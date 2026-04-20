@@ -731,9 +731,10 @@ defmodule PhoenixKitProjects.Projects do
   # Returns true when `depends_on_uuid` already reaches `assignment_uuid`
   # transitively — inserting the new edge would close a cycle.
   defp would_create_cycle?(assignment_uuid, depends_on_uuid) do
-    walk_dependencies([depends_on_uuid], MapSet.new(), assignment_uuid)
+    walk_dependencies([depends_on_uuid], %{}, assignment_uuid)
   end
 
+  @spec walk_dependencies([binary()], %{binary() => true}, binary()) :: boolean()
   defp walk_dependencies([], _seen, _target), do: false
 
   defp walk_dependencies([current | rest], seen, target) do
@@ -741,7 +742,7 @@ defmodule PhoenixKitProjects.Projects do
       current == target ->
         true
 
-      MapSet.member?(seen, current) ->
+      Map.has_key?(seen, current) ->
         walk_dependencies(rest, seen, target)
 
       true ->
@@ -751,7 +752,7 @@ defmodule PhoenixKitProjects.Projects do
           |> select([d], d.depends_on_uuid)
           |> repo().all()
 
-        walk_dependencies(next ++ rest, MapSet.put(seen, current), target)
+        walk_dependencies(next ++ rest, Map.put(seen, current, true), target)
     end
   end
 
