@@ -106,4 +106,74 @@ defmodule PhoenixKitProjects.Integration.TemplateCloneTest do
       assert Projects.count_tasks() == tasks_before
     end
   end
+
+  describe "V105 partial-index name uniqueness (template vs project)" do
+    test "a template and a real project can share the same name" do
+      shared_name = "Shared-#{System.unique_integer([:positive])}"
+
+      assert {:ok, %Project{is_template: true}} =
+               Projects.create_project(%{
+                 "name" => shared_name,
+                 "status" => "active",
+                 "start_mode" => "immediate",
+                 "is_template" => "true"
+               })
+
+      # Same name, real project — used to collide on the single global
+      # `phoenix_kit_projects_name_index`. After V105 split it into two
+      # partial indexes (one per `is_template` value), this insert
+      # should succeed.
+      assert {:ok, %Project{is_template: false}} =
+               Projects.create_project(%{
+                 "name" => shared_name,
+                 "status" => "active",
+                 "start_mode" => "immediate",
+                 "is_template" => "false"
+               })
+    end
+
+    test "two templates with the same name still collide" do
+      shared_name = "Collide-tpl-#{System.unique_integer([:positive])}"
+
+      {:ok, _} =
+        Projects.create_project(%{
+          "name" => shared_name,
+          "status" => "active",
+          "start_mode" => "immediate",
+          "is_template" => "true"
+        })
+
+      {:error, cs} =
+        Projects.create_project(%{
+          "name" => shared_name,
+          "status" => "active",
+          "start_mode" => "immediate",
+          "is_template" => "true"
+        })
+
+      assert %{name: ["already taken" | _]} = errors_on(cs)
+    end
+
+    test "two real projects with the same name still collide" do
+      shared_name = "Collide-proj-#{System.unique_integer([:positive])}"
+
+      {:ok, _} =
+        Projects.create_project(%{
+          "name" => shared_name,
+          "status" => "active",
+          "start_mode" => "immediate",
+          "is_template" => "false"
+        })
+
+      {:error, cs} =
+        Projects.create_project(%{
+          "name" => shared_name,
+          "status" => "active",
+          "start_mode" => "immediate",
+          "is_template" => "false"
+        })
+
+      assert %{name: ["already taken" | _]} = errors_on(cs)
+    end
+  end
 end

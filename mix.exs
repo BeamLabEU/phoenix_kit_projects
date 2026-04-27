@@ -27,6 +27,10 @@ defmodule PhoenixKitProjects.MixProject do
     [extra_applications: [:logger, :phoenix_kit, :phoenix_kit_staff]]
   end
 
+  def cli do
+    [preferred_envs: ["test.setup": :test, "test.reset": :test]]
+  end
+
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
@@ -34,7 +38,15 @@ defmodule PhoenixKitProjects.MixProject do
     [
       quality: ["format", "credo --strict", "dialyzer"],
       "quality.ci": ["format --check-formatted", "credo --strict", "dialyzer"],
-      precommit: ["compile", "quality"]
+      precommit: ["compile", "quality"],
+      "test.setup": [
+        "ecto.create --quiet -r PhoenixKitProjects.Test.Repo",
+        "ecto.migrate -r PhoenixKitProjects.Test.Repo"
+      ],
+      "test.reset": [
+        "ecto.drop --quiet -r PhoenixKitProjects.Test.Repo",
+        "test.setup"
+      ]
     ]
   end
 

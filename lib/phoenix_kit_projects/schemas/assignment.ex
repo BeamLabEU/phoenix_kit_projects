@@ -94,13 +94,15 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_single_assignee()
     |> check_constraint(:assigned_team_uuid,
       name: :phoenix_kit_project_assignments_single_assignee,
-      message: gettext("only one of team, department, or person can be assigned")
+      message: single_assignee_message()
     )
   end
 
   # Mirrors the DB-level CHECK constraint on the assignee triple so
   # changesets fail fast with a friendly message instead of a raw
-  # Postgrex error on concurrent inserts.
+  # Postgrex error on concurrent inserts. Both the validator and the
+  # check_constraint surface the same translated message — single
+  # source kept here so the wording can't drift.
   defp validate_single_assignee(changeset) do
     set =
       Enum.count(
@@ -109,15 +111,14 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
       )
 
     if set > 1 do
-      add_error(
-        changeset,
-        :assigned_team_uuid,
-        gettext("only one of team, department, or person can be assigned")
-      )
+      add_error(changeset, :assigned_team_uuid, single_assignee_message())
     else
       changeset
     end
   end
+
+  defp single_assignee_message,
+    do: gettext("only one of team, department, or person can be assigned")
 
   def statuses, do: @statuses
 end

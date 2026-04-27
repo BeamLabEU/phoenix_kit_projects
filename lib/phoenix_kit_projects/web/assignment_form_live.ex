@@ -258,7 +258,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     case Projects.create_assignment(assignment_attrs) do
       {:ok, assignment} ->
-        Projects.apply_template_dependencies(assignment)
+        {flash_kind, flash_msg} =
+          flash_for_template_deps(
+            assignment,
+            gettext("Task created and added to project.")
+          )
 
         Activity.log("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
@@ -269,7 +273,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         {:noreply,
          socket
-         |> put_flash(:info, gettext("Task created and added to project."))
+         |> put_flash(flash_kind, flash_msg)
          |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
 
       {:error, cs} ->
@@ -298,7 +302,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     case Projects.create_assignment(attrs) do
       {:ok, assignment} ->
-        Projects.apply_template_dependencies(assignment)
+        {flash_kind, flash_msg} =
+          flash_for_template_deps(
+            assignment,
+            gettext("Task added to project.")
+          )
 
         Activity.log("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
@@ -309,11 +317,38 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         {:noreply,
          socket
-         |> put_flash(:info, gettext("Task added to project."))
+         |> put_flash(flash_kind, flash_msg)
          |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
 
       {:error, cs} ->
         {:noreply, assign_form(socket, cs)}
+    end
+  end
+
+  # Apply template-level default dependencies and return a flash tuple
+  # describing what to show the user. A rollback in
+  # `Projects.apply_template_dependencies/1` is *not* fatal — the
+  # assignment itself was created successfully — but the user expected
+  # default deps to land, so we surface a warning instead of the
+  # success message.
+  defp flash_for_template_deps(assignment, success_msg) do
+    case Projects.apply_template_dependencies(assignment) do
+      :ok ->
+        {:info, success_msg}
+
+      {:ok, _} ->
+        {:info, success_msg}
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Projects] apply_template_dependencies/1 rolled back for assignment " <>
+            "#{assignment.uuid}: #{inspect(reason)}"
+        )
+
+        {:warning,
+         gettext(
+           "Task added to project, but applying default dependencies from the template failed."
+         )}
     end
   end
 

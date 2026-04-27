@@ -13,6 +13,22 @@ defmodule PhoenixKitProjects.PubSub do
   ## Events
 
   Messages are `{:projects, event_atom, payload_map}` tuples.
+
+  ## Tenant scoping (deferred)
+
+  Topics are global today. PhoenixKit core does not currently expose
+  a per-tenant `Scope.organization_id` or equivalent, and no other
+  feature module (`locations`, `staff`, `sync`, …) does multi-tenant
+  PubSub partitioning either — so this is a framework-wide gap, not
+  a projects-specific one.
+
+  When core grows tenant scoping, the right shape here is to thread
+  the org/tenant key into every topic
+  (`"projects:org:<org_id>:all"`, etc.) and have `subscribe/1` raise
+  if the scope is missing. Until then, the `:project:<uuid>` topic
+  is the only one safe against cross-tenant fan-out (you need the
+  UUID to subscribe), and the `:all` / `:tasks` / `:templates`
+  topics deliberately broadcast across all subscribers.
   """
 
   alias PhoenixKit.PubSub.Manager

@@ -290,14 +290,18 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
-  Counts of assignments by status across all non-template projects.
+  Counts of assignments by status across active non-template projects.
   Returns a map like %{"todo" => 5, "in_progress" => 2, "done" => 10}.
+
+  Filters on `p.status == "active"` to match the dashboard's intent —
+  assignments inside archived projects shouldn't inflate the workload
+  stats shown alongside `list_active_projects/0`.
   """
   def assignment_status_counts do
     from(a in Assignment,
       join: p in Project,
       on: p.uuid == a.project_uuid,
-      where: p.is_template == false,
+      where: p.is_template == false and p.status == "active",
       group_by: a.status,
       select: {a.status, count(a.uuid)}
     )
@@ -308,6 +312,15 @@ defmodule PhoenixKitProjects.Projects do
   @doc """
   Assignments currently assigned to the given user's staff record.
   Returns non-done assignments across all active projects, with project preloaded.
+
+  The `rescue [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError]`
+  block at the bottom is **intentional**: a hard dep on
+  `phoenix_kit_staff` means a Staff outage (missing tables in early
+  install, sandbox-shutdown in tests, transient connection drop) would
+  otherwise take the Projects dashboard down. The rescue degrades
+  gracefully to "no assignments for this user" — the dashboard keeps
+  rendering for everyone else's data. Don't "clean it up" by
+  narrowing or removing.
   """
   def list_assignments_for_user(user_uuid) do
     case PhoenixKitStaff.Staff.get_person_by_user_uuid(user_uuid, preload: []) do
@@ -662,13 +675,6 @@ defmodule PhoenixKitProjects.Projects do
     })
   end
 
-  @doc "Number of assignments in a project."
-  def count_assignments(project_uuid) do
-    Assignment
-    |> where([a], a.project_uuid == ^project_uuid)
-    |> repo().aggregate(:count, :uuid)
-  end
-
   # ── Dependencies ───────────────────────────────────────────────────
 
   @doc "Dependencies declared on a single assignment."
@@ -698,6 +704,15 @@ defmodule PhoenixKitProjects.Projects do
   refused with a changeset error. The schema-level self-reference check
   handles the `A == B` case; this function handles multi-hop cycles
   (`A → B`, then `B → A`).
+
+  The cycle check + insert run inside a `:serializable` transaction.
+  Without this, two concurrent calls — `add_dependency(A, B)` and
+  `add_dependency(B, A)` — could each read an acyclic graph, both
+  pass the check, both insert, and produce a cycle (the unique pair
+  index doesn't catch this; it only rejects identical duplicate
+  edges). At `:serializable` Postgres aborts the loser with
+  `serialization_failure` (`SQLSTATE 40001`); we catch that and
+  return a friendly changeset error so the caller can retry.
   """
   def add_dependency(assignment_uuid, depends_on_uuid) do
     changeset =
@@ -706,26 +721,58 @@ defmodule PhoenixKitProjects.Projects do
         depends_on_uuid: depends_on_uuid
       })
 
-    cond do
-      not changeset.valid? ->
-        {:error, %{changeset | action: :insert}}
+    if changeset.valid? do
+      do_add_dependency_in_serializable_tx(assignment_uuid, depends_on_uuid, changeset)
+    else
+      {:error, %{changeset | action: :insert}}
+    end
+  end
 
-      would_create_cycle?(assignment_uuid, depends_on_uuid) ->
+  defp do_add_dependency_in_serializable_tx(assignment_uuid, depends_on_uuid, changeset) do
+    result =
+      repo().transaction(
+        fn ->
+          if would_create_cycle?(assignment_uuid, depends_on_uuid) do
+            cs =
+              Ecto.Changeset.add_error(
+                changeset,
+                :depends_on_uuid,
+                gettext("would create a dependency cycle")
+              )
+
+            repo().rollback(%{cs | action: :insert})
+          else
+            case repo().insert(changeset) do
+              {:ok, dep} -> dep
+              {:error, cs} -> repo().rollback(cs)
+            end
+          end
+        end,
+        isolation: :serializable
+      )
+
+    case result do
+      {:ok, dep} ->
+        broadcast_dep(dep, :dependency_added)
+        {:ok, dep}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        {:error, cs}
+    end
+  rescue
+    e in Postgrex.Error ->
+      if Map.get(e.postgres || %{}, :code) == :serialization_failure do
         cs =
           Ecto.Changeset.add_error(
             changeset,
             :depends_on_uuid,
-            gettext("would create a dependency cycle")
+            gettext("conflicting dependency change in flight, please retry")
           )
 
         {:error, %{cs | action: :insert}}
-
-      true ->
-        with {:ok, dep} <- repo().insert(changeset) do
-          broadcast_dep(dep, :dependency_added)
-          {:ok, dep}
-        end
-    end
+      else
+        reraise e, __STACKTRACE__
+      end
   end
 
   # Returns true when `depends_on_uuid` already reaches `assignment_uuid`

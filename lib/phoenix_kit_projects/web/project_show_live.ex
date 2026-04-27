@@ -113,7 +113,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     case Projects.update_assignment_status(a, attrs) do
       {:ok, _} ->
         Activity.log(action_name,
-          actor_uuid: actor_uuid(socket),
+          actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: a.uuid,
           metadata: Keyword.get(opts, :metadata, %{})
@@ -150,7 +150,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     case Projects.recompute_project_completion(socket.assigns.project.uuid) do
       {:completed, project} ->
         Activity.log("projects.project_completed",
-          actor_uuid: actor_uuid(socket),
+          actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: project.uuid,
           metadata: %{"name" => project.name}
@@ -162,7 +162,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       {:reopened, project} ->
         Activity.log("projects.project_reopened",
-          actor_uuid: actor_uuid(socket),
+          actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: project.uuid,
           metadata: %{"name" => project.name}
@@ -175,13 +175,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       _ ->
         socket
-    end
-  end
-
-  defp actor_uuid(socket) do
-    case socket.assigns[:phoenix_kit_current_user] do
-      %{uuid: uuid} -> uuid
-      _ -> nil
     end
   end
 
@@ -207,7 +200,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         attrs = %{
           status: "done",
           progress_pct: 100,
-          completed_by_uuid: actor_uuid(socket),
+          completed_by_uuid: Activity.actor_uuid(socket),
           completed_at: DateTime.utc_now()
         }
 
@@ -298,7 +291,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         case Projects.update_assignment_form(a, attrs) do
           {:ok, _} ->
             Activity.log("projects.assignment_duration_changed",
-              actor_uuid: actor_uuid(socket),
+              actor_uuid: Activity.actor_uuid(socket),
               resource_type: "assignment",
               resource_uuid: uuid,
               metadata: %{
@@ -331,7 +324,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         case Projects.delete_assignment(a) do
           {:ok, _} ->
             Activity.log("projects.assignment_removed",
-              actor_uuid: actor_uuid(socket),
+              actor_uuid: Activity.actor_uuid(socket),
               resource_type: "assignment",
               resource_uuid: uuid,
               metadata: %{"task" => a.task.title}
@@ -367,7 +360,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         case Projects.update_assignment_form(a, %{track_progress: new_value}) do
           {:ok, _} ->
             Activity.log("projects.assignment_tracking_toggled",
-              actor_uuid: actor_uuid(socket),
+              actor_uuid: Activity.actor_uuid(socket),
               resource_type: "assignment",
               resource_uuid: uuid,
               metadata: %{"task" => a.task.title, "track_progress" => new_value}
@@ -388,7 +381,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          %{} <- scoped_assignment(socket, d_uuid),
          {:ok, _} <- Projects.remove_dependency(a_uuid, d_uuid) do
       Activity.log("projects.dependency_removed",
-        actor_uuid: actor_uuid(socket),
+        actor_uuid: Activity.actor_uuid(socket),
         resource_type: "assignment",
         resource_uuid: a_uuid,
         target_uuid: d_uuid,
@@ -405,7 +398,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     case Projects.start_project(socket.assigns.project) do
       {:ok, project} ->
         Activity.log("projects.project_started",
-          actor_uuid: actor_uuid(socket),
+          actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: project.uuid,
           metadata: %{"name" => project.name}
@@ -432,7 +425,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     do: %{
       progress_pct: 100,
       status: "done",
-      completed_by_uuid: actor_uuid(socket),
+      completed_by_uuid: Activity.actor_uuid(socket),
       completed_at: DateTime.utc_now()
     }
 
@@ -460,7 +453,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     case Projects.update_assignment_status(a, attrs) do
       {:ok, _} ->
         Activity.log(progress_action(pct, a.status),
-          actor_uuid: actor_uuid(socket),
+          actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: a.uuid,
           metadata: %{"task" => a.task.title, "progress_pct" => pct}

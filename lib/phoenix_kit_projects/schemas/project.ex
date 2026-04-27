@@ -45,9 +45,27 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_inclusion(:start_mode, @start_modes)
     |> maybe_require_date()
     |> unique_constraint(:name,
-      name: :phoenix_kit_projects_name_index,
+      name: name_index_for(project, attrs),
       message: gettext("already taken")
     )
+  end
+
+  # V105 split the single `phoenix_kit_projects_name_index` into two
+  # partial indexes — one per `is_template` value — so a template
+  # named "Onboarding" and a real project named "Onboarding" can
+  # coexist. Pick the index whose `WHERE` clause matches the row we're
+  # about to write so Ecto attaches the constraint error to the right
+  # changeset field.
+  defp name_index_for(project, attrs) do
+    template? =
+      case Map.get(attrs, :is_template, Map.get(attrs, "is_template")) do
+        nil -> Map.get(project, :is_template, false)
+        v -> v in [true, "true"]
+      end
+
+    if template?,
+      do: :phoenix_kit_projects_name_template_index,
+      else: :phoenix_kit_projects_name_project_index
   end
 
   defp maybe_require_date(changeset) do
