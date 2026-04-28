@@ -46,6 +46,13 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             {:noreply, socket |> put_flash(:info, gettext("Task deleted.")) |> load_tasks()}
 
           {:error, _} ->
+            Activity.log_failed("projects.task_deleted",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "task",
+              resource_uuid: task.uuid,
+              metadata: %{"title" => task.title}
+            )
+
             {:noreply, put_flash(socket, :error, gettext("Could not delete task."))}
         end
     end

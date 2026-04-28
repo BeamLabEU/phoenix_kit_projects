@@ -10,6 +10,12 @@ defmodule PhoenixKitProjects.Projects do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, TaskDependency}
 
+  @typedoc "UUIDv7 string or raw 16-byte binary (Ecto accepts either)."
+  @type uuid :: String.t() | <<_::128>>
+
+  @typedoc "Atom-shaped error returned for not-found / missing-resource cases."
+  @type error_atom :: :not_found | :template_not_found | :task_not_found
+
   defp repo, do: PhoenixKit.RepoHelper.repo()
 
   # ── Task library ───────────────────────────────────────────────────
@@ -21,6 +27,7 @@ defmodule PhoenixKitProjects.Projects do
   ]
 
   @doc "Lists all task-library entries, preloaded with defaults."
+  @spec list_tasks() :: [Task.t()]
   def list_tasks do
     Task
     |> order_by([t], asc: t.title)
@@ -29,19 +36,23 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Fetches a task by uuid, or `nil` if not found."
+  @spec get_task(uuid()) :: Task.t() | nil
   def get_task(uuid) do
     Task |> preload(^@task_preloads) |> repo().get(uuid)
   end
 
   @doc "Fetches a task by uuid. Raises if not found."
+  @spec get_task!(uuid()) :: Task.t()
   def get_task!(uuid) do
     Task |> preload(^@task_preloads) |> repo().get!(uuid)
   end
 
   @doc "Returns a changeset for the given task."
+  @spec change_task(Task.t(), map()) :: Ecto.Changeset.t()
   def change_task(%Task{} = t, attrs \\ %{}), do: Task.changeset(t, attrs)
 
   @doc "Inserts a task and broadcasts `:task_created`."
+  @spec create_task(map()) :: {:ok, Task.t()} | {:error, Ecto.Changeset.t()}
   def create_task(attrs) do
     with {:ok, task} <- %Task{} |> Task.changeset(attrs) |> repo().insert() do
       ProjectsPubSub.broadcast_task(:task_created, %{uuid: task.uuid, title: task.title})
@@ -50,6 +61,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Updates a task and broadcasts `:task_updated`."
+  @spec update_task(Task.t(), map()) :: {:ok, Task.t()} | {:error, Ecto.Changeset.t()}
   def update_task(%Task{} = t, attrs) do
     with {:ok, updated} <- t |> Task.changeset(attrs) |> repo().update() do
       ProjectsPubSub.broadcast_task(:task_updated, %{uuid: updated.uuid, title: updated.title})
@@ -58,6 +70,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Deletes a task and broadcasts `:task_deleted`."
+  @spec delete_task(Task.t()) :: {:ok, Task.t()} | {:error, Ecto.Changeset.t()}
   def delete_task(%Task{} = t) do
     with {:ok, deleted} <- repo().delete(t) do
       ProjectsPubSub.broadcast_task(:task_deleted, %{uuid: deleted.uuid, title: deleted.title})
@@ -66,11 +79,13 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Total number of tasks in the library."
+  @spec count_tasks() :: non_neg_integer()
   def count_tasks, do: repo().aggregate(Task, :count, :uuid)
 
   # ── Task template dependencies ─────────────────────────────────
 
   @doc "Template-level dependencies declared on the given task."
+  @spec list_task_dependencies(uuid()) :: [TaskDependency.t()]
   def list_task_dependencies(task_uuid) do
     TaskDependency
     |> where([d], d.task_uuid == ^task_uuid)
@@ -79,6 +94,8 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Adds a template-level dependency from one task to another."
+  @spec add_task_dependency(uuid(), uuid()) ::
+          {:ok, TaskDependency.t()} | {:error, Ecto.Changeset.t()}
   def add_task_dependency(task_uuid, depends_on_task_uuid) do
     %TaskDependency{}
     |> TaskDependency.changeset(%{
@@ -89,6 +106,9 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Removes a template-level dependency. Returns `{:error, :not_found}` if missing."
+  @spec remove_task_dependency(uuid(), uuid()) ::
+          {:ok, TaskDependency.t()}
+          | {:error, :not_found | Ecto.Changeset.t()}
   def remove_task_dependency(task_uuid, depends_on_task_uuid) do
     case repo().get_by(TaskDependency,
            task_uuid: task_uuid,
@@ -100,6 +120,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Tasks that the given task does not yet depend on (for the dependency picker)."
+  @spec available_task_dependencies(uuid()) :: [Task.t()]
   def available_task_dependencies(task_uuid) do
     existing =
       from(d in TaskDependency, where: d.task_uuid == ^task_uuid, select: d.depends_on_task_uuid)
@@ -125,6 +146,8 @@ defmodule PhoenixKitProjects.Projects do
   exists is the desired end state). All inserts run in a single
   transaction so a partial failure rolls the batch back.
   """
+  @spec apply_template_dependencies(Assignment.t()) ::
+          :ok | {:ok, term()} | {:error, term()}
   def apply_template_dependencies(assignment) do
     case template_dep_targets(assignment) do
       [] ->
@@ -170,6 +193,7 @@ defmodule PhoenixKitProjects.Projects do
   # ── Projects ───────────────────────────────────────────────────────
 
   @doc "Lists projects. Accepts `:status` filter and `:include_templates` (default false)."
+  @spec list_projects(keyword()) :: [Project.t()]
   def list_projects(opts \\ []) do
     status = Keyword.get(opts, :status)
     include_templates = Keyword.get(opts, :include_templates, false)
@@ -189,13 +213,17 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_filter_project_status(q, s), do: where(q, [p], p.status == ^s)
 
   @doc "Fetches a project by uuid, or `nil` if not found."
+  @spec get_project(uuid()) :: Project.t() | nil
   def get_project(uuid), do: repo().get(Project, uuid)
   @doc "Fetches a project by uuid. Raises if not found."
+  @spec get_project!(uuid()) :: Project.t()
   def get_project!(uuid), do: repo().get!(Project, uuid)
   @doc "Returns a changeset for the given project."
+  @spec change_project(Project.t(), map()) :: Ecto.Changeset.t()
   def change_project(%Project{} = p, attrs \\ %{}), do: Project.changeset(p, attrs)
 
   @doc "Inserts a project and broadcasts `:project_created`."
+  @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def create_project(attrs) do
     with {:ok, project} <- %Project{} |> Project.changeset(attrs) |> repo().insert() do
       ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
@@ -204,6 +232,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Updates a project and broadcasts `:project_updated`."
+  @spec update_project(Project.t(), map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def update_project(%Project{} = p, attrs) do
     with {:ok, updated} <- p |> Project.changeset(attrs) |> repo().update() do
       ProjectsPubSub.broadcast_project(:project_updated, project_payload(updated))
@@ -212,6 +241,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Deletes a project and broadcasts `:project_deleted`."
+  @spec delete_project(Project.t()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def delete_project(%Project{} = p) do
     with {:ok, deleted} <- repo().delete(p) do
       ProjectsPubSub.broadcast_project(:project_deleted, project_payload(deleted))
@@ -224,9 +254,11 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Total number of projects (including templates)."
+  @spec count_projects() :: non_neg_integer()
   def count_projects, do: repo().aggregate(Project, :count, :uuid)
 
   @doc "Lists projects that are templates, ordered by name."
+  @spec list_templates() :: [Project.t()]
   def list_templates do
     Project
     |> where([p], p.is_template == true)
@@ -235,6 +267,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Total number of template projects."
+  @spec count_templates() :: non_neg_integer()
   def count_templates do
     Project
     |> where([p], p.is_template == true)
@@ -242,6 +275,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Active, in-flight projects (started but not yet completed)."
+  @spec list_active_projects() :: [Project.t()]
   def list_active_projects do
     Project
     |> where(
@@ -254,6 +288,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Completed projects (all tasks done), most recently completed first."
+  @spec list_recently_completed_projects(pos_integer()) :: [Project.t()]
   def list_recently_completed_projects(limit \\ 5) do
     Project
     |> where(
@@ -266,6 +301,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Scheduled projects waiting to start."
+  @spec list_upcoming_projects() :: [Project.t()]
   def list_upcoming_projects do
     Project
     |> where(
@@ -278,6 +314,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Projects not yet started, in setup (immediate mode, not scheduled)."
+  @spec list_setup_projects() :: [Project.t()]
   def list_setup_projects do
     Project
     |> where(
@@ -297,6 +334,7 @@ defmodule PhoenixKitProjects.Projects do
   assignments inside archived projects shouldn't inflate the workload
   stats shown alongside `list_active_projects/0`.
   """
+  @spec assignment_status_counts() :: %{optional(String.t()) => non_neg_integer()}
   def assignment_status_counts do
     from(a in Assignment,
       join: p in Project,
@@ -322,6 +360,7 @@ defmodule PhoenixKitProjects.Projects do
   rendering for everyone else's data. Don't "clean it up" by
   narrowing or removing.
   """
+  @spec list_assignments_for_user(uuid()) :: [Assignment.t()]
   def list_assignments_for_user(user_uuid) do
     case PhoenixKitStaff.Staff.get_person_by_user_uuid(user_uuid, preload: []) do
       nil ->
@@ -352,6 +391,7 @@ defmodule PhoenixKitProjects.Projects do
   Summary of an active project for the overview dashboard.
   Returns a map with progress stats.
   """
+  @spec project_summary(Project.t()) :: map() | nil
   def project_summary(%Project{} = project) do
     project |> List.wrap() |> project_summaries() |> List.first()
   end
@@ -360,6 +400,7 @@ defmodule PhoenixKitProjects.Projects do
   Batched summaries for many projects — loads all their assignments in
   one query, then groups in memory. Preserves the input project order.
   """
+  @spec project_summaries([Project.t()]) :: [map()]
   def project_summaries([]), do: []
 
   def project_summaries(projects) do
@@ -400,6 +441,9 @@ defmodule PhoenixKitProjects.Projects do
   (with their task links, descriptions, durations, assignees, weekends
   settings) and re-creates dependencies between the cloned assignments.
   """
+  @spec create_project_from_template(uuid(), map()) ::
+          {:ok, Project.t()}
+          | {:error, :template_not_found | Ecto.Changeset.t() | term()}
   def create_project_from_template(template_uuid, project_attrs) do
     case get_project(template_uuid) do
       nil -> {:error, :template_not_found}
@@ -473,6 +517,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Stamps `started_at` on the project and broadcasts `:project_started`."
+  @spec start_project(Project.t()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def start_project(%Project{} = p) do
     with {:ok, updated} <-
            p |> Project.changeset(%{started_at: DateTime.utc_now()}) |> repo().update() do
@@ -486,11 +531,28 @@ defmodule PhoenixKitProjects.Projects do
   in the project are done. If so, sets `completed_at`. If not (e.g., a task
   was reopened), clears it. Returns the (possibly updated) project.
   """
+  @spec recompute_project_completion(uuid()) ::
+          :ok
+          | {:completed, Project.t()}
+          | {:reopened, Project.t()}
+          | {:unchanged, Project.t()}
+          | {:error, term()}
   def recompute_project_completion(project_uuid) do
-    case get_project(project_uuid) do
-      nil -> :ok
-      %Project{is_template: true} -> :ok
-      project -> decide_completion(project)
+    # Wrap the read + check + update in a transaction so two concurrent
+    # status changes (e.g. task A marked done, task B reopened) can't
+    # both observe the same pre-update state and try to mark the project
+    # completed twice. The second wins-or-loses but it's idempotent —
+    # broadcast and audit-row consumers see exactly one transition.
+    repo().transaction(fn ->
+      case get_project(project_uuid) do
+        nil -> :ok
+        %Project{is_template: true} -> :ok
+        project -> decide_completion(project)
+      end
+    end)
+    |> case do
+      {:ok, result} -> result
+      {:error, _} = err -> err
     end
   end
 
@@ -544,6 +606,7 @@ defmodule PhoenixKitProjects.Projects do
   ]
 
   @doc "Lists assignments within a project, ordered by position, with related records preloaded."
+  @spec list_assignments(uuid()) :: [Assignment.t()]
   def list_assignments(project_uuid) do
     Assignment
     |> where([a], a.project_uuid == ^project_uuid)
@@ -553,6 +616,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Fetches an assignment by uuid with related records preloaded, or `nil` if not found."
+  @spec get_assignment(uuid()) :: Assignment.t() | nil
   def get_assignment(uuid) do
     Assignment
     |> preload(^@assignment_preloads)
@@ -560,9 +624,11 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Returns a changeset for the given assignment."
+  @spec change_assignment(Assignment.t(), map()) :: Ecto.Changeset.t()
   def change_assignment(%Assignment{} = a, attrs \\ %{}), do: Assignment.changeset(a, attrs)
 
   @doc "Inserts an assignment and broadcasts `:assignment_created`."
+  @spec create_assignment(map()) :: {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def create_assignment(attrs) do
     with {:ok, a} <- %Assignment{} |> Assignment.changeset(attrs) |> repo().insert() do
       ProjectsPubSub.broadcast_assignment(:assignment_created, %{
@@ -579,6 +645,8 @@ defmodule PhoenixKitProjects.Projects do
   (description, duration, default assignee). The caller's attrs override
   any template values.
   """
+  @spec create_assignment_from_template(uuid(), map()) ::
+          {:ok, Assignment.t()} | {:error, :task_not_found | Ecto.Changeset.t()}
   def create_assignment_from_template(task_uuid, attrs) do
     case get_task(task_uuid) do
       nil ->
@@ -618,6 +686,8 @@ defmodule PhoenixKitProjects.Projects do
   The `_form` suffix is a deliberate smell: if you reach for this
   function, double-check whether your caller is really a form handler.
   """
+  @spec update_assignment_form(Assignment.t(), map()) ::
+          {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_form(%Assignment{} = a, attrs) do
     with {:ok, updated} <- a |> Assignment.changeset(attrs) |> repo().update() do
       ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
@@ -634,6 +704,8 @@ defmodule PhoenixKitProjects.Projects do
   `completed_at`. Only call from server code (never pass raw form attrs),
   since the caller vouches for those fields.
   """
+  @spec update_assignment_status(Assignment.t(), map()) ::
+          {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_status(%Assignment{} = a, attrs) do
     with {:ok, updated} <- a |> Assignment.status_changeset(attrs) |> repo().update() do
       ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
@@ -646,6 +718,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Deletes an assignment and broadcasts `:assignment_deleted`."
+  @spec delete_assignment(Assignment.t()) :: {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def delete_assignment(%Assignment{} = a) do
     with {:ok, deleted} <- repo().delete(a) do
       ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
@@ -658,6 +731,8 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Marks an assignment done, stamping `completed_by_uuid` and `completed_at`."
+  @spec complete_assignment(Assignment.t(), uuid() | nil) ::
+          {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def complete_assignment(%Assignment{} = a, completed_by_uuid) do
     update_assignment_status(a, %{
       status: "done",
@@ -667,6 +742,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Reverts an assignment to `todo` and clears its completion fields."
+  @spec reopen_assignment(Assignment.t()) :: {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def reopen_assignment(%Assignment{} = a) do
     update_assignment_status(a, %{
       status: "todo",
@@ -678,6 +754,7 @@ defmodule PhoenixKitProjects.Projects do
   # ── Dependencies ───────────────────────────────────────────────────
 
   @doc "Dependencies declared on a single assignment."
+  @spec list_dependencies(uuid()) :: [Dependency.t()]
   def list_dependencies(assignment_uuid) do
     Dependency
     |> where([d], d.assignment_uuid == ^assignment_uuid)
@@ -686,6 +763,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "All dependencies across every assignment in a project (used when cloning templates)."
+  @spec list_all_dependencies(uuid()) :: [Dependency.t()]
   def list_all_dependencies(project_uuid) do
     from(d in Dependency,
       join: a in Assignment,
@@ -714,6 +792,8 @@ defmodule PhoenixKitProjects.Projects do
   `serialization_failure` (`SQLSTATE 40001`); we catch that and
   return a friendly changeset error so the caller can retry.
   """
+  @spec add_dependency(uuid(), uuid()) ::
+          {:ok, Dependency.t()} | {:error, Ecto.Changeset.t()}
   def add_dependency(assignment_uuid, depends_on_uuid) do
     changeset =
       Dependency.changeset(%Dependency{}, %{
@@ -804,6 +884,8 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Removes an assignment-level dependency and broadcasts `:dependency_removed`."
+  @spec remove_dependency(uuid(), uuid()) ::
+          {:ok, Dependency.t()} | {:error, :not_found | Ecto.Changeset.t()}
   def remove_dependency(assignment_uuid, depends_on_uuid) do
     case repo().get_by(Dependency,
            assignment_uuid: assignment_uuid,
@@ -835,6 +917,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Assignments in this project that the given assignment does NOT yet depend on."
+  @spec available_dependencies(uuid(), uuid()) :: [Assignment.t()]
   def available_dependencies(project_uuid, assignment_uuid) do
     existing =
       from(d in Dependency,
@@ -854,6 +937,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Check if all dependencies of an assignment are done."
+  @spec dependencies_met?(uuid()) :: boolean()
   def dependencies_met?(assignment_uuid) do
     from(d in Dependency,
       join: dep_on in Assignment,

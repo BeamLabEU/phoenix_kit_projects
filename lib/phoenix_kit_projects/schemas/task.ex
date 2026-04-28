@@ -46,6 +46,11 @@ defmodule PhoenixKitProjects.Schemas.Task do
   def to_hours(n, unit, _counts_weekends),
     do: n * Map.get(@hours_per_weekdays, unit, 1)
 
+  # Cross-module assoc fields use `struct()` rather than the precise
+  # `PhoenixKitStaff.Schemas.<X>.t()` because phoenix_kit_staff Hex
+  # 0.1.0 doesn't ship `@type t` declarations on its schemas (the
+  # workspace version does — once it publishes 0.1.1, tighten these
+  # back to the named types).
   @type t :: %__MODULE__{
           uuid: UUIDv7.t() | nil,
           title: String.t() | nil,
@@ -53,11 +58,11 @@ defmodule PhoenixKitProjects.Schemas.Task do
           estimated_duration: integer() | nil,
           estimated_duration_unit: String.t() | nil,
           default_assigned_team_uuid: UUIDv7.t() | nil,
-          default_assigned_team: Team.t() | Ecto.Association.NotLoaded.t() | nil,
+          default_assigned_team: struct() | Ecto.Association.NotLoaded.t() | nil,
           default_assigned_department_uuid: UUIDv7.t() | nil,
-          default_assigned_department: Department.t() | Ecto.Association.NotLoaded.t() | nil,
+          default_assigned_department: struct() | Ecto.Association.NotLoaded.t() | nil,
           default_assigned_person_uuid: UUIDv7.t() | nil,
-          default_assigned_person: Person.t() | Ecto.Association.NotLoaded.t() | nil,
+          default_assigned_person: struct() | Ecto.Association.NotLoaded.t() | nil,
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
         }

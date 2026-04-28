@@ -127,6 +127,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         {:ok, socket}
 
       {:error, cs} ->
+        Activity.log_failed(action_name,
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: a.uuid,
+          metadata: Keyword.get(opts, :metadata, %{})
+        )
+
         {:error, socket, error_summary(cs, gettext("Could not update task."))}
     end
   end
@@ -139,17 +146,38 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply, put_flash(socket, :error, msg)}
   end
 
+  # Translates Ecto validator messages through the gettext "errors"
+  # domain — Ecto emits English literals like `"is invalid"` /
+  # `"must be greater than 0"` from `validate_*` plus interpolation
+  # bindings; `Gettext.dngettext/6` is the canonical translator for
+  # those (matches the Phoenix scaffolding pattern). Without this,
+  # the inline error summary (e.g. on a failed `complete` from a
+  # validation-rejected status transition) renders English regardless
+  # of the user's locale — Phase 1 PR #1 review item #15, deferred
+  # then to Phase 2 C3 + closed in this re-validation batch.
+  #
+  # Named `translate_validator_error/1` (not `translate_error/1`) to
+  # avoid shadowing `PhoenixKitWeb.Components.Core.Input.translate_error/1`
+  # which is auto-imported by `use PhoenixKitWeb, :live_view`.
   defp error_summary(%Ecto.Changeset{errors: errors}, fallback) do
     case errors do
       [] ->
         fallback
 
       errs ->
-        Enum.map_join(errs, ", ", fn {k, {m, _}} -> "#{k}: #{m}" end)
+        Enum.map_join(errs, ", ", fn {k, {msg, opts}} ->
+          "#{k}: #{translate_validator_error({msg, opts})}"
+        end)
     end
   end
 
-  defp error_summary(_, fallback), do: fallback
+  defp translate_validator_error({msg, opts}) do
+    if count = opts[:count] do
+      Gettext.dngettext(PhoenixKitWeb.Gettext, "errors", msg, msg, count, opts)
+    else
+      Gettext.dgettext(PhoenixKitWeb.Gettext, "errors", msg, opts)
+    end
+  end
 
   defp sync_project_completion(socket) do
     case Projects.recompute_project_completion(socket.assigns.project.uuid) do
@@ -342,6 +370,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              |> load_assignments()}
 
           {:error, _} ->
+            Activity.log_failed("projects.assignment_removed",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "assignment",
+              resource_uuid: uuid,
+              metadata: %{"task" => a.task.title}
+            )
+
             {:noreply, put_flash(socket, :error, gettext("Could not remove task."))}
         end
     end
@@ -374,6 +409,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             {:noreply, load_assignments(socket)}
 
           {:error, _} ->
+            Activity.log_failed("projects.assignment_tracking_toggled",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "assignment",
+              resource_uuid: uuid,
+              metadata: %{"task" => a.task.title, "track_progress" => new_value}
+            )
+
             {:noreply, put_flash(socket, :error, gettext("Could not toggle tracking."))}
         end
     end
@@ -413,6 +455,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          assign(socket, project: project) |> put_flash(:info, gettext("Project started!"))}
 
       {:error, _} ->
+        Activity.log_failed("projects.project_started",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: socket.assigns.project.uuid,
+          metadata: %{"name" => socket.assigns.project.name}
+        )
+
         {:noreply, put_flash(socket, :error, gettext("Could not start project."))}
     end
   end

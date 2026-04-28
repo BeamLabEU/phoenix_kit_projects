@@ -185,6 +185,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         reload_deps(socket)
 
       {:error, _} ->
+        Activity.log_failed("projects.dependency_added",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          target_uuid: dep_uuid,
+          metadata: %{}
+        )
+
         {:noreply, put_flash(socket, :error, gettext("Could not add dependency."))}
     end
   end
@@ -205,6 +213,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         reload_deps(socket)
 
       {:error, _} ->
+        Activity.log_failed("projects.dependency_removed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          target_uuid: dep_uuid,
+          metadata: %{}
+        )
+
         {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
     end
   end

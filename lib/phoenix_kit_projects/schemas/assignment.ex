@@ -35,12 +35,17 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
           counts_weekends: boolean() | nil,
           progress_pct: integer() | nil,
           track_progress: boolean() | nil,
+          # Cross-module assoc fields use `struct()` rather than the precise
+          # `PhoenixKitStaff.Schemas.<X>.t()` because phoenix_kit_staff
+          # Hex 0.1.0 doesn't ship `@type t` declarations on its schemas
+          # (the workspace version does — once it publishes 0.1.1, tighten
+          # these back to the named types).
           assigned_team_uuid: UUIDv7.t() | nil,
-          assigned_team: Team.t() | Ecto.Association.NotLoaded.t() | nil,
+          assigned_team: struct() | Ecto.Association.NotLoaded.t() | nil,
           assigned_department_uuid: UUIDv7.t() | nil,
-          assigned_department: Department.t() | Ecto.Association.NotLoaded.t() | nil,
+          assigned_department: struct() | Ecto.Association.NotLoaded.t() | nil,
           assigned_person_uuid: UUIDv7.t() | nil,
-          assigned_person: Person.t() | Ecto.Association.NotLoaded.t() | nil,
+          assigned_person: struct() | Ecto.Association.NotLoaded.t() | nil,
           completed_by_uuid: UUIDv7.t() | nil,
           completed_by: User.t() | Ecto.Association.NotLoaded.t() | nil,
           completed_at: DateTime.t() | nil,

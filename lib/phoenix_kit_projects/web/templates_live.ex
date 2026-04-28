@@ -47,6 +47,13 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
              socket |> put_flash(:info, gettext("Template deleted.")) |> load_templates()}
 
           {:error, _} ->
+            Activity.log_failed("projects.template_deleted",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "project_template",
+              resource_uuid: template.uuid,
+              metadata: %{"name" => template.name}
+            )
+
             {:noreply, put_flash(socket, :error, gettext("Could not delete template."))}
         end
     end

@@ -43,6 +43,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             log_and_flash_deleted(socket, project)
 
           {:error, _} ->
+            Activity.log_failed("projects.project_deleted",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "project",
+              resource_uuid: project.uuid,
+              metadata: %{"name" => project.name}
+            )
+
             {:noreply, put_flash(socket, :error, gettext("Could not delete project."))}
         end
     end
