@@ -76,7 +76,11 @@ defmodule PhoenixKitProjects.Schemas.Project do
     template? =
       case Map.get(attrs, :is_template, Map.get(attrs, "is_template")) do
         nil -> Map.get(project, :is_template, false)
-        v -> v in [true, "true"]
+        # Phoenix forms send `"true"`/`"false"`. Programmatic callers
+        # may pass native booleans, the legacy HTML checkbox `"on"`,
+        # or `1`/`"1"`. All canonicalised here so the constraint
+        # error attaches to the right field regardless of caller shape.
+        v -> v in [true, "true", "1", 1, "on"]
       end
 
     if template?,

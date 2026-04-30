@@ -166,9 +166,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       errs ->
         Enum.map_join(errs, ", ", fn {k, {msg, opts}} ->
-          "#{k}: #{translate_validator_error({msg, opts})}"
+          "#{humanize_field(k)}: #{translate_validator_error({msg, opts})}"
         end)
     end
+  end
+
+  # Renders an Ecto field name like `:estimated_duration` as
+  # `"Estimated duration"` for the cross-field flash summary. The
+  # per-field input component already humanizes its own label, so this
+  # only matters for the multi-error fallback.
+  defp humanize_field(field) do
+    field
+    |> to_string()
+    |> String.replace("_", " ")
+    |> String.capitalize()
   end
 
   defp translate_validator_error({msg, opts}) do
@@ -340,6 +351,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              |> load_assignments()}
 
           {:error, cs} ->
+            Activity.log_failed("projects.assignment_duration_changed",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "assignment",
+              resource_uuid: uuid,
+              metadata: %{
+                "task" => a.task.title,
+                "from" => old_dur,
+                "to" => "#{dur} #{unit}"
+              }
+            )
+
             {:noreply,
              socket
              |> assign(editing_duration_uuid: nil)
@@ -424,18 +446,34 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   def handle_event("remove_dependency", %{"assignment" => a_uuid, "depends_on" => d_uuid}, socket) do
     # Both assignments must belong to the currently-viewed project —
     # prevents an admin on project A from unlinking deps in project B.
+    # Cross-project mismatches are silent noops (UI never offers them).
+    # An actual `remove_dependency/2` failure is rare but logged via
+    # `log_failed` so a Postgres outage doesn't erase the click.
     with %{} <- scoped_assignment(socket, a_uuid),
-         %{} <- scoped_assignment(socket, d_uuid),
-         {:ok, _} <- Projects.remove_dependency(a_uuid, d_uuid) do
-      Activity.log("projects.dependency_removed",
-        actor_uuid: Activity.actor_uuid(socket),
-        resource_type: "assignment",
-        resource_uuid: a_uuid,
-        target_uuid: d_uuid,
-        metadata: %{}
-      )
+         %{} <- scoped_assignment(socket, d_uuid) do
+      case Projects.remove_dependency(a_uuid, d_uuid) do
+        {:ok, _} ->
+          Activity.log("projects.dependency_removed",
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "assignment",
+            resource_uuid: a_uuid,
+            target_uuid: d_uuid,
+            metadata: %{}
+          )
 
-      {:noreply, load_assignments(socket)}
+          {:noreply, load_assignments(socket)}
+
+        {:error, _} ->
+          Activity.log_failed("projects.dependency_removed",
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "assignment",
+            resource_uuid: a_uuid,
+            target_uuid: d_uuid,
+            metadata: %{}
+          )
+
+          {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
+      end
     else
       _ -> {:noreply, socket}
     end
@@ -519,6 +557,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         {:noreply, load_assignments(socket)}
 
       {:error, cs} ->
+        Activity.log_failed(progress_action(pct, a.status),
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: a.uuid,
+          metadata: %{"task" => a.task.title, "progress_pct" => pct}
+        )
+
         {:noreply,
          put_flash(socket, :error, error_summary(cs, gettext("Could not update progress.")))}
     end

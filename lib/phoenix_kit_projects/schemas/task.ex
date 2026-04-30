@@ -51,6 +51,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
   # 0.1.0 doesn't ship `@type t` declarations on its schemas (the
   # workspace version does — once it publishes 0.1.1, tighten these
   # back to the named types).
+  # Tracking: BeamLabEU/phoenix_kit_staff#3.
   @type t :: %__MODULE__{
           uuid: UUIDv7.t() | nil,
           title: String.t() | nil,

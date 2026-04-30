@@ -38,19 +38,26 @@ db_name =
     "phoenix_kit_projects_test"
 
 db_check =
-  case System.cmd("psql", ["-lqt"], stderr_to_stdout: true) do
-    {output, 0} ->
-      exists =
-        output
-        |> String.split("\n")
-        |> Enum.any?(fn line ->
-          line |> String.split("|") |> List.first("") |> String.trim() == db_name
-        end)
+  try do
+    case System.cmd("psql", ["-lqt"], stderr_to_stdout: true) do
+      {output, 0} ->
+        exists =
+          output
+          |> String.split("\n")
+          |> Enum.any?(fn line ->
+            line |> String.split("|") |> List.first("") |> String.trim() == db_name
+          end)
 
-      if exists, do: :exists, else: :not_found
+        if exists, do: :exists, else: :not_found
 
-    _ ->
-      :try_connect
+      _ ->
+        :try_connect
+    end
+  rescue
+    # `psql` binary not installed — fall through to the connect-attempt
+    # path. Honors the AGENTS.md contract that `mix test` never
+    # hard-fails on a missing DB.
+    ErlangError -> :try_connect
   end
 
 repo_available =

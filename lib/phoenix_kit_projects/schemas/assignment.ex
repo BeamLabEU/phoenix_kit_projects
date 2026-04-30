@@ -40,6 +40,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
           # Hex 0.1.0 doesn't ship `@type t` declarations on its schemas
           # (the workspace version does — once it publishes 0.1.1, tighten
           # these back to the named types).
+          # Tracking: BeamLabEU/phoenix_kit_staff#3.
           assigned_team_uuid: UUIDv7.t() | nil,
           assigned_team: struct() | Ecto.Association.NotLoaded.t() | nil,
           assigned_department_uuid: UUIDv7.t() | nil,

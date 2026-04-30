@@ -461,12 +461,24 @@ defmodule PhoenixKitProjects.Projects do
     template_assignments = list_assignments(template.uuid)
     template_deps = list_all_dependencies(template.uuid)
 
-    repo().transaction(fn ->
-      project = create_project_in_tx(attrs)
-      uuid_map = clone_assignments_in_tx(template_assignments, project)
-      clone_dependencies_in_tx(template_deps, uuid_map)
-      project
-    end)
+    # `:serializable` on the outer transaction so the cycle-check guard
+    # inside `add_dependency/2` (called via `clone_one_dependency_in_tx/1`)
+    # actually runs at serializable isolation. Postgres only honors the
+    # isolation level set on the outermost transaction; the nested
+    # `repo().transaction(..., isolation: :serializable)` inside
+    # `add_dependency/2` would otherwise become a savepoint at the
+    # outer transaction's level (`read_committed` by default), silently
+    # dropping the cycle-race protection the docstring advertises.
+    # Template clones are short and rare; the isolation cost is negligible.
+    repo().transaction(
+      fn ->
+        project = create_project_in_tx(attrs)
+        uuid_map = clone_assignments_in_tx(template_assignments, project)
+        clone_dependencies_in_tx(template_deps, uuid_map)
+        project
+      end,
+      isolation: :serializable
+    )
   end
 
   defp create_project_in_tx(attrs) do
@@ -791,6 +803,13 @@ defmodule PhoenixKitProjects.Projects do
   edges). At `:serializable` Postgres aborts the loser with
   `serialization_failure` (`SQLSTATE 40001`); we catch that and
   return a friendly changeset error so the caller can retry.
+
+  When called from inside another transaction (e.g. via
+  `create_project_from_template/2` → `clone_template/2`), the inner
+  `repo().transaction/2` becomes a savepoint and Postgres ignores
+  the inner `isolation:` keyword — the protection only holds if the
+  outer transaction is itself opened at `:serializable` (which
+  `clone_template/2` does).
   """
   @spec add_dependency(uuid(), uuid()) ::
           {:ok, Dependency.t()} | {:error, Ecto.Changeset.t()}
