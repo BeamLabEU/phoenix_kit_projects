@@ -8,13 +8,12 @@
 # First-time setup:
 #
 #   createdb phoenix_kit_projects_test
-#   mix test.setup
 #
-# After that, `mix test` boots the repo and lets the Ecto sandbox handle
-# isolation. The schema is built by
-# `test/support/postgres/migrations/<timestamp>_setup_phoenix_kit.exs`,
-# which calls `PhoenixKit.Migrations.up()` for V01..V96 prereqs and
-# inlines the V100 (staff) + V101 (projects) DDL.
+# After that, `mix test` boots the repo, runs core's versioned migrations
+# via `PhoenixKit.Migration.ensure_current/2` (V40 extensions +
+# uuid_generate_v7, V03 settings, V90 activities, V100 staff tables,
+# V101 projects tables), and lets the Ecto sandbox handle isolation.
+# No module-owned DDL.
 
 # Elixir 1.19 quirk — see `phoenix_kit_locations` test_helper for context.
 support_dir = Path.expand("support", __DIR__)
@@ -72,6 +71,17 @@ repo_available =
   else
     try do
       {:ok, _} = TestRepo.start_link()
+
+      # Build the schema directly from core's versioned migrations — same
+      # call the host app makes in production. Replaces the hand-rolled
+      # `test/support/postgres/migrations/` shim, which was a transition
+      # state from when V100 (staff) and V101 (projects) weren't yet in
+      # core's published Hex release. `ensure_current/2` (core 1.7.105+
+      # / phoenix_kit#515) re-applies any newly-shipped Vxxx migrations
+      # on every boot. See `dev_docs/migration_cleanup.md` for the
+      # staleness story.
+      PhoenixKit.Migration.ensure_current(TestRepo, log: false)
+
       Ecto.Adapters.SQL.Sandbox.mode(TestRepo, :manual)
       true
     rescue

@@ -226,13 +226,13 @@ Test infrastructure:
   fixtures from `DataCase`
 - `test/support/activity_log_assertions.ex` —
   `assert_activity_logged/2` and `refute_activity_logged/2`
-- `test/support/postgres/migrations/<timestamp>_setup_phoenix_kit.exs`
-  — schema migration that calls `PhoenixKit.Migrations.up()` for
-  V01..V96 prereqs and inlines V100 (staff) + V101 (projects) +
-  V105 (partial-index conversion) DDL
 - `test/test_helper.exs` — starts `PhoenixKit.PubSub.Manager`,
   Hammer's `RateLimiter.Backend`, pins the URL prefix, starts
-  `PhoenixKitProjects.Test.Endpoint`
+  `PhoenixKitProjects.Test.Endpoint`, and runs core's versioned
+  migrations via `PhoenixKit.Migration.ensure_current/2` (V40
+  extensions + uuid_generate_v7, V03 settings, V90 activities,
+  V100 staff tables, V101 projects tables, V105 partial-index
+  conversion) — no module-owned DDL anywhere
 - `config/test.exs` — repo + Test.Endpoint config
 
 Commands:
@@ -240,7 +240,6 @@ Commands:
 ```bash
 # First time only:
 createdb phoenix_kit_projects_test
-mix test.setup
 
 # All runs (unit + integration if DB is reachable):
 mix test
@@ -248,6 +247,11 @@ mix test
 # Unit tests only (DB not required):
 mix test --exclude integration
 ```
+
+The test helper runs core's versioned migrations via
+`PhoenixKit.Migration.ensure_current/2` on every boot, so the schema
+re-applies any newly-shipped Vxxx migrations automatically. No
+`mix test.setup` step needed past the initial `createdb`.
 
 Integration tests are auto-excluded if the DB isn't reachable. `mix
 test` never hard-fails on a missing DB.
