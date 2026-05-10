@@ -18,6 +18,30 @@ defmodule PhoenixKitProjects.Projects do
 
   defp repo, do: PhoenixKit.RepoHelper.repo()
 
+  # Max number of uuids accepted in one reorder call. Compile-env
+  # overridable; the default mirrors `phoenix_kit_catalogue`'s cap so
+  # any list view that needs a bigger payload signals intent rather
+  # than silently exceeding it. Beyond the cap we want to switch to a
+  # paged / virtualised approach instead.
+  @reorder_max_uuids Application.compile_env(:phoenix_kit_projects, :reorder_max_uuids, 1000)
+
+  # Last-write-wins dedup on a uuid list. Catalogue ships an identical
+  # helper (`Helpers.dedupe_keep_last/1`) — repeating the few lines
+  # here keeps `phoenix_kit_projects` independent of catalogue and
+  # documents the contract: order preserved, last occurrence kept.
+  defp dedupe_uuids(uuids) when is_list(uuids) do
+    {result, _seen} =
+      uuids
+      |> Enum.reverse()
+      |> Enum.reduce({[], MapSet.new()}, fn uuid, {acc, seen} ->
+        if MapSet.member?(seen, uuid),
+          do: {acc, seen},
+          else: {[uuid | acc], MapSet.put(seen, uuid)}
+      end)
+
+    result
+  end
+
   # ── Task library ───────────────────────────────────────────────────
 
   @task_preloads [
@@ -26,13 +50,36 @@ defmodule PhoenixKitProjects.Projects do
     default_assigned_person: [:user]
   ]
 
-  @doc "Lists all task-library entries, preloaded with defaults."
+  @doc """
+  Lists all task-library entries, preloaded with defaults.
+
+  Order: `position ASC, inserted_at ASC`. Date-added is the secondary
+  sort (NOT title) so renaming a task doesn't shuffle it in the list
+  — a complaint we got from the boss with the prior `title`-secondary
+  ordering. After a reorder, dragged tasks claim `1..N` and appear
+  above any still-zero ones; among the still-zero tasks, creation
+  order wins.
+  """
   @spec list_tasks() :: [Task.t()]
   def list_tasks do
     Task
-    |> order_by([t], asc: t.title)
+    |> order_by([t], asc: t.position, asc: t.inserted_at)
     |> preload(^@task_preloads)
     |> repo().all()
+  end
+
+  @doc """
+  Next available `position` for a new task — one past the current
+  max, falling back to `1` on an empty table. New tasks should be
+  inserted with this value so they land at the bottom of the
+  user's manual order.
+  """
+  @spec next_task_position() :: integer()
+  def next_task_position do
+    case repo().one(from(t in Task, select: max(t.position))) do
+      nil -> 1
+      n -> n + 1
+    end
   end
 
   @doc "Fetches a task by uuid, or `nil` if not found."
@@ -54,9 +101,25 @@ defmodule PhoenixKitProjects.Projects do
   @doc "Inserts a task and broadcasts `:task_created`."
   @spec create_task(map()) :: {:ok, Task.t()} | {:error, Ecto.Changeset.t()}
   def create_task(attrs) do
+    # Auto-assign the next position so new tasks land at the end of
+    # the manually-reordered library list. Caller-supplied positions
+    # win — covers the cloning paths that explicitly set positions.
+    attrs = put_default_position(attrs, &next_task_position/0)
+
     with {:ok, task} <- %Task{} |> Task.changeset(attrs) |> repo().insert() do
       ProjectsPubSub.broadcast_task(:task_created, %{uuid: task.uuid, title: task.title})
       {:ok, task}
+    end
+  end
+
+  # Inserts `position: <next>` only if the caller didn't already
+  # supply one. Accepts string- or atom-keyed maps (Phoenix forms vs
+  # programmatic callers).
+  defp put_default_position(attrs, next_fn) when is_map(attrs) do
+    cond do
+      Map.has_key?(attrs, "position") -> attrs
+      Map.has_key?(attrs, :position) -> attrs
+      true -> Map.put(attrs, "position", next_fn.())
     end
   end
 
@@ -81,6 +144,135 @@ defmodule PhoenixKitProjects.Projects do
   @doc "Total number of tasks in the library."
   @spec count_tasks() :: non_neg_integer()
   def count_tasks, do: repo().aggregate(Task, :count, :uuid)
+
+  @doc """
+  Re-indexes the supplied task uuids into positions `1..N`. Used by
+  the task-library list-view DnD handler.
+
+  No parent scope — the task library is a flat collection. UUIDs not
+  found in the table are dropped silently (the LV may have a stale
+  view of the page when the user dragged). Duplicates in the input
+  list are deduped last-write-wins.
+
+  Two-pass write inside a transaction: pass 1 stamps `position =
+  -idx`, pass 2 stamps `position = idx`. Sidesteps any future unique
+  index on `position` and stays atomic.
+
+  Returns `:ok` on success, `{:error, :too_many_uuids}` past the cap,
+  or `{:error, reason}` on a DB failure. Audit rows are written for
+  every outcome (success carries the count + first-uuid; rejection
+  paths log via `log_reorder_rejected/3` shape).
+  """
+  @spec reorder_tasks([uuid()], keyword()) ::
+          :ok | {:error, :too_many_uuids | term()}
+  def reorder_tasks(ordered_uuids, opts \\ [])
+
+  def reorder_tasks(ordered_uuids, opts)
+      when is_list(ordered_uuids) and length(ordered_uuids) > @reorder_max_uuids do
+    log_reorder_rejected("task", :too_many_uuids, length(ordered_uuids), opts)
+    {:error, :too_many_uuids}
+  end
+
+  def reorder_tasks(ordered_uuids, opts) when is_list(ordered_uuids) do
+    unique_uuids = dedupe_uuids(ordered_uuids)
+
+    case write_task_positions(unique_uuids) do
+      {:ok, 0} ->
+        # All uuids stale — silent no-op (no audit row); the LV will
+        # snap back to persisted state on its next reload.
+        :ok
+
+      {:ok, count} ->
+        log_reorder_success("task", List.first(unique_uuids), count, opts)
+        :ok
+
+      {:error, reason} ->
+        log_reorder_db_error("task", unique_uuids, opts)
+        {:error, reason}
+    end
+  end
+
+  defp write_task_positions(unique_uuids) do
+    repo().transaction(fn ->
+      pairs = Enum.with_index(unique_uuids, 1)
+
+      # Pass 1: stamp negatives so a future unique index on `position`
+      # wouldn't collide with the source rows still holding their old
+      # values.
+      Enum.each(pairs, fn {uuid, idx} ->
+        from(t in Task, where: t.uuid == ^uuid)
+        |> repo().update_all(set: [position: -idx])
+      end)
+
+      # Pass 2: stamp the final positives. `update_all` returns
+      # `{count, _}` per row; we sum the second pass to get the true
+      # number of rows touched (drops uuids that didn't match the
+      # table).
+      pairs
+      |> Enum.reduce(0, fn {uuid, idx}, total ->
+        {n, _} =
+          from(t in Task, where: t.uuid == ^uuid)
+          |> repo().update_all(set: [position: idx])
+
+        total + n
+      end)
+    end)
+  end
+
+  defp log_reorder_success(kind, first_uuid, count, opts) do
+    extra = Keyword.get(opts, :metadata, %{})
+
+    log_activity(%{
+      action: "#{kind}.reordered",
+      mode: "manual",
+      actor_uuid: opts[:actor_uuid],
+      resource_type: kind,
+      resource_uuid: first_uuid,
+      metadata: Map.merge(%{"count" => count}, extra)
+    })
+  end
+
+  defp log_reorder_rejected(kind, reason, count, opts) do
+    log_activity(%{
+      action: "#{kind}.reorder_rejected",
+      mode: "manual",
+      actor_uuid: opts[:actor_uuid],
+      resource_type: kind,
+      metadata: %{"reason" => to_string(reason), "count" => count}
+    })
+  end
+
+  defp log_reorder_db_error(kind, uuids, opts) do
+    log_activity(%{
+      action: "#{kind}.reorder_failed",
+      mode: "manual",
+      actor_uuid: opts[:actor_uuid],
+      resource_type: kind,
+      metadata: %{"count" => length(uuids), "uuids" => Enum.take(uuids, 20)}
+    })
+  end
+
+  # Wraps `PhoenixKit.Activity.log/1` with the same load-bearing
+  # rescue + catch shape every other module uses — logging failures
+  # never crash the primary operation. Mirror of
+  # `PhoenixKitProjects.Activity`'s wrapper but local-only since
+  # reorder logging fires from the context layer (not the LV layer
+  # where `Activity.log/3` lives).
+  defp log_activity(payload) do
+    if Code.ensure_loaded?(PhoenixKit.Activity) do
+      try do
+        PhoenixKit.Activity.log(Map.put_new(payload, :module, "projects"))
+      rescue
+        Postgrex.Error -> :ok
+        DBConnection.OwnershipError -> :ok
+        e -> Logger.warning("[Projects] activity log failed: #{Exception.message(e)}")
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
+    :ok
+  end
 
   @doc """
   Returns the flat task list with a `%{task_uuid => [Task]}` map of
@@ -435,7 +627,7 @@ defmodule PhoenixKitProjects.Projects do
     Project
     |> maybe_exclude_templates(include_templates)
     |> maybe_filter_archived(archived)
-    |> order_by([p], asc: fragment("lower(?)", p.name), asc: p.uuid)
+    |> order_by([p], asc: p.position, asc: p.inserted_at, asc: p.uuid)
     |> repo().all()
   end
 
@@ -467,9 +659,38 @@ defmodule PhoenixKitProjects.Projects do
   @doc "Inserts a project and broadcasts `:project_created`."
   @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def create_project(attrs) do
+    # Auto-assign the next position scoped to the project's
+    # `is_template` bucket so a new row lands at the bottom of either
+    # the project list or the template list (whichever the row
+    # belongs to). Caller-supplied positions still win; covers the
+    # template-clone path and any future bulk insert.
+    is_template? = is_template_attr?(attrs)
+    attrs = put_default_position(attrs, fn -> next_project_position(is_template?) end)
+
     with {:ok, project} <- %Project{} |> Project.changeset(attrs) |> repo().insert() do
       ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
       {:ok, project}
+    end
+  end
+
+  defp is_template_attr?(attrs) do
+    val = Map.get(attrs, "is_template") || Map.get(attrs, :is_template)
+    val in [true, "true", "1", 1, "on"]
+  end
+
+  @doc """
+  Next available `position` within the given `is_template` scope —
+  one past the per-bucket max, falling back to `1` on an empty
+  bucket. Projects (`is_template = false`) and templates (`true`)
+  share the column but order independently.
+  """
+  @spec next_project_position(boolean()) :: integer()
+  def next_project_position(is_template?) when is_boolean(is_template?) do
+    case repo().one(
+           from(p in Project, where: p.is_template == ^is_template?, select: max(p.position))
+         ) do
+      nil -> 1
+      n -> n + 1
     end
   end
 
@@ -500,16 +721,112 @@ defmodule PhoenixKitProjects.Projects do
     }
   end
 
+  @doc """
+  Re-indexes the supplied project uuids into positions `1..N`.
+  Used by the project list-view DnD handler.
+
+  Scope: `is_template = false`. UUIDs that resolve to templates (or
+  to no row at all) abort the whole batch with
+  `{:error, :wrong_scope}`. Duplicates dedup last-write-wins.
+  Two-pass write (negatives → positives) inside a transaction.
+  """
+  @spec reorder_projects([uuid()], keyword()) ::
+          :ok | {:error, :too_many_uuids | :wrong_scope | term()}
+  def reorder_projects(ordered_uuids, opts \\ []),
+    do: reorder_projects_in_scope(false, "project", ordered_uuids, opts)
+
+  @doc """
+  Same as `reorder_projects/2` but scoped to `is_template = true`.
+  Audit rows use `template.reordered` so the activity feed
+  distinguishes the two.
+  """
+  @spec reorder_templates([uuid()], keyword()) ::
+          :ok | {:error, :too_many_uuids | :wrong_scope | term()}
+  def reorder_templates(ordered_uuids, opts \\ []),
+    do: reorder_projects_in_scope(true, "template", ordered_uuids, opts)
+
+  defp reorder_projects_in_scope(_is_template, kind, ordered_uuids, opts)
+       when is_list(ordered_uuids) and length(ordered_uuids) > @reorder_max_uuids do
+    log_reorder_rejected(kind, :too_many_uuids, length(ordered_uuids), opts)
+    {:error, :too_many_uuids}
+  end
+
+  defp reorder_projects_in_scope(is_template?, kind, ordered_uuids, opts)
+       when is_boolean(is_template?) and is_list(ordered_uuids) do
+    unique_uuids = dedupe_uuids(ordered_uuids)
+
+    case project_scope_check(is_template?, unique_uuids) do
+      :empty ->
+        :ok
+
+      :ok ->
+        case write_project_positions(unique_uuids) do
+          {:ok, count} ->
+            log_reorder_success(kind, List.first(unique_uuids), count, opts)
+            :ok
+
+          {:error, reason} ->
+            log_reorder_db_error(kind, unique_uuids, opts)
+            {:error, reason}
+        end
+
+      {:error, :wrong_scope} = err ->
+        log_reorder_rejected(kind, :wrong_scope, length(unique_uuids), opts)
+        err
+    end
+  end
+
+  defp project_scope_check(_is_template?, []), do: :empty
+
+  defp project_scope_check(is_template?, unique_uuids) do
+    rows =
+      from(p in Project, where: p.uuid in ^unique_uuids, select: p.is_template)
+      |> repo().all()
+
+    cond do
+      rows == [] -> :empty
+      Enum.all?(rows, &(&1 == is_template?)) -> :ok
+      true -> {:error, :wrong_scope}
+    end
+  end
+
+  defp write_project_positions(unique_uuids) do
+    repo().transaction(fn ->
+      pairs = Enum.with_index(unique_uuids, 1)
+
+      Enum.each(pairs, fn {uuid, idx} ->
+        from(p in Project, where: p.uuid == ^uuid)
+        |> repo().update_all(set: [position: -idx])
+      end)
+
+      pairs
+      |> Enum.reduce(0, fn {uuid, idx}, total ->
+        {n, _} =
+          from(p in Project, where: p.uuid == ^uuid)
+          |> repo().update_all(set: [position: idx])
+
+        total + n
+      end)
+    end)
+  end
+
   @doc "Total number of projects (including templates)."
   @spec count_projects() :: non_neg_integer()
   def count_projects, do: repo().aggregate(Project, :count, :uuid)
 
-  @doc "Lists projects that are templates, ordered by name."
+  @doc """
+  Lists projects that are templates, in `position`-then-date-added
+  order. Date-added (not name) is the secondary sort so renaming a
+  template doesn't shuffle it in the list. After a manual drag,
+  templates with explicit positions land at the top in the user's
+  order; un-touched templates fall to the bottom by date-added.
+  `uuid` tiebreaks within the same `inserted_at` second.
+  """
   @spec list_templates() :: [Project.t()]
   def list_templates do
     Project
     |> where([p], p.is_template == true)
-    |> order_by([p], asc: fragment("lower(?)", p.name), asc: p.uuid)
+    |> order_by([p], asc: p.position, asc: p.inserted_at, asc: p.uuid)
     |> repo().all()
   end
 
@@ -919,6 +1236,16 @@ defmodule PhoenixKitProjects.Projects do
   @doc "Inserts an assignment and broadcasts `:assignment_created`."
   @spec create_assignment(map()) :: {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def create_assignment(attrs) do
+    # Auto-assign the next position so a fresh add lands at the
+    # bottom of the project's manually-reordered timeline. Caller-
+    # supplied positions win — covers `clone_template/2` (which
+    # preserves the source assignment's position) and any future
+    # programmatic batch insert that wants explicit ordering.
+    project_uuid = Map.get(attrs, "project_uuid") || Map.get(attrs, :project_uuid)
+
+    attrs =
+      put_default_position(attrs, fn -> next_assignment_position(project_uuid) end)
+
     with {:ok, a} <- %Assignment{} |> Assignment.changeset(attrs) |> repo().insert() do
       ProjectsPubSub.broadcast_assignment(:assignment_created, %{
         uuid: a.uuid,
@@ -926,6 +1253,23 @@ defmodule PhoenixKitProjects.Projects do
       })
 
       {:ok, a}
+    end
+  end
+
+  @doc """
+  Next available `position` for a new assignment within the given
+  project — one past the current per-project max, falling back to
+  `1` on an empty project.
+  """
+  @spec next_assignment_position(uuid() | nil) :: integer()
+  def next_assignment_position(nil), do: 1
+
+  def next_assignment_position(project_uuid) do
+    case repo().one(
+           from(a in Assignment, where: a.project_uuid == ^project_uuid, select: max(a.position))
+         ) do
+      nil -> 1
+      n -> n + 1
     end
   end
 
@@ -987,69 +1331,95 @@ defmodule PhoenixKitProjects.Projects do
 
   defp do_create_assignments_with_closure(tree, project_uuid, attrs, excluded) do
     closure_tasks = flatten_closure(tree)
-
-    # Tasks the user wants to land in the project (root included),
-    # minus user-pruned, minus already-in-project (those are reused
-    # for wiring but not re-inserted).
-    to_create_task_uuids =
-      closure_tasks
-      |> Map.keys()
-      |> Enum.reject(fn uuid ->
-        MapSet.member?(excluded, uuid) or
-          flatten_already_in_project?(tree, uuid)
-      end)
+    root_uuid = tree.task.uuid
 
     # Map task_uuid → assignment_uuid for ALL tasks in the closure that
-    # have an assignment in the project. Built up as we insert; seeded
-    # with whatever already exists so wiring spans new + pre-existing
-    # assignments uniformly.
+    # already have an assignment in the project. Built up as we
+    # insert; seeded with what already exists so wiring spans new +
+    # pre-existing rows uniformly.
     existing_map = existing_task_assignment_map(project_uuid, Map.keys(closure_tasks))
 
-    # Insert root first using the form's attrs, then closure children
-    # using `create_assignment_from_template` for each remaining task.
-    {root, task_to_assignment} =
-      insert_root(tree.task.uuid, project_uuid, attrs, existing_map)
+    # Insertion order = post-order DFS of the kept subtree: deepest
+    # leaves first, the user's pick (root) last. Each `create_*` call
+    # auto-assigns `next_assignment_position(project_uuid)`, so the
+    # row order on disk matches execution order — prerequisites land
+    # at lower positions, the picked task at the highest.
+    insertion_order = topological_insertion_order(tree, excluded)
 
-    extras =
-      to_create_task_uuids
-      |> Enum.reject(&(&1 == tree.task.uuid))
-      |> Enum.reduce([], fn task_uuid, acc ->
-        case create_assignment_from_template(task_uuid, %{
-               "project_uuid" => project_uuid,
-               "status" => "todo"
-             }) do
-          {:ok, a} -> [a | acc]
-          {:error, reason} -> repo().rollback(reason)
+    {root, extras_rev, final_map} =
+      Enum.reduce(insertion_order, {nil, [], existing_map}, fn task_uuid,
+                                                               {root_acc, extras_acc, map} ->
+        cond do
+          # Reuse: another assignment for this task already exists in
+          # the project AND it isn't the user's explicit pick. Wiring
+          # will reference the existing uuid; no insert.
+          Map.has_key?(map, task_uuid) and task_uuid != root_uuid ->
+            {root_acc, extras_acc, map}
+
+          # Root: insert with the form's attrs (description, duration,
+          # assignee, etc.). Always inserts even if a prior assignment
+          # exists — the user's explicit pick is an "I want a new
+          # assignment for this" action.
+          task_uuid == root_uuid ->
+            full_attrs =
+              attrs
+              |> Map.put("task_uuid", task_uuid)
+              |> Map.put("project_uuid", project_uuid)
+
+            case create_assignment(full_attrs) do
+              {:ok, a} -> {a, extras_acc, Map.put(map, task_uuid, a.uuid)}
+              {:error, reason} -> repo().rollback(reason)
+            end
+
+          # Closure-pulled task: insert with template defaults.
+          true ->
+            case create_assignment_from_template(task_uuid, %{
+                   "project_uuid" => project_uuid,
+                   "status" => "todo"
+                 }) do
+              {:ok, a} -> {root_acc, [a | extras_acc], Map.put(map, task_uuid, a.uuid)}
+              {:error, reason} -> repo().rollback(reason)
+            end
         end
       end)
-      |> Enum.reverse()
-
-    # Now finish populating the wiring map with the extras we just made.
-    final_map =
-      Enum.reduce(extras, task_to_assignment, fn a, m -> Map.put(m, a.task_uuid, a.uuid) end)
 
     wire_closure_dependencies(tree, final_map, excluded)
 
-    %{root: root, extras: extras}
+    %{root: root, extras: Enum.reverse(extras_rev)}
   end
 
-  # Inserts the root assignment using the user-provided attrs (their
-  # description override, duration, assignee, etc.). The
-  # `existing_map`'s entry for the root, if any, is replaced — saving
-  # via the form is an explicit "I want this task in this project"
-  # action even if there's an old assignment lying around.
-  defp insert_root(task_uuid, project_uuid, attrs, existing_map) do
-    full_attrs =
-      attrs
-      |> Map.put("task_uuid", task_uuid)
-      |> Map.put("project_uuid", project_uuid)
+  # Post-order DFS of the closure tree, returning a list of task
+  # uuids in execution order: deepest leaves first, root last. Skips
+  # excluded subtrees entirely (cascading model — an excluded
+  # ancestor implies its descendants are also out, matching the
+  # form's render-time cascade). Cycle nodes terminate without
+  # contributing.
+  defp topological_insertion_order(tree, excluded) do
+    {acc, _seen} = do_topo(tree, excluded, false, MapSet.new(), [])
+    acc
+  end
 
-    case create_assignment(full_attrs) do
-      {:ok, a} ->
-        {a, Map.put(existing_map, a.task_uuid, a.uuid)}
+  defp do_topo(%{cycle?: true}, _excluded, _ancestor_excluded?, seen, acc), do: {acc, seen}
 
-      {:error, reason} ->
-        repo().rollback(reason)
+  defp do_topo(%{task: task, children: children}, excluded, ancestor_excluded?, seen, acc) do
+    cond do
+      MapSet.member?(seen, task.uuid) ->
+        {acc, seen}
+
+      ancestor_excluded? or MapSet.member?(excluded, task.uuid) ->
+        # Skip this task; the cascade ensures descendants are also
+        # excluded so we don't recurse into them.
+        {acc, MapSet.put(seen, task.uuid)}
+
+      true ->
+        seen = MapSet.put(seen, task.uuid)
+
+        {acc, seen} =
+          Enum.reduce(children, {acc, seen}, fn child, {a, s} ->
+            do_topo(child, excluded, false, s, a)
+          end)
+
+        {acc ++ [task.uuid], seen}
     end
   end
 
@@ -1089,13 +1459,6 @@ defmodule PhoenixKitProjects.Projects do
 
         wire_closure_dependencies(child, map, excluded)
       end)
-    end
-  end
-
-  defp flatten_already_in_project?(%{task: task, children: children, already_in_project?: aip?}, target_uuid) do
-    cond do
-      task.uuid == target_uuid -> aip?
-      true -> Enum.any?(children, &flatten_already_in_project?(&1, target_uuid))
     end
   end
 
@@ -1174,6 +1537,94 @@ defmodule PhoenixKitProjects.Projects do
 
       {:ok, updated}
     end
+  end
+
+  @doc """
+  Re-indexes the supplied assignment uuids into positions `1..N`
+  within the given project. Used by the project-show timeline DnD
+  handler.
+
+  All uuids must belong to `project_uuid` — UUIDs that exist in
+  another project (or don't exist) abort the whole batch with
+  `{:error, :not_in_project}`. Duplicates in the input are deduped
+  last-write-wins.
+
+  Two-pass write inside a transaction (negatives → positives) so
+  any future unique index on `(project_uuid, position)` would be
+  honoured. Returns `:ok` / `{:error, :too_many_uuids}` /
+  `{:error, :not_in_project}` / `{:error, term()}`. Audit rows are
+  written for every outcome.
+  """
+  @spec reorder_assignments(uuid(), [uuid()], keyword()) ::
+          :ok | {:error, :too_many_uuids | :not_in_project | term()}
+  def reorder_assignments(project_uuid, ordered_uuids, opts \\ [])
+
+  def reorder_assignments(_project_uuid, ordered_uuids, opts)
+      when is_list(ordered_uuids) and length(ordered_uuids) > @reorder_max_uuids do
+    log_reorder_rejected("assignment", :too_many_uuids, length(ordered_uuids), opts)
+    {:error, :too_many_uuids}
+  end
+
+  def reorder_assignments(project_uuid, ordered_uuids, opts)
+      when is_binary(project_uuid) and is_list(ordered_uuids) do
+    unique_uuids = dedupe_uuids(ordered_uuids)
+
+    case assignment_scope_check(project_uuid, unique_uuids) do
+      :empty ->
+        :ok
+
+      :ok ->
+        case write_assignment_positions(unique_uuids) do
+          {:ok, count} ->
+            log_reorder_success("assignment", List.first(unique_uuids), count,
+              Keyword.put(opts, :metadata, %{"project_uuid" => project_uuid})
+            )
+
+            :ok
+
+          {:error, reason} ->
+            log_reorder_db_error("assignment", unique_uuids, opts)
+            {:error, reason}
+        end
+
+      {:error, :not_in_project} = err ->
+        log_reorder_rejected("assignment", :not_in_project, length(unique_uuids), opts)
+        err
+    end
+  end
+
+  defp assignment_scope_check(_project_uuid, []), do: :empty
+
+  defp assignment_scope_check(project_uuid, unique_uuids) do
+    rows =
+      from(a in Assignment, where: a.uuid in ^unique_uuids, select: a.project_uuid)
+      |> repo().all()
+
+    cond do
+      rows == [] -> :empty
+      Enum.all?(rows, &(&1 == project_uuid)) -> :ok
+      true -> {:error, :not_in_project}
+    end
+  end
+
+  defp write_assignment_positions(unique_uuids) do
+    repo().transaction(fn ->
+      pairs = Enum.with_index(unique_uuids, 1)
+
+      Enum.each(pairs, fn {uuid, idx} ->
+        from(a in Assignment, where: a.uuid == ^uuid)
+        |> repo().update_all(set: [position: -idx])
+      end)
+
+      pairs
+      |> Enum.reduce(0, fn {uuid, idx}, total ->
+        {n, _} =
+          from(a in Assignment, where: a.uuid == ^uuid)
+          |> repo().update_all(set: [position: idx])
+
+        total + n
+      end)
+    end)
   end
 
   @doc "Deletes an assignment and broadcasts `:assignment_deleted`."

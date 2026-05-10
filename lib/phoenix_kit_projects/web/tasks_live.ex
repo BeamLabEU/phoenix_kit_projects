@@ -65,6 +65,34 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   @impl true
+  def handle_event("reorder_tasks", %{"ordered_ids" => ordered_ids} = params, socket)
+      when is_list(ordered_ids) do
+    moved_id = params["moved_id"]
+    actor_uuid = Activity.actor_uuid(socket)
+
+    case Projects.reorder_tasks(ordered_ids, actor_uuid: actor_uuid) do
+      :ok ->
+        {:noreply,
+         socket
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "ok"})
+         |> load_tasks()}
+
+      {:error, :too_many_uuids} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Too many tasks to reorder at once."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_tasks()}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Could not reorder tasks."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_tasks()}
+    end
+  end
+
   def handle_event("delete", %{"uuid" => uuid}, socket) do
     case Projects.get_task(uuid) do
       nil ->
@@ -242,19 +270,46 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             <.link navigate={Paths.new_task()} class="link link-primary text-sm">{gettext("Create your first")}</.link>
           </div>
         <% else %>
+          <%!-- DnD reorder is wired only on the list view (groups are
+               derived from the dep graph and don't have a stable
+               manual order). Hook lives on the `<tbody>` because
+               browsers won't let arbitrary children render between a
+               table and its rows; SortableGrid auto-finds children
+               that match `data-sortable-items=".sortable-item"`. The
+               drag handle (`.pk-drag-handle`) is the only initiator
+               so clicks on the row body still navigate / delete. --%>
           <div class="card bg-base-100 shadow">
             <div class="card-body p-0">
               <table class="table">
                 <thead>
                   <tr>
+                    <th class="w-8"></th>
                     <th>{gettext("Title")}</th>
                     <th>{gettext("Duration")}</th>
                     <th class="text-right">{gettext("Actions")}</th>
                   </tr>
                 </thead>
-                <tbody>
-                  <tr :for={task <- @tasks} class="hover">
-                    <td>
+                <tbody
+                  id="tasks-list-body"
+                  phx-hook="SortableGrid"
+                  data-sortable="true"
+                  data-sortable-event="reorder_tasks"
+                  data-sortable-items=".sortable-item"
+                  data-sortable-handle=".pk-drag-handle"
+                >
+                  <%!-- `align-middle` on every cell because SortableJS
+                       pulls the `<tr>` out of table-layout during the
+                       drag (cells lose `display: table-cell` and
+                       collapse to baseline). The flex wrapper on the
+                       actions cell makes the icons center regardless
+                       of layout context — without it the
+                       pencil/trash row drops to baseline once the row
+                       is floated. --%>
+                  <tr :for={task <- @tasks} class="hover sortable-item" data-id={task.uuid}>
+                    <td class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content align-middle" title={gettext("Drag to reorder")}>
+                      <.icon name="hero-bars-3" class="w-4 h-4" />
+                    </td>
+                    <td class="align-middle">
                       <div class="font-medium">{TaskSchema.localized_title(task, lang)}</div>
                       <% desc = TaskSchema.localized_description(task, lang) %>
                       <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">
@@ -270,21 +325,23 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                         </div>
                       <% end %>
                     </td>
-                    <td>{format_duration(task)}</td>
-                    <td class="text-right">
-                      <.link navigate={Paths.edit_task(task.uuid)} class="btn btn-ghost btn-xs">
-                        <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                      </.link>
-                      <button
-                        type="button"
-                        phx-click="delete"
-                        phx-value-uuid={task.uuid}
-                        phx-disable-with={gettext("Deleting…")}
-                        data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, lang))}
-                        class="btn btn-ghost btn-xs text-error"
-                      >
-                        <.icon name="hero-trash" class="w-3.5 h-3.5" />
-                      </button>
+                    <td class="align-middle">{format_duration(task)}</td>
+                    <td class="align-middle">
+                      <div class="flex items-center justify-end gap-1">
+                        <.link navigate={Paths.edit_task(task.uuid)} class="btn btn-ghost btn-xs">
+                          <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+                        </.link>
+                        <button
+                          type="button"
+                          phx-click="delete"
+                          phx-value-uuid={task.uuid}
+                          phx-disable-with={gettext("Deleting…")}
+                          data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, lang))}
+                          class="btn btn-ghost btn-xs text-error"
+                        >
+                          <.icon name="hero-trash" class="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 </tbody>

@@ -65,6 +65,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
           description: String.t() | nil,
           estimated_duration: integer() | nil,
           estimated_duration_unit: String.t() | nil,
+          position: integer() | nil,
           translations: translations_map(),
           default_assigned_team_uuid: UUIDv7.t() | nil,
           default_assigned_team: struct() | Ecto.Association.NotLoaded.t() | nil,
@@ -83,6 +84,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
     field(:description, :string)
     field(:estimated_duration, :integer)
     field(:estimated_duration_unit, :string, default: "hours")
+    field(:position, :integer, default: 0)
     field(:translations, :map, default: %{})
 
     belongs_to(:default_assigned_team, Team,
@@ -104,7 +106,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
   end
 
   @required ~w(title)a
-  @optional ~w(description estimated_duration estimated_duration_unit translations
+  @optional ~w(description estimated_duration estimated_duration_unit position translations
                default_assigned_team_uuid default_assigned_department_uuid
                default_assigned_person_uuid)a
 

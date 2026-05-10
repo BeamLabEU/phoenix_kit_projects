@@ -37,6 +37,43 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     {:noreply, socket |> assign(show: s) |> load_projects()}
   end
 
+  def handle_event("reorder_projects", %{"ordered_ids" => ordered_ids} = params, socket)
+      when is_list(ordered_ids) do
+    moved_id = params["moved_id"]
+
+    case Projects.reorder_projects(ordered_ids, actor_uuid: Activity.actor_uuid(socket)) do
+      :ok ->
+        {:noreply,
+         socket
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "ok"})
+         |> load_projects()}
+
+      {:error, :too_many_uuids} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Too many projects to reorder at once."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_projects()}
+
+      {:error, :wrong_scope} ->
+        # The user dropped a row from a list that isn't a regular
+        # project bucket — usually a stale view racing a flag flip.
+        # Reload to snap back to truth.
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Project list changed; please try again."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_projects()}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Could not reorder projects."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_projects()}
+    end
+  end
+
   def handle_event("delete", %{"uuid" => uuid}, socket) do
     case Projects.get_project(uuid) do
       nil ->
@@ -132,20 +169,38 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           <p>{gettext("No projects match.")}</p>
         </div>
       <% else %>
+        <%!-- DnD only applies when the user is viewing the visible
+             (non-archived) bucket — reordering a filtered subset
+             would write inconsistent positions for the projects that
+             aren't currently visible. The hook is gated on
+             `@show == "visible"`; archived/all views render without
+             the SortableGrid hook (drag handle hidden too). --%>
+        <% lang = L10n.current_content_lang() %>
+        <% draggable? = @show == "visible" %>
         <div class="card bg-base-100 shadow">
           <div class="card-body p-0">
             <table class="table">
               <thead>
                 <tr>
+                  <th :if={draggable?} class="w-8"></th>
                   <th>{gettext("Name")}</th>
                   <th>{gettext("Status")}</th>
                   <th class="text-right">{gettext("Actions")}</th>
                 </tr>
               </thead>
-              <tbody>
-                <% lang = L10n.current_content_lang() %>
-                <tr :for={p <- @projects} class="hover">
-                  <td>
+              <tbody
+                id="projects-list-body"
+                phx-hook={if draggable?, do: "SortableGrid"}
+                data-sortable={if draggable?, do: "true"}
+                data-sortable-event="reorder_projects"
+                data-sortable-items=".sortable-item"
+                data-sortable-handle=".pk-drag-handle"
+              >
+                <tr :for={p <- @projects} class="hover sortable-item" data-id={p.uuid}>
+                  <td :if={draggable?} class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content align-middle" title={gettext("Drag to reorder")}>
+                    <.icon name="hero-bars-3" class="w-4 h-4" />
+                  </td>
+                  <td class="align-middle">
                     <.link navigate={Paths.project(p.uuid)} class="link link-hover font-medium">
                       {Project.localized_name(p, lang)}
                     </.link>
@@ -154,27 +209,29 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                       {desc}
                     </div>
                   </td>
-                  <td>
+                  <td class="align-middle">
                     <% state = PhoenixKitProjects.Schemas.Project.derived_status(p) %>
                     <span class={"badge badge-sm gap-1 #{derived_status_class(state)}"}>
                       <.icon name={derived_status_icon(state)} class="w-3 h-3" />
                       {derived_status_label(state)}
                     </span>
                   </td>
-                  <td class="text-right">
-                    <.link navigate={Paths.edit_project(p.uuid)} class="btn btn-ghost btn-xs">
-                      <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                    </.link>
-                    <button
-                      type="button"
-                      phx-click="delete"
-                      phx-value-uuid={p.uuid}
-                      phx-disable-with={gettext("Deleting…")}
-                      data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, lang))}
-                      class="btn btn-ghost btn-xs text-error"
-                    >
-                      <.icon name="hero-trash" class="w-3.5 h-3.5" />
-                    </button>
+                  <td class="align-middle">
+                    <div class="flex items-center justify-end gap-1">
+                      <.link navigate={Paths.edit_project(p.uuid)} class="btn btn-ghost btn-xs">
+                        <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+                      </.link>
+                      <button
+                        type="button"
+                        phx-click="delete"
+                        phx-value-uuid={p.uuid}
+                        phx-disable-with={gettext("Deleting…")}
+                        data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, lang))}
+                        class="btn btn-ghost btn-xs text-error"
+                      >
+                        <.icon name="hero-trash" class="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>

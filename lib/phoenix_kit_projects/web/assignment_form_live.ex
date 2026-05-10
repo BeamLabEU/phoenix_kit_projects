@@ -28,12 +28,26 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # not by un-ticking it here); already-in-project nodes render as
   # static "already there" markers. Cycle nodes terminate with a
   # warning glyph instead of recursing.
+  #
+  # `:ancestor_excluded?` cascades down the tree: when an ancestor is
+  # in `excluded_uuids`, every descendant gets locked out (checkbox
+  # disabled, label greyed, struck through). The user can still
+  # re-tick the ancestor to bring the whole subtree back — only
+  # explicit per-node clicks live in `excluded_uuids`.
   attr :node, :map, required: true
   attr :excluded_uuids, :any, required: true
   attr :is_root, :boolean, default: false
+  attr :ancestor_excluded?, :boolean, default: false
   attr :lang, :string, default: nil
 
   defp closure_node(assigns) do
+    self_excluded? = MapSet.member?(assigns.excluded_uuids, assigns.node.task.uuid)
+
+    assigns =
+      assigns
+      |> assign(:self_excluded?, self_excluded?)
+      |> assign(:effective_excluded?, assigns.ancestor_excluded? or self_excluded?)
+
     ~H"""
     <li class="flex flex-col">
       <div class="flex items-start gap-2 py-0.5">
@@ -54,14 +68,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               type="checkbox"
               phx-click="toggle_closure_task"
               phx-value-uuid={@node.task.uuid}
-              checked={not MapSet.member?(@excluded_uuids, @node.task.uuid)}
-              disabled={@is_root}
+              checked={not @effective_excluded?}
+              disabled={@is_root or @ancestor_excluded?}
               class="checkbox checkbox-sm shrink-0 mt-0.5"
             />
-            <span class={["text-sm", MapSet.member?(@excluded_uuids, @node.task.uuid) && "line-through text-base-content/40"]}>
+            <span class={["text-sm", @effective_excluded? && "line-through text-base-content/40"]}>
               {Task.localized_title(@node.task, @lang)}
-              <%= if @is_root do %>
-                <span class="text-xs text-base-content/50">{gettext("(this task)")}</span>
+              <%= cond do %>
+                <% @is_root -> %>
+                  <span class="text-xs text-base-content/50">{gettext("(this task)")}</span>
+                <% @ancestor_excluded? -> %>
+                  <span class="text-xs text-base-content/50">{gettext("(parent unchecked)")}</span>
+                <% true -> %>
               <% end %>
             </span>
         <% end %>
@@ -74,6 +92,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             node={child}
             excluded_uuids={@excluded_uuids}
             is_root={false}
+            ancestor_excluded?={@effective_excluded?}
             lang={@lang}
           />
         </ul>
@@ -490,11 +509,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         false
 
       tree ->
-        excluded = socket.assigns.excluded_closure_uuids
-        # Any descendant of the root that isn't user-excluded and isn't
-        # already represented by an existing assignment in this project.
+        # Use the cascade-expanded set so unticking a parent (which
+        # also disables descendants) correctly drops the closure-pull
+        # path back to the simple-insert one when nothing's left.
+        effective_excluded =
+          expand_excluded_closure(tree, socket.assigns.excluded_closure_uuids)
+
         Enum.any?(tree.children, fn child ->
-          closure_branch_yields_inserts?(child, excluded)
+          closure_branch_yields_inserts?(child, effective_excluded)
         end)
     end
   end
@@ -502,7 +524,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp closure_branch_yields_inserts?(node, excluded) do
     cond do
       MapSet.member?(excluded, node.task.uuid) ->
-        Enum.any?(node.children, &closure_branch_yields_inserts?(&1, excluded))
+        # Self excluded — skip self. Children are also excluded by the
+        # cascade so nothing in this subtree yields an insert.
+        false
 
       not node.already_in_project? ->
         true
@@ -512,14 +536,41 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # Expands the user's per-node clicks into the full effective set:
+  # every descendant of an excluded ancestor is also excluded. The
+  # user-only set lives in socket state so re-ticking an ancestor
+  # un-cascades; this helper is the projection used at render + save.
+  defp expand_excluded_closure(tree, user_excluded) do
+    do_expand_excluded(tree, user_excluded, false, MapSet.new())
+  end
+
+  defp do_expand_excluded(%{cycle?: true}, _user_excluded, _ancestor_excluded?, acc), do: acc
+
+  defp do_expand_excluded(%{task: task, children: children}, user_excluded, ancestor_excluded?, acc) do
+    self_excluded? = MapSet.member?(user_excluded, task.uuid)
+    effective_excluded? = ancestor_excluded? or self_excluded?
+    acc = if effective_excluded?, do: MapSet.put(acc, task.uuid), else: acc
+
+    Enum.reduce(children, acc, fn child, a ->
+      do_expand_excluded(child, user_excluded, effective_excluded?, a)
+    end)
+  end
+
   defp save_new_with_closure(socket, attrs) do
     task_uuid = socket.assigns.closure_tree.task.uuid
+
+    # Expand the user's explicit clicks into the full effective set:
+    # every descendant of an unticked ancestor is also excluded. The
+    # `excluded_closure_uuids` socket assign stays minimal (only
+    # user-clicked uuids) so re-ticking an ancestor can un-cascade.
+    effective_excluded =
+      expand_excluded_closure(socket.assigns.closure_tree, socket.assigns.excluded_closure_uuids)
 
     case Projects.create_assignments_with_closure(
            task_uuid,
            socket.assigns.project.uuid,
            attrs,
-           excluded_task_uuids: socket.assigns.excluded_closure_uuids
+           excluded_task_uuids: effective_excluded
          ) do
       {:ok, %{root: root, extras: extras}} ->
         Activity.log("projects.assignment_created",

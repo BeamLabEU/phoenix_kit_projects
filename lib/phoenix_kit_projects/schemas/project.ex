@@ -47,6 +47,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
           started_at: DateTime.t() | nil,
           completed_at: DateTime.t() | nil,
           archived_at: DateTime.t() | nil,
+          position: integer() | nil,
           translations: translations_map(),
           assignments: [Assignment.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t() | nil,
@@ -69,6 +70,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     field(:started_at, :utc_datetime)
     field(:completed_at, :utc_datetime)
     field(:archived_at, :utc_datetime)
+    field(:position, :integer, default: 0)
     field(:translations, :map, default: %{})
 
     has_many(:assignments, Assignment, foreign_key: :project_uuid, on_delete: :delete_all)
@@ -77,7 +79,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
   end
 
   @required ~w(name start_mode)a
-  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at translations)a
+  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations)a
 
   def changeset(project, attrs, opts \\ []) do
     project

@@ -29,6 +29,40 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   end
 
   @impl true
+  def handle_event("reorder_templates", %{"ordered_ids" => ordered_ids} = params, socket)
+      when is_list(ordered_ids) do
+    moved_id = params["moved_id"]
+
+    case Projects.reorder_templates(ordered_ids, actor_uuid: Activity.actor_uuid(socket)) do
+      :ok ->
+        {:noreply,
+         socket
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "ok"})
+         |> load_templates()}
+
+      {:error, :too_many_uuids} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Too many templates to reorder at once."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_templates()}
+
+      {:error, :wrong_scope} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Template list changed; please try again."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_templates()}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Could not reorder templates."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_templates()}
+    end
+  end
+
   def handle_event("delete", %{"uuid" => uuid}, socket) do
     case Projects.get_project(uuid) do
       nil ->
@@ -81,20 +115,31 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
           <.link navigate={Paths.new_template()} class="link link-primary text-sm">{gettext("Create your first")}</.link>
         </div>
       <% else %>
+        <% lang = L10n.current_content_lang() %>
         <div class="card bg-base-100 shadow">
           <div class="card-body p-0">
             <table class="table">
               <thead>
                 <tr>
+                  <th class="w-8"></th>
                   <th>{gettext("Name")}</th>
                   <th>{gettext("Weekends")}</th>
                   <th class="text-right">{gettext("Actions")}</th>
                 </tr>
               </thead>
-              <tbody>
-                <% lang = L10n.current_content_lang() %>
-                <tr :for={t <- @templates} class="hover">
-                  <td>
+              <tbody
+                id="templates-list-body"
+                phx-hook="SortableGrid"
+                data-sortable="true"
+                data-sortable-event="reorder_templates"
+                data-sortable-items=".sortable-item"
+                data-sortable-handle=".pk-drag-handle"
+              >
+                <tr :for={t <- @templates} class="hover sortable-item" data-id={t.uuid}>
+                  <td class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content align-middle" title={gettext("Drag to reorder")}>
+                    <.icon name="hero-bars-3" class="w-4 h-4" />
+                  </td>
+                  <td class="align-middle">
                     <.link navigate={Paths.template(t.uuid)} class="link link-hover font-medium">
                       {Project.localized_name(t, lang)}
                     </.link>
@@ -103,25 +148,27 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
                       {desc}
                     </div>
                   </td>
-                  <td>
+                  <td class="align-middle">
                     <span class={"badge badge-xs #{if t.counts_weekends, do: "badge-info", else: "badge-ghost"}"}>
                       {if t.counts_weekends, do: gettext("yes"), else: gettext("no")}
                     </span>
                   </td>
-                  <td class="text-right">
-                    <.link navigate={Paths.edit_template(t.uuid)} class="btn btn-ghost btn-xs">
-                      <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                    </.link>
-                    <button
-                      type="button"
-                      phx-click="delete"
-                      phx-value-uuid={t.uuid}
-                      phx-disable-with={gettext("Deleting…")}
-                      data-confirm={gettext("Delete template \"%{name}\"?", name: Project.localized_name(t, lang))}
-                      class="btn btn-ghost btn-xs text-error"
-                    >
-                      <.icon name="hero-trash" class="w-3.5 h-3.5" />
-                    </button>
+                  <td class="align-middle">
+                    <div class="flex items-center justify-end gap-1">
+                      <.link navigate={Paths.edit_template(t.uuid)} class="btn btn-ghost btn-xs">
+                        <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+                      </.link>
+                      <button
+                        type="button"
+                        phx-click="delete"
+                        phx-value-uuid={t.uuid}
+                        phx-disable-with={gettext("Deleting…")}
+                        data-confirm={gettext("Delete template \"%{name}\"?", name: Project.localized_name(t, lang))}
+                        class="btn btn-ghost btn-xs text-error"
+                      >
+                        <.icon name="hero-trash" class="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               </tbody>

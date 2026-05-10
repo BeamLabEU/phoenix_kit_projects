@@ -606,6 +606,51 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # SortableGrid drop handler. Validates the new order against the
+  # project's assignments, applies positions atomically, and pushes a
+  # `sortable:flash` back so the dragged card flashes green/red. The
+  # LV reload happens via the assignment_updated PubSub fan-out
+  # triggered by the position writes — no explicit `load_assignments`
+  # needed here.
+  def handle_event("reorder_assignments", %{"ordered_ids" => ordered_ids} = params, socket)
+      when is_list(ordered_ids) do
+    moved_id = params["moved_id"]
+    project_uuid = socket.assigns.project.uuid
+
+    case Projects.reorder_assignments(project_uuid, ordered_ids,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      :ok ->
+        {:noreply,
+         socket
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "ok"})
+         |> load_assignments()}
+
+      {:error, :too_many_uuids} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Too many tasks to reorder at once."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_assignments()}
+
+      {:error, :not_in_project} ->
+        # Stale view — a concurrent change moved an assignment out of
+        # this project. Snap back to the persisted state.
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Tasks have changed; please try again."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_assignments()}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Could not reorder tasks."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_assignments()}
+    end
+  end
+
   def handle_event("unarchive_project", _params, socket) do
     case Projects.unarchive_project(socket.assigns.project) do
       {:ok, project} ->
@@ -1117,9 +1162,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <%!-- Vertical connector line --%>
           <div class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"></div>
 
-          <div class="flex flex-col gap-0">
+          <%!-- SortableGrid hook lives on the inner flex container —
+               the absolute-positioned vertical line is a sibling
+               outside it so it doesn't get included in the sortable
+               item set. The drag handle on each card's title row is
+               the only initiator (`.pk-drag-handle`), so clicks
+               anywhere else on the card still trigger the existing
+               status / duration / dep handlers. --%>
+          <div
+            id="project-show-timeline"
+            class="flex flex-col gap-0"
+            phx-hook="SortableGrid"
+            data-sortable="true"
+            data-sortable-event="reorder_assignments"
+            data-sortable-items=".sortable-item"
+            data-sortable-handle=".pk-drag-handle"
+          >
             <%= for {a, idx} <- Enum.with_index(@assignments) do %>
-              <div class="relative flex gap-4 py-3">
+              <div class="relative flex gap-4 py-3 sortable-item" data-id={a.uuid}>
                 <%!-- Status dot on the timeline --%>
                 <div class="relative z-10 shrink-0 flex flex-col items-center">
                   <div class={"w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold #{status_color(a.status)}"}>
@@ -1137,6 +1197,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <%!-- Title row --%>
                     <div class="flex items-center justify-between gap-2">
                       <div class="flex items-center gap-2 min-w-0">
+                        <span class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content shrink-0" title={gettext("Drag to reorder")}>
+                          <.icon name="hero-bars-3" class="w-4 h-4" />
+                        </span>
                         <span :if={not @is_template} class={"badge badge-sm #{status_badge_class(a.status)}"}>{status_label(a.status)}</span>
                         <span class="font-medium truncate">{TaskSchema.localized_title(a.task, L10n.current_content_lang())}</span>
                       </div>
