@@ -10,6 +10,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
 
   require Logger
@@ -34,15 +35,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         is_template = project.is_template
 
+        lang = L10n.current_content_lang()
+
         {:ok,
          socket
          |> assign(
-           page_title: project.name,
+           page_title: Project.localized_name(project, lang),
            project: project,
            is_template: is_template,
            editing_duration_uuid: nil,
            duration_form:
-             to_form(%{"estimated_duration" => "", "estimated_duration_unit" => "hours"})
+             to_form(%{"estimated_duration" => "", "estimated_duration_unit" => "hours"}),
+           start_modal_open: false,
+           start_form: to_form(%{"start_at" => default_start_at_local()})
          )
          |> load_assignments()}
     end
@@ -479,25 +484,97 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("start_project", _params, socket) do
-    case Projects.start_project(socket.assigns.project) do
+  # Opens the start-project modal pre-filled with today's date. The
+  # actual DB write happens in `confirm_start_project` so users can
+  # backdate (project was already running before the system was set up)
+  # or future-date (preparing the project but actual start is later).
+  # Falls through to a no-op for projects already started — defensive
+  # against double-clicks racing the LV's render of the now-hidden
+  # button.
+  def handle_event("open_start_modal", _params, socket) do
+    if socket.assigns.project.started_at do
+      {:noreply, socket}
+    else
+      {:noreply,
+       assign(socket,
+         start_modal_open: true,
+         start_form: to_form(%{"start_at" => default_start_at_local()})
+       )}
+    end
+  end
+
+  def handle_event("close_start_modal", _params, socket) do
+    {:noreply, assign(socket, start_modal_open: false)}
+  end
+
+  def handle_event("confirm_start_project", %{"start_at" => datetime_str}, socket) do
+    case parse_start_at(datetime_str) do
+      {:ok, started_at} ->
+        do_start_project(socket, started_at)
+
+      {:error, msg} ->
+        {:noreply, put_flash(socket, :error, msg)}
+    end
+  end
+
+  # `<input type="datetime-local">` posts `YYYY-MM-DDTHH:mm` (no
+  # seconds, no timezone). Treat as UTC — what the user typed is what
+  # gets stored. Pad seconds when missing so `NaiveDateTime` accepts it.
+  defp parse_start_at(value) when is_binary(value) do
+    with_seconds = if String.length(value) == 16, do: value <> ":00", else: value
+
+    case NaiveDateTime.from_iso8601(with_seconds) do
+      {:ok, ndt} ->
+        {:ok, DateTime.from_naive!(ndt, "Etc/UTC")}
+
+      {:error, _} ->
+        {:error, gettext("Invalid date — please pick a valid date and time.")}
+    end
+  end
+
+  defp parse_start_at(_),
+    do: {:error, gettext("Invalid date — please pick a valid date and time.")}
+
+  # Default value for `<input type="datetime-local">`: today at the
+  # current hour:minute, formatted `YYYY-MM-DDTHH:mm` (the format the
+  # browser expects). Built from UTC so the prefilled value matches
+  # what'll be persisted when the user clicks Start without changing
+  # anything.
+  defp default_start_at_local do
+    DateTime.utc_now()
+    |> DateTime.truncate(:second)
+    |> DateTime.to_naive()
+    |> NaiveDateTime.to_iso8601()
+    |> String.slice(0, 16)
+  end
+
+  defp do_start_project(socket, started_at) do
+    case Projects.start_project(socket.assigns.project, started_at) do
       {:ok, project} ->
         Activity.log("projects.project_started",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: project.uuid,
-          metadata: %{"name" => project.name}
+          metadata: %{
+            "name" => project.name,
+            "started_at" => DateTime.to_iso8601(started_at)
+          }
         )
 
         {:noreply,
-         assign(socket, project: project) |> put_flash(:info, gettext("Project started!"))}
+         socket
+         |> assign(project: project, start_modal_open: false)
+         |> put_flash(:info, gettext("Project started!"))}
 
       {:error, _} ->
         Activity.log_failed("projects.project_started",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: socket.assigns.project.uuid,
-          metadata: %{"name" => socket.assigns.project.name}
+          metadata: %{
+            "name" => socket.assigns.project.name,
+            "started_at" => DateTime.to_iso8601(started_at)
+          }
         )
 
         {:noreply, put_flash(socket, :error, gettext("Could not start project."))}
@@ -852,7 +929,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </.link>
         <div class="flex items-center justify-between mt-1">
           <div class="flex items-center gap-2">
-            <h1 class="text-2xl font-bold">{@project.name}</h1>
+            <h1 class="text-2xl font-bold">{Project.localized_name(@project, L10n.current_content_lang())}</h1>
             <%= if @is_template do %>
               <span class="badge badge-info badge-sm">{gettext("Template")}</span>
             <% end %>
@@ -903,8 +980,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% end %>
           </div>
         </div>
-        <div :if={@project.description} class="text-sm text-base-content/60 mt-1">
-          {@project.description}
+        <% desc = Project.localized_description(@project, L10n.current_content_lang()) %>
+        <div :if={desc} class="text-sm text-base-content/60 mt-1">
+          {desc}
         </div>
       </div>
 
@@ -953,12 +1031,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <% @project.start_mode == "scheduled" -> %>
             <.icon name="hero-calendar" class="w-5 h-5 text-info" />
             <span class="text-sm">
-              {gettext("Scheduled for %{date}", date: L10n.format_date(@project.scheduled_start_date))}
+              {gettext("Scheduled for %{when}", when: L10n.format_datetime(@project.scheduled_start_date))}
             </span>
             <button
               type="button"
-              phx-click="start_project"
-              phx-disable-with={gettext("Starting…")}
+              phx-click="open_start_modal"
               class="btn btn-success btn-xs ml-auto"
             >
               {gettext("Start now")}
@@ -968,9 +1045,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <span class="text-sm">{gettext("Not started — set up tasks, then start")}</span>
             <button
               type="button"
-              phx-click="start_project"
-              phx-disable-with={gettext("Starting…")}
-              data-confirm={gettext("Start this project now?")}
+              phx-click="open_start_modal"
               class="btn btn-success btn-xs ml-auto"
             >
               <.icon name="hero-play" class="w-4 h-4" /> {gettext("Start project")}
@@ -1063,7 +1138,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <div class="flex items-center justify-between gap-2">
                       <div class="flex items-center gap-2 min-w-0">
                         <span :if={not @is_template} class={"badge badge-sm #{status_badge_class(a.status)}"}>{status_label(a.status)}</span>
-                        <span class="font-medium truncate">{a.task.title}</span>
+                        <span class="font-medium truncate">{TaskSchema.localized_title(a.task, L10n.current_content_lang())}</span>
                       </div>
 
                       <div class="flex items-center gap-1 shrink-0">
@@ -1106,7 +1181,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           phx-click="remove_assignment"
                           phx-value-uuid={a.uuid}
                           phx-disable-with={gettext("Removing…")}
-                          data-confirm={gettext("Remove \"%{title}\"?", title: a.task.title)}
+                          data-confirm={gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(a.task, L10n.current_content_lang()))}
                           class="btn btn-ghost btn-xs text-error"
                         >
                           <.icon name="hero-trash" class="w-3.5 h-3.5" />
@@ -1115,8 +1190,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     </div>
 
                     <%!-- Description --%>
-                    <div :if={a.description || a.task.description} class="text-xs text-base-content/60">
-                      {a.description || a.task.description}
+                    <% lang = L10n.current_content_lang() %>
+                    <% a_desc = Assignment.localized_description(a, lang) %>
+                    <% t_desc = TaskSchema.localized_description(a.task, lang) %>
+                    <% shown_desc = a_desc || t_desc %>
+                    <div :if={shown_desc} class="text-xs text-base-content/60">
+                      {shown_desc}
                     </div>
 
                     <%!-- Meta row: duration, assignee, completed by --%>
@@ -1253,7 +1332,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                         <%= for dep <- deps do %>
                           <span class="badge badge-outline badge-xs gap-1">
                             <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                            {gettext("depends on:")} {dep.depends_on.task.title}
+                            {gettext("depends on:")} {TaskSchema.localized_title(dep.depends_on.task, L10n.current_content_lang())}
                             <button
                               phx-click="remove_dependency"
                               phx-value-assignment={a.uuid}
@@ -1274,6 +1353,44 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% end %>
           </div>
         </div>
+      <% end %>
+
+      <%!-- Start-project modal — date editable so the user can backdate
+           an already-running project or queue a future start. The
+           form's `phx-change="noop"` prevents the LV from rebuilding
+           the changeset on each keystroke (no live validation needed
+           for a single date input); submit goes via `phx-submit`. --%>
+      <%= if @start_modal_open do %>
+        <dialog open class="modal modal-open" phx-window-keydown="close_start_modal" phx-key="Escape">
+          <div class="modal-box max-w-md">
+            <h3 class="font-bold text-lg">{gettext("Start project")}</h3>
+            <p class="text-sm text-base-content/70 mt-1">
+              {gettext("Pick the date and time this project starts. Defaults to right now; backdate it if work began earlier, or pick a future moment if you're queueing it up.")}
+            </p>
+
+            <.form for={@start_form} phx-submit="confirm_start_project" class="flex flex-col gap-3 mt-4">
+              <.input field={@start_form[:start_at]} type="datetime-local" label={gettext("Start date and time")} required />
+
+              <div class="modal-action">
+                <button
+                  type="button"
+                  phx-click="close_start_modal"
+                  class="btn btn-ghost btn-sm"
+                >
+                  {gettext("Cancel")}
+                </button>
+                <button
+                  type="submit"
+                  phx-disable-with={gettext("Starting…")}
+                  class="btn btn-success btn-sm"
+                >
+                  <.icon name="hero-play" class="w-4 h-4" /> {gettext("Start project")}
+                </button>
+              </div>
+            </.form>
+          </div>
+          <button type="button" phx-click="close_start_modal" class="modal-backdrop" aria-label={gettext("Close")}></button>
+        </dialog>
       <% end %>
     </div>
     """

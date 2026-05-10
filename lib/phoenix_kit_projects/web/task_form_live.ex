@@ -4,13 +4,17 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
 
+  import PhoenixKitWeb.Components.MultilangForm
+
   require Logger
 
-  alias PhoenixKitProjects.{Activity, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Task
+  alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   @impl true
   def mount(params, _session, socket) do
+    socket = mount_multilang(socket)
     {:ok, apply_action(socket, socket.assigns.live_action, params)}
   end
 
@@ -48,7 +52,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
         socket
         |> assign(
-          page_title: gettext("Edit %{title}", title: task.title),
+          page_title:
+            gettext("Edit %{title}", title: Task.localized_title(task, L10n.current_content_lang())),
           task: task,
           live_action: :edit,
           assign_type: assign_type,
@@ -96,16 +101,34 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
 
   @impl true
+  def handle_event("switch_language", %{"lang" => lang_code}, socket) do
+    {:noreply, handle_switch_language(socket, lang_code)}
+  end
+
+  # Same `:action`-not-stamped pattern as `ProjectFormLive.validate` —
+  # surfacing errors only after a failed submit so live editing never
+  # red-borders untouched fields.
   def handle_event("validate", %{"task" => attrs} = params, socket) do
     assign_type = Map.get(params, "default_assign_type", socket.assigns.assign_type)
-    cs = socket.assigns.task |> Projects.change_task(attrs) |> Map.put(:action, :validate)
+    attrs = merge_attrs(attrs, socket)
+    cs = Projects.change_task(socket.assigns.task, attrs)
     {:noreply, socket |> assign(assign_type: assign_type) |> assign_form(cs)}
   end
 
   def handle_event("save", %{"task" => attrs} = params, socket) do
     assign_type = Map.get(params, "default_assign_type", "")
-    attrs = clear_other_default_assignees(attrs, assign_type)
+
+    attrs =
+      attrs
+      |> clear_other_default_assignees(assign_type)
+      |> then(&merge_attrs(&1, socket))
+
     save(socket, socket.assigns.live_action, attrs)
+  end
+
+  defp merge_attrs(attrs, socket) do
+    in_flight = WebHelpers.in_flight_record(socket, :form, :task)
+    WebHelpers.merge_translations_attrs(attrs, in_flight, Task.translatable_fields())
   end
 
   def handle_event("add_dep", %{"depends_on_task_uuid" => dep_uuid}, socket)
@@ -198,7 +221,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
          |> push_navigate(to: Paths.edit_task(task.uuid))}
 
       {:error, cs} ->
-        {:noreply, assign_form(socket, cs)}
+        {:noreply, on_save_error(socket, cs)}
     end
   end
 
@@ -218,8 +241,28 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
          |> push_navigate(to: Paths.tasks())}
 
       {:error, cs} ->
-        {:noreply, assign_form(socket, cs)}
+        {:noreply, on_save_error(socket, cs)}
     end
+  end
+
+  # Same shape as ProjectFormLive — flips back to the primary tab when
+  # the save error sits on a translatable primary field, otherwise the
+  # secondary-tab user wouldn't see anything change.
+  defp on_save_error(socket, %Ecto.Changeset{} = cs) do
+    socket
+    |> assign_form(cs)
+    |> WebHelpers.maybe_switch_to_primary_on_error(cs, [:title, :description])
+    |> put_flash(:error, first_error_message(cs))
+  end
+
+  defp first_error_message(%Ecto.Changeset{errors: [{field, {msg, _opts}} | _]}) do
+    gettext("%{field}: %{message}", field: humanize(field), message: msg)
+  end
+
+  defp first_error_message(_), do: gettext("Could not save the task.")
+
+  defp humanize(field) do
+    field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
   end
 
   defp duration_unit_options do
@@ -245,12 +288,68 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         <h1 class="text-2xl font-bold mt-1">{@page_title}</h1>
       </div>
 
-      <div class="card bg-base-100 shadow">
-        <div class="card-body">
-          <.form for={@form} id="task-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
-            <.input field={@form[:title]} label={gettext("Title")} required />
-            <.textarea field={@form[:description]} label={gettext("Description")} />
+      <.form for={@form} id="task-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
+        <%!-- Translatable card: title + description with language tabs. --%>
+        <div class="card bg-base-100 shadow">
+          <.multilang_tabs
+            multilang_enabled={@multilang_enabled}
+            language_tabs={@language_tabs}
+            current_lang={@current_lang}
+          />
 
+          <.multilang_fields_wrapper
+            multilang_enabled={@multilang_enabled}
+            current_lang={@current_lang}
+            skeleton_class="card-body pt-4 space-y-4"
+            fields_class="card-body pt-4 space-y-4"
+          >
+            <:skeleton>
+              <div class="space-y-2">
+                <div class="skeleton h-4 w-24"></div>
+                <div class="skeleton h-12 w-full"></div>
+              </div>
+              <div class="space-y-2">
+                <div class="skeleton h-4 w-24"></div>
+                <div class="skeleton h-24 w-full"></div>
+              </div>
+            </:skeleton>
+
+            <.translatable_field
+              field_name="title"
+              form_prefix="task"
+              changeset={@form.source}
+              schema_field={:title}
+              multilang_enabled={@multilang_enabled}
+              current_lang={@current_lang}
+              primary_language={@primary_language}
+              lang_data={WebHelpers.lang_data(@form, @current_lang)}
+              secondary_name={"task[translations][#{@current_lang}][title]"}
+              lang_data_key="title"
+              label={gettext("Title")}
+              required
+            />
+
+            <.translatable_field
+              field_name="description"
+              form_prefix="task"
+              changeset={@form.source}
+              schema_field={:description}
+              multilang_enabled={@multilang_enabled}
+              current_lang={@current_lang}
+              primary_language={@primary_language}
+              lang_data={WebHelpers.lang_data(@form, @current_lang)}
+              secondary_name={"task[translations][#{@current_lang}][description]"}
+              lang_data_key="description"
+              label={gettext("Description")}
+              type="textarea"
+              rows={4}
+            />
+          </.multilang_fields_wrapper>
+        </div>
+
+        <%!-- Non-translatable settings (duration, default assignee). --%>
+        <div class="card bg-base-100 shadow">
+          <div class="card-body flex flex-col gap-3">
             <div class="flex gap-2">
               <div class="flex-1">
                 <.input field={@form[:estimated_duration]} label={gettext("Estimated duration")} type="number" />
@@ -282,66 +381,68 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
             <%= if @assign_type == "person" do %>
               <.select field={@form[:default_assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
             <% end %>
-
-            <div class="flex justify-end gap-2 mt-2">
-              <.link navigate={Paths.tasks()} class="btn btn-ghost btn-sm">{gettext("Cancel")}</.link>
-              <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
-                <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
-              </button>
-            </div>
-          </.form>
+          </div>
         </div>
-      </div>
 
-      <%!-- Default dependencies (only in edit mode, after task exists) --%>
-      <%= if @live_action == :edit do %>
-        <div class="card bg-base-100 shadow">
-          <div class="card-body">
-            <h2 class="card-title text-lg">{gettext("Default dependencies")}</h2>
-            <p class="text-xs text-base-content/60">
-              {gettext("When this task is added to a project, dependencies will be auto-created for any of these tasks already in the same project.")}
-            </p>
+        <%!-- Default dependencies (edit mode only — task must exist
+             first since deps FK-reference its uuid). Lives INSIDE
+             the form so it sits above the action row, matching the
+             same convention used in `AssignmentFormLive`. The picker
+             uses `phx-change` on the `<.select>` instead of a nested
+             `<.form>` to avoid nested-form HTML invalidity. --%>
+        <%= if @live_action == :edit do %>
+          <% lang = L10n.current_content_lang() %>
+          <div class="card bg-base-100 shadow">
+            <div class="card-body">
+              <h2 class="card-title text-lg">{gettext("Default dependencies")}</h2>
+              <p class="text-xs text-base-content/60">
+                {gettext("When this task is added to a project, dependencies will be auto-created for any of these tasks already in the same project.")}
+              </p>
 
-            <%= if @task_deps != [] do %>
-              <div class="flex flex-wrap gap-2 mt-2">
-                <%= for dep <- @task_deps do %>
-                  <span class="badge badge-outline gap-1">
-                    {dep.depends_on_task.title}
-                    <button
-                      type="button"
-                      phx-click="remove_dep"
-                      phx-value-uuid={dep.depends_on_task_uuid}
-                      phx-disable-with={gettext("Removing…")}
-                      class="hover:text-error"
-                    >
-                      <.icon name="hero-x-mark" class="w-3 h-3" />
-                    </button>
-                  </span>
-                <% end %>
-              </div>
-            <% end %>
+              <%= if @task_deps != [] do %>
+                <div class="flex flex-wrap gap-2 mt-2">
+                  <%= for dep <- @task_deps do %>
+                    <span class="badge badge-outline gap-1">
+                      {Task.localized_title(dep.depends_on_task, lang)}
+                      <button
+                        type="button"
+                        phx-click="remove_dep"
+                        phx-value-uuid={dep.depends_on_task_uuid}
+                        phx-disable-with={gettext("Removing…")}
+                        class="hover:text-error"
+                      >
+                        <.icon name="hero-x-mark" class="w-3 h-3" />
+                      </button>
+                    </span>
+                  <% end %>
+                </div>
+              <% end %>
 
-            <%= if @available_deps != [] do %>
-              <.form for={%{}} phx-submit="add_dep" class="flex gap-2 items-end mt-2">
+              <%= if @available_deps != [] do %>
                 <.select
                   name="depends_on_task_uuid"
                   label={gettext("Add dependency")}
                   value=""
-                  options={Enum.map(@available_deps, &{&1.title, &1.uuid})}
+                  options={Enum.map(@available_deps, &{Task.localized_title(&1, lang), &1.uuid})}
                   prompt={gettext("Select task")}
+                  phx-change="add_dep"
                 />
-                <button type="submit" phx-disable-with={gettext("Adding…")} class="btn btn-ghost btn-sm">
-                  <.icon name="hero-plus" class="w-4 h-4" />
-                </button>
-              </.form>
-            <% end %>
+              <% end %>
 
-            <%= if @task_deps == [] and @available_deps == [] do %>
-              <p class="text-sm text-base-content/50 mt-2">{gettext("No other tasks in the library to depend on.")}</p>
-            <% end %>
+              <%= if @task_deps == [] and @available_deps == [] do %>
+                <p class="text-sm text-base-content/50 mt-2">{gettext("No other tasks in the library to depend on.")}</p>
+              <% end %>
+            </div>
           </div>
+        <% end %>
+
+        <div class="flex justify-end gap-2 mt-2">
+          <.link navigate={Paths.tasks()} class="btn btn-ghost btn-sm">{gettext("Cancel")}</.link>
+          <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
+            <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
+          </button>
         </div>
-      <% end %>
+      </.form>
     </div>
     """
   end

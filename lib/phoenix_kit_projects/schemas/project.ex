@@ -26,6 +26,16 @@ defmodule PhoenixKitProjects.Schemas.Project do
 
   @start_modes ~w(immediate scheduled)
 
+  @typedoc """
+  JSONB map of secondary-language overrides for translatable fields.
+
+  Shape: `%{"es-ES" => %{"name" => "...", "description" => "..."}}`.
+  Primary-language values live in the dedicated `name`/`description`
+  columns; this map only carries overrides for non-primary languages.
+  Missing/empty overrides fall back to the primary value at render time.
+  """
+  @type translations_map :: %{optional(String.t()) => %{optional(String.t()) => String.t()}}
+
   @type t :: %__MODULE__{
           uuid: UUIDv7.t() | nil,
           name: String.t() | nil,
@@ -33,14 +43,17 @@ defmodule PhoenixKitProjects.Schemas.Project do
           is_template: boolean() | nil,
           counts_weekends: boolean() | nil,
           start_mode: String.t() | nil,
-          scheduled_start_date: Date.t() | nil,
+          scheduled_start_date: DateTime.t() | nil,
           started_at: DateTime.t() | nil,
           completed_at: DateTime.t() | nil,
           archived_at: DateTime.t() | nil,
+          translations: translations_map(),
           assignments: [Assignment.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
         }
+
+  @translatable_fields ~w(name description)
 
   schema "phoenix_kit_projects" do
     field(:name, :string)
@@ -48,10 +61,15 @@ defmodule PhoenixKitProjects.Schemas.Project do
     field(:is_template, :boolean, default: false)
     field(:counts_weekends, :boolean, default: false)
     field(:start_mode, :string, default: "immediate")
-    field(:scheduled_start_date, :date)
+    # Promoted from `:date` to `:utc_datetime` in V112 so the form +
+    # start-modal can carry hour-and-minute precision. Column name kept
+    # `scheduled_start_date` to avoid a churn pass through every call
+    # site; treat the trailing "_date" as historical baggage.
+    field(:scheduled_start_date, :utc_datetime)
     field(:started_at, :utc_datetime)
     field(:completed_at, :utc_datetime)
     field(:archived_at, :utc_datetime)
+    field(:translations, :map, default: %{})
 
     has_many(:assignments, Assignment, foreign_key: :project_uuid, on_delete: :delete_all)
 
@@ -59,45 +77,26 @@ defmodule PhoenixKitProjects.Schemas.Project do
   end
 
   @required ~w(name start_mode)a
-  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at)a
+  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at translations)a
 
-  def changeset(project, attrs) do
+  def changeset(project, attrs, opts \\ []) do
     project
     |> cast(attrs, @required ++ @optional)
     |> validate_required(@required)
     |> validate_length(:name, min: 1, max: 255)
     |> validate_inclusion(:start_mode, @start_modes)
-    |> maybe_require_date()
-    |> unique_constraint(:name,
-      name: name_index_for(project, attrs),
-      message: gettext("already taken")
-    )
+    |> maybe_require_date(opts)
   end
 
-  # V105 split the single `phoenix_kit_projects_name_index` into two
-  # partial indexes — one per `is_template` value — so a template
-  # named "Onboarding" and a real project named "Onboarding" can
-  # coexist. Pick the index whose `WHERE` clause matches the row we're
-  # about to write so Ecto attaches the constraint error to the right
-  # changeset field.
-  defp name_index_for(project, attrs) do
-    template? =
-      case Map.get(attrs, :is_template, Map.get(attrs, "is_template")) do
-        nil -> Map.get(project, :is_template, false)
-        # Phoenix forms send `"true"`/`"false"`. Programmatic callers
-        # may pass native booleans, the legacy HTML checkbox `"on"`,
-        # or `1`/`"1"`. All canonicalised here so the constraint
-        # error attaches to the right field regardless of caller shape.
-        v -> v in [true, "true", "1", 1, "on"]
-      end
+  # `enforce_scheduled_date_required: false` lets the form's `phx-change`
+  # validate the rest of the changeset without flagging the just-revealed
+  # date field as required before the user has had a chance to fill it.
+  # The save path passes the default (true) so submitting without a date
+  # still surfaces the inline error.
+  defp maybe_require_date(changeset, opts) do
+    enforce? = Keyword.get(opts, :enforce_scheduled_date_required, true)
 
-    if template?,
-      do: :phoenix_kit_projects_name_template_index,
-      else: :phoenix_kit_projects_name_project_index
-  end
-
-  defp maybe_require_date(changeset) do
-    if get_field(changeset, :start_mode) == "scheduled" do
+    if enforce? and get_field(changeset, :start_mode) == "scheduled" do
       validate_required(changeset, [:scheduled_start_date],
         message: gettext("required for scheduled projects")
       )
@@ -144,8 +143,54 @@ defmodule PhoenixKitProjects.Schemas.Project do
     end
   end
 
-  defp scheduled_overdue?(%__MODULE__{start_mode: "scheduled", scheduled_start_date: %Date{} = d}, today),
-    do: Date.compare(d, today) == :lt
+  defp scheduled_overdue?(%__MODULE__{start_mode: "scheduled", scheduled_start_date: %DateTime{} = dt}, today),
+    do: Date.compare(DateTime.to_date(dt), today) == :lt
 
   defp scheduled_overdue?(_, _), do: false
+
+  @doc """
+  The list of fields that participate in `translations` JSONB storage.
+
+  Used by the form layer to drive `merge_translatable_params/4` and by
+  reads to know which keys to look up under each language code.
+  """
+  @spec translatable_fields() :: [String.t()]
+  def translatable_fields, do: @translatable_fields
+
+  @doc """
+  Returns the project's name in the requested language, falling back to
+  the primary `name` column when the language has no override (or the
+  override is empty).
+
+  `lang` may be `nil` (e.g. when multilang is disabled) — in that case
+  the primary column is returned directly.
+  """
+  @spec localized_name(t(), String.t() | nil) :: String.t() | nil
+  def localized_name(%__MODULE__{} = p, lang), do: localized_field(p, "name", lang)
+
+  @doc """
+  Returns the project's description in the requested language, with the
+  same primary-fallback semantics as `localized_name/2`.
+  """
+  @spec localized_description(t(), String.t() | nil) :: String.t() | nil
+  def localized_description(%__MODULE__{} = p, lang), do: localized_field(p, "description", lang)
+
+  defp localized_field(p, field, lang) do
+    primary = Map.get(p, String.to_existing_atom(field))
+
+    case lookup_translation(p.translations, lang, field) do
+      nil -> primary
+      "" -> primary
+      val -> val
+    end
+  end
+
+  defp lookup_translation(translations, lang, field) when is_map(translations) and is_binary(lang) do
+    case Map.get(translations, lang) do
+      %{} = lang_map -> Map.get(lang_map, field)
+      _ -> nil
+    end
+  end
+
+  defp lookup_translation(_translations, _lang, _field), do: nil
 end

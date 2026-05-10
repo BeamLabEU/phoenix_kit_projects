@@ -4,8 +4,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
 
-  alias PhoenixKitProjects.{Activity, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.Project
 
   require Logger
 
@@ -84,6 +85,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   defp derived_status_icon(:template), do: "hero-document-duplicate"
 
   defp log_and_flash_deleted(socket, project) do
+    # Activity log captures the primary-language name (audit trail is
+    # locale-agnostic; primary is the canonical identifier for the row).
     Activity.log("projects.project_deleted",
       actor_uuid: Activity.actor_uuid(socket),
       resource_type: "project",
@@ -140,13 +143,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 </tr>
               </thead>
               <tbody>
+                <% lang = L10n.current_content_lang() %>
                 <tr :for={p <- @projects} class="hover">
                   <td>
                     <.link navigate={Paths.project(p.uuid)} class="link link-hover font-medium">
-                      {p.name}
+                      {Project.localized_name(p, lang)}
                     </.link>
-                    <div :if={p.description} class="text-xs text-base-content/60 truncate max-w-md">
-                      {p.description}
+                    <% desc = Project.localized_description(p, lang) %>
+                    <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">
+                      {desc}
                     </div>
                   </td>
                   <td>
@@ -165,7 +170,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                       phx-click="delete"
                       phx-value-uuid={p.uuid}
                       phx-disable-with={gettext("Deleting…")}
-                      data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: p.name)}
+                      data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, lang))}
                       class="btn btn-ghost btn-xs text-error"
                     >
                       <.icon name="hero-trash" class="w-3.5 h-3.5" />

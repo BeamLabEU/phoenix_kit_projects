@@ -4,18 +4,55 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
 
-  alias PhoenixKitProjects.{Activity, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
 
   require Logger
+
+  @valid_views ~w(list groups)
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
-    {:ok, assign(socket, page_title: gettext("Task Library")) |> load_tasks()}
+    {:ok, assign(socket, page_title: gettext("Task Library"), view: "list") |> load_tasks()}
   end
 
-  defp load_tasks(socket), do: assign(socket, tasks: Projects.list_tasks())
+  @impl true
+  def handle_params(params, _url, socket) do
+    view = if params["view"] in @valid_views, do: params["view"], else: "list"
+    {:noreply, socket |> assign(view: view) |> load_tasks()}
+  end
+
+  # Loads only what the current view actually renders, so flipping
+  # between modes doesn't pay for the unused query each time.
+  defp load_tasks(socket) do
+    case socket.assigns[:view] || "list" do
+      "groups" ->
+        %{trees: trees, standalone: standalone} = Projects.list_task_groups()
+        # Flatten each tree to a peer-list, root-LAST (execution order:
+        # prerequisites first, the rooted task at the bottom). The
+        # rest of the list is alphabetised inside the tree so within
+        # one card the order stays stable across renders even when
+        # the tree shape changes.
+        groups =
+          Enum.map(trees, fn tree ->
+            [root | rest] = flatten_tree(tree)
+            %{root: root, peers: Enum.sort_by(rest, & &1.title) ++ [root]}
+          end)
+
+        assign(socket,
+          groups: groups,
+          standalone: standalone,
+          tasks: [],
+          deps_by_task: %{}
+        )
+
+      _ ->
+        %{tasks: tasks, deps_by_task: deps_by_task} = Projects.list_tasks_with_deps()
+        assign(socket, tasks: tasks, deps_by_task: deps_by_task, groups: [], standalone: [])
+    end
+  end
 
   @impl true
   def handle_info({:projects, _event, _payload}, socket) do
@@ -65,6 +102,31 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     )
   end
 
+  # Flattens a closure tree to a unique-by-uuid task list. The root is
+  # always first; everything else is in DFS order. The groups view
+  # renders the result as a flat list of peer tasks (they are full
+  # task templates, not subtasks) — the dep direction is shown by
+  # each row's `→ X` badges, not by indentation.
+  defp flatten_tree(tree), do: tree |> do_flatten_tree(MapSet.new()) |> elem(0)
+
+  defp do_flatten_tree(%{cycle?: true}, seen), do: {[], seen}
+
+  defp do_flatten_tree(%{task: task, children: children}, seen) do
+    if MapSet.member?(seen, task.uuid) do
+      {[], seen}
+    else
+      seen = MapSet.put(seen, task.uuid)
+
+      {kids, seen} =
+        Enum.reduce(children, {[], seen}, fn child, {acc, s} ->
+          {child_tasks, s2} = do_flatten_tree(child, s)
+          {acc ++ child_tasks, s2}
+        end)
+
+      {[task | kids], seen}
+    end
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -79,52 +141,157 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         </.link>
       </div>
 
-      <%= if @tasks == [] do %>
-        <div class="text-center py-16 text-base-content/60">
-          <.icon name="hero-rectangle-stack" class="w-12 h-12 mx-auto mb-2 opacity-40" />
-          <p>{gettext("No tasks yet.")}</p>
-          <.link navigate={Paths.new_task()} class="link link-primary text-sm">{gettext("Create your first")}</.link>
-        </div>
-      <% else %>
-        <div class="card bg-base-100 shadow">
-          <div class="card-body p-0">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>{gettext("Title")}</th>
-                  <th>{gettext("Duration")}</th>
-                  <th class="text-right">{gettext("Actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr :for={task <- @tasks} class="hover">
-                  <td>
-                    <div class="font-medium">{task.title}</div>
-                    <div :if={task.description} class="text-xs text-base-content/60 truncate max-w-md">
-                      {task.description}
-                    </div>
-                  </td>
-                  <td>{format_duration(task)}</td>
-                  <td class="text-right">
-                    <.link navigate={Paths.edit_task(task.uuid)} class="btn btn-ghost btn-xs">
-                      <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                    </.link>
-                    <button
-                      type="button"
-                      phx-click="delete"
-                      phx-value-uuid={task.uuid}
-                      phx-disable-with={gettext("Deleting…")}
-                      data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: task.title)}
-                      class="btn btn-ghost btn-xs text-error"
-                    >
-                      <.icon name="hero-trash" class="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+      <%!-- View toggle. URL-driven (`?view=…`) so a refresh keeps the
+           user on the same view and the link is shareable. The "list"
+           view is the source of truth — flat, alphabetical, with
+           per-row dep badges. The "groups" view re-renders the same
+           tasks as rooted dep trees; tasks shared across multiple
+           roots show in EACH group (intentional duplication, not a
+           bug — that's how the view answers "where is this task
+           reused?"). --%>
+      <div role="tablist" class="tabs tabs-boxed self-start">
+        <.link
+          patch={Paths.tasks() <> "?view=list"}
+          role="tab"
+          class={["tab gap-2", @view == "list" && "tab-active"]}
+        >
+          <.icon name="hero-list-bullet" class="w-4 h-4" /> {gettext("List")}
+        </.link>
+        <.link
+          patch={Paths.tasks() <> "?view=groups"}
+          role="tab"
+          class={["tab gap-2", @view == "groups" && "tab-active"]}
+        >
+          <.icon name="hero-rectangle-group" class="w-4 h-4" /> {gettext("Groups")}
+        </.link>
+      </div>
+
+      <%= if @view == "groups" do %>
+        <% lang = L10n.current_content_lang() %>
+
+        <%= if @groups == [] and @standalone == [] do %>
+          <div class="text-center py-16 text-base-content/60">
+            <.icon name="hero-rectangle-stack" class="w-12 h-12 mx-auto mb-2 opacity-40" />
+            <p>{gettext("No tasks yet.")}</p>
+            <.link navigate={Paths.new_task()} class="link link-primary text-sm">{gettext("Create your first")}</.link>
           </div>
-        </div>
+        <% else %>
+          <p class="text-xs text-base-content/60">
+            {gettext("Each group is rooted at a task that nothing else depends on. Tasks reused across multiple groups appear in every one that pulls them in — they're independent task templates, the relationship is just a dependency.")}
+          </p>
+
+          <div class="flex flex-col gap-4">
+            <%= for group <- @groups do %>
+              <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                  <%!-- Flat peer list — no nesting. Tasks are full
+                       templates, not subtasks. Order is execution
+                       order (prerequisites first, the rooted task
+                       last); `→ X` dep badges are intentionally
+                       omitted — those targets are right there in the
+                       same list, so the badges would be redundant. --%>
+                  <ul class="divide-y divide-base-200">
+                    <%= for task <- group.peers do %>
+                      <li class="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
+                        <.link navigate={Paths.edit_task(task.uuid)} class="text-sm font-medium link link-hover flex-1 min-w-0 truncate">
+                          {TaskSchema.localized_title(task, lang)}
+                        </.link>
+                        <span class="badge badge-ghost badge-xs shrink-0">
+                          {format_duration(task)}
+                        </span>
+                      </li>
+                    <% end %>
+                  </ul>
+                </div>
+              </div>
+            <% end %>
+          </div>
+
+          <%= if @standalone != [] do %>
+            <div class="card bg-base-100 shadow">
+              <div class="card-body">
+                <h2 class="card-title text-base flex items-center gap-2">
+                  <.icon name="hero-rectangle-stack" class="w-4 h-4 text-base-content/60" />
+                  {gettext("Standalone")}
+                </h2>
+                <p class="text-xs text-base-content/60 -mt-1">
+                  {gettext("Tasks with no dependency relationships yet.")}
+                </p>
+                <ul class="mt-2 space-y-1">
+                  <li :for={task <- @standalone} class="flex items-center gap-2">
+                    <.link navigate={Paths.edit_task(task.uuid)} class="text-sm link link-hover flex-1 min-w-0 truncate">
+                      {TaskSchema.localized_title(task, lang)}
+                    </.link>
+                    <span class="badge badge-ghost badge-xs shrink-0">
+                      {format_duration(task)}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          <% end %>
+        <% end %>
+      <% else %>
+        <%!-- Default flat list view. --%>
+        <% lang = L10n.current_content_lang() %>
+
+        <%= if @tasks == [] do %>
+          <div class="text-center py-16 text-base-content/60">
+            <.icon name="hero-rectangle-stack" class="w-12 h-12 mx-auto mb-2 opacity-40" />
+            <p>{gettext("No tasks yet.")}</p>
+            <.link navigate={Paths.new_task()} class="link link-primary text-sm">{gettext("Create your first")}</.link>
+          </div>
+        <% else %>
+          <div class="card bg-base-100 shadow">
+            <div class="card-body p-0">
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>{gettext("Title")}</th>
+                    <th>{gettext("Duration")}</th>
+                    <th class="text-right">{gettext("Actions")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr :for={task <- @tasks} class="hover">
+                    <td>
+                      <div class="font-medium">{TaskSchema.localized_title(task, lang)}</div>
+                      <% desc = TaskSchema.localized_description(task, lang) %>
+                      <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">
+                        {desc}
+                      </div>
+                      <% deps = Map.get(@deps_by_task, task.uuid, []) %>
+                      <%= if deps != [] do %>
+                        <div class="flex flex-wrap gap-1 mt-1.5">
+                          <span :for={dep <- deps} class="badge badge-outline badge-xs gap-1">
+                            <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
+                            {TaskSchema.localized_title(dep, lang)}
+                          </span>
+                        </div>
+                      <% end %>
+                    </td>
+                    <td>{format_duration(task)}</td>
+                    <td class="text-right">
+                      <.link navigate={Paths.edit_task(task.uuid)} class="btn btn-ghost btn-xs">
+                        <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+                      </.link>
+                      <button
+                        type="button"
+                        phx-click="delete"
+                        phx-value-uuid={task.uuid}
+                        phx-disable-with={gettext("Deleting…")}
+                        data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, lang))}
+                        class="btn btn-ghost btn-xs text-error"
+                      >
+                        <.icon name="hero-trash" class="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        <% end %>
       <% end %>
     </div>
     """

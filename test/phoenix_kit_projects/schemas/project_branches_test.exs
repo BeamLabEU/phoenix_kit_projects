@@ -52,56 +52,6 @@ defmodule PhoenixKitProjects.Schemas.ProjectBranchesTest do
     end
   end
 
-  describe "name_index_for/2 picks partial-index per is_template" do
-    test "template attrs (string key 'true') select the template index — accepts both project + template" do
-      shared = "Shared-#{System.unique_integer([:positive])}"
-
-      {:ok, _project} =
-        PhoenixKitProjects.Projects.create_project(%{
-          "name" => shared,
-          "is_template" => "false",
-          "start_mode" => "immediate"
-        })
-
-      {:ok, _template} =
-        PhoenixKitProjects.Projects.create_project(%{
-          "name" => shared,
-          "is_template" => "true",
-          "start_mode" => "immediate"
-        })
-    end
-
-    test "two templates with the same name still collide on the template index" do
-      shared = "Tpl-#{System.unique_integer([:positive])}"
-
-      {:ok, _} =
-        PhoenixKitProjects.Projects.create_project(%{
-          "name" => shared,
-          "is_template" => "true",
-          "start_mode" => "immediate"
-        })
-
-      assert {:error, %Ecto.Changeset{} = cs} =
-               PhoenixKitProjects.Projects.create_project(%{
-                 "name" => shared,
-                 "is_template" => "true",
-                 "start_mode" => "immediate"
-               })
-
-      assert errors_on(cs) |> Map.has_key?(:name)
-    end
-
-    test "atom-keyed attrs path: changeset built directly with `is_template: true` atom key" do
-      cs = Project.changeset(%Project{}, %{is_template: true, name: "AtomKey"})
-      assert is_struct(cs)
-    end
-
-    test "struct-data fallback: blank attrs use existing struct's is_template" do
-      cs = Project.changeset(%Project{is_template: true}, %{name: "InheritFromStruct"})
-      assert is_struct(cs)
-    end
-  end
-
   describe "validate_inclusion on start_mode" do
     test "rejects unknown start_mode" do
       cs =

@@ -266,21 +266,44 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       )
     end
 
-    test "start_project stamps started_at + logs",
+    test "open_start_modal → confirm_start_project stamps started_at + logs",
          %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project(%{"start_mode" => "immediate"})
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
 
-      _ = render_click(view, "start_project", %{})
+      # Page button opens the modal — no DB write here.
+      _ = render_click(view, "open_start_modal", %{})
+
+      reread = Projects.get_project!(project.uuid)
+      assert reread.started_at == nil
+
+      # Submitting the modal's form with today's date stamps started_at.
+      today = Date.utc_today() |> Date.to_iso8601()
+      _ = render_click(view, "confirm_start_project", %{"start_date" => today})
 
       reread = Projects.get_project!(project.uuid)
       assert reread.started_at != nil
+      assert DateTime.to_date(reread.started_at) == Date.utc_today()
 
       assert_activity_logged("projects.project_started",
         actor_uuid: actor_uuid,
         resource_uuid: project.uuid
       )
+    end
+
+    test "confirm_start_project accepts a backdated date", %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      yesterday = Date.utc_today() |> Date.add(-7) |> Date.to_iso8601()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      _ = render_click(view, "open_start_modal", %{})
+      _ = render_click(view, "confirm_start_project", %{"start_date" => yesterday})
+
+      reread = Projects.get_project!(project.uuid)
+      assert reread.started_at != nil
+      assert DateTime.to_date(reread.started_at) == Date.utc_today() |> Date.add(-7)
     end
 
     test "toggle_tracking flips track_progress + logs",

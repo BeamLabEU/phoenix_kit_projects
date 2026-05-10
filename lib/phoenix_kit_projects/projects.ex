@@ -82,6 +82,118 @@ defmodule PhoenixKitProjects.Projects do
   @spec count_tasks() :: non_neg_integer()
   def count_tasks, do: repo().aggregate(Task, :count, :uuid)
 
+  @doc """
+  Returns the flat task list with a `%{task_uuid => [Task]}` map of
+  the directed `TaskDependency` edges (`task → depends_on_task`) for
+  badge rendering. Used by the task-library list view (the default
+  view mode).
+  """
+  @spec list_tasks_with_deps() :: %{
+          tasks: [Task.t()],
+          deps_by_task: %{optional(String.t()) => [Task.t()]}
+        }
+  def list_tasks_with_deps do
+    tasks = list_tasks()
+    %{tasks: tasks, deps_by_task: deps_by_task_map(tasks)}
+  end
+
+  @doc """
+  Returns task-library "groups" — rooted dependency trees.
+
+  Each group has one root (a task that nothing else depends on,
+  i.e. has no incoming `depends_on_task_uuid` edge) plus its full
+  transitive closure of task-template deps. Tasks shared across
+  multiple roots **appear in each group** — duplication is the point
+  of the grouped view: it surfaces "this task is reused across N
+  workflows."
+
+  Tasks with no deps either way (no incoming and no outgoing edges)
+  are returned in `:standalone` instead of being padded out as
+  one-task groups, so the group view doesn't look like 50 tiny cards
+  for unrelated singletons.
+
+  Returns `%{trees: [closure_node()], standalone: [Task.t()]}` where
+  each `closure_node()` has `:task`, `:children`, `:cycle?`,
+  `:already_in_project?` (the last is `false` here — this view isn't
+  scoped to a project; the field is kept for shape compatibility with
+  `task_closure/2`).
+  """
+  @spec list_task_groups() :: %{trees: [closure_node()], standalone: [Task.t()]}
+  def list_task_groups do
+    tasks = list_tasks()
+    edges = repo().all(TaskDependency)
+    task_by_uuid = Map.new(tasks, &{&1.uuid, &1})
+
+    out_edges = Enum.group_by(edges, & &1.task_uuid, & &1.depends_on_task_uuid)
+    has_incoming = MapSet.new(edges, & &1.depends_on_task_uuid)
+    has_outgoing = MapSet.new(Map.keys(out_edges))
+
+    {root_uuids, leaf_only_uuids} =
+      Enum.split_with(tasks, fn t ->
+        # "Root" = no other task depends on it. Includes tasks that
+        # themselves have outgoing deps (the typical workflow root).
+        not MapSet.member?(has_incoming, t.uuid) and MapSet.member?(has_outgoing, t.uuid)
+      end)
+
+    standalone =
+      tasks
+      |> Enum.reject(fn t ->
+        MapSet.member?(has_incoming, t.uuid) or MapSet.member?(has_outgoing, t.uuid)
+      end)
+      |> Enum.sort_by(& &1.title)
+
+    # Tasks that are only-a-leaf (depended on but no outgoing deps)
+    # would never be a root — they show up under their parents.
+    _ = leaf_only_uuids
+
+    trees =
+      root_uuids
+      |> Enum.sort_by(& &1.title)
+      |> Enum.map(fn root -> build_group_tree(root.uuid, MapSet.new(), task_by_uuid, out_edges) end)
+      |> Enum.reject(&is_nil/1)
+
+    %{trees: trees, standalone: standalone}
+  end
+
+  defp build_group_tree(task_uuid, visited, task_by_uuid, out_edges) do
+    cond do
+      MapSet.member?(visited, task_uuid) ->
+        case Map.get(task_by_uuid, task_uuid) do
+          nil -> nil
+          task -> %{task: task, children: [], cycle?: true, already_in_project?: false}
+        end
+
+      true ->
+        case Map.get(task_by_uuid, task_uuid) do
+          nil ->
+            nil
+
+          task ->
+            next_visited = MapSet.put(visited, task_uuid)
+            children_uuids = Map.get(out_edges, task_uuid, [])
+
+            children =
+              children_uuids
+              |> Enum.sort()
+              |> Enum.map(&build_group_tree(&1, next_visited, task_by_uuid, out_edges))
+              |> Enum.reject(&is_nil/1)
+
+            %{task: task, children: children, cycle?: false, already_in_project?: false}
+        end
+    end
+  end
+
+  defp deps_by_task_map(tasks) do
+    edges = repo().all(TaskDependency)
+    task_by_uuid = Map.new(tasks, &{&1.uuid, &1})
+
+    edges
+    |> Enum.group_by(& &1.task_uuid, &Map.get(task_by_uuid, &1.depends_on_task_uuid))
+    |> Map.new(fn {k, deps} ->
+      {k, deps |> Enum.reject(&is_nil/1) |> Enum.sort_by(& &1.title)}
+    end)
+  end
+
   # ── Task template dependencies ─────────────────────────────────
 
   @doc "Template-level dependencies declared on the given task."
@@ -134,6 +246,121 @@ defmodule PhoenixKitProjects.Projects do
 
   defp duplicate_constraint?(%Ecto.Changeset{errors: errors}) do
     Enum.any?(errors, fn {_, {_, opts}} -> Keyword.get(opts, :constraint) == :unique end)
+  end
+
+  # ── Task closure (transitive task-template dependencies) ─────────
+
+  @typedoc """
+  A node in the task-template dependency closure tree.
+
+  - `:task` — the `Task` schema struct, with task-level preloads.
+  - `:children` — child trees (the tasks this one depends on,
+    transitively).
+  - `:cycle?` — `true` if this node was reached via a cycle in the
+    template graph and traversal stopped here. `TaskDependency` doesn't
+    enforce acyclicity, so this flag lets the UI render a warning
+    instead of spinning forever.
+  - `:already_in_project?` — `true` if an assignment for this task
+    already exists in the target project. UI uses this to show the
+    node as "already there" (won't be re-added on save) — applies to
+    every node in the tree, including the root.
+  """
+  @type closure_node :: %{
+          task: Task.t(),
+          children: [closure_node()],
+          cycle?: boolean(),
+          already_in_project?: boolean()
+        }
+
+  @doc """
+  Builds the task-template dependency closure rooted at `root_task_uuid`.
+
+  Traverses `TaskDependency` edges (`task → depends_on_task`) outward
+  from the root, returning a tree the UI can render with checkboxes
+  for pruning. `project_uuid` is used to mark which nodes already have
+  an assignment in the target project — those are skipped on save
+  (the assignment-form's "drag in closure" flow won't duplicate them).
+
+  Returns `nil` if `root_task_uuid` doesn't resolve to a task. Cycles
+  in the template graph are detected and short-circuited; the cycle
+  node has `cycle?: true` and no children.
+  """
+  @spec task_closure(uuid(), uuid()) :: closure_node() | nil
+  def task_closure(root_task_uuid, project_uuid) do
+    in_project = assignment_task_uuid_set(project_uuid)
+    build_closure_tree(root_task_uuid, MapSet.new(), in_project)
+  end
+
+  defp build_closure_tree(task_uuid, visited, in_project) do
+    cond do
+      MapSet.member?(visited, task_uuid) ->
+        case get_task(task_uuid) do
+          nil ->
+            nil
+
+          task ->
+            %{
+              task: task,
+              children: [],
+              cycle?: true,
+              already_in_project?: MapSet.member?(in_project, task_uuid)
+            }
+        end
+
+      true ->
+        case get_task(task_uuid) do
+          nil ->
+            nil
+
+          task ->
+            next_visited = MapSet.put(visited, task_uuid)
+            dep_uuids = list_task_dependency_uuids(task_uuid)
+
+            children =
+              dep_uuids
+              |> Enum.map(&build_closure_tree(&1, next_visited, in_project))
+              |> Enum.reject(&is_nil/1)
+
+            %{
+              task: task,
+              children: children,
+              cycle?: false,
+              already_in_project?: MapSet.member?(in_project, task_uuid)
+            }
+        end
+    end
+  end
+
+  defp list_task_dependency_uuids(task_uuid) do
+    TaskDependency
+    |> where([d], d.task_uuid == ^task_uuid)
+    |> select([d], d.depends_on_task_uuid)
+    |> repo().all()
+  end
+
+  defp assignment_task_uuid_set(project_uuid) do
+    Assignment
+    |> where([a], a.project_uuid == ^project_uuid)
+    |> select([a], a.task_uuid)
+    |> repo().all()
+    |> MapSet.new()
+  end
+
+  @doc """
+  Flattens a `closure_node()` tree into a `%{task_uuid => %Task{}}` map.
+
+  Used by the save path to enumerate every task that *might* become an
+  assignment (before applying the user's exclusions). `Map` rather than
+  list because the same task can appear multiple times across branches
+  if two parents both depend on it — the map dedups by uuid.
+  """
+  @spec flatten_closure(closure_node() | nil) :: %{optional(String.t()) => Task.t()}
+  def flatten_closure(nil), do: %{}
+
+  def flatten_closure(%{task: task, children: children}) do
+    Enum.reduce(children, %{task.uuid => task}, fn child, acc ->
+      Map.merge(acc, flatten_closure(child))
+    end)
   end
 
   @doc """
@@ -225,9 +452,17 @@ defmodule PhoenixKitProjects.Projects do
   @doc "Fetches a project by uuid. Raises if not found."
   @spec get_project!(uuid()) :: Project.t()
   def get_project!(uuid), do: repo().get!(Project, uuid)
-  @doc "Returns a changeset for the given project."
-  @spec change_project(Project.t(), map()) :: Ecto.Changeset.t()
-  def change_project(%Project{} = p, attrs \\ %{}), do: Project.changeset(p, attrs)
+  @doc """
+  Returns a changeset for the given project.
+
+  Accepts the same `opts` as `Project.changeset/3` — notably
+  `:enforce_scheduled_date_required`, which the project form passes as
+  `false` on `phx-change` events so the just-revealed date input doesn't
+  light up red before the user has had a chance to fill it.
+  """
+  @spec change_project(Project.t(), map(), keyword()) :: Ecto.Changeset.t()
+  def change_project(%Project{} = p, attrs \\ %{}, opts \\ []),
+    do: Project.changeset(p, attrs, opts)
 
   @doc "Inserts a project and broadcasts `:project_created`."
   @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
@@ -540,11 +775,21 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  @doc "Stamps `started_at` on the project and broadcasts `:project_started`."
-  @spec start_project(Project.t()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
-  def start_project(%Project{} = p) do
+  @doc """
+  Stamps `started_at` on the project and broadcasts `:project_started`.
+
+  `started_at` defaults to `DateTime.utc_now()`. Pass a `%DateTime{}` to
+  backdate (the user picked an earlier date in the start-project modal)
+  or future-date (the project is being prepared but the actual start
+  is later than today).
+  """
+  @spec start_project(Project.t(), DateTime.t() | nil) ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
+  def start_project(%Project{} = p, started_at \\ nil) do
+    started_at = started_at || DateTime.utc_now()
+
     with {:ok, updated} <-
-           p |> Project.changeset(%{started_at: DateTime.utc_now()}) |> repo().update() do
+           p |> Project.changeset(%{started_at: started_at}) |> repo().update() do
       ProjectsPubSub.broadcast_project(:project_started, project_payload(updated))
       {:ok, updated}
     end
@@ -681,6 +926,176 @@ defmodule PhoenixKitProjects.Projects do
       })
 
       {:ok, a}
+    end
+  end
+
+  @doc """
+  Creates the root assignment AND any closure-pulled assignments in one
+  serializable transaction, then wires `Dependency` rows according to
+  the `TaskDependency` graph between the resulting assignments.
+
+  Drives the assignment-form's "this task pulls in N more" UX: the user
+  picks a task, the closure tree shows what'll be dragged in, the user
+  optionally prunes nodes via `excluded_task_uuids`, and on save this
+  function lands the kept set atomically.
+
+  ## Parameters
+
+    * `root_task_uuid` — the task the user explicitly picked.
+    * `project_uuid` — target project.
+    * `attrs` — the form's `assignment` params, used for the root
+      assignment's description/duration/assignee/etc. overrides.
+    * `opts`:
+        - `:excluded_task_uuids` — `MapSet` of task uuids the user
+          unticked in the closure tree. Excluded tasks are skipped, but
+          their template-dep edges that touch *kept* tasks are still
+          wired (so removing a leaf doesn't break upstream wiring).
+          Defaults to `MapSet.new()`.
+
+  Returns `{:ok, %{root: assignment, extras: [assignment, ...]}}` on
+  success or `{:error, reason}` on failure. The transaction rolls back
+  cleanly on any failure — partial closure inserts won't leak.
+
+  Tasks already represented by an assignment in the project are
+  *reused* (not duplicated) when wiring deps; a closure node whose
+  task already has an assignment becomes a wiring target without
+  triggering an insert.
+  """
+  @spec create_assignments_with_closure(uuid(), uuid(), map(), keyword()) ::
+          {:ok, %{root: Assignment.t(), extras: [Assignment.t()]}}
+          | {:error, term()}
+  def create_assignments_with_closure(root_task_uuid, project_uuid, attrs, opts \\ []) do
+    excluded = Keyword.get(opts, :excluded_task_uuids, MapSet.new())
+    tree = task_closure(root_task_uuid, project_uuid)
+
+    if is_nil(tree) do
+      {:error, :task_not_found}
+    else
+      # `:serializable` so the closure cycle-check + the chained
+      # `add_dependency/2` calls (which themselves want serializable)
+      # share one outer transaction. Postgres only honors the isolation
+      # set on the outermost; nested `repo().transaction(_, isolation:
+      # :serializable)` calls become savepoints at the outer's level.
+      repo().transaction(
+        fn ->
+          do_create_assignments_with_closure(tree, project_uuid, attrs, excluded)
+        end,
+        isolation: :serializable
+      )
+    end
+  end
+
+  defp do_create_assignments_with_closure(tree, project_uuid, attrs, excluded) do
+    closure_tasks = flatten_closure(tree)
+
+    # Tasks the user wants to land in the project (root included),
+    # minus user-pruned, minus already-in-project (those are reused
+    # for wiring but not re-inserted).
+    to_create_task_uuids =
+      closure_tasks
+      |> Map.keys()
+      |> Enum.reject(fn uuid ->
+        MapSet.member?(excluded, uuid) or
+          flatten_already_in_project?(tree, uuid)
+      end)
+
+    # Map task_uuid → assignment_uuid for ALL tasks in the closure that
+    # have an assignment in the project. Built up as we insert; seeded
+    # with whatever already exists so wiring spans new + pre-existing
+    # assignments uniformly.
+    existing_map = existing_task_assignment_map(project_uuid, Map.keys(closure_tasks))
+
+    # Insert root first using the form's attrs, then closure children
+    # using `create_assignment_from_template` for each remaining task.
+    {root, task_to_assignment} =
+      insert_root(tree.task.uuid, project_uuid, attrs, existing_map)
+
+    extras =
+      to_create_task_uuids
+      |> Enum.reject(&(&1 == tree.task.uuid))
+      |> Enum.reduce([], fn task_uuid, acc ->
+        case create_assignment_from_template(task_uuid, %{
+               "project_uuid" => project_uuid,
+               "status" => "todo"
+             }) do
+          {:ok, a} -> [a | acc]
+          {:error, reason} -> repo().rollback(reason)
+        end
+      end)
+      |> Enum.reverse()
+
+    # Now finish populating the wiring map with the extras we just made.
+    final_map =
+      Enum.reduce(extras, task_to_assignment, fn a, m -> Map.put(m, a.task_uuid, a.uuid) end)
+
+    wire_closure_dependencies(tree, final_map, excluded)
+
+    %{root: root, extras: extras}
+  end
+
+  # Inserts the root assignment using the user-provided attrs (their
+  # description override, duration, assignee, etc.). The
+  # `existing_map`'s entry for the root, if any, is replaced — saving
+  # via the form is an explicit "I want this task in this project"
+  # action even if there's an old assignment lying around.
+  defp insert_root(task_uuid, project_uuid, attrs, existing_map) do
+    full_attrs =
+      attrs
+      |> Map.put("task_uuid", task_uuid)
+      |> Map.put("project_uuid", project_uuid)
+
+    case create_assignment(full_attrs) do
+      {:ok, a} ->
+        {a, Map.put(existing_map, a.task_uuid, a.uuid)}
+
+      {:error, reason} ->
+        repo().rollback(reason)
+    end
+  end
+
+  defp existing_task_assignment_map(project_uuid, task_uuids) do
+    from(a in Assignment,
+      where: a.project_uuid == ^project_uuid and a.task_uuid in ^task_uuids,
+      select: {a.task_uuid, a.uuid}
+    )
+    |> repo().all()
+    |> Map.new()
+  end
+
+  # Walks the closure tree top-down adding `Dependency` rows for every
+  # template edge whose endpoints both have an assignment in the
+  # project (after excludes). Skipped pairs (one or both excluded /
+  # missing) are silently dropped — the dep can't exist if either
+  # side doesn't.
+  defp wire_closure_dependencies(%{task: parent, children: children, cycle?: cycle?}, map, excluded) do
+    if not cycle? do
+      Enum.each(children, fn child ->
+        child_task_uuid = child.task.uuid
+
+        if not MapSet.member?(excluded, parent.uuid) and
+             not MapSet.member?(excluded, child_task_uuid) do
+          parent_assignment = Map.get(map, parent.uuid)
+          child_assignment = Map.get(map, child_task_uuid)
+
+          if parent_assignment && child_assignment do
+            case add_dependency(parent_assignment, child_assignment) do
+              {:ok, _} -> :ok
+              # Duplicate pair = idempotent; cycle = halt.
+              {:error, %Ecto.Changeset{} = cs} ->
+                if duplicate_constraint?(cs), do: :ok, else: repo().rollback(cs)
+            end
+          end
+        end
+
+        wire_closure_dependencies(child, map, excluded)
+      end)
+    end
+  end
+
+  defp flatten_already_in_project?(%{task: task, children: children, already_in_project?: aip?}, target_uuid) do
+    cond do
+      task.uuid == target_uuid -> aip?
+      true -> Enum.any?(children, &flatten_already_in_project?(&1, target_uuid))
     end
   end
 

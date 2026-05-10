@@ -55,8 +55,8 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
     end
   end
 
-  describe "scheduled-mode start_project button carries phx-disable-with" do
-    test "start_project button on scheduled-mode project", %{conn: conn} do
+  describe "scheduled-mode start button opens the start-project modal" do
+    test "Start now button is wired to open_start_modal", %{conn: conn} do
       project =
         fixture_project(%{
           "start_mode" => "scheduled",
@@ -64,7 +64,12 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      assert html =~ ~r/phx-click="start_project"[^>]*phx-disable-with=/s
+
+      # The bare button no longer carries phx-disable-with — that label
+      # has moved to the modal's "Start project" submit button (the
+      # destructive write happens inside the modal, not on the page
+      # button which only opens it).
+      assert html =~ ~r/phx-click="open_start_modal"/
     end
   end
 

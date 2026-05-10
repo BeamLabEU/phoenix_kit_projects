@@ -4,8 +4,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
 
-  alias PhoenixKitProjects.{Activity, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.Project
 
   require Logger
 
@@ -91,13 +92,15 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
                 </tr>
               </thead>
               <tbody>
+                <% lang = L10n.current_content_lang() %>
                 <tr :for={t <- @templates} class="hover">
                   <td>
                     <.link navigate={Paths.template(t.uuid)} class="link link-hover font-medium">
-                      {t.name}
+                      {Project.localized_name(t, lang)}
                     </.link>
-                    <div :if={t.description} class="text-xs text-base-content/60 truncate max-w-md">
-                      {t.description}
+                    <% desc = Project.localized_description(t, lang) %>
+                    <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">
+                      {desc}
                     </div>
                   </td>
                   <td>
@@ -114,7 +117,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
                       phx-click="delete"
                       phx-value-uuid={t.uuid}
                       phx-disable-with={gettext("Deleting…")}
-                      data-confirm={gettext("Delete template \"%{name}\"?", name: t.name)}
+                      data-confirm={gettext("Delete template \"%{name}\"?", name: Project.localized_name(t, lang))}
                       class="btn btn-ghost btn-xs text-error"
                     >
                       <.icon name="hero-trash" class="w-3.5 h-3.5" />
