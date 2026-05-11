@@ -172,39 +172,29 @@ Commit: `fdac48d`.
   `{:error, "literal"}`, `changeset_errors`/`Gettext.gettext`/
   `String.capitalize`, commented-out `def`/`case`/`if` — all clean
 
+## Fixed (Batch 4 — 2026-05-11 re-validation)
+
+- ~~`phoenix_kit_staff` `@type t` follow-up~~ — `phoenix_kit_staff`
+  0.2.0 shipped with `@type t` declarations on all four schemas
+  (`Person`, `Department`, `Team`, `TeamMembership`). Tightened the
+  cross-module fields in `task.ex` (`default_assigned_team` /
+  `_department` / `_person`) and `assignment.ex` (`assigned_team` /
+  `_department` / `_person`) from `struct() | NotLoaded.t() | nil`
+  to the precise `Team.t()` / `Department.t()` / `Person.t()`
+  variants. Inline placeholder comments removed.
+- ~~Listing-helper `@spec` backfill~~ — verified all `list_*` and
+  `count_*` in `projects.ex` already carry `@spec`; the original
+  deferral was overtaken by the Phase 2 sweep itself.
+
 ## Open
 
-### Surfaced for boss decision (deliberately deferred)
+None.
 
-These are real findings but are **scope-creep** for a quality sweep
-per memory `feedback_quality_sweep_scope.md` ("Quality sweeps
-improve code, not functionality — refactor existing paths; don't
-add missing features"). Documented in AGENTS.md's "What this module
-does NOT have" section so they don't get re-found and re-deferred
-in a future re-validation:
-
-- **Mount → handle_params refactor** (Phase 1 PR #1 review #1) —
-  every LV does DB work in `mount/3` (HTTP render + WebSocket
-  connect = 2× queries). Per-LV behaviour change, not a
-  quality-sweep refactor.
-- **OverviewLive event-debounce** (PR #1 review #7) — every
-  `:projects, _, _` broadcast triggers a full dashboard reload
-  (~10 queries). Same scope reason.
-- **Status-helper extraction** — `status_color/1` /
-  `status_badge_class/1` / `status_label/1` are duplicated between
-  `OverviewLive` and `ProjectShowLive`. Cosmetic; surfaces only on
-  a third call site.
-- **Listing-helper `@spec` backfill** (~10 fns: `list_active_projects`,
-  `list_recently_completed_projects`, `list_upcoming_projects`,
-  `list_setup_projects`, `count_*`, etc.) — same `[Project.t()]`
-  shape, low-value cluster.
-
-### Pending Hex re-publish (not actionable from this module)
-
-- `phoenix_kit_staff` 0.1.0 → 0.1.1 with `@type t` declarations
-  on schemas. Once published, tighten our cross-module field types
-  back from `struct()` to `Team.t()` / `Department.t()` /
-  `Person.t()`. Tracked in inline comments at
-  `lib/phoenix_kit_projects/schemas/{task,assignment}.ex`.
-
-None of the above block merge.
+The previously-deferred behaviour-change items (mount → handle_params
+refactor, OverviewLive event-debounce, status-helper extraction)
+remain documented in `AGENTS.md` under "What this module does NOT
+have" — they are non-features by design, not parking-lot TODOs. The
+status-helper trigger ("third call site appears") has not fired —
+duplication is between `OverviewLive` and `ProjectShowLive` only
+(`ProjectsLive`'s `derived_status_*` helpers are a separate
+project-state concern, not the assignment-status set).
