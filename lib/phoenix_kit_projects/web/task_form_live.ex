@@ -3,6 +3,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
   import PhoenixKitWeb.Components.MultilangForm
 
@@ -306,12 +307,13 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col mx-auto max-w-xl px-4 py-6 gap-4">
-      <div>
-        <.link navigate={Paths.tasks()} class="link link-hover text-sm">
-          <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Task Library")}
-        </.link>
-        <h1 class="text-2xl font-bold mt-1">{@page_title}</h1>
-      </div>
+      <.page_header title={@page_title}>
+        <:back_link>
+          <.link navigate={Paths.tasks()} class="link link-hover text-sm">
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Task Library")}
+          </.link>
+        </:back_link>
+      </.page_header>
 
       <.form for={@form} id="task-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
         <%!-- Translatable card: title + description with language tabs. --%>

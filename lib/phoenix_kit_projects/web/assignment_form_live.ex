@@ -7,6 +7,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
   import PhoenixKitWeb.Components.MultilangForm
 
@@ -886,12 +887,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col mx-auto max-w-xl px-4 py-6 gap-4">
-      <div>
-        <.link navigate={Paths.project(@project.uuid)} class="link link-hover text-sm">
-          <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {@project.name}
-        </.link>
-        <h1 class="text-2xl font-bold mt-1">{@page_title}</h1>
-      </div>
+      <.page_header title={@page_title}>
+        <:back_link>
+          <.link navigate={Paths.project(@project.uuid)} class="link link-hover text-sm">
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {@project.name}
+          </.link>
+        </:back_link>
+      </.page_header>
 
       <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
         <%!-- Language tabs render only when multilang is on AND >1 language enabled.
@@ -920,28 +922,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                    data so existing `validate`/`save` handlers don't
                    need to special-case socket reads. --%>
               <input type="hidden" name="task_mode" value={@task_mode} />
-              <div role="tablist" class="tabs tabs-boxed">
-                <button
-                  type="button"
-                  role="tab"
-                  phx-click="set_task_mode"
-                  phx-value-mode="existing"
-                  class={["tab gap-2", @task_mode == "existing" && "tab-active"]}
-                >
-                  <.icon name="hero-rectangle-stack" class="w-4 h-4" />
-                  {gettext("From library")}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  phx-click="set_task_mode"
-                  phx-value-mode="new"
-                  class={["tab gap-2", @task_mode == "new" && "tab-active"]}
-                >
-                  <.icon name="hero-plus" class="w-4 h-4" />
-                  {gettext("Create new")}
-                </button>
-              </div>
+              <.tabs_strip
+                event="set_task_mode"
+                value_attr="mode"
+                active={@task_mode}
+                tabs={[
+                  {"existing", gettext("From library"), "hero-rectangle-stack"},
+                  {"new", gettext("Create new"), "hero-plus"}
+                ]}
+              />
 
               <%= if @task_mode == "existing" do %>
                 <.select

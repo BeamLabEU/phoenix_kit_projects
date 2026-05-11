@@ -135,15 +135,46 @@ lib/phoenix_kit_projects/
 │   └── task_dependency.ex                   # Template-level default deps
 └── web/
     ├── assignment_form_live.ex
+    ├── components.ex                         # `use` aggregator — imports every web/components/*.ex
+    ├── components/
+    │   ├── derived_status_badge.ex          # `<.derived_status_badge>` + `<.project_status_badge>`
+    │   ├── empty_state.ex                   # `<.empty_state>` — icon + heading + sub + CTA slot
+    │   ├── page_header.ex                   # `<.page_header>` — title + description + actions + back_link slots
+    │   ├── running_card.ex                  # `<.running_card>` — dashboard project summary tile
+    │   ├── sortable_table.ex                # `<.sortable_table>` — drag-to-reorder table with `:col` slots
+    │   ├── stat_tile.ex                     # `<.stat_tile>` — compact "label + big number" card
+    │   ├── tabs_strip.ex                    # `<.tabs_strip>` — daisyUI tabs-boxed switcher
+    │   └── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
     ├── overview_live.ex
     ├── project_form_live.ex
-    ├── project_show_live.ex                 # Large (~1000 lines) — timeline, schedule math
+    ├── project_show_live.ex                 # Large (~1700 lines) — timeline, schedule math
     ├── projects_live.ex
     ├── task_form_live.ex
     ├── tasks_live.ex
     ├── template_form_live.ex
     └── templates_live.ex
 ```
+
+## Web components
+
+LVs `use PhoenixKitProjects.Web.Components` to pull in every reusable
+component in one line. Components live in `web/components/*.ex` as
+individual Phoenix.Component modules. The aggregator in
+`web/components.ex` only `import`s them — it doesn't define functions
+of its own, so adding a new component is `add file → add import` and
+done.
+
+Components are deliberately scoped to this module's surface (not
+core's `PhoenixKitWeb.Components.*` namespace). Promoting one to core
+is mechanical when a sibling module needs it: copy the file, rename
+the module to `PhoenixKitWeb.Components.<Name>`, drop the import here,
+let the consumer fall through to the core function.
+
+**What's already a core component (use the core one, don't duplicate):**
+`<.input>`, `<.select>`, `<.textarea>`, `<.checkbox>`, `<.icon>`,
+`<.multilang_tabs>`, `<.translatable_field>`, `<.stat_card>` (note:
+core's takes title + subtitle + icon — for a minimal "label + value"
+tile use this module's `<.stat_tile>`).
 
 ## Versioning & Releases
 

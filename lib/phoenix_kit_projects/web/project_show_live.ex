@@ -7,6 +7,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
@@ -1311,13 +1312,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       <%!-- Timeline --%>
       <%= if @assignments == [] do %>
-        <div class="text-center py-16 text-base-content/60">
-          <.icon name="hero-rectangle-stack" class="w-12 h-12 mx-auto mb-2 opacity-40" />
-          <p>{gettext("No tasks in this project yet.")}</p>
-          <.link navigate={Paths.new_assignment(@project.uuid)} class="link link-primary text-sm">
-            {gettext("Add one from the task library")}
-          </.link>
-        </div>
+        <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
+          <:cta>
+            <.link navigate={Paths.new_assignment(@project.uuid)} class="link link-primary text-sm">
+              {gettext("Add one from the task library")}
+            </.link>
+          </:cta>
+        </.empty_state>
       <% else %>
         <div class="relative">
           <%!-- Vertical connector line --%>

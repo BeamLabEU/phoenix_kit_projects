@@ -3,6 +3,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
@@ -97,30 +98,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     end
   end
 
-  defp derived_status_label(:running), do: gettext("running")
-  defp derived_status_label(:completed), do: gettext("completed")
-  defp derived_status_label(:overdue), do: gettext("overdue")
-  defp derived_status_label(:scheduled), do: gettext("scheduled")
-  defp derived_status_label(:setup), do: gettext("setup")
-  defp derived_status_label(:archived), do: gettext("archived")
-  defp derived_status_label(:template), do: gettext("template")
-
-  defp derived_status_class(:running), do: "badge-success"
-  defp derived_status_class(:completed), do: "badge-success badge-outline"
-  defp derived_status_class(:overdue), do: "badge-error"
-  defp derived_status_class(:scheduled), do: "badge-info"
-  defp derived_status_class(:setup), do: "badge-warning"
-  defp derived_status_class(:archived), do: "badge-ghost"
-  defp derived_status_class(:template), do: "badge-info badge-outline"
-
-  defp derived_status_icon(:running), do: "hero-play"
-  defp derived_status_icon(:completed), do: "hero-check-circle"
-  defp derived_status_icon(:overdue), do: "hero-exclamation-triangle"
-  defp derived_status_icon(:scheduled), do: "hero-calendar"
-  defp derived_status_icon(:setup), do: "hero-clock"
-  defp derived_status_icon(:archived), do: "hero-archive-box"
-  defp derived_status_icon(:template), do: "hero-document-duplicate"
-
   defp log_and_flash_deleted(socket, project) do
     # Activity log captures the primary-language name (audit trail is
     # locale-agnostic; primary is the canonical identifier for the row).
@@ -138,15 +115,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col mx-auto max-w-5xl px-4 py-6 gap-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold">{gettext("Projects")}</h1>
-          <p class="text-sm text-base-content/60">{gettext("All projects.")}</p>
-        </div>
-        <.link navigate={Paths.new_project()} class="btn btn-primary btn-sm">
-          <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
-        </.link>
-      </div>
+      <.page_header title={gettext("Projects")} description={gettext("All projects.")}>
+        <:actions>
+          <.link navigate={Paths.new_project()} class="btn btn-primary btn-sm">
+            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
+          </.link>
+        </:actions>
+      </.page_header>
 
       <div class="bg-base-200 rounded-lg p-3">
         <.form for={%{}} phx-change="filter" class="flex gap-3 items-end">
@@ -164,10 +139,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       </div>
 
       <%= if @projects == [] do %>
-        <div class="text-center py-16 text-base-content/60">
-          <.icon name="hero-clipboard-document-list" class="w-12 h-12 mx-auto mb-2 opacity-40" />
-          <p>{gettext("No projects match.")}</p>
-        </div>
+        <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects match.")} />
       <% else %>
         <%!-- DnD only applies when the user is viewing the visible
              (non-archived) bucket — reordering a filtered subset
@@ -176,68 +148,41 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
              `@show == "visible"`; archived/all views render without
              the SortableGrid hook (drag handle hidden too). --%>
         <% lang = L10n.current_content_lang() %>
-        <% draggable? = @show == "visible" %>
-        <div class="card bg-base-100 shadow">
-          <div class="card-body p-0">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th :if={draggable?} class="w-8"></th>
-                  <th>{gettext("Name")}</th>
-                  <th>{gettext("Status")}</th>
-                  <th class="text-right">{gettext("Actions")}</th>
-                </tr>
-              </thead>
-              <tbody
-                id="projects-list-body"
-                phx-hook={if draggable?, do: "SortableGrid"}
-                data-sortable={if draggable?, do: "true"}
-                data-sortable-event="reorder_projects"
-                data-sortable-items=".sortable-item"
-                data-sortable-handle=".pk-drag-handle"
+        <.sortable_table
+          id="projects-list-body"
+          rows={@projects}
+          row_id={& &1.uuid}
+          event="reorder_projects"
+          draggable={@show == "visible"}
+        >
+          <:col :let={p} label={gettext("Name")}>
+            <.link navigate={Paths.project(p.uuid)} class="link link-hover font-medium">
+              {Project.localized_name(p, lang)}
+            </.link>
+            <% desc = Project.localized_description(p, lang) %>
+            <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
+          </:col>
+          <:col :let={p} label={gettext("Status")}>
+            <.project_status_badge project={p} />
+          </:col>
+          <:col :let={p} label={gettext("Actions")} class="text-right">
+            <div class="flex items-center justify-end gap-1">
+              <.link navigate={Paths.edit_project(p.uuid)} class="btn btn-ghost btn-xs">
+                <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+              </.link>
+              <button
+                type="button"
+                phx-click="delete"
+                phx-value-uuid={p.uuid}
+                phx-disable-with={gettext("Deleting…")}
+                data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, lang))}
+                class="btn btn-ghost btn-xs text-error"
               >
-                <tr :for={p <- @projects} class="hover sortable-item" data-id={p.uuid}>
-                  <td :if={draggable?} class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content align-middle" title={gettext("Drag to reorder")}>
-                    <.icon name="hero-bars-3" class="w-4 h-4" />
-                  </td>
-                  <td class="align-middle">
-                    <.link navigate={Paths.project(p.uuid)} class="link link-hover font-medium">
-                      {Project.localized_name(p, lang)}
-                    </.link>
-                    <% desc = Project.localized_description(p, lang) %>
-                    <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">
-                      {desc}
-                    </div>
-                  </td>
-                  <td class="align-middle">
-                    <% state = PhoenixKitProjects.Schemas.Project.derived_status(p) %>
-                    <span class={"badge badge-sm gap-1 #{derived_status_class(state)}"}>
-                      <.icon name={derived_status_icon(state)} class="w-3 h-3" />
-                      {derived_status_label(state)}
-                    </span>
-                  </td>
-                  <td class="align-middle">
-                    <div class="flex items-center justify-end gap-1">
-                      <.link navigate={Paths.edit_project(p.uuid)} class="btn btn-ghost btn-xs">
-                        <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                      </.link>
-                      <button
-                        type="button"
-                        phx-click="delete"
-                        phx-value-uuid={p.uuid}
-                        phx-disable-with={gettext("Deleting…")}
-                        data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, lang))}
-                        class="btn btn-ghost btn-xs text-error"
-                      >
-                        <.icon name="hero-trash" class="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+                <.icon name="hero-trash" class="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </:col>
+        </.sortable_table>
       <% end %>
     </div>
     """

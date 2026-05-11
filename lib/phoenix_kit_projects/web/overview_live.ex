@@ -3,6 +3,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
@@ -125,20 +126,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   defp late?(_, _, _, _), do: false
 
-  # Pill attrs for the status badge shown on every Running card.
-  # Returns {daisyUI badge class, heroicon name, gettext'd label}.
-  defp tier_pill(:late),
-    do: {"badge-error", "hero-exclamation-triangle", gettext("late")}
-
-  defp tier_pill(:near_done),
-    do: {"badge-success", "hero-flag", gettext("near done")}
-
-  defp tier_pill(:on_track),
-    do: {"badge-info badge-outline", "hero-check", gettext("on time")}
-
-  defp tier_pill(:empty),
-    do: {"badge-ghost", "hero-inbox", gettext("no tasks")}
-
   defp running_sort_key(summary, today) do
     %{project: project, progress_pct: pct, total: total} = summary
     tier = running_tier(summary)
@@ -224,49 +211,34 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col mx-auto max-w-6xl px-4 py-6 gap-6">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h1 class="text-2xl font-bold">{gettext("Projects")}</h1>
-          <p class="text-base-content/60 text-sm mt-1">
-            {gettext("Overview of active work, upcoming projects, and your assignments.")}
-          </p>
-        </div>
-        <div class="flex flex-wrap gap-2">
+      <.page_header
+        title={gettext("Projects")}
+        description={gettext("Overview of active work, upcoming projects, and your assignments.")}
+      >
+        <:actions>
           <.link navigate={Paths.new_project()} class="btn btn-primary btn-sm">
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
           </.link>
           <.link navigate={Paths.new_task()} class="btn btn-ghost btn-sm">
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
           </.link>
-        </div>
-      </div>
+        </:actions>
+      </.page_header>
 
       <%!-- Stats row --%>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div class="card bg-base-100 shadow-sm border border-base-200">
-          <div class="card-body p-3">
-            <div class="text-xs text-base-content/60">{gettext("Running")}</div>
-            <div class="text-2xl font-bold">{@active_count}</div>
-          </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm border border-base-200">
-          <div class="card-body p-3">
-            <div class="text-xs text-base-content/60">{gettext("Tasks in progress")}</div>
-            <div class="text-2xl font-bold text-warning">{Map.get(@status_counts, "in_progress", 0)}</div>
-          </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm border border-base-200">
-          <div class="card-body p-3">
-            <div class="text-xs text-base-content/60">{gettext("Tasks todo")}</div>
-            <div class="text-2xl font-bold">{Map.get(@status_counts, "todo", 0)}</div>
-          </div>
-        </div>
-        <div class="card bg-base-100 shadow-sm border border-base-200">
-          <div class="card-body p-3">
-            <div class="text-xs text-base-content/60">{gettext("Tasks done")}</div>
-            <div class="text-2xl font-bold text-success">{Map.get(@status_counts, "done", 0)}</div>
-          </div>
-        </div>
+        <.stat_tile label={gettext("Running")} value={@active_count} />
+        <.stat_tile
+          label={gettext("Tasks in progress")}
+          value={Map.get(@status_counts, "in_progress", 0)}
+          value_class="text-warning"
+        />
+        <.stat_tile label={gettext("Tasks todo")} value={Map.get(@status_counts, "todo", 0)} />
+        <.stat_tile
+          label={gettext("Tasks done")}
+          value={Map.get(@status_counts, "done", 0)}
+          value_class="text-success"
+        />
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -292,62 +264,42 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
             </div>
 
             <%= if @active_summaries == [] do %>
-              <div class="text-center py-10 text-base-content/60">
-                <.icon name="hero-clipboard-document-list" class="w-10 h-10 mx-auto mb-2 opacity-40" />
-                <%= if @any_projects? do %>
-                  <p class="text-sm">{gettext("Nothing running right now.")}</p>
-                  <p class="text-xs text-base-content/50 mt-1">
-                    {gettext("Open a project and click Start to begin.")}
-                  </p>
-                  <.link navigate={Paths.projects()} class="btn btn-ghost btn-xs mt-3">
-                    <.icon name="hero-clipboard-document-list" class="w-3.5 h-3.5" /> {gettext("View projects")}
-                  </.link>
-                <% else %>
-                  <p class="text-sm">{gettext("No projects yet.")}</p>
-                  <p class="text-xs text-base-content/50 mt-1">
-                    {gettext("Create one to get started.")}
-                  </p>
-                  <.link navigate={Paths.new_project()} class="btn btn-primary btn-xs mt-3">
-                    <.icon name="hero-plus" class="w-3.5 h-3.5" /> {gettext("New project")}
-                  </.link>
-                <% end %>
-              </div>
+              <%= if @any_projects? do %>
+                <.empty_state
+                  icon="hero-clipboard-document-list"
+                  title={gettext("Nothing running right now.")}
+                  description={gettext("Open a project and click Start to begin.")}
+                  class="py-10"
+                >
+                  <:cta>
+                    <.link navigate={Paths.projects()} class="btn btn-ghost btn-xs">
+                      <.icon name="hero-clipboard-document-list" class="w-3.5 h-3.5" /> {gettext("View projects")}
+                    </.link>
+                  </:cta>
+                </.empty_state>
+              <% else %>
+                <.empty_state
+                  icon="hero-clipboard-document-list"
+                  title={gettext("No projects yet.")}
+                  description={gettext("Create one to get started.")}
+                  class="py-10"
+                >
+                  <:cta>
+                    <.link navigate={Paths.new_project()} class="btn btn-primary btn-xs">
+                      <.icon name="hero-plus" class="w-3.5 h-3.5" /> {gettext("New project")}
+                    </.link>
+                  </:cta>
+                </.empty_state>
+              <% end %>
             <% else %>
               <div class="flex flex-col gap-2 mt-2">
-                <.link
+                <.running_card
                   :for={s <- @active_summaries}
+                  summary={s}
+                  tier={running_tier(s)}
                   navigate={Paths.project(s.project.uuid)}
-                  class="flex items-center gap-3 p-3 rounded hover:bg-base-200 transition"
-                >
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 min-w-0">
-                      <div class="font-medium truncate min-w-0">{Project.localized_name(s.project, L10n.current_content_lang())}</div>
-                      <% {pill_class, pill_icon, pill_label} = tier_pill(running_tier(s)) %>
-                      <span class={"badge badge-xs gap-1 shrink-0 #{pill_class}"}>
-                        <.icon name={pill_icon} class="w-3 h-3" /> {pill_label}
-                      </span>
-                    </div>
-                    <div class="flex items-center gap-2 text-xs text-base-content/60 mt-1">
-                      <span>{gettext("Started %{when}", when: relative_day(Date.diff(DateTime.to_date(s.project.started_at), Date.utc_today())))}</span>
-                      <span>·</span>
-                      <span>{gettext("%{done}/%{total} tasks", done: s.done, total: s.total)}</span>
-                      <%= if s.in_progress > 0 do %>
-                        <span>·</span>
-                        <span class="text-warning">{gettext("%{count} in progress", count: s.in_progress)}</span>
-                      <% end %>
-                    </div>
-                    <div class="w-full bg-base-300 rounded-full h-1.5 mt-2">
-                      <div
-                        class="bg-success h-1.5 rounded-full transition-all"
-                        style={"width: #{s.progress_pct}%"}
-                      >
-                      </div>
-                    </div>
-                  </div>
-                  <div class="text-right shrink-0">
-                    <div class="text-lg font-bold">{s.progress_pct}%</div>
-                  </div>
-                </.link>
+                  lang={L10n.current_content_lang()}
+                />
               </div>
             <% end %>
           </div>

@@ -3,6 +3,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
@@ -159,15 +160,16 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col mx-auto max-w-5xl px-4 py-6 gap-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold">{gettext("Task Library")}</h1>
-          <p class="text-sm text-base-content/60">{gettext("Reusable task templates.")}</p>
-        </div>
-        <.link navigate={Paths.new_task()} class="btn btn-primary btn-sm">
-          <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
-        </.link>
-      </div>
+      <.page_header
+        title={gettext("Task Library")}
+        description={gettext("Reusable task templates.")}
+      >
+        <:actions>
+          <.link navigate={Paths.new_task()} class="btn btn-primary btn-sm">
+            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
+          </.link>
+        </:actions>
+      </.page_header>
 
       <%!-- View toggle. URL-driven (`?view=…`) so a refresh keeps the
            user on the same view and the link is shareable. The "list"
@@ -198,11 +200,13 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <% lang = L10n.current_content_lang() %>
 
         <%= if @groups == [] and @standalone == [] do %>
-          <div class="text-center py-16 text-base-content/60">
-            <.icon name="hero-rectangle-stack" class="w-12 h-12 mx-auto mb-2 opacity-40" />
-            <p>{gettext("No tasks yet.")}</p>
-            <.link navigate={Paths.new_task()} class="link link-primary text-sm">{gettext("Create your first")}</.link>
-          </div>
+          <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
+            <:cta>
+              <.link navigate={Paths.new_task()} class="link link-primary text-sm">
+                {gettext("Create your first")}
+              </.link>
+            </:cta>
+          </.empty_state>
         <% else %>
           <p class="text-xs text-base-content/60">
             {gettext("Each group is rooted at a task that nothing else depends on. Tasks reused across multiple groups appear in every one that pulls them in — they're independent task templates, the relationship is just a dependency.")}
@@ -264,90 +268,57 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <% lang = L10n.current_content_lang() %>
 
         <%= if @tasks == [] do %>
-          <div class="text-center py-16 text-base-content/60">
-            <.icon name="hero-rectangle-stack" class="w-12 h-12 mx-auto mb-2 opacity-40" />
-            <p>{gettext("No tasks yet.")}</p>
-            <.link navigate={Paths.new_task()} class="link link-primary text-sm">{gettext("Create your first")}</.link>
-          </div>
+          <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
+            <:cta>
+              <.link navigate={Paths.new_task()} class="link link-primary text-sm">
+                {gettext("Create your first")}
+              </.link>
+            </:cta>
+          </.empty_state>
         <% else %>
           <%!-- DnD reorder is wired only on the list view (groups are
                derived from the dep graph and don't have a stable
-               manual order). Hook lives on the `<tbody>` because
-               browsers won't let arbitrary children render between a
-               table and its rows; SortableGrid auto-finds children
-               that match `data-sortable-items=".sortable-item"`. The
-               drag handle (`.pk-drag-handle`) is the only initiator
-               so clicks on the row body still navigate / delete. --%>
-          <div class="card bg-base-100 shadow">
-            <div class="card-body p-0">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th class="w-8"></th>
-                    <th>{gettext("Title")}</th>
-                    <th>{gettext("Duration")}</th>
-                    <th class="text-right">{gettext("Actions")}</th>
-                  </tr>
-                </thead>
-                <tbody
-                  id="tasks-list-body"
-                  phx-hook="SortableGrid"
-                  data-sortable="true"
-                  data-sortable-event="reorder_tasks"
-                  data-sortable-items=".sortable-item"
-                  data-sortable-handle=".pk-drag-handle"
+               manual order). Per-row body uses the sortable_table
+               component's :col slots; SortableJS knockout-of-table-
+               layout is handled by `align-middle` cells inside the
+               component. --%>
+          <.sortable_table
+            id="tasks-list-body"
+            rows={@tasks}
+            row_id={& &1.uuid}
+            event="reorder_tasks"
+          >
+            <:col :let={task} label={gettext("Title")}>
+              <div class="font-medium">{TaskSchema.localized_title(task, lang)}</div>
+              <% desc = TaskSchema.localized_description(task, lang) %>
+              <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
+              <% deps = Map.get(@deps_by_task, task.uuid, []) %>
+              <div :if={deps != []} class="flex flex-wrap gap-1 mt-1.5">
+                <span :for={dep <- deps} class="badge badge-outline badge-xs gap-1">
+                  <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
+                  {TaskSchema.localized_title(dep, lang)}
+                </span>
+              </div>
+            </:col>
+            <:col :let={task} label={gettext("Duration")}>{format_duration(task)}</:col>
+            <:col :let={task} label={gettext("Actions")} class="text-right">
+              <div class="flex items-center justify-end gap-1">
+                <.link navigate={Paths.edit_task(task.uuid)} class="btn btn-ghost btn-xs">
+                  <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+                </.link>
+                <button
+                  type="button"
+                  phx-click="delete"
+                  phx-value-uuid={task.uuid}
+                  phx-disable-with={gettext("Deleting…")}
+                  data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, lang))}
+                  class="btn btn-ghost btn-xs text-error"
                 >
-                  <%!-- `align-middle` on every cell because SortableJS
-                       pulls the `<tr>` out of table-layout during the
-                       drag (cells lose `display: table-cell` and
-                       collapse to baseline). The flex wrapper on the
-                       actions cell makes the icons center regardless
-                       of layout context — without it the
-                       pencil/trash row drops to baseline once the row
-                       is floated. --%>
-                  <tr :for={task <- @tasks} class="hover sortable-item" data-id={task.uuid}>
-                    <td class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content align-middle" title={gettext("Drag to reorder")}>
-                      <.icon name="hero-bars-3" class="w-4 h-4" />
-                    </td>
-                    <td class="align-middle">
-                      <div class="font-medium">{TaskSchema.localized_title(task, lang)}</div>
-                      <% desc = TaskSchema.localized_description(task, lang) %>
-                      <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">
-                        {desc}
-                      </div>
-                      <% deps = Map.get(@deps_by_task, task.uuid, []) %>
-                      <%= if deps != [] do %>
-                        <div class="flex flex-wrap gap-1 mt-1.5">
-                          <span :for={dep <- deps} class="badge badge-outline badge-xs gap-1">
-                            <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                            {TaskSchema.localized_title(dep, lang)}
-                          </span>
-                        </div>
-                      <% end %>
-                    </td>
-                    <td class="align-middle">{format_duration(task)}</td>
-                    <td class="align-middle">
-                      <div class="flex items-center justify-end gap-1">
-                        <.link navigate={Paths.edit_task(task.uuid)} class="btn btn-ghost btn-xs">
-                          <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                        </.link>
-                        <button
-                          type="button"
-                          phx-click="delete"
-                          phx-value-uuid={task.uuid}
-                          phx-disable-with={gettext("Deleting…")}
-                          data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, lang))}
-                          class="btn btn-ghost btn-xs text-error"
-                        >
-                          <.icon name="hero-trash" class="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
+                  <.icon name="hero-trash" class="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </:col>
+          </.sortable_table>
         <% end %>
       <% end %>
     </div>
