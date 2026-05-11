@@ -1439,18 +1439,30 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                              select, buttons) need matching `*-xs`
                              modifiers — without `select-xs` daisyUI's
                              default select-md renders ~2x taller and the
-                             row visually staggers. --%>
+                             row visually staggers.
+
+                             The badge above renders `format_duration(a)`
+                             which already falls back from the assignment
+                             to its task template when the assignment
+                             doesn't override. Mirror the same fallback
+                             on the edit inputs — otherwise the user
+                             opens the editor and sees blank fields,
+                             which the boss correctly flagged as
+                             inconsistent with the badge they just
+                             clicked. --%>
+                        <% prefill_dur = a.estimated_duration || a.task.estimated_duration %>
+                        <% prefill_unit = a.estimated_duration_unit || a.task.estimated_duration_unit || "hours" %>
                         <form phx-submit="save_duration" class="flex items-center gap-1">
                           <input
                             type="number"
                             name="estimated_duration"
-                            value={a.estimated_duration}
+                            value={prefill_dur}
                             class="input input-xs w-16"
                             min="1"
                           />
                           <.select
                             name="estimated_duration_unit"
-                            value={a.estimated_duration_unit || "hours"}
+                            value={prefill_unit}
                             options={duration_unit_options()}
                             class="select-xs w-auto"
                           />
