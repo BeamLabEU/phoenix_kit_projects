@@ -383,7 +383,9 @@ defmodule PhoenixKitProjects.Projects do
     trees =
       root_uuids
       |> Enum.sort_by(& &1.title)
-      |> Enum.map(fn root -> build_group_tree(root.uuid, MapSet.new(), task_by_uuid, out_edges) end)
+      |> Enum.map(fn root ->
+        build_group_tree(root.uuid, MapSet.new(), task_by_uuid, out_edges)
+      end)
       |> Enum.reject(&is_nil/1)
 
     %{trees: trees, standalone: standalone}
@@ -686,6 +688,7 @@ defmodule PhoenixKitProjects.Projects do
   @doc "Fetches a project by uuid. Raises if not found."
   @spec get_project!(uuid()) :: Project.t()
   def get_project!(uuid), do: repo().get!(Project, uuid)
+
   @doc """
   Returns a changeset for the given project.
 
@@ -1480,9 +1483,17 @@ defmodule PhoenixKitProjects.Projects do
   # ancestor implies its descendants are also out, matching the
   # form's render-time cascade). Cycle nodes terminate without
   # contributing.
+  #
+  # `seen` only tracks tasks that contributed an insert (or skipped
+  # because the user explicitly excluded them on every path). Skips
+  # that come purely from an ancestor-exclusion are NOT recorded in
+  # `seen`, so a diamond where the same descendant is reachable via
+  # both an excluded and a non-excluded parent still emits the
+  # descendant once when traversal reaches it via the non-excluded
+  # branch.
   defp topological_insertion_order(tree, excluded) do
-    {acc, _seen} = do_topo(tree, excluded, false, MapSet.new(), [])
-    acc
+    {acc_rev, _seen} = do_topo(tree, excluded, false, MapSet.new(), [])
+    Enum.reverse(acc_rev)
   end
 
   defp do_topo(%{cycle?: true}, _excluded, _ancestor_excluded?, seen, acc), do: {acc, seen}
@@ -1492,10 +1503,24 @@ defmodule PhoenixKitProjects.Projects do
       MapSet.member?(seen, task.uuid) ->
         {acc, seen}
 
-      ancestor_excluded? or MapSet.member?(excluded, task.uuid) ->
-        # Skip this task; the cascade ensures descendants are also
-        # excluded so we don't recurse into them.
-        {acc, MapSet.put(seen, task.uuid)}
+      ancestor_excluded? ->
+        # Pure ancestor-exclusion skip — don't poison `seen`, so a
+        # sibling branch reaching this same task can still emit it.
+        # Recurse with `ancestor_excluded?: true` so the cascade still
+        # blocks inserts down this branch.
+        Enum.reduce(children, {acc, seen}, fn child, {a, s} ->
+          do_topo(child, excluded, true, s, a)
+        end)
+
+      MapSet.member?(excluded, task.uuid) ->
+        # User explicitly excluded this task. Mark it `seen` so other
+        # branches reaching the same task won't re-emit it, and
+        # cascade the exclusion to descendants.
+        seen = MapSet.put(seen, task.uuid)
+
+        Enum.reduce(children, {acc, seen}, fn child, {a, s} ->
+          do_topo(child, excluded, true, s, a)
+        end)
 
       true ->
         seen = MapSet.put(seen, task.uuid)
@@ -1505,7 +1530,10 @@ defmodule PhoenixKitProjects.Projects do
             do_topo(child, excluded, false, s, a)
           end)
 
-        {acc ++ [task.uuid], seen}
+        # Build the list in reverse; `topological_insertion_order/2`
+        # reverses once at the end. Prepending stays O(1) per node;
+        # an `acc ++ [_]` here would be O(n²) over the closure depth.
+        {[task.uuid | acc], seen}
     end
   end
 
@@ -1523,7 +1551,11 @@ defmodule PhoenixKitProjects.Projects do
   # project (after excludes). Skipped pairs (one or both excluded /
   # missing) are silently dropped — the dep can't exist if either
   # side doesn't.
-  defp wire_closure_dependencies(%{task: parent, children: children, cycle?: cycle?}, map, excluded) do
+  defp wire_closure_dependencies(
+         %{task: parent, children: children, cycle?: cycle?},
+         map,
+         excluded
+       ) do
     if not cycle? do
       Enum.each(children, fn child ->
         child_task_uuid = child.task.uuid
@@ -1543,7 +1575,9 @@ defmodule PhoenixKitProjects.Projects do
 
           if parent_assignment && child_assignment do
             case add_dependency(parent_assignment, child_assignment) do
-              {:ok, _} -> :ok
+              {:ok, _} ->
+                :ok
+
               # Duplicate pair = idempotent; cycle = halt.
               {:error, %Ecto.Changeset{} = cs} ->
                 if duplicate_constraint?(cs), do: :ok, else: repo().rollback(cs)
@@ -1670,7 +1704,10 @@ defmodule PhoenixKitProjects.Projects do
       :ok ->
         case write_assignment_positions(unique_uuids) do
           {:ok, count} ->
-            log_reorder_success("assignment", List.first(unique_uuids), count,
+            log_reorder_success(
+              "assignment",
+              List.first(unique_uuids),
+              count,
               Keyword.put(opts, :metadata, %{"project_uuid" => project_uuid})
             )
 

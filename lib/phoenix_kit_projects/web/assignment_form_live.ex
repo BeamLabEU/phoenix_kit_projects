@@ -35,11 +35,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # disabled, label greyed, struck through). The user can still
   # re-tick the ancestor to bring the whole subtree back — only
   # explicit per-node clicks live in `excluded_uuids`.
-  attr :node, :map, required: true
-  attr :excluded_uuids, :any, required: true
-  attr :is_root, :boolean, default: false
-  attr :ancestor_excluded?, :boolean, default: false
-  attr :lang, :string, default: nil
+  attr(:node, :map, required: true)
+  attr(:excluded_uuids, :any, required: true)
+  attr(:is_root, :boolean, default: false)
+  attr(:ancestor_excluded?, :boolean, default: false)
+  attr(:lang, :string, default: nil)
 
   defp closure_node(assigns) do
     self_excluded? = MapSet.member?(assigns.excluded_uuids, assigns.node.task.uuid)
@@ -261,8 +261,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # so track the user's selections in socket state and flush them in
   # `save_new` / `create_assignment_for_new_task` after the assignment
   # row exists. Uses a list (not a MapSet) so the rendered order
-  # mirrors the user's add order, and `--` strips dupes if the same
-  # uuid is added twice.
+  # mirrors the user's add order; the `if dep_uuid in current` guard
+  # below skips dupes when the same uuid is added twice.
   def handle_event("add_pending_dep", %{"depends_on_uuid" => dep_uuid}, socket)
       when dep_uuid != "" do
     {:noreply,
@@ -547,7 +547,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp do_expand_excluded(%{cycle?: true}, _user_excluded, _ancestor_excluded?, acc), do: acc
 
-  defp do_expand_excluded(%{task: task, children: children}, user_excluded, ancestor_excluded?, acc) do
+  defp do_expand_excluded(
+         %{task: task, children: children},
+         user_excluded,
+         ancestor_excluded?,
+         acc
+       ) do
     self_excluded? = MapSet.member?(user_excluded, task.uuid)
     effective_excluded? = ancestor_excluded? or self_excluded?
     acc = if effective_excluded?, do: MapSet.put(acc, task.uuid), else: acc

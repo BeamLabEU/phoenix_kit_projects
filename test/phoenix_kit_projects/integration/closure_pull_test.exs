@@ -123,6 +123,69 @@ defmodule PhoenixKitProjects.Integration.ClosurePullTest do
     end
   end
 
+  describe "create_assignments_with_closure/4 — diamond dep graph" do
+    test "diamond: shared descendant lands once when both parents kept" do
+      project = fixture_project()
+      [a, b, c, d] = diamond()
+
+      assert {:ok, %{root: root, extras: extras}} =
+               Projects.create_assignments_with_closure(a.uuid, project.uuid, %{
+                 "status" => "todo"
+               })
+
+      assert root.task_uuid == a.uuid
+
+      # D contributes exactly one assignment despite being reachable
+      # via both B and C.
+      assignments = Projects.list_assignments(project.uuid)
+      d_rows = Enum.filter(assignments, &(&1.task_uuid == d.uuid))
+      assert length(d_rows) == 1
+
+      assert length(extras) == 3
+
+      assert Enum.map(extras, & &1.task_uuid) |> Enum.sort() ==
+               Enum.sort([b.uuid, c.uuid, d.uuid])
+
+      assert depends_on?(project.uuid, a.uuid, b.uuid)
+      assert depends_on?(project.uuid, a.uuid, c.uuid)
+      assert depends_on?(project.uuid, b.uuid, d.uuid)
+      assert depends_on?(project.uuid, c.uuid, d.uuid)
+    end
+
+    test "diamond: excluding one parent doesn't drop the shared descendant" do
+      project = fixture_project()
+      [a, b, c, d] = diamond()
+
+      # Untick B — D should still land because C (kept) also depends
+      # on it. Pre-fix, do_topo's `seen` was poisoned by the excluded
+      # B-branch and D was silently dropped.
+      assert {:ok, %{root: root, extras: extras}} =
+               Projects.create_assignments_with_closure(
+                 a.uuid,
+                 project.uuid,
+                 %{"status" => "todo"},
+                 excluded_task_uuids: MapSet.new([b.uuid])
+               )
+
+      assert root.task_uuid == a.uuid
+
+      extra_task_uuids = Enum.map(extras, & &1.task_uuid) |> Enum.sort()
+      assert extra_task_uuids == Enum.sort([c.uuid, d.uuid])
+
+      # B has no assignment; D and C do.
+      assignments = Projects.list_assignments(project.uuid)
+      task_uuids = Enum.map(assignments, & &1.task_uuid)
+      refute b.uuid in task_uuids
+      assert d.uuid in task_uuids
+
+      # A → C and C → D wired; A → B and B → D NOT wired (B was excluded).
+      assert depends_on?(project.uuid, a.uuid, c.uuid)
+      assert depends_on?(project.uuid, c.uuid, d.uuid)
+      refute depends_on?(project.uuid, a.uuid, b.uuid)
+      refute depends_on?(project.uuid, b.uuid, d.uuid)
+    end
+  end
+
   describe "create_assignments_with_closure/4 — cycle terminator" do
     test "a cycle in the dep chain doesn't crash; cycle nodes don't insert" do
       project = fixture_project()
@@ -190,6 +253,29 @@ defmodule PhoenixKitProjects.Integration.ClosurePullTest do
     {:ok, _} = Projects.add_task_dependency(t3.uuid, t2.uuid)
 
     [t1, t2, t3]
+  end
+
+  # Diamond:
+  #
+  #       A
+  #      / \
+  #     B   C
+  #      \ /
+  #       D
+  #
+  # A depends on B and C; B and C both depend on D.
+  defp diamond do
+    a = fixture_task()
+    b = fixture_task()
+    c = fixture_task()
+    d = fixture_task()
+
+    {:ok, _} = Projects.add_task_dependency(a.uuid, b.uuid)
+    {:ok, _} = Projects.add_task_dependency(a.uuid, c.uuid)
+    {:ok, _} = Projects.add_task_dependency(b.uuid, d.uuid)
+    {:ok, _} = Projects.add_task_dependency(c.uuid, d.uuid)
+
+    [a, b, c, d]
   end
 
   defp depends_on?(project_uuid, task_uuid, depends_on_task_uuid) do
