@@ -71,6 +71,22 @@ defmodule PhoenixKitProjects.Integration.ReorderTest do
       assert :ok = Projects.reorder_tasks(stale)
       refute_activity_logged("task.reordered")
     end
+
+    test "duplicate uuids dedup last-write-wins (last occurrence keeps its position)" do
+      t1 = fixture_task()
+      t2 = fixture_task()
+
+      # Submitting [t1, t2, t1] dedupes to [t2, t1] (last occurrence
+      # of t1 wins): t2 lands at position 1, t1 at position 2.
+      assert :ok = Projects.reorder_tasks([t1.uuid, t2.uuid, t1.uuid])
+
+      positions =
+        Projects.list_tasks()
+        |> Enum.filter(&(&1.uuid in [t1.uuid, t2.uuid]))
+        |> Map.new(&{&1.uuid, &1.position})
+
+      assert positions[t2.uuid] < positions[t1.uuid]
+    end
   end
 
   describe "reorder_projects/2" do
@@ -201,9 +217,7 @@ defmodule PhoenixKitProjects.Integration.ReorderTest do
       [a_in_b, _] = two_assignments(project_b.uuid)
 
       assert {:error, :not_in_project} =
-               Projects.reorder_assignments(project_a.uuid, [a_in_b.uuid],
-                 actor_uuid: actor_uuid
-               )
+               Projects.reorder_assignments(project_a.uuid, [a_in_b.uuid], actor_uuid: actor_uuid)
 
       assert_activity_logged("assignment.reorder_rejected",
         actor_uuid: actor_uuid,
