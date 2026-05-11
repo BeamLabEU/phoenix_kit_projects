@@ -14,8 +14,14 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_templates())
-    {:ok, assign(socket, page_title: gettext("Project Templates")) |> load_templates()}
+
+    # No DB queries in mount/3. `handle_params/3` loads the list once
+    # the socket lifecycle settles.
+    {:ok, assign(socket, page_title: gettext("Project Templates"), templates: [])}
   end
+
+  @impl true
+  def handle_params(_params, _url, socket), do: {:noreply, load_templates(socket)}
 
   defp load_templates(socket), do: assign(socket, templates: Projects.list_templates())
 

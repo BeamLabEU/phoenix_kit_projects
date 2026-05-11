@@ -14,8 +14,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_all())
-    {:ok, assign(socket, page_title: gettext("Projects"), show: "visible") |> load_projects()}
+
+    # No DB queries in mount/3. `handle_params/3` loads the list once
+    # the socket lifecycle settles.
+    {:ok, assign(socket, page_title: gettext("Projects"), show: "visible", projects: [])}
   end
+
+  @impl true
+  def handle_params(_params, _url, socket), do: {:noreply, load_projects(socket)}
 
   @impl true
   def handle_info({:projects, _event, _payload}, socket), do: {:noreply, load_projects(socket)}

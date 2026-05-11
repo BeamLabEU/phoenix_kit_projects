@@ -21,7 +21,33 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         _ -> nil
       end
 
-    {:ok, assign(socket, user_uuid: user_uuid) |> reload()}
+    # No DB queries in mount/3 — mount runs both on the disconnected
+    # HTTP render and again on the WebSocket reconnect (and again on
+    # every reconnection after a transient network drop). Defaults
+    # match what `reload/1` would produce against an empty database;
+    # `handle_params/3` swaps them for real data.
+    {:ok,
+     assign(socket,
+       user_uuid: user_uuid,
+       page_title: gettext("Projects"),
+       task_count: 0,
+       project_count: 0,
+       template_count: 0,
+       active_count: 0,
+       active_summaries: [],
+       running_display_limit: @running_display_limit,
+       completed_projects: [],
+       upcoming_projects: [],
+       setup_projects: [],
+       any_projects?: false,
+       my_assignments: [],
+       status_counts: %{}
+     )}
+  end
+
+  @impl true
+  def handle_params(_params, _url, socket) do
+    {:noreply, reload(socket)}
   end
 
   # How many "Running" projects to show on the dashboard. The count
@@ -53,13 +79,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       |> prioritize_running()
 
     assign(socket,
-      page_title: gettext("Projects"),
       task_count: Projects.count_tasks(),
       project_count: Projects.count_projects(),
       template_count: Projects.count_templates(),
       active_count: total_active,
       active_summaries: top_summaries,
-      running_display_limit: @running_display_limit,
       completed_projects: completed_projects,
       upcoming_projects: upcoming_projects,
       setup_projects: setup_projects,
