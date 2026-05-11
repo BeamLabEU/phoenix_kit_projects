@@ -571,11 +571,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     if socket.assigns[:comments_enabled] do
       project_uuid = socket.assigns.project.uuid
 
+      # Rescue narrowed to the shapes we actually expect: comments are
+      # optional (UndefinedFunctionError when the module is absent
+      # mid-install / mid-Hex-bump) and DB transients shouldn't break
+      # the badge. Anything else surfaces and gets fixed.
       project_count =
         try do
           PhoenixKitComments.count_comments("project", project_uuid, status: "published")
         rescue
-          _ -> 0
+          UndefinedFunctionError -> 0
+          Postgrex.Error -> 0
+          DBConnection.OwnershipError -> 0
+        catch
+          :exit, _reason -> 0
         end
 
       assignment_uuids = Enum.map(socket.assigns.assignments, & &1.uuid)

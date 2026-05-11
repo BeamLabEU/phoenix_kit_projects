@@ -111,6 +111,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
          |> push_navigate(to: Paths.project(project.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.project_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          metadata: %{"name" => Map.get(attrs, "name") || Ecto.Changeset.get_field(cs, :name)}
+        )
+
         {:noreply, on_save_error(socket, cs)}
     end
   end
@@ -134,17 +140,38 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
          |> push_navigate(to: Paths.project(project.uuid))}
 
       {:error, :template_not_found} ->
+        Activity.log_failed("projects.project_created_from_template",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          metadata: %{"template_uuid" => template_uuid, "reason" => "template_not_found"}
+        )
+
         {:noreply, put_flash(socket, :error, Errors.message(:template_not_found))}
 
       # Changeset errors that originate from the cloned project itself get
       # re-assigned to the form so the user sees inline validation.
       {:error, %Ecto.Changeset{data: %Project{}} = cs} ->
+        Activity.log_failed("projects.project_created_from_template",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          metadata: %{
+            "template_uuid" => template_uuid,
+            "name" => Map.get(attrs, "name") || Ecto.Changeset.get_field(cs, :name)
+          }
+        )
+
         {:noreply, on_save_error(socket, cs)}
 
       # Changesets from deeper in the transaction (assignment / dependency
       # cloning) don't map cleanly onto the project form — surface a
       # generic error message instead.
       {:error, %Ecto.Changeset{}} ->
+        Activity.log_failed("projects.project_created_from_template",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          metadata: %{"template_uuid" => template_uuid, "reason" => "cascade_changeset"}
+        )
+
         {:noreply,
          put_flash(
            socket,
@@ -155,7 +182,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       # Any other shape (e.g. `{:error, reason}` from a transaction that
       # caught an unexpected exception) — fail closed with a flash
       # instead of a pattern-match crash.
-      {:error, _other} ->
+      {:error, other} ->
+        Activity.log_failed("projects.project_created_from_template",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          metadata: %{"template_uuid" => template_uuid, "reason" => inspect(other)}
+        )
+
         {:noreply,
          put_flash(
            socket,
@@ -181,6 +214,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
          |> push_navigate(to: Paths.project(project.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.project_updated",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: socket.assigns.project.uuid,
+          metadata: %{"name" => socket.assigns.project.name}
+        )
+
         {:noreply, on_save_error(socket, cs)}
     end
   end

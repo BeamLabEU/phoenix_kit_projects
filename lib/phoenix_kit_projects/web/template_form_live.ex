@@ -68,6 +68,12 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
          |> push_navigate(to: Paths.template(project.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.template_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project_template",
+          metadata: %{"name" => Map.get(attrs, "name") || Ecto.Changeset.get_field(cs, :name)}
+        )
+
         {:noreply, assign_form(socket, cs)}
     end
   end
@@ -88,6 +94,13 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
          |> push_navigate(to: Paths.template(project.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.template_updated",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project_template",
+          resource_uuid: socket.assigns.project.uuid,
+          metadata: %{"name" => socket.assigns.project.name}
+        )
+
         {:noreply, assign_form(socket, cs)}
     end
   end

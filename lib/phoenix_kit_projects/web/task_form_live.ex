@@ -144,7 +144,13 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         )
 
       _ ->
-        :ok
+        Activity.log_failed("projects.task_dependency_added",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          resource_uuid: socket.assigns.task.uuid,
+          target_uuid: dep_uuid,
+          metadata: %{"task" => socket.assigns.task.title}
+        )
     end
 
     {:noreply, reload_task_deps(socket)}
@@ -164,7 +170,13 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         )
 
       _ ->
-        :ok
+        Activity.log_failed("projects.task_dependency_removed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          resource_uuid: socket.assigns.task.uuid,
+          target_uuid: dep_task_uuid,
+          metadata: %{"task" => socket.assigns.task.title}
+        )
     end
 
     {:noreply, reload_task_deps(socket)}
@@ -221,6 +233,12 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
          |> push_navigate(to: Paths.edit_task(task.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.task_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          metadata: %{"title" => Map.get(attrs, "title") || Ecto.Changeset.get_field(cs, :title)}
+        )
+
         {:noreply, on_save_error(socket, cs)}
     end
   end
@@ -241,6 +259,13 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
          |> push_navigate(to: Paths.tasks())}
 
       {:error, cs} ->
+        Activity.log_failed("projects.task_updated",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          resource_uuid: socket.assigns.task.uuid,
+          metadata: %{"title" => socket.assigns.task.title}
+        )
+
         {:noreply, on_save_error(socket, cs)}
     end
   end

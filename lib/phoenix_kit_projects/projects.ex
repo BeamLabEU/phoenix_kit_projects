@@ -165,7 +165,14 @@ defmodule PhoenixKitProjects.Projects do
       %{}
     end
   rescue
-    _ -> %{}
+    # Comments are optional — UndefinedFunctionError covers
+    # cross-module Hex skew, Postgrex/Ownership covers DB transients.
+    # Anything else surfaces.
+    UndefinedFunctionError -> %{}
+    Postgrex.Error -> %{}
+    DBConnection.OwnershipError -> %{}
+  catch
+    :exit, _reason -> %{}
   end
 
   defp do_count_assignment_comments(assignment_uuids) do

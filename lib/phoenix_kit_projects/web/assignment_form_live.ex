@@ -609,11 +609,29 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
 
       {:error, %Ecto.Changeset{} = cs} ->
+        Activity.log_failed("projects.assignment_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          target_uuid: socket.assigns.project.uuid,
+          metadata: %{"project" => socket.assigns.project.name, "via_closure_of" => task_uuid}
+        )
+
         {:noreply, on_save_error(socket, cs)}
 
       {:error, reason} ->
         Logger.warning(
           "[Projects] closure-create rolled back for task #{task_uuid}: #{inspect(reason)}"
+        )
+
+        Activity.log_failed("projects.assignment_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          target_uuid: socket.assigns.project.uuid,
+          metadata: %{
+            "project" => socket.assigns.project.name,
+            "via_closure_of" => task_uuid,
+            "reason" => inspect(reason)
+          }
         )
 
         {:noreply,
@@ -649,6 +667,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.assignment_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          target_uuid: socket.assigns.project.uuid,
+          metadata: %{"project" => socket.assigns.project.name}
+        )
+
         {:noreply, on_save_error(socket, cs)}
     end
   end
@@ -732,6 +757,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.assignment_updated",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"project" => socket.assigns.project.name}
+        )
+
         {:noreply, on_save_error(socket, cs)}
     end
   end
