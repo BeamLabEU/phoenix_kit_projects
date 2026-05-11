@@ -81,7 +81,7 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
       _ =
         fixture_project(%{
           "start_mode" => "scheduled",
-          "scheduled_start_date" => Date.utc_today() |> Date.to_iso8601()
+          "scheduled_start_date" => DateTime.utc_now() |> DateTime.to_iso8601()
         })
 
       assert is_list(Projects.list_upcoming_projects())

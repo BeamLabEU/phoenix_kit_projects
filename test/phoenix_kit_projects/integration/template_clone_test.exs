@@ -77,36 +77,6 @@ defmodule PhoenixKitProjects.Integration.TemplateCloneTest do
     end
   end
 
-  describe "transaction rollback" do
-    test "a duplicate-name project attrs causes rollback and leaves no orphans" do
-      %{template: template} = build_template()
-
-      # First clone succeeds.
-      {:ok, _first} =
-        Projects.create_project_from_template(template.uuid, %{
-          "name" => "Clone-fixed",
-          "status" => "active",
-          "start_mode" => "immediate"
-        })
-
-      projects_before = Projects.count_projects()
-      tasks_before = Projects.count_tasks()
-
-      # Second clone tries to reuse the same project name → unique_constraint
-      # error on the project insert → full rollback.
-      {:error, %Ecto.Changeset{data: %Project{}} = cs} =
-        Projects.create_project_from_template(template.uuid, %{
-          "name" => "Clone-fixed",
-          "status" => "active",
-          "start_mode" => "immediate"
-        })
-
-      assert %{name: [_ | _]} = errors_on(cs)
-      assert Projects.count_projects() == projects_before
-      assert Projects.count_tasks() == tasks_before
-    end
-  end
-
   describe "name uniqueness — none" do
     # V105 added two partial unique indexes (template vs project) and
     # V112 dropped both: name uniqueness is policy, not structure, and

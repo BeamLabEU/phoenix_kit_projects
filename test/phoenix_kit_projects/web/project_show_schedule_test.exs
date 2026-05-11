@@ -109,7 +109,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
       project =
         fixture_project(%{
           "start_mode" => "scheduled",
-          "scheduled_start_date" => Date.utc_today() |> Date.add(7) |> Date.to_iso8601()
+          "scheduled_start_date" =>
+            DateTime.utc_now() |> DateTime.add(7 * 86_400, :second) |> DateTime.to_iso8601()
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")

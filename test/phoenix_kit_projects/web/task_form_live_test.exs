@@ -26,16 +26,20 @@ defmodule PhoenixKitProjects.Web.TaskFormLiveTest do
       assert html =~ ~r/phx-disable-with=/
     end
 
-    test "validate event with empty title shows inline error", %{conn: conn} do
+    test "submit with empty title shows inline error", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/tasks/new")
 
+      # `validate` deliberately does NOT stamp `:action` on the changeset
+      # (suppresses premature errors when the user toggles unrelated
+      # radio/select fields mid-form). Errors only render after a save
+      # attempt — `Repo.update/insert` auto-stamps `:action` on
+      # `{:error, _}` so the secondary render via `assign_form` carries
+      # it through.
       html =
         view
         |> form("#task-form", task: %{title: "", description: "x"})
-        |> render_change()
+        |> render_submit()
 
-      # `validate_required(:title)` should fire and the form's
-      # `:action = :validate` (Phase 2 delta) makes `<.input>` show it.
       assert html =~ "can&#39;t be blank" or html =~ "can't be blank"
     end
   end

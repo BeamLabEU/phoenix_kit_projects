@@ -26,15 +26,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
       assert html =~ ~r/phx-disable-with=/
     end
 
-    test "validate with blank name shows inline error", %{conn: conn} do
+    test "submit with blank name shows inline error", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
 
+      # `validate` deliberately does NOT stamp `:action` (suppresses
+      # premature errors when the user toggles the start_mode radio
+      # mid-form). Errors only render after a save attempt.
       html =
         view
         |> form("#project-form",
           project: %{name: "", description: "", start_mode: "immediate"}
         )
-        |> render_change()
+        |> render_submit()
 
       assert html =~ "can&#39;t be blank" or html =~ "can't be blank"
     end

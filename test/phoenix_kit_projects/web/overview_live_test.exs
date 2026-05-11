@@ -19,7 +19,9 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "mount renders the heading + empty-state copy", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/en/admin/projects")
       assert html =~ "Projects"
-      assert html =~ "Active projects"
+      # The "Active projects" header was renamed to "Running" with
+      # the prioritized-tier rework.
+      assert html =~ "Running"
     end
   end
 
@@ -67,12 +69,10 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
   describe "upcoming + setup project sections (days_until + relative_day branches)" do
     test "scheduled project today renders the relative-day label", %{conn: conn} do
-      today = Date.utc_today()
-
       _ =
         fixture_project(%{
           "start_mode" => "scheduled",
-          "scheduled_start_date" => today |> Date.to_iso8601()
+          "scheduled_start_date" => DateTime.utc_now() |> DateTime.to_iso8601()
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects")
@@ -81,12 +81,12 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     end
 
     test "scheduled project tomorrow renders the relative-day label", %{conn: conn} do
-      tomorrow = Date.utc_today() |> Date.add(1)
+      tomorrow = DateTime.utc_now() |> DateTime.add(86_400, :second)
 
       _ =
         fixture_project(%{
           "start_mode" => "scheduled",
-          "scheduled_start_date" => tomorrow |> Date.to_iso8601()
+          "scheduled_start_date" => DateTime.to_iso8601(tomorrow)
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects")
@@ -94,12 +94,12 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     end
 
     test "scheduled project 5 days out renders ngettext branch", %{conn: conn} do
-      five_days = Date.utc_today() |> Date.add(5)
+      five_days = DateTime.utc_now() |> DateTime.add(5 * 86_400, :second)
 
       _ =
         fixture_project(%{
           "start_mode" => "scheduled",
-          "scheduled_start_date" => five_days |> Date.to_iso8601()
+          "scheduled_start_date" => DateTime.to_iso8601(five_days)
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects")
@@ -107,12 +107,12 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     end
 
     test "scheduled project 30 days out renders weeks branch", %{conn: conn} do
-      far = Date.utc_today() |> Date.add(30)
+      far = DateTime.utc_now() |> DateTime.add(30 * 86_400, :second)
 
       _ =
         fixture_project(%{
           "start_mode" => "scheduled",
-          "scheduled_start_date" => far |> Date.to_iso8601()
+          "scheduled_start_date" => DateTime.to_iso8601(far)
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects")
