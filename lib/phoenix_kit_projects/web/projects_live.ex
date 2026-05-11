@@ -3,16 +3,18 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{Activity, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.Project
 
   require Logger
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_all())
-    {:ok, assign(socket, page_title: gettext("Projects"), status: "") |> load_projects()}
+    {:ok, assign(socket, page_title: gettext("Projects"), show: "visible") |> load_projects()}
   end
 
   @impl true
@@ -24,12 +26,53 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   defp load_projects(socket) do
-    assign(socket, projects: Projects.list_projects(status: socket.assigns.status))
+    assign(socket, projects: Projects.list_projects(archived: archived_opt(socket.assigns.show)))
   end
 
+  defp archived_opt("archived"), do: true
+  defp archived_opt("all"), do: :all
+  defp archived_opt(_visible), do: false
+
   @impl true
-  def handle_event("filter", %{"status" => s}, socket) do
-    {:noreply, socket |> assign(status: s) |> load_projects()}
+  def handle_event("filter", %{"show" => s}, socket) do
+    {:noreply, socket |> assign(show: s) |> load_projects()}
+  end
+
+  def handle_event("reorder_projects", %{"ordered_ids" => ordered_ids} = params, socket)
+      when is_list(ordered_ids) do
+    moved_id = params["moved_id"]
+
+    case Projects.reorder_projects(ordered_ids, actor_uuid: Activity.actor_uuid(socket)) do
+      :ok ->
+        {:noreply,
+         socket
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "ok"})
+         |> load_projects()}
+
+      {:error, :too_many_uuids} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Too many projects to reorder at once."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_projects()}
+
+      {:error, :wrong_scope} ->
+        # The user dropped a row from a list that isn't a regular
+        # project bucket — usually a stale view racing a flag flip.
+        # Reload to snap back to truth.
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Project list changed; please try again."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_projects()}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Could not reorder projects."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_projects()}
+    end
   end
 
   def handle_event("delete", %{"uuid" => uuid}, socket) do
@@ -55,11 +98,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     end
   end
 
-  defp project_status_label("active"), do: gettext("active")
-  defp project_status_label("archived"), do: gettext("archived")
-  defp project_status_label(other), do: other
-
   defp log_and_flash_deleted(socket, project) do
+    # Activity log captures the primary-language name (audit trail is
+    # locale-agnostic; primary is the canonical identifier for the row).
     Activity.log("projects.project_deleted",
       actor_uuid: Activity.actor_uuid(socket),
       resource_type: "project",
@@ -74,83 +115,74 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col mx-auto max-w-5xl px-4 py-6 gap-4">
-      <div class="flex items-center justify-between">
-        <div>
-          <h1 class="text-2xl font-bold">{gettext("Projects")}</h1>
-          <p class="text-sm text-base-content/60">{gettext("All projects.")}</p>
-        </div>
-        <.link navigate={Paths.new_project()} class="btn btn-primary btn-sm">
-          <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
-        </.link>
-      </div>
+      <.page_header title={gettext("Projects")} description={gettext("All projects.")}>
+        <:actions>
+          <.link navigate={Paths.new_project()} class="btn btn-primary btn-sm">
+            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
+          </.link>
+        </:actions>
+      </.page_header>
 
       <div class="bg-base-200 rounded-lg p-3">
         <.form for={%{}} phx-change="filter" class="flex gap-3 items-end">
           <.select
-            name="status"
-            label={gettext("Status")}
-            value={@status}
-            options={[{gettext("All"), ""}, {gettext("Active"), "active"}, {gettext("Archived"), "archived"}]}
+            name="show"
+            label={gettext("Show")}
+            value={@show}
+            options={[
+              {gettext("Active only"), "visible"},
+              {gettext("Archived only"), "archived"},
+              {gettext("All"), "all"}
+            ]}
           />
         </.form>
       </div>
 
       <%= if @projects == [] do %>
-        <div class="text-center py-16 text-base-content/60">
-          <.icon name="hero-clipboard-document-list" class="w-12 h-12 mx-auto mb-2 opacity-40" />
-          <p>{gettext("No projects match.")}</p>
-        </div>
+        <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects match.")} />
       <% else %>
-        <div class="card bg-base-100 shadow">
-          <div class="card-body p-0">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>{gettext("Name")}</th>
-                  <th>{gettext("Status")}</th>
-                  <th class="text-right">{gettext("Actions")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr :for={p <- @projects} class="hover">
-                  <td>
-                    <.link navigate={Paths.project(p.uuid)} class="link link-hover font-medium">
-                      {p.name}
-                    </.link>
-                    <%= if p.completed_at do %>
-                      <span class="badge badge-success badge-xs ml-2">
-                        <.icon name="hero-check-circle" class="w-3 h-3" /> {gettext("completed")}
-                      </span>
-                    <% end %>
-                    <div :if={p.description} class="text-xs text-base-content/60 truncate max-w-md">
-                      {p.description}
-                    </div>
-                  </td>
-                  <td>
-                    <span class={"badge badge-sm #{if p.status == "active", do: "badge-success", else: "badge-ghost"}"}>
-                      {project_status_label(p.status)}
-                    </span>
-                  </td>
-                  <td class="text-right">
-                    <.link navigate={Paths.edit_project(p.uuid)} class="btn btn-ghost btn-xs">
-                      <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                    </.link>
-                    <button
-                      type="button"
-                      phx-click="delete"
-                      phx-value-uuid={p.uuid}
-                      phx-disable-with={gettext("Deleting…")}
-                      data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: p.name)}
-                      class="btn btn-ghost btn-xs text-error"
-                    >
-                      <.icon name="hero-trash" class="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <%!-- DnD only applies when the user is viewing the visible
+             (non-archived) bucket — reordering a filtered subset
+             would write inconsistent positions for the projects that
+             aren't currently visible. The hook is gated on
+             `@show == "visible"`; archived/all views render without
+             the SortableGrid hook (drag handle hidden too). --%>
+        <% lang = L10n.current_content_lang() %>
+        <.sortable_table
+          id="projects-list-body"
+          rows={@projects}
+          row_id={& &1.uuid}
+          event="reorder_projects"
+          draggable={@show == "visible"}
+        >
+          <:col :let={p} label={gettext("Name")}>
+            <.link navigate={Paths.project(p.uuid)} class="link link-hover font-medium">
+              {Project.localized_name(p, lang)}
+            </.link>
+            <% desc = Project.localized_description(p, lang) %>
+            <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
+          </:col>
+          <:col :let={p} label={gettext("Status")}>
+            <.project_status_badge project={p} />
+          </:col>
+          <:col :let={p} label={gettext("Actions")} class="text-right">
+            <div class="flex items-center justify-end gap-1">
+              <.link navigate={Paths.edit_project(p.uuid)} class="btn btn-ghost btn-xs">
+                <.icon name="hero-pencil" class="w-3.5 h-3.5" />
+              </.link>
+              <button
+                type="button"
+                phx-click="delete"
+                phx-value-uuid={p.uuid}
+                phx-disable-with={gettext("Deleting…")}
+                data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, lang))}
+                class="btn btn-ghost btn-xs text-error"
+              >
+                <.icon name="hero-trash" class="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </:col>
+        </.sortable_table>
       <% end %>
     </div>
     """

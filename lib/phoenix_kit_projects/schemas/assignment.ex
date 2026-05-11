@@ -20,6 +20,13 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
 
   @statuses ~w(todo in_progress done)
   @duration_units ~w(minutes hours days weeks fortnights months years)
+  @translatable_fields ~w(description)
+
+  @typedoc """
+  JSONB map of secondary-language overrides. Same shape as
+  `Project.translations_map`/`Task.translations_map`.
+  """
+  @type translations_map :: %{optional(String.t()) => %{optional(String.t()) => String.t()}}
 
   @type t :: %__MODULE__{
           uuid: UUIDv7.t() | nil,
@@ -35,21 +42,16 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
           counts_weekends: boolean() | nil,
           progress_pct: integer() | nil,
           track_progress: boolean() | nil,
-          # Cross-module assoc fields use `struct()` rather than the precise
-          # `PhoenixKitStaff.Schemas.<X>.t()` because phoenix_kit_staff
-          # Hex 0.1.0 doesn't ship `@type t` declarations on its schemas
-          # (the workspace version does — once it publishes 0.1.1, tighten
-          # these back to the named types).
-          # Tracking: BeamLabEU/phoenix_kit_staff#3.
           assigned_team_uuid: UUIDv7.t() | nil,
-          assigned_team: struct() | Ecto.Association.NotLoaded.t() | nil,
+          assigned_team: Team.t() | Ecto.Association.NotLoaded.t() | nil,
           assigned_department_uuid: UUIDv7.t() | nil,
-          assigned_department: struct() | Ecto.Association.NotLoaded.t() | nil,
+          assigned_department: Department.t() | Ecto.Association.NotLoaded.t() | nil,
           assigned_person_uuid: UUIDv7.t() | nil,
-          assigned_person: struct() | Ecto.Association.NotLoaded.t() | nil,
+          assigned_person: Person.t() | Ecto.Association.NotLoaded.t() | nil,
           completed_by_uuid: UUIDv7.t() | nil,
           completed_by: User.t() | Ecto.Association.NotLoaded.t() | nil,
           completed_at: DateTime.t() | nil,
+          translations: translations_map(),
           dependencies: [Dependency.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
@@ -65,6 +67,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:progress_pct, :integer, default: 0)
     field(:track_progress, :boolean, default: false)
     field(:completed_at, :utc_datetime)
+    field(:translations, :map, default: %{})
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
@@ -88,7 +91,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
 
   @required ~w(project_uuid task_uuid status)a
   @optional ~w(position description estimated_duration estimated_duration_unit
-               counts_weekends progress_pct track_progress
+               counts_weekends progress_pct track_progress translations
                assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
   # Server-only fields: set by trusted server code (completion tracking),
@@ -155,4 +158,37 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     do: gettext("only one of team, department, or person can be assigned")
 
   def statuses, do: @statuses
+
+  @doc "DB-column field names that participate in the `translations` JSONB."
+  @spec translatable_fields() :: [String.t()]
+  def translatable_fields, do: @translatable_fields
+
+  @doc """
+  Returns the assignment's description in the requested language, with
+  primary-fallback semantics: empty/missing override → the primary
+  `description` column, which itself may be `nil` (in which case the
+  caller's typical pattern is to fall further back to the parent task's
+  `localized_description/2`). The double-fallback chain keeps existing
+  call sites like `a.description || a.task.description` working
+  locale-aware: `Assignment.localized_description(a, lang) ||
+  Task.localized_description(a.task, lang)`.
+  """
+  @spec localized_description(t(), String.t() | nil) :: String.t() | nil
+  def localized_description(%__MODULE__{} = a, lang) do
+    case lookup_translation(a.translations, lang, "description") do
+      nil -> a.description
+      "" -> a.description
+      val -> val
+    end
+  end
+
+  defp lookup_translation(translations, lang, field)
+       when is_map(translations) and is_binary(lang) do
+    case Map.get(translations, lang) do
+      %{} = lang_map -> Map.get(lang_map, field)
+      _ -> nil
+    end
+  end
+
+  defp lookup_translation(_translations, _lang, _field), do: nil
 end

@@ -247,22 +247,16 @@ V105 as part of the V01..V105 chain on first run.
   baseline; no regressions introduced. Pre-existing failure details
   below in "Open".
 
+## Fixed (Batch 2 — 2026-05-11 re-validation)
+
+- ~~Pre-existing 4 test failures in `assignments_test.exs`
+  (`completed_by_uuid` FK against `phoenix_kit_users` not satisfied
+  by fake `%User{uuid: ...}`)~~ — resolved in commit `2e70505`
+  (Phase 2 sweep). Test fixture now uses `real_user_uuid!/0` helper
+  at `assignments_test.exs:46-54` that builds a real user via
+  `Auth.register_user/1` before passing into completion paths. All
+  call sites updated.
+
 ## Open
 
-### Pre-existing test failures (not introduced by this batch)
-
-`test/phoenix_kit_projects/integration/assignments_test.exs` —
-**4 of 53 tests fail on `main`** (without my changes), all in
-`AssignmentsTest`:
-- `complete_assignment/2 + reopen_assignment/1 complete sets status and completion fields` (line 95)
-- `complete_assignment/2 + reopen_assignment/1 reopen clears completion fields`
-- `mass-assignment guard update_assignment_status DOES apply completed_by_uuid/completed_at`
-- `PubSub broadcast complete_assignment fires the same broadcast (sugar helper parity)`
-
-Same root cause: each passes a fake `actor` `%User{uuid: "..."}` to
-`Projects.complete_assignment/2`, but the V100 schema added a
-`completed_by_uuid` FK referencing `phoenix_kit_users(uuid)`. The
-test fixture never seeds the user, so the UPDATE raises
-`Ecto.ConstraintError`. Phase 2 C8 territory — needs a real-user
-fixture before calling `complete_assignment`. Confirmed pre-existing
-by stashing my edits and re-running.
+None.

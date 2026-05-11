@@ -46,33 +46,40 @@ defmodule PhoenixKitProjects.Schemas.Task do
   def to_hours(n, unit, _counts_weekends),
     do: n * Map.get(@hours_per_weekdays, unit, 1)
 
-  # Cross-module assoc fields use `struct()` rather than the precise
-  # `PhoenixKitStaff.Schemas.<X>.t()` because phoenix_kit_staff Hex
-  # 0.1.0 doesn't ship `@type t` declarations on its schemas (the
-  # workspace version does — once it publishes 0.1.1, tighten these
-  # back to the named types).
-  # Tracking: BeamLabEU/phoenix_kit_staff#3.
+  @typedoc """
+  JSONB map of secondary-language overrides for translatable fields.
+  Same shape as `Project.translations_map` — primary stays in the
+  dedicated columns, this map only carries non-primary overrides.
+  """
+  @type translations_map :: %{optional(String.t()) => %{optional(String.t()) => String.t()}}
+
   @type t :: %__MODULE__{
           uuid: UUIDv7.t() | nil,
           title: String.t() | nil,
           description: String.t() | nil,
           estimated_duration: integer() | nil,
           estimated_duration_unit: String.t() | nil,
+          position: integer() | nil,
+          translations: translations_map(),
           default_assigned_team_uuid: UUIDv7.t() | nil,
-          default_assigned_team: struct() | Ecto.Association.NotLoaded.t() | nil,
+          default_assigned_team: Team.t() | Ecto.Association.NotLoaded.t() | nil,
           default_assigned_department_uuid: UUIDv7.t() | nil,
-          default_assigned_department: struct() | Ecto.Association.NotLoaded.t() | nil,
+          default_assigned_department: Department.t() | Ecto.Association.NotLoaded.t() | nil,
           default_assigned_person_uuid: UUIDv7.t() | nil,
-          default_assigned_person: struct() | Ecto.Association.NotLoaded.t() | nil,
+          default_assigned_person: Person.t() | Ecto.Association.NotLoaded.t() | nil,
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
         }
+
+  @translatable_fields ~w(title description)
 
   schema "phoenix_kit_project_tasks" do
     field(:title, :string)
     field(:description, :string)
     field(:estimated_duration, :integer)
     field(:estimated_duration_unit, :string, default: "hours")
+    field(:position, :integer, default: 0)
+    field(:translations, :map, default: %{})
 
     belongs_to(:default_assigned_team, Team,
       foreign_key: :default_assigned_team_uuid,
@@ -93,7 +100,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
   end
 
   @required ~w(title)a
-  @optional ~w(description estimated_duration estimated_duration_unit
+  @optional ~w(description estimated_duration estimated_duration_unit position translations
                default_assigned_team_uuid default_assigned_department_uuid
                default_assigned_person_uuid)a
 
@@ -105,10 +112,6 @@ defmodule PhoenixKitProjects.Schemas.Task do
     |> validate_number(:estimated_duration, greater_than: 0)
     |> validate_inclusion(:estimated_duration_unit, @duration_units)
     |> validate_single_default_assignee()
-    |> unique_constraint(:title,
-      name: :phoenix_kit_project_tasks_title_index,
-      message: gettext("already taken")
-    )
     |> check_constraint(:default_assigned_team_uuid,
       name: :phoenix_kit_project_tasks_single_default_assignee,
       message: gettext("only one default assignee (team, department, or person) allowed")
@@ -140,6 +143,42 @@ defmodule PhoenixKitProjects.Schemas.Task do
   end
 
   def duration_units, do: @duration_units
+
+  @doc "DB-column field names that participate in the `translations` JSONB."
+  @spec translatable_fields() :: [String.t()]
+  def translatable_fields, do: @translatable_fields
+
+  @doc """
+  Returns the task's title in the requested language, falling back to
+  the primary `title` column when the language has no override (or the
+  override is empty/nil).
+  """
+  @spec localized_title(t(), String.t() | nil) :: String.t() | nil
+  def localized_title(%__MODULE__{} = t, lang), do: localized_field(t, "title", lang)
+
+  @doc "Same fallback semantics as `localized_title/2` — for `description`."
+  @spec localized_description(t(), String.t() | nil) :: String.t() | nil
+  def localized_description(%__MODULE__{} = t, lang), do: localized_field(t, "description", lang)
+
+  defp localized_field(t, field, lang) do
+    primary = Map.get(t, String.to_existing_atom(field))
+
+    case lookup_translation(t.translations, lang, field) do
+      nil -> primary
+      "" -> primary
+      val -> val
+    end
+  end
+
+  defp lookup_translation(translations, lang, field)
+       when is_map(translations) and is_binary(lang) do
+    case Map.get(translations, lang) do
+      %{} = lang_map -> Map.get(lang_map, field)
+      _ -> nil
+    end
+  end
+
+  defp lookup_translation(_translations, _lang, _field), do: nil
 
   def format_duration(nil, _), do: "—"
   def format_duration(_, nil), do: "—"

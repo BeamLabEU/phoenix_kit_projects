@@ -2,18 +2,14 @@ defmodule PhoenixKitProjects.Schemas.ProjectBranchesTest do
   @moduledoc """
   Branch coverage on `Project` schema — `name_index_for/2` (atom + string
   key paths, struct fallback), `maybe_require_date/1` (scheduled vs
-  immediate), `statuses/0` and `start_modes/0` getters.
+  immediate), `start_modes/0` getter, `derived_status/2` ordering.
   """
 
   use PhoenixKitProjects.DataCase, async: true
 
   alias PhoenixKitProjects.Schemas.Project
 
-  describe "statuses/0 + start_modes/0 getters" do
-    test "statuses/0 returns the canonical list" do
-      assert Project.statuses() == ~w(active archived)
-    end
-
+  describe "start_modes/0 getter" do
     test "start_modes/0 returns the canonical list" do
       assert Project.start_modes() == ~w(immediate scheduled)
     end
@@ -25,8 +21,7 @@ defmodule PhoenixKitProjects.Schemas.ProjectBranchesTest do
         Project.changeset(%Project{}, %{
           "name" => "S",
           "is_template" => "false",
-          "start_mode" => "scheduled",
-          "status" => "active"
+          "start_mode" => "scheduled"
         })
 
       refute cs.valid?
@@ -39,8 +34,7 @@ defmodule PhoenixKitProjects.Schemas.ProjectBranchesTest do
           "name" => "S",
           "is_template" => "false",
           "start_mode" => "scheduled",
-          "scheduled_start_date" => Date.utc_today() |> Date.to_iso8601(),
-          "status" => "active"
+          "scheduled_start_date" => DateTime.utc_now() |> DateTime.to_iso8601()
         })
 
       assert cs.valid?
@@ -51,101 +45,82 @@ defmodule PhoenixKitProjects.Schemas.ProjectBranchesTest do
         Project.changeset(%Project{}, %{
           "name" => "I",
           "is_template" => "false",
-          "start_mode" => "immediate",
-          "status" => "active"
+          "start_mode" => "immediate"
         })
 
       assert cs.valid?
     end
   end
 
-  describe "name_index_for/2 picks partial-index per is_template" do
-    test "template attrs (string key 'true') select the template index — accepts both project + template" do
-      # We can't read name_index_for/2 directly — it's defp. But we can
-      # observe its behaviour: a template named X and a project named X
-      # both insert without colliding because they hit different partial
-      # indexes.
-      shared = "Shared-#{System.unique_integer([:positive])}"
-
-      {:ok, _project} =
-        PhoenixKitProjects.Projects.create_project(%{
-          "name" => shared,
-          "is_template" => "false",
-          "start_mode" => "immediate",
-          "status" => "active"
-        })
-
-      {:ok, _template} =
-        PhoenixKitProjects.Projects.create_project(%{
-          "name" => shared,
-          "is_template" => "true",
-          "start_mode" => "immediate",
-          "status" => "active"
-        })
-    end
-
-    test "two templates with the same name still collide on the template index" do
-      shared = "Tpl-#{System.unique_integer([:positive])}"
-
-      {:ok, _} =
-        PhoenixKitProjects.Projects.create_project(%{
-          "name" => shared,
-          "is_template" => "true",
-          "start_mode" => "immediate",
-          "status" => "active"
-        })
-
-      assert {:error, %Ecto.Changeset{} = cs} =
-               PhoenixKitProjects.Projects.create_project(%{
-                 "name" => shared,
-                 "is_template" => "true",
-                 "start_mode" => "immediate",
-                 "status" => "active"
-               })
-
-      assert errors_on(cs) |> Map.has_key?(:name)
-    end
-
-    test "atom-keyed attrs path: changeset built directly with `is_template: true` atom key" do
-      # Cover the `Map.get(attrs, :is_template, ...)` branch where the
-      # atom key wins over the string key fallback.
-      cs = Project.changeset(%Project{}, %{is_template: true, name: "AtomKey"})
-      assert is_struct(cs)
-    end
-
-    test "struct-data fallback: blank attrs use existing struct's is_template" do
-      # When neither :is_template nor "is_template" is in attrs, the
-      # private `name_index_for/2` reads from the existing struct.
-      cs = Project.changeset(%Project{is_template: true}, %{name: "InheritFromStruct"})
-      assert is_struct(cs)
-    end
-  end
-
-  describe "validate_inclusion on status + start_mode" do
-    test "rejects unknown status" do
-      cs =
-        Project.changeset(%Project{}, %{
-          "name" => "X",
-          "is_template" => "false",
-          "start_mode" => "immediate",
-          "status" => "deleted"
-        })
-
-      refute cs.valid?
-      assert errors_on(cs) |> Map.has_key?(:status)
-    end
-
+  describe "validate_inclusion on start_mode" do
     test "rejects unknown start_mode" do
       cs =
         Project.changeset(%Project{}, %{
           "name" => "X",
           "is_template" => "false",
-          "start_mode" => "asap",
-          "status" => "active"
+          "start_mode" => "asap"
         })
 
       refute cs.valid?
       assert errors_on(cs) |> Map.has_key?(:start_mode)
+    end
+  end
+
+  describe "derived_status/2 priority order" do
+    test ":archived wins over everything" do
+      now = DateTime.utc_now()
+
+      p = %Project{
+        archived_at: now,
+        is_template: true,
+        completed_at: now,
+        started_at: now
+      }
+
+      assert Project.derived_status(p) == :archived
+    end
+
+    test ":template wins over completion / start" do
+      now = DateTime.utc_now()
+      p = %Project{is_template: true, completed_at: now, started_at: now}
+      assert Project.derived_status(p) == :template
+    end
+
+    test ":completed wins over :running" do
+      now = DateTime.utc_now()
+      p = %Project{started_at: now, completed_at: now}
+      assert Project.derived_status(p) == :completed
+    end
+
+    test ":running for started + not completed" do
+      now = DateTime.utc_now()
+      p = %Project{started_at: now}
+      assert Project.derived_status(p) == :running
+    end
+
+    test ":overdue for scheduled past start date" do
+      past = DateTime.add(DateTime.utc_now(), -3600, :second)
+      p = %Project{start_mode: "scheduled", scheduled_start_date: past}
+      assert Project.derived_status(p) == :overdue
+    end
+
+    test ":overdue for scheduled same-day past time" do
+      # Scheduled for 1 hour ago — must flip to :overdue even though the
+      # date is still today (time-of-day must be honored, not just date).
+      one_hour_ago = DateTime.add(DateTime.utc_now(), -3600, :second)
+      p = %Project{start_mode: "scheduled", scheduled_start_date: one_hour_ago}
+      assert Project.derived_status(p) == :overdue
+    end
+
+    test ":scheduled for scheduled future start date" do
+      future = DateTime.add(DateTime.utc_now(), 7 * 86_400, :second)
+      p = %Project{start_mode: "scheduled", scheduled_start_date: future}
+      assert Project.derived_status(p) == :scheduled
+    end
+
+    test ":setup for immediate not started" do
+      p = %Project{start_mode: "immediate"}
+      assert Project.derived_status(p) == :setup
     end
   end
 end

@@ -38,20 +38,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
   end
 
   describe "save_with_new_task error branch (invalid task_attrs)" do
-    test "create_task fails (e.g. duplicate title) shows fallback flash", %{conn: conn} do
+    test "blank new_task_title surfaces a 'Task title is required' flash", %{conn: conn} do
+      # V112 dropped the title unique-constraint, so duplicate-title is no
+      # longer a failure mode for `create_task_and_assign/3`. The
+      # remaining server-side guard is the blank-title branch — exercise
+      # that to keep the fallback-flash render path covered.
       project = fixture_project()
-      existing = fixture_task(%{"title" => "Dup-#{System.unique_integer([:positive])}"})
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
 
-      _ =
-        view
-        |> form("#assignment-form", assignment: %{status: "todo"}, task_mode: "new")
-        |> render_change()
+      _ = view |> element("button[phx-value-mode='new']") |> render_click()
 
-      # Same title as the existing task → unique-constraint failure on
-      # `create_task` → fallback flash branch.
       html =
         view
         |> form("#assignment-form",
@@ -62,13 +60,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
             estimated_duration_unit: "hours"
           },
           task_mode: "new",
-          new_task_title: existing.title
+          new_task_title: "   "
         )
         |> render_submit()
 
-      # Either created (if no unique constraint) or fell to error flash.
-      # Both paths exercise `create_task_and_assign/3`.
-      assert is_binary(html)
+      assert html =~ "Task title is required"
     end
   end
 

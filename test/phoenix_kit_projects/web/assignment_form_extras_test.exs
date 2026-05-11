@@ -43,11 +43,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       assert html =~ "from template" or html =~ "Description"
     end
 
-    test "validate with task_mode=new keeps form alive", %{conn: conn} do
+    test "switching to new-task tab + validate keeps form alive", %{conn: conn} do
       project = fixture_project()
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+
+      # New UI: tabs (Create new / From library) replaced the dropdown.
+      _ = view |> element("button[phx-value-mode='new']") |> render_click()
 
       _ =
         view

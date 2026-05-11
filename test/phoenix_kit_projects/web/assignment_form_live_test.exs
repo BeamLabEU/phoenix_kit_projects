@@ -88,13 +88,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
 
-      # Switch task_mode to "new" first so the LV re-renders with the
-      # `new_task_title` input. `form/3` only binds fields currently in
-      # the DOM, so without this step the input doesn't exist yet.
-      _ =
-        view
-        |> form("#assignment-form", assignment: %{status: "todo"}, task_mode: "new")
-        |> render_change()
+      # The dropdown was replaced with tabs — click the "Create new" tab
+      # button so `@task_mode` flips to "new" server-side, the hidden
+      # `task_mode` input re-renders with the new value, and the
+      # `new_task_title` input appears in the DOM. `form/3` only binds
+      # fields currently rendered, so without this step the title input
+      # doesn't exist (and the hidden's allowed value mismatches).
+      _ = view |> element("button[phx-value-mode='new']") |> render_click()
 
       html =
         view
@@ -115,10 +115,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
 
-      _ =
-        view
-        |> form("#assignment-form", assignment: %{status: "todo"}, task_mode: "new")
-        |> render_change()
+      _ = view |> element("button[phx-value-mode='new']") |> render_click()
 
       title = "Inline-#{System.unique_integer([:positive])}"
 

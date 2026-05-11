@@ -7,9 +7,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
 
   require Logger
@@ -34,17 +36,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         is_template = project.is_template
 
+        lang = L10n.current_content_lang()
+
         {:ok,
          socket
          |> assign(
-           page_title: project.name,
+           page_title: Project.localized_name(project, lang),
            project: project,
            is_template: is_template,
            editing_duration_uuid: nil,
-           duration_form:
-             to_form(%{"estimated_duration" => "", "estimated_duration_unit" => "hours"})
+           start_modal_open: false,
+           start_form: to_form(%{"start_at" => default_start_at_local()}),
+           # Comments drawer state. `comments_resource` is `nil` when
+           # closed; a `%{type, uuid, title}` map when open. The
+           # `CommentsComponent` is keyed on `{type, uuid}` so opening
+           # different resources doesn't reuse stale state.
+           comments_resource: nil,
+           comments_enabled: comments_available?(),
+           project_comment_count: 0,
+           assignment_comment_counts: %{}
          )
-         |> load_assignments()}
+         |> load_assignments()
+         |> load_comment_counts()}
     end
   end
 
@@ -79,6 +92,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
      socket
      |> put_flash(:info, gettext("This project was deleted."))
      |> push_navigate(to: Paths.projects())}
+  end
+
+  # `CommentsComponent` notifies its parent LV after every create /
+  # delete so the button badges can refresh without an extra round
+  # trip. We reload the full count map regardless of which resource
+  # changed — both project and assignment counts cost a single
+  # query each, and the message carries an `action` (`:created |
+  # :deleted`) that we don't need to discriminate on here.
+  def handle_info({:comments_updated, _payload}, socket) do
+    {:noreply, load_comment_counts(socket)}
   end
 
   def handle_info(msg, socket) do
@@ -299,17 +322,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       nil ->
         {:noreply, socket}
 
-      a ->
-        {:noreply,
-         assign(socket,
-           editing_duration_uuid: uuid,
-           duration_form:
-             to_form(%{
-               "estimated_duration" =>
-                 (a.estimated_duration && to_string(a.estimated_duration)) || "",
-               "estimated_duration_unit" => a.estimated_duration_unit || "hours"
-             })
-         )}
+      _a ->
+        # Just flip the assign — the template sources the prefilled
+        # values directly from the assignment row via the `:for=` loop
+        # variable, so there's nothing to stage into a form here.
+        {:noreply, assign(socket, editing_duration_uuid: uuid)}
     end
   end
 
@@ -479,10 +496,151 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("start_project", _params, socket) do
-    case Projects.start_project(socket.assigns.project) do
+  # Opens the start-project modal pre-filled with today's date. The
+  # actual DB write happens in `confirm_start_project` so users can
+  # backdate (project was already running before the system was set up)
+  # or future-date (preparing the project but actual start is later).
+  # Falls through to a no-op for projects already started — defensive
+  # against double-clicks racing the LV's render of the now-hidden
+  # button.
+  def handle_event("open_start_modal", _params, socket) do
+    if socket.assigns.project.started_at do
+      {:noreply, socket}
+    else
+      {:noreply,
+       assign(socket,
+         start_modal_open: true,
+         start_form: to_form(%{"start_at" => default_start_at_local()})
+       )}
+    end
+  end
+
+  def handle_event("close_start_modal", _params, socket) do
+    {:noreply, assign(socket, start_modal_open: false)}
+  end
+
+  def handle_event("confirm_start_project", %{"start_at" => datetime_str}, socket) do
+    case parse_start_at(datetime_str) do
+      {:ok, started_at} ->
+        do_start_project(socket, started_at)
+
+      {:error, msg} ->
+        {:noreply, put_flash(socket, :error, msg)}
+    end
+  end
+
+  # `<input type="datetime-local">` posts `YYYY-MM-DDTHH:mm` (no
+  # seconds, no timezone). Treat as UTC — what the user typed is what
+  # gets stored. Pad seconds when missing so `NaiveDateTime` accepts it.
+  defp parse_start_at(value) when is_binary(value) do
+    with_seconds = if String.length(value) == 16, do: value <> ":00", else: value
+
+    case NaiveDateTime.from_iso8601(with_seconds) do
+      {:ok, ndt} ->
+        {:ok, DateTime.from_naive!(ndt, "Etc/UTC")}
+
+      {:error, _} ->
+        {:error, gettext("Invalid date — please pick a valid date and time.")}
+    end
+  end
+
+  defp parse_start_at(_),
+    do: {:error, gettext("Invalid date — please pick a valid date and time.")}
+
+  # True only when the `phoenix_kit_comments` module is loaded AND
+  # admin-enabled. Off-by-default `enabled?/0` rescues any error
+  # (missing tables, sandbox-down) and returns false, so this stays
+  # safe in early-install or test environments.
+  defp comments_available? do
+    Code.ensure_loaded?(PhoenixKitComments) and PhoenixKitComments.enabled?()
+  end
+
+  # Refreshes both the project-level and per-assignment comment
+  # counts. Called from mount + after `:comments_updated` so the
+  # button badges stay in sync with reality. Cheap: project count is
+  # one query, assignment counts are one batched query keyed by
+  # uuid — no N+1 even with long timelines.
+  defp load_comment_counts(socket) do
+    if socket.assigns[:comments_enabled] do
+      project_uuid = socket.assigns.project.uuid
+
+      # Rescue narrowed to the shapes we actually expect: comments are
+      # optional (UndefinedFunctionError when the module is absent
+      # mid-install / mid-Hex-bump) and DB transients shouldn't break
+      # the badge. Anything else surfaces and gets fixed.
+      project_count =
+        try do
+          PhoenixKitComments.count_comments("project", project_uuid, status: "published")
+        rescue
+          UndefinedFunctionError -> 0
+          Postgrex.Error -> 0
+          DBConnection.OwnershipError -> 0
+        catch
+          :exit, _reason -> 0
+        end
+
+      assignment_uuids = Enum.map(socket.assigns.assignments, & &1.uuid)
+      assignment_counts = Projects.comment_counts_for_assignments(assignment_uuids)
+
+      assign(socket,
+        project_comment_count: project_count,
+        assignment_comment_counts: assignment_counts
+      )
+    else
+      socket
+    end
+  end
+
+  # Default value for `<input type="datetime-local">`: today at the
+  # current hour:minute, formatted `YYYY-MM-DDTHH:mm` (the format the
+  # browser expects). Built from UTC so the prefilled value matches
+  # what'll be persisted when the user clicks Start without changing
+  # anything.
+  defp default_start_at_local do
+    DateTime.utc_now()
+    |> DateTime.truncate(:second)
+    |> DateTime.to_naive()
+    |> NaiveDateTime.to_iso8601()
+    |> String.slice(0, 16)
+  end
+
+  defp do_start_project(socket, started_at) do
+    case Projects.start_project(socket.assigns.project, started_at) do
       {:ok, project} ->
         Activity.log("projects.project_started",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: project.uuid,
+          metadata: %{
+            "name" => project.name,
+            "started_at" => DateTime.to_iso8601(started_at)
+          }
+        )
+
+        {:noreply,
+         socket
+         |> assign(project: project, start_modal_open: false)
+         |> put_flash(:info, gettext("Project started!"))}
+
+      {:error, _} ->
+        Activity.log_failed("projects.project_started",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: socket.assigns.project.uuid,
+          metadata: %{
+            "name" => socket.assigns.project.name,
+            "started_at" => DateTime.to_iso8601(started_at)
+          }
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not start project."))}
+    end
+  end
+
+  def handle_event("archive_project", _params, socket) do
+    case Projects.archive_project(socket.assigns.project) do
+      {:ok, project} ->
+        Activity.log("projects.project_archived",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: project.uuid,
@@ -490,17 +648,105 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         )
 
         {:noreply,
-         assign(socket, project: project) |> put_flash(:info, gettext("Project started!"))}
+         assign(socket, project: project) |> put_flash(:info, gettext("Project archived."))}
 
       {:error, _} ->
-        Activity.log_failed("projects.project_started",
+        Activity.log_failed("projects.project_archived",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: socket.assigns.project.uuid,
           metadata: %{"name" => socket.assigns.project.name}
         )
 
-        {:noreply, put_flash(socket, :error, gettext("Could not start project."))}
+        {:noreply, put_flash(socket, :error, gettext("Could not archive project."))}
+    end
+  end
+
+  # Comments drawer. Opening sets `comments_resource` to the
+  # `(type, uuid, title)` triple of the target so the drawer header
+  # can show context and the embedded `CommentsComponent` is keyed
+  # uniquely per resource. Closing clears the assign — the
+  # component unmounts and any in-flight reply state is dropped
+  # (intended: drawer-close is a "step away" affordance).
+  def handle_event("open_comments", %{"type" => type, "uuid" => uuid} = params, socket)
+      when type in ["project", "assignment"] do
+    title = Map.get(params, "title", "")
+
+    {:noreply,
+     assign(socket, comments_resource: %{type: type, uuid: uuid, title: title})}
+  end
+
+  def handle_event("close_comments", _params, socket) do
+    {:noreply, assign(socket, comments_resource: nil)}
+  end
+
+  # SortableGrid drop handler. Validates the new order against the
+  # project's assignments, applies positions atomically, and pushes a
+  # `sortable:flash` back so the dragged card flashes green/red. The
+  # LV reload happens via the assignment_updated PubSub fan-out
+  # triggered by the position writes — no explicit `load_assignments`
+  # needed here.
+  def handle_event("reorder_assignments", %{"ordered_ids" => ordered_ids} = params, socket)
+      when is_list(ordered_ids) do
+    moved_id = params["moved_id"]
+    project_uuid = socket.assigns.project.uuid
+
+    case Projects.reorder_assignments(project_uuid, ordered_ids,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      :ok ->
+        {:noreply,
+         socket
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "ok"})
+         |> load_assignments()}
+
+      {:error, :too_many_uuids} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Too many tasks to reorder at once."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_assignments()}
+
+      {:error, :not_in_project} ->
+        # Stale view — a concurrent change moved an assignment out of
+        # this project. Snap back to the persisted state.
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Tasks have changed; please try again."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_assignments()}
+
+      {:error, _reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Could not reorder tasks."))
+         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
+         |> load_assignments()}
+    end
+  end
+
+  def handle_event("unarchive_project", _params, socket) do
+    case Projects.unarchive_project(socket.assigns.project) do
+      {:ok, project} ->
+        Activity.log("projects.project_unarchived",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: project.uuid,
+          metadata: %{"name" => project.name}
+        )
+
+        {:noreply,
+         assign(socket, project: project) |> put_flash(:info, gettext("Project unarchived."))}
+
+      {:error, _} ->
+        Activity.log_failed("projects.project_unarchived",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: socket.assigns.project.uuid,
+          metadata: %{"name" => socket.assigns.project.name}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not unarchive project."))}
     end
   end
 
@@ -654,6 +900,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp build_schedule(project, total_hours, effective_done) do
     now = DateTime.utc_now()
     calendar_hours = DateTime.diff(now, project.started_at, :second) / 3600
+    # `planned_end_for/2` honors `counts_weekends`: for weekday-only
+    # projects weekend days don't consume the work budget.
+    planned_end = Project.planned_end_for(project, total_hours)
+    remaining_hours = max(total_hours - effective_done, 0)
+    past_planned_end? = DateTime.compare(now, planned_end) == :gt
+    done? = remaining_hours <= 0
 
     # Planned-elapsed = work hours under the project's schedule rules.
     # Velocity-elapsed uses calendar time when weekend work has pulled us ahead.
@@ -667,14 +919,37 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         do: calendar_hours,
         else: planned_elapsed_hours
 
-    expected_pct = min(planned_elapsed_hours / total_hours * 100, 100)
-    actual_pct = effective_done / total_hours * 100
+    # Cap expected at 100% once calendar time has blown past the
+    # planned end. Otherwise a project with all weekends elapsed and a
+    # short total can report "0% expected" — which then makes a 0%-done
+    # project look "on time" instead of overdue.
+    raw_expected_pct = planned_elapsed_hours / total_hours * 100
+
+    expected_pct =
+      cond do
+        past_planned_end? and not done? -> 100.0
+        true -> min(raw_expected_pct, 100)
+      end
+
+    # Cap defensively: nothing rendered should exceed 100% even if
+    # `effective_done` somehow drifts past `total_hours` (e.g. task
+    # durations edited downward after work was logged).
+    actual_pct = min(effective_done / total_hours * 100, 100)
     delta_pct = actual_pct - expected_pct
+    overdue? = past_planned_end? and not done?
 
-    {delta_value, delta_unit} = humanize_hours(abs(delta_pct / 100 * total_hours))
+    # When overdue, report calendar lateness ("1 day overdue") rather
+    # than work-hours-equivalent — for a 52-minute task that's 2 days
+    # late, "< 1 hour behind" reads as nearly-on-time, which is wrong.
+    delta_label =
+      cond do
+        overdue? ->
+          delta_days(now, planned_end)
 
-    planned_end = DateTime.add(project.started_at, round(total_hours * 3600), :second)
-    remaining_hours = max(total_hours - effective_done, 0)
+        true ->
+          {v, u} = humanize_hours(abs(delta_pct / 100 * total_hours))
+          "#{v} #{u}"
+      end
 
     %{
       total_hours: total_hours,
@@ -683,8 +958,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       expected_pct: round(expected_pct),
       actual_pct: round(actual_pct),
       delta_pct: round(delta_pct),
-      ahead?: delta_pct >= 0,
-      delta_label: "#{delta_value} #{delta_unit}",
+      ahead?: delta_pct >= 0 and not overdue?,
+      overdue?: overdue?,
+      delta_label: delta_label,
       planned_end: planned_end,
       projected_end:
         projected_end(
@@ -714,29 +990,54 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     DateTime.add(DateTime.utc_now(), extra_seconds, :second)
   end
 
-  defp work_hours_elapsed(from, to) do
-    total_hours = DateTime.diff(to, from, :second) / 3600
-    total_days = total_hours / 24
-    full_weeks = trunc(total_days / 7)
-    remaining_days = total_days - full_weeks * 7
+  # Mirrors `Project.planned_end_for/2`'s weekday-only model: each
+  # weekday's calendar time contributes work hours at the 3:1 ratio
+  # (24 calendar hours = 8 work hours); weekend days contribute zero.
+  # Walks the calendar day-by-day clipping the start/end days.
+  defp work_hours_elapsed(%DateTime{} = from, %DateTime{} = to) do
+    if DateTime.compare(from, to) != :lt do
+      0
+    else
+      sum_weekday_calendar_hours(from, to) / 3.0
+    end
+  end
 
-    start_dow = Date.day_of_week(DateTime.to_date(from))
+  defp sum_weekday_calendar_hours(from, to) do
+    from_date = DateTime.to_date(from)
+    to_date = DateTime.to_date(to)
 
-    weekend_days_in_remainder =
-      Enum.count(0..trunc(remaining_days), fn d ->
-        dow = rem(start_dow + d - 1, 7) + 1
-        dow >= 6
-      end)
+    Date.range(from_date, to_date)
+    |> Enum.reduce(0.0, fn date, acc ->
+      if Date.day_of_week(date) <= 5 do
+        acc + weekday_calendar_hours_on(date, from, to)
+      else
+        acc
+      end
+    end)
+  end
 
-    work_days = full_weeks * 5 + (remaining_days - weekend_days_in_remainder)
-    max(work_days * 8, 0)
+  defp weekday_calendar_hours_on(date, from, to) do
+    sod = DateTime.new!(date, ~T[00:00:00.000], from.time_zone)
+    eod = DateTime.new!(date, ~T[23:59:59.999], from.time_zone)
+
+    window_start = if DateTime.compare(from, sod) == :gt, do: from, else: sod
+    window_end = if DateTime.compare(to, eod) == :lt, do: to, else: eod
+
+    if DateTime.compare(window_start, window_end) == :lt do
+      DateTime.diff(window_end, window_start, :second) / 3600
+    else
+      0
+    end
   end
 
   defp delta_days(later, earlier) do
-    days = DateTime.diff(later, earlier, :second) / 86_400
+    seconds = DateTime.diff(later, earlier, :second)
+    hours = seconds / 3600
+    days = hours / 24
 
     cond do
-      days < 1 -> gettext("< 1 day")
+      hours < 1 -> gettext("< 1 hour")
+      days < 1 -> ngettext("%{count} hour", "%{count} hours", round(hours))
       days < 2 -> gettext("1 day")
       days < 14 -> ngettext("%{count} day", "%{count} days", round(days))
       days < 60 -> gettext("%{n} weeks", n: Float.round(days / 7, 1))
@@ -744,11 +1045,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # Calendar-scale boundaries (1h, 24h, 7d, 30d) so unit transitions
+  # land at intuitive points. Previously transitioned at 8h/40h which
+  # came from "1 workday = 8h" and produced jarring jumps like
+  # 7.9h → "8 hours", 8h → "1.0 days".
   defp humanize_hours(h) when h < 1, do: {gettext("< 1"), gettext("hour")}
-  defp humanize_hours(h) when h < 8, do: {round(h), gettext("hours")}
-  defp humanize_hours(h) when h < 40, do: {Float.round(h / 8, 1), gettext("days")}
-  defp humanize_hours(h) when h < 160, do: {Float.round(h / 40, 1), gettext("weeks")}
-  defp humanize_hours(h), do: {Float.round(h / 160, 1), gettext("months")}
+  defp humanize_hours(h) when h < 24, do: {round(h), gettext("hours")}
+  defp humanize_hours(h) when h < 24 * 7, do: {Float.round(h / 24, 1), gettext("days")}
+  defp humanize_hours(h) when h < 24 * 30, do: {Float.round(h / (24 * 7), 1), gettext("weeks")}
+  defp humanize_hours(h), do: {Float.round(h / (24 * 30), 1), gettext("months")}
 
   defp status_color("todo"), do: "bg-base-300"
   defp status_color("in_progress"), do: "bg-warning"
@@ -802,7 +1107,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </.link>
         <div class="flex items-center justify-between mt-1">
           <div class="flex items-center gap-2">
-            <h1 class="text-2xl font-bold">{@project.name}</h1>
+            <h1 class="text-2xl font-bold">{Project.localized_name(@project, L10n.current_content_lang())}</h1>
             <%= if @is_template do %>
               <span class="badge badge-info badge-sm">{gettext("Template")}</span>
             <% end %>
@@ -811,21 +1116,66 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name="hero-check-circle" class="w-3.5 h-3.5" /> {gettext("Completed")}
               </span>
             <% end %>
+            <%= if @project.archived_at do %>
+              <span class="badge badge-ghost gap-1">
+                <.icon name="hero-archive-box" class="w-3.5 h-3.5" /> {gettext("Archived")}
+              </span>
+            <% end %>
           </div>
           <div class="flex gap-2">
             <.link navigate={Paths.new_assignment(@project.uuid)} class="btn btn-primary btn-sm">
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
             </.link>
+            <button
+              :if={@comments_enabled}
+              type="button"
+              phx-click="open_comments"
+              phx-value-type="project"
+              phx-value-uuid={@project.uuid}
+              phx-value-title={Project.localized_name(@project, L10n.current_content_lang())}
+              class="btn btn-ghost btn-sm gap-1"
+              title={gettext("Open project comments")}
+            >
+              <.icon name="hero-chat-bubble-left-right" class="w-4 h-4" /> {gettext("Comments")}
+              <span :if={@project_comment_count > 0} class="badge badge-sm badge-primary">
+                {@project_comment_count}
+              </span>
+            </button>
             <.link
               navigate={if @is_template, do: Paths.edit_template(@project.uuid), else: Paths.edit_project(@project.uuid)}
               class="btn btn-ghost btn-sm"
             >
               <.icon name="hero-pencil" class="w-4 h-4" /> {gettext("Edit")}
             </.link>
+            <%= if not @is_template do %>
+              <%= if @project.archived_at do %>
+                <button
+                  type="button"
+                  phx-click="unarchive_project"
+                  phx-disable-with={gettext("Unarchiving…")}
+                  class="btn btn-ghost btn-sm"
+                  title={gettext("Restore from archive")}
+                >
+                  <.icon name="hero-arrow-uturn-left" class="w-4 h-4" /> {gettext("Unarchive")}
+                </button>
+              <% else %>
+                <button
+                  type="button"
+                  phx-click="archive_project"
+                  phx-disable-with={gettext("Archiving…")}
+                  data-confirm={gettext("Archive this project? It will be hidden from the main lists but kept in the database.")}
+                  class="btn btn-ghost btn-sm"
+                  title={gettext("Hide from main lists")}
+                >
+                  <.icon name="hero-archive-box" class="w-4 h-4" /> {gettext("Archive")}
+                </button>
+              <% end %>
+            <% end %>
           </div>
         </div>
-        <div :if={@project.description} class="text-sm text-base-content/60 mt-1">
-          {@project.description}
+        <% desc = Project.localized_description(@project, L10n.current_content_lang()) %>
+        <div :if={desc} class="text-sm text-base-content/60 mt-1">
+          {desc}
         </div>
       </div>
 
@@ -856,16 +1206,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </span>
             <%= if @schedule do %>
               <span class="text-base-content/40 mx-1">·</span>
-              <%= if @schedule.ahead? do %>
-                <span class="badge badge-success badge-sm gap-1">
-                  <.icon name="hero-arrow-trending-up" class="w-3 h-3" />
-                  {gettext("%{delta} ahead", delta: @schedule.delta_label)}
-                </span>
-              <% else %>
-                <span class="badge badge-error badge-sm gap-1">
-                  <.icon name="hero-arrow-trending-down" class="w-3 h-3" />
-                  {gettext("%{delta} behind", delta: @schedule.delta_label)}
-                </span>
+              <%= cond do %>
+                <% @schedule.overdue? -> %>
+                  <span class="badge badge-error badge-sm gap-1">
+                    <.icon name="hero-exclamation-triangle" class="w-3 h-3" />
+                    {gettext("%{delta} overdue", delta: @schedule.delta_label)}
+                  </span>
+                <% @schedule.ahead? -> %>
+                  <span class="badge badge-success badge-sm gap-1">
+                    <.icon name="hero-arrow-trending-up" class="w-3 h-3" />
+                    {gettext("%{delta} ahead", delta: @schedule.delta_label)}
+                  </span>
+                <% true -> %>
+                  <span class="badge badge-error badge-sm gap-1">
+                    <.icon name="hero-arrow-trending-down" class="w-3 h-3" />
+                    {gettext("%{delta} behind", delta: @schedule.delta_label)}
+                  </span>
               <% end %>
               <span class="text-xs text-base-content/50 ml-1">
                 {gettext("(%{actual}% done vs %{expected}% expected)", actual: @schedule.actual_pct, expected: @schedule.expected_pct)}
@@ -874,12 +1230,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <% @project.start_mode == "scheduled" -> %>
             <.icon name="hero-calendar" class="w-5 h-5 text-info" />
             <span class="text-sm">
-              {gettext("Scheduled for %{date}", date: L10n.format_date(@project.scheduled_start_date))}
+              {gettext("Scheduled for %{when}", when: L10n.format_datetime(@project.scheduled_start_date))}
             </span>
             <button
               type="button"
-              phx-click="start_project"
-              phx-disable-with={gettext("Starting…")}
+              phx-click="open_start_modal"
               class="btn btn-success btn-xs ml-auto"
             >
               {gettext("Start now")}
@@ -889,9 +1244,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <span class="text-sm">{gettext("Not started — set up tasks, then start")}</span>
             <button
               type="button"
-              phx-click="start_project"
-              phx-disable-with={gettext("Starting…")}
-              data-confirm={gettext("Start this project now?")}
+              phx-click="open_start_modal"
               class="btn btn-success btn-xs ml-auto"
             >
               <.icon name="hero-play" class="w-4 h-4" /> {gettext("Start project")}
@@ -951,21 +1304,36 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       <%!-- Timeline --%>
       <%= if @assignments == [] do %>
-        <div class="text-center py-16 text-base-content/60">
-          <.icon name="hero-rectangle-stack" class="w-12 h-12 mx-auto mb-2 opacity-40" />
-          <p>{gettext("No tasks in this project yet.")}</p>
-          <.link navigate={Paths.new_assignment(@project.uuid)} class="link link-primary text-sm">
-            {gettext("Add one from the task library")}
-          </.link>
-        </div>
+        <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
+          <:cta>
+            <.link navigate={Paths.new_assignment(@project.uuid)} class="link link-primary text-sm">
+              {gettext("Add one from the task library")}
+            </.link>
+          </:cta>
+        </.empty_state>
       <% else %>
         <div class="relative">
           <%!-- Vertical connector line --%>
           <div class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"></div>
 
-          <div class="flex flex-col gap-0">
+          <%!-- SortableGrid hook lives on the inner flex container —
+               the absolute-positioned vertical line is a sibling
+               outside it so it doesn't get included in the sortable
+               item set. The drag handle on each card's title row is
+               the only initiator (`.pk-drag-handle`), so clicks
+               anywhere else on the card still trigger the existing
+               status / duration / dep handlers. --%>
+          <div
+            id="project-show-timeline"
+            class="flex flex-col gap-0"
+            phx-hook="SortableGrid"
+            data-sortable="true"
+            data-sortable-event="reorder_assignments"
+            data-sortable-items=".sortable-item"
+            data-sortable-handle=".pk-drag-handle"
+          >
             <%= for {a, idx} <- Enum.with_index(@assignments) do %>
-              <div class="relative flex gap-4 py-3">
+              <div class="relative flex gap-4 py-3 sortable-item" data-id={a.uuid}>
                 <%!-- Status dot on the timeline --%>
                 <div class="relative z-10 shrink-0 flex flex-col items-center">
                   <div class={"w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold #{status_color(a.status)}"}>
@@ -983,8 +1351,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <%!-- Title row --%>
                     <div class="flex items-center justify-between gap-2">
                       <div class="flex items-center gap-2 min-w-0">
+                        <span class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content shrink-0" title={gettext("Drag to reorder")}>
+                          <.icon name="hero-bars-3" class="w-4 h-4" />
+                        </span>
                         <span :if={not @is_template} class={"badge badge-sm #{status_badge_class(a.status)}"}>{status_label(a.status)}</span>
-                        <span class="font-medium truncate">{a.task.title}</span>
+                        <span class="font-medium truncate">{TaskSchema.localized_title(a.task, L10n.current_content_lang())}</span>
                       </div>
 
                       <div class="flex items-center gap-1 shrink-0">
@@ -1020,6 +1391,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           <% end %>
                         <% end %>
 
+                        <% a_comment_count = Map.get(@assignment_comment_counts, a.uuid, 0) %>
+                        <button
+                          :if={@comments_enabled and not @is_template}
+                          type="button"
+                          phx-click="open_comments"
+                          phx-value-type="assignment"
+                          phx-value-uuid={a.uuid}
+                          phx-value-title={TaskSchema.localized_title(a.task, L10n.current_content_lang())}
+                          class="btn btn-ghost btn-xs gap-1"
+                          title={gettext("Open comments")}
+                        >
+                          <.icon name="hero-chat-bubble-left" class="w-3.5 h-3.5" />
+                          <span :if={a_comment_count > 0} class="badge badge-xs badge-primary">
+                            {a_comment_count}
+                          </span>
+                        </button>
                         <.link navigate={Paths.edit_assignment(@project.uuid, a.uuid)} class="btn btn-ghost btn-xs">
                           <.icon name="hero-pencil" class="w-3.5 h-3.5" />
                         </.link>
@@ -1027,7 +1414,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           phx-click="remove_assignment"
                           phx-value-uuid={a.uuid}
                           phx-disable-with={gettext("Removing…")}
-                          data-confirm={gettext("Remove \"%{title}\"?", title: a.task.title)}
+                          data-confirm={gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(a.task, L10n.current_content_lang()))}
                           class="btn btn-ghost btn-xs text-error"
                         >
                           <.icon name="hero-trash" class="w-3.5 h-3.5" />
@@ -1036,26 +1423,48 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     </div>
 
                     <%!-- Description --%>
-                    <div :if={a.description || a.task.description} class="text-xs text-base-content/60">
-                      {a.description || a.task.description}
+                    <% lang = L10n.current_content_lang() %>
+                    <% a_desc = Assignment.localized_description(a, lang) %>
+                    <% t_desc = TaskSchema.localized_description(a.task, lang) %>
+                    <% shown_desc = a_desc || t_desc %>
+                    <div :if={shown_desc} class="text-xs text-base-content/60">
+                      {shown_desc}
                     </div>
 
                     <%!-- Meta row: duration, assignee, completed by --%>
                     <div class="flex flex-wrap items-center gap-2 text-xs">
                       <%!-- Duration (clickable to edit) --%>
                       <%= if @editing_duration_uuid == a.uuid do %>
-                        <.form for={@duration_form} phx-submit="save_duration" class="flex items-center gap-1">
+                        <%!-- Inline editor. All three controls (input,
+                             select, buttons) need matching `*-xs`
+                             modifiers — without `select-xs` daisyUI's
+                             default select-md renders ~2x taller and the
+                             row visually staggers.
+
+                             The badge above renders `format_duration(a)`
+                             which already falls back from the assignment
+                             to its task template when the assignment
+                             doesn't override. Mirror the same fallback
+                             on the edit inputs — otherwise the user
+                             opens the editor and sees blank fields,
+                             which the boss correctly flagged as
+                             inconsistent with the badge they just
+                             clicked. --%>
+                        <% prefill_dur = a.estimated_duration || a.task.estimated_duration %>
+                        <% prefill_unit = a.estimated_duration_unit || a.task.estimated_duration_unit || "hours" %>
+                        <form phx-submit="save_duration" class="flex items-center gap-1">
                           <input
                             type="number"
                             name="estimated_duration"
-                            value={@duration_form[:estimated_duration].value}
+                            value={prefill_dur}
                             class="input input-xs w-16"
                             min="1"
                           />
                           <.select
                             name="estimated_duration_unit"
-                            value={@duration_form[:estimated_duration_unit].value}
+                            value={prefill_unit}
                             options={duration_unit_options()}
+                            class="select-xs w-auto"
                           />
                           <button
                             type="submit"
@@ -1067,14 +1476,21 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           <button type="button" phx-click="cancel_edit_duration" class="btn btn-ghost btn-xs">
                             <.icon name="hero-x-mark" class="w-3 h-3" />
                           </button>
-                        </.form>
+                        </form>
                       <% else %>
                         <% dur = format_duration(a) %>
                         <%= if dur != "—" do %>
+                          <%!-- Explicit Tailwind hover utilities instead
+                               of `hover:badge-primary` — daisyUI's class
+                               composition collapses text-color to the
+                               outline color, which on some themes is
+                               near-white once the bg flips to primary.
+                               Forcing bg + text + border together keeps
+                               contrast theme-independent. --%>
                           <button
                             phx-click="edit_duration"
                             phx-value-uuid={a.uuid}
-                            class="badge badge-outline badge-sm gap-1 cursor-pointer hover:badge-primary"
+                            class="badge badge-outline badge-sm gap-1 cursor-pointer hover:bg-primary hover:text-primary-content hover:border-primary transition-colors"
                           >
                             <.icon name="hero-clock" class="w-3 h-3" />
                             {dur}
@@ -1083,7 +1499,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           <button
                             phx-click="edit_duration"
                             phx-value-uuid={a.uuid}
-                            class="badge badge-ghost badge-sm gap-1 cursor-pointer"
+                            class="badge badge-ghost badge-sm gap-1 cursor-pointer hover:bg-base-300 transition-colors"
                           >
                             <.icon name="hero-clock" class="w-3 h-3" /> {gettext("Set duration")}
                           </button>
@@ -1174,7 +1590,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                         <%= for dep <- deps do %>
                           <span class="badge badge-outline badge-xs gap-1">
                             <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                            {gettext("depends on:")} {dep.depends_on.task.title}
+                            {gettext("depends on:")} {TaskSchema.localized_title(dep.depends_on.task, L10n.current_content_lang())}
                             <button
                               phx-click="remove_dependency"
                               phx-value-assignment={a.uuid}
@@ -1195,6 +1611,109 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% end %>
           </div>
         </div>
+      <% end %>
+
+      <%!-- Start-project modal — date editable so the user can backdate
+           an already-running project or queue a future start. The
+           form's `phx-change="noop"` prevents the LV from rebuilding
+           the changeset on each keystroke (no live validation needed
+           for a single date input); submit goes via `phx-submit`. --%>
+      <%= if @start_modal_open do %>
+        <dialog open class="modal modal-open" phx-window-keydown="close_start_modal" phx-key="Escape">
+          <div class="modal-box max-w-md">
+            <h3 class="font-bold text-lg">{gettext("Start project")}</h3>
+            <p class="text-sm text-base-content/70 mt-1">
+              {gettext("Pick the date and time this project starts. Defaults to right now; backdate it if work began earlier, or pick a future moment if you're queueing it up.")}
+            </p>
+
+            <.form for={@start_form} phx-submit="confirm_start_project" class="flex flex-col gap-3 mt-4">
+              <.input field={@start_form[:start_at]} type="datetime-local" label={gettext("Start date and time")} required />
+
+              <div class="modal-action">
+                <button
+                  type="button"
+                  phx-click="close_start_modal"
+                  class="btn btn-ghost btn-sm"
+                >
+                  {gettext("Cancel")}
+                </button>
+                <button
+                  type="submit"
+                  phx-disable-with={gettext("Starting…")}
+                  class="btn btn-success btn-sm"
+                >
+                  <.icon name="hero-play" class="w-4 h-4" /> {gettext("Start project")}
+                </button>
+              </div>
+            </.form>
+          </div>
+          <button type="button" phx-click="close_start_modal" class="modal-backdrop" aria-label={gettext("Close")}></button>
+        </dialog>
+      <% end %>
+
+      <%!-- Slide-in comments drawer. Right-side fixed panel that
+           hosts `PhoenixKitComments.Web.CommentsComponent` for either
+           the project or one of its assignments. The component is
+           keyed on `{type, uuid}` so opening a different resource
+           re-mounts with its own state instead of leaking the
+           previous resource's reply-in-progress / pagination.
+
+           Esc + backdrop click both fire `close_comments`. The
+           component's "comments_updated" message is unhandled here
+           (we don't need to react to project-level comment counts
+           in the timeline yet) — the catch-all `handle_info` clause
+           logs it at debug and moves on. --%>
+      <%!-- z-[60] / z-[70] so we paint over the admin header
+           (`fixed top-0 z-50` in the layout wrapper). At z-40 the
+           backdrop sat behind the header and looked broken. --%>
+      <%= if @comments_resource do %>
+        <div
+          class="fixed inset-0 z-[60] bg-black/40"
+          phx-click="close_comments"
+          phx-window-keydown="close_comments"
+          phx-key="Escape"
+          aria-hidden="true"
+        ></div>
+
+        <aside
+          class="fixed top-0 right-0 z-[70] h-screen w-full max-w-md bg-base-100 shadow-2xl flex flex-col"
+          role="dialog"
+          aria-modal="true"
+          aria-label={gettext("Comments")}
+        >
+          <header class="flex items-start gap-2 p-4 border-b border-base-200 shrink-0">
+            <div class="flex-1 min-w-0">
+              <div class="text-xs uppercase tracking-wide text-base-content/60">
+                <%= if @comments_resource.type == "project" do %>
+                  {gettext("Project")}
+                <% else %>
+                  {gettext("Task")}
+                <% end %>
+              </div>
+              <h2 class="font-bold text-lg truncate">{@comments_resource.title}</h2>
+            </div>
+            <button
+              type="button"
+              phx-click="close_comments"
+              class="btn btn-ghost btn-sm btn-square"
+              aria-label={gettext("Close")}
+            >
+              <.icon name="hero-x-mark" class="w-5 h-5" />
+            </button>
+          </header>
+
+          <div class="flex-1 min-h-0 overflow-y-auto p-4">
+            <.live_component
+              module={PhoenixKitComments.Web.CommentsComponent}
+              id={"comments-drawer-#{@comments_resource.type}-#{@comments_resource.uuid}"}
+              resource_type={@comments_resource.type}
+              resource_uuid={@comments_resource.uuid}
+              current_user={@phoenix_kit_current_scope && @phoenix_kit_current_scope.user}
+              title=""
+              show_likes={true}
+            />
+          </div>
+        </aside>
       <% end %>
     </div>
     """

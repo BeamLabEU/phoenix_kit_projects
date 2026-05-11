@@ -37,11 +37,13 @@ defmodule PhoenixKitProjects.Integration.TasksTest do
       assert %{title: [_ | _]} = errors_on(cs)
     end
 
-    test "duplicate titles rejected case-insensitively" do
-      {:ok, _} = Projects.create_task(%{"title" => "Write tests"})
+    test "duplicate titles are allowed (V112 dropped the case-insensitive unique index)" do
+      shared = "Shared #{System.unique_integer([:positive])}"
+      {:ok, a} = Projects.create_task(%{"title" => shared})
+      {:ok, b} = Projects.create_task(%{"title" => String.downcase(shared)})
 
-      assert {:error, cs} = Projects.create_task(%{"title" => "write tests"})
-      assert %{title: [_ | _]} = errors_on(cs)
+      assert a.uuid != b.uuid
+      assert String.downcase(a.title) == String.downcase(b.title)
     end
   end
 

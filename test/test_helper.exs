@@ -12,8 +12,8 @@
 # After that, `mix test` boots the repo, runs core's versioned migrations
 # via `PhoenixKit.Migration.ensure_current/2` (V40 extensions +
 # uuid_generate_v7, V03 settings, V90 activities, V100 staff tables,
-# V101 projects tables), and lets the Ecto sandbox handle isolation.
-# No module-owned DDL.
+# V101 projects tables, V112 projects.archived_at + visible partial
+# index), and lets the Ecto sandbox handle isolation. No module-owned DDL.
 
 # Elixir 1.19 quirk — see `phoenix_kit_locations` test_helper for context.
 support_dir = Path.expand("support", __DIR__)

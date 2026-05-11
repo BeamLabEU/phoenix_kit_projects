@@ -86,11 +86,23 @@ defmodule PhoenixKitProjects do
         live_view: {PhoenixKitProjects.Web.OverviewLive, :index}
       },
       %Tab{
+        id: :admin_projects_templates,
+        label: "Templates",
+        icon: "hero-document-duplicate",
+        path: "projects/templates",
+        priority: 662,
+        level: :admin,
+        permission: module_key(),
+        match: :prefix,
+        parent: :admin_projects,
+        live_view: {PhoenixKitProjects.Web.TemplatesLive, :index}
+      },
+      %Tab{
         id: :admin_projects_tasks,
         label: "Tasks",
         icon: "hero-rectangle-stack",
         path: "projects/tasks",
-        priority: 662,
+        priority: 663,
         level: :admin,
         permission: module_key(),
         match: :prefix,
@@ -102,24 +114,12 @@ defmodule PhoenixKitProjects do
         label: "Projects",
         icon: "hero-clipboard-document-list",
         path: "projects/list",
-        priority: 663,
-        level: :admin,
-        permission: module_key(),
-        match: :prefix,
-        parent: :admin_projects,
-        live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
-      },
-      %Tab{
-        id: :admin_projects_templates,
-        label: "Templates",
-        icon: "hero-document-duplicate",
-        path: "projects/templates",
         priority: 664,
         level: :admin,
         permission: module_key(),
         match: :prefix,
         parent: :admin_projects,
-        live_view: {PhoenixKitProjects.Web.TemplatesLive, :index}
+        live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
       }
     ]
 

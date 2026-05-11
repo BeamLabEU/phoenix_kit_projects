@@ -3,6 +3,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitWeb.Gettext
+  use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Project
@@ -68,6 +69,12 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
          |> push_navigate(to: Paths.template(project.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.template_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project_template",
+          metadata: %{"name" => Map.get(attrs, "name") || Ecto.Changeset.get_field(cs, :name)}
+        )
+
         {:noreply, assign_form(socket, cs)}
     end
   end
@@ -88,6 +95,13 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
          |> push_navigate(to: Paths.template(project.uuid))}
 
       {:error, cs} ->
+        Activity.log_failed("projects.template_updated",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project_template",
+          resource_uuid: socket.assigns.project.uuid,
+          metadata: %{"name" => socket.assigns.project.name}
+        )
+
         {:noreply, assign_form(socket, cs)}
     end
   end
@@ -96,12 +110,13 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   def render(assigns) do
     ~H"""
     <div class="flex flex-col mx-auto max-w-xl px-4 py-6 gap-4">
-      <div>
-        <.link navigate={Paths.templates()} class="link link-hover text-sm">
-          <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Templates")}
-        </.link>
-        <h1 class="text-2xl font-bold mt-1">{@page_title}</h1>
-      </div>
+      <.page_header title={@page_title}>
+        <:back_link>
+          <.link navigate={Paths.templates()} class="link link-hover text-sm">
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Templates")}
+          </.link>
+        </:back_link>
+      </.page_header>
 
       <div class="card bg-base-100 shadow">
         <div class="card-body">

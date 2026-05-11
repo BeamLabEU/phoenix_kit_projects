@@ -20,34 +20,34 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
   end
 
   describe "ProjectsLive render branches" do
-    test "renders projects of all status values + fallback", %{conn: conn} do
+    test "renders projects with derived status badge", %{conn: conn} do
       _ =
         fixture_project(%{
-          "status" => "active",
           "name" => "A-#{System.unique_integer([:positive])}"
         })
 
-      _ =
+      hidden =
         fixture_project(%{
-          "status" => "archived",
           "name" => "B-#{System.unique_integer([:positive])}"
         })
 
+      {:ok, _} = PhoenixKitProjects.Projects.archive_project(hidden)
+
       {:ok, _view, html} = live(conn, "/en/admin/projects/list")
 
-      assert html =~ "active"
-      assert html =~ "archived"
+      assert html =~ "setup"
     end
 
-    test "filter event with archived status renders archived projects", %{conn: conn} do
-      _ = fixture_project(%{"status" => "archived"})
+    test "filter event with archived selection renders archived projects", %{conn: conn} do
+      hidden = fixture_project()
+      {:ok, _} = PhoenixKitProjects.Projects.archive_project(hidden)
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/list")
 
       html =
         view
         |> element("form[phx-change=\"filter\"]")
-        |> render_change(%{"status" => "archived"})
+        |> render_change(%{"show" => "archived"})
 
       assert html =~ "archived"
     end

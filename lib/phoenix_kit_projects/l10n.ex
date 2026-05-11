@@ -54,6 +54,24 @@ defmodule PhoenixKitProjects.L10n do
   def format_time(%DateTime{hour: h, minute: m}),
     do: :io_lib.format("~2..0B:~2..0B", [h, m]) |> IO.iodata_to_binary()
 
+  @doc """
+  The current content-display language code.
+
+  Reads `Gettext.get_locale/1` against the parent app's gettext backend
+  — that's the locale Phoenix's pipeline set on the URL prefix
+  (`/bs/...` → `"bs"`). Used by the localized-read helpers on schemas
+  to pick the right entry from the `translations` JSONB; the helpers
+  themselves fall back to the primary-language column when the locale
+  has no override or is `nil`, so this never needs to validate the
+  result against `enabled_languages/0`.
+  """
+  @spec current_content_lang() :: String.t() | nil
+  def current_content_lang do
+    Gettext.get_locale(PhoenixKitWeb.Gettext)
+  rescue
+    _ -> nil
+  end
+
   @doc "Short 3-letter month name, translated (`Jan`, `Feb`, ...)."
   def short_month(1), do: gettext("Jan")
   def short_month(2), do: gettext("Feb")

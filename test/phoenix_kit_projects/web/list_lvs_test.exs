@@ -28,15 +28,15 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
       assert html =~ "Projects"
     end
 
-    test "filter event applies status filter", %{conn: conn} do
+    test "filter event applies show filter", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/list")
 
       html =
         view
         |> element("form[phx-change=\"filter\"]")
-        |> render_change(%{"status" => "active"})
+        |> render_change(%{"show" => "visible"})
 
-      assert html =~ "Status"
+      assert html =~ "Show"
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do

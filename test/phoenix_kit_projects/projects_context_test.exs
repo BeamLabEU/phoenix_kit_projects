@@ -27,17 +27,34 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
       assert Enum.any?(results, &(not &1.is_template))
     end
 
-    test "status filter narrows" do
-      _ = fixture_project(%{"status" => "active"})
+    test "archived: false (default) returns visible only" do
+      visible = fixture_project()
+      hidden = fixture_project()
+      {:ok, _} = Projects.archive_project(hidden)
 
-      assert Enum.all?(Projects.list_projects(status: "active"), &(&1.status == "active"))
-      assert Projects.list_projects(status: "archived") == []
+      results = Projects.list_projects()
+      assert Enum.any?(results, &(&1.uuid == visible.uuid))
+      refute Enum.any?(results, &(&1.uuid == hidden.uuid))
     end
 
-    test "blank status string falls through to no filter" do
-      _ = fixture_project()
-      results = Projects.list_projects(status: "")
-      assert is_list(results)
+    test "archived: true returns archived only" do
+      visible = fixture_project()
+      hidden = fixture_project()
+      {:ok, _} = Projects.archive_project(hidden)
+
+      results = Projects.list_projects(archived: true)
+      assert Enum.any?(results, &(&1.uuid == hidden.uuid))
+      refute Enum.any?(results, &(&1.uuid == visible.uuid))
+    end
+
+    test "archived: :all returns both" do
+      visible = fixture_project()
+      hidden = fixture_project()
+      {:ok, _} = Projects.archive_project(hidden)
+
+      results = Projects.list_projects(archived: :all)
+      assert Enum.any?(results, &(&1.uuid == visible.uuid))
+      assert Enum.any?(results, &(&1.uuid == hidden.uuid))
     end
   end
 
@@ -64,7 +81,7 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
       _ =
         fixture_project(%{
           "start_mode" => "scheduled",
-          "scheduled_start_date" => Date.utc_today() |> Date.to_iso8601()
+          "scheduled_start_date" => DateTime.utc_now() |> DateTime.to_iso8601()
         })
 
       assert is_list(Projects.list_upcoming_projects())

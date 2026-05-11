@@ -77,103 +77,26 @@ defmodule PhoenixKitProjects.Integration.TemplateCloneTest do
     end
   end
 
-  describe "transaction rollback" do
-    test "a duplicate-name project attrs causes rollback and leaves no orphans" do
-      %{template: template} = build_template()
-
-      # First clone succeeds.
-      {:ok, _first} =
-        Projects.create_project_from_template(template.uuid, %{
-          "name" => "Clone-fixed",
-          "status" => "active",
-          "start_mode" => "immediate"
-        })
-
-      projects_before = Projects.count_projects()
-      tasks_before = Projects.count_tasks()
-
-      # Second clone tries to reuse the same project name → unique_constraint
-      # error on the project insert → full rollback.
-      {:error, %Ecto.Changeset{data: %Project{}} = cs} =
-        Projects.create_project_from_template(template.uuid, %{
-          "name" => "Clone-fixed",
-          "status" => "active",
-          "start_mode" => "immediate"
-        })
-
-      assert %{name: [_ | _]} = errors_on(cs)
-      assert Projects.count_projects() == projects_before
-      assert Projects.count_tasks() == tasks_before
-    end
-  end
-
-  describe "V105 partial-index name uniqueness (template vs project)" do
-    test "a template and a real project can share the same name" do
+  describe "name uniqueness — none" do
+    # V105 added two partial unique indexes (template vs project) and
+    # V112 dropped both: name uniqueness is policy, not structure, and
+    # the rest of the code references projects by `uuid`. Two real
+    # projects (or two templates) with the same name now coexist.
+    test "duplicate names are allowed across is_template combinations" do
       shared_name = "Shared-#{System.unique_integer([:positive])}"
+      base = %{"start_mode" => "immediate"}
 
       assert {:ok, %Project{is_template: true}} =
-               Projects.create_project(%{
-                 "name" => shared_name,
-                 "status" => "active",
-                 "start_mode" => "immediate",
-                 "is_template" => "true"
-               })
+               Projects.create_project(Map.merge(base, %{"name" => shared_name, "is_template" => "true"}))
 
-      # Same name, real project — used to collide on the single global
-      # `phoenix_kit_projects_name_index`. After V105 split it into two
-      # partial indexes (one per `is_template` value), this insert
-      # should succeed.
+      assert {:ok, %Project{is_template: true}} =
+               Projects.create_project(Map.merge(base, %{"name" => shared_name, "is_template" => "true"}))
+
       assert {:ok, %Project{is_template: false}} =
-               Projects.create_project(%{
-                 "name" => shared_name,
-                 "status" => "active",
-                 "start_mode" => "immediate",
-                 "is_template" => "false"
-               })
-    end
+               Projects.create_project(Map.merge(base, %{"name" => shared_name, "is_template" => "false"}))
 
-    test "two templates with the same name still collide" do
-      shared_name = "Collide-tpl-#{System.unique_integer([:positive])}"
-
-      {:ok, _} =
-        Projects.create_project(%{
-          "name" => shared_name,
-          "status" => "active",
-          "start_mode" => "immediate",
-          "is_template" => "true"
-        })
-
-      {:error, cs} =
-        Projects.create_project(%{
-          "name" => shared_name,
-          "status" => "active",
-          "start_mode" => "immediate",
-          "is_template" => "true"
-        })
-
-      assert %{name: ["already taken" | _]} = errors_on(cs)
-    end
-
-    test "two real projects with the same name still collide" do
-      shared_name = "Collide-proj-#{System.unique_integer([:positive])}"
-
-      {:ok, _} =
-        Projects.create_project(%{
-          "name" => shared_name,
-          "status" => "active",
-          "start_mode" => "immediate",
-          "is_template" => "false"
-        })
-
-      {:error, cs} =
-        Projects.create_project(%{
-          "name" => shared_name,
-          "status" => "active",
-          "start_mode" => "immediate",
-          "is_template" => "false"
-        })
-
-      assert %{name: ["already taken" | _]} = errors_on(cs)
+      assert {:ok, %Project{is_template: false}} =
+               Projects.create_project(Map.merge(base, %{"name" => shared_name, "is_template" => "false"}))
     end
   end
 end
