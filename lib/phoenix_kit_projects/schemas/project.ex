@@ -19,7 +19,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
 
   import Ecto.Changeset
 
-  alias PhoenixKitProjects.Schemas.Assignment
+  alias PhoenixKitProjects.{L10n, Schemas.Assignment}
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
   @foreign_key_type UUIDv7
@@ -87,7 +87,28 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_required(@required)
     |> validate_length(:name, min: 1, max: 255)
     |> validate_inclusion(:start_mode, @start_modes)
+    |> validate_translations_shape()
     |> maybe_require_date(opts)
+  end
+
+  # Guards the `translations` JSONB against garbage from programmatic
+  # callers (the form layer cleans inputs via
+  # `Web.Helpers.merge_translations_attrs/3`, but seeds / migrations /
+  # future direct writers don't). The shape contract lives on
+  # `L10n.valid_translations_shape?/1` so all three schemas with this
+  # column enforce it identically.
+  defp validate_translations_shape(changeset) do
+    case get_change(changeset, :translations) do
+      nil ->
+        changeset
+
+      val ->
+        if L10n.valid_translations_shape?(val) do
+          changeset
+        else
+          add_error(changeset, :translations, "is not a valid translations map")
+        end
+    end
   end
 
   # `enforce_scheduled_date_required: false` lets the form's `phx-change`
@@ -257,7 +278,8 @@ defmodule PhoenixKitProjects.Schemas.Project do
     end
   end
 
-  defp lookup_translation(translations, lang, field) when is_map(translations) and is_binary(lang) do
+  defp lookup_translation(translations, lang, field)
+       when is_map(translations) and is_binary(lang) do
     case Map.get(translations, lang) do
       %{} = lang_map -> Map.get(lang_map, field)
       _ -> nil

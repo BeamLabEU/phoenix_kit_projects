@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
 
   import Ecto.Changeset
 
+  alias PhoenixKitProjects.L10n
   alias PhoenixKitStaff.Schemas.{Department, Person, Team}
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
@@ -111,11 +112,28 @@ defmodule PhoenixKitProjects.Schemas.Task do
     |> validate_length(:title, min: 1, max: 255)
     |> validate_number(:estimated_duration, greater_than: 0)
     |> validate_inclusion(:estimated_duration_unit, @duration_units)
+    |> validate_translations_shape()
     |> validate_single_default_assignee()
     |> check_constraint(:default_assigned_team_uuid,
       name: :phoenix_kit_project_tasks_single_default_assignee,
       message: gettext("only one default assignee (team, department, or person) allowed")
     )
+  end
+
+  # Shape guard for the `translations` JSONB. See `Project` for the
+  # rationale; the contract lives on `L10n.valid_translations_shape?/1`.
+  defp validate_translations_shape(changeset) do
+    case get_change(changeset, :translations) do
+      nil ->
+        changeset
+
+      val ->
+        if L10n.valid_translations_shape?(val) do
+          changeset
+        else
+          add_error(changeset, :translations, "is not a valid translations map")
+        end
+    end
   end
 
   # Mirrors the DB-level CHECK constraint on the default-assignee triple

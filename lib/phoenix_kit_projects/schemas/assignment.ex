@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   import Ecto.Changeset
 
   alias PhoenixKit.Users.Auth.User
+  alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.Schemas.{Dependency, Project, Task}
   alias PhoenixKitStaff.Schemas.{Department, Person, Team}
 
@@ -126,6 +127,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_number(:estimated_duration, greater_than: 0)
     |> validate_inclusion(:estimated_duration_unit, @duration_units)
     |> validate_number(:progress_pct, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
+    |> validate_translations_shape()
     |> assoc_constraint(:project)
     |> assoc_constraint(:task)
     |> validate_single_assignee()
@@ -133,6 +135,22 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
       name: :phoenix_kit_project_assignments_single_assignee,
       message: single_assignee_message()
     )
+  end
+
+  # Shape guard for the `translations` JSONB. See `Project` for the
+  # rationale; the contract lives on `L10n.valid_translations_shape?/1`.
+  defp validate_translations_shape(changeset) do
+    case get_change(changeset, :translations) do
+      nil ->
+        changeset
+
+      val ->
+        if L10n.valid_translations_shape?(val) do
+          changeset
+        else
+          add_error(changeset, :translations, "is not a valid translations map")
+        end
+    end
   end
 
   # Mirrors the DB-level CHECK constraint on the assignee triple so
