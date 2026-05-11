@@ -1528,7 +1528,15 @@ defmodule PhoenixKitProjects.Projects do
       Enum.each(children, fn child ->
         child_task_uuid = child.task.uuid
 
-        if not MapSet.member?(excluded, parent.uuid) and
+        # Skip the parent→child edge entirely when the child is a
+        # cycle terminator. The child *is* an already-visited ancestor;
+        # adding this edge would close the cycle in the project's
+        # dependency graph and trigger `add_dependency/2`'s cycle guard,
+        # rolling back the whole closure insert. The cycle node itself
+        # didn't contribute an insert (per `do_topo/5`), so there's no
+        # row to wire to anyway.
+        if not child.cycle? and
+             not MapSet.member?(excluded, parent.uuid) and
              not MapSet.member?(excluded, child_task_uuid) do
           parent_assignment = Map.get(map, parent.uuid)
           child_assignment = Map.get(map, child_task_uuid)
