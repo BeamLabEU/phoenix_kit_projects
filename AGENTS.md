@@ -82,6 +82,25 @@ Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V
 - Weekend work counts toward velocity even in weekdays-only projects (calendar_hours used when progress > plan)
 - `progress_pct` on an assignment contributes proportionally to "done hours" only when `track_progress` is enabled
 
+### Planned: per-task "count as work hours" toggle
+
+A future change will add an opt-in per-task flag (working name
+`count_as_work_hours`) that switches a task's planned-end math from
+the current weekdays-only 8h/day / calendar 24h/day approximations
+to the assignee's actual weekly work windows. The assignee side
+ships in `phoenix_kit_staff` as a `Person.work_schedule` JSONB
+column (see `phoenix_kit_staff/AGENTS.md` → "Planned:
+`Person.work_schedule` (JSONB)" for the column shape and fallback
+rules). The two PRs ship together; neither side has landed yet.
+
+When the toggle is off, `Task.to_hours/3` keeps its current
+behaviour. When it is on and the assignee has a non-empty
+`work_schedule`, planned-end math walks that week's windows. When
+it is on but the assignee's `work_schedule` is empty, math falls
+back to the existing 5×8 approximation in `work_hours_elapsed/2` —
+a Mon–Fri 09:00–17:00 windowed helper does not exist yet and is
+part of this same follow-up work.
+
 ## Completion auto-detection
 
 After every assignment status/progress/removal change, `Projects.recompute_project_completion/1` checks whether all assignments are `done` and sets `project.completed_at` accordingly. Reopening a task clears it. Logs `projects.project_completed` / `projects.project_reopened`.
