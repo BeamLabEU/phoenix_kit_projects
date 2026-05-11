@@ -5,21 +5,27 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   use Gettext, backend: PhoenixKitWeb.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Project, Task}
 
   require Logger
 
+  # How many "Running" projects to show on the dashboard. The count
+  # badge on "View all →" reveals when the total exceeds this cap.
+  @running_display_limit 10
+  # Fallback "late" threshold (days since `started_at`) when a project
+  # has no estimated durations — without sum-of-durations we can't
+  # compute a real planned_end. Projects with durations use planned_end
+  # directly (started_at + total estimated hours), per the same logic
+  # the project show page uses.
+  @late_fallback_days 14
+  # Progress percentage (>=) for the "near done" tier on the dashboard.
+  @near_done_threshold_pct 75
+
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_all())
-
-    user_uuid =
-      case socket.assigns[:phoenix_kit_current_user] do
-        %{uuid: uuid} -> uuid
-        _ -> nil
-      end
 
     # No DB queries in mount/3 — mount runs both on the disconnected
     # HTTP render and again on the WebSocket reconnect (and again on
@@ -28,7 +34,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     # `handle_params/3` swaps them for real data.
     {:ok,
      assign(socket,
-       user_uuid: user_uuid,
+       user_uuid: Activity.actor_uuid(socket),
        page_title: gettext("Projects"),
        task_count: 0,
        project_count: 0,
@@ -49,18 +55,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   def handle_params(_params, _url, socket) do
     {:noreply, reload(socket)}
   end
-
-  # How many "Running" projects to show on the dashboard. The count
-  # badge on "View all →" reveals when the total exceeds this cap.
-  @running_display_limit 10
-  # Fallback "late" threshold (days since `started_at`) when a project
-  # has no estimated durations — without sum-of-durations we can't
-  # compute a real planned_end. Projects with durations use planned_end
-  # directly (started_at + total estimated hours), per the same logic
-  # the project show page uses.
-  @late_fallback_days 14
-  # Progress percentage (>=) for the "near done" tier on the dashboard.
-  @near_done_threshold_pct 75
 
   defp reload(socket) do
     user_uuid = socket.assigns[:user_uuid]

@@ -200,6 +200,12 @@ defmodule PhoenixKitProjects.Projects do
   -idx`, pass 2 stamps `position = idx`. Sidesteps any future unique
   index on `position` and stays atomic.
 
+  The `@reorder_max_uuids` cap is checked against the **raw input
+  list length**, before dedup — a payload over the cap signals a
+  misbehaving client (real users can't drag 1000+ rows in one
+  batched event), so the rejection is a guard, not a real-user
+  constraint.
+
   Returns `:ok` on success, `{:error, :too_many_uuids}` past the cap,
   or `{:error, reason}` on a DB failure. Audit rows are written for
   every outcome (success carries the count + first-uuid; rejection
