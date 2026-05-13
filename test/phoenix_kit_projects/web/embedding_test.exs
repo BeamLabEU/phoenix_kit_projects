@@ -204,6 +204,39 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       # the LV `push_navigate`s during the event handler.
       assert {:error, {:live_redirect, %{to: "/host/orders/123"}}} = result
     end
+
+    # Open-redirect guard: an embedder that naively forwards an
+    # unvalidated `params["return_to"]` from a query string must not be
+    # able to redirect the user off-site after save. Each of these test
+    # cases is a redirect-injection vector that should fall back to the
+    # internal default path.
+    test "redirect_to override rejects external URLs", %{conn: conn} do
+      for malicious <- [
+            "https://evil.example.com/phish",
+            "//evil.example.com/phish",
+            "javascript:alert(1)",
+            "/relative/then/scheme://evil.example.com",
+            ""
+          ] do
+        {:ok, view, _html} =
+          live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
+            session: %{"redirect_to" => malicious}
+          )
+
+        result =
+          view
+          |> form("#project-form",
+            project: %{"name" => "Guarded project", "start_mode" => "immediate"}
+          )
+          |> render_submit()
+
+        # Falls back to the default admin path; never the malicious target.
+        assert {:error, {:live_redirect, %{to: to}}} = result
+        refute to =~ "evil.example.com"
+        refute to =~ "javascript:"
+        assert String.starts_with?(to, "/")
+      end
+    end
   end
 
   describe "ProjectFormLive embed (:edit)" do

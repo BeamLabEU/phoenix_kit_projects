@@ -285,16 +285,42 @@ defmodule PhoenixKitProjects.Web.Helpers do
   Used by form save handlers so that an embedded form can return to a
   host-app path on save (and the host can close a modal, refresh its
   own state, etc.) instead of yanking the user to `/admin/projects/...`.
+
+  **Open-redirect guard.** The override is validated as a *relative*
+  path before use: must start with `/`, must not start with `//`
+  (protocol-relative URL), must not contain a scheme separator (`://`).
+  This protects naive embedders who might forward an unvalidated
+  `params["return_to"]` from a request query string — without the
+  guard, an attacker could land
+  `?return_to=https://evil.example.com` and have our form
+  `push_navigate` to it on save. Invalid overrides fall back to
+  `default_path` silently (the embedder's misuse is documented in the
+  embedding contract; logging the rejection here doesn't help the
+  caller).
   """
   @spec navigate_after_save(Phoenix.LiveView.Socket.t(), String.t()) ::
           Phoenix.LiveView.Socket.t()
   def navigate_after_save(socket, default_path) do
     target =
       case socket.assigns[:embed_redirect_to] do
-        path when is_binary(path) and path != "" -> path
-        _ -> default_path
+        path when is_binary(path) and path != "" ->
+          if safe_internal_path?(path), do: path, else: default_path
+
+        _ ->
+          default_path
       end
 
     Phoenix.LiveView.push_navigate(socket, to: target)
   end
+
+  # Accepts absolute paths under the current host (`/admin/...`,
+  # `/host/orders/123`). Rejects schemes (`https://...`,
+  # `javascript:...`) and protocol-relative URLs (`//evil.example.com/...`).
+  defp safe_internal_path?(path) when is_binary(path) do
+    String.starts_with?(path, "/") and
+      not String.starts_with?(path, "//") and
+      not String.contains?(path, "://")
+  end
+
+  defp safe_internal_path?(_), do: false
 end

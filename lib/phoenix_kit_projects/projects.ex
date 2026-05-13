@@ -770,8 +770,7 @@ defmodule PhoenixKitProjects.Projects do
     %{
       uuid: p.uuid,
       name: p.name,
-      is_template: p.is_template,
-      archived: not is_nil(p.archived_at)
+      is_template: p.is_template
     }
   end
 

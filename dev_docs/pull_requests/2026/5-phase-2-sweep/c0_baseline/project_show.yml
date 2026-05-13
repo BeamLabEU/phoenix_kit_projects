@@ -1,0 +1,234 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e7]:
+      - link "DON TESTER pk project" [ref=e8] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e9]: Admin
+    - generic [ref=e10]:
+      - group [ref=e13]
+      - button "M Avatar" [ref=e17] [cursor=pointer]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: M
+          - img "Avatar" [ref=e21]
+  - generic [ref=e22]:
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - link "Projects" [ref=e27] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/list
+          - text: Projects
+        - generic [ref=e28]:
+          - heading "Acme Corp onboarding" [level=1] [ref=e30]
+          - generic [ref=e31]:
+            - link "Add task" [ref=e32] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60/assignments/new
+              - text: Add task
+            - button "Comments 5" [ref=e34] [cursor=pointer]:
+              - text: Comments
+              - generic [ref=e36]: "5"
+            - link "Edit" [ref=e37] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60/edit
+              - text: Edit
+            - button "Archive" [ref=e39] [cursor=pointer]: Archive
+        - generic [ref=e41]: New hire onboarding for J. Smith at Acme Corp.
+      - generic [ref=e42]:
+        - generic [ref=e44]: Started May 7, 2026 at 22:27
+        - generic [ref=e45]: ·
+        - generic [ref=e46]: 5 days overdue
+        - generic [ref=e48]: (57% done vs 100% expected)
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - generic [ref=e52]: "Remaining:"
+          - generic [ref=e53]: 2 hours
+        - generic [ref=e54]: ·
+        - generic [ref=e55]:
+          - generic [ref=e57]: "ETA:"
+          - generic [ref=e58]: May 13, 2026 at 21:29
+          - generic [ref=e59]: at planned pace
+      - generic [ref=e64]: 2/5 done
+      - generic [ref=e67]:
+        - generic [ref=e73]:
+          - generic [ref=e74]:
+            - generic [ref=e75]:
+              - generic "Drag to reorder" [ref=e76]
+              - generic [ref=e78]: done
+              - generic [ref=e79]: Send welcome email
+            - generic [ref=e80]:
+              - button "Reopen" [ref=e81] [cursor=pointer]
+              - button "Open comments" [ref=e82] [cursor=pointer]
+              - link [ref=e84] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60/assignments/019e1400-a344-7c16-839b-11eb8622d812/edit
+              - button [ref=e86] [cursor=pointer]
+          - generic [ref=e88]: Welcome packet + first-day logistics
+          - generic [ref=e89]:
+            - button "15 mins" [ref=e90] [cursor=pointer]: 15 mins
+            - generic [ref=e92]: weekdays only
+            - button "Track %" [ref=e93] [cursor=pointer]: Track %
+            - generic [ref=e95]: max@don.ee · May 7 22:27
+        - generic [ref=e102]:
+          - generic [ref=e103]:
+            - generic [ref=e104]:
+              - generic "Drag to reorder" [ref=e105]
+              - generic [ref=e107]: done
+              - generic [ref=e108]: Set up company laptop
+            - generic [ref=e109]:
+              - button "Reopen" [ref=e110] [cursor=pointer]
+              - button "1" [ref=e111] [cursor=pointer]:
+                - generic [ref=e113]: "1"
+              - link [ref=e114] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60/assignments/019e1400-a344-7cda-b3fa-b92391467148/edit
+              - button [ref=e116] [cursor=pointer]
+          - generic [ref=e118]: Image + install standard software
+          - generic [ref=e119]:
+            - button "2 hrs" [ref=e120] [cursor=pointer]: 2 hrs
+            - generic [ref=e122]: weekdays only
+            - button "Track %" [ref=e123] [cursor=pointer]: Track %
+            - generic [ref=e125]: max@don.ee · May 8 22:27
+        - generic [ref=e127]:
+          - generic [ref=e129]: "3"
+          - generic [ref=e131]:
+            - generic [ref=e132]:
+              - generic [ref=e133]:
+                - generic "Drag to reorder" [ref=e134]
+                - generic [ref=e136]: in progress
+                - generic [ref=e137]: Configure VPN access
+              - generic [ref=e138]:
+                - button "Done" [ref=e139] [cursor=pointer]: Done
+                - button "2" [ref=e141] [cursor=pointer]:
+                  - generic [ref=e143]: "2"
+                - link [ref=e144] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60/assignments/019e1400-a344-72aa-a06c-664aa019ef4b/edit
+                - button [ref=e146] [cursor=pointer]
+            - generic [ref=e148]: Issue certificate + verify connection
+            - generic [ref=e149]:
+              - button "30 mins" [ref=e150] [cursor=pointer]: 30 mins
+              - generic [ref=e152]: weekdays only
+              - button "Track %" [ref=e153] [cursor=pointer]: Track %
+            - generic [ref=e156]:
+              - text: "depends on: Set up company laptop"
+              - button [ref=e158]
+        - generic [ref=e160]:
+          - generic [ref=e162]: "4"
+          - generic [ref=e164]:
+            - generic [ref=e165]:
+              - generic [ref=e166]:
+                - generic "Drag to reorder" [ref=e167]
+                - generic [ref=e169]: todo
+                - generic [ref=e170]: Add to Slack channels
+              - generic [ref=e171]:
+                - button "Start" [ref=e172] [cursor=pointer]
+                - button "Open comments" [ref=e173] [cursor=pointer]
+                - link [ref=e175] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60/assignments/019e1400-a345-77be-b938-ecbfe4b65987/edit
+                - button [ref=e177] [cursor=pointer]
+            - generic [ref=e179]: "Invite to #general, team channel, social"
+            - generic [ref=e180]:
+              - button "10 mins" [ref=e181] [cursor=pointer]: 10 mins
+              - generic [ref=e183]: weekdays only
+              - button "Track %" [ref=e184] [cursor=pointer]: Track %
+            - generic [ref=e187]:
+              - text: "depends on: Set up company laptop"
+              - button [ref=e189]
+        - generic [ref=e191]:
+          - generic [ref=e193]: "5"
+          - generic [ref=e195]:
+            - generic [ref=e196]:
+              - generic [ref=e197]:
+                - generic "Drag to reorder" [ref=e198]
+                - generic [ref=e200]: todo
+                - generic [ref=e201]: Schedule onboarding call
+              - generic [ref=e202]:
+                - button "Start" [ref=e203] [cursor=pointer]
+                - button "1" [ref=e204] [cursor=pointer]:
+                  - generic [ref=e206]: "1"
+                - link [ref=e207] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60/assignments/019e1400-a345-7de2-bafa-3ddef709e9bf/edit
+                - button [ref=e209] [cursor=pointer]
+            - generic [ref=e211]: 60-min intro with manager + team lead
+            - generic [ref=e212]:
+              - button "60 mins" [ref=e213] [cursor=pointer]: 60 mins
+              - generic [ref=e215]: weekdays only
+              - button "Track %" [ref=e216] [cursor=pointer]: Track %
+    - complementary [ref=e219]:
+      - navigation "Admin navigation" [ref=e221]:
+        - generic [ref=e222]:
+          - link "Dashboard" [ref=e224] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin
+            - generic [ref=e227]: Dashboard
+          - link "Users" [ref=e229] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/users
+            - generic [ref=e232]: Users
+          - link "Activity" [ref=e234] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/activity
+            - generic [ref=e237]: Activity
+          - link "Media" [ref=e239] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/media
+            - generic [ref=e242]: Media
+        - generic [ref=e243]:
+          - link "Emails" [ref=e245] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/emails/dashboard
+            - generic [ref=e248]: Emails
+          - link "Newsletters" [ref=e250] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/newsletters/broadcasts
+            - generic [ref=e253]: Newsletters
+          - link "DB" [ref=e255] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/db
+            - generic [ref=e258]: DB
+          - link "Posts" [ref=e260] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/posts
+            - generic [ref=e263]: Posts
+          - link "Comments" [ref=e265] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/comments
+            - generic [ref=e268]: Comments
+          - link "Connections" [ref=e270] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/connections
+            - generic [ref=e273]: Connections
+          - link "Jobs" [ref=e275] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/jobs
+            - generic [ref=e278]: Jobs
+          - link "Modules" [ref=e280] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/modules
+            - generic [ref=e283]: Modules
+          - link "AI" [ref=e285] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/ai/endpoints
+            - generic [ref=e288]: AI
+          - link "Hello World" [ref=e290] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/hello-world
+            - generic [ref=e293]: Hello World
+          - link "Document Creator" [ref=e295] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/document-creator/documents
+            - generic [ref=e298]: Document Creator
+          - link "Staff" [ref=e300] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/staff
+            - generic [ref=e303]: Staff
+          - generic [ref=e304]:
+            - link "Projects" [ref=e305] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects
+              - generic [ref=e308]: Projects
+            - generic [ref=e309]:
+              - link "Overview" [ref=e310] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects
+                - generic [ref=e313]: Overview
+              - link "Templates" [ref=e314] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/templates
+                - generic [ref=e317]: Templates
+              - link "Tasks" [ref=e318] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/tasks
+                - generic [ref=e321]: Tasks
+              - link "Projects" [ref=e322] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list
+                - generic [ref=e325]: Projects
+          - link "Catalogue" [ref=e327] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/catalogue
+            - generic [ref=e330]: Catalogue
+          - link "Locations" [ref=e332] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/locations
+            - generic [ref=e335]: Locations
+          - link "Entities" [ref=e337] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/entities
+            - generic [ref=e340]: Entities
+          - link "Publishing" [ref=e342] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/publishing
+            - generic [ref=e345]: Publishing
+        - link "Settings" [ref=e348] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/settings
+          - generic [ref=e351]: Settings

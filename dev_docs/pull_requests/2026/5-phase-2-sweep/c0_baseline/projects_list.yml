@@ -1,0 +1,219 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e7]:
+      - link "DON TESTER pk project" [ref=e8] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e9]: Admin
+    - generic [ref=e10]:
+      - group [ref=e13]
+      - button "M Avatar" [ref=e17] [cursor=pointer]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: M
+          - img "Avatar" [ref=e21]
+  - generic [ref=e22]:
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - heading "Projects" [level=1] [ref=e28]
+          - paragraph [ref=e29]: All projects.
+        - link "New project" [ref=e31] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/list/new
+          - text: New project
+      - generic [ref=e35]:
+        - generic [ref=e36]: Show
+        - combobox [ref=e38]:
+          - option "Active only" [selected]
+          - option "Archived only"
+          - option "All"
+      - table [ref=e41]:
+        - rowgroup [ref=e42]:
+          - row "Name Status Actions" [ref=e43]:
+            - columnheader [ref=e44]
+            - columnheader "Name" [ref=e45]
+            - columnheader "Status" [ref=e46]
+            - columnheader "Actions" [ref=e47]
+        - rowgroup [ref=e48]:
+          - row "Acme Corp onboarding New hire onboarding for J. Smith at Acme Corp. running" [ref=e49]:
+            - cell "Drag to reorder" [ref=e50]
+            - cell "Acme Corp onboarding New hire onboarding for J. Smith at Acme Corp." [ref=e52]:
+              - link "Acme Corp onboarding" [ref=e53] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60
+              - generic [ref=e54]: New hire onboarding for J. Smith at Acme Corp.
+            - cell "running" [ref=e55]:
+              - generic [ref=e56]: running
+            - cell [ref=e58]:
+              - generic [ref=e59]:
+                - link [ref=e60] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60/edit
+                - button [ref=e62] [cursor=pointer]
+          - row "Spring cleaning sprint Annual deep-clean of all common areas. running" [ref=e64]:
+            - cell "Drag to reorder" [ref=e65]
+            - cell "Spring cleaning sprint Annual deep-clean of all common areas." [ref=e67]:
+              - link "Spring cleaning sprint" [ref=e68] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7073-ac94-2e61bbd6660a
+              - generic [ref=e69]: Annual deep-clean of all common areas.
+            - cell "running" [ref=e70]:
+              - generic [ref=e71]: running
+            - cell [ref=e73]:
+              - generic [ref=e74]:
+                - link [ref=e75] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7073-ac94-2e61bbd6660a/edit
+                - button [ref=e77] [cursor=pointer]
+          - row "Q3 product launch Marketing + ops coordination for the September launch. scheduled" [ref=e79]:
+            - cell "Drag to reorder" [ref=e80]
+            - cell "Q3 product launch Marketing + ops coordination for the September launch." [ref=e82]:
+              - link "Q3 product launch" [ref=e83] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-75fb-919c-a79744e015f7
+              - generic [ref=e84]: Marketing + ops coordination for the September launch.
+            - cell "scheduled" [ref=e85]:
+              - generic [ref=e86]: scheduled
+            - cell [ref=e88]:
+              - generic [ref=e89]:
+                - link [ref=e90] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-75fb-919c-a79744e015f7/edit
+                - button [ref=e92] [cursor=pointer]
+          - row "Test1 running" [ref=e94]:
+            - cell "Drag to reorder" [ref=e95]
+            - cell "Test1" [ref=e97]:
+              - link "Test1" [ref=e98] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e0e9f-a7b3-7585-b964-93487619cba2
+            - cell "running" [ref=e99]:
+              - generic [ref=e100]: running
+            - cell [ref=e102]:
+              - generic [ref=e103]:
+                - link [ref=e104] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e0e9f-a7b3-7585-b964-93487619cba2/edit
+                - button [ref=e106] [cursor=pointer]
+          - row "Time-test project running" [ref=e108]:
+            - cell "Drag to reorder" [ref=e109]
+            - cell "Time-test project" [ref=e111]:
+              - link "Time-test project" [ref=e112] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e0ea7-ec99-7789-8d6a-7b43c7e5f361
+            - cell "running" [ref=e113]:
+              - generic [ref=e114]: running
+            - cell [ref=e116]:
+              - generic [ref=e117]:
+                - link [ref=e118] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e0ea7-ec99-7789-8d6a-7b43c7e5f361/edit
+                - button [ref=e120] [cursor=pointer]
+          - row "Test running" [ref=e122]:
+            - cell "Drag to reorder" [ref=e123]
+            - cell "Test" [ref=e125]:
+              - link "Test" [ref=e126] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e0e72-a4fe-742d-a0ea-595eb056a03a
+            - cell "running" [ref=e127]:
+              - generic [ref=e128]: running
+            - cell [ref=e130]:
+              - generic [ref=e131]:
+                - link [ref=e132] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e0e72-a4fe-742d-a0ea-595eb056a03a/edit
+                - button [ref=e134] [cursor=pointer]
+          - row "Multilang test project Primary-language description. setup" [ref=e136]:
+            - cell "Drag to reorder" [ref=e137]
+            - cell "Multilang test project Primary-language description." [ref=e139]:
+              - link "Multilang test project" [ref=e140] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e0e2b-7e68-745c-ace5-f0286923e9f7
+              - generic [ref=e141]: Primary-language description.
+            - cell "setup" [ref=e142]:
+              - generic [ref=e143]: setup
+            - cell [ref=e145]:
+              - generic [ref=e146]:
+                - link [ref=e147] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e0e2b-7e68-745c-ace5-f0286923e9f7/edit
+                - button [ref=e149] [cursor=pointer]
+          - row "Test running" [ref=e151]:
+            - cell "Drag to reorder" [ref=e152]
+            - cell "Test" [ref=e154]:
+              - link "Test" [ref=e155] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list/019e0e10-5558-7a78-b15a-58ccceab03ed
+            - cell "running" [ref=e156]:
+              - generic [ref=e157]: running
+            - cell [ref=e159]:
+              - generic [ref=e160]:
+                - link [ref=e161] [cursor=pointer]:
+                  - /url: /phoenix_kit/ja/admin/projects/list/019e0e10-5558-7a78-b15a-58ccceab03ed/edit
+                - button [ref=e163] [cursor=pointer]
+    - complementary [ref=e166]:
+      - navigation "Admin navigation" [ref=e168]:
+        - generic [ref=e169]:
+          - link "Dashboard" [ref=e171] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin
+            - generic [ref=e174]: Dashboard
+          - link "Users" [ref=e176] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/users
+            - generic [ref=e179]: Users
+          - link "Activity" [ref=e181] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/activity
+            - generic [ref=e184]: Activity
+          - link "Media" [ref=e186] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/media
+            - generic [ref=e189]: Media
+        - generic [ref=e190]:
+          - link "Emails" [ref=e192] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/emails/dashboard
+            - generic [ref=e195]: Emails
+          - link "Newsletters" [ref=e197] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/newsletters/broadcasts
+            - generic [ref=e200]: Newsletters
+          - link "DB" [ref=e202] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/db
+            - generic [ref=e205]: DB
+          - link "Posts" [ref=e207] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/posts
+            - generic [ref=e210]: Posts
+          - link "Comments" [ref=e212] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/comments
+            - generic [ref=e215]: Comments
+          - link "Connections" [ref=e217] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/connections
+            - generic [ref=e220]: Connections
+          - link "Jobs" [ref=e222] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/jobs
+            - generic [ref=e225]: Jobs
+          - link "Modules" [ref=e227] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/modules
+            - generic [ref=e230]: Modules
+          - link "AI" [ref=e232] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/ai/endpoints
+            - generic [ref=e235]: AI
+          - link "Hello World" [ref=e237] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/hello-world
+            - generic [ref=e240]: Hello World
+          - link "Document Creator" [ref=e242] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/document-creator/documents
+            - generic [ref=e245]: Document Creator
+          - link "Staff" [ref=e247] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/staff
+            - generic [ref=e250]: Staff
+          - generic [ref=e251]:
+            - link "Projects" [ref=e252] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects
+              - generic [ref=e255]: Projects
+            - generic [ref=e256]:
+              - link "Overview" [ref=e257] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects
+                - generic [ref=e260]: Overview
+              - link "Templates" [ref=e261] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/templates
+                - generic [ref=e264]: Templates
+              - link "Tasks" [ref=e265] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/tasks
+                - generic [ref=e268]: Tasks
+              - link "Projects" [ref=e269] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list
+                - generic [ref=e272]: Projects
+          - link "Catalogue" [ref=e274] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/catalogue
+            - generic [ref=e277]: Catalogue
+          - link "Locations" [ref=e279] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/locations
+            - generic [ref=e282]: Locations
+          - link "Entities" [ref=e284] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/entities
+            - generic [ref=e287]: Entities
+          - link "Publishing" [ref=e289] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/publishing
+            - generic [ref=e292]: Publishing
+        - link "Settings" [ref=e295] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/settings
+          - generic [ref=e298]: Settings

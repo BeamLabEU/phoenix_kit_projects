@@ -1,0 +1,303 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e7]:
+      - link "DON TESTER pk project" [ref=e8] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e9]: Admin
+    - generic [ref=e10]:
+      - group [ref=e13]
+      - button "M Avatar" [ref=e17] [cursor=pointer]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: M
+          - img "Avatar" [ref=e21]
+  - generic [ref=e22]:
+    - generic [ref=e25]:
+      - generic [ref=e27]:
+        - link "Acme Corp onboarding" [ref=e29] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60
+          - text: Acme Corp onboarding
+        - heading "Add task to Acme Corp onboarding" [level=1] [ref=e30]
+      - generic [ref=e31]:
+        - generic [ref=e33]:
+          - generic [ref=e34]:
+            - heading "Content Language" [level=2] [ref=e37]
+            - generic [ref=e40]: "Primary: English (United States)"
+          - tablist [ref=e42]:
+            - tab "EN-US" [ref=e43] [cursor=pointer]:
+              - generic [ref=e44]:
+                - generic [ref=e45]: EN-US
+                - img [ref=e46]
+            - tab "EN" [ref=e49] [cursor=pointer]:
+              - generic [ref=e51]: EN
+            - generic [ref=e52]: "|"
+            - tab "SQ" [ref=e53] [cursor=pointer]:
+              - generic [ref=e55]: SQ
+            - generic [ref=e56]: "|"
+            - tab "AM" [ref=e57] [cursor=pointer]:
+              - generic [ref=e59]: AM
+            - generic [ref=e60]: "|"
+            - tab "AR" [ref=e61] [cursor=pointer]:
+              - generic [ref=e63]: AR
+            - generic [ref=e64]: "|"
+            - tab "HY" [ref=e65] [cursor=pointer]:
+              - generic [ref=e67]: HY
+            - generic [ref=e68]: "|"
+            - tab "AZ" [ref=e69] [cursor=pointer]:
+              - generic [ref=e71]: AZ
+            - generic [ref=e72]: "|"
+            - tab "EU" [ref=e73] [cursor=pointer]:
+              - generic [ref=e75]: EU
+            - generic [ref=e76]: "|"
+            - tab "BN" [ref=e77] [cursor=pointer]:
+              - generic [ref=e79]: BN
+            - generic [ref=e80]: "|"
+            - tab "BG" [ref=e81] [cursor=pointer]:
+              - generic [ref=e83]: BG
+            - generic [ref=e84]: "|"
+            - tab "BS" [ref=e85] [cursor=pointer]:
+              - generic [ref=e87]: BS
+            - generic [ref=e88]: "|"
+            - tab "CA" [ref=e89] [cursor=pointer]:
+              - generic [ref=e91]: CA
+            - generic [ref=e92]: "|"
+            - tab "ZH-CN" [ref=e93] [cursor=pointer]:
+              - generic [ref=e95]: ZH-CN
+            - generic [ref=e96]: "|"
+            - tab "ZH-TW" [ref=e97] [cursor=pointer]:
+              - generic [ref=e99]: ZH-TW
+            - generic [ref=e100]: "|"
+            - tab "CS" [ref=e101] [cursor=pointer]:
+              - generic [ref=e103]: CS
+            - generic [ref=e104]: "|"
+            - tab "HR" [ref=e105] [cursor=pointer]:
+              - generic [ref=e107]: HR
+            - generic [ref=e108]: "|"
+            - tab "DA" [ref=e109] [cursor=pointer]:
+              - generic [ref=e111]: DA
+            - generic [ref=e112]: "|"
+            - tab "NL" [ref=e113] [cursor=pointer]:
+              - generic [ref=e115]: NL
+            - generic [ref=e116]: "|"
+            - tab "EN-GB" [ref=e117] [cursor=pointer]:
+              - generic [ref=e119]: EN-GB
+            - generic [ref=e120]: "|"
+            - tab "EN-CA" [ref=e121] [cursor=pointer]:
+              - generic [ref=e123]: EN-CA
+            - generic [ref=e124]: "|"
+            - tab "EN-AU" [ref=e125] [cursor=pointer]:
+              - generic [ref=e127]: EN-AU
+            - generic [ref=e128]: "|"
+            - tab "ET" [ref=e129] [cursor=pointer]:
+              - generic [ref=e131]: ET
+            - generic [ref=e132]: "|"
+            - tab "TL" [ref=e133] [cursor=pointer]:
+              - generic [ref=e135]: TL
+            - generic [ref=e136]: "|"
+            - tab "FI" [ref=e137] [cursor=pointer]:
+              - generic [ref=e139]: FI
+            - generic [ref=e140]: "|"
+            - tab "FR-FR" [ref=e141] [cursor=pointer]:
+              - generic [ref=e143]: FR-FR
+            - generic [ref=e144]: "|"
+            - tab "GL" [ref=e145] [cursor=pointer]:
+              - generic [ref=e147]: GL
+            - generic [ref=e148]: "|"
+            - tab "FR-CA" [ref=e149] [cursor=pointer]:
+              - generic [ref=e151]: FR-CA
+            - generic [ref=e152]: "|"
+            - tab "KA" [ref=e153] [cursor=pointer]:
+              - generic [ref=e155]: KA
+            - generic [ref=e156]: "|"
+            - tab "DE-DE" [ref=e157] [cursor=pointer]:
+              - generic [ref=e159]: DE-DE
+            - generic [ref=e160]: "|"
+            - tab "DE-AT" [ref=e161] [cursor=pointer]:
+              - generic [ref=e163]: DE-AT
+            - generic [ref=e164]: "|"
+            - tab "DE-CH" [ref=e165] [cursor=pointer]:
+              - generic [ref=e167]: DE-CH
+            - generic [ref=e168]: "|"
+            - tab "GU" [ref=e169] [cursor=pointer]:
+              - generic [ref=e171]: GU
+            - generic [ref=e172]: "|"
+            - tab "HE" [ref=e173] [cursor=pointer]:
+              - generic [ref=e175]: HE
+            - generic [ref=e176]: "|"
+            - tab "HI" [ref=e177] [cursor=pointer]:
+              - generic [ref=e179]: HI
+            - generic [ref=e180]: "|"
+            - tab "HU" [ref=e181] [cursor=pointer]:
+              - generic [ref=e183]: HU
+            - generic [ref=e184]: "|"
+            - tab "IS" [ref=e185] [cursor=pointer]:
+              - generic [ref=e187]: IS
+            - generic [ref=e188]: "|"
+            - tab "ID" [ref=e189] [cursor=pointer]:
+              - generic [ref=e191]: ID
+            - generic [ref=e192]: "|"
+            - tab "GA" [ref=e193] [cursor=pointer]:
+              - generic [ref=e195]: GA
+            - generic [ref=e196]: "|"
+            - tab "IT" [ref=e197] [cursor=pointer]:
+              - generic [ref=e199]: IT
+            - generic [ref=e200]: "|"
+            - tab "JA" [ref=e201] [cursor=pointer]:
+              - generic [ref=e203]: JA
+        - generic [ref=e205]:
+          - tablist [ref=e206]:
+            - tab "From library" [ref=e207] [cursor=pointer]: From library
+            - tab "Create new" [ref=e209] [cursor=pointer]: Create new
+          - generic [ref=e211]:
+            - generic [ref=e212]: Task template
+            - combobox "Task template" [ref=e214]:
+              - option "Select task" [selected]
+              - option "Find empty trash bag"
+              - option "Mail business cards"
+              - option "Send welcome email"
+              - option "Set up company laptop"
+              - option "Configure VPN access"
+              - option "Add to Slack channels"
+              - option "Schedule onboarding call"
+              - option "Replace bin liners"
+              - option "Spring cleaning"
+              - option "Walk house and collect garbage"
+              - option "Take out trash"
+              - option "Test task"
+          - generic [ref=e215]: Details
+          - generic [ref=e216]:
+            - generic [ref=e218]: Description
+            - textbox "Description" [ref=e219]
+          - generic [ref=e220]:
+            - generic [ref=e222]:
+              - generic [ref=e224]: Duration
+              - spinbutton "Duration" [ref=e225]
+            - generic [ref=e227]:
+              - generic [ref=e228]: Unit
+              - combobox "Unit" [ref=e230]:
+                - option "—" [selected]
+                - option "Minutes"
+                - option "Hours"
+                - option "Days"
+                - option "Weeks"
+                - option "Fortnights"
+                - option "Months"
+                - option "Years"
+          - generic [ref=e231]:
+            - generic [ref=e232]: Status
+            - combobox "Status" [ref=e234]:
+              - option "To do" [selected]
+              - option "In progress"
+              - option "Done"
+          - generic [ref=e235] [cursor=pointer]:
+            - checkbox "Counts weekends (e.g. deliveries, external processes)" [ref=e236]
+            - generic [ref=e237]: Counts weekends (e.g. deliveries, external processes)
+          - generic [ref=e238]: Assignment (optional)
+          - generic [ref=e239]:
+            - generic [ref=e240]: Assign to
+            - combobox [ref=e242]:
+              - option "Nobody" [selected]
+              - option "Department"
+              - option "Team"
+              - option "Person"
+        - generic [ref=e244]:
+          - heading "Dependencies" [level=2] [ref=e245]
+          - paragraph [ref=e246]:
+            - text: Tasks in this project that must finish before this one can start.
+            - text: Selections will be applied when you save this task.
+          - generic [ref=e247]:
+            - generic [ref=e248]: Add dependency
+            - combobox [ref=e250]:
+              - option "Select task" [selected]
+              - option "Send welcome email"
+              - option "Set up company laptop"
+              - option "Configure VPN access"
+              - option "Add to Slack channels"
+              - option "Schedule onboarding call"
+        - generic [ref=e251]:
+          - link "Cancel" [ref=e252] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60
+          - button "Add" [ref=e253] [cursor=pointer]
+    - complementary [ref=e255]:
+      - navigation "Admin navigation" [ref=e257]:
+        - generic [ref=e258]:
+          - link "Dashboard" [ref=e260] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin
+            - generic [ref=e263]: Dashboard
+          - link "Users" [ref=e265] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/users
+            - generic [ref=e268]: Users
+          - link "Activity" [ref=e270] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/activity
+            - generic [ref=e273]: Activity
+          - link "Media" [ref=e275] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/media
+            - generic [ref=e278]: Media
+        - generic [ref=e279]:
+          - link "Emails" [ref=e281] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/emails/dashboard
+            - generic [ref=e284]: Emails
+          - link "Newsletters" [ref=e286] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/newsletters/broadcasts
+            - generic [ref=e289]: Newsletters
+          - link "DB" [ref=e291] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/db
+            - generic [ref=e294]: DB
+          - link "Posts" [ref=e296] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/posts
+            - generic [ref=e299]: Posts
+          - link "Comments" [ref=e301] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/comments
+            - generic [ref=e304]: Comments
+          - link "Connections" [ref=e306] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/connections
+            - generic [ref=e309]: Connections
+          - link "Jobs" [ref=e311] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/jobs
+            - generic [ref=e314]: Jobs
+          - link "Modules" [ref=e316] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/modules
+            - generic [ref=e319]: Modules
+          - link "AI" [ref=e321] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/ai/endpoints
+            - generic [ref=e324]: AI
+          - link "Hello World" [ref=e326] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/hello-world
+            - generic [ref=e329]: Hello World
+          - link "Document Creator" [ref=e331] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/document-creator/documents
+            - generic [ref=e334]: Document Creator
+          - link "Staff" [ref=e336] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/staff
+            - generic [ref=e339]: Staff
+          - generic [ref=e340]:
+            - link "Projects" [ref=e341] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects
+              - generic [ref=e344]: Projects
+            - generic [ref=e345]:
+              - link "Overview" [ref=e346] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects
+                - generic [ref=e349]: Overview
+              - link "Templates" [ref=e350] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/templates
+                - generic [ref=e353]: Templates
+              - link "Tasks" [ref=e354] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/tasks
+                - generic [ref=e357]: Tasks
+              - link "Projects" [ref=e358] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list
+                - generic [ref=e361]: Projects
+          - link "Catalogue" [ref=e363] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/catalogue
+            - generic [ref=e366]: Catalogue
+          - link "Locations" [ref=e368] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/locations
+            - generic [ref=e371]: Locations
+          - link "Entities" [ref=e373] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/entities
+            - generic [ref=e376]: Entities
+          - link "Publishing" [ref=e378] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/publishing
+            - generic [ref=e381]: Publishing
+        - link "Settings" [ref=e384] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/settings
+          - generic [ref=e387]: Settings

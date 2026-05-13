@@ -1,0 +1,238 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e7]:
+      - link "DON TESTER pk project" [ref=e8] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e9]: Admin
+    - generic [ref=e10]:
+      - group [ref=e13]
+      - button "M Avatar" [ref=e17] [cursor=pointer]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: M
+          - img "Avatar" [ref=e21]
+  - generic [ref=e22]:
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - heading "Projects" [level=1] [ref=e28]
+          - paragraph [ref=e29]: Overview of active work, upcoming projects, and your assignments.
+        - generic [ref=e30]:
+          - link "New project" [ref=e31] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/projects/list/new
+            - text: New project
+          - link "New task" [ref=e33] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/projects/tasks/new
+            - text: New task
+      - generic [ref=e35]:
+        - generic [ref=e37]:
+          - generic [ref=e38]: Running
+          - generic [ref=e39]: "6"
+        - generic [ref=e41]:
+          - generic [ref=e42]: Tasks in progress
+          - generic [ref=e43]: "2"
+        - generic [ref=e45]:
+          - generic [ref=e46]: Tasks todo
+          - generic [ref=e47]: "13"
+        - generic [ref=e49]:
+          - generic [ref=e50]: Tasks done
+          - generic [ref=e51]: "4"
+      - generic [ref=e52]:
+        - generic [ref=e54]:
+          - generic [ref=e55]:
+            - generic [ref=e56]:
+              - heading "Running" [level=2] [ref=e57]: Running
+              - paragraph [ref=e59]: Started and not yet completed.
+            - link "View all →" [ref=e60] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list
+          - generic [ref=e61]:
+            - link "Spring cleaning sprint late Started 10 days ago · 2/4 tasks · 1 in progress 50%" [ref=e62] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7073-ac94-2e61bbd6660a
+              - generic [ref=e63]:
+                - generic [ref=e64]:
+                  - generic [ref=e65]: Spring cleaning sprint
+                  - generic [ref=e66]: late
+                - generic [ref=e68]:
+                  - generic [ref=e69]: Started 10 days ago
+                  - generic [ref=e70]: ·
+                  - generic [ref=e71]: 2/4 tasks
+                  - generic [ref=e72]: ·
+                  - generic [ref=e73]: 1 in progress
+              - generic [ref=e77]: 50%
+            - link "Acme Corp onboarding late Started 6 days ago · 2/5 tasks · 1 in progress 40%" [ref=e78] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-7b1b-b14c-3676d7ec2a60
+              - generic [ref=e79]:
+                - generic [ref=e80]:
+                  - generic [ref=e81]: Acme Corp onboarding
+                  - generic [ref=e82]: late
+                - generic [ref=e84]:
+                  - generic [ref=e85]: Started 6 days ago
+                  - generic [ref=e86]: ·
+                  - generic [ref=e87]: 2/5 tasks
+                  - generic [ref=e88]: ·
+                  - generic [ref=e89]: 1 in progress
+              - generic [ref=e93]: 40%
+            - link "Test late Started 4 days ago · 0/4 tasks 0%" [ref=e94] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e0e10-5558-7a78-b15a-58ccceab03ed
+              - generic [ref=e95]:
+                - generic [ref=e96]:
+                  - generic [ref=e97]: Test
+                  - generic [ref=e98]: late
+                - generic [ref=e100]:
+                  - generic [ref=e101]: Started 4 days ago
+                  - generic [ref=e102]: ·
+                  - generic [ref=e103]: 0/4 tasks
+              - generic [ref=e106]: 0%
+            - link "Test1 no tasks Started 5 days ago · 0/0 tasks 0%" [ref=e107] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e0e9f-a7b3-7585-b964-93487619cba2
+              - generic [ref=e108]:
+                - generic [ref=e109]:
+                  - generic [ref=e110]: Test1
+                  - generic [ref=e111]: no tasks
+                - generic [ref=e113]:
+                  - generic [ref=e114]: Started 5 days ago
+                  - generic [ref=e115]: ·
+                  - generic [ref=e116]: 0/0 tasks
+              - generic [ref=e119]: 0%
+            - link "Time-test project no tasks Started 5 days ago · 0/0 tasks 0%" [ref=e120] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e0ea7-ec99-7789-8d6a-7b43c7e5f361
+              - generic [ref=e121]:
+                - generic [ref=e122]:
+                  - generic [ref=e123]: Time-test project
+                  - generic [ref=e124]: no tasks
+                - generic [ref=e126]:
+                  - generic [ref=e127]: Started 5 days ago
+                  - generic [ref=e128]: ·
+                  - generic [ref=e129]: 0/0 tasks
+              - generic [ref=e132]: 0%
+            - link "Test no tasks Started 9 days ago · 0/0 tasks 0%" [ref=e133] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e0e72-a4fe-742d-a0ea-595eb056a03a
+              - generic [ref=e134]:
+                - generic [ref=e135]:
+                  - generic [ref=e136]: Test
+                  - generic [ref=e137]: no tasks
+                - generic [ref=e139]:
+                  - generic [ref=e140]: Started 9 days ago
+                  - generic [ref=e141]: ·
+                  - generic [ref=e142]: 0/0 tasks
+              - generic [ref=e145]: 0%
+        - generic [ref=e146]:
+          - generic [ref=e148]:
+            - heading "My tasks" [level=2] [ref=e149]: My tasks
+            - paragraph [ref=e151]: Nothing assigned to you right now.
+          - generic [ref=e153]:
+            - heading "Upcoming" [level=2] [ref=e154]: Upcoming
+            - generic [ref=e156]: In setup
+            - link "Multilang test project" [ref=e157] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e0e2b-7e68-745c-ace5-f0286923e9f7
+              - generic [ref=e159]: Multilang test project
+            - generic [ref=e160]: Scheduled
+            - link "Q3 product launch May 25, 2026 at 01:27 · in 12 days" [ref=e161] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects/list/019e1400-a344-75fb-919c-a79744e015f7
+              - generic [ref=e163]:
+                - generic [ref=e164]: Q3 product launch
+                - generic [ref=e165]: May 25, 2026 at 01:27 · in 12 days
+      - generic [ref=e166]:
+        - link "Projects 12" [ref=e167] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/list
+          - generic [ref=e168]:
+            - generic [ref=e171]: Projects
+            - generic [ref=e172]: "12"
+        - link "Task Library 12" [ref=e173] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/tasks
+          - generic [ref=e174]:
+            - generic [ref=e177]: Task Library
+            - generic [ref=e178]: "12"
+        - link "Templates 4" [ref=e179] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/templates
+          - generic [ref=e180]:
+            - generic [ref=e183]: Templates
+            - generic [ref=e184]: "4"
+        - link "New template Blueprint from scratch" [ref=e185] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/templates/new
+          - generic [ref=e186]:
+            - generic [ref=e189]: New template
+            - generic [ref=e190]: Blueprint from scratch
+    - complementary [ref=e192]:
+      - navigation "Admin navigation" [ref=e194]:
+        - generic [ref=e195]:
+          - link "Dashboard" [ref=e197] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin
+            - generic [ref=e200]: Dashboard
+          - link "Users" [ref=e202] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/users
+            - generic [ref=e205]: Users
+          - link "Activity" [ref=e207] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/activity
+            - generic [ref=e210]: Activity
+          - link "Media" [ref=e212] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/media
+            - generic [ref=e215]: Media
+        - generic [ref=e216]:
+          - link "Emails" [ref=e218] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/emails/dashboard
+            - generic [ref=e221]: Emails
+          - link "Newsletters" [ref=e223] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/newsletters/broadcasts
+            - generic [ref=e226]: Newsletters
+          - link "DB" [ref=e228] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/db
+            - generic [ref=e231]: DB
+          - link "Posts" [ref=e233] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/posts
+            - generic [ref=e236]: Posts
+          - link "Comments" [ref=e238] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/comments
+            - generic [ref=e241]: Comments
+          - link "Connections" [ref=e243] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/connections
+            - generic [ref=e246]: Connections
+          - link "Jobs" [ref=e248] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/jobs
+            - generic [ref=e251]: Jobs
+          - link "Modules" [ref=e253] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/modules
+            - generic [ref=e256]: Modules
+          - link "AI" [ref=e258] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/ai/endpoints
+            - generic [ref=e261]: AI
+          - link "Hello World" [ref=e263] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/hello-world
+            - generic [ref=e266]: Hello World
+          - link "Document Creator" [ref=e268] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/document-creator/documents
+            - generic [ref=e271]: Document Creator
+          - link "Staff" [ref=e273] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/staff
+            - generic [ref=e276]: Staff
+          - generic [ref=e277]:
+            - link "Projects" [ref=e278] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects
+              - generic [ref=e281]: Projects
+            - generic [ref=e282]:
+              - link "Overview" [ref=e283] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects
+                - generic [ref=e286]: Overview
+              - link "Templates" [ref=e287] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/templates
+                - generic [ref=e290]: Templates
+              - link "Tasks" [ref=e291] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/tasks
+                - generic [ref=e294]: Tasks
+              - link "Projects" [ref=e295] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list
+                - generic [ref=e298]: Projects
+          - link "Catalogue" [ref=e300] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/catalogue
+            - generic [ref=e303]: Catalogue
+          - link "Locations" [ref=e305] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/locations
+            - generic [ref=e308]: Locations
+          - link "Entities" [ref=e310] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/entities
+            - generic [ref=e313]: Entities
+          - link "Publishing" [ref=e315] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/publishing
+            - generic [ref=e318]: Publishing
+        - link "Settings" [ref=e321] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/settings
+          - generic [ref=e324]: Settings
