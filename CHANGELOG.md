@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.2.1
+
+Embed support + ETA refactor + Phase 2 re-validation sweep (PR #6) plus
+post-merge follow-up (review under
+`dev_docs/pull_requests/2026/6-embed-and-quality/FOLLOWUP.md`).
+
+### Added
+
+- **Embeddable LiveViews** — all 9 LVs in the module can now be nested
+  inside a host LiveView via `live_render/3` (issue #5). Each LV
+  accepts a `:not_mounted_at_router` mount path, a session-overridable
+  `wrapper_class`, and (for form LVs) a session-overridable
+  `redirect_to`. Host apps can drop the module's own UI into their own
+  workflow instead of re-implementing it against the contexts.
+- **Shared embed plumbing in `PhoenixKitProjects.Web.Helpers`** —
+  `resolve_live_action/3`, `resolve_action_params/2`, and
+  `navigate_after_save/2` provide a single source of truth for the
+  router-vs-embed mount path.
+- **Open-redirect guard on `navigate_after_save/2`** —
+  `session["redirect_to"]` is validated as a relative internal path
+  (starts with `/`, not protocol-relative, no `://`) before any
+  `push_navigate`. Protects embedders that naively forward an
+  unvalidated `params["return_to"]` from a request query string.
+- **Remaining + ETA stat** — `ProjectShowLive` now displays
+  `Remaining: Xh · ETA: <datetime> at planned pace` in place of the
+  previous Planned/Projected date pair. Anchored on `now` and the sum
+  of remaining task hours rather than velocity. New `Project.eta_from/3`
+  public API mirrors `planned_end_for/2` but accepts an arbitrary
+  anchor datetime.
+- **`dev_docs/embedding_audit.md`** — per-LV diagnosis of the three
+  embed-blocker patterns (router-shaped `mount/3`, `handle_params/3`
+  export, hardcoded wrapper class) and the test convention
+  (`live_isolated/3` in `test/phoenix_kit_projects/web/embedding_test.exs`)
+  that stops them from being re-introduced. 28 new contract tests.
+
+### Changed
+
+- **`handle_params/3` removed from list, show, and form LVs.** Phoenix
+  LiveView refuses to mount a LV exporting `handle_params/3` outside a
+  router live route, which would block `live_render` embedding. The
+  bodies were folded into the tail of `mount/3`. (Reverses the 0.2.0
+  refactor that had moved queries the other direction.)
+- **`TasksLive` view toggle** moved from URL-driven `?view=list|groups`
+  to `phx-click set_view`. The toggle is UI state, not a real route
+  arg — making it a URL param required `handle_params/3` (now
+  removed for embedability) and meant deep links could collide with
+  per-user preference.
+- **Empty-content pop-in eliminated on first paint** for Tier 1/2 LVs
+  (`OverviewLive`, `ProjectsLive`, `TemplatesLive`, `TasksLive`) by
+  dropping the `connected?(socket)` gate around data loading in
+  `mount/3`. First HTTP response now contains content rather than a
+  skeleton that the WebSocket-connected mount then replaces.
+- **`mix precommit` auto-formats before checking** — `format` prepended
+  to the alias so unformatted files are rewritten before
+  `quality.ci`'s `format --check-formatted` verifies. `quality.ci`
+  keeps the check-only variant for CI.
+
+### Fixed
+
+- **Dead `archived` key in PubSub broadcast payload** — `project_payload/1`
+  was building `archived: not is_nil(p.archived_at)` but every
+  subscriber pattern-matched on `{:projects, event, _payload}` and
+  re-fetched via `get_project/1` when archived state mattered.
+  Removed.
+- **Unreachable `safe_internal_path?/1` catch-all** in
+  `Web.Helpers` — the second clause was dead code because the only
+  caller already narrows the value to a non-empty binary; Dialyzer
+  flagged it as unreachable.
+- **PR #4 follow-up** — docstring symmetry on reorder helpers (Phase 1
+  triage of `CLAUDE_REVIEW.md`).
+
 ## 0.2.0
 
 ### Added
