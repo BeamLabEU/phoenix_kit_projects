@@ -23,37 +23,42 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # Progress percentage (>=) for the "near done" tier on the dashboard.
   @near_done_threshold_pct 75
 
+  # Default wrapper class for the standalone admin page. Embedders can
+  # override via `live_render(... session: %{"wrapper_class" => "..."})`.
+  @default_wrapper_class "flex flex-col mx-auto max-w-6xl px-4 py-6 gap-6"
+
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_all())
 
-    # No DB queries in mount/3 — mount runs both on the disconnected
-    # HTTP render and again on the WebSocket reconnect (and again on
-    # every reconnection after a transient network drop). Defaults
-    # match what `reload/1` would produce against an empty database;
-    # `handle_params/3` swaps them for real data.
-    {:ok,
-     assign(socket,
-       user_uuid: Activity.actor_uuid(socket),
-       page_title: gettext("Projects"),
-       task_count: 0,
-       project_count: 0,
-       template_count: 0,
-       active_count: 0,
-       active_summaries: [],
-       running_display_limit: @running_display_limit,
-       completed_projects: [],
-       upcoming_projects: [],
-       setup_projects: [],
-       any_projects?: false,
-       my_assignments: [],
-       status_counts: %{}
-     )}
-  end
+    wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
-  @impl true
-  def handle_params(_params, _url, socket) do
-    {:noreply, reload(socket)}
+    # Mount runs on disconnected HTTP render AND on every WebSocket
+    # (re)connect. Skeleton defaults keep the disconnected render cheap
+    # (no DB); `reload/1` runs once the socket is connected. `handle_params/3`
+    # is intentionally absent — Phoenix LV refuses to mount a LV exporting
+    # it outside a router live route, which would block embedding via
+    # `live_render`. See dev_docs/embedding_audit.md.
+    socket =
+      assign(socket,
+        user_uuid: Activity.actor_uuid(socket),
+        page_title: gettext("Projects"),
+        wrapper_class: wrapper_class,
+        task_count: 0,
+        project_count: 0,
+        template_count: 0,
+        active_count: 0,
+        active_summaries: [],
+        running_display_limit: @running_display_limit,
+        completed_projects: [],
+        upcoming_projects: [],
+        setup_projects: [],
+        any_projects?: false,
+        my_assignments: [],
+        status_counts: %{}
+      )
+
+    {:ok, if(connected?(socket), do: reload(socket), else: socket)}
   end
 
   defp reload(socket) do
@@ -228,7 +233,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex flex-col mx-auto max-w-6xl px-4 py-6 gap-6">
+    <div class={@wrapper_class}>
       <.page_header
         title={gettext("Projects")}
         description={gettext("Overview of active work, upcoming projects, and your assignments.")}

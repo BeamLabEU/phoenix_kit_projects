@@ -68,6 +68,82 @@ Under `PhoenixKitProjects.Web.*`:
 
 Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../new`, `.../:id`, `.../:id/edit`, and assignment routes like `list/:project_id/assignments/new`. Use `PhoenixKitProjects.Paths`.
 
+### Embedding LiveViews via `live_render`
+
+**See also:** [`dev_docs/embedding_audit.md`](dev_docs/embedding_audit.md)
+— the deep-dive audit of every LV in this module, why the blockers
+exist, the per-LV fix shapes, the test convention, and the pre-flight
+checklist for new LVs. Read it before adding a new LV.
+
+**All 9 LVs are embeddable.** The regression gate is
+`test/phoenix_kit_projects/web/embedding_test.exs` — 28
+`live_isolated/3` tests pinning the embed contract. Coverage:
+`OverviewLive`, `ProjectsLive`, `TemplatesLive`, `TasksLive`,
+`ProjectShowLive`, `ProjectFormLive`, `TaskFormLive`,
+`TemplateFormLive`, `AssignmentFormLive`.
+
+Common shape for **read-only LVs** (Overview / Projects / Templates /
+Tasks / ProjectShow):
+
+```heex
+{live_render(@socket, PhoenixKitProjects.Web.OverviewLive,
+   id: "embedded-projects-overview",
+   session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-6"})}
+```
+
+`ProjectShowLive` additionally requires `session["id"]` (the project
+UUID). `TasksLive` accepts `session["view"]` (`"list"` or `"groups"`).
+
+Common shape for **form LVs** (ProjectForm / AssignmentForm /
+TaskForm / TemplateForm):
+
+```heex
+{live_render(@socket, PhoenixKitProjects.Web.ProjectFormLive,
+   id: "embedded-new-project",
+   session: %{"live_action" => "new",
+              "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4",
+              "redirect_to" => "/host/orders/#{@order_id}"})}
+```
+
+Contract (all keys optional unless noted):
+
+- `session["id"]` — required for `ProjectShowLive` and for `:edit`
+  actions on form LVs. String UUID.
+- `session["project_id"]` — required for `AssignmentFormLive` (both
+  `:new` and `:edit`).
+- `session["live_action"]` — `"new"` or `"edit"` for form LVs.
+  Defaults to `:new`. Resolved via `String.to_existing_atom/1` so
+  unknown values fall back to the default.
+- `session["template"]` — optional template UUID for
+  `ProjectFormLive` `:new` (prefills the template picker).
+- `session["view"]` — `"list"` or `"groups"` for `TasksLive`.
+  Defaults to `"list"`.
+- `session["wrapper_class"]` — overrides the outermost `<div>` class.
+  Each LV defaults to its standalone-admin class
+  (`mx-auto max-w-{xl,4xl,5xl,6xl} px-4 py-6 gap-{4,6}`); pass any
+  host-friendly Tailwind class string.
+- `session["redirect_to"]` — form LVs only. String path. When set,
+  `push_navigate` on save / mount-error fires to this path instead of
+  the admin default. Lets the host close a modal, refresh state, etc.
+  without yanking the user to `/admin/projects/...`.
+- `id:` opt on `live_render` should be unique per logical embed (e.g.
+  include the resource UUID) so two embeddings of the same LV on one
+  page don't collide.
+
+Behavior notes:
+
+- `push_navigate` from within an embedded LV navigates the
+  **top-level** browser session. Read-only LVs: rare paths (back-link,
+  post-delete redirect). Form LVs: every save — that's why the
+  `redirect_to` seam exists.
+- All `phx-click` events, PubSub subscriptions, and the comments
+  drawer (on `ProjectShowLive`) are scoped to the embedded socket;
+  reactivity works the same as on the standalone page.
+- Two embeds of different resources can coexist on one host page;
+  PubSub fan-out (`projects:all` etc.) is global so both will rerender
+  on cross-resource events. Per-project topic
+  (`projects:project:<uuid>`) is already scoped.
+
 ## Database
 
 Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`.
@@ -485,10 +561,15 @@ Pinning the deliberate non-features so future-me doesn't propose them as
   org/tenant key through every topic when core grows that capability.
   Per-project topic (`projects:project:<uuid>`) is already safe — you
   need the UUID to subscribe.
-- **No mount → handle_params refactor** — `mount/3` does the initial DB
-  read in every LV. This means HTTP render + WebSocket connect each
-  query. Reviewer flagged in PR #1 review item #1; left deferred because
-  it's a per-LV behaviour change, not a quality-sweep refactor.
+- **`ProjectShowLive` is mount-only by design** — initial DB reads happen
+  at the tail of `mount/3`, not in `handle_params/3`. The 0.2.0 CHANGELOG
+  noted a `handle_params/3` refactor across all list/show/form LVs to
+  share the disconnected/connected query path; on `ProjectShowLive` that
+  was reverted (issue #5) because Phoenix LiveView refuses to mount any LV
+  exporting `handle_params/3` outside a router live route, which blocks
+  embedding via `live_render`. Same constraint applies if a sibling LV
+  ever needs to be embedded — drop `handle_params/3` and move its body
+  into the mount tail.
 - **No event-debounce / minimal-delta on OverviewLive `handle_info`** —
   every `:projects, _, _` broadcast triggers a full dashboard reload
   (~10 queries). Reviewer flagged in PR #1 review item #7. Same scope

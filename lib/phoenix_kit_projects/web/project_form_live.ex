@@ -11,18 +11,34 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
-  @impl true
-  def mount(_params, _session, socket) do
-    # No DB queries in mount/3 — `apply_action/3` fetches templates
-    # (on `:new`) or the project being edited; it runs from
-    # `handle_params/3` so the load doesn't fire twice across the
-    # disconnected + connected lifecycle.
-    {:ok, mount_multilang(socket)}
-  end
+  # Default wrapper class for the standalone admin page. Embedders can
+  # override via `live_render(... session: %{"wrapper_class" => "..."})`.
+  @default_wrapper_class "flex flex-col mx-auto max-w-xl px-4 py-6 gap-4"
 
   @impl true
-  def handle_params(params, _url, socket) do
-    {:noreply, apply_action(socket, socket.assigns.live_action, params)}
+  def mount(params, session, socket) do
+    wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
+    redirect_to = Map.get(session, "redirect_to")
+    live_action = WebHelpers.resolve_live_action(socket, session)
+    resolved_params = WebHelpers.resolve_action_params(params, session)
+
+    # `apply_action/3` loads the project on `:edit` and the templates
+    # list on `:new`. It runs at the tail of `mount/3` (not in
+    # `handle_params/3`) because Phoenix LV refuses to mount a LV
+    # exporting `handle_params/3` outside a router live route, which
+    # would block embedding via `live_render`. See
+    # dev_docs/embedding_audit.md.
+    socket =
+      socket
+      |> mount_multilang()
+      |> assign(
+        wrapper_class: wrapper_class,
+        embed_redirect_to: redirect_to,
+        live_action: live_action
+      )
+      |> apply_action(live_action, resolved_params)
+
+    {:ok, socket}
   end
 
   defp apply_action(socket, :new, params) do
@@ -46,7 +62,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       nil ->
         socket
         |> put_flash(:error, gettext("Project not found."))
-        |> push_navigate(to: Paths.projects())
+        |> WebHelpers.navigate_after_save(Paths.projects())
 
       project ->
         socket
@@ -119,7 +135,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Project created."))
-         |> push_navigate(to: Paths.project(project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(project.uuid))}
 
       {:error, cs} ->
         Activity.log_failed("projects.project_created",
@@ -148,7 +164,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
            :info,
            gettext("Project created from template with all tasks and dependencies.")
          )
-         |> push_navigate(to: Paths.project(project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(project.uuid))}
 
       {:error, :template_not_found} ->
         Activity.log_failed("projects.project_created_from_template",
@@ -222,7 +238,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Project updated."))
-         |> push_navigate(to: Paths.project(project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(project.uuid))}
 
       {:error, cs} ->
         Activity.log_failed("projects.project_updated",
@@ -275,7 +291,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex flex-col mx-auto max-w-xl px-4 py-6 gap-4">
+    <div class={@wrapper_class}>
       <.page_header title={@page_title}>
         <:back_link>
           <.link navigate={Paths.projects()} class="link link-hover text-sm">

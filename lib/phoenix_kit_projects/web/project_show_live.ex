@@ -16,13 +16,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   require Logger
 
+  # Default wrapper class for the standalone admin page. Embedders can
+  # override via `live_render(... session: %{"wrapper_class" => "..."})`
+  # to drop `mx-auto max-w-4xl` and fill a wider host layout.
+  @default_wrapper_class "flex flex-col mx-auto max-w-4xl px-4 py-6 gap-4"
+
+  # Embedded entry: when nested via `live_render`, params arrives as
+  # `:not_mounted_at_router` and `session` carries the project id (plus
+  # any `wrapper_class` override). Delegate to the router clause so the
+  # mount logic stays single-sourced.
   @impl true
-  def mount(%{"id" => id}, _session, socket) do
+  def mount(:not_mounted_at_router, %{"id" => id} = session, socket) do
+    mount(%{"id" => id}, session, socket)
+  end
+
+  def mount(%{"id" => id}, session, socket) do
     # `get_project/1` stays in mount/3 because the not-found path
     # has to redirect before render, and the per-project PubSub
-    # topic needs the project.uuid to subscribe to. Everything
-    # heavier (assignment list, comment counts) moves to
-    # `handle_params/3`.
+    # topic needs the project.uuid to subscribe to. The heavier
+    # assignment/comment loads sit at the tail of mount/3 (not
+    # `handle_params/3`) because Phoenix LiveView refuses to mount a
+    # LV that exports `handle_params/3` outside a router live route,
+    # which would block embedding via `live_render`.
     case Projects.get_project(id) do
       nil ->
         {:ok,
@@ -43,37 +58,37 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         lang = L10n.current_content_lang()
 
-        {:ok,
-         assign(socket,
-           page_title: Project.localized_name(project, lang),
-           project: project,
-           is_template: is_template,
-           editing_duration_uuid: nil,
-           start_modal_open: false,
-           start_form: to_form(%{"start_at" => default_start_at_local()}),
-           # Comments drawer state. `comments_resource` is `nil` when
-           # closed; a `%{type, uuid, title}` map when open. The
-           # `CommentsComponent` is keyed on `{type, uuid}` so opening
-           # different resources doesn't reuse stale state.
-           comments_resource: nil,
-           comments_enabled: comments_available?(),
-           project_comment_count: 0,
-           assignment_comment_counts: %{},
-           # Skeleton defaults so the disconnected render is coherent
-           # before `handle_params/3` loads the real data.
-           assignments: [],
-           deps_by_assignment: %{},
-           total_tasks: 0,
-           done_tasks: 0,
-           progress_pct: 0,
-           schedule: nil
-         )}
-    end
-  end
+        wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
-  @impl true
-  def handle_params(_params, _url, socket) do
-    {:noreply, socket |> load_assignments() |> load_comment_counts()}
+        socket =
+          assign(socket,
+            page_title: Project.localized_name(project, lang),
+            project: project,
+            is_template: is_template,
+            wrapper_class: wrapper_class,
+            editing_duration_uuid: nil,
+            start_modal_open: false,
+            start_form: to_form(%{"start_at" => default_start_at_local()}),
+            # Comments drawer state. `comments_resource` is `nil` when
+            # closed; a `%{type, uuid, title}` map when open. The
+            # `CommentsComponent` is keyed on `{type, uuid}` so opening
+            # different resources doesn't reuse stale state.
+            comments_resource: nil,
+            comments_enabled: comments_available?(),
+            project_comment_count: 0,
+            assignment_comment_counts: %{},
+            # Skeleton defaults overwritten by the load_* helpers below;
+            # they keep the assigns coherent if either helper short-circuits.
+            assignments: [],
+            deps_by_assignment: %{},
+            total_tasks: 0,
+            done_tasks: 0,
+            progress_pct: 0,
+            schedule: nil
+          )
+
+        {:ok, socket |> load_assignments() |> load_comment_counts()}
+    end
   end
 
   # ── PubSub reactivity ─────────────────────────────────────────
@@ -1111,7 +1126,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex flex-col mx-auto max-w-4xl px-4 py-6 gap-4">
+    <div class={@wrapper_class}>
       <%!-- Header --%>
       <div>
         <.link navigate={if @is_template, do: Paths.templates(), else: Paths.projects()} class="link link-hover text-sm">

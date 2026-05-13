@@ -17,18 +17,32 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   alias PhoenixKitProjects.Schemas.{Assignment, Task}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
-  @impl true
-  def mount(_params, _session, socket) do
-    # No DB queries in mount/3 — `apply_action/3` (which fetches
-    # project / assignment / task list / closure tree) is invoked
-    # from `handle_params/3` so the heavy load doesn't run twice on
-    # the disconnected + connected lifecycle.
-    {:ok, mount_multilang(socket)}
-  end
+  # Default wrapper class for the standalone admin page. Embedders can
+  # override via `live_render(... session: %{"wrapper_class" => "..."})`.
+  @default_wrapper_class "flex flex-col mx-auto max-w-xl px-4 py-6 gap-4"
 
   @impl true
-  def handle_params(params, _url, socket) do
-    {:noreply, apply_action(socket, socket.assigns.live_action, params)}
+  def mount(params, session, socket) do
+    wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
+    redirect_to = Map.get(session, "redirect_to")
+    live_action = WebHelpers.resolve_live_action(socket, session)
+    resolved_params = WebHelpers.resolve_action_params(params, session)
+
+    # `apply_action/3` fetches project / assignment / task list /
+    # closure tree. Runs at the tail of `mount/3` (not
+    # `handle_params/3`) so the LV stays embeddable via `live_render`.
+    # See dev_docs/embedding_audit.md.
+    socket =
+      socket
+      |> mount_multilang()
+      |> assign(
+        wrapper_class: wrapper_class,
+        embed_redirect_to: redirect_to,
+        live_action: live_action
+      )
+      |> apply_action(live_action, resolved_params)
+
+    {:ok, socket}
   end
 
   # Recursive function component for the closure-pull tree. Renders
@@ -115,7 +129,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       nil ->
         socket
         |> put_flash(:error, gettext("Project not found."))
-        |> push_navigate(to: Paths.projects())
+        |> WebHelpers.navigate_after_save(Paths.projects())
 
       project ->
         assignment = %Assignment{project_uuid: project.uuid}
@@ -166,12 +180,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {nil, _} ->
         socket
         |> put_flash(:error, gettext("Project not found."))
-        |> push_navigate(to: Paths.projects())
+        |> WebHelpers.navigate_after_save(Paths.projects())
 
       {_, nil} ->
         socket
         |> put_flash(:error, gettext("Assignment not found."))
-        |> push_navigate(to: Paths.project(project_id))
+        |> WebHelpers.navigate_after_save(Paths.project(project_id))
 
       {project, assignment} ->
         assign_type =
@@ -475,7 +489,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(flash_kind, flash_msg)
-         |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid))}
 
       {:error, cs} ->
         {:noreply, on_save_error(socket, cs)}
@@ -620,7 +634,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(:info, msg)
-         |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid))}
 
       {:error, %Ecto.Changeset{} = cs} ->
         Activity.log_failed("projects.assignment_created",
@@ -678,7 +692,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(flash_kind, flash_msg)
-         |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid))}
 
       {:error, cs} ->
         Activity.log_failed("projects.assignment_created",
@@ -768,7 +782,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Assignment updated."))
-         |> push_navigate(to: Paths.project(socket.assigns.project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid))}
 
       {:error, cs} ->
         Activity.log_failed("projects.assignment_updated",
@@ -899,7 +913,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex flex-col mx-auto max-w-xl px-4 py-6 gap-4">
+    <div class={@wrapper_class}>
       <.page_header title={@page_title}>
         <:back_link>
           <.link navigate={Paths.project(@project.uuid)} class="link link-hover text-sm">

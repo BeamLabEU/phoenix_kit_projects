@@ -227,4 +227,74 @@ defmodule PhoenixKitProjects.Web.Helpers do
         socket.assigns[fallback_assign]
     end
   end
+
+  @doc """
+  Resolves the `live_action` for the embedded mount path.
+
+  Router-mounted LVs get `live_action` set by Phoenix LV before
+  `mount/3` runs (from the `live "/...", Mod, :action` macro). Embedded
+  LVs mounted via `live_render` get nothing — the host has to pass it
+  via session. Falls back to `default` (typically `:new`) when neither
+  source is present.
+
+  Accepts strings (`"new"`, `"edit"`) from session and converts via
+  `String.to_existing_atom/1` (safer than `to_atom/1`; an unknown action
+  raises rather than minting atoms from arbitrary user input).
+  """
+  @spec resolve_live_action(Phoenix.LiveView.Socket.t(), map(), atom()) :: atom()
+  def resolve_live_action(socket, session, default \\ :new) do
+    cond do
+      action = socket.assigns[:live_action] -> action
+      raw = Map.get(session, "live_action") -> normalize_action(raw, default)
+      true -> default
+    end
+  end
+
+  defp normalize_action(value, _default) when is_atom(value), do: value
+
+  defp normalize_action(value, default) when is_binary(value) do
+    String.to_existing_atom(value)
+  rescue
+    ArgumentError -> default
+  end
+
+  defp normalize_action(_, default), do: default
+
+  @doc """
+  Builds the params map an `apply_action/3` clause expects.
+
+  Router mount passes URL params as a map; embed mount passes the atom
+  `:not_mounted_at_router`. This helper unifies both: if `params` is a
+  map, returns it as-is; otherwise extracts the same string keys from
+  `session` (`"id"`, `"project_id"`, `"template"`). Embedders pass those
+  keys explicitly when they want `:edit` or template-prefill behavior.
+  """
+  @spec resolve_action_params(map() | atom(), map()) :: map()
+  def resolve_action_params(params, _session) when is_map(params), do: params
+
+  def resolve_action_params(_atom, session) do
+    session
+    |> Map.take(["id", "project_id", "template"])
+  end
+
+  @doc """
+  Push-navigates to `default_path` unless the embedder supplied a
+  `session["redirect_to"]` override (already on socket as
+  `:embed_redirect_to`).
+
+  Used by form save handlers so that an embedded form can return to a
+  host-app path on save (and the host can close a modal, refresh its
+  own state, etc.) instead of yanking the user to `/admin/projects/...`.
+  """
+  @spec navigate_after_save(Phoenix.LiveView.Socket.t(), String.t()) ::
+          Phoenix.LiveView.Socket.t()
+  def navigate_after_save(socket, default_path) do
+    target =
+      case socket.assigns[:embed_redirect_to] do
+        path when is_binary(path) and path != "" -> path
+        _ -> default_path
+      end
+
+    Phoenix.LiveView.push_navigate(socket, to: target)
+  end
 end
