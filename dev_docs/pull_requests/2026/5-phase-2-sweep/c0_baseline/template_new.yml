@@ -1,0 +1,117 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e7]:
+      - link "DON TESTER pk project" [ref=e8] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e9]: Admin
+    - generic [ref=e10]:
+      - group [ref=e13]
+      - button "M Avatar" [ref=e17] [cursor=pointer]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: M
+          - img "Avatar" [ref=e21]
+  - generic [ref=e22]:
+    - generic [ref=e25]:
+      - generic [ref=e27]:
+        - link "Templates" [ref=e29] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/templates
+          - text: Templates
+        - heading "New template" [level=1] [ref=e30]
+      - generic [ref=e33]:
+        - generic [ref=e34]:
+          - generic [ref=e36]: Name
+          - textbox "Name" [ref=e37]
+        - generic [ref=e38]:
+          - generic [ref=e40]: Description
+          - textbox "Description" [ref=e41]
+        - generic [ref=e42] [cursor=pointer]:
+          - checkbox "Count weekends in schedule" [ref=e43]
+          - generic [ref=e44]: Count weekends in schedule
+        - generic [ref=e45]:
+          - link "Cancel" [ref=e46] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/projects/templates
+          - button "Create" [ref=e47] [cursor=pointer]
+    - complementary [ref=e49]:
+      - navigation "Admin navigation" [ref=e51]:
+        - generic [ref=e52]:
+          - link "Dashboard" [ref=e54] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin
+            - generic [ref=e57]: Dashboard
+          - link "Users" [ref=e59] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/users
+            - generic [ref=e62]: Users
+          - link "Activity" [ref=e64] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/activity
+            - generic [ref=e67]: Activity
+          - link "Media" [ref=e69] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/media
+            - generic [ref=e72]: Media
+        - generic [ref=e73]:
+          - link "Emails" [ref=e75] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/emails/dashboard
+            - generic [ref=e78]: Emails
+          - link "Newsletters" [ref=e80] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/newsletters/broadcasts
+            - generic [ref=e83]: Newsletters
+          - link "DB" [ref=e85] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/db
+            - generic [ref=e88]: DB
+          - link "Posts" [ref=e90] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/posts
+            - generic [ref=e93]: Posts
+          - link "Comments" [ref=e95] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/comments
+            - generic [ref=e98]: Comments
+          - link "Connections" [ref=e100] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/connections
+            - generic [ref=e103]: Connections
+          - link "Jobs" [ref=e105] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/jobs
+            - generic [ref=e108]: Jobs
+          - link "Modules" [ref=e110] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/modules
+            - generic [ref=e113]: Modules
+          - link "AI" [ref=e115] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/ai/endpoints
+            - generic [ref=e118]: AI
+          - link "Hello World" [ref=e120] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/hello-world
+            - generic [ref=e123]: Hello World
+          - link "Document Creator" [ref=e125] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/document-creator/documents
+            - generic [ref=e128]: Document Creator
+          - link "Staff" [ref=e130] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/staff
+            - generic [ref=e133]: Staff
+          - generic [ref=e134]:
+            - link "Projects" [ref=e135] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects
+              - generic [ref=e138]: Projects
+            - generic [ref=e139]:
+              - link "Overview" [ref=e140] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects
+                - generic [ref=e143]: Overview
+              - link "Templates" [ref=e144] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/templates
+                - generic [ref=e147]: Templates
+              - link "Tasks" [ref=e148] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/tasks
+                - generic [ref=e151]: Tasks
+              - link "Projects" [ref=e152] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list
+                - generic [ref=e155]: Projects
+          - link "Catalogue" [ref=e157] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/catalogue
+            - generic [ref=e160]: Catalogue
+          - link "Locations" [ref=e162] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/locations
+            - generic [ref=e165]: Locations
+          - link "Entities" [ref=e167] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/entities
+            - generic [ref=e170]: Entities
+          - link "Publishing" [ref=e172] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/publishing
+            - generic [ref=e175]: Publishing
+        - link "Settings" [ref=e178] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/settings
+          - generic [ref=e181]: Settings

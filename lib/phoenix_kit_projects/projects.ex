@@ -770,8 +770,7 @@ defmodule PhoenixKitProjects.Projects do
     %{
       uuid: p.uuid,
       name: p.name,
-      is_template: p.is_template,
-      archived: not is_nil(p.archived_at)
+      is_template: p.is_template
     }
   end
 
@@ -783,6 +782,12 @@ defmodule PhoenixKitProjects.Projects do
   to no row at all) abort the whole batch with
   `{:error, :wrong_scope}`. Duplicates dedup last-write-wins.
   Two-pass write (negatives → positives) inside a transaction.
+
+  The `@reorder_max_uuids` cap is checked against the **raw input
+  list length**, before dedup — a payload over the cap signals a
+  misbehaving client (real users can't drag 1000+ rows in one
+  batched event), so the rejection is a guard, not a real-user
+  constraint. Same shape as `reorder_tasks/2`.
   """
   @spec reorder_projects([uuid()], keyword()) ::
           :ok | {:error, :too_many_uuids | :wrong_scope | term()}
@@ -1703,6 +1708,12 @@ defmodule PhoenixKitProjects.Projects do
   honoured. Returns `:ok` / `{:error, :too_many_uuids}` /
   `{:error, :not_in_project}` / `{:error, term()}`. Audit rows are
   written for every outcome.
+
+  The `@reorder_max_uuids` cap is checked against the **raw input
+  list length**, before dedup — a payload over the cap signals a
+  misbehaving client (real users can't drag 1000+ rows in one
+  batched event), so the rejection is a guard, not a real-user
+  constraint. Same shape as `reorder_tasks/2`.
   """
   @spec reorder_assignments(uuid(), [uuid()], keyword()) ::
           :ok | {:error, :too_many_uuids | :not_in_project | term()}

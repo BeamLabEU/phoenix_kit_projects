@@ -1,0 +1,265 @@
+- main [ref=e3]:
+  - generic [ref=e5]:
+    - generic [ref=e7]:
+      - link "DON TESTER pk project" [ref=e8] [cursor=pointer]:
+        - /url: /
+      - generic [ref=e9]: Admin
+    - generic [ref=e10]:
+      - group [ref=e13]
+      - button "M Avatar" [ref=e17] [cursor=pointer]:
+        - generic [ref=e19]:
+          - generic [ref=e20]: M
+          - img "Avatar" [ref=e21]
+  - generic [ref=e22]:
+    - generic [ref=e25]:
+      - generic [ref=e27]:
+        - link "Task Library" [ref=e29] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/projects/tasks
+          - text: Task Library
+        - heading "New task" [level=1] [ref=e30]
+      - generic [ref=e31]:
+        - generic [ref=e32]:
+          - generic [ref=e33]:
+            - generic [ref=e34]:
+              - heading "Content Language" [level=2] [ref=e37]
+              - generic [ref=e40]: "Primary: English (United States)"
+            - generic [ref=e43]: Use the language tabs below to translate this record's content. The primary language (marked with a star) is required. Other languages are optional — any empty fields will fall back to the primary language value.
+            - tablist [ref=e45]:
+              - tab "EN-US" [ref=e46] [cursor=pointer]:
+                - generic [ref=e47]:
+                  - generic [ref=e48]: EN-US
+                  - img [ref=e49]
+              - tab "EN" [ref=e52] [cursor=pointer]:
+                - generic [ref=e54]: EN
+              - generic [ref=e55]: "|"
+              - tab "SQ" [ref=e56] [cursor=pointer]:
+                - generic [ref=e58]: SQ
+              - generic [ref=e59]: "|"
+              - tab "AM" [ref=e60] [cursor=pointer]:
+                - generic [ref=e62]: AM
+              - generic [ref=e63]: "|"
+              - tab "AR" [ref=e64] [cursor=pointer]:
+                - generic [ref=e66]: AR
+              - generic [ref=e67]: "|"
+              - tab "HY" [ref=e68] [cursor=pointer]:
+                - generic [ref=e70]: HY
+              - generic [ref=e71]: "|"
+              - tab "AZ" [ref=e72] [cursor=pointer]:
+                - generic [ref=e74]: AZ
+              - generic [ref=e75]: "|"
+              - tab "EU" [ref=e76] [cursor=pointer]:
+                - generic [ref=e78]: EU
+              - generic [ref=e79]: "|"
+              - tab "BN" [ref=e80] [cursor=pointer]:
+                - generic [ref=e82]: BN
+              - generic [ref=e83]: "|"
+              - tab "BG" [ref=e84] [cursor=pointer]:
+                - generic [ref=e86]: BG
+              - generic [ref=e87]: "|"
+              - tab "BS" [ref=e88] [cursor=pointer]:
+                - generic [ref=e90]: BS
+              - generic [ref=e91]: "|"
+              - tab "CA" [ref=e92] [cursor=pointer]:
+                - generic [ref=e94]: CA
+              - generic [ref=e95]: "|"
+              - tab "ZH-CN" [ref=e96] [cursor=pointer]:
+                - generic [ref=e98]: ZH-CN
+              - generic [ref=e99]: "|"
+              - tab "ZH-TW" [ref=e100] [cursor=pointer]:
+                - generic [ref=e102]: ZH-TW
+              - generic [ref=e103]: "|"
+              - tab "CS" [ref=e104] [cursor=pointer]:
+                - generic [ref=e106]: CS
+              - generic [ref=e107]: "|"
+              - tab "HR" [ref=e108] [cursor=pointer]:
+                - generic [ref=e110]: HR
+              - generic [ref=e111]: "|"
+              - tab "DA" [ref=e112] [cursor=pointer]:
+                - generic [ref=e114]: DA
+              - generic [ref=e115]: "|"
+              - tab "NL" [ref=e116] [cursor=pointer]:
+                - generic [ref=e118]: NL
+              - generic [ref=e119]: "|"
+              - tab "EN-GB" [ref=e120] [cursor=pointer]:
+                - generic [ref=e122]: EN-GB
+              - generic [ref=e123]: "|"
+              - tab "EN-CA" [ref=e124] [cursor=pointer]:
+                - generic [ref=e126]: EN-CA
+              - generic [ref=e127]: "|"
+              - tab "EN-AU" [ref=e128] [cursor=pointer]:
+                - generic [ref=e130]: EN-AU
+              - generic [ref=e131]: "|"
+              - tab "ET" [ref=e132] [cursor=pointer]:
+                - generic [ref=e134]: ET
+              - generic [ref=e135]: "|"
+              - tab "TL" [ref=e136] [cursor=pointer]:
+                - generic [ref=e138]: TL
+              - generic [ref=e139]: "|"
+              - tab "FI" [ref=e140] [cursor=pointer]:
+                - generic [ref=e142]: FI
+              - generic [ref=e143]: "|"
+              - tab "FR-FR" [ref=e144] [cursor=pointer]:
+                - generic [ref=e146]: FR-FR
+              - generic [ref=e147]: "|"
+              - tab "GL" [ref=e148] [cursor=pointer]:
+                - generic [ref=e150]: GL
+              - generic [ref=e151]: "|"
+              - tab "FR-CA" [ref=e152] [cursor=pointer]:
+                - generic [ref=e154]: FR-CA
+              - generic [ref=e155]: "|"
+              - tab "KA" [ref=e156] [cursor=pointer]:
+                - generic [ref=e158]: KA
+              - generic [ref=e159]: "|"
+              - tab "DE-DE" [ref=e160] [cursor=pointer]:
+                - generic [ref=e162]: DE-DE
+              - generic [ref=e163]: "|"
+              - tab "DE-AT" [ref=e164] [cursor=pointer]:
+                - generic [ref=e166]: DE-AT
+              - generic [ref=e167]: "|"
+              - tab "DE-CH" [ref=e168] [cursor=pointer]:
+                - generic [ref=e170]: DE-CH
+              - generic [ref=e171]: "|"
+              - tab "GU" [ref=e172] [cursor=pointer]:
+                - generic [ref=e174]: GU
+              - generic [ref=e175]: "|"
+              - tab "HE" [ref=e176] [cursor=pointer]:
+                - generic [ref=e178]: HE
+              - generic [ref=e179]: "|"
+              - tab "HI" [ref=e180] [cursor=pointer]:
+                - generic [ref=e182]: HI
+              - generic [ref=e183]: "|"
+              - tab "HU" [ref=e184] [cursor=pointer]:
+                - generic [ref=e186]: HU
+              - generic [ref=e187]: "|"
+              - tab "IS" [ref=e188] [cursor=pointer]:
+                - generic [ref=e190]: IS
+              - generic [ref=e191]: "|"
+              - tab "ID" [ref=e192] [cursor=pointer]:
+                - generic [ref=e194]: ID
+              - generic [ref=e195]: "|"
+              - tab "GA" [ref=e196] [cursor=pointer]:
+                - generic [ref=e198]: GA
+              - generic [ref=e199]: "|"
+              - tab "IT" [ref=e200] [cursor=pointer]:
+                - generic [ref=e202]: IT
+              - generic [ref=e203]: "|"
+              - tab "JA" [ref=e204] [cursor=pointer]:
+                - generic [ref=e206]: JA
+          - generic [ref=e207]:
+            - generic [ref=e208]:
+              - generic [ref=e210]: Title *
+              - textbox "Title *" [ref=e211]
+            - generic [ref=e212]:
+              - generic [ref=e214]: Description
+              - textbox "Description" [ref=e215]
+        - generic [ref=e217]:
+          - generic [ref=e218]:
+            - generic [ref=e220]:
+              - generic [ref=e222]: Estimated duration
+              - spinbutton "Estimated duration" [ref=e223]
+            - generic [ref=e225]:
+              - generic [ref=e226]: Unit
+              - combobox "Unit" [ref=e228]:
+                - option "Minutes"
+                - option "Hours" [selected]
+                - option "Days"
+                - option "Weeks"
+                - option "Fortnights"
+                - option "Months"
+                - option "Years"
+          - generic [ref=e229]: Default assignment (optional)
+          - generic [ref=e230]:
+            - generic [ref=e231]: Default assign to
+            - combobox [ref=e233]:
+              - option "Nobody" [selected]
+              - option "Department"
+              - option "Team"
+              - option "Person"
+        - generic [ref=e234]:
+          - link "Cancel" [ref=e235] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/projects/tasks
+          - button "Create" [ref=e236] [cursor=pointer]
+    - complementary [ref=e238]:
+      - navigation "Admin navigation" [ref=e240]:
+        - generic [ref=e241]:
+          - link "Dashboard" [ref=e243] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin
+            - generic [ref=e246]: Dashboard
+          - link "Users" [ref=e248] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/users
+            - generic [ref=e251]: Users
+          - link "Activity" [ref=e253] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/activity
+            - generic [ref=e256]: Activity
+          - link "Media" [ref=e258] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/media
+            - generic [ref=e261]: Media
+        - generic [ref=e262]:
+          - link "Emails" [ref=e264] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/emails/dashboard
+            - generic [ref=e267]: Emails
+          - link "Newsletters" [ref=e269] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/newsletters/broadcasts
+            - generic [ref=e272]: Newsletters
+          - link "DB" [ref=e274] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/db
+            - generic [ref=e277]: DB
+          - link "Posts" [ref=e279] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/posts
+            - generic [ref=e282]: Posts
+          - link "Comments" [ref=e284] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/comments
+            - generic [ref=e287]: Comments
+          - link "Connections" [ref=e289] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/connections
+            - generic [ref=e292]: Connections
+          - link "Jobs" [ref=e294] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/jobs
+            - generic [ref=e297]: Jobs
+          - link "Modules" [ref=e299] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/modules
+            - generic [ref=e302]: Modules
+          - link "AI" [ref=e304] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/ai/endpoints
+            - generic [ref=e307]: AI
+          - link "Hello World" [ref=e309] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/hello-world
+            - generic [ref=e312]: Hello World
+          - link "Document Creator" [ref=e314] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/document-creator/documents
+            - generic [ref=e317]: Document Creator
+          - link "Staff" [ref=e319] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/staff
+            - generic [ref=e322]: Staff
+          - generic [ref=e323]:
+            - link "Projects" [ref=e324] [cursor=pointer]:
+              - /url: /phoenix_kit/ja/admin/projects
+              - generic [ref=e327]: Projects
+            - generic [ref=e328]:
+              - link "Overview" [ref=e329] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects
+                - generic [ref=e332]: Overview
+              - link "Templates" [ref=e333] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/templates
+                - generic [ref=e336]: Templates
+              - link "Tasks" [ref=e337] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/tasks
+                - generic [ref=e340]: Tasks
+              - link "Projects" [ref=e341] [cursor=pointer]:
+                - /url: /phoenix_kit/ja/admin/projects/list
+                - generic [ref=e344]: Projects
+          - link "Catalogue" [ref=e346] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/catalogue
+            - generic [ref=e349]: Catalogue
+          - link "Locations" [ref=e351] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/locations
+            - generic [ref=e354]: Locations
+          - link "Entities" [ref=e356] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/entities
+            - generic [ref=e359]: Entities
+          - link "Publishing" [ref=e361] [cursor=pointer]:
+            - /url: /phoenix_kit/ja/admin/publishing
+            - generic [ref=e364]: Publishing
+        - link "Settings" [ref=e367] [cursor=pointer]:
+          - /url: /phoenix_kit/ja/admin/settings
+          - generic [ref=e370]: Settings

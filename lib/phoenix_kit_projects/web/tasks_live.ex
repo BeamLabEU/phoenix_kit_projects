@@ -13,16 +13,40 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   @valid_views ~w(list groups)
 
-  @impl true
-  def mount(_params, _session, socket) do
-    if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
-    {:ok, assign(socket, page_title: gettext("Task Library"), view: "list") |> load_tasks()}
-  end
+  # Default wrapper class for the standalone admin page. Embedders can
+  # override via `live_render(... session: %{"wrapper_class" => "..."})`.
+  @default_wrapper_class "flex flex-col mx-auto max-w-5xl px-4 py-6 gap-4"
 
   @impl true
-  def handle_params(params, _url, socket) do
-    view = if params["view"] in @valid_views, do: params["view"], else: "list"
-    {:noreply, socket |> assign(view: view) |> load_tasks()}
+  def mount(_params, session, socket) do
+    if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
+
+    wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
+
+    # `view` is UI state, not a URL param — the standalone admin page
+    # toggles between list and groups via a `phx-click` button. Embedders
+    # can preselect by passing `session["view"]` (defaults to "list").
+    initial_view =
+      case Map.get(session, "view") do
+        v when v in @valid_views -> v
+        _ -> "list"
+      end
+
+    socket =
+      assign(socket,
+        page_title: gettext("Task Library"),
+        wrapper_class: wrapper_class,
+        view: initial_view,
+        tasks: [],
+        deps_by_task: %{},
+        groups: [],
+        standalone: []
+      )
+
+    # Load on both disconnected + connected mount so the first paint has
+    # real content. `handle_params/3` is intentionally absent — see
+    # dev_docs/embedding_audit.md.
+    {:ok, load_tasks(socket)}
   end
 
   # Loads only what the current view actually renders, so flipping
@@ -66,6 +90,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   @impl true
+  def handle_event("set_view", %{"view" => view}, socket) when view in @valid_views do
+    {:noreply, socket |> assign(view: view) |> load_tasks()}
+  end
+
+  def handle_event("set_view", _params, socket), do: {:noreply, socket}
+
   def handle_event("reorder_tasks", %{"ordered_ids" => ordered_ids} = params, socket)
       when is_list(ordered_ids) do
     moved_id = params["moved_id"]
@@ -159,7 +189,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex flex-col mx-auto max-w-5xl px-4 py-6 gap-4">
+    <div class={@wrapper_class}>
       <.page_header
         title={gettext("Task Library")}
         description={gettext("Reusable task templates.")}
@@ -171,29 +201,32 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         </:actions>
       </.page_header>
 
-      <%!-- View toggle. URL-driven (`?view=…`) so a refresh keeps the
-           user on the same view and the link is shareable. The "list"
-           view is the source of truth — flat, alphabetical, with
-           per-row dep badges. The "groups" view re-renders the same
-           tasks as rooted dep trees; tasks shared across multiple
-           roots show in EACH group (intentional duplication, not a
-           bug — that's how the view answers "where is this task
-           reused?"). --%>
+      <%!-- View toggle. UI state (not URL-driven) so the LV stays
+           embeddable via `live_render`. The "list" view is the source
+           of truth — flat, alphabetical, with per-row dep badges. The
+           "groups" view re-renders the same tasks as rooted dep trees;
+           tasks shared across multiple roots show in EACH group
+           (intentional duplication, not a bug — that's how the view
+           answers "where is this task reused?"). --%>
       <div role="tablist" class="tabs tabs-boxed self-start">
-        <.link
-          patch={Paths.tasks() <> "?view=list"}
+        <button
+          type="button"
+          phx-click="set_view"
+          phx-value-view="list"
           role="tab"
           class={["tab gap-2", @view == "list" && "tab-active"]}
         >
           <.icon name="hero-list-bullet" class="w-4 h-4" /> {gettext("List")}
-        </.link>
-        <.link
-          patch={Paths.tasks() <> "?view=groups"}
+        </button>
+        <button
+          type="button"
+          phx-click="set_view"
+          phx-value-view="groups"
           role="tab"
           class={["tab gap-2", @view == "groups" && "tab-active"]}
         >
           <.icon name="hero-rectangle-group" class="w-4 h-4" /> {gettext("Groups")}
-        </.link>
+        </button>
       </div>
 
       <%= if @view == "groups" do %>

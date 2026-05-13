@@ -69,6 +69,50 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
   end
 
+  # Issue #5: host apps embed `ProjectShowLive` via `live_render` so any
+  # upstream timeline / dependency / comments improvement lands in their
+  # workflow without re-implementation. `live_isolated/3` is the test-side
+  # equivalent — it mounts the LV with `params == :not_mounted_at_router`
+  # and the session map flowing into `mount/3`.
+  describe "embedded (live_isolated)" do
+    test "mounts when given id via session and renders project name", %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid}
+        )
+
+      assert html =~ project.name
+    end
+
+    test "wrapper_class defaults to the standalone max-w-4xl layout", %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid}
+        )
+
+      assert html =~ "mx-auto max-w-4xl"
+    end
+
+    test "wrapper_class override from session replaces the default", %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{
+            "id" => project.uuid,
+            "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"
+          }
+        )
+
+      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
+      refute html =~ "max-w-4xl"
+    end
+  end
+
   describe "status-transition events" do
     setup do
       project = fixture_project(%{"start_mode" => "immediate"})

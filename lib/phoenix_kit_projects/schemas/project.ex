@@ -195,17 +195,28 @@ defmodule PhoenixKitProjects.Schemas.Project do
   def planned_end_for(%__MODULE__{started_at: nil}, _hours), do: nil
   def planned_end_for(_, hours) when hours <= 0, do: nil
 
-  def planned_end_for(
-        %__MODULE__{started_at: %DateTime{} = start, counts_weekends: true},
-        hours
-      ),
-      do: DateTime.add(start, round(hours * 3600), :second)
+  def planned_end_for(%__MODULE__{started_at: %DateTime{} = start} = project, hours),
+    do: eta_from(project, start, hours)
 
-  def planned_end_for(
-        %__MODULE__{started_at: %DateTime{} = start, counts_weekends: false},
-        hours
-      ),
-      do: consume_weekday_budget(start, hours * 1.0)
+  @doc """
+  Calendar end-time for `hours` of work starting from `from`, honoring
+  the project's `counts_weekends` rule.
+
+  Sibling of `planned_end_for/2` anchored on an arbitrary datetime
+  instead of `started_at`. Used for the "if work continues at planned
+  pace from now, ETA is …" projection shown on the project page —
+  `eta_from(project, DateTime.utc_now(), remaining_hours)`.
+
+  Returns `nil` when `hours <= 0` (nothing left to schedule).
+  """
+  @spec eta_from(t(), DateTime.t(), number()) :: DateTime.t() | nil
+  def eta_from(_project, _from, hours) when hours <= 0, do: nil
+
+  def eta_from(%__MODULE__{counts_weekends: true}, %DateTime{} = from, hours),
+    do: DateTime.add(from, round(hours * 3600), :second)
+
+  def eta_from(%__MODULE__{counts_weekends: false}, %DateTime{} = from, hours),
+    do: consume_weekday_budget(from, hours * 1.0)
 
   # Walks calendar time forward from `current`, treating 24 calendar
   # hours on a weekday as 8 work hours (a 3:1 calendar-to-work ratio).

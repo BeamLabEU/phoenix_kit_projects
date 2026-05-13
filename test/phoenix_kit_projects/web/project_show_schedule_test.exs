@@ -66,7 +66,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
       # Schedule blocks render only when started_at != nil + total_hours > 0.
-      assert html =~ "Planned" or html =~ "Projected" or html =~ "/"
+      # New schedule shape: "Remaining:" + "ETA:" (active) or "Finished:" (done).
+      assert html =~ "Remaining:" or html =~ "ETA:" or html =~ "Finished:" or html =~ "/"
     end
 
     test "renders for counts_weekends=true project (calendar mode)", %{conn: conn} do

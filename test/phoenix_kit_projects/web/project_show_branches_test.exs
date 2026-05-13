@@ -184,7 +184,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
       # `projected_end({:completed_at: dt}, ...)` returns dt — exercises
       # the first projected_end clause.
-      assert html =~ "Finished" or html =~ "Completed" or html =~ "Projected"
+      assert html =~ "Finished" or html =~ "Completed"
     end
 
     test "project with one in_progress + done renders schedule + ahead/behind label",
@@ -207,7 +207,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
       end)
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      assert html =~ "Planned" or html =~ "Projected"
+      # Three :done tasks → project auto-completes → "Finished:" badge.
+      # Earlier this matched on "Planned"/"Projected" labels that were
+      # removed when the schedule block was simplified to "Remaining: …
+      # · ETA: …" / "Finished: …".
+      assert html =~ "Finished" or html =~ "Remaining:" or html =~ "ETA:"
     end
   end
 

@@ -11,17 +11,28 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
   require Logger
 
+  # Default wrapper class for the standalone admin page. Embedders can
+  # override via `live_render(... session: %{"wrapper_class" => "..."})`.
+  @default_wrapper_class "flex flex-col mx-auto max-w-5xl px-4 py-6 gap-4"
+
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_templates())
 
-    # No DB queries in mount/3. `handle_params/3` loads the list once
-    # the socket lifecycle settles.
-    {:ok, assign(socket, page_title: gettext("Project Templates"), templates: [])}
-  end
+    wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
-  @impl true
-  def handle_params(_params, _url, socket), do: {:noreply, load_templates(socket)}
+    socket =
+      assign(socket,
+        page_title: gettext("Project Templates"),
+        wrapper_class: wrapper_class,
+        templates: []
+      )
+
+    # Load on both disconnected + connected mount so the first paint has
+    # real content. `handle_params/3` is intentionally absent — see
+    # dev_docs/embedding_audit.md.
+    {:ok, load_templates(socket)}
+  end
 
   defp load_templates(socket), do: assign(socket, templates: Projects.list_templates())
 
@@ -104,7 +115,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class="flex flex-col mx-auto max-w-5xl px-4 py-6 gap-4">
+    <div class={@wrapper_class}>
       <.page_header
         title={gettext("Project Templates")}
         description={gettext("Blueprint projects that can be cloned.")}

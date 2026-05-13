@@ -41,10 +41,12 @@ defmodule PhoenixKitProjects.Integration.BroadcastsTest do
 
       project = new_project!()
 
-      # V112 replaced the `status` enum field with `archived_at`
-      # timestamp; the broadcast payload exposes `archived: boolean` now.
+      # Broadcast payload is intentionally minimal — uuid + name +
+      # is_template. Subscribers needing archived state re-read the
+      # project via `get_project/1` (the source of truth is the
+      # `archived_at` column on the schema).
       assert_receive {:projects, :project_created,
-                      %{uuid: uuid, name: _, is_template: false, archived: false}},
+                      %{uuid: uuid, name: _, is_template: false}},
                      500
 
       assert uuid == project.uuid
