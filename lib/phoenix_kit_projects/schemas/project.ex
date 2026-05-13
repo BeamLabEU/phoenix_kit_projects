@@ -185,7 +185,8 @@ defmodule PhoenixKitProjects.Schemas.Project do
   For weekday-only projects (`counts_weekends: false`) weekend days
   contribute zero work hours: the calendar walks forward but only
   weekday hours count toward the budget, scaled at the convention
-  `Task.to_hours/3` uses (8 work hours per 24-hour weekday). Starting
+  `PhoenixKitProjects.Schemas.Task.to_hours/3` uses (8 work hours per
+  24-hour weekday). Starting
   on a weekend skips to Monday before any budget is consumed.
 
   Returns `nil` when the project hasn't started or has no estimated
