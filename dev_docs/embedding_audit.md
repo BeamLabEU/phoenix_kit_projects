@@ -70,11 +70,11 @@ call that folded straight into the mount tail.
 
 **`overview_live.ex`** — dashboard, `max-w-6xl`
 - Was: `handle_params/3` exported; body `{:noreply, reload(socket)}`.
-- Fix: dropped `handle_params/3`; mount tail does `{:ok,
-  if(connected?(socket), do: reload(socket), else: socket)}` —
-  disconnected render keeps the cheap skeleton, connected mount loads.
-  Wrapper class via `session["wrapper_class"]` with
-  `@default_wrapper_class` module attribute.
+- Fix: dropped `handle_params/3`; mount tail loads unconditionally
+  (`{:ok, reload(socket)}`). Both disconnected and connected mounts
+  hit the DB so the first HTML response already has content — no
+  empty-skeleton pop-in. Wrapper class via `session["wrapper_class"]`
+  with `@default_wrapper_class` module attribute.
 - Embed value: **HIGH** — host home page widget.
 
 **`projects_live.ex`** — list, `max-w-5xl`
@@ -279,8 +279,7 @@ opening the PR:
 
 The 0.2.0 refactor introduced `handle_params/3` to share the
 disconnected/connected query path. The unstated cost was breaking
-embeddability. Replacement pattern that keeps the perf win without
-the embed cost:
+embeddability. Replacement pattern:
 
 ```elixir
 def mount(_params, session, socket) do
@@ -289,12 +288,22 @@ def mount(_params, session, socket) do
   socket =
     socket
     |> assign(wrapper_class: wrapper_class, …skeleton defaults…)
+    |> load_data()
 
-  # Cheap disconnected render keeps skeleton defaults; connected mount
-  # does the real load. Same query-path-sharing the 0.2.0 refactor wanted.
-  {:ok, if(connected?(socket), do: load_data(socket), else: socket)}
+  {:ok, socket}
 end
 ```
+
+**Load on both disconnected and connected mount.** The skeleton
+assigns are defensive defaults that `load_data/1` overwrites on the
+same socket — the render path never actually paints them. An earlier
+draft gated the load on `connected?(socket)` to "keep the disconnected
+render cheap"; that was a mistake. mount/3 runs twice on first page
+load regardless (disconnected HTTP render → connect → connected
+mount), so the DB cost was identical, but the gated version shipped
+empty content on the first HTML response and pop-in on connect. Don't
+do that. (Same trade-off as the 0.2.0 `handle_params/3` pattern minus
+the embed blocker.)
 
 If you genuinely need to parse URL params (`?view=tree`,
 `?page=N`, etc.), prefer:

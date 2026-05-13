@@ -28,10 +28,10 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         templates: []
       )
 
-    # Skeleton defaults keep the disconnected render cheap; the actual
-    # list loads on connected mount. `handle_params/3` is intentionally
-    # absent — see dev_docs/embedding_audit.md.
-    {:ok, if(connected?(socket), do: load_templates(socket), else: socket)}
+    # Load on both disconnected + connected mount so the first paint has
+    # real content. `handle_params/3` is intentionally absent — see
+    # dev_docs/embedding_audit.md.
+    {:ok, load_templates(socket)}
   end
 
   defp load_templates(socket), do: assign(socket, templates: Projects.list_templates())

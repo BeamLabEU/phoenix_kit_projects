@@ -33,11 +33,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
     wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
-    # Mount runs on disconnected HTTP render AND on every WebSocket
-    # (re)connect. Skeleton defaults keep the disconnected render cheap
-    # (no DB); `reload/1` runs once the socket is connected. `handle_params/3`
-    # is intentionally absent — Phoenix LV refuses to mount a LV exporting
-    # it outside a router live route, which would block embedding via
+    # Load on both the disconnected HTTP render AND the connected
+    # WebSocket mount so the first paint already has real content (no
+    # empty-skeleton pop-in). The skeleton assigns below stay as defensive
+    # defaults — `reload/1` overwrites them on the same socket — but the
+    # render path never actually sees them. `handle_params/3` is
+    # intentionally absent: Phoenix LV refuses to mount a LV exporting it
+    # outside a router live route, which would block embedding via
     # `live_render`. See dev_docs/embedding_audit.md.
     socket =
       assign(socket,
@@ -58,7 +60,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         status_counts: %{}
       )
 
-    {:ok, if(connected?(socket), do: reload(socket), else: socket)}
+    {:ok, reload(socket)}
   end
 
   defp reload(socket) do

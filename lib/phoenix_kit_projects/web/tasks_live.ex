@@ -43,10 +43,10 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         standalone: []
       )
 
-    # Skeleton defaults keep the disconnected render cheap; load on
-    # connected mount. `handle_params/3` is intentionally absent — see
+    # Load on both disconnected + connected mount so the first paint has
+    # real content. `handle_params/3` is intentionally absent — see
     # dev_docs/embedding_audit.md.
-    {:ok, if(connected?(socket), do: load_tasks(socket), else: socket)}
+    {:ok, load_tasks(socket)}
   end
 
   # Loads only what the current view actually renders, so flipping

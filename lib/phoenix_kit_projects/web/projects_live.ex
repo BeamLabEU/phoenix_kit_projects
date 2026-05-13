@@ -29,10 +29,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         projects: []
       )
 
-    # Skeleton defaults keep the disconnected render cheap; the actual
-    # list loads on connected mount. `handle_params/3` is intentionally
-    # absent — see dev_docs/embedding_audit.md.
-    {:ok, if(connected?(socket), do: load_projects(socket), else: socket)}
+    # Load on both disconnected + connected mount so the first paint has
+    # real content. `handle_params/3` is intentionally absent — see
+    # dev_docs/embedding_audit.md.
+    {:ok, load_projects(socket)}
   end
 
   @impl true
