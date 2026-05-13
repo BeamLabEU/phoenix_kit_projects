@@ -72,6 +72,11 @@ defmodule PhoenixKitProjects.MixProject do
       # for polymorphic assignee FKs (team / department / person).
       {:phoenix_live_view, "~> 1.1"},
       {:ecto_sql, "~> 3.13"},
+      # Already transitive via :phoenix_kit, but pinned explicitly here so
+      # `mix gettext.extract` / `mix gettext.merge` run against this app's
+      # own `PhoenixKitProjects.Gettext` backend (call sites for project-
+      # domain strings; common strings still resolve via core's backend).
+      {:gettext, "~> 0.26 or ~> 1.0"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
@@ -85,7 +90,7 @@ defmodule PhoenixKitProjects.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
+      files: ~w(lib priv .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
     ]
   end
 

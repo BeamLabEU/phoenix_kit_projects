@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.Projects do
   @moduledoc "Context for projects, tasks, assignments, and dependencies."
 
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   import Ecto.Query
 

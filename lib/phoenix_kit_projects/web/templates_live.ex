@@ -2,7 +2,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   @moduledoc "List project templates."
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}

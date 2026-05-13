@@ -12,7 +12,7 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
   """
 
   use Phoenix.Component
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.Components.Core.Icon
 

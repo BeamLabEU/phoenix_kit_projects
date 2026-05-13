@@ -19,7 +19,7 @@ defmodule PhoenixKitProjects.Errors do
      conditions get a new atom + a new branch here.
   """
 
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   @typedoc """
   Atoms that the Projects context returns inside `{:error, atom}` tuples.

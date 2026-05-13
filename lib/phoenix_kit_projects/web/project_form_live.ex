@@ -2,7 +2,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   @moduledoc "Create or edit a project."
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
   import PhoenixKitWeb.Components.MultilangForm

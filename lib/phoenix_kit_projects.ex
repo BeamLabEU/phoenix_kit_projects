@@ -45,6 +45,8 @@ defmodule PhoenixKitProjects do
     %{
       key: module_key(),
       label: "Projects",
+      gettext_backend: PhoenixKitProjects.Gettext,
+      gettext_domain: "default",
       icon: "hero-clipboard-document-list",
       description: "Manage projects, tasks, and assignments"
     }
@@ -59,6 +61,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects,
         label: "Projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         icon: "hero-clipboard-document-list",
         path: "projects",
         priority: 660,
@@ -76,6 +80,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_overview,
         label: "Overview",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         icon: "hero-home",
         path: "projects",
         priority: 661,
@@ -88,6 +94,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_templates,
         label: "Templates",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         icon: "hero-document-duplicate",
         path: "projects/templates",
         priority: 662,
@@ -100,6 +108,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_tasks,
         label: "Tasks",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         icon: "hero-rectangle-stack",
         path: "projects/tasks",
         priority: 663,
@@ -112,6 +122,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_list,
         label: "Projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         icon: "hero-clipboard-document-list",
         path: "projects/list",
         priority: 664,
@@ -127,6 +139,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_task_new,
         label: "New Task",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/tasks/new",
         level: :admin,
         permission: module_key(),
@@ -137,6 +151,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_task_edit,
         label: "Edit Task",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/tasks/:id/edit",
         level: :admin,
         permission: module_key(),
@@ -147,6 +163,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_project_new,
         label: "New Project",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/list/new",
         level: :admin,
         permission: module_key(),
@@ -157,6 +175,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_project_edit,
         label: "Edit Project",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/list/:id/edit",
         level: :admin,
         permission: module_key(),
@@ -167,6 +187,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_project_show,
         label: "Project",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/list/:id",
         level: :admin,
         permission: module_key(),
@@ -177,6 +199,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_template_new,
         label: "New Template",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/templates/new",
         level: :admin,
         permission: module_key(),
@@ -187,6 +211,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_template_edit,
         label: "Edit Template",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/templates/:id/edit",
         level: :admin,
         permission: module_key(),
@@ -197,6 +223,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_template_show,
         label: "Template",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/templates/:id",
         level: :admin,
         permission: module_key(),
@@ -207,6 +235,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_assignment_new,
         label: "Add Task",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/list/:project_id/assignments/new",
         level: :admin,
         permission: module_key(),
@@ -217,6 +247,8 @@ defmodule PhoenixKitProjects do
       %Tab{
         id: :admin_projects_assignment_edit,
         label: "Edit Assignment",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         path: "projects/list/:project_id/assignments/:id/edit",
         level: :admin,
         permission: module_key(),
