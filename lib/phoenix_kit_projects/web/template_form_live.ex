@@ -2,7 +2,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   @moduledoc "Create or edit a project template."
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, Paths, Projects}

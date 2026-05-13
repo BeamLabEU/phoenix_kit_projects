@@ -2,7 +2,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   @moduledoc "List reusable task templates."
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}

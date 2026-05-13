@@ -26,7 +26,7 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
   """
 
   use Phoenix.Component
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitProjects.Web.Components.TierPill
 

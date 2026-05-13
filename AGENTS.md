@@ -292,7 +292,25 @@ Release checklist:
 - **Activity**: via `PhoenixKitProjects.Activity` wrapper, always at the LiveView layer
 - **Duration units + conversion**: centralized in `Schemas.Task`
 - **Cross-module staff lookups**: direct calls to `PhoenixKitStaff.*` are fine — it's a declared hard dep. Wrap DB-backed lookups in a `rescue [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError]` that logs and returns an empty list so a staff DB outage never takes the projects UI down with it
-- **Gettext**: all user-visible strings wrapped via `use Gettext, backend: PhoenixKitWeb.Gettext` then `gettext(...)` — shares the parent app's backend, no separate domain
+- **Gettext (hybrid, two backends)**:
+  - **Module-domain strings** (project / task / template / assignment /
+    dependency UI — the bulk) live in `PhoenixKitProjects.Gettext` with
+    `.po` files in `priv/gettext/`. Files declare
+    `use Gettext, backend: PhoenixKitProjects.Gettext` and call
+    `gettext(...)` / `ngettext(...)` normally. Refresh with
+    `mix gettext.extract && mix gettext.merge priv/gettext --no-fuzzy`
+    from this repo.
+  - **Common/generic strings** (date/month formatting in
+    `PhoenixKitProjects.L10n`, generic table chrome in
+    `Web.Components.SortableTable`) stay on core's
+    `PhoenixKitWeb.Gettext` backend. Their msgids ship in
+    `phoenix_kit/lib/phoenix_kit_web/projects_gettext_manifest.ex`
+    (extraction target — never called at runtime). Mirrors the
+    `legal_gettext_manifest.ex` pattern.
+  - Both backends share the same locale via `Gettext.put_locale/1`
+    (process-global), so the `/ru/...` URL prefix translates both
+    surfaces simultaneously.
+  - See `dev_docs/i18n_triage.md` for the per-file bucket assignments.
 - **LiveView layout**: `use PhoenixKitWeb, :live_view` (in `phoenix_kit_web.ex`) injects `layout: PhoenixKit.LayoutConfig.get_layout()` automatically. No need to wrap templates in `<PhoenixKitWeb.Components.LayoutWrapper.app_layout>` — that wrapper is for LiveViews served outside the admin live_session
 
 ## Pre-commit commands
@@ -585,8 +603,11 @@ Pinning the deliberate non-features so future-me doesn't propose them as
   `phoenix_kit`. Schema changes go in the next core `VNN`. Test-only
   setup migration inlines V100 + V101 + V105 verbatim, idempotent so a
   future Hex release containing them is a no-op.
-- **No own .po files** — gettext call sites live here, but translations
-  live in core's `priv/gettext`.
+- **No HTTP backend for translations** — translations live in this
+  repo's `priv/gettext/` (module-domain strings, `PhoenixKitProjects.Gettext`
+  backend) and in core's `priv/gettext/` (the ~16 common strings reached
+  via the `PhoenixKitWeb.Gettext` backend). See the Gettext entry under
+  Conventions and `dev_docs/i18n_triage.md` for the split.
 - **No own Errors module for HTTP error shapes** — `Errors.message/1`
   covers `:not_found` / `:template_not_found` / `:task_not_found` plus
   a generic fallback. Add a new branch when a context fn introduces a

@@ -2,7 +2,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   @moduledoc "Create or edit a reusable task template, including default dependencies."
 
   use PhoenixKitWeb, :live_view
-  use Gettext, backend: PhoenixKitWeb.Gettext
+  use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
   import PhoenixKitWeb.Components.MultilangForm
