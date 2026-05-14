@@ -6,7 +6,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
-  alias PhoenixKitProjects.Web.Helpers
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -21,7 +20,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   @impl true
   def mount(_params, session, socket) do
-    Helpers.maybe_put_locale(session)
+    WebHelpers.maybe_put_locale(session)
 
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
 
