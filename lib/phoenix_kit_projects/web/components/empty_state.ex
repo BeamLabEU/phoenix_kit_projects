@@ -13,9 +13,14 @@ defmodule PhoenixKitProjects.Web.Components.EmptyState do
 
       <.empty_state icon="hero-clipboard-document-list" title="No projects yet.">
         <:cta>
-          <.link navigate={Paths.new_project()} class="btn btn-primary btn-xs">
+          <.smart_link
+            navigate={Paths.new_project()}
+            emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+            embed_mode={@embed_mode}
+            class="btn btn-primary btn-xs"
+          >
             <.icon name="hero-plus" class="w-3.5 h-3.5" /> New project
-          </.link>
+          </.smart_link>
         </:cta>
       </.empty_state>
   """

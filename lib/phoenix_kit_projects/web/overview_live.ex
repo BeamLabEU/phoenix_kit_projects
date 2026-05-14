@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   alias PhoenixKitProjects.Web.Helpers
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Project, Task}
+  alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
 
@@ -45,7 +46,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     # outside a router live route, which would block embedding via
     # `live_render`. See dev_docs/embedding_audit.md.
     socket =
-      assign(socket,
+      socket
+      |> assign(
         user_uuid: Activity.actor_uuid(socket),
         page_title: gettext("Projects"),
         wrapper_class: wrapper_class,
@@ -62,6 +64,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         my_assignments: [],
         status_counts: %{}
       )
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.attach_open_embed_hook()
 
     {:ok, reload(socket)}
   end
@@ -244,12 +248,22 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         description={gettext("Overview of active work, upcoming projects, and your assignments.")}
       >
         <:actions>
-          <.link navigate={Paths.new_project()} class="btn btn-primary btn-sm">
+          <.smart_link
+            navigate={Paths.new_project()}
+            emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+            embed_mode={@embed_mode}
+            class="btn btn-primary btn-sm"
+          >
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
-          </.link>
-          <.link navigate={Paths.new_task()} class="btn btn-ghost btn-sm">
+          </.smart_link>
+          <.smart_link
+            navigate={Paths.new_task()}
+            emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
+            embed_mode={@embed_mode}
+            class="btn btn-ghost btn-sm"
+          >
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
-          </.link>
+          </.smart_link>
         </:actions>
       </.page_header>
 
@@ -282,13 +296,18 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   {gettext("Started and not yet completed.")}
                 </p>
               </div>
-              <.link navigate={Paths.projects()} class="link link-hover text-sm shrink-0 mt-1">
+              <.smart_link
+                navigate={Paths.projects()}
+                emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
+                embed_mode={@embed_mode}
+                class="link link-hover text-sm shrink-0 mt-1"
+              >
                 <%= if @active_count > @running_display_limit do %>
                   {gettext("View all (%{count}) →", count: @active_count)}
                 <% else %>
                   {gettext("View all →")}
                 <% end %>
-              </.link>
+              </.smart_link>
             </div>
 
             <%= if @active_summaries == [] do %>
@@ -300,9 +319,14 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   class="py-10"
                 >
                   <:cta>
-                    <.link navigate={Paths.projects()} class="btn btn-ghost btn-xs">
+                    <.smart_link
+                      navigate={Paths.projects()}
+                      emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
+                      embed_mode={@embed_mode}
+                      class="btn btn-ghost btn-xs"
+                    >
                       <.icon name="hero-clipboard-document-list" class="w-3.5 h-3.5" /> {gettext("View projects")}
-                    </.link>
+                    </.smart_link>
                   </:cta>
                 </.empty_state>
               <% else %>
@@ -313,9 +337,14 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   class="py-10"
                 >
                   <:cta>
-                    <.link navigate={Paths.new_project()} class="btn btn-primary btn-xs">
+                    <.smart_link
+                      navigate={Paths.new_project()}
+                      emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+                      embed_mode={@embed_mode}
+                      class="btn btn-primary btn-xs"
+                    >
                       <.icon name="hero-plus" class="w-3.5 h-3.5" /> {gettext("New project")}
-                    </.link>
+                    </.smart_link>
                   </:cta>
                 </.empty_state>
               <% end %>
@@ -326,6 +355,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   summary={s}
                   tier={running_tier(s)}
                   navigate={Paths.project(s.project.uuid)}
+                  embed_mode={@embed_mode}
                   lang={L10n.current_content_lang()}
                 />
               </div>
@@ -348,9 +378,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                 </p>
               <% else %>
                 <div class="flex flex-col gap-2 mt-2">
-                  <.link
+                  <.smart_link
                     :for={a <- Enum.take(@my_assignments, 6)}
                     navigate={Paths.project(a.project.uuid)}
+                    emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => a.project.uuid}}}
+                    embed_mode={@embed_mode}
                     class="flex items-start gap-2 p-2 rounded hover:bg-base-200 transition"
                   >
                     <span class={"badge badge-xs mt-1 #{status_badge_class(a.status)}"}>{status_label(a.status)}</span>
@@ -358,7 +390,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       <div class="text-sm font-medium truncate">{Task.localized_title(a.task, L10n.current_content_lang())}</div>
                       <div class="text-xs text-base-content/60 truncate">{Project.localized_name(a.project, L10n.current_content_lang())}</div>
                     </div>
-                  </.link>
+                  </.smart_link>
 
                   <%= if length(@my_assignments) > 6 do %>
                     <div class="text-xs text-base-content/50 text-center pt-1">
@@ -378,9 +410,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   <.icon name="hero-trophy" class="w-5 h-5 text-success" /> {gettext("Recently completed")}
                 </h2>
                 <div class="flex flex-col gap-1 mt-2">
-                  <.link
+                  <.smart_link
                     :for={p <- @completed_projects}
                     navigate={Paths.project(p.uuid)}
+                    emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
+                    embed_mode={@embed_mode}
                     class="flex items-center gap-2 p-2 rounded hover:bg-base-200 transition"
                   >
                     <.icon name="hero-check-circle" class="w-4 h-4 text-success shrink-0" />
@@ -390,7 +424,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                         {relative_day(Date.diff(DateTime.to_date(p.completed_at), Date.utc_today()))}
                       </div>
                     </div>
-                  </.link>
+                  </.smart_link>
                 </div>
               </div>
             </div>
@@ -406,21 +440,25 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
                 <%= if @setup_projects != [] do %>
                   <div class="text-xs text-base-content/50 uppercase tracking-wide mt-2">{gettext("In setup")}</div>
-                  <.link
+                  <.smart_link
                     :for={p <- @setup_projects}
                     navigate={Paths.project(p.uuid)}
+                    emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
+                    embed_mode={@embed_mode}
                     class="flex items-center gap-2 p-2 rounded hover:bg-base-200 transition"
                   >
                     <.icon name="hero-clock" class="w-4 h-4 text-warning shrink-0" />
                     <span class="text-sm font-medium truncate flex-1">{Project.localized_name(p, L10n.current_content_lang())}</span>
-                  </.link>
+                  </.smart_link>
                 <% end %>
 
                 <%= if @upcoming_projects != [] do %>
                   <div class="text-xs text-base-content/50 uppercase tracking-wide mt-2">{gettext("Scheduled")}</div>
-                  <.link
+                  <.smart_link
                     :for={p <- @upcoming_projects}
                     navigate={Paths.project(p.uuid)}
+                    emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
+                    embed_mode={@embed_mode}
                     class="flex items-center gap-2 p-2 rounded hover:bg-base-200 transition"
                   >
                     <.icon name="hero-calendar" class="w-4 h-4 text-info shrink-0" />
@@ -431,7 +469,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                         · {relative_day(days_until(p.scheduled_start_date))}
                       </div>
                     </div>
-                  </.link>
+                  </.smart_link>
                 <% end %>
               </div>
             </div>
@@ -441,7 +479,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
       <%!-- Bottom navigation row --%>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <.link navigate={Paths.projects()} class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200">
+        <.smart_link
+          navigate={Paths.projects()}
+          emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
+          embed_mode={@embed_mode}
+          class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
+        >
           <div class="card-body p-4">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-clipboard-document-list" class="w-5 h-5" />
@@ -449,8 +492,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
             </div>
             <div class="text-xl font-bold">{@project_count}</div>
           </div>
-        </.link>
-        <.link navigate={Paths.tasks()} class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200">
+        </.smart_link>
+        <.smart_link
+          navigate={Paths.tasks()}
+          emit={{PhoenixKitProjects.Web.TasksLive, %{}}}
+          embed_mode={@embed_mode}
+          class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
+        >
           <div class="card-body p-4">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-rectangle-stack" class="w-5 h-5" />
@@ -458,8 +506,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
             </div>
             <div class="text-xl font-bold">{@task_count}</div>
           </div>
-        </.link>
-        <.link navigate={Paths.templates()} class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200">
+        </.smart_link>
+        <.smart_link
+          navigate={Paths.templates()}
+          emit={{PhoenixKitProjects.Web.TemplatesLive, %{}}}
+          embed_mode={@embed_mode}
+          class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
+        >
           <div class="card-body p-4">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-document-duplicate" class="w-5 h-5" />
@@ -467,8 +520,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
             </div>
             <div class="text-xl font-bold">{@template_count}</div>
           </div>
-        </.link>
-        <.link navigate={Paths.new_template()} class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200">
+        </.smart_link>
+        <.smart_link
+          navigate={Paths.new_template()}
+          emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
+          embed_mode={@embed_mode}
+          class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
+        >
           <div class="card-body p-4">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-plus" class="w-5 h-5" />
@@ -476,7 +534,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
             </div>
             <div class="text-xs text-base-content/50">{gettext("Blueprint from scratch")}</div>
           </div>
-        </.link>
+        </.smart_link>
       </div>
     </div>
     """

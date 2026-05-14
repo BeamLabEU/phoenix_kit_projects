@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   alias PhoenixKitProjects.Web.Helpers
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
+  alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
 
@@ -36,7 +37,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       end
 
     socket =
-      assign(socket,
+      socket
+      |> assign(
         page_title: gettext("Task Library"),
         wrapper_class: wrapper_class,
         view: initial_view,
@@ -45,6 +47,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         groups: [],
         standalone: []
       )
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.attach_open_embed_hook()
 
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
@@ -142,7 +146,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               metadata: %{"title" => task.title}
             )
 
-            {:noreply, socket |> put_flash(:info, gettext("Task deleted.")) |> load_tasks()}
+            {:noreply,
+             socket
+             |> WebHelpers.notify_deleted(:task, task.uuid)
+             |> put_flash(:info, gettext("Task deleted."))
+             |> load_tasks()}
 
           {:error, _} ->
             Activity.log_failed("projects.task_deleted",
@@ -198,9 +206,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         description={gettext("Reusable task templates.")}
       >
         <:actions>
-          <.link navigate={Paths.new_task()} class="btn btn-primary btn-sm">
+          <.smart_link
+            navigate={Paths.new_task()}
+            emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
+            embed_mode={@embed_mode}
+            class="btn btn-primary btn-sm"
+          >
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
-          </.link>
+          </.smart_link>
         </:actions>
       </.page_header>
 
@@ -238,9 +251,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <%= if @groups == [] and @standalone == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
-              <.link navigate={Paths.new_task()} class="link link-primary text-sm">
+              <.smart_link
+                navigate={Paths.new_task()}
+                emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
+                embed_mode={@embed_mode}
+                class="link link-primary text-sm"
+              >
                 {gettext("Create your first")}
-              </.link>
+              </.smart_link>
             </:cta>
           </.empty_state>
         <% else %>
@@ -261,9 +279,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                   <ul class="divide-y divide-base-200">
                     <%= for task <- group.peers do %>
                       <li class="flex items-center gap-2 py-2 first:pt-0 last:pb-0">
-                        <.link navigate={Paths.edit_task(task.uuid)} class="text-sm font-medium link link-hover flex-1 min-w-0 truncate">
+                        <.smart_link
+                          navigate={Paths.edit_task(task.uuid)}
+                          emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
+                          embed_mode={@embed_mode}
+                          class="text-sm font-medium link link-hover flex-1 min-w-0 truncate"
+                        >
                           {TaskSchema.localized_title(task, lang)}
-                        </.link>
+                        </.smart_link>
                         <span class="badge badge-ghost badge-xs shrink-0">
                           {format_duration(task)}
                         </span>
@@ -287,9 +310,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                 </p>
                 <ul class="mt-2 space-y-1">
                   <li :for={task <- @standalone} class="flex items-center gap-2">
-                    <.link navigate={Paths.edit_task(task.uuid)} class="text-sm link link-hover flex-1 min-w-0 truncate">
+                    <.smart_link
+                      navigate={Paths.edit_task(task.uuid)}
+                      emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
+                      embed_mode={@embed_mode}
+                      class="text-sm link link-hover flex-1 min-w-0 truncate"
+                    >
                       {TaskSchema.localized_title(task, lang)}
-                    </.link>
+                    </.smart_link>
                     <span class="badge badge-ghost badge-xs shrink-0">
                       {format_duration(task)}
                     </span>
@@ -306,9 +334,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <%= if @tasks == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
-              <.link navigate={Paths.new_task()} class="link link-primary text-sm">
+              <.smart_link
+                navigate={Paths.new_task()}
+                emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
+                embed_mode={@embed_mode}
+                class="link link-primary text-sm"
+              >
                 {gettext("Create your first")}
-              </.link>
+              </.smart_link>
             </:cta>
           </.empty_state>
         <% else %>
@@ -339,9 +372,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             <:col :let={task} label={gettext("Duration")}>{format_duration(task)}</:col>
             <:col :let={task} label={gettext("Actions")} class="text-right">
               <div class="flex items-center justify-end gap-1">
-                <.link navigate={Paths.edit_task(task.uuid)} class="btn btn-ghost btn-xs">
+                <.smart_link
+                  navigate={Paths.edit_task(task.uuid)}
+                  emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
+                  embed_mode={@embed_mode}
+                  class="btn btn-ghost btn-xs"
+                >
                   <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                </.link>
+                </.smart_link>
                 <button
                   type="button"
                   phx-click="delete"

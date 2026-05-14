@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   alias PhoenixKitProjects.Web.Helpers
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
 
@@ -25,12 +26,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
     socket =
-      assign(socket,
+      socket
+      |> assign(
         page_title: gettext("Projects"),
         wrapper_class: wrapper_class,
         show: "visible",
         projects: []
       )
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.attach_open_embed_hook()
 
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
@@ -129,7 +133,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       metadata: %{"name" => project.name}
     )
 
-    {:noreply, socket |> put_flash(:info, gettext("Project deleted.")) |> load_projects()}
+    {:noreply,
+     socket
+     |> WebHelpers.notify_deleted(:project, project.uuid)
+     |> put_flash(:info, gettext("Project deleted."))
+     |> load_projects()}
   end
 
   @impl true
@@ -138,9 +146,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     <div class={@wrapper_class}>
       <.page_header title={gettext("Projects")} description={gettext("All projects.")}>
         <:actions>
-          <.link navigate={Paths.new_project()} class="btn btn-primary btn-sm">
+          <.smart_link
+            navigate={Paths.new_project()}
+            emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+            embed_mode={@embed_mode}
+            class="btn btn-primary btn-sm"
+          >
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
-          </.link>
+          </.smart_link>
         </:actions>
       </.page_header>
 
@@ -177,9 +190,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           draggable={@show == "visible"}
         >
           <:col :let={p} label={gettext("Name")}>
-            <.link navigate={Paths.project(p.uuid)} class="link link-hover font-medium">
+            <.smart_link
+              navigate={Paths.project(p.uuid)}
+              emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
+              embed_mode={@embed_mode}
+              class="link link-hover font-medium"
+            >
               {Project.localized_name(p, lang)}
-            </.link>
+            </.smart_link>
             <% desc = Project.localized_description(p, lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
           </:col>
@@ -188,9 +206,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           </:col>
           <:col :let={p} label={gettext("Actions")} class="text-right">
             <div class="flex items-center justify-end gap-1">
-              <.link navigate={Paths.edit_project(p.uuid)} class="btn btn-ghost btn-xs">
+              <.smart_link
+                navigate={Paths.edit_project(p.uuid)}
+                emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "edit", "id" => p.uuid}}}
+                embed_mode={@embed_mode}
+                class="btn btn-ghost btn-xs"
+              >
                 <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-              </.link>
+              </.smart_link>
               <button
                 type="button"
                 phx-click="delete"

@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   alias PhoenixKitProjects.Web.Helpers
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
 
@@ -25,11 +26,14 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
     wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
     socket =
-      assign(socket,
+      socket
+      |> assign(
         page_title: gettext("Project Templates"),
         wrapper_class: wrapper_class,
         templates: []
       )
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.attach_open_embed_hook()
 
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
@@ -100,7 +104,10 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             )
 
             {:noreply,
-             socket |> put_flash(:info, gettext("Template deleted.")) |> load_templates()}
+             socket
+             |> WebHelpers.notify_deleted(:template, template.uuid)
+             |> put_flash(:info, gettext("Template deleted."))
+             |> load_templates()}
 
           {:error, _} ->
             Activity.log_failed("projects.template_deleted",
@@ -124,18 +131,28 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         description={gettext("Blueprint projects that can be cloned.")}
       >
         <:actions>
-          <.link navigate={Paths.new_template()} class="btn btn-primary btn-sm">
+          <.smart_link
+            navigate={Paths.new_template()}
+            emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
+            embed_mode={@embed_mode}
+            class="btn btn-primary btn-sm"
+          >
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New template")}
-          </.link>
+          </.smart_link>
         </:actions>
       </.page_header>
 
       <%= if @templates == [] do %>
         <.empty_state icon="hero-document-duplicate" title={gettext("No templates yet.")}>
           <:cta>
-            <.link navigate={Paths.new_template()} class="link link-primary text-sm">
+            <.smart_link
+              navigate={Paths.new_template()}
+              emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
+              embed_mode={@embed_mode}
+              class="link link-primary text-sm"
+            >
               {gettext("Create your first")}
-            </.link>
+            </.smart_link>
           </:cta>
         </.empty_state>
       <% else %>
@@ -147,9 +164,14 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
           event="reorder_templates"
         >
           <:col :let={t} label={gettext("Name")}>
-            <.link navigate={Paths.template(t.uuid)} class="link link-hover font-medium">
+            <.smart_link
+              navigate={Paths.template(t.uuid)}
+              emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => t.uuid}}}
+              embed_mode={@embed_mode}
+              class="link link-hover font-medium"
+            >
               {Project.localized_name(t, lang)}
-            </.link>
+            </.smart_link>
             <% desc = Project.localized_description(t, lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
           </:col>
@@ -160,9 +182,14 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
           </:col>
           <:col :let={t} label={gettext("Actions")} class="text-right">
             <div class="flex items-center justify-end gap-1">
-              <.link navigate={Paths.edit_template(t.uuid)} class="btn btn-ghost btn-xs">
+              <.smart_link
+                navigate={Paths.edit_template(t.uuid)}
+                emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "edit", "id" => t.uuid}}}
+                embed_mode={@embed_mode}
+                class="btn btn-ghost btn-xs"
+              >
                 <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-              </.link>
+              </.smart_link>
               <button
                 type="button"
                 phx-click="delete"
