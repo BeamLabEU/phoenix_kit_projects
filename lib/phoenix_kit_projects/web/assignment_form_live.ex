@@ -42,6 +42,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         embed_redirect_to: redirect_to,
         live_action: live_action
       )
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
 
     {:ok, socket}
@@ -126,12 +128,52 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     """
   end
 
+  # Minimal assigns required so the render path can paint a flash + empty
+  # frame after `close_or_navigate/2` emits :closed in emit mode (where
+  # the LV stays mounted until the host pulls it down). In navigate mode
+  # `push_navigate` replaces the LV before render so these are harmless.
+  defp assign_not_found_placeholders(socket) do
+    placeholder_project = %{uuid: "", name: ""}
+    # `task: nil` so the render template's `@assignment.task && ...`
+    # short-circuits cleanly. The default `%Assignment{}` would have
+    # `task: %Ecto.Association.NotLoaded{}` which is truthy and would
+    # crash `Task.localized_title/2`.
+    placeholder_assignment = %Assignment{task: nil}
+
+    socket
+    |> assign(
+      page_title: "",
+      project: placeholder_project,
+      assignment: placeholder_assignment,
+      live_action: :new,
+      task_mode: "existing",
+      assign_type: "",
+      selected_task_uuid: nil,
+      new_task_title: "",
+      save_as_template: false,
+      assignment_deps: [],
+      available_assignment_deps: [],
+      pending_dep_uuids: [],
+      pending_dep_options: [],
+      closure_tree: nil,
+      excluded_closure_uuids: MapSet.new()
+    )
+    |> assign_options()
+    |> assign_form(Projects.change_assignment(placeholder_assignment))
+  end
+
   defp apply_action(socket, :new, %{"project_id" => project_id}) do
     case Projects.get_project(project_id) do
       nil ->
+        # In navigate mode, `close_or_navigate` push-navigates and the LV is
+        # replaced before render. In emit mode it broadcasts `:closed` but
+        # the LV stays mounted until the host pulls down the modal — so
+        # we need safe placeholders for the render path between emit and
+        # host-side teardown.
         socket
+        |> assign_not_found_placeholders()
         |> put_flash(:error, gettext("Project not found."))
-        |> WebHelpers.navigate_after_save(Paths.projects())
+        |> WebHelpers.close_or_navigate(Paths.projects())
 
       project ->
         assignment = %Assignment{project_uuid: project.uuid}
@@ -181,13 +223,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     case {project, assignment} do
       {nil, _} ->
         socket
+        |> assign_not_found_placeholders()
         |> put_flash(:error, gettext("Project not found."))
-        |> WebHelpers.navigate_after_save(Paths.projects())
+        |> WebHelpers.close_or_navigate(Paths.projects())
 
       {_, nil} ->
         socket
+        |> assign_not_found_placeholders()
         |> put_flash(:error, gettext("Assignment not found."))
-        |> WebHelpers.navigate_after_save(Paths.project(project_id))
+        |> WebHelpers.close_or_navigate(Paths.project(project_id))
 
       {project, assignment} ->
         assign_type =
@@ -223,6 +267,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         |> assign_options()
         |> assign_form(Projects.change_assignment(assignment))
     end
+  end
+
+  # Fail-closed catch-all. Triggers when the host emits `{:projects,
+  # :opened, %{lv: AssignmentFormLive, session: %{}}}` without the
+  # required `project_id` (or `id` for :edit). Without this clause the
+  # apply_action/3 dispatch raises `FunctionClauseError` before mount
+  # completes. Per the embedding contract we render placeholders + flash,
+  # then `close_or_navigate/2` emits `:closed` so the host can pop the
+  # modal.
+  defp apply_action(socket, action, _params) when action in [:new, :edit] do
+    socket
+    |> assign_not_found_placeholders()
+    |> put_flash(:error, gettext("Project not found."))
+    |> WebHelpers.close_or_navigate(Paths.projects())
   end
 
   defp assign_options(socket) do
@@ -266,6 +324,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # ── Validate ────────────────────────────────────────────────────
 
   @impl true
+  def handle_event("cancel", _params, socket) do
+    fallback =
+      case socket.assigns[:project] do
+        %{uuid: uuid} -> Paths.project(uuid)
+        _ -> Paths.projects()
+      end
+
+    {:noreply, WebHelpers.close_or_navigate(socket, fallback)}
+  end
+
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do
     {:noreply, handle_switch_language(socket, lang_code)}
   end
@@ -491,7 +559,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(flash_kind, flash_msg)
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+           kind: :assignment,
+           record: assignment,
+           action: :create
+         )}
 
       {:error, cs} ->
         {:noreply, on_save_error(socket, cs)}
@@ -636,7 +708,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(:info, msg)
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+           kind: :assignment,
+           record: root,
+           action: :create
+         )}
 
       {:error, %Ecto.Changeset{} = cs} ->
         Activity.log_failed("projects.assignment_created",
@@ -694,7 +770,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(flash_kind, flash_msg)
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+           kind: :assignment,
+           record: assignment,
+           action: :create
+         )}
 
       {:error, cs} ->
         Activity.log_failed("projects.assignment_created",
@@ -784,7 +864,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Assignment updated."))
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+           kind: :assignment,
+           record: updated,
+           action: :update
+         )}
 
       {:error, cs} ->
         Activity.log_failed("projects.assignment_updated",
@@ -918,9 +1002,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     <div class={@wrapper_class}>
       <.page_header title={@page_title}>
         <:back_link>
-          <.link navigate={Paths.project(@project.uuid)} class="link link-hover text-sm">
+          <.smart_link
+            navigate={Paths.project(@project.uuid)}
+            emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => @project.uuid}}}
+            embed_mode={@embed_mode}
+            class="link link-hover text-sm"
+          >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {@project.name}
-          </.link>
+          </.smart_link>
         </:back_link>
       </.page_header>
 
@@ -1193,7 +1282,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         </div>
 
         <div class="flex justify-end gap-2 mt-2">
-          <.link navigate={Paths.project(@project.uuid)} class="btn btn-ghost btn-sm">{gettext("Cancel")}</.link>
+          <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+            {gettext("Cancel")}
+          </button>
           <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
             <%= if @live_action == :new, do: gettext("Add"), else: gettext("Save") %>
           </button>

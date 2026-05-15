@@ -32,6 +32,8 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
         embed_redirect_to: redirect_to,
         live_action: live_action
       )
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
 
     {:ok, socket}
@@ -48,9 +50,18 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   defp apply_action(socket, :edit, %{"id" => id}) do
     case Projects.get_project(id) do
       nil ->
+        # Render-safe placeholders for emit mode (see ProjectFormLive
+        # for the rationale — in emit mode `close_or_navigate` doesn't
+        # navigate, so the LV's render runs and needs these assigns).
         socket
+        |> assign(
+          page_title: "",
+          project: %Project{is_template: true},
+          live_action: :edit
+        )
+        |> assign_form(Projects.change_project(%Project{is_template: true}))
         |> put_flash(:error, gettext("Template not found."))
-        |> WebHelpers.navigate_after_save(Paths.templates())
+        |> WebHelpers.close_or_navigate(Paths.templates())
 
       project ->
         socket
@@ -61,6 +72,20 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
         )
         |> assign_form(Projects.change_project(project))
     end
+  end
+
+  # Fail-closed catch-all: emit-session lacking `"id"` for :edit lands
+  # here. Render placeholders + flash, then close.
+  defp apply_action(socket, :edit, _params) do
+    socket
+    |> assign(
+      page_title: "",
+      project: %Project{is_template: true},
+      live_action: :edit
+    )
+    |> assign_form(Projects.change_project(%Project{is_template: true}))
+    |> put_flash(:error, gettext("Template not found."))
+    |> WebHelpers.close_or_navigate(Paths.templates())
   end
 
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
@@ -77,6 +102,10 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     save(socket, socket.assigns.live_action, attrs)
   end
 
+  def handle_event("cancel", _params, socket) do
+    {:noreply, WebHelpers.close_or_navigate(socket, Paths.templates())}
+  end
+
   defp save(socket, :new, attrs) do
     case Projects.create_project(attrs) do
       {:ok, project} ->
@@ -90,7 +119,14 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Template created. Add tasks to it now."))
-         |> WebHelpers.navigate_after_save(Paths.template(project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.template(project.uuid),
+           kind: :template,
+           record: project,
+           action: :create,
+           # Emit-mode chain: close the form, open the template-show so
+           # the user can add tasks (matches the navigate-mode flow).
+           next: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => project.uuid}}
+         )}
 
       {:error, cs} ->
         Activity.log_failed("projects.template_created",
@@ -116,7 +152,11 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Template updated."))
-         |> WebHelpers.navigate_after_save(Paths.template(project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.template(project.uuid),
+           kind: :template,
+           record: project,
+           action: :update
+         )}
 
       {:error, cs} ->
         Activity.log_failed("projects.template_updated",
@@ -136,9 +176,14 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     <div class={@wrapper_class}>
       <.page_header title={@page_title}>
         <:back_link>
-          <.link navigate={Paths.templates()} class="link link-hover text-sm">
+          <.smart_link
+            navigate={Paths.templates()}
+            emit={{PhoenixKitProjects.Web.TemplatesLive, %{}}}
+            embed_mode={@embed_mode}
+            class="link link-hover text-sm"
+          >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Templates")}
-          </.link>
+          </.smart_link>
         </:back_link>
       </.page_header>
 
@@ -159,7 +204,9 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
               <span class="text-sm">{gettext("Count weekends in schedule")}</span>
             </label>
             <div class="flex justify-end gap-2 mt-2">
-              <.link navigate={Paths.templates()} class="btn btn-ghost btn-sm">{gettext("Cancel")}</.link>
+              <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+                {gettext("Cancel")}
+              </button>
               <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
                 <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
               </button>

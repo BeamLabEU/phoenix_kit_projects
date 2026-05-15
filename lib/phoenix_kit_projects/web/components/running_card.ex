@@ -29,18 +29,36 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitProjects.Web.Components.TierPill
+  import PhoenixKitProjects.Web.Components.SmartLink
 
   alias PhoenixKitProjects.Schemas.Project
 
   attr(:summary, :map, required: true)
   attr(:tier, :atom, required: true, values: [:late, :near_done, :on_track, :empty])
   attr(:navigate, :string, required: true)
+
+  attr(:emit, :any,
+    default: nil,
+    doc:
+      "`{TargetLV :: module(), session_overrides :: map()}` — required when used in embed-mode " <>
+        "callers; defaults to opening `ProjectShowLive` with the summary's project uuid."
+  )
+
+  attr(:embed_mode, :atom, default: :navigate, values: [:navigate, :emit])
   attr(:lang, :string, default: nil)
 
   def running_card(assigns) do
+    assigns =
+      assign_new(assigns, :emit_resolved, fn ->
+        assigns.emit ||
+          {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => assigns.summary.project.uuid}}
+      end)
+
     ~H"""
-    <.link
+    <.smart_link
       navigate={@navigate}
+      emit={@emit_resolved}
+      embed_mode={@embed_mode}
       class="flex items-center gap-3 p-3 rounded hover:bg-base-200 transition"
     >
       <div class="flex-1 min-w-0">
@@ -69,7 +87,7 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
       <div class="text-right shrink-0">
         <div class="text-lg font-bold">{@summary.progress_pct}%</div>
       </div>
-    </.link>
+    </.smart_link>
     """
   end
 

@@ -86,7 +86,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert html =~ project.name
     end
 
-    test "wrapper_class defaults to the standalone max-w-4xl layout", %{conn: conn} do
+    test "wrapper_class defaults to the standalone full-width layout", %{conn: conn} do
       project = fixture_project()
 
       {:ok, _view, html} =
@@ -94,7 +94,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
           session: %{"id" => project.uuid}
         )
 
-      assert html =~ "mx-auto max-w-4xl"
+      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
     test "wrapper_class override from session replaces the default", %{conn: conn} do
@@ -104,12 +104,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
           session: %{
             "id" => project.uuid,
-            "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"
+            "wrapper_class" => "host-specific-class"
           }
         )
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
-      refute html =~ "max-w-4xl"
+      assert html =~ "host-specific-class"
+      refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
     test "locale from session is applied to embedded mount", %{conn: conn} do

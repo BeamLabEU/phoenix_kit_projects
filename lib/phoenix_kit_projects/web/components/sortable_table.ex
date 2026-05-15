@@ -26,9 +26,15 @@ defmodule PhoenixKitProjects.Web.Components.SortableTable do
         draggable={true}
       >
         <:col label={gettext("Title")}>
-          <.link navigate={Paths.edit_task(t.uuid)} class="link link-hover font-medium">
+          <.smart_link
+            navigate={Paths.edit_task(t.uuid)}
+            emit={{PhoenixKitProjects.Web.TaskFormLive,
+                   %{"live_action" => "edit", "id" => t.uuid}}}
+            embed_mode={@embed_mode}
+            class="link link-hover font-medium"
+          >
             {Task.localized_title(t, lang)}
-          </.link>
+          </.smart_link>
         </:col>
         <:col label={gettext("Actions")} class="text-right">
           ...

@@ -10,10 +10,22 @@ defmodule PhoenixKitProjects.Projects do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, TaskDependency}
 
-  # Dialyzer loses opacity on MapSet.t() when it flows through recursive
-  # private helpers that don't return the set. The standard-lib functions
-  # are used correctly; the warning is a false positive.
-  @dialyzer {:no_opaque, [build_group_tree: 4, build_closure_tree: 3]}
+  # Dialyzer loses opacity on `MapSet.t()` whenever an empty MapSet
+  # (`MapSet.new()` — `%MapSet{map: %{}}`) seeds a recursive helper
+  # whose spec is `MapSet.t()` (`%MapSet{map: internal(value)}`).
+  # The empty literal isn't a member of the opaque internal type until
+  # something has been inserted. The standard-lib functions are used
+  # correctly; the warning is a false positive. Suppress at both the
+  # callee (the recursive helpers) and the caller (the public fns that
+  # seed `MapSet.new()`) — dialyzer attributes `call_without_opaque`
+  # to the caller, not the called fn.
+  @dialyzer {:no_opaque,
+             [
+               build_group_tree: 4,
+               build_closure_tree: 3,
+               list_task_groups: 0,
+               task_closure: 2
+             ]}
 
   @typedoc "UUIDv7 string or raw 16-byte binary (Ecto accepts either)."
   @type uuid :: String.t() | <<_::128>>
