@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.3.0
+
+Emit-mode navigation + PopupHostLive for embedded LiveViews, locale inheritance fixes, and UI polish.
+
+### Added
+
+- **Emit-mode contract** — embedded LVs can now broadcast UI-intent events (`:opened`, `:closed`, `:saved`, `:deleted`) on a host-supplied PubSub topic instead of calling top-level `push_navigate`. Pass `session["mode"] => "emit"` + `session["pubsub_topic"]` to any embedded LV. `session["redirect_to"]` from PR #6 stays supported in navigate mode (default).
+- **`PopupHostLive`** — opinionated daisyUI modal-stack host for embedded LVs. Renders a root view inline, pushes follow-up views into `<dialog>` frames, and handles ESC / backdrop / race-safe pop via `frame_ref`.
+- **`PhoenixKitProjects.Web.Helpers` embed utilities** — `assign_embed_state/2`, `attach_open_embed_hook/1`, `navigate_or_open/2`, `close_or_navigate/2`, `navigate_after_save/3`, `notify_deleted_or_navigate/4`, `notify_deleted/3`.
+- **`<.smart_link>` + `<.smart_menu_link>` components** — render real `<a>` tags in navigate mode and `<button phx-click="open_embed">` in emit mode, with whitelist validation against `Helpers.embeddable_lvs/0`.
+- **`<.popup_host>` component** — function-component wrapper for PopupHostLive session generation.
+- **`dev_docs/embedding_emit.md`** — full emit-mode contract reference for host authors.
+
+### Changed
+
+- **Embedded LV locale inheritance** — `session["locale"]` is now threaded through PopupHostLive and restored in every stacked frame so translations stay consistent across modal opens.
+- **Full-width default wrappers** — list and show LVs now default to `w-full` instead of `max-w-*` when embedded, giving hosts more layout control.
+- **Project show header layout** — title + description are stacked; Edit / Archive actions moved into a kebab menu. Row actions in the assignment timeline converted to kebab menus for cleaner visuals.
+- **Dependency upgrades** — `phoenix_live_view`, `phoenix_kit`, `phoenix_kit_staff`, and transitive deps updated to latest compatible versions.
+
+### Fixed
+
+- **Dialyzer warnings** — silenced pre-existing opaque-type warnings on `PopupHostLive` and `Helpers` via targeted `@dialyzer` annotations and `.dialyzer_ignore.exs` entries.
+- **Duplicate alias** — removed a duplicate `Helpers` alias left by a rebase in `AssignmentFormLive`.
+
+### Tests
+
+- **Emit-mode regression gate** — `embedding_emit_test.exs` (53 tests) + `popup_host_live_test.exs` (27 tests) covering mount, event round-trips, `frame_ref` stamping, race-safe pops, stack-depth caps, and `next:` chaining.
+- **Helper embed tests** — `helpers_embed_test.exs` (15 tests) covering `safe_internal_path?/1`, `assign_embed_state/2`, and emit-vs-navigate branching.
+
 ## 0.2.2
 
 Dialyzer clean-up + version sync.
