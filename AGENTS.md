@@ -149,6 +149,54 @@ Behavior notes:
   on cross-resource events. Per-project topic
   (`projects:project:<uuid>`) is already scoped.
 
+### Emit mode + popup host
+
+**See:** [`dev_docs/embedding_emit.md`](dev_docs/embedding_emit.md)
+for the full contract.
+
+Above contract handles **layout** (where the embedded LV sits, how
+session keys flow). The follow-up problem PR #6 deferred:
+*navigation* inside an embedded LV still calls top-level
+`push_navigate`, yanking the user out of the host page. Shipped fix
+— two extra session keys turn every `push_navigate` site into a
+PubSub broadcast on a host topic:
+
+| Key | Default | Required when | Notes |
+|---|---|---|---|
+| `"mode"` | `"navigate"` | — | `"emit"` switches all nav sites to broadcast |
+| `"pubsub_topic"` | `nil` | `mode == "emit"` | Host-supplied topic |
+| `"frame_ref"` | `nil` | inherited from PopupHost | Race-safe pop identity |
+| `"close_on"` | `["closed"]` | — | Subset of `["closed", "saved", "deleted"]` |
+
+Event vocabulary (UI-intent verbs, disjoint from
+`PhoenixKitProjects.PubSub`'s content-broadcast verbs so
+`handle_info` clauses never collide):
+
+```elixir
+{:projects, :opened, %{lv, session, frame_ref}}
+{:projects, :closed, %{frame_ref}}
+{:projects, :saved, %{kind, action, record, close, next, frame_ref}}
+{:projects, :deleted, %{kind, uuid, close, frame_ref}}
+```
+
+`close: bool` — emitter-controlled "should the modal frame pop after
+this event?" `navigate_after_save/3` defaults to `true` (form saves
+are terminal). `notify_deleted_or_navigate/4` emits `true` (resource
+is gone). `notify_deleted/3` emits `false` (list-LV row deleted; the
+list stays open). `PopupHostLive` pops iff `close: true` AND
+`frame_ref` matches the top frame.
+
+`next: {lv, session} | nil` (on `:saved`) — optional follow-up LV.
+When set, PopupHost pops the current frame and pushes a new frame for
+`next` (e.g. "task created — open the edit screen so the user can add
+dependencies", mirroring the navigate-mode `push_navigate(to:
+edit_path)` flow).
+
+For zero-config popup UX, host mounts
+`PhoenixKitProjects.Web.PopupHostLive` once with an optional
+`root_view` session key — it subscribes, manages a daisyUI `<dialog>`
+modal stack, and renders requested LVs inside via `live_render`.
+
 ## Database
 
 Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`.

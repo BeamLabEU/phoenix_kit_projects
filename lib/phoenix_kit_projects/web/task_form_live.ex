@@ -37,6 +37,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         embed_redirect_to: redirect_to,
         live_action: live_action
       )
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
 
     {:ok, socket}
@@ -61,9 +63,24 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   defp apply_action(socket, :edit, %{"id" => id}) do
     case Projects.get_task(id) do
       nil ->
+        # In navigate mode, `close_or_navigate` push-navigates and the LV
+        # is replaced before render. In emit mode it broadcasts `:closed`
+        # but the LV stays mounted until the host pulls down the modal —
+        # so we need render-safe placeholders for the brief window between
+        # emit and host-side teardown.
         socket
+        |> assign(
+          page_title: "",
+          task: %Task{},
+          live_action: :edit,
+          assign_type: "",
+          task_deps: [],
+          available_deps: []
+        )
+        |> assign_staff_options()
+        |> assign_form(Projects.change_task(%Task{}))
         |> put_flash(:error, gettext("Task not found."))
-        |> WebHelpers.navigate_after_save(Paths.tasks())
+        |> WebHelpers.close_or_navigate(Paths.tasks())
 
       task ->
         assign_type =
@@ -89,6 +106,24 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         |> assign_staff_options()
         |> assign_form(Projects.change_task(task))
     end
+  end
+
+  # Fail-closed catch-all: emit-session lacking `"id"` for :edit lands
+  # here. Render placeholders + flash, then close.
+  defp apply_action(socket, :edit, _params) do
+    socket
+    |> assign(
+      page_title: "",
+      task: %Task{},
+      live_action: :edit,
+      assign_type: "",
+      task_deps: [],
+      available_deps: []
+    )
+    |> assign_staff_options()
+    |> assign_form(Projects.change_task(%Task{}))
+    |> put_flash(:error, gettext("Task not found."))
+    |> WebHelpers.close_or_navigate(Paths.tasks())
   end
 
   defp assign_staff_options(socket) do
@@ -179,6 +214,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
   def handle_event("add_dep", _params, socket), do: {:noreply, socket}
 
+  def handle_event("cancel", _params, socket) do
+    {:noreply, WebHelpers.close_or_navigate(socket, Paths.tasks())}
+  end
+
   def handle_event("remove_dep", %{"uuid" => dep_task_uuid}, socket) do
     case Projects.remove_task_dependency(socket.assigns.task.uuid, dep_task_uuid) do
       {:ok, _} ->
@@ -256,7 +295,16 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
            :info,
            gettext("Task created. You can now add default dependencies by editing it.")
          )
-         |> WebHelpers.navigate_after_save(Paths.edit_task(task.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.edit_task(task.uuid),
+           kind: :task,
+           record: task,
+           action: :create,
+           # Emit-mode equivalent of the navigate-mode "go to /edit so
+           # the user can add dependencies": tell the host to pop the
+           # current frame and open the edit form on top.
+           next:
+             {PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}
+         )}
 
       {:error, cs} ->
         Activity.log_failed("projects.task_created",
@@ -282,7 +330,11 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Task updated."))
-         |> WebHelpers.navigate_after_save(Paths.tasks())}
+         |> WebHelpers.navigate_after_save(Paths.tasks(),
+           kind: :task,
+           record: task,
+           action: :update
+         )}
 
       {:error, cs} ->
         Activity.log_failed("projects.task_updated",
@@ -334,9 +386,14 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     <div class={@wrapper_class}>
       <.page_header title={@page_title}>
         <:back_link>
-          <.link navigate={Paths.tasks()} class="link link-hover text-sm">
+          <.smart_link
+            navigate={Paths.tasks()}
+            emit={{PhoenixKitProjects.Web.TasksLive, %{}}}
+            embed_mode={@embed_mode}
+            class="link link-hover text-sm"
+          >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Task Library")}
-          </.link>
+          </.smart_link>
         </:back_link>
       </.page_header>
 
@@ -489,7 +546,9 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         <% end %>
 
         <div class="flex justify-end gap-2 mt-2">
-          <.link navigate={Paths.tasks()} class="btn btn-ghost btn-sm">{gettext("Cancel")}</.link>
+          <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+            {gettext("Cancel")}
+          </button>
           <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
             <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
           </button>

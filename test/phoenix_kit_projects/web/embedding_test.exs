@@ -46,21 +46,21 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       assert html =~ "Projects"
     end
 
-    test "wrapper_class defaults to the standalone max-w-6xl layout", %{conn: conn} do
+    test "wrapper_class defaults to the full-width standalone layout", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.OverviewLive, session: %{})
 
-      assert html =~ "mx-auto max-w-6xl"
+      assert html =~ "flex flex-col w-full px-4 py-6 gap-6"
     end
 
     test "wrapper_class override from session replaces the default", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.OverviewLive,
-          session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-6"}
+          session: %{"wrapper_class" => "host-specific-class"}
         )
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-6"
-      refute html =~ "max-w-6xl"
+      assert html =~ "host-specific-class"
+      refute html =~ "flex flex-col w-full px-4 py-6 gap-6"
     end
 
     test "locale from session is applied to embedded mount", %{conn: conn} do
@@ -80,21 +80,21 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       assert html =~ "Projects"
     end
 
-    test "wrapper_class defaults to max-w-5xl", %{conn: conn} do
+    test "wrapper_class defaults to full-width", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive, session: %{})
 
-      assert html =~ "mx-auto max-w-5xl"
+      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive,
-          session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"}
+          session: %{"wrapper_class" => "host-specific-class"}
         )
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
-      refute html =~ "max-w-5xl"
+      assert html =~ "host-specific-class"
+      refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
   end
 
@@ -110,21 +110,21 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       assert html =~ "Templates"
     end
 
-    test "wrapper_class defaults to max-w-5xl", %{conn: conn} do
+    test "wrapper_class defaults to full-width", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplatesLive, session: %{})
 
-      assert html =~ "mx-auto max-w-5xl"
+      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplatesLive,
-          session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"}
+          session: %{"wrapper_class" => "host-specific-class"}
         )
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
-      refute html =~ "max-w-5xl"
+      assert html =~ "host-specific-class"
+      refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
   end
 
@@ -136,21 +136,21 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       assert html =~ "Task Library"
     end
 
-    test "wrapper_class defaults to max-w-5xl", %{conn: conn} do
+    test "wrapper_class defaults to full-width", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive, session: %{})
 
-      assert html =~ "mx-auto max-w-5xl"
+      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
-          session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"}
+          session: %{"wrapper_class" => "host-specific-class"}
         )
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
-      refute html =~ "max-w-5xl"
+      assert html =~ "host-specific-class"
+      refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
     test "view preselect via session lands on the groups tab", %{conn: conn} do

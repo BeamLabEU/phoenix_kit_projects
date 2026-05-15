@@ -79,4 +79,26 @@ defmodule PhoenixKitProjects.PubSub do
     Manager.broadcast(topic_all(), msg)
     Manager.broadcast(topic_project(project_uuid), msg)
   end
+
+  @doc """
+  Broadcasts an emit-mode UI-intent event to a host-supplied topic.
+
+  Used by `PhoenixKitProjects.Web.Helpers` when an embedded LV is in
+  emit mode (`session["mode"] = "emit"`). The host topic is registered
+  by whoever mounts `PhoenixKitProjects.Web.PopupHostLive` (or any
+  custom host that subscribes directly). Unlike the other broadcast
+  helpers in this module, the topic is NOT one of the canonical
+  `projects:*` namespaces — it's caller-supplied and opaque to us.
+
+  UI-intent verbs (`:opened` / `:closed` / `:saved` / `:deleted`) are
+  deliberately distinct from the content verbs above
+  (`:project_created` etc.) so `handle_info` clauses subscribed to
+  the canonical topics never collide with handlers subscribed to a
+  host topic.
+  """
+  @spec broadcast_embed(String.t(), atom(), map()) :: :ok
+  def broadcast_embed(topic, event, payload)
+      when is_binary(topic) and is_atom(event) and is_map(payload) do
+    Manager.broadcast(topic, {:projects, event, payload})
+  end
 end

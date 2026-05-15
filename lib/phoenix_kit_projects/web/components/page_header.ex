@@ -14,21 +14,33 @@ defmodule PhoenixKitProjects.Web.Components.PageHeader do
 
   ## Examples
 
-      # List-page header.
+      # List-page header. Use `<.smart_link>` so the action button honors
+      # the LV's `:embed_mode` (real <a href> in navigate mode, emit
+      # broadcast in emit mode). See dev_docs/embedding_emit.md.
       <.page_header title="Projects" description="All projects.">
         <:actions>
-          <.link navigate={Paths.new_project()} class="btn btn-primary btn-sm">
+          <.smart_link
+            navigate={Paths.new_project()}
+            emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+            embed_mode={@embed_mode}
+            class="btn btn-primary btn-sm"
+          >
             New project
-          </.link>
+          </.smart_link>
         </:actions>
       </.page_header>
 
       # Form-page header (back-link variant).
       <.page_header title={@page_title}>
         <:back_link>
-          <.link navigate={Paths.projects()} class="link link-hover text-sm">
+          <.smart_link
+            navigate={Paths.projects()}
+            emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
+            embed_mode={@embed_mode}
+            class="link link-hover text-sm"
+          >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Projects")}
-          </.link>
+          </.smart_link>
         </:back_link>
       </.page_header>
   """

@@ -10,17 +10,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
-  alias PhoenixKitProjects.Web.Helpers
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
+  alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`
   # to drop `mx-auto max-w-4xl` and fill a wider host layout.
-  @default_wrapper_class "flex flex-col mx-auto max-w-4xl px-4 py-6 gap-4"
+  @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
 
   # Embedded entry: when nested via `live_render`, params arrives as
   # `:not_mounted_at_router` and `session` carries the project id (plus
@@ -28,12 +28,47 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # mount logic stays single-sourced.
   @impl true
   def mount(:not_mounted_at_router, %{"id" => id} = session, socket) do
-    Helpers.maybe_put_locale(session)
+    WebHelpers.maybe_put_locale(session)
     mount(%{"id" => id}, session, socket)
   end
 
+  # Fail-closed: emit-session lacking `"id"` lands here. Without this
+  # clause the mount/3 dispatch raises `FunctionClauseError`. Render
+  # placeholders + flash + close so the host pops the modal.
+  def mount(:not_mounted_at_router, session, socket) do
+    socket = WebHelpers.assign_embed_state(socket, session)
+
+    {:ok,
+     socket
+     |> assign(
+       page_title: "",
+       project: %Project{},
+       is_template: false,
+       wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
+       assignments: [],
+       deps_by_assignment: %{},
+       total_tasks: 0,
+       done_tasks: 0,
+       progress_pct: 0,
+       schedule: nil,
+       editing_duration_uuid: nil,
+       start_modal_open: false,
+       start_form: to_form(%{"start_at" => default_start_at_local()}),
+       comments_resource: nil,
+       comments_enabled: false,
+       project_comment_count: 0,
+       assignment_comment_counts: %{}
+     )
+     |> put_flash(:error, gettext("Project not found."))
+     |> WebHelpers.close_or_navigate(Paths.projects())}
+  end
+
   def mount(%{"id" => id}, session, socket) do
-    Helpers.maybe_put_locale(session)
+    # Locale first so any error flashes / placeholders render in the
+    # right language. Embed state second so the not-found path can
+    # honor emit mode (broadcasting `:closed` instead of push_navigate).
+    WebHelpers.maybe_put_locale(session)
+    socket = WebHelpers.assign_embed_state(socket, session)
 
     # `get_project/1` stays in mount/3 because the not-found path
     # has to redirect before render, and the per-project PubSub
@@ -46,8 +81,27 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       nil ->
         {:ok,
          socket
+         |> assign(
+           page_title: "",
+           project: %Project{},
+           is_template: false,
+           wrapper_class: @default_wrapper_class,
+           assignments: [],
+           deps_by_assignment: %{},
+           total_tasks: 0,
+           done_tasks: 0,
+           progress_pct: 0,
+           schedule: nil,
+           editing_duration_uuid: nil,
+           start_modal_open: false,
+           start_form: to_form(%{"start_at" => default_start_at_local()}),
+           comments_resource: nil,
+           comments_enabled: false,
+           project_comment_count: 0,
+           assignment_comment_counts: %{}
+         )
          |> put_flash(:error, gettext("Project not found."))
-         |> push_navigate(to: Paths.projects())}
+         |> WebHelpers.close_or_navigate(Paths.projects())}
 
       project ->
         if connected?(socket) do
@@ -65,7 +119,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
         socket =
-          assign(socket,
+          socket
+          |> assign(
             page_title: Project.localized_name(project, lang),
             project: project,
             is_template: is_template,
@@ -90,6 +145,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             progress_pct: 0,
             schedule: nil
           )
+          |> WebHelpers.attach_open_embed_hook()
 
         {:ok, socket |> load_assignments() |> load_comment_counts()}
     end
@@ -125,7 +181,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply,
      socket
      |> put_flash(:info, gettext("This project was deleted."))
-     |> push_navigate(to: Paths.projects())}
+     |> WebHelpers.close_or_navigate(Paths.projects())}
   end
 
   # `CommentsComponent` notifies its parent LV after every create /
@@ -438,6 +494,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             {:noreply,
              socket
+             |> WebHelpers.notify_deleted(:assignment, uuid)
              |> put_flash(:info, gettext("Task removed."))
              |> sync_project_completion()
              |> load_assignments()}
@@ -1116,13 +1173,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     <div class={@wrapper_class}>
       <%!-- Header --%>
       <div>
-        <.link navigate={if @is_template, do: Paths.templates(), else: Paths.projects()} class="link link-hover text-sm">
+        <.smart_link
+          navigate={if @is_template, do: Paths.templates(), else: Paths.projects()}
+          emit={
+            if @is_template,
+              do: {PhoenixKitProjects.Web.TemplatesLive, %{}},
+              else: {PhoenixKitProjects.Web.ProjectsLive, %{}}
+          }
+          embed_mode={@embed_mode}
+          class="link link-hover text-sm"
+        >
           <.icon name="hero-arrow-left" class="w-4 h-4 inline" />
           {if @is_template, do: gettext("Templates"), else: gettext("Projects")}
-        </.link>
-        <div class="flex items-center justify-between mt-1">
-          <div class="flex items-center gap-2">
-            <h1 class="text-2xl font-bold">{Project.localized_name(@project, L10n.current_content_lang())}</h1>
+        </.smart_link>
+        <div class="flex flex-col gap-2 mt-1">
+          <%!-- Title + status badges. Min-width: 0 lets the h1 truncate
+               instead of pushing siblings around. Long project names
+               wrap rather than overflowing the column. --%>
+          <div class="flex flex-wrap items-center gap-2 min-w-0">
+            <h1 class="text-2xl font-bold break-words">{Project.localized_name(@project, L10n.current_content_lang())}</h1>
             <%= if @is_template do %>
               <span class="badge badge-info badge-sm">{gettext("Template")}</span>
             <% end %>
@@ -1137,10 +1206,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               </span>
             <% end %>
           </div>
-          <div class="flex gap-2">
-            <.link navigate={Paths.new_assignment(@project.uuid)} class="btn btn-primary btn-sm">
+          <%!-- Description sits directly under the title, above the buttons —
+               title + subtitle as a stacked pair before the action row. --%>
+          <% desc = Project.localized_description(@project, L10n.current_content_lang()) %>
+          <p :if={desc} class="text-sm text-base-content/60">
+            {desc}
+          </p>
+          <%!-- Action buttons. Separate row so a long title never crowds
+               them out; `flex-wrap` keeps the row tidy on narrow viewports. --%>
+          <div class="flex flex-wrap gap-2">
+            <.smart_link
+              navigate={Paths.new_assignment(@project.uuid)}
+              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="btn btn-primary btn-sm"
+            >
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
-            </.link>
+            </.smart_link>
             <button
               :if={@comments_enabled}
               type="button"
@@ -1156,41 +1238,45 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 {@project_comment_count}
               </span>
             </button>
-            <.link
-              navigate={if @is_template, do: Paths.edit_template(@project.uuid), else: Paths.edit_project(@project.uuid)}
-              class="btn btn-ghost btn-sm"
-            >
-              <.icon name="hero-pencil" class="w-4 h-4" /> {gettext("Edit")}
-            </.link>
-            <%= if not @is_template do %>
-              <%= if @project.archived_at do %>
-                <button
-                  type="button"
-                  phx-click="unarchive_project"
-                  phx-disable-with={gettext("Unarchiving…")}
-                  class="btn btn-ghost btn-sm"
-                  title={gettext("Restore from archive")}
-                >
-                  <.icon name="hero-arrow-uturn-left" class="w-4 h-4" /> {gettext("Unarchive")}
-                </button>
-              <% else %>
-                <button
-                  type="button"
-                  phx-click="archive_project"
-                  phx-disable-with={gettext("Archiving…")}
-                  data-confirm={gettext("Archive this project? It will be hidden from the main lists but kept in the database.")}
-                  class="btn btn-ghost btn-sm"
-                  title={gettext("Hide from main lists")}
-                >
-                  <.icon name="hero-archive-box" class="w-4 h-4" /> {gettext("Archive")}
-                </button>
+            <%!-- Edit + (Un)archive go into a kebab dropdown to match the
+                 per-row action pattern used elsewhere in the module. --%>
+            <.table_row_menu id={"project-header-menu-#{@project.uuid}"}>
+              <.smart_menu_link
+                navigate={if @is_template, do: Paths.edit_template(@project.uuid), else: Paths.edit_project(@project.uuid)}
+                emit={
+                  if @is_template,
+                    do:
+                      {PhoenixKitProjects.Web.TemplateFormLive,
+                       %{"live_action" => "edit", "id" => @project.uuid}},
+                    else:
+                      {PhoenixKitProjects.Web.ProjectFormLive,
+                       %{"live_action" => "edit", "id" => @project.uuid}}
+                }
+                embed_mode={@embed_mode}
+                icon="hero-pencil"
+                label={gettext("Edit")}
+              />
+              <%= if not @is_template do %>
+                <.table_row_menu_divider />
+                <%= if @project.archived_at do %>
+                  <.table_row_menu_button
+                    phx-click="unarchive_project"
+                    phx-disable-with={gettext("Unarchiving…")}
+                    icon="hero-arrow-uturn-left"
+                    label={gettext("Unarchive")}
+                  />
+                <% else %>
+                  <.table_row_menu_button
+                    phx-click="archive_project"
+                    phx-disable-with={gettext("Archiving…")}
+                    data-confirm={gettext("Archive this project? It will be hidden from the main lists but kept in the database.")}
+                    icon="hero-archive-box"
+                    label={gettext("Archive")}
+                  />
+                <% end %>
               <% end %>
-            <% end %>
+            </.table_row_menu>
           </div>
-        </div>
-        <% desc = Project.localized_description(@project, L10n.current_content_lang()) %>
-        <div :if={desc} class="text-sm text-base-content/60 mt-1">
-          {desc}
         </div>
       </div>
 
@@ -1200,9 +1286,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <% @is_template -> %>
             <.icon name="hero-document-duplicate" class="w-5 h-5 text-info" />
             <span class="text-sm">{gettext("This is a template — set up tasks, then create projects from it.")}</span>
-            <.link navigate={Paths.new_project() <> "?template=#{@project.uuid}"} class="btn btn-primary btn-xs ml-auto">
+            <.smart_link
+              navigate={Paths.new_project() <> "?template=#{@project.uuid}"}
+              emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new", "template" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="btn btn-primary btn-xs ml-auto"
+            >
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Create project from this template")}
-            </.link>
+            </.smart_link>
           <% @project.completed_at -> %>
             <.icon name="hero-trophy" class="w-5 h-5 text-success" />
             <span class="text-sm font-medium">
@@ -1321,9 +1412,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%= if @assignments == [] do %>
         <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
           <:cta>
-            <.link navigate={Paths.new_assignment(@project.uuid)} class="link link-primary text-sm">
+            <.smart_link
+              navigate={Paths.new_assignment(@project.uuid)}
+              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="link link-primary text-sm"
+            >
               {gettext("Add one from the task library")}
-            </.link>
+            </.smart_link>
           </:cta>
         </.empty_state>
       <% else %>
@@ -1422,18 +1518,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             {a_comment_count}
                           </span>
                         </button>
-                        <.link navigate={Paths.edit_assignment(@project.uuid, a.uuid)} class="btn btn-ghost btn-xs">
-                          <.icon name="hero-pencil" class="w-3.5 h-3.5" />
-                        </.link>
-                        <button
-                          phx-click="remove_assignment"
-                          phx-value-uuid={a.uuid}
-                          phx-disable-with={gettext("Removing…")}
-                          data-confirm={gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(a.task, L10n.current_content_lang()))}
-                          class="btn btn-ghost btn-xs text-error"
-                        >
-                          <.icon name="hero-trash" class="w-3.5 h-3.5" />
-                        </button>
+                        <.table_row_menu id={"assignment-menu-#{a.uuid}"}>
+                          <.smart_menu_link
+                            navigate={Paths.edit_assignment(@project.uuid, a.uuid)}
+                            emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "edit", "project_id" => @project.uuid, "id" => a.uuid}}}
+                            embed_mode={@embed_mode}
+                            icon="hero-pencil"
+                            label={gettext("Edit")}
+                          />
+                          <.table_row_menu_divider />
+                          <.table_row_menu_button
+                            phx-click="remove_assignment"
+                            phx-value-uuid={a.uuid}
+                            phx-disable-with={gettext("Removing…")}
+                            data-confirm={gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(a.task, L10n.current_content_lang()))}
+                            icon="hero-trash"
+                            label={gettext("Remove")}
+                            variant="error"
+                          />
+                        </.table_row_menu>
                       </div>
                     </div>
 

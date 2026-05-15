@@ -148,11 +148,19 @@ Forms had two extra concerns beyond the Tier 1/2 pattern:
 **`template_form_live.ex`** — `max-w-xl`, **LOW**
 - Same shape.
 
-Deferred (not implemented): a PubSub-emit-and-let-host-react seam
-(embedded form emits `{:projects, :project_created, %{uuid: ...}}` and
-the host subscribes to react without a navigate). More flexible but
-more coupling. Worth picking up only if a concrete embedder needs
-event-shaped feedback rather than path-shaped redirect.
+**Shipped** (`dev_docs/embedding_emit.md`): the PubSub-emit-and-let-
+host-react seam. Embedded LVs in `mode: "emit"` broadcast UI-intent
+events on a host-supplied topic (`:opened` / `:closed` / `:saved` /
+`:deleted`) **instead of** calling `push_navigate` — every one of
+this module's nav sites now routes through `<.smart_link>` /
+`navigate_or_open/2` / `close_or_navigate/2` /
+`navigate_after_save/3` / `notify_deleted_or_navigate/4`. The module
+also ships `PhoenixKitProjects.Web.PopupHostLive` + `<.popup_host>`,
+an opinionated host shell that subscribes to the topic, manages a
+daisyUI `<dialog>` modal stack with frame-ref-based race-safe pop
+semantics, and `live_render`s the requested LV inside each frame.
+See `dev_docs/embedding_emit.md` for the full contract and `<.popup_host>`
+reference.
 
 ## Why these problems exist
 

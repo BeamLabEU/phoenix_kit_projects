@@ -2,33 +2,67 @@ defmodule PhoenixKitProjects.Web.Helpers do
   @moduledoc """
   Cross-cutting helpers for the projects module's LiveView layer.
 
-  Right now this is the canonical home for the multilang-form merge
-  helpers used by `ProjectFormLive`, `TaskFormLive`, and
-  `AssignmentFormLive`. Each form has its own non-translatable fields
-  and primary-language columns, but the JSONB-shaping plumbing is
-  identical — extracted here to avoid three near-identical copies.
+  Two surfaces live here:
 
-  See the corresponding form LV's `mount/3` and `handle_event/3` for the
-  call sites; the shape they expect:
+  ## Multilang form merge helpers
 
-    * `lang_data(form, current_lang)` — pulled-in for `<.translatable_field
-      lang_data={...}>` so the secondary-tab inputs render the existing
-      override (and edits survive a `phx-change` round-trip without a DB
-      hit).
-    * `merge_translations_attrs(attrs, in_flight_record, primary_fields)` —
-      called from the `validate`/`save` handlers to:
-        1. clean the submitted `attrs["translations"]` map (strip
-           `_unused_*` sentinels, drop empty/`nil` overrides),
-        2. merge it on top of the record's existing JSONB so other
-           languages aren't clobbered, and
-        3. preserve primary-language column values that aren't in the
-           current submission (the secondary-tab DOM doesn't render
-           them, so they'd otherwise come back nil and trigger
-           `validate_required` failures on save).
-    * `in_flight_record(socket, form_assign, fallback_assign)` — the form's
-      changeset captures the user's typed-but-not-yet-saved primary
-      values from prior `validate` events. Apply it for the merge-baseline.
+  `lang_data/2`, `merge_translations_attrs/3`, `in_flight_record/3`,
+  `normalize_datetime_local_attrs/2`, `maybe_switch_to_primary_on_error/3`
+  — shared between `ProjectFormLive`, `TaskFormLive`, and
+  `AssignmentFormLive`. See each function's docstring for the contract.
+
+  ## Embed-mode helpers (PR follow-up to PR #6 audit)
+
+  `assign_embed_state/2`, `navigate_or_open/2`, `close_or_navigate/2`,
+  `navigate_after_save/3`, `notify_deleted_or_navigate/4`,
+  `attach_open_embed_hook/1`, `embeddable_lv?/1`, plus the
+  `decode_embeddable_lv/1` and `decode_session/1` decoders used by the
+  shared `open_embed` event handler.
+
+  When a host mounts an embedded LV with `session["mode"] = "emit"` +
+  `session["pubsub_topic"] = topic`, no `push_navigate` ever fires from
+  this module. Instead, UI-intent events are broadcast on the host's
+  topic so the host can render the requested LV inside a popup/drawer/
+  inline panel on the existing page — no URL change, no DOM replacement.
+  See `dev_docs/embedding_emit.md` for the full contract.
   """
+
+  alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+
+  require Logger
+
+  # ─────────────────────────────────────────────────────────────────
+  # Embeddable LV whitelist
+  # ─────────────────────────────────────────────────────────────────
+
+  @embeddable_lvs [
+    PhoenixKitProjects.Web.OverviewLive,
+    PhoenixKitProjects.Web.ProjectsLive,
+    PhoenixKitProjects.Web.TemplatesLive,
+    PhoenixKitProjects.Web.TasksLive,
+    PhoenixKitProjects.Web.ProjectShowLive,
+    PhoenixKitProjects.Web.ProjectFormLive,
+    PhoenixKitProjects.Web.TaskFormLive,
+    PhoenixKitProjects.Web.TemplateFormLive,
+    PhoenixKitProjects.Web.AssignmentFormLive
+  ]
+
+  @doc "The canonical list of LVs eligible for embed-mode mounting."
+  @spec embeddable_lvs() :: [module()]
+  def embeddable_lvs, do: @embeddable_lvs
+
+  @doc """
+  Returns `true` iff `mod` is in the embeddable whitelist.
+
+  Used by `PopupHostLive` and the shared `open_embed` event handler
+  before passing a module atom to `live_render` or
+  `String.to_existing_atom/1`. Protects against hot-reload renames and
+  arbitrary-atom injection if the contract is ever wired to an
+  untrusted HTTP boundary.
+  """
+  @spec embeddable_lv?(module()) :: boolean()
+  def embeddable_lv?(mod) when is_atom(mod), do: mod in @embeddable_lvs
+  def embeddable_lv?(_), do: false
 
   @doc """
   Reads the `translations` field off the current changeset and returns
@@ -258,10 +292,15 @@ defmodule PhoenixKitProjects.Web.Helpers do
   via session. Falls back to `default` (typically `:new`) when neither
   source is present.
 
-  Accepts strings (`"new"`, `"edit"`) from session and converts via
-  `String.to_existing_atom/1` (safer than `to_atom/1`; an unknown action
-  raises rather than minting atoms from arbitrary user input).
+  Accepts strings (`"new"`, `"edit"`) from session, converts via
+  `String.to_existing_atom/1`, **then validates against an allowlist
+  (`[:new, :edit]`)** — anything else falls back to `default`. Without
+  the allowlist a tampered `"live_action": "show"` would mint `:show`
+  (an existing atom from Phoenix.LiveView land) and then crash inside
+  `apply_action/3` which has no `:show` clause.
   """
+  @valid_live_actions [:new, :edit]
+
   @spec resolve_live_action(Phoenix.LiveView.Socket.t(), map(), atom()) :: atom()
   def resolve_live_action(socket, session, default \\ :new) do
     cond do
@@ -271,10 +310,13 @@ defmodule PhoenixKitProjects.Web.Helpers do
     end
   end
 
-  defp normalize_action(value, _default) when is_atom(value), do: value
+  defp normalize_action(value, default) when is_atom(value) do
+    if value in @valid_live_actions, do: value, else: default
+  end
 
   defp normalize_action(value, default) when is_binary(value) do
-    String.to_existing_atom(value)
+    candidate = String.to_existing_atom(value)
+    if candidate in @valid_live_actions, do: candidate, else: default
   rescue
     ArgumentError -> default
   end
@@ -299,39 +341,496 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   @doc """
-  Push-navigates to `default_path` unless the embedder supplied a
-  `session["redirect_to"]` override (already on socket as
-  `:embed_redirect_to`).
+  Routes a form-save transition per the socket's `:embed_mode`.
 
-  Used by form save handlers so that an embedded form can return to a
-  host-app path on save (and the host can close a modal, refresh its
-  own state, etc.) instead of yanking the user to `/admin/projects/...`.
+  In navigate mode (default) — push_navigates to `default_path` unless
+  the embedder supplied `session["redirect_to"]` (already on socket as
+  `:embed_redirect_to`), with the same-host open-redirect guard.
 
-  **Open-redirect guard.** The override is validated as a *relative*
-  path before use: must start with `/`, must not start with `//`
-  (protocol-relative URL), must not contain a scheme separator (`://`).
-  This protects naive embedders who might forward an unvalidated
-  `params["return_to"]` from a request query string — without the
-  guard, an attacker could land
-  `?return_to=https://evil.example.com` and have our form
-  `push_navigate` to it on save. Invalid overrides fall back to
-  `default_path` silently (the embedder's misuse is documented in the
-  embedding contract; logging the rejection here doesn't help the
-  caller).
+  In emit mode — broadcasts `{:projects, :saved, %{kind, action, record,
+  frame_ref}}` on the host topic and returns the socket unchanged. No
+  navigation fires. `opts` must include `:kind` and `:record`; `:action`
+  defaults to `:update`.
+
+  ## Opts
+
+    * `:kind` (atom) — `:project | :task | :template | :assignment`.
+      Required in emit mode; ignored in navigate mode.
+    * `:record` (struct) — the saved record. Required in emit mode.
+    * `:action` (atom) — `:create | :update`. Defaults to `:update`.
+    * `:next` (`{module(), map()} | nil`) — optional follow-up LV the
+      host should open after the save. When set, `PopupHostLive` pops
+      the current frame and pushes a new frame for `next` — this is
+      how form LVs offer a "create then edit" flow in emit mode that
+      mirrors their navigate-mode `push_navigate(to: edit_path)`.
+
+  ## Open-redirect guard (navigate mode)
+
+  The `:embed_redirect_to` override is validated as a *relative* path
+  before use: must start with `/`, must not start with `//`, must not
+  contain `://`. Protects naive embedders who forward an unvalidated
+  `params["return_to"]` from a request query string. Invalid overrides
+  silently fall back to `default_path`.
   """
-  @spec navigate_after_save(Phoenix.LiveView.Socket.t(), String.t()) ::
+  @spec navigate_after_save(Phoenix.LiveView.Socket.t(), String.t(), keyword()) ::
           Phoenix.LiveView.Socket.t()
-  def navigate_after_save(socket, default_path) do
-    target =
-      case socket.assigns[:embed_redirect_to] do
-        path when is_binary(path) and path != "" ->
-          if safe_internal_path?(path), do: path, else: default_path
+  def navigate_after_save(socket, default_path, opts \\ []) do
+    case socket.assigns[:embed_mode] do
+      :emit ->
+        emit_saved(socket, opts)
+        socket
 
-        _ ->
-          default_path
-      end
+      _ ->
+        target =
+          case socket.assigns[:embed_redirect_to] do
+            path when is_binary(path) and path != "" ->
+              if safe_internal_path?(path), do: path, else: default_path
 
-    Phoenix.LiveView.push_navigate(socket, to: target)
+            _ ->
+              default_path
+          end
+
+        Phoenix.LiveView.push_navigate(socket, to: target)
+    end
+  end
+
+  # ─────────────────────────────────────────────────────────────────
+  # Embed-mode primitives
+  # ─────────────────────────────────────────────────────────────────
+
+  @doc """
+  Reads the four embed-mode session keys, validates them, and assigns
+  them onto the socket. Call from every embeddable LV's `mount/3` after
+  `wrapper_class` resolution.
+
+  Session keys read:
+    * `"mode"` — `"navigate"` (default) or `"emit"`
+    * `"pubsub_topic"` — string; required when mode is `"emit"`
+    * `"frame_ref"` — opaque integer stamped by `PopupHostLive` (may be nil)
+    * `"close_on"` — subset of `["closed", "saved", "deleted"]`; defaults
+      to `["closed"]`
+
+  Socket assigns produced:
+    * `:embed_mode` — `:navigate | :emit`
+    * `:embed_pubsub_topic` — string or nil
+    * `:embed_frame_ref` — integer or nil
+    * `:embed_close_on` — `MapSet.t(atom())`
+
+  Raises `ArgumentError` if `mode == "emit"` but `pubsub_topic` is missing
+  — fail-fast at mount rather than silently no-op every later emit call.
+  """
+  @spec assign_embed_state(Phoenix.LiveView.Socket.t(), map()) ::
+          Phoenix.LiveView.Socket.t()
+  def assign_embed_state(socket, session) when is_map(session) do
+    mode = decode_mode(Map.get(session, "mode"))
+    topic = Map.get(session, "pubsub_topic")
+    frame_ref = decode_frame_ref(Map.get(session, "frame_ref"))
+    close_on = decode_close_on(Map.get(session, "close_on"))
+
+    if mode == :emit and (not is_binary(topic) or topic == "") do
+      raise ArgumentError,
+            "embed mode is \"emit\" but session[\"pubsub_topic\"] is missing or empty"
+    end
+
+    if mode == :emit and is_binary(Map.get(session, "redirect_to", nil)) and
+         Map.get(session, "redirect_to") != "" do
+      Logger.warning(
+        "[phoenix_kit_projects] both `mode: \"emit\"` and `redirect_to` " <>
+          "supplied — preferring emit; `redirect_to` ignored."
+      )
+    end
+
+    Phoenix.Component.assign(socket,
+      embed_mode: mode,
+      embed_pubsub_topic: topic,
+      embed_frame_ref: frame_ref,
+      embed_close_on: close_on
+    )
+  end
+
+  defp decode_mode("emit"), do: :emit
+  defp decode_mode(:emit), do: :emit
+  defp decode_mode("navigate"), do: :navigate
+  defp decode_mode(:navigate), do: :navigate
+  defp decode_mode(nil), do: :navigate
+
+  defp decode_mode(other) do
+    Logger.warning(
+      "[phoenix_kit_projects] unknown embed mode #{inspect(other)} — defaulting to :navigate"
+    )
+
+    :navigate
+  end
+
+  defp decode_frame_ref(n) when is_integer(n), do: n
+
+  defp decode_frame_ref(s) when is_binary(s) do
+    case Integer.parse(s) do
+      {n, ""} ->
+        n
+
+      _ ->
+        Logger.warning(
+          "[phoenix_kit_projects] ignoring malformed frame_ref #{inspect(s)} — defaulting to nil"
+        )
+
+        nil
+    end
+  end
+
+  defp decode_frame_ref(_), do: nil
+
+  defp decode_close_on(list) when is_list(list) do
+    list
+    |> Enum.flat_map(fn
+      "closed" -> [:closed]
+      "saved" -> [:saved]
+      "deleted" -> [:deleted]
+      :closed -> [:closed]
+      :saved -> [:saved]
+      :deleted -> [:deleted]
+      _ -> []
+    end)
+    |> MapSet.new()
+  end
+
+  defp decode_close_on(nil), do: MapSet.new([:closed])
+  defp decode_close_on(_), do: MapSet.new([:closed])
+
+  @doc """
+  Routes per `:embed_mode`. In navigate mode: `push_navigate(to: opts[:to])`.
+  In emit mode: broadcasts `{:projects, :opened, %{lv, session, frame_ref}}`
+  and returns the socket unchanged.
+
+  ## Opts
+
+    * `:to` (string) — fallback path used in navigate mode
+    * `:open` (`{module(), map()}`) — `{TargetLV, session_overrides}` used
+      in emit mode
+
+  Both opts are required. In emit mode the open-target's module is
+  validated against `embeddable_lvs/0`; an unlisted module logs a
+  warning and is dropped (no broadcast, no navigation — caller's bug).
+  """
+  @spec navigate_or_open(Phoenix.LiveView.Socket.t(), keyword()) ::
+          Phoenix.LiveView.Socket.t()
+  def navigate_or_open(socket, opts) when is_list(opts) do
+    case socket.assigns[:embed_mode] do
+      :emit ->
+        {lv, session_overrides} = Keyword.fetch!(opts, :open)
+        emit_opened(socket, lv, session_overrides)
+        socket
+
+      _ ->
+        path = Keyword.fetch!(opts, :to)
+        Phoenix.LiveView.push_navigate(socket, to: path)
+    end
+  end
+
+  @doc """
+  Cancel / Back behaviour.
+
+  In emit mode: broadcasts `{:projects, :closed, %{frame_ref}}` and
+  returns the socket unchanged.
+
+  In navigate mode: `push_navigate(to: fallback_path)`, but if the
+  embedder supplied `session["redirect_to"]` (already on socket as
+  `:embed_redirect_to`) it takes precedence — same open-redirect guard
+  as `navigate_after_save/3`. This honors the host-supplied exit point
+  for both cancel/back AND save success in PR #6's contract.
+  """
+  @spec close_or_navigate(Phoenix.LiveView.Socket.t(), String.t()) ::
+          Phoenix.LiveView.Socket.t()
+  def close_or_navigate(socket, fallback_path) when is_binary(fallback_path) do
+    case socket.assigns[:embed_mode] do
+      :emit ->
+        emit_closed(socket)
+        socket
+
+      _ ->
+        target =
+          case socket.assigns[:embed_redirect_to] do
+            path when is_binary(path) and path != "" ->
+              if safe_internal_path?(path), do: path, else: fallback_path
+
+            _ ->
+              fallback_path
+          end
+
+        Phoenix.LiveView.push_navigate(socket, to: target)
+    end
+  end
+
+  @doc """
+  Delete-success path that **navigates**. In navigate mode:
+  `push_navigate(to: fallback_path)`. In emit mode: broadcasts
+  `{:projects, :deleted, %{kind, uuid, frame_ref}}` and returns the
+  socket unchanged.
+
+  Use this when the LV must leave the current view after a delete
+  (e.g. deleting the project you're showing). For list-LV delete
+  handlers that stay on the same page, use `notify_deleted/3`.
+  """
+  @spec notify_deleted_or_navigate(
+          Phoenix.LiveView.Socket.t(),
+          atom(),
+          binary(),
+          String.t()
+        ) :: Phoenix.LiveView.Socket.t()
+  def notify_deleted_or_navigate(socket, kind, uuid, fallback_path)
+      when is_atom(kind) and is_binary(uuid) and is_binary(fallback_path) do
+    case socket.assigns[:embed_mode] do
+      :emit ->
+        # `close: true` — the LV's resource is gone, the modal frame
+        # that was showing it should pop.
+        emit_deleted(socket, kind, uuid, true)
+        socket
+
+      _ ->
+        Phoenix.LiveView.push_navigate(socket, to: fallback_path)
+    end
+  end
+
+  @doc """
+  Emits `{:projects, :deleted, %{kind, uuid, close: false, frame_ref}}`
+  on the host topic when in emit mode, no-ops in navigate mode.
+
+  Use at list-LV delete-success branches where the LV stays on the
+  same page after delete (just reloads its own list). The broadcast is
+  **informational** — `close: false` tells `PopupHostLive` not to pop
+  the modal that hosts this list. The host learns about the delete
+  through the canonical UI-intent vocabulary; the list itself stays
+  open showing the post-delete state.
+
+  Contrast with `notify_deleted_or_navigate/4` which emits `close: true`
+  — used when the LV's *own resource* was deleted and the modal should
+  pop.
+  """
+  @spec notify_deleted(Phoenix.LiveView.Socket.t(), atom(), binary()) ::
+          Phoenix.LiveView.Socket.t()
+  def notify_deleted(socket, kind, uuid)
+      when is_atom(kind) and is_binary(uuid) do
+    if socket.assigns[:embed_mode] == :emit do
+      emit_deleted(socket, kind, uuid, false)
+    end
+
+    socket
+  end
+
+  @doc """
+  Attaches the shared `open_embed` event handler to the socket via
+  `Phoenix.LiveView.attach_hook/4`. Call from every LV that uses
+  `<.smart_link>` (the conventional entry point is to chain it after
+  `assign_embed_state/2` in `mount/3`).
+
+  The hook intercepts `phx-click="open_embed"` events fired by
+  `<.smart_link>` in emit mode, validates the `lv` value against
+  `embeddable_lvs/0`, JSON-decodes the `session` value, and emits
+  `:opened`. Halts the event so the host LV's own `handle_event/3`
+  never sees it.
+
+  In navigate mode `<.smart_link>` renders a plain `<.link navigate>`
+  and no `open_embed` event ever fires — the hook is harmless then.
+  """
+  @spec attach_open_embed_hook(Phoenix.LiveView.Socket.t()) ::
+          Phoenix.LiveView.Socket.t()
+  def attach_open_embed_hook(socket) do
+    Phoenix.LiveView.attach_hook(
+      socket,
+      :phoenix_kit_projects_open_embed,
+      :handle_event,
+      &handle_open_embed/3
+    )
+  end
+
+  defp handle_open_embed("open_embed", %{"lv" => lv_str} = params, socket) do
+    # The `open_embed` event name is owned by this helper end-to-end.
+    # `<.smart_link>` renders the button only in emit mode, so reaching
+    # this handler in navigate mode means the payload is stale or
+    # adversarial — most LVs do not implement `handle_event("open_embed",
+    # ...)`, so a fall-through would crash them. Halt + log in both modes;
+    # only emit mode actually fires the broadcast.
+    case socket.assigns[:embed_mode] do
+      :emit ->
+        with {:ok, lv} <- decode_embeddable_lv(lv_str),
+             {:ok, session} <- decode_session(Map.get(params, "session")) do
+          emit_opened(socket, lv, session)
+        else
+          _ ->
+            Logger.warning(
+              "[phoenix_kit_projects] dropping malformed open_embed event " <>
+                "(lv=#{inspect(lv_str)})"
+            )
+        end
+
+      _ ->
+        Logger.warning(
+          "[phoenix_kit_projects] dropping unexpected open_embed event in navigate mode " <>
+            "(lv=#{inspect(lv_str)})"
+        )
+    end
+
+    {:halt, socket}
+  end
+
+  defp handle_open_embed(_event, _params, socket), do: {:cont, socket}
+
+  @doc """
+  Decodes a stringified module name into an atom, validating that the
+  result is in `embeddable_lvs/0`. Used by the `open_embed` event
+  handler and by `PopupHostLive`'s `root_view` decoder.
+
+  Accepts both forms hosts can plausibly write:
+
+    * `"Elixir.PhoenixKitProjects.Web.OverviewLive"` — the fully-
+      qualified atom string (what `Atom.to_string/1` produces on a
+      module, and what `<.smart_link>` puts on the wire)
+    * `"PhoenixKitProjects.Web.OverviewLive"` — the human-friendly
+      form used in docs and `PopupHostLive`'s `root_view` session
+      example. Prepended with `Elixir.` before lookup.
+
+  Returns `:error` if the resulting atom isn't in the whitelist (or
+  doesn't exist as an atom yet — `String.to_existing_atom/1` raises,
+  which we trap).
+  """
+  @spec decode_embeddable_lv(String.t()) :: {:ok, module()} | :error
+  def decode_embeddable_lv(str) when is_binary(str) do
+    normalized =
+      if String.starts_with?(str, "Elixir."), do: str, else: "Elixir." <> str
+
+    case String.to_existing_atom(normalized) do
+      mod when is_atom(mod) ->
+        if embeddable_lv?(mod), do: {:ok, mod}, else: :error
+    end
+  rescue
+    ArgumentError -> :error
+  end
+
+  def decode_embeddable_lv(_), do: :error
+
+  @doc """
+  Decodes the `phx-value-session` JSON blob produced by `<.smart_link>`.
+  Returns `{:ok, map}` on success, `:error` on malformed JSON.
+  """
+  @spec decode_session(any()) :: {:ok, map()} | :error
+  def decode_session(nil), do: {:ok, %{}}
+  def decode_session(""), do: {:ok, %{}}
+
+  def decode_session(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, map} when is_map(map) -> {:ok, map}
+      _ -> :error
+    end
+  end
+
+  def decode_session(map) when is_map(map), do: {:ok, map}
+  def decode_session(_), do: :error
+
+  # ─────────────────────────────────────────────────────────────────
+  # Emit primitives (internal — drive the helpers above)
+  # ─────────────────────────────────────────────────────────────────
+
+  defp emit_opened(socket, lv, session_overrides)
+       when is_atom(lv) and is_map(session_overrides) do
+    if embeddable_lv?(lv) do
+      payload = %{
+        lv: lv,
+        session: session_overrides,
+        frame_ref: socket.assigns[:embed_frame_ref]
+      }
+
+      do_broadcast(socket, :opened, payload)
+      emit_telemetry(:open, lv: lv, mode: :emit)
+    else
+      Logger.warning(
+        "[phoenix_kit_projects] refusing to emit :opened for #{inspect(lv)} — " <>
+          "not in embeddable_lvs/0 whitelist"
+      )
+    end
+
+    :ok
+  end
+
+  defp emit_closed(socket) do
+    do_broadcast(socket, :closed, %{frame_ref: socket.assigns[:embed_frame_ref]})
+    :ok
+  end
+
+  defp emit_saved(socket, opts) do
+    kind = Keyword.fetch!(opts, :kind)
+    record = Keyword.fetch!(opts, :record)
+    action = Keyword.get(opts, :action, :update)
+    close = Keyword.get(opts, :close, true)
+    next = Keyword.get(opts, :next)
+
+    # R5-IM1: `next` only has well-defined semantics when the current
+    # frame is also being closed (pop-then-push). `close: false, next:
+    # {...}` would silently drop the next at the PopupHost layer —
+    # surfacing it loudly here avoids the silent no-op.
+    if next != nil and close != true do
+      raise ArgumentError,
+            "navigate_after_save/3 requires `close: true` when `next:` is set " <>
+              "(got close=#{inspect(close)}, next=#{inspect(next)}). " <>
+              "The next-frame chain replaces the current frame; stacking a " <>
+              "follow-up while keeping the current form open is a separate " <>
+              "flow that should emit :opened explicitly."
+    end
+
+    payload =
+      %{
+        kind: kind,
+        action: action,
+        record: record,
+        close: close,
+        next: next,
+        frame_ref: socket.assigns[:embed_frame_ref]
+      }
+
+    do_broadcast(socket, :saved, payload)
+    emit_telemetry(:save, kind: kind, action: action, mode: :emit)
+    :ok
+  end
+
+  # `close: true` signals to PopupHost "this resource is gone — pop the
+  # modal frame that was showing it." `close: false` is informational
+  # ("a row in my view was deleted; I'm staying open"). The emitter's
+  # call site decides — see `notify_deleted_or_navigate/4` vs
+  # `notify_deleted/3`.
+  defp emit_deleted(socket, kind, uuid, close) do
+    payload = %{
+      kind: kind,
+      uuid: uuid,
+      close: close,
+      frame_ref: socket.assigns[:embed_frame_ref]
+    }
+
+    do_broadcast(socket, :deleted, payload)
+    emit_telemetry(:delete, kind: kind, mode: :emit)
+    :ok
+  end
+
+  defp do_broadcast(socket, event, payload) do
+    case socket.assigns[:embed_pubsub_topic] do
+      topic when is_binary(topic) and topic != "" ->
+        ProjectsPubSub.broadcast_embed(topic, event, payload)
+
+      _ ->
+        Logger.warning(
+          "[phoenix_kit_projects] cannot broadcast #{inspect(event)} — " <>
+            "embed_pubsub_topic missing on socket"
+        )
+    end
+  end
+
+  defp emit_telemetry(event, metadata) do
+    :telemetry.execute(
+      [:phoenix_kit_projects, :embed, event],
+      %{system_time: System.system_time()},
+      Map.new(metadata)
+    )
+  rescue
+    # Telemetry handler errors must never crash the embed flow.
+    _ -> :ok
   end
 
   # Accepts absolute paths under the current host (`/admin/...`,

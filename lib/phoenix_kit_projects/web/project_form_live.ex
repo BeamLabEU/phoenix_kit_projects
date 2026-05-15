@@ -38,6 +38,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         embed_redirect_to: redirect_to,
         live_action: live_action
       )
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
 
     {:ok, socket}
@@ -63,8 +65,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     case Projects.get_project(id) do
       nil ->
         socket
+        |> assign(
+          page_title: "",
+          project: %Project{},
+          live_action: :edit,
+          templates: [],
+          selected_template: nil
+        )
+        |> assign_form(Projects.change_project(%Project{}))
         |> put_flash(:error, gettext("Project not found."))
-        |> WebHelpers.navigate_after_save(Paths.projects())
+        |> WebHelpers.close_or_navigate(Paths.projects())
 
       project ->
         socket
@@ -80,6 +90,23 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         )
         |> assign_form(Projects.change_project(project))
     end
+  end
+
+  # Fail-closed catch-all: a tampered or partial emit-session can land
+  # `:edit` here without an `"id"` key. Render placeholders + flash, then
+  # `close_or_navigate/2` emits `:closed` so the host pops the modal.
+  defp apply_action(socket, :edit, _params) do
+    socket
+    |> assign(
+      page_title: "",
+      project: %Project{},
+      live_action: :edit,
+      templates: [],
+      selected_template: nil
+    )
+    |> assign_form(Projects.change_project(%Project{}))
+    |> put_flash(:error, gettext("Project not found."))
+    |> WebHelpers.close_or_navigate(Paths.projects())
   end
 
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
@@ -116,6 +143,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     save(socket, socket.assigns.live_action, merge_attrs(attrs, socket), template_uuid)
   end
 
+  def handle_event("cancel", _params, socket) do
+    {:noreply, WebHelpers.close_or_navigate(socket, Paths.projects())}
+  end
+
   defp merge_attrs(attrs, socket) do
     in_flight = WebHelpers.in_flight_record(socket, :form, :project)
 
@@ -137,7 +168,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Project created."))
-         |> WebHelpers.navigate_after_save(Paths.project(project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(project.uuid),
+           kind: :project,
+           record: project,
+           action: :create,
+           # Emit-mode chain: close the form modal, open the project
+           # show on top (mirrors navigate-mode's `push_navigate(to:
+           # Paths.project(uuid))`).
+           next: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => project.uuid}}
+         )}
 
       {:error, cs} ->
         Activity.log_failed("projects.project_created",
@@ -166,7 +205,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
            :info,
            gettext("Project created from template with all tasks and dependencies.")
          )
-         |> WebHelpers.navigate_after_save(Paths.project(project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(project.uuid),
+           kind: :project,
+           record: project,
+           action: :create,
+           next: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => project.uuid}}
+         )}
 
       {:error, :template_not_found} ->
         Activity.log_failed("projects.project_created_from_template",
@@ -240,7 +284,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Project updated."))
-         |> WebHelpers.navigate_after_save(Paths.project(project.uuid))}
+         |> WebHelpers.navigate_after_save(Paths.project(project.uuid),
+           kind: :project,
+           record: project,
+           action: :update
+         )}
 
       {:error, cs} ->
         Activity.log_failed("projects.project_updated",
@@ -296,9 +344,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     <div class={@wrapper_class}>
       <.page_header title={@page_title}>
         <:back_link>
-          <.link navigate={Paths.projects()} class="link link-hover text-sm">
+          <.smart_link
+            navigate={Paths.projects()}
+            emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
+            embed_mode={@embed_mode}
+            class="link link-hover text-sm"
+          >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Projects")}
-          </.link>
+          </.smart_link>
         </:back_link>
       </.page_header>
 
@@ -401,7 +454,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               <.input field={@form[:scheduled_start_date]} label={gettext("Start date and time")} type="datetime-local" />
             <% end %>
             <div class="flex justify-end gap-2 mt-2">
-              <.link navigate={Paths.projects()} class="btn btn-ghost btn-sm">{gettext("Cancel")}</.link>
+              <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+                {gettext("Cancel")}
+              </button>
               <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
                 <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
               </button>
