@@ -862,23 +862,14 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp write_project_positions(unique_uuids) do
-    repo().transaction(fn ->
-      pairs = Enum.with_index(unique_uuids, 1)
-
-      Enum.each(pairs, fn {uuid, idx} ->
-        from(p in Project, where: p.uuid == ^uuid)
-        |> repo().update_all(set: [position: -idx])
-      end)
-
-      pairs
-      |> Enum.reduce(0, fn {uuid, idx}, total ->
-        {n, _} =
-          from(p in Project, where: p.uuid == ^uuid)
-          |> repo().update_all(set: [position: idx])
-
-        total + n
-      end)
-    end)
+    # Delegates to the shared two-phase index-rewrite primitive. The
+    # outer reorder_projects_in_scope/4 already runs the raw-length
+    # cap + scope check, so we pass our own cap through so Reorder's
+    # default (500) doesn't reject payloads our outer guard accepts.
+    PhoenixKit.Utils.Reorder.reorder(Project, unique_uuids, :position,
+      repo: repo(),
+      max_uuids: @reorder_max_uuids
+    )
   end
 
   @doc "Total number of projects (including templates)."
