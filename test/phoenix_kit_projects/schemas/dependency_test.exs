@@ -42,19 +42,17 @@ defmodule PhoenixKitProjects.Schemas.DependencyTest do
     end
 
     test "self-reference check needs both fields present" do
-      # Only one field set — self-ref guard shouldn't fire; the
-      # required-validation should be the failure
+      # Only one field set — guards against the self-ref check firing
+      # on `nil == nil` when the other field hasn't been provided.
       cs =
         Dependency.changeset(%Dependency{}, %{
           "assignment_uuid" => UUIDv7.generate()
         })
 
       refute cs.valid?
-
-      case List.keyfind(cs.errors, :depends_on_uuid, 0) do
-        {:depends_on_uuid, {msg, _}} -> refute msg =~ "itself"
-        nil -> :ok
-      end
+      assert {:depends_on_uuid, {msg, meta}} = List.keyfind(cs.errors, :depends_on_uuid, 0)
+      refute msg =~ "itself"
+      assert meta[:validation] == :required
     end
   end
 end

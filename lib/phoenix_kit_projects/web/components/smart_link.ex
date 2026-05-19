@@ -40,7 +40,7 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
 
   use Phoenix.Component
 
-  require Logger
+  alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   attr(:navigate, :string, required: true)
 
@@ -68,7 +68,10 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
     assigns =
       assigns
       |> assign(:lv_str, Atom.to_string(target_lv))
-      |> assign(:session_json, safe_encode_session(session_overrides, target_lv))
+      |> assign(
+        :session_json,
+        WebHelpers.encode_emit_session(session_overrides, __MODULE__, target_lv)
+      )
 
     ~H"""
     <.link
@@ -105,31 +108,5 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
       {render_slot(@inner_block)}
     </button>
     """
-  end
-
-  # Render-time JSON encoding of the emit-target session. Wrapped to
-  # avoid the `Jason.encode!/1` crash if a caller ever passes a struct
-  # or atom value (today's callers all pass plain string-keyed maps,
-  # but `<.smart_link>` is the canonical navigation primitive and a
-  # single bad payload would take down the whole view). On failure we
-  # fall back to `"{}"`: the click still fires, the target LV's
-  # fail-closed `mount(:not_mounted_at_router, session, socket)` clause
-  # (every embeddable LV has one) flashes "not found" and closes the
-  # modal — same shape as a deliberately empty session. The warning
-  # surfaces the misuse in logs without the page crashing.
-  defp safe_encode_session(session_overrides, target_lv) do
-    case Jason.encode(session_overrides) do
-      {:ok, json} ->
-        json
-
-      {:error, reason} ->
-        Logger.warning(
-          "[phoenix_kit_projects] SmartLink session encode failed for #{inspect(target_lv)}: " <>
-            "#{inspect(reason)} (session=#{inspect(session_overrides)}). " <>
-            "Falling back to empty session — target LV will fail-closed."
-        )
-
-        "{}"
-    end
   end
 end

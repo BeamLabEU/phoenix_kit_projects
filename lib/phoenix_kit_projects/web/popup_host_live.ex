@@ -20,8 +20,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   5. Generates a unique `frame_ref` per push and stamps it into the
      child LV's session along with `mode: "emit"` and the host topic,
      so the child's own emits flow back through this LV.
-  6. Caps stack depth at `session["max_stack_depth"]` (defaults to 5,
-     clamped 1..20) to prevent runaway recursion if a misbehaved LV
+  6. Caps stack depth at `session["max_stack_depth"]` (defaults to 5;
+     accepts an integer in `1..20`, anything outside that band resets
+     to the default) to prevent runaway recursion if a misbehaved LV
      emits `:opened` on every mount.
 
   ## Session contract

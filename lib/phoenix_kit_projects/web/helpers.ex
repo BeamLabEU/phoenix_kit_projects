@@ -65,6 +65,41 @@ defmodule PhoenixKitProjects.Web.Helpers do
   def embeddable_lv?(_), do: false
 
   @doc """
+  Render-time JSON encoding of an emit-target session for the
+  `phx-value-session` attribute on an `open_embed` button.
+
+  Wrapped (non-bang `Jason.encode/1`) so a caller passing a struct or
+  atom value never crashes the whole view at render time — `<.smart_link>`
+  / `<.smart_menu_link>` are the canonical navigation primitives and a
+  single bad payload would take down every button rendered on the page.
+  On failure we fall back to `"{}"`: the click still fires, and the
+  target LV's fail-closed `mount(:not_mounted_at_router, session,
+  socket)` clause (every embeddable LV has one) flashes "not found" and
+  closes the modal — the same shape as a deliberately empty session.
+  The warning surfaces the misuse in logs without the page crashing.
+
+  `source` is the calling component module, included in the log line so
+  the misuse is traceable to the offending button.
+  """
+  @spec encode_emit_session(term(), module(), module()) :: String.t()
+  def encode_emit_session(session_overrides, source, target_lv) do
+    case Jason.encode(session_overrides) do
+      {:ok, json} ->
+        json
+
+      {:error, reason} ->
+        Logger.warning(
+          "[phoenix_kit_projects] #{inspect(source)} session encode failed for " <>
+            "#{inspect(target_lv)}: #{inspect(reason)} " <>
+            "(session=#{inspect(session_overrides)}). " <>
+            "Falling back to empty session — target LV will fail-closed."
+        )
+
+        "{}"
+    end
+  end
+
+  @doc """
   Reads the `translations` field off the current changeset and returns
   the sub-map for `current_lang` (or `%{}`).
 
@@ -801,20 +836,27 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   defp emit_telemetry(event, metadata) do
-    :telemetry.execute(
-      [:phoenix_kit_projects, :embed, event],
-      %{system_time: System.system_time()},
-      Map.new(metadata)
-    )
-  rescue
-    # Telemetry handler errors must never crash the embed flow — they're
-    # observability, not load-bearing. Narrowed to the exception shapes
-    # `:telemetry.execute/3` and host-attached handlers can actually
-    # raise so genuine programmer errors (e.g. a bug in this module's
-    # metadata construction) still surface instead of being swallowed.
-    e in [ArgumentError, KeyError, FunctionClauseError, RuntimeError, MatchError] ->
-      Logger.warning("[phoenix_kit_projects] telemetry handler raised: #{inspect(e)}")
-      :ok
+    # Built outside the rescue on purpose: a failure here is a bug in
+    # this module's own metadata construction and must crash loudly.
+    measurements = %{system_time: System.system_time()}
+    metadata = Map.new(metadata)
+
+    try do
+      :telemetry.execute([:phoenix_kit_projects, :embed, event], measurements, metadata)
+    rescue
+      # Host-attached handlers run synchronously inside `execute/3` and
+      # may raise anything (including host-defined exception structs).
+      # Telemetry is observability, not load-bearing, so a misbehaved
+      # host handler must never crash the embed flow — rescue broadly
+      # here, but here only, and log the full exception for postmortem.
+      e ->
+        Logger.warning(
+          "[phoenix_kit_projects] telemetry handler raised: " <>
+            Exception.format(:error, e, __STACKTRACE__)
+        )
+
+        :ok
+    end
   end
 
   # Accepts absolute paths under the current host (`/admin/...`,
