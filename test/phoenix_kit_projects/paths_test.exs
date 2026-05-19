@@ -4,16 +4,18 @@ defmodule PhoenixKitProjects.PathsTest do
 
   All paths route through `PhoenixKit.Utils.Routes.path/1`, which in
   the test config has `url_prefix` pinned to `/` (see
-  `test_helper.exs`). Admin paths additionally get the default
-  locale `en` prefix. So `Paths.tasks()` resolves to
-  `/en/admin/projects/tasks`.
+  `test_helper.exs`). Admin paths follow the same primary-locale-no-
+  prefix rule as non-admin paths (introduced in phoenix_kit
+  PR #551 — `Routes.admin_path/2` strips the prefix when the locale
+  equals the default), so `Paths.tasks()` resolves to
+  `/admin/projects/tasks` for the default `en` locale.
   """
 
   use ExUnit.Case, async: true
 
   alias PhoenixKitProjects.Paths
 
-  @prefix "/en/admin/projects"
+  @prefix "/admin/projects"
 
   test "index/0 returns the base admin URL" do
     assert Paths.index() == @prefix
