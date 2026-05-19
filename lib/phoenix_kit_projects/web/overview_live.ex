@@ -209,16 +209,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     {:noreply, socket}
   end
 
-  defp status_badge_class("todo"), do: "badge-ghost"
-  defp status_badge_class("in_progress"), do: "badge-warning"
-  defp status_badge_class("done"), do: "badge-success"
-  defp status_badge_class(_), do: "badge-ghost"
-
-  defp status_label("todo"), do: gettext("todo")
-  defp status_label("in_progress"), do: gettext("in progress")
-  defp status_label("done"), do: gettext("done")
-  defp status_label(other), do: other
-
   # Accepts either a `Date` or a `DateTime` — `scheduled_start_date`
   # was retyped to `:utc_datetime` in V112; this helper preserves the
   # daily-cadence comparison by collapsing datetimes to their date
@@ -384,7 +374,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                     embed_mode={@embed_mode}
                     class="flex items-start gap-2 p-2 rounded hover:bg-base-200 transition"
                   >
-                    <span class={"badge badge-xs mt-1 #{status_badge_class(a.status)}"}>{status_label(a.status)}</span>
+                    <.assignment_status_badge status={a.status} size="xs" class="mt-1" />
                     <div class="flex-1 min-w-0">
                       <div class="text-sm font-medium truncate">{Task.localized_title(a.task, L10n.current_content_lang())}</div>
                       <div class="text-xs text-base-content/60 truncate">{Project.localized_name(a.project, L10n.current_content_lang())}</div>

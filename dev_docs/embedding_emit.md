@@ -39,7 +39,7 @@ Every embeddable LV reads four new session keys via
 | `"mode"` | `"navigate"` | — | `"navigate"` keeps PR #6 behaviour; `"emit"` enables broadcasts |
 | `"pubsub_topic"` | `nil` | `mode == "emit"` | Host-supplied topic string; mount **raises** if `emit` is set without a topic |
 | `"frame_ref"` | `nil` | inherited from PopupHost | Opaque integer; stamped into every emit so the receiver can dedup against the modal stack |
-| `"close_on"` | `["closed"]` | — | Subset of `["closed", "saved", "deleted"]`; reserved for future per-frame opt-in (today PopupHost closes on all three) |
+| `"max_stack_depth"` | `5` | — | Cap on simultaneous modal frames a single `PopupHostLive` will hold; further `:opened` events are refused with a logged warning |
 
 `session["redirect_to"]` from PR #6 stays supported in navigate mode.
 If both `redirect_to` and `mode: "emit"` are passed, a warning logs
@@ -144,10 +144,9 @@ are reserved — content broadcasts use `:project_created`,
 In `PhoenixKitProjects.Web.Helpers`:
 
 - **`assign_embed_state(socket, session) :: socket`** — call from
-  every LV's `mount/3`. Reads the four embed-mode session keys,
-  validates, and assigns `:embed_mode`, `:embed_pubsub_topic`,
-  `:embed_frame_ref`, `:embed_close_on`. Raises if `mode == "emit"`
-  without a topic.
+  every LV's `mount/3`. Reads the embed-mode session keys, validates,
+  and assigns `:embed_mode`, `:embed_pubsub_topic`, `:embed_frame_ref`.
+  Raises if `mode == "emit"` without a topic.
 - **`attach_open_embed_hook(socket) :: socket`** — chain after
   `assign_embed_state/2`. Attaches the shared `open_embed` event
   handler via `Phoenix.LiveView.attach_hook/4`, which intercepts

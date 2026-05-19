@@ -13,6 +13,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
+  alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -35,7 +36,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Fail-closed: emit-session lacking `"id"` lands here. Without this
   # clause the mount/3 dispatch raises `FunctionClauseError`. Render
   # placeholders + flash + close so the host pops the modal.
+  #
+  # `maybe_put_locale/1` first so the "Project not found." flash
+  # renders in the host's locale — matches every other LV's mount/3
+  # contract and avoids an English flash on a misrouted modal.
   def mount(:not_mounted_at_router, session, socket) do
+    WebHelpers.maybe_put_locale(session)
     socket = WebHelpers.assign_embed_state(socket, session)
 
     {:ok,
@@ -1127,21 +1133,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp humanize_hours(h) when h < 24 * 30, do: {Float.round(h / (24 * 7), 1), gettext("weeks")}
   defp humanize_hours(h), do: {Float.round(h / (24 * 30), 1), gettext("months")}
 
-  defp status_color("todo"), do: "bg-base-300"
-  defp status_color("in_progress"), do: "bg-warning"
-  defp status_color("done"), do: "bg-success"
-  defp status_color(_), do: "bg-base-300"
-
-  defp status_badge_class("todo"), do: "badge-ghost"
-  defp status_badge_class("in_progress"), do: "badge-warning"
-  defp status_badge_class("done"), do: "badge-success"
-  defp status_badge_class(_), do: "badge-ghost"
-
-  defp status_label("todo"), do: gettext("todo")
-  defp status_label("in_progress"), do: gettext("in progress")
-  defp status_label("done"), do: gettext("done")
-  defp status_label(other), do: other
-
   defp format_duration(a) do
     dur = a.estimated_duration
     unit = a.estimated_duration_unit
@@ -1447,7 +1438,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <div class="relative flex gap-4 py-3 sortable-item" data-id={a.uuid}>
                 <%!-- Status dot on the timeline --%>
                 <div class="relative z-10 shrink-0 flex flex-col items-center">
-                  <div class={"w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold #{status_color(a.status)}"}>
+                  <div class={"w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold #{AssignmentStatusBadge.color(a.status)}"}>
                     <%= if a.status == "done" do %>
                       <.icon name="hero-check" class="w-5 h-5" />
                     <% else %>
@@ -1465,7 +1456,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                         <span class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content shrink-0" title={gettext("Drag to reorder")}>
                           <.icon name="hero-bars-3" class="w-4 h-4" />
                         </span>
-                        <span :if={not @is_template} class={"badge badge-sm #{status_badge_class(a.status)}"}>{status_label(a.status)}</span>
+                        <.assignment_status_badge :if={not @is_template} status={a.status} />
                         <span class="font-medium truncate">{TaskSchema.localized_title(a.task, L10n.current_content_lang())}</span>
                       </div>
 

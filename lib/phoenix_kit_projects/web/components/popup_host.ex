@@ -76,6 +76,24 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
     assigns = assign(assigns, :top_frame_ref, top_frame_ref)
 
     ~H"""
+    <%!--
+      Keyframes for the per-frame loading spinner overlay. Inlined here
+      so this component is self-contained regardless of the host app's
+      Tailwind/CSS pipeline — repeats are harmless (CSS dedups same
+      keyframe definitions). Animation runs once on mount, holds at
+      `opacity: 0; visibility: hidden` thereafter so the overlay is
+      truly out of the way once the LV content is composited.
+    --%>
+    <style>
+      @keyframes popup-host-frame-spinner-fade {
+        0%, 25% { opacity: 1; visibility: visible; }
+        90%     { opacity: 0; visibility: visible; }
+        100%    { opacity: 0; visibility: hidden; }
+      }
+      .popup-host-frame-spinner {
+        animation: popup-host-frame-spinner-fade 600ms ease-out forwards;
+      }
+    </style>
     <div class={@class}>
       {render_slot(@inner_block)}
       <dialog
@@ -88,7 +106,25 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
         phx-value-frame-ref={frame.frame_ref}
         data-frame-ref={frame.frame_ref}
       >
-        <div class="modal-box max-w-4xl">
+        <div class="modal-box max-w-4xl relative">
+          <%!--
+            Loading overlay — visible immediately when the dialog mounts,
+            fades out after ~400ms. The embedded LV's `live_render` dead
+            render happens synchronously with the parent's re-render, so
+            real content is already underneath; the spinner is purely a
+            transitional cue so the popup doesn't appear blank during
+            its fade-in. Behind the spinner the LV's content is being
+            composited, then the spinner's `animation: forwards` keeps
+            it invisible without us having to react to a "child mounted"
+            event.
+
+            `pointer-events-none` so the overlay never blocks clicks
+            even before its opacity is 0. `z-10` keeps it above the
+            child LV's content during the fade.
+          --%>
+          <div class="popup-host-frame-spinner absolute inset-0 z-10 flex items-center justify-center bg-base-100/85 rounded-2xl pointer-events-none">
+            <span class="loading loading-spinner loading-lg text-primary" />
+          </div>
           {render_slot(@frame, frame)}
         </div>
         <button

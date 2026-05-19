@@ -470,7 +470,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       # The LV pushes a navigate via `push_navigate/2` after putting a
       # flash. `assert_redirect/2` takes a string `to`, so we read it
       # from the redirect tuple — a regex assertion is more permissive.
-      assert_redirect(view, "/en/admin/projects/list")
+      # Default locale `en` strips its prefix from admin paths (phoenix_kit PR #551).
+      assert_redirect(view, "/admin/projects/list")
     end
   end
 end

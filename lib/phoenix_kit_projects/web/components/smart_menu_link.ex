@@ -33,6 +33,8 @@ defmodule PhoenixKitProjects.Web.Components.SmartMenuLink do
 
   use Phoenix.Component
 
+  require Logger
+
   import PhoenixKitWeb.Components.Core.TableRowMenu,
     only: [table_row_menu_link: 1, table_row_menu_button: 1]
 
@@ -55,7 +57,7 @@ defmodule PhoenixKitProjects.Web.Components.SmartMenuLink do
     assigns =
       assigns
       |> assign(:lv_str, Atom.to_string(target_lv))
-      |> assign(:session_json, Jason.encode!(session_overrides))
+      |> assign(:session_json, safe_encode_session(session_overrides, target_lv))
 
     ~H"""
     <.table_row_menu_button
@@ -80,5 +82,26 @@ defmodule PhoenixKitProjects.Web.Components.SmartMenuLink do
       {@rest}
     />
     """
+  end
+
+  # See `SmartLink.safe_encode_session/2` for the rationale — keep the
+  # two implementations textually identical so a future caller's bad
+  # payload fails the same way no matter which navigation primitive
+  # rendered the button.
+  defp safe_encode_session(session_overrides, target_lv) do
+    case Jason.encode(session_overrides) do
+      {:ok, json} ->
+        json
+
+      {:error, reason} ->
+        Logger.warning(
+          "[phoenix_kit_projects] SmartMenuLink session encode failed for " <>
+            "#{inspect(target_lv)}: #{inspect(reason)} " <>
+            "(session=#{inspect(session_overrides)}). " <>
+            "Falling back to empty session — target LV will fail-closed."
+        )
+
+        "{}"
+    end
   end
 end

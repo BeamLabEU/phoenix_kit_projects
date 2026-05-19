@@ -16,12 +16,12 @@ defmodule PhoenixKitProjects.Web.Components do
   defmacro __using__(_opts) do
     quote do
       import PhoenixKitProjects.Web.Components.PageHeader
-      import PhoenixKitProjects.Web.Components.EmptyState
       import PhoenixKitProjects.Web.Components.StatTile
       import PhoenixKitProjects.Web.Components.TierPill
       import PhoenixKitProjects.Web.Components.RunningCard
       import PhoenixKitProjects.Web.Components.SortableTable
       import PhoenixKitProjects.Web.Components.DerivedStatusBadge
+      import PhoenixKitProjects.Web.Components.AssignmentStatusBadge
       import PhoenixKitProjects.Web.Components.TabsStrip
       import PhoenixKitProjects.Web.Components.SmartLink
       import PhoenixKitProjects.Web.Components.SmartMenuLink

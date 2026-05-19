@@ -20,8 +20,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   5. Generates a unique `frame_ref` per push and stamps it into the
      child LV's session along with `mode: "emit"` and the host topic,
      so the child's own emits flow back through this LV.
-  6. Caps stack depth at `@max_stack_depth` (5) to prevent runaway
-     recursion if a misbehaved LV emits `:opened` on every mount.
+  6. Caps stack depth at `session["max_stack_depth"]` (defaults to 5,
+     clamped 1..20) to prevent runaway recursion if a misbehaved LV
+     emits `:opened` on every mount.
 
   ## Session contract
 
@@ -32,6 +33,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     %{...}}`. The always-visible LV. `:lv` is whitelist-validated.
   - `"wrapper_class"` (optional) — outer div class. Defaults to
     `"flex flex-col w-full"`.
+  - `"max_stack_depth"` (optional) — positive integer in `1..20`
+    overriding the default 5-frame cap. Values outside that band are
+    clamped to the default with a logged warning.
 
   ## Example mount (from a host app's router)
 
@@ -66,7 +70,12 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   @default_wrapper_class "flex flex-col w-full"
   @default_root_wrapper_class "flex flex-col w-full px-4 py-6 gap-6"
-  @max_stack_depth 5
+  # Default cap on simultaneously-stacked modal frames. Hosts can
+  # override via `session["max_stack_depth"]`; the value is clamped to
+  # `1..@absolute_max_stack_depth` so a misconfigured host can't
+  # request an unbounded stack and DOS the process by recursing.
+  @default_max_stack_depth 5
+  @absolute_max_stack_depth 20
 
   @impl true
   def mount(_params, session, socket) do
@@ -89,6 +98,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
     wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
     host_locale = Map.get(session, "locale")
+    max_stack_depth = decode_max_stack_depth(Map.get(session, "max_stack_depth"))
 
     if connected?(socket), do: ProjectsPubSub.subscribe(topic)
 
@@ -99,9 +109,32 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
        host_topic: topic,
        host_locale: host_locale,
        wrapper_class: wrapper_class,
+       max_stack_depth: max_stack_depth,
        modal_stack: [],
        root_view: root_view
      )}
+  end
+
+  # Validate the host-supplied stack-depth cap. Anything outside the
+  # `1..@absolute_max_stack_depth` band is treated as a misconfiguration
+  # and silently clamped (with a warning) — the cap exists to prevent
+  # runaway recursion on bugged LVs that emit `:opened` from every mount,
+  # so we'd rather render with a sane default than honor a zero/negative
+  # value that disables stacking entirely or an absurd value that lets
+  # the process pile up memory.
+  defp decode_max_stack_depth(nil), do: @default_max_stack_depth
+
+  defp decode_max_stack_depth(n) when is_integer(n) and n >= 1 and n <= @absolute_max_stack_depth,
+    do: n
+
+  defp decode_max_stack_depth(other) do
+    Logger.warning(
+      "[PopupHostLive] invalid session[\"max_stack_depth\"]=#{inspect(other)} — " <>
+        "must be 1..#{@absolute_max_stack_depth}; clamping to default " <>
+        "#{@default_max_stack_depth}"
+    )
+
+    @default_max_stack_depth
   end
 
   defp decode_root_view(nil, _topic, _locale), do: nil
@@ -178,9 +211,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     emitter_ref = Map.get(payload, :frame_ref)
 
     cond do
-      length(socket.assigns.modal_stack) >= @max_stack_depth ->
+      length(socket.assigns.modal_stack) >= socket.assigns.max_stack_depth ->
         Logger.warning(
-          "[PopupHostLive] modal stack depth (#{@max_stack_depth}) exceeded — " <>
+          "[PopupHostLive] modal stack depth (#{socket.assigns.max_stack_depth}) exceeded — " <>
             "refusing to push #{inspect(lv)}"
         )
 
@@ -263,11 +296,11 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       true ->
         socket = pop_top(socket)
 
-        if length(socket.assigns.modal_stack) < @max_stack_depth do
+        if length(socket.assigns.modal_stack) < socket.assigns.max_stack_depth do
           {:noreply, push_frame(socket, next_lv, next_session)}
         else
           Logger.warning(
-            "[PopupHostLive] modal stack depth (#{@max_stack_depth}) exceeded after pop — " <>
+            "[PopupHostLive] modal stack depth (#{socket.assigns.max_stack_depth}) exceeded after pop — " <>
               "refusing to push :saved.next #{inspect(next_lv)}"
           )
 

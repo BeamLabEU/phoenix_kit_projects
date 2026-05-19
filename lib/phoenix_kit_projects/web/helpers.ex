@@ -407,14 +407,11 @@ defmodule PhoenixKitProjects.Web.Helpers do
     * `"mode"` — `"navigate"` (default) or `"emit"`
     * `"pubsub_topic"` — string; required when mode is `"emit"`
     * `"frame_ref"` — opaque integer stamped by `PopupHostLive` (may be nil)
-    * `"close_on"` — subset of `["closed", "saved", "deleted"]`; defaults
-      to `["closed"]`
 
   Socket assigns produced:
     * `:embed_mode` — `:navigate | :emit`
     * `:embed_pubsub_topic` — string or nil
     * `:embed_frame_ref` — integer or nil
-    * `:embed_close_on` — `MapSet.t(atom())`
 
   Raises `ArgumentError` if `mode == "emit"` but `pubsub_topic` is missing
   — fail-fast at mount rather than silently no-op every later emit call.
@@ -425,7 +422,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
     mode = decode_mode(Map.get(session, "mode"))
     topic = Map.get(session, "pubsub_topic")
     frame_ref = decode_frame_ref(Map.get(session, "frame_ref"))
-    close_on = decode_close_on(Map.get(session, "close_on"))
 
     if mode == :emit and (not is_binary(topic) or topic == "") do
       raise ArgumentError,
@@ -443,8 +439,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
     Phoenix.Component.assign(socket,
       embed_mode: mode,
       embed_pubsub_topic: topic,
-      embed_frame_ref: frame_ref,
-      embed_close_on: close_on
+      embed_frame_ref: frame_ref
     )
   end
 
@@ -479,23 +474,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   defp decode_frame_ref(_), do: nil
-
-  defp decode_close_on(list) when is_list(list) do
-    list
-    |> Enum.flat_map(fn
-      "closed" -> [:closed]
-      "saved" -> [:saved]
-      "deleted" -> [:deleted]
-      :closed -> [:closed]
-      :saved -> [:saved]
-      :deleted -> [:deleted]
-      _ -> []
-    end)
-    |> MapSet.new()
-  end
-
-  defp decode_close_on(nil), do: MapSet.new([:closed])
-  defp decode_close_on(_), do: MapSet.new([:closed])
 
   @doc """
   Routes per `:embed_mode`. In navigate mode: `push_navigate(to: opts[:to])`.
@@ -829,8 +807,14 @@ defmodule PhoenixKitProjects.Web.Helpers do
       Map.new(metadata)
     )
   rescue
-    # Telemetry handler errors must never crash the embed flow.
-    _ -> :ok
+    # Telemetry handler errors must never crash the embed flow — they're
+    # observability, not load-bearing. Narrowed to the exception shapes
+    # `:telemetry.execute/3` and host-attached handlers can actually
+    # raise so genuine programmer errors (e.g. a bug in this module's
+    # metadata construction) still surface instead of being swallowed.
+    e in [ArgumentError, KeyError, FunctionClauseError, RuntimeError, MatchError] ->
+      Logger.warning("[phoenix_kit_projects] telemetry handler raised: #{inspect(e)}")
+      :ok
   end
 
   # Accepts absolute paths under the current host (`/admin/...`,

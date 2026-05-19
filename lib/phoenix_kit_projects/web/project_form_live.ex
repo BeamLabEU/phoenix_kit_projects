@@ -7,6 +7,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   import PhoenixKitWeb.Components.MultilangForm
 
+  alias PhoenixKit.Utils.Values
   alias PhoenixKitProjects.{Activity, Errors, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -139,7 +140,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   def handle_event("save", %{"project" => attrs} = params, socket) do
-    template_uuid = Map.get(params, "template_uuid", nil) |> blank_to_nil()
+    template_uuid = Map.get(params, "template_uuid", nil) |> Values.blank_to_nil()
     save(socket, socket.assigns.live_action, merge_attrs(attrs, socket), template_uuid)
   end
 
@@ -326,10 +327,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   defp humanize(field) do
     field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
   end
-
-  defp blank_to_nil(nil), do: nil
-  defp blank_to_nil(""), do: nil
-  defp blank_to_nil(v), do: v
 
   defp start_mode_value(form) do
     case form[:start_mode] do
