@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.3.0"
+  @version "0.4.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -67,7 +67,7 @@ defmodule PhoenixKitProjects.MixProject do
 
   defp deps do
     [
-      {:phoenix_kit, "~> 1.7"},
+      {:phoenix_kit, "~> 1.7.114"},
       {:phoenix_kit_staff, "~> 0.1"},
       {:phoenix_kit_comments, "~> 0.2"},
 

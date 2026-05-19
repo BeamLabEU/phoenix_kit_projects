@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.4.0
+
+Adopts phoenix_kit core PR #551 — shared utilities consolidated upstream — plus emit-mode review follow-ups and UX polish.
+
+### Changed
+
+- **Prefixless admin URLs** — `Paths.*` helpers now resolve to `/admin/projects/...` instead of `/en/admin/projects/...` for the default locale, tracking `Routes.admin_path/2` from phoenix_kit core PR #551. Hosts with hardcoded locale-prefixed paths to project routes should re-check them.
+- **Migrated to `PhoenixKit.Utils.{Reorder,Values}`** — the projects-local reorder and value-coercion helpers were dropped in favour of the consolidated core utilities.
+- **Dropped local `<.empty_state>`** — list views now use the `PhoenixKitWeb.Components.Core` `empty_state/1` component lifted into phoenix_kit core.
+- Minimum `phoenix_kit` is now `~> 1.7.114` (ships `Utils.Reorder`, `Utils.Values`, `core/empty_state`, and prefixless `admin_path`).
+
+### Added
+
+- **`<.assignment_status_badge>` component** — shared assignment-status presentation (`color/1`, `badge_class/1`, `label/1`), extracted from `ProjectShowLive` + `OverviewLive`.
+- **`session["max_stack_depth"]`** — `PopupHostLive` accepts a host-supplied modal-stack cap (integer `1..20`, default 5; out-of-band values reset to the default with a logged warning).
+- **`<.popup_host>` loading feedback** — per-frame daisyUI spinner overlay that auto-fades; `<.smart_link>` buttons get `cursor-pointer` + `phx-click-loading` CSS feedback.
+
+### Fixed
+
+- **`<.smart_link>` / `<.smart_menu_link>` render-time crash vector** — emit-session JSON now encodes via the non-bang `Helpers.encode_emit_session/3`, falling back to an empty session on failure instead of crashing the whole view.
+- **`ProjectShowLive` fail-closed mount** now inherits the host locale, so the "Project not found." flash is localized.
+- **`emit_telemetry/2`** builds its payload outside the rescue and rescues only around `:telemetry.execute/3`, so a misbehaved host telemetry handler can't crash the embed flow while bugs in this module still surface.
+- **`mix precommit`** — credo alias, dialyzer `pattern_match_cov` on the reorder LiveViews, and formatting.
+
+### Removed
+
+- Dead `:embed_close_on` assign / `"close_on"` session key — reserved-but-unused; can be reintroduced when per-frame close-event opt-in is genuinely needed.
+
+### Tests
+
+- New pure-changeset suites — `schemas/project_test.exs` (26 tests: required/length validation, `start_mode` enum, `derived_status/2` cascade, `planned_end_for/2` + `eta_from/3` branches) and `schemas/dependency_test.exs` (required validation, self-reference rejection).
+
 ## 0.3.0
 
 Emit-mode navigation + PopupHostLive for embedded LiveViews, locale inheritance fixes, and UI polish.
