@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.5.0
+
+AI-driven translation for projects, templates, and tasks — an Oban-backed worker plus an in-form translate UI — alongside a batch of field-report fixes (embedded-mount crash, partial-progress rollup, translatable templates, popup width).
+
+### Added
+
+- **AI translation** — `PhoenixKitProjects.Translations` public API (`enqueue/1`, `enqueue_all_missing/2`, AI endpoint/prompt resolution, and default-prompt provisioning) backed by `PhoenixKitProjects.Workers.TranslateResourceWorker`, an Oban worker that translates `Project` / `Template` / `Task` / `Assignment` translatable fields via `PhoenixKit.Modules.AI.Translation.translate_fields/6`. Deterministic failures discard instead of retrying (no token burn), and failure reasons are sanitized before logging / activity-metadata writes.
+- **`<.ai_translate_bar>` + AI Translation modal** on the project / template / task form LVs — a compact trigger above the multilang tabs with endpoint/prompt selectors and a scope picker (missing-only / all-overwrite / current tab). Hidden when AI is unavailable or on `:new`. Status streams over scoped per-resource PubSub; completion patches **only** the `translations` field of the live changeset, so unsaved edits survive a job finishing mid-edit.
+- **Translatable templates** — `TemplateFormLive` gains the multilang plumbing (tabs, language switcher, translatable name + description) already present on projects.
+- **Partial-progress rollup** — overall project progress now averages each assignment's `progress_pct` instead of counting only `done`. Project auto-completion stays binary (flips to `:completed` only when every assignment is `done`).
+- **`Projects.get_projects/1`** — batch `%{uuid => Project}` lookup so host list views can avoid a per-row N+1.
+- **`session["modal_box_class"]`** — `PopupHostLive` accepts a host-supplied modal-box width (default `w-11/12 max-w-6xl`).
+
+### Changed
+
+- Minimum `phoenix_kit` is now `~> 1.7.117` — it ships `PhoenixKit.Modules.AI.Translation.translate_fields/6` (core PR #557) that the translation worker delegates to.
+- Popup child frames now fill the modal box — `PopupHostLive` injects a full-width `wrapper_class` unless the host passes its own, fixing form LVs that stacked their standalone `max-w-xl` cap inside the popup.
+
+### Fixed
+
+- **Embedded `ProjectShowLive` comments-drawer crash** — switched bang-form `@phoenix_kit_current_scope` to bracket access, so off-router `live_render` mounts (which skip core's `on_mount`) no longer raise `KeyError` when the drawer opens.
+- **AI unique-job window** — `TranslateResourceWorker` now sets `unique: [period: :infinity, …]`. The omitted period defaulted to 60s, which let a translation slower than a minute be enqueued a second time and burn tokens twice.
+- **AI overwrite vs. open form** — the "all"/overwrite scope now overwrites translations in the open form too (mirroring the worker's persisted merge) instead of leaving stale values that a save would silently revert; missing/current scopes keep the blank-only edit protection.
+- **AI mount cost + flash accuracy** — the five Settings/plugin lookups now run only on the connected mount (`mount/3` fires twice), and an empty-source completion flashes an accurate message instead of "Translated".
+
+### Tests
+
+- New `translations_test.exs` + `translate_resource_worker_test.exs` (argument validation, deterministic-failure discard, broadcast fan-out, merge + source-lang semantics, overwrite-flag propagation), `ai_translate_form_helpers_test.exs` + `ai_translate_bar_test.exs` (missing-language detection, merge policy, scope/visibility), and an `embedding_test.exs` regression that greps `lib/` for any `@phoenix_kit_*` bang-form reference.
+
 ## 0.4.0
 
 Adopts phoenix_kit core PR #551 — shared utilities consolidated upstream — plus emit-mode review follow-ups and UX polish.

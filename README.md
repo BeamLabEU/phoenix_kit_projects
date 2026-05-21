@@ -23,7 +23,7 @@ Add to your parent PhoenixKit app's `mix.exs`:
 
 ```elixir
 {:phoenix_kit_staff, "~> 0.1"},
-{:phoenix_kit_projects, "~> 0.4"}
+{:phoenix_kit_projects, "~> 0.5"}
 ```
 
 (For local development inside the PhoenixKit workspace, use the path-dep form instead: `{:phoenix_kit_projects, path: "../phoenix_kit_projects"}`.)
