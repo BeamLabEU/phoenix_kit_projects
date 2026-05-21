@@ -197,25 +197,34 @@ defmodule PhoenixKitProjects.Translations do
       - Keep any HTML tags and special syntax unchanged.
       - Output ONLY the structured markers below — no commentary, no preface, no closing remarks.
 
-      OUTPUT FORMAT — for each field present in the SOURCE section, emit:
+      OUTPUT FORMAT — for each non-empty field below, emit ONE
+      marker named after the field, followed by the translation:
 
           ---<FIELD_NAME_UPPERCASE>---
-          [translated value, on the line(s) after the marker]
+          [translated value]
 
-      For example, if the source has a `name` field, output:
+      Examples:
 
           ---NAME---
           <translated name>
 
-      If a field is empty or missing from the source, do not emit a marker for it.
+          ---TITLE---
+          <translated title>
+
+          ---DESCRIPTION---
+          <translated description>
+
+      If a field is missing or blank from the SOURCE section, do
+      NOT emit a marker for it. Do not emit markers for fields the
+      caller did not provide.
 
       === SOURCE ===
 
-      Name (if present): {{name}}
+      Name: {{name}}
 
-      Title (if present): {{title}}
+      Title: {{title}}
 
-      Description (if present): {{description}}
+      Description: {{description}}
       """
     })
   end
