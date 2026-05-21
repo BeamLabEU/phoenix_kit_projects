@@ -42,6 +42,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         embed_redirect_to: redirect_to,
         live_action: live_action,
         ai_translate_in_flight: [],
+        ai_translate_scope: :missing,
         show_ai_translation_modal: false,
         ai_selected_endpoint_uuid: Translations.get_default_ai_endpoint_uuid(),
         ai_selected_prompt_uuid: Translations.get_default_ai_prompt_uuid(),
@@ -161,6 +162,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   def handle_event("select_ai_prompt", %{"prompt_uuid" => uuid}, socket) do
     {:noreply, assign(socket, :ai_selected_prompt_uuid, blank_to_nil(uuid))}
   end
+
+  def handle_event("select_ai_scope", %{"scope" => scope}, socket)
+      when scope in ~w(missing all current) do
+    {:noreply, assign(socket, :ai_translate_scope, String.to_existing_atom(scope))}
+  end
+
+  def handle_event("select_ai_scope", _params, socket), do: {:noreply, socket}
 
   def handle_event("generate_default_ai_prompt", _params, socket) do
     case Translations.generate_default_translation_prompt() do
@@ -296,8 +304,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end
   end
 
-  defp do_dispatch_ai_translate(socket, "*", endpoint_uuid, prompt_uuid) do
-    missing = ai_translate_missing(socket.assigns)
+  # Scope sentinels: `"*"` = missing-only, `"**"` = all non-primary.
+  defp do_dispatch_ai_translate(socket, scope, endpoint_uuid, prompt_uuid)
+       when scope in ["*", "**"] do
+    target_langs =
+      case scope do
+        "*" -> ai_translate_missing(socket.assigns)
+        "**" -> ai_translate_all_targets(socket.assigns)
+      end
 
     base_params = %{
       resource_type: "project",
@@ -308,7 +322,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       actor_uuid: Activity.actor_uuid(socket)
     }
 
-    case Translations.enqueue_all_missing(base_params, missing) do
+    case Translations.enqueue_all_missing(base_params, target_langs) do
       {:ok, %{in_flight: [_ | _] = enqueued_langs, enqueued: n, errors: errors}} ->
         socket
         |> assign(
@@ -373,6 +387,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     )
   end
 
+  # Every non-primary enabled language. Used for the "all" scope —
+  # the worker's unique constraint dedupes per-(resource, lang) so
+  # enqueuing already-translated langs just overwrites them on
+  # completion.
+  defp ai_translate_all_targets(assigns) do
+    assigns.language_tabs
+    |> Enum.map(& &1.code)
+    |> Enum.reject(&(&1 == assigns.primary_language))
+  end
+
   # Merge a freshly-translated language into the form's existing
   # `translations` field WITHOUT touching primary-column edits or other
   # secondary-lang fields the user may have typed since dispatching the
@@ -419,14 +443,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           toggle_event: "toggle_ai_translation",
           select_endpoint_event: "select_ai_endpoint",
           select_prompt_event: "select_ai_prompt",
+          select_scope_event: "select_ai_scope",
           generate_prompt_event: "generate_default_ai_prompt",
           missing: ai_translate_missing(assigns),
+          all_langs: ai_translate_all_targets(assigns),
           in_flight: assigns.ai_translate_in_flight,
           modal_open: assigns.show_ai_translation_modal,
           endpoints: assigns.ai_endpoints,
           prompts: assigns.ai_prompts,
           selected_endpoint_uuid: assigns.ai_selected_endpoint_uuid,
           selected_prompt_uuid: assigns.ai_selected_prompt_uuid,
+          scope: assigns.ai_translate_scope,
           default_prompt_exists: assigns.ai_default_prompt_exists,
           current_lang: assigns.current_lang,
           primary_lang: assigns.primary_language
@@ -644,13 +671,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
              inputs when the user switches languages — that's what swaps
              primary-column inputs for `lang_*` JSONB inputs. --%>
         <div class="card bg-base-100 shadow">
-          <.ai_translate_button ai_translate={ai_translate_config(assigns)} />
-
           <.multilang_tabs
             multilang_enabled={@multilang_enabled}
             language_tabs={@language_tabs}
             current_lang={@current_lang}
           />
+
+          <.ai_translate_button ai_translate={ai_translate_config(assigns)} />
 
           <.multilang_fields_wrapper
             multilang_enabled={@multilang_enabled}

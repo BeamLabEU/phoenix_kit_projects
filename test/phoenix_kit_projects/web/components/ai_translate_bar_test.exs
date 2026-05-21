@@ -38,14 +38,17 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
         toggle_event: "toggle_ai",
         select_endpoint_event: "sel_ep",
         select_prompt_event: "sel_p",
+        select_scope_event: "sel_scope",
         generate_prompt_event: "gen_p",
         missing: ["es", "de"],
+        all_langs: ["es", "de"],
         in_flight: [],
         modal_open: false,
         endpoints: [{"ep-uuid", "OpenAI"}],
         prompts: [{"p-uuid", "Default"}],
         selected_endpoint_uuid: "ep-uuid",
         selected_prompt_uuid: "p-uuid",
+        scope: :missing,
         default_prompt_exists: true,
         current_lang: "es",
         primary_lang: "en"
@@ -196,79 +199,141 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
     end
   end
 
-  describe "ai_translate_modal/1 — action buttons" do
-    test "renders Translate Missing button with phx-value-lang=\"*\"" do
+  describe "ai_translate_modal/1 — scope picker (radio)" do
+    test "renders all three scope options" do
       html =
         modal(
           full_cfg(%{
             modal_open: true,
             missing: ["es", "de"],
-            in_flight: []
+            all_langs: ["es", "de", "fr"],
+            current_lang: "es",
+            primary_lang: "en"
           })
         )
+
+      assert html =~ ~s|name="scope"|
+      assert html =~ ~s|value="missing"|
+      assert html =~ ~s|value="all"|
+      assert html =~ ~s|value="current"|
+      assert html =~ "Missing only (2"
+      assert html =~ "All non-primary languages (3"
+      assert html =~ "Current tab only (ES)"
+    end
+
+    test "missing scope option disabled when no missing langs" do
+      html =
+        modal(
+          full_cfg(%{
+            modal_open: true,
+            missing: [],
+            all_langs: ["es", "de"],
+            scope: :all
+          })
+        )
+
+      # Missing option's input element has the disabled attr
+      assert html =~ ~r/name="scope"\s+value="missing"[^>]*disabled/
+    end
+
+    test "all scope option disabled when no enabled target langs (single-language app)" do
+      html =
+        modal(
+          full_cfg(%{
+            modal_open: true,
+            all_langs: [],
+            primary_lang: "en"
+          })
+        )
+
+      assert html =~ ~r/value="all"[^>]*disabled/
+    end
+
+    test "current scope option disabled on primary lang" do
+      html =
+        modal(
+          full_cfg(%{
+            modal_open: true,
+            current_lang: "en",
+            primary_lang: "en"
+          })
+        )
+
+      assert html =~ ~r/value="current"[^>]*disabled/
+    end
+
+    test "current scope option enabled on a non-primary tab" do
+      html =
+        modal(
+          full_cfg(%{
+            modal_open: true,
+            current_lang: "es",
+            primary_lang: "en"
+          })
+        )
+
+      # Should NOT have `disabled` on the current radio
+      refute html =~ ~r/value="current"[^>]*disabled/
+    end
+
+    test "the active scope option is checked" do
+      html = modal(full_cfg(%{modal_open: true, scope: :all}))
+      assert html =~ ~r/name="scope"\s+value="all"[^>]*checked/
+      refute html =~ ~r/name="scope"\s+value="missing"[^>]*checked/
+    end
+
+    test "scope radios wire to select_scope_event via phx-click" do
+      # Each enabled radio carries `phx-click=<select_scope_event>`
+      # plus `phx-value-scope=<value>`. Phoenix LV's form-event
+      # dispatcher refuses to push when the modal sits outside the
+      # host's root form (dialog-inside-wrapper), so the component
+      # uses plain click events instead — sidesteps form ownership
+      # lookup entirely.
+      html = modal(full_cfg(%{modal_open: true}))
+      assert html =~ ~s|phx-click="sel_scope"|
+      assert html =~ ~s|phx-value-scope="missing"|
+      assert html =~ ~s|phx-value-scope="all"|
+      assert html =~ ~s|phx-value-scope="current"|
+    end
+  end
+
+  describe "ai_translate_modal/1 — single action button (scope-driven)" do
+    test ":missing scope → button uses `*` sentinel with missing count label" do
+      html =
+        modal(full_cfg(%{modal_open: true, missing: ["es", "de"], scope: :missing}))
 
       assert html =~ ~s|phx-value-lang="*"|
-      assert html =~ "Translate Missing Only (2)"
+      assert html =~ "Translate 2 missing"
     end
 
-    test "Translate Missing disabled when no endpoint selected" do
+    test ":all scope → button uses `**` sentinel with all-langs count label" do
       html =
         modal(
           full_cfg(%{
             modal_open: true,
-            selected_endpoint_uuid: nil
+            all_langs: ["es", "de", "fr"],
+            primary_lang: "en",
+            scope: :all
           })
         )
 
-      assert html =~ "btn-disabled"
+      assert html =~ ~s|phx-value-lang="**"|
+      assert html =~ "Translate all 3 languages"
     end
 
-    test "Translate Missing disabled when no prompt selected" do
-      html =
-        modal(
-          full_cfg(%{
-            modal_open: true,
-            selected_prompt_uuid: nil
-          })
-        )
-
-      assert html =~ "btn-disabled"
+    test ":all scope shows an overwrite warning" do
+      html = modal(full_cfg(%{modal_open: true, scope: :all}))
+      assert html =~ "Existing translations" or html =~ "overwritten"
     end
 
-    test "Translate Missing disabled while any lang in flight" do
-      html =
-        modal(
-          full_cfg(%{
-            modal_open: true,
-            missing: ["es", "de"],
-            in_flight: ["es"]
-          })
-        )
-
-      assert html =~ "btn-disabled"
-    end
-
-    test "hides Translate Missing when actionable_missing is empty" do
-      html =
-        modal(
-          full_cfg(%{
-            modal_open: true,
-            missing: ["es"],
-            in_flight: ["es"]
-          })
-        )
-
-      refute html =~ ~s|phx-value-lang="*"|
-    end
-
-    test "renders Translate to Current button when on a non-primary lang in missing" do
+    test ":current scope → button uses the current_lang code" do
       html =
         modal(
           full_cfg(%{
             modal_open: true,
             current_lang: "es",
             primary_lang: "en",
-            missing: ["es", "de"]
+            scope: :current
           })
         )
 
@@ -276,32 +341,49 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
       assert html =~ "Translate to ES"
     end
 
-    test "hides Translate to Current when on the primary lang" do
+    test "disabled when no endpoint selected" do
       html =
-        modal(
-          full_cfg(%{
-            modal_open: true,
-            current_lang: "en",
-            primary_lang: "en",
-            missing: ["es"]
-          })
-        )
+        modal(full_cfg(%{modal_open: true, selected_endpoint_uuid: nil}))
 
-      refute html =~ "Translate to EN"
+      assert html =~ "btn-disabled"
     end
 
-    test "hides Translate to Current when current_lang isn't in missing (already translated)" do
+    test "disabled when no prompt selected" do
+      html = modal(full_cfg(%{modal_open: true, selected_prompt_uuid: nil}))
+      assert html =~ "btn-disabled"
+    end
+
+    test "disabled while any lang in flight" do
+      html =
+        modal(full_cfg(%{modal_open: true, in_flight: ["es"], missing: ["es", "de"]}))
+
+      assert html =~ "btn-disabled"
+    end
+
+    test "disabled when :missing scope but missing list is empty" do
       html =
         modal(
           full_cfg(%{
             modal_open: true,
-            current_lang: "fr",
-            primary_lang: "en",
-            missing: ["es", "de"]
+            missing: [],
+            scope: :missing
           })
         )
 
-      refute html =~ "Translate to FR"
+      assert html =~ "btn-disabled"
+    end
+
+    test "disabled when :all scope but all_langs is empty" do
+      html =
+        modal(
+          full_cfg(%{
+            modal_open: true,
+            all_langs: [],
+            scope: :all
+          })
+        )
+
+      assert html =~ "btn-disabled"
     end
   end
 
@@ -320,19 +402,25 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
       assert html =~ "ES, DE"
     end
 
-    test "shows 'all already translated' message when nothing to do" do
+    test "when nothing to translate, all scope options are disabled (no implicit action)" do
       html =
         modal(
           full_cfg(%{
             modal_open: true,
             missing: [],
+            all_langs: [],
             in_flight: [],
             current_lang: "en",
             primary_lang: "en"
           })
         )
 
-      assert html =~ "All enabled languages already have translations"
+      # All three scope radios are disabled and the action button is too —
+      # the user can see the modal but can't fire a meaningless job.
+      assert html =~ ~r/value="missing"[^>]*disabled/
+      assert html =~ ~r/value="all"[^>]*disabled/
+      assert html =~ ~r/value="current"[^>]*disabled/
+      assert html =~ "btn-disabled"
     end
   end
 

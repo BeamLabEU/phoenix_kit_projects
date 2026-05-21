@@ -24,8 +24,7 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
 
   ## Host contract
 
-  Pass `ai_translate: %{...}` (same shape as before, with two new
-  keys for the modal):
+  Pass `ai_translate: %{...}`:
 
       %{
         enabled: true,                  # boolean — gates render
@@ -33,26 +32,36 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
         toggle_event: "toggle_ai",      # opens/closes the modal
         select_endpoint_event: "...",   # endpoint dropdown change
         select_prompt_event: "...",     # prompt dropdown change
+        select_scope_event: "...",      # scope radio change
         generate_prompt_event: "...",   # generate-default-prompt
         missing: ["es", "de"],          # langs still to translate
+        all_langs: ["es", "de", "fr"],  # every non-primary enabled lang
         in_flight: ["es"],              # jobs running now
         modal_open: false,              # is the modal visible?
         endpoints: [{uuid, name}, ...], # AI endpoints list
         prompts: [{uuid, name}, ...],   # AI prompts list
         selected_endpoint_uuid: "...",  # current endpoint choice
         selected_prompt_uuid: "...",    # current prompt choice
+        scope: :missing,                # :missing | :all | :current
         default_prompt_exists: true,    # hides the generate-button
         current_lang: "es",             # active multilang tab
-        primary_lang: "en"              # to disable "translate to current" on primary
+        primary_lang: "en"              # to disable "current" scope on primary
       }
 
-  All keys are optional with sensible defaults; the button renders
-  whenever `enabled: true` and `event: "..."` are set, and the modal
-  renders whenever `modal_open: true`.
+  ## Action contract
 
-  Per-language click contract: `phx-click={event}` with `phx-value-lang`:
-    - `"*"` for the "Translate Missing Only" sentinel
-    - a concrete lang code for "Translate to Current Language"
+  The modal renders a single "Translate" button driven by `scope`:
+
+    - `:missing` (default) — bulk: `phx-value-lang="*"`. Worker
+      only enqueues langs without translations.
+    - `:all` — bulk with overwrite warning: `phx-value-lang="**"`.
+      Enqueues every non-primary lang (existing translations get
+      overwritten on completion via the host's same-target merge).
+    - `:current` — single lang: `phx-value-lang=<current_lang>`.
+
+  Host's `handle_event(@ai_translate.event, %{"lang" => lang}, socket)`
+  branches on the value: `"*"` → missing-only path; `"**"` → all
+  path; concrete code → single-lang path.
   """
 
   use Phoenix.Component
@@ -207,52 +216,64 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
               </div>
             <% end %>
 
-            <%!-- Action Buttons --%>
-            <div class="flex flex-wrap gap-3">
-              <%= if can_translate_missing?(@ai_translate) do %>
-                <button
-                  type="button"
-                  class={[
-                    "btn btn-primary btn-sm gap-1",
-                    button_disabled?(@ai_translate) && "btn-disabled"
-                  ]}
-                  phx-click={event_name(@ai_translate)}
-                  phx-value-lang="*"
-                  disabled={button_disabled?(@ai_translate)}
-                >
-                  <Icon.icon name="hero-sparkles" class="w-4 h-4" />
-                  {gettext("Translate Missing Only (%{count})",
-                    count: length(actionable_missing(@ai_translate))
-                  )}
-                </button>
-              <% end %>
+            <%!-- Scope picker — what to translate.
+                 Each option is a `phx-click` (not a `phx-change` form)
+                 because Phoenix LV's form-event handler refuses to
+                 dispatch when the modal sits outside the host's
+                 root form (the dialog-inside-wrapper structure
+                 confuses the form-ownership lookup). Using
+                 plain click events sidesteps that entirely. --%>
+            <fieldset class="space-y-2">
+              <legend class="text-sm font-medium">{gettext("Translate")}</legend>
 
-              <%= if can_translate_current?(@ai_translate) do %>
-                <button
-                  type="button"
-                  class={[
-                    "btn btn-outline btn-sm gap-1",
-                    current_disabled?(@ai_translate) && "btn-disabled"
-                  ]}
-                  phx-click={event_name(@ai_translate)}
-                  phx-value-lang={get(@ai_translate, :current_lang)}
-                  disabled={current_disabled?(@ai_translate)}
-                >
-                  <Icon.icon name="hero-language" class="w-4 h-4" />
-                  {gettext("Translate to %{lang}",
-                    lang: String.upcase(get(@ai_translate, :current_lang) || "")
-                  )}
-                </button>
+              <%= for {value, label, disabled} <- scope_options(@ai_translate) do %>
+                <label class={[
+                  "flex items-start gap-2 cursor-pointer p-2 rounded hover:bg-base-200",
+                  disabled && "opacity-50 cursor-not-allowed pointer-events-none"
+                ]}>
+                  <input
+                    type="radio"
+                    name="scope"
+                    value={value}
+                    class="radio radio-sm radio-primary mt-0.5"
+                    checked={Atom.to_string(current_scope(@ai_translate)) == value}
+                    disabled={disabled}
+                    phx-click={if disabled, do: nil, else: get(@ai_translate, :select_scope_event)}
+                    phx-value-scope={value}
+                  />
+                  <span class="text-sm leading-tight">{label}</span>
+                </label>
               <% end %>
-            </div>
+            </fieldset>
 
-            <%!-- Empty state --%>
-            <%= if not can_translate_missing?(@ai_translate) and not can_translate_current?(@ai_translate) do %>
-              <div class="text-xs text-base-content/50">
-                <Icon.icon name="hero-check-circle" class="w-3 h-3 inline" />
-                {gettext("All enabled languages already have translations.")}
+            <%!-- Overwrite warning when scope = :all --%>
+            <%= if current_scope(@ai_translate) == :all do %>
+              <div class="alert alert-warning py-2 text-xs gap-2">
+                <Icon.icon name="hero-exclamation-triangle" class="w-4 h-4 shrink-0" />
+                <span>
+                  {gettext(
+                    "Existing translations in every non-primary language will be overwritten on completion."
+                  )}
+                </span>
               </div>
             <% end %>
+
+            <%!-- Action button --%>
+            <div class="flex flex-wrap gap-3">
+              <button
+                type="button"
+                class={[
+                  "btn btn-primary btn-sm gap-1",
+                  action_disabled?(@ai_translate) && "btn-disabled"
+                ]}
+                phx-click={event_name(@ai_translate)}
+                phx-value-lang={scope_target(@ai_translate)}
+                disabled={action_disabled?(@ai_translate)}
+              >
+                <Icon.icon name="hero-sparkles" class="w-4 h-4" />
+                {action_label(@ai_translate)}
+              </button>
+            </div>
           </div>
         </div>
         <div class="modal-backdrop" phx-click={toggle_event_name(@ai_translate)}></div>
@@ -326,26 +347,120 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
   defp ai_endpoints(cfg), do: cfg |> get(:endpoints) |> List.wrap()
   defp ai_prompts(cfg), do: cfg |> get(:prompts) |> List.wrap()
 
-  defp can_translate_missing?(cfg), do: actionable_missing(cfg) != []
+  # ─── Scope picker ──────────────────────────────────────────────
 
-  defp can_translate_current?(cfg) do
+  @doc false
+  # Public for testing — list of `{value, label, disabled}` tuples
+  # for the radio options. Order is missing → all → current.
+  def scope_options_for_test(cfg), do: scope_options(cfg)
+
+  defp scope_options(cfg) do
+    missing_count = length(actionable_missing(cfg))
+    all_count = length(all_target_langs(cfg))
+    current = get(cfg, :current_lang)
+    current_disabled = not current_scope_available?(cfg)
+
+    [
+      {
+        "missing",
+        gettext("Missing only (%{count} %{plural})",
+          count: missing_count,
+          plural: ngettext_plural(missing_count, "language", "languages")
+        ),
+        # Missing scope disabled when no missing langs left to translate.
+        missing_count == 0
+      },
+      {
+        "all",
+        gettext("All non-primary languages (%{count}, overwrites existing)",
+          count: all_count
+        ),
+        # All scope disabled when there are zero target langs (one-language app).
+        all_count == 0
+      },
+      {"current",
+       gettext("Current tab only (%{lang})",
+         lang: if(is_binary(current), do: String.upcase(current), else: "—")
+       ), current_disabled}
+    ]
+  end
+
+  defp current_scope_available?(cfg) do
     current = get(cfg, :current_lang)
     primary = get(cfg, :primary_lang)
-
-    is_binary(current) and current != "" and current != primary and
-      current in normalized_missing(cfg)
+    is_binary(current) and current != "" and current != primary
   end
 
-  defp button_disabled?(cfg) do
-    has_in_flight?(cfg) or
-      blank?(get(cfg, :selected_endpoint_uuid)) or
-      blank?(get(cfg, :selected_prompt_uuid))
+  defp all_target_langs(cfg) do
+    primary = get(cfg, :primary_lang)
+
+    cfg
+    |> get(:all_langs)
+    |> List.wrap()
+    |> Enum.map(&to_lang/1)
+    |> Enum.reject(&(is_nil(&1) or &1 == primary))
   end
 
-  defp current_disabled?(cfg) do
-    button_disabled?(cfg) or
-      get(cfg, :current_lang) in normalized_in_flight(cfg)
+  # ─── Selected scope + derived action surface ───────────────────
+
+  defp current_scope(cfg) do
+    case get(cfg, :scope) do
+      :missing -> :missing
+      :all -> :all
+      :current -> :current
+      "missing" -> :missing
+      "all" -> :all
+      "current" -> :current
+      _ -> :missing
+    end
   end
+
+  defp scope_target(cfg) do
+    case current_scope(cfg) do
+      :missing -> "*"
+      :all -> "**"
+      :current -> get(cfg, :current_lang) || ""
+    end
+  end
+
+  defp action_label(cfg) do
+    case current_scope(cfg) do
+      :missing ->
+        gettext("Translate %{n} missing", n: length(actionable_missing(cfg)))
+
+      :all ->
+        gettext("Translate all %{n} languages", n: length(all_target_langs(cfg)))
+
+      :current ->
+        gettext("Translate to %{lang}",
+          lang: String.upcase(get(cfg, :current_lang) || "")
+        )
+    end
+  end
+
+  # The action button is disabled when:
+  #   * no endpoint or no prompt selected
+  #   * any translation is currently running (prevents double-click + helps
+  #     visually communicate that the system is busy)
+  #   * the chosen scope has nothing to translate (e.g. :missing with 0
+  #     missing, :current on the primary tab)
+  defp action_disabled?(cfg) do
+    blank?(get(cfg, :selected_endpoint_uuid)) or
+      blank?(get(cfg, :selected_prompt_uuid)) or
+      has_in_flight?(cfg) or
+      scope_empty?(cfg)
+  end
+
+  defp scope_empty?(cfg) do
+    case current_scope(cfg) do
+      :missing -> actionable_missing(cfg) == []
+      :all -> all_target_langs(cfg) == []
+      :current -> not current_scope_available?(cfg)
+    end
+  end
+
+  defp ngettext_plural(1, sing, _plur), do: sing
+  defp ngettext_plural(_, _sing, plur), do: plur
 
   defp blank?(nil), do: true
   defp blank?(""), do: true
