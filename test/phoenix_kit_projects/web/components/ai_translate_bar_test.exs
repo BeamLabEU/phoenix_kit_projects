@@ -117,6 +117,47 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
     end
   end
 
+  describe "ai_translate_modal/1 — source-language disclosure" do
+    test "uses primary_lang_name in the description when host provided it" do
+      html =
+        modal(
+          full_cfg(%{
+            modal_open: true,
+            primary_lang: "en",
+            primary_lang_name: "English (United States)"
+          })
+        )
+
+      assert html =~ "Source: English (United States)"
+    end
+
+    test "falls back to uppercased primary_lang when no name provided" do
+      html =
+        modal(
+          full_cfg(%{
+            modal_open: true,
+            primary_lang: "en-us",
+            primary_lang_name: nil
+          })
+        )
+
+      assert html =~ "Source: EN-US"
+    end
+
+    test "falls back to a generic 'primary language' string when nothing usable" do
+      html =
+        modal(
+          full_cfg(%{
+            modal_open: true,
+            primary_lang: nil,
+            primary_lang_name: nil
+          })
+        )
+
+      assert html =~ "Source: the primary language"
+    end
+  end
+
   describe "ai_translate_modal/1 — visibility" do
     test "renders nothing when ai_translate is nil" do
       assert modal(nil) == ""

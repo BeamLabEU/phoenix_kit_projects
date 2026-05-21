@@ -45,7 +45,8 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
         scope: :missing,                # :missing | :all | :current
         default_prompt_exists: true,    # hides the generate-button
         current_lang: "es",             # active multilang tab
-        primary_lang: "en"              # to disable "current" scope on primary
+        primary_lang: "en",             # source for translations + disables :current on primary
+        primary_lang_name: "English"    # friendly label; falls back to upcased code, then a generic string
       }
 
   ## Action contract
@@ -149,7 +150,8 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
           <div class="space-y-4">
             <p class="text-sm text-base-content/70">
               {gettext(
-                "Automatically translate this resource to other languages using AI. The translation will be queued as a background job."
+                "Source: %{lang}. Each translation runs as a background job — you can keep editing while it finishes.",
+                lang: source_lang_label(@ai_translate)
               )}
             </p>
 
@@ -383,6 +385,21 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
          lang: if(is_binary(current), do: String.upcase(current), else: "—")
        ), current_disabled}
     ]
+  end
+
+  # Friendly label for the source (primary) language. Prefers
+  # `primary_lang_name` (host can resolve "en-US" → "English (United
+  # States)") and falls back to the uppercased code when the host
+  # didn't pass a name. Last resort: "the primary language".
+  defp source_lang_label(cfg) do
+    name = get(cfg, :primary_lang_name)
+    code = get(cfg, :primary_lang)
+
+    cond do
+      is_binary(name) and String.trim(name) != "" -> name
+      is_binary(code) and String.trim(code) != "" -> String.upcase(code)
+      true -> gettext("the primary language")
+    end
   end
 
   defp current_scope_available?(cfg) do

@@ -456,8 +456,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           scope: assigns.ai_translate_scope,
           default_prompt_exists: assigns.ai_default_prompt_exists,
           current_lang: assigns.current_lang,
-          primary_lang: assigns.primary_language
+          primary_lang: assigns.primary_language,
+          primary_lang_name: lookup_lang_name(assigns.language_tabs, assigns.primary_language)
         }
+    end
+  end
+
+  defp lookup_lang_name(tabs, code) do
+    case Enum.find(tabs || [], &(&1.code == code)) do
+      %{name: name} when is_binary(name) -> name
+      _ -> nil
     end
   end
 
