@@ -40,16 +40,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign(
         wrapper_class: wrapper_class,
         embed_redirect_to: redirect_to,
-        live_action: live_action,
-        ai_translate_in_flight: [],
-        ai_translate_scope: :missing,
-        show_ai_translation_modal: false,
-        ai_selected_endpoint_uuid: Translations.get_default_ai_endpoint_uuid(),
-        ai_selected_prompt_uuid: Translations.get_default_ai_prompt_uuid(),
-        ai_endpoints: Translations.list_ai_endpoints(),
-        ai_prompts: Translations.list_ai_prompts(),
-        ai_default_prompt_exists: Translations.default_translation_prompt_exists?()
+        live_action: live_action
       )
+      |> AITranslateFormHelpers.assign_ai_translate_mount_state()
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
@@ -232,30 +225,44 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   def handle_info(
-        {:projects, :translation_completed, %{resource_uuid: uuid, target_lang: lang}},
+        {:projects, :translation_completed, %{resource_uuid: uuid, target_lang: lang} = payload},
         socket
       )
       when uuid == socket.assigns.project.uuid do
-    # Merge ONLY the new lang's translation into the form-bound project
-    # — never `Projects.change_project(fresh_reload)` here, because that
-    # wipes any unsaved edits the user has made while the Oban job ran
-    # in the background. Refresh the underlying `socket.assigns.project`
-    # too so subsequent dispatches don't re-enqueue an already-translated
-    # language.
-    case Projects.get_project(uuid) do
-      nil ->
-        {:noreply,
-         assign(socket, :ai_translate_in_flight, socket.assigns.ai_translate_in_flight -- [lang])}
+    socket =
+      assign(socket, :ai_translate_in_flight, socket.assigns.ai_translate_in_flight -- [lang])
 
-      reloaded ->
-        new_translation = Map.get(reloaded.translations || %{}, lang, %{})
+    if Map.get(payload, :empty, false) do
+      # Nothing was translated — the source had no content for any
+      # translatable field. Don't claim "Translated to X".
+      {:noreply,
+       put_flash(
+         socket,
+         :info,
+         gettext("Nothing to translate for %{lang} — the source has no content yet.",
+           lang: String.upcase(lang)
+         )
+       )}
+    else
+      # Merge ONLY the new lang's translation into the form-bound project
+      # — never `Projects.change_project(fresh_reload)` here, because that
+      # wipes any unsaved edits the user has made while the Oban job ran
+      # in the background. Refresh the underlying `socket.assigns.project`
+      # too so subsequent dispatches don't re-enqueue an already-translated
+      # language.
+      case Projects.get_project(uuid) do
+        nil ->
+          {:noreply, socket}
 
-        {:noreply,
-         socket
-         |> assign(:project, reloaded)
-         |> assign(:ai_translate_in_flight, socket.assigns.ai_translate_in_flight -- [lang])
-         |> patch_form_translations(lang, new_translation)
-         |> put_flash(:info, gettext("Translated to %{lang}.", lang: String.upcase(lang)))}
+        reloaded ->
+          new_translation = Map.get(reloaded.translations || %{}, lang, %{})
+
+          {:noreply,
+           socket
+           |> assign(:project, reloaded)
+           |> patch_form_translations(lang, new_translation, Map.get(payload, :overwrite, false))
+           |> put_flash(:info, gettext("Translated to %{lang}.", lang: String.upcase(lang)))}
+      end
     end
   end
 
@@ -319,7 +326,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       endpoint_uuid: endpoint_uuid,
       prompt_uuid: prompt_uuid,
       source_lang: socket.assigns.primary_language,
-      actor_uuid: Activity.actor_uuid(socket)
+      actor_uuid: Activity.actor_uuid(socket),
+      # `"**"` = overwrite-all; `"*"` = missing-only (fill blanks).
+      overwrite: scope == "**"
     }
 
     case Translations.enqueue_all_missing(base_params, target_langs) do
@@ -398,17 +407,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   # Merge a freshly-translated language into the form's existing
-  # `translations` field WITHOUT touching primary-column edits or other
-  # secondary-lang fields the user may have typed since dispatching the
-  # AI job. Reuses the changeset's existing changes via `put_change/3`.
-  # Merges the AI's translated fields into the form-bound changeset
-  # for `lang`, but ONLY fills fields whose current value is blank.
-  # If the user switched to the target lang during the job and typed
-  # something into e.g. `name`, the AI's translated name does NOT
-  # win — user input always takes precedence. This addresses the
-  # "translation overwrites in-flight edits" footgun that an
-  # unconditional `Map.merge/2` had.
-  defp patch_form_translations(socket, lang, new_lang_map) do
+  # `translations` field, reusing the changeset's existing changes via
+  # `put_change/3` (never a fresh reload + rebuild, which would wipe
+  # unsaved edits). The merge policy depends on `overwrite?`:
+  #
+  #   * missing-only / single-lang (`overwrite? == false`) — fills only
+  #     blank fields, so edits the user typed while the job ran win.
+  #   * "all" scope (`overwrite? == true`) — AI output wins, mirroring
+  #     the worker's persisted merge so the form matches the DB.
+  defp patch_form_translations(socket, lang, new_lang_map, overwrite?) do
     cs = socket.assigns.form.source
 
     current_translations =
@@ -416,7 +423,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     current_lang_map = Map.get(current_translations, lang, %{})
 
-    merged_lang = AITranslateFormHelpers.merge_blank_fields_only(current_lang_map, new_lang_map)
+    merged_lang =
+      AITranslateFormHelpers.merge_translation_fields(current_lang_map, new_lang_map, overwrite?)
 
     updated_translations = Map.put(current_translations, lang, merged_lang)
 

@@ -47,6 +47,15 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
   double-click in the UI doesn't burn AI tokens twice. Other target
   languages on the same resource can run concurrently.
 
+  `period: :infinity` is deliberate: Oban's `unique` default is a
+  60-second window, which would let a second enqueue slip through
+  for a translation that runs longer than a minute (entirely possible
+  for a multi-field AI call). With `:infinity` the dedup is bounded by
+  the in-flight `states` instead of time — a duplicate is rejected as
+  long as the original is still `available`/`scheduled`/`executing`/
+  `retryable`, and a fresh job is allowed only once the previous one
+  reaches a terminal state (so re-translating later still works).
+
   ## Auto-completion
 
   Mirrors publishing's `TranslatePostWorker` shape (queue, retry
@@ -61,6 +70,7 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
     queue: :default,
     max_attempts: 3,
     unique: [
+      period: :infinity,
       keys: [:resource_uuid, :target_lang],
       states: [:available, :scheduled, :executing, :retryable]
     ]
@@ -91,7 +101,11 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
         prompt_uuid: prompt_uuid,
         source_lang: source_lang,
         target_lang: target_lang,
-        actor_uuid: actor_uuid
+        actor_uuid: actor_uuid,
+        # The "all"/overwrite scope sets this so the form can mirror the
+        # worker's `Map.merge/2` (AI wins) instead of its default
+        # blank-only merge. JSON round-trips it as a plain boolean.
+        overwrite: Map.get(args, "overwrite", false) == true
       })
     else
       {:error, reason} ->
@@ -141,7 +155,12 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
     if map_size(fields) == 0 do
       # Nothing to translate (every translatable field is empty / nil).
       # Treat as success — the resource just has no content yet.
-      broadcast(:translation_completed, resource, type, params, fields: %{}, empty: true)
+      broadcast(:translation_completed, resource, type, params,
+        fields: %{},
+        empty: true,
+        overwrite: params.overwrite
+      )
+
       :ok
     else
       case Translation.translate_fields(
@@ -180,7 +199,11 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
           }
         )
 
-        broadcast(:translation_completed, resource, type, params, fields: translated_fields)
+        broadcast(:translation_completed, resource, type, params,
+          fields: translated_fields,
+          overwrite: params.overwrite
+        )
+
         :ok
 
       {:error, changeset} ->
@@ -394,6 +417,11 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
   end
 
   defp get_uuid(%{uuid: uuid}), do: uuid
+  # Defensive: every loaded resource carries a `:uuid`, but a future
+  # schema (or a malformed struct) without one should degrade to a nil
+  # uuid in logs/broadcasts rather than crash the whole job with a
+  # FunctionClauseError.
+  defp get_uuid(_), do: nil
 
   defp broadcast(event, resource, type, params, extra \\ []) do
     payload =

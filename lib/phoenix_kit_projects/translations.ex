@@ -252,7 +252,8 @@ defmodule PhoenixKitProjects.Translations do
           required(:prompt_uuid) => String.t(),
           required(:source_lang) => String.t(),
           required(:target_lang) => String.t(),
-          optional(:actor_uuid) => String.t() | nil
+          optional(:actor_uuid) => String.t() | nil,
+          optional(:overwrite) => boolean()
         }
 
   @doc """
@@ -423,7 +424,12 @@ defmodule PhoenixKitProjects.Translations do
       "prompt_uuid" => params[:prompt_uuid] || params["prompt_uuid"],
       "source_lang" => params[:source_lang] || params["source_lang"],
       "target_lang" => params[:target_lang] || params["target_lang"],
-      "actor_uuid" => params[:actor_uuid] || params["actor_uuid"]
+      "actor_uuid" => params[:actor_uuid] || params["actor_uuid"],
+      # Optional, defaults false. Only the "all" scope sets it true so
+      # the worker can tell the form to overwrite existing translations
+      # instead of filling blanks. Normalised to a real boolean here so
+      # a stray `"true"`/`nil` from a host can't reach the worker.
+      "overwrite" => (params[:overwrite] || params["overwrite"]) == true
     }
   end
 end

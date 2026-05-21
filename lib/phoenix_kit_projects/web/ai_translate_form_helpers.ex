@@ -11,6 +11,49 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpers do
   user typed).
   """
 
+  import Phoenix.Component, only: [assign: 2]
+
+  alias PhoenixKitProjects.Translations
+
+  @doc """
+  Assigns the AI-translate bar's initial mount state onto `socket`.
+
+  The DB/plugin-backed lookups (default endpoint/prompt UUIDs, the
+  endpoint + prompt lists, default-prompt existence) only run on the
+  **connected** mount. `mount/3` fires twice — once for the dead HTTP
+  render and again on the WS upgrade — and these values are only needed
+  once the modal is interactive, so the dead render gets empty defaults
+  and we avoid five duplicate Settings/plugin round-trips per mount.
+  """
+  @spec assign_ai_translate_mount_state(Phoenix.LiveView.Socket.t()) ::
+          Phoenix.LiveView.Socket.t()
+  def assign_ai_translate_mount_state(socket) do
+    socket =
+      assign(socket,
+        ai_translate_in_flight: [],
+        ai_translate_scope: :missing,
+        show_ai_translation_modal: false
+      )
+
+    if Phoenix.LiveView.connected?(socket) do
+      assign(socket,
+        ai_selected_endpoint_uuid: Translations.get_default_ai_endpoint_uuid(),
+        ai_selected_prompt_uuid: Translations.get_default_ai_prompt_uuid(),
+        ai_endpoints: Translations.list_ai_endpoints(),
+        ai_prompts: Translations.list_ai_prompts(),
+        ai_default_prompt_exists: Translations.default_translation_prompt_exists?()
+      )
+    else
+      assign(socket,
+        ai_selected_endpoint_uuid: nil,
+        ai_selected_prompt_uuid: nil,
+        ai_endpoints: [],
+        ai_prompts: [],
+        ai_default_prompt_exists: false
+      )
+    end
+  end
+
   @doc """
   Computes the `missing` list for the language switcher's
   `ai_translate.missing` slot.
@@ -80,6 +123,30 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpers do
         acc
       end
     end)
+  end
+
+  @doc """
+  Merges AI output into the form's current lang map according to the
+  job's scope.
+
+  * `overwrite? == true` (the "all" scope) — AI output wins via plain
+    `Map.merge/2`, mirroring the worker's persisted merge so the open
+    form reflects exactly what was written to the DB. Without this, an
+    "overwrite all" translation would update the DB but leave the open
+    form showing the old values, and a subsequent save would silently
+    revert the overwrite.
+  * `overwrite? == false` (missing-only / single-lang) — defers to
+    `merge_blank_fields_only/2` so edits the user made while the job
+    ran are preserved.
+  """
+  @spec merge_translation_fields(map(), map(), boolean()) :: map()
+  def merge_translation_fields(current_lang_map, new_lang_map, true)
+      when is_map(current_lang_map) and is_map(new_lang_map) do
+    Map.merge(current_lang_map, new_lang_map)
+  end
+
+  def merge_translation_fields(current_lang_map, new_lang_map, _overwrite?) do
+    merge_blank_fields_only(current_lang_map, new_lang_map)
   end
 
   defp blank?(nil), do: true

@@ -138,4 +138,41 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpersTest do
                %{"name" => 42}
     end
   end
+
+  describe "merge_translation_fields/3 — overwrite-aware merge" do
+    test "overwrite? false defers to blank-only merge (user edits win)" do
+      assert H.merge_translation_fields(
+               %{"name" => "My Custom Name"},
+               %{"name" => "Proyecto", "description" => "Generada"},
+               false
+             ) == %{"name" => "My Custom Name", "description" => "Generada"}
+    end
+
+    test "overwrite? true lets AI output win over existing non-blank values" do
+      # The "all" scope: the user explicitly asked to overwrite, so the
+      # form must mirror the worker's persisted Map.merge — otherwise a
+      # save would silently revert the just-written translation.
+      assert H.merge_translation_fields(
+               %{"name" => "Proyecto antiguo", "description" => "Vieja"},
+               %{"name" => "Proyecto nuevo"},
+               true
+             ) == %{"name" => "Proyecto nuevo", "description" => "Vieja"}
+    end
+
+    test "overwrite? true still preserves fields the AI didn't return" do
+      assert H.merge_translation_fields(
+               %{"name" => "Old", "description" => "Keep me"},
+               %{"name" => "New"},
+               true
+             ) == %{"name" => "New", "description" => "Keep me"}
+    end
+
+    test "overwrite? false fills blanks (parity with merge_blank_fields_only)" do
+      assert H.merge_translation_fields(
+               %{"name" => "", "description" => nil},
+               %{"name" => "Proyecto", "description" => "Una descripción"},
+               false
+             ) == %{"name" => "Proyecto", "description" => "Una descripción"}
+    end
+  end
 end
