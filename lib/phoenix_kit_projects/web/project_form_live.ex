@@ -202,8 +202,23 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   def handle_event("save", %{"project" => attrs} = params, socket) do
-    template_uuid = Map.get(params, "template_uuid", nil) |> Values.blank_to_nil()
-    save(socket, socket.assigns.live_action, merge_attrs(attrs, socket), template_uuid)
+    if socket.assigns.ai_translate_in_flight == [] do
+      template_uuid = Map.get(params, "template_uuid", nil) |> Values.blank_to_nil()
+      save(socket, socket.assigns.live_action, merge_attrs(attrs, socket), template_uuid)
+    else
+      # AI translation in flight on at least one lang. Block save —
+      # the worker is about to write to `translations` and a save now
+      # would race the worker's persist. The form's save button is
+      # disabled via `:translation_in_flight?`, but a stray keyboard
+      # shortcut / `phx-key=Enter` could still submit, so this is the
+      # belt-and-suspenders guard.
+      {:noreply,
+       put_flash(
+         socket,
+         :info,
+         gettext("Hold on — wait for the translation to finish before saving.")
+       )}
+    end
   end
 
   def handle_event("cancel", _params, socket) do
@@ -230,7 +245,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       )
       when uuid == socket.assigns.project.uuid do
     socket =
-      assign(socket, :ai_translate_in_flight, socket.assigns.ai_translate_in_flight -- [lang])
+      socket
+      |> AITranslateFormHelpers.bump_translation_completed(lang)
 
     if Map.get(payload, :empty, false) do
       # Nothing was translated — the source had no content for any
@@ -246,10 +262,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     else
       # Merge ONLY the new lang's translation into the form-bound project
       # — never `Projects.change_project(fresh_reload)` here, because that
-      # wipes any unsaved edits the user has made while the Oban job ran
-      # in the background. Refresh the underlying `socket.assigns.project`
-      # too so subsequent dispatches don't re-enqueue an already-translated
-      # language.
+      # wipes any unsaved edits the user has made on OTHER langs /
+      # non-translatable fields. Refresh the underlying
+      # `socket.assigns.project` too so subsequent dispatches don't
+      # re-enqueue an already-translated language.
       case Projects.get_project(uuid) do
         nil ->
           {:noreply, socket}
@@ -260,7 +276,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           {:noreply,
            socket
            |> assign(:project, reloaded)
-           |> patch_form_translations(lang, new_translation, Map.get(payload, :overwrite, false))
+           |> patch_form_translations(lang, new_translation)
            |> put_flash(:info, gettext("Translated to %{lang}.", lang: String.upcase(lang)))}
       end
     end
@@ -273,7 +289,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       when uuid == socket.assigns.project.uuid do
     {:noreply,
      socket
-     |> assign(:ai_translate_in_flight, socket.assigns.ai_translate_in_flight -- [lang])
+     |> AITranslateFormHelpers.bump_translation_completed(lang)
      |> put_flash(:error, gettext("Translation to %{lang} failed.", lang: String.upcase(lang)))}
   end
 
@@ -326,9 +342,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       endpoint_uuid: endpoint_uuid,
       prompt_uuid: prompt_uuid,
       source_lang: socket.assigns.primary_language,
-      actor_uuid: Activity.actor_uuid(socket),
-      # `"**"` = overwrite-all; `"*"` = missing-only (fill blanks).
-      overwrite: scope == "**"
+      actor_uuid: Activity.actor_uuid(socket)
     }
 
     case Translations.enqueue_all_missing(base_params, target_langs) do
@@ -338,6 +352,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           :ai_translate_in_flight,
           Enum.uniq(socket.assigns.ai_translate_in_flight ++ enqueued_langs)
         )
+        |> AITranslateFormHelpers.bump_translation_started(length(enqueued_langs))
         |> maybe_flash_partial_errors(errors)
         |> put_flash(:info, gettext("Translating to %{count} languages…", count: n))
 
@@ -370,6 +385,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           :ai_translate_in_flight,
           Enum.uniq([lang | socket.assigns.ai_translate_in_flight])
         )
+        |> AITranslateFormHelpers.bump_translation_started(1)
         |> put_flash(:info, gettext("Translating to %{lang}…", lang: String.upcase(lang)))
 
       {:ok, %{conflict?: true}} ->
@@ -409,23 +425,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # Merge a freshly-translated language into the form's existing
   # `translations` field, reusing the changeset's existing changes via
   # `put_change/3` (never a fresh reload + rebuild, which would wipe
-  # unsaved edits). The merge policy depends on `overwrite?`:
-  #
-  #   * missing-only / single-lang (`overwrite? == false`) — fills only
-  #     blank fields, so edits the user typed while the job ran win.
-  #   * "all" scope (`overwrite? == true`) — AI output wins, mirroring
-  #     the worker's persisted merge so the form matches the DB.
-  defp patch_form_translations(socket, lang, new_lang_map, overwrite?) do
+  # unsaved edits on OTHER languages or non-translatable fields). The
+  # AI value always wins on the target lang's fields — the user
+  # explicitly clicked translate, and the form is locked while the
+  # job runs so there's no in-flight typing to preserve.
+  defp patch_form_translations(socket, lang, new_lang_map) do
     cs = socket.assigns.form.source
 
     current_translations =
       Ecto.Changeset.get_field(cs, :translations) || %{}
 
     current_lang_map = Map.get(current_translations, lang, %{})
-
-    merged_lang =
-      AITranslateFormHelpers.merge_translation_fields(current_lang_map, new_lang_map, overwrite?)
-
+    merged_lang = Map.merge(current_lang_map, new_lang_map)
     updated_translations = Map.put(current_translations, lang, merged_lang)
 
     cs
@@ -456,6 +467,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           missing: ai_translate_missing(assigns),
           all_langs: ai_translate_all_targets(assigns),
           in_flight: assigns.ai_translate_in_flight,
+          translation_status: assigns.ai_translation_status,
+          translation_progress: assigns.ai_translation_progress,
+          translation_total: assigns.ai_translation_total,
           modal_open: assigns.show_ai_translation_modal,
           endpoints: assigns.ai_endpoints,
           prompts: assigns.ai_prompts,
@@ -693,7 +707,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             current_lang={@current_lang}
           />
 
-          <.ai_translate_button ai_translate={ai_translate_config(assigns)} />
+          <%!-- `px-6` matches daisyUI's default `.card-body` inline
+               padding so the row aligns with the input fields below.
+               `-mt-2 py-1` pulls the row tight against the language
+               tab strip above — boss wanted the AI button closer to
+               the list of languages. --%>
+          <div class="flex items-center gap-3 px-6 -mt-2 py-1 border-b border-base-200">
+            <.ai_translate_button ai_translate={ai_translate_config(assigns)} />
+            <.ai_translate_progress ai_translate={ai_translate_config(assigns)} />
+          </div>
 
           <.multilang_fields_wrapper
             multilang_enabled={@multilang_enabled}
@@ -701,14 +723,21 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             skeleton_class="card-body pt-4 space-y-4"
             fields_class="card-body pt-4 space-y-4"
           >
+            <%!-- daisyUI's bare `.skeleton` resolves to a ~8%-opacity
+                 base-content grey, which is nearly invisible on the
+                 `bg-base-100` (pure white) card we render inside —
+                 user reported seeing what looked like a "blank white
+                 page" during the lang-switch window. `bg-base-content/15`
+                 gives a visible mid-grey on every theme + Tailwind's
+                 `animate-pulse` carries the loading affordance. --%>
             <:skeleton>
               <div class="space-y-2">
-                <div class="skeleton h-4 w-24"></div>
-                <div class="skeleton h-12 w-full"></div>
+                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
+                <div class="bg-base-content/15 rounded h-12 w-full animate-pulse"></div>
               </div>
               <div class="space-y-2">
-                <div class="skeleton h-4 w-24"></div>
-                <div class="skeleton h-24 w-full"></div>
+                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
+                <div class="bg-base-content/15 rounded h-24 w-full animate-pulse"></div>
               </div>
             </:skeleton>
 
@@ -724,6 +753,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               secondary_name={"project[translations][#{@current_lang}][name]"}
               lang_data_key="name"
               label={gettext("Name")}
+              disabled={@current_lang in @ai_translate_in_flight}
               required
             />
 
@@ -741,6 +771,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               label={gettext("Description")}
               type="textarea"
               rows={4}
+              disabled={@current_lang in @ai_translate_in_flight}
             />
           </.multilang_fields_wrapper>
         </div>
@@ -785,7 +816,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
                 {gettext("Cancel")}
               </button>
-              <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
+              <button
+                type="submit"
+                phx-disable-with={gettext("Saving…")}
+                disabled={@ai_translate_in_flight != []}
+                class="btn btn-primary btn-sm"
+              >
                 <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
               </button>
             </div>

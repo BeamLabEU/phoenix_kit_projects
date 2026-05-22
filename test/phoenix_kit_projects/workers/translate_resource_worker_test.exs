@@ -177,37 +177,6 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorkerTest do
       assert_receive {:projects, :translation_started, %{resource_type: "assignment"}}, 500
       assert_receive {:projects, :translation_completed, %{empty: true}}, 500
     end
-
-    test "completion broadcast carries the overwrite flag from job args" do
-      {:ok, project} =
-        PhoenixKitProjects.Projects.create_project(%{
-          "name" => "Ov #{System.unique_integer([:positive])}",
-          "start_mode" => "immediate"
-        })
-
-      {:ok, task} =
-        PhoenixKitProjects.Projects.create_task(%{
-          "title" => "Ov T #{System.unique_integer([:positive])}"
-        })
-
-      {:ok, assignment} =
-        PhoenixKitProjects.Projects.create_assignment(%{
-          "project_uuid" => project.uuid,
-          "task_uuid" => task.uuid,
-          "status" => "todo"
-        })
-
-      run(
-        base_args("assignment")
-        |> Map.put("resource_uuid", assignment.uuid)
-        |> Map.put("overwrite", true)
-      )
-
-      # The "all"/overwrite scope threads `overwrite: true` to the
-      # completion broadcast so the host form mirrors the worker's
-      # Map.merge instead of its default blank-only merge.
-      assert_receive {:projects, :translation_completed, %{overwrite: true}}, 500
-    end
   end
 
   describe "broadcast fan-out — events reach per-resource-type topics" do

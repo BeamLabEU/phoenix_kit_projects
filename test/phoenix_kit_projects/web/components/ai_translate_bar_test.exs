@@ -71,8 +71,15 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
       assert button(full_cfg(%{toggle_event: "   "})) == ""
     end
 
-    test "renders nothing when there's nothing to translate and nothing in flight" do
-      assert button(full_cfg(%{missing: [], in_flight: []})) == ""
+    test "renders the button even when there's nothing to translate and nothing in flight" do
+      # The button is now always visible when AI is enabled — the user
+      # can re-translate any time, and the modal's scope picker carries
+      # the missing-count info if they need it. Pre-change the button
+      # hid when missing == 0 AND in_flight == [], which created a UX
+      # bug where the button vanished after all langs were translated.
+      html = button(full_cfg(%{missing: [], in_flight: []}))
+      assert html =~ "AI Translate"
+      assert html =~ ~s|phx-click="toggle_ai"|
     end
 
     test "renders when there are missing langs" do
@@ -83,8 +90,8 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
 
     test "renders when there are in-flight langs even with no remaining missing" do
       # User clicked translate, job is running, the only missing lang
-      # is now in_flight — the trigger should still show the spinner
-      # badge so the user can re-open the modal to check status.
+      # is now in_flight — the spinner glyph appears inside the button
+      # so the user knows something is happening.
       html = button(full_cfg(%{missing: ["es"], in_flight: ["es"]}))
       refute html == ""
       assert html =~ "loading-spinner"
@@ -97,18 +104,27 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
     end
   end
 
-  describe "ai_translate_button/1 — badge content" do
-    test "missing count badge when nothing in flight" do
+  describe "ai_translate_button/1 — in-flight indicator" do
+    test "no spinner glyph when nothing in flight (regardless of missing count)" do
       html = button(full_cfg(%{missing: ["es", "de", "fr"], in_flight: []}))
-      assert html =~ "3 missing"
+      assert html =~ "AI Translate"
       refute html =~ "loading-spinner"
     end
 
-    test "spinner badge when any lang in flight (takes precedence over missing count)" do
+    test "spinner glyph appears when any lang in flight" do
       html = button(full_cfg(%{missing: ["es", "de"], in_flight: ["es"]}))
       assert html =~ "loading-spinner"
-      # Badge shows count of in-flight langs (not missing)
-      assert html =~ "badge-primary"
+    end
+
+    test "no missing-count badge — that info lives in the modal scope picker" do
+      # Pre-change: a "3 missing" / "1 missing" ghost-badge sat next
+      # to the button text. Dropped because (a) the count persisted
+      # after a successful single-lang translate, creating a confusing
+      # "translation done but still says N missing" UX, and (b) the
+      # sibling progress bar already signals an in-flight session.
+      html = button(full_cfg(%{missing: ["es", "de", "fr"], in_flight: []}))
+      refute html =~ "missing"
+      refute html =~ "badge"
     end
 
     test "aria-expanded reflects modal_open" do
@@ -466,19 +482,27 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBarTest do
   end
 
   describe "weird-input handling" do
-    test "atom lang codes are normalized in the trigger badge" do
-      html = button(full_cfg(%{missing: [:es, :de], in_flight: []}))
-      assert html =~ "2 missing"
+    test "atom lang codes in in_flight render the spinner glyph" do
+      # The button no longer renders a count, but the in-flight list
+      # is still normalized for the spinner-vs-no-spinner branch.
+      # Surfaces normalization bugs that would otherwise silently
+      # leave the spinner off when atoms are passed.
+      html = button(full_cfg(%{missing: [], in_flight: [:es, :de]}))
+      assert html =~ "loading-spinner"
     end
 
-    test "blank / nil entries in missing are dropped" do
-      html = button(full_cfg(%{missing: ["es", "", nil, "  "], in_flight: []}))
-      assert html =~ "1 missing"
+    test "blank / nil entries in in_flight don't trip the spinner branch" do
+      # Without normalization, `in_flight: [nil, "", "  "]` would
+      # length-check to 3 and (pre-change) render a "3" badge with
+      # spinner. After normalization the list is empty and the
+      # spinner stays off.
+      html = button(full_cfg(%{missing: [], in_flight: [nil, "", "  "]}))
+      refute html =~ "loading-spinner"
     end
 
-    test "non-binary, non-atom entries are dropped silently" do
-      html = button(full_cfg(%{missing: ["es", 123, %{}, {:tuple}], in_flight: []}))
-      assert html =~ "1 missing"
+    test "non-binary, non-atom entries in in_flight are dropped silently" do
+      html = button(full_cfg(%{missing: [], in_flight: [123, %{}, {:tuple}]}))
+      refute html =~ "loading-spinner"
     end
   end
 

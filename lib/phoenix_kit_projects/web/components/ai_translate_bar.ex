@@ -63,6 +63,45 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
   Host's `handle_event(@ai_translate.event, %{"lang" => lang}, socket)`
   branches on the value: `"*"` → missing-only path; `"**"` → all
   path; concrete code → single-lang path.
+
+  ## Host embedding contract — render placement matters
+
+  The modal contains its own `<form phx-change>` elements for the
+  endpoint / prompt selectors. HTML forbids nested `<form>` and the
+  browser silently flattens them, which makes the selectors' change
+  events fire against the *outer* form's `phx-change` handler.
+  Render the modal **outside** your outer form, after `</.form>`:
+
+      <.form for={@form} phx-change="validate" phx-submit="save" ...>
+        <.ai_translate_button ai_translate={...} />
+        <%!-- rest of the form fields here --%>
+      </.form>
+
+      <%!-- Modal AFTER the form close, not inside it. --%>
+      <.ai_translate_modal ai_translate={...} />
+
+  Both components accept the same `ai_translate` map, so a host can
+  compute it once per render and pass it to both.
+
+  ### LiveComponent hosts
+
+  If the host renders the button from inside a `Phoenix.LiveComponent`
+  (e.g. a translation tab strip rendered via `<.live_component>`),
+  the modal's selector events still need to land on the parent
+  LiveView — modal placement at the LV root is the simplest path.
+  Embed the modal at the LV's outer render template, not inside the
+  LiveComponent's HEEx, and have the LiveComponent emit a
+  `send(self(), {:ai_translate, ...})` (or call the host event via
+  `phx-target={@myself}` on the button only) so the modal's PubSub
+  / `handle_event` consumers stay on the LV process.
+
+  If the modal MUST render from inside a LiveComponent (rare —
+  e.g. embedded analytics panel that wants the picker self-contained),
+  pass `phx-target={@myself}` on every `<.form>` / event-emitting
+  element inside the modal so the LiveComponent receives the events
+  instead of routing them up. The current `<.ai_translate_modal>`
+  does not plumb a target attr; in that case render a thin wrapper
+  inside the LiveComponent and replicate the modal markup.
   """
 
   use Phoenix.Component
@@ -75,44 +114,33 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
     doc: "Configuration map — see moduledoc for the full shape."
   )
 
-  attr(:class, :string, default: "flex items-center gap-2 px-4 py-2 border-b border-base-200")
-
   @doc """
-  Compact trigger button. Shows a missing-count badge and a spinner
-  badge while any translation is in flight.
+  Compact trigger button. Shows a small spinner glyph while any
+  translation is in flight (no count, no missing badge — the
+  sibling `<.ai_translate_progress>` carries the per-session status,
+  and the modal's scope picker shows the missing count if the user
+  needs it).
 
-  Hidden entirely when `ai_translate.enabled != true`, the toggle
-  event is blank, or there's nothing to translate AND nothing in
-  flight.
+  Hidden when `ai_translate.enabled != true` or the toggle event is
+  blank. Stays visible after all langs are translated so the user can
+  re-translate at any time.
   """
   def ai_translate_button(assigns) do
     ~H"""
     <%= if button_visible?(@ai_translate) do %>
-      <div class={@class}>
-        <button
-          type="button"
-          class="btn btn-ghost btn-xs gap-2"
-          phx-click={toggle_event_name(@ai_translate)}
-          aria-haspopup="dialog"
-          aria-expanded={if modal_open?(@ai_translate), do: "true", else: "false"}
-        >
-          <Icon.icon name="hero-language" class="w-4 h-4 text-primary" />
-          <span>{gettext("AI Translate")}</span>
-
-          <%= cond do %>
-            <% has_in_flight?(@ai_translate) -> %>
-              <span class="badge badge-sm badge-primary gap-1">
-                <span class="loading loading-spinner loading-xs"></span>
-                {length(normalized_in_flight(@ai_translate))}
-              </span>
-            <% missing_count(@ai_translate) > 0 -> %>
-              <span class="badge badge-sm badge-ghost">
-                {gettext("%{count} missing", count: missing_count(@ai_translate))}
-              </span>
-            <% true -> %>
-            <% end %>
-        </button>
-      </div>
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs gap-2"
+        phx-click={toggle_event_name(@ai_translate)}
+        aria-haspopup="dialog"
+        aria-expanded={if modal_open?(@ai_translate), do: "true", else: "false"}
+      >
+        <Icon.icon name="hero-language" class="w-4 h-4 text-primary" />
+        <span>{gettext("AI Translate")}</span>
+        <%= if has_in_flight?(@ai_translate) do %>
+          <span class="loading loading-spinner loading-xs"></span>
+        <% end %>
+      </button>
     <% end %>
     """
   end
@@ -260,7 +288,10 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
               </div>
             <% end %>
 
-            <%!-- Action button --%>
+            <%!-- Action button. `phx-disable-with` covers the small
+                 window between click and the LV's first re-render, so
+                 a double-click during a slow round-trip can't queue
+                 two dispatches before the modal closes. --%>
             <div class="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -270,6 +301,7 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
                 ]}
                 phx-click={event_name(@ai_translate)}
                 phx-value-lang={scope_target(@ai_translate)}
+                phx-disable-with={gettext("Starting…")}
                 disabled={action_disabled?(@ai_translate)}
               >
                 <Icon.icon name="hero-sparkles" class="w-4 h-4" />
@@ -291,11 +323,54 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
   @doc false
   def ai_translate_bar(assigns), do: ai_translate_button(assigns)
 
+  attr(:ai_translate, :map,
+    required: true,
+    doc:
+      "Same `ai_translate` config map the button + modal accept. Reads `:translation_status`, `:translation_progress`, and `:translation_total` keys for the bar fill state."
+  )
+
+  attr(:wrapper_class, :string, default: "flex-1 min-w-0")
+  attr(:class, :string, default: "progress h-2 w-full block")
+
+  @doc """
+  Slim inline progress bar — designed to sit on the same row as
+  `<.ai_translate_button>`. No text, no counter, no language list:
+  the bar's fill level is the only signal. Color flips to
+  `progress-success` when the session reaches `:completed`.
+
+  The wrapper is `flex-1 min-w-0` so the bar fills the remaining
+  horizontal space in its parent flex container without bleeding past
+  it; the inner `<progress>` is `w-full` so its daisyUI default
+  `width: 100%` resolves against the wrapper, not the row.
+
+  Renders nothing until the host has dispatched at least one
+  translation in the session (`translation_status` flips to
+  `:in_progress`). The bar persists in the `:completed` state until
+  the next dispatch resets it.
+  """
+  def ai_translate_progress(assigns) do
+    ~H"""
+    <%= if progress_visible?(@ai_translate) do %>
+      <div class={@wrapper_class}>
+        <progress
+          class={[
+            @class,
+            translation_status(@ai_translate) == :completed && "progress-success",
+            translation_status(@ai_translate) != :completed && "progress-primary"
+          ]}
+          value={translation_progress(@ai_translate)}
+          max={max(translation_total(@ai_translate), 1)}
+        >
+        </progress>
+      </div>
+    <% end %>
+    """
+  end
+
   # ─── Visibility / state helpers ────────────────────────────────
 
   defp button_visible?(cfg) when is_map(cfg) do
-    enabled?(cfg) and toggle_event_name(cfg) != nil and
-      (missing_count(cfg) > 0 or has_in_flight?(cfg))
+    enabled?(cfg) and toggle_event_name(cfg) != nil
   end
 
   defp button_visible?(_), do: false
@@ -310,8 +385,6 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
 
   defp enabled?(cfg), do: get(cfg, :enabled) == true
 
-  defp missing_count(cfg), do: length(actionable_missing(cfg))
-
   defp actionable_missing(cfg) do
     missing = normalized_missing(cfg)
     in_flight = normalized_in_flight(cfg)
@@ -319,6 +392,22 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
   end
 
   defp has_in_flight?(cfg), do: normalized_in_flight(cfg) != []
+
+  defp translation_status(cfg) when is_map(cfg), do: get(cfg, :translation_status)
+  defp translation_status(_), do: nil
+
+  defp translation_progress(cfg) when is_map(cfg), do: get(cfg, :translation_progress) || 0
+  defp translation_progress(_), do: 0
+
+  defp translation_total(cfg) when is_map(cfg), do: get(cfg, :translation_total) || 0
+  defp translation_total(_), do: 0
+
+  defp progress_visible?(cfg) when is_map(cfg) do
+    enabled?(cfg) and translation_status(cfg) in [:in_progress, :completed] and
+      translation_total(cfg) > 0
+  end
+
+  defp progress_visible?(_), do: false
 
   defp normalized_missing(cfg) do
     cfg

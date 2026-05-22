@@ -197,25 +197,38 @@ defmodule PhoenixKitProjects.Translations do
       - Keep any HTML tags and special syntax unchanged.
       - Output ONLY the structured markers below — no commentary, no preface, no closing remarks.
 
-      OUTPUT FORMAT — for each field present in the SOURCE section, emit:
+      OUTPUT FORMAT — for each non-empty field below, emit ONE
+      marker named after the field, followed by the translation:
 
           ---<FIELD_NAME_UPPERCASE>---
-          [translated value, on the line(s) after the marker]
+          [translated value]
 
-      For example, if the source has a `name` field, output:
+      Examples:
 
           ---NAME---
           <translated name>
 
-      If a field is empty or missing from the source, do not emit a marker for it.
+          ---TITLE---
+          <translated title>
+
+          ---DESCRIPTION---
+          <translated description>
+
+      If a field is missing or blank from the SOURCE section, do
+      NOT emit a marker for it. Do not emit markers for fields the
+      caller did not provide. A value that still looks like a
+      literal placeholder (`{{name}}`, `{{title}}`, `{{description}}`,
+      etc.) means the caller did not bind that variable and the
+      field MUST be skipped — do not emit a marker, do not translate
+      the placeholder string itself.
 
       === SOURCE ===
 
-      Name (if present): {{name}}
+      Name: {{name}}
 
-      Title (if present): {{title}}
+      Title: {{title}}
 
-      Description (if present): {{description}}
+      Description: {{description}}
       """
     })
   end
@@ -252,8 +265,7 @@ defmodule PhoenixKitProjects.Translations do
           required(:prompt_uuid) => String.t(),
           required(:source_lang) => String.t(),
           required(:target_lang) => String.t(),
-          optional(:actor_uuid) => String.t() | nil,
-          optional(:overwrite) => boolean()
+          optional(:actor_uuid) => String.t() | nil
         }
 
   @doc """
@@ -424,12 +436,7 @@ defmodule PhoenixKitProjects.Translations do
       "prompt_uuid" => params[:prompt_uuid] || params["prompt_uuid"],
       "source_lang" => params[:source_lang] || params["source_lang"],
       "target_lang" => params[:target_lang] || params["target_lang"],
-      "actor_uuid" => params[:actor_uuid] || params["actor_uuid"],
-      # Optional, defaults false. Only the "all" scope sets it true so
-      # the worker can tell the form to overwrite existing translations
-      # instead of filling blanks. Normalised to a real boolean here so
-      # a stray `"true"`/`nil` from a host can't reach the worker.
-      "overwrite" => (params[:overwrite] || params["overwrite"]) == true
+      "actor_uuid" => params[:actor_uuid] || params["actor_uuid"]
     }
   end
 end

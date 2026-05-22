@@ -4,11 +4,10 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpers do
   template, and task forms.
 
   Extracted because the three form LVs each held an identical copy of
-  these helpers. Beyond dedup, lifting them out makes the
-  `merge_blank_fields_only/2` policy directly unit-testable — the
-  user-edits-win contract is load-bearing for the form UX (a
-  translation that lands mid-edit must not silently clobber what the
-  user typed).
+  these helpers. The merge policy now lives directly in the form LVs
+  as plain `Map.merge/2` — explicit user-click means AI value always
+  wins, and the form UI is locked while a translation is in flight,
+  so there's no user-edits-during-job race to mitigate.
   """
 
   import Phoenix.Component, only: [assign: 2]
@@ -32,7 +31,14 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpers do
       assign(socket,
         ai_translate_in_flight: [],
         ai_translate_scope: :missing,
-        show_ai_translation_modal: false
+        show_ai_translation_modal: false,
+        # Progress UI state. `nil` until the first dispatch, then
+        # `:in_progress` while any lang is in flight, then `:completed`
+        # for the brief moment the bar shows 100% before the next
+        # dispatch resets the session.
+        ai_translation_status: nil,
+        ai_translation_progress: 0,
+        ai_translation_total: 0
       )
 
     if Phoenix.LiveView.connected?(socket) do
@@ -51,6 +57,82 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpers do
         ai_prompts: [],
         ai_default_prompt_exists: false
       )
+    end
+  end
+
+  @doc """
+  Bump the progress-UI state when a new dispatch starts.
+
+  * `started_count` — number of langs the host just enqueued.
+    For single-lang it's `1`; for bulk `*`/`**` it's the count of
+    successfully-enqueued langs.
+
+  When the previous session was `nil` or `:completed`, this RESETS
+  the bar to a fresh `:in_progress` session sized for the new
+  dispatch. When the previous session was still `:in_progress`,
+  this ADDS to the running total — so a user that clicks "translate
+  FR" while SQ is still translating sees the bar grow to 2/2 instead
+  of restarting.
+  """
+  @spec bump_translation_started(Phoenix.LiveView.Socket.t(), non_neg_integer()) ::
+          Phoenix.LiveView.Socket.t()
+  def bump_translation_started(socket, started_count) when started_count > 0 do
+    case socket.assigns.ai_translation_status do
+      s when s in [nil, :completed] ->
+        assign(socket,
+          ai_translation_status: :in_progress,
+          ai_translation_progress: 0,
+          ai_translation_total: started_count
+        )
+
+      :in_progress ->
+        assign(socket,
+          ai_translation_total: socket.assigns.ai_translation_total + started_count
+        )
+    end
+  end
+
+  def bump_translation_started(socket, _zero), do: socket
+
+  @doc """
+  Bump the progress-UI state when a translation lifecycle event lands
+  (`:translation_completed` or `:translation_failed`). Both terminal
+  outcomes advance the bar — the UX is "this job finished, the lang
+  is no longer spinning", and failure is communicated separately via
+  the flash, not by holding the progress count back.
+
+  Takes the `lang` so the helper can detect duplicate / stale terminal
+  events (e.g. the same `:translation_completed` arriving twice on a
+  PubSub reconnect, or a stale event from a previous session's
+  in-flight set still in transit). When `lang` is no longer in
+  `:ai_translate_in_flight`, treat as a no-op: don't double-bump
+  progress past `total` and don't flip status back to `:in_progress`
+  for a session that already reached `:completed`.
+
+  Also removes `lang` from the in-flight list — caller passes the
+  socket BEFORE removal, this helper consolidates the removal +
+  progress bump so the two stay in sync.
+
+  Flips status to `:completed` only when the in-flight list goes
+  empty as a result of this bump.
+  """
+  @spec bump_translation_completed(Phoenix.LiveView.Socket.t(), String.t()) ::
+          Phoenix.LiveView.Socket.t()
+  def bump_translation_completed(socket, lang) when is_binary(lang) do
+    in_flight = socket.assigns.ai_translate_in_flight
+
+    if lang in in_flight do
+      new_in_flight = in_flight -- [lang]
+      next_progress = (socket.assigns.ai_translation_progress || 0) + 1
+      next_status = if new_in_flight == [], do: :completed, else: :in_progress
+
+      assign(socket,
+        ai_translate_in_flight: new_in_flight,
+        ai_translation_progress: next_progress,
+        ai_translation_status: next_status
+      )
+    else
+      socket
     end
   end
 
@@ -98,59 +180,4 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpers do
         false
     end
   end
-
-  @doc """
-  Merges the AI's translated `new_lang_map` into the existing
-  `current_lang_map`, with **user-typed values winning over AI
-  output**.
-
-  A field is updated by the AI only when the current value is
-  blank (`nil`, `""`, or whitespace-only). If the user switched to
-  the target language during the Oban job and typed something in
-  e.g. `name`, the AI's translated name will NOT overwrite it.
-
-  This is the policy fix from PR #12's final codex review — an
-  unconditional `Map.merge/2` would silently clobber edits the user
-  made between dispatching the translation and the job completing.
-  """
-  @spec merge_blank_fields_only(map(), map()) :: map()
-  def merge_blank_fields_only(current_lang_map, new_lang_map)
-      when is_map(current_lang_map) and is_map(new_lang_map) do
-    Enum.reduce(new_lang_map, current_lang_map, fn {field, ai_value}, acc ->
-      if blank?(Map.get(acc, field)) do
-        Map.put(acc, field, ai_value)
-      else
-        acc
-      end
-    end)
-  end
-
-  @doc """
-  Merges AI output into the form's current lang map according to the
-  job's scope.
-
-  * `overwrite? == true` (the "all" scope) — AI output wins via plain
-    `Map.merge/2`, mirroring the worker's persisted merge so the open
-    form reflects exactly what was written to the DB. Without this, an
-    "overwrite all" translation would update the DB but leave the open
-    form showing the old values, and a subsequent save would silently
-    revert the overwrite.
-  * `overwrite? == false` (missing-only / single-lang) — defers to
-    `merge_blank_fields_only/2` so edits the user made while the job
-    ran are preserved.
-  """
-  @spec merge_translation_fields(map(), map(), boolean()) :: map()
-  def merge_translation_fields(current_lang_map, new_lang_map, true)
-      when is_map(current_lang_map) and is_map(new_lang_map) do
-    Map.merge(current_lang_map, new_lang_map)
-  end
-
-  def merge_translation_fields(current_lang_map, new_lang_map, _overwrite?) do
-    merge_blank_fields_only(current_lang_map, new_lang_map)
-  end
-
-  defp blank?(nil), do: true
-  defp blank?(""), do: true
-  defp blank?(v) when is_binary(v), do: String.trim(v) == ""
-  defp blank?(_), do: false
 end

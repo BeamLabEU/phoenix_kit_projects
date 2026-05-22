@@ -1,11 +1,14 @@
 defmodule PhoenixKitProjects.Web.AITranslateFormHelpersTest do
   @moduledoc """
   Unit coverage for the shared helpers extracted from project /
-  template / task form LVs. The `merge_blank_fields_only/2` policy
-  is load-bearing for the form UX — a translation that lands while
-  the user is mid-edit must NOT silently overwrite typed text.
-  Pinning that here so a future "Map.merge is simpler" refactor
-  trips this test instead of shipping a regression.
+  template / task form LVs (missing-language detection +
+  has-any-translation discriminator).
+
+  Merge policy moved out of this helper module — the form LVs now
+  use plain `Map.merge/2` directly because the UI is locked while
+  any translation is in flight, removing the user-typed-during-job
+  race that the old `merge_blank_fields_only/2` policy was meant
+  to mitigate.
   """
 
   use ExUnit.Case, async: true
@@ -88,91 +91,6 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpersTest do
 
     test "false on non-binary field values (e.g. accidentally stored numbers)" do
       refute H.has_any_translation?(%{"es" => %{"name" => 42}}, "es", ["name"])
-    end
-  end
-
-  describe "merge_blank_fields_only/2 — user-typed values win over AI output" do
-    test "fills blank fields with AI values" do
-      assert H.merge_blank_fields_only(%{"name" => "", "description" => nil}, %{
-               "name" => "Proyecto",
-               "description" => "Una descripción"
-             }) == %{"name" => "Proyecto", "description" => "Una descripción"}
-    end
-
-    test "does NOT overwrite a non-blank user-typed value" do
-      # User typed "My Custom Name" into the `es.name` field while
-      # the AI job was running. The AI returns "Proyecto" for name.
-      # User input wins.
-      result =
-        H.merge_blank_fields_only(
-          %{"name" => "My Custom Name"},
-          %{"name" => "Proyecto", "description" => "Generated description"}
-        )
-
-      assert result == %{"name" => "My Custom Name", "description" => "Generated description"}
-    end
-
-    test "treats whitespace-only current values as blank (still gets the AI value)" do
-      assert H.merge_blank_fields_only(%{"name" => "   "}, %{"name" => "Proyecto"}) ==
-               %{"name" => "Proyecto"}
-    end
-
-    test "preserves current map fields the AI didn't return" do
-      # AI only translated `name`; existing description stays put.
-      assert H.merge_blank_fields_only(
-               %{"name" => "", "description" => "Existing"},
-               %{"name" => "Proyecto"}
-             ) == %{"name" => "Proyecto", "description" => "Existing"}
-    end
-
-    test "non-binary current value (e.g. nil) gets filled" do
-      assert H.merge_blank_fields_only(%{"name" => nil}, %{"name" => "x"}) ==
-               %{"name" => "x"}
-    end
-
-    test "non-string current value other than nil is treated as set (preserved)" do
-      # Defensive: if some upstream schema mismatch leaves an integer
-      # in the translations map, we don't overwrite — surfaces the
-      # bug instead of papering over it with AI output.
-      assert H.merge_blank_fields_only(%{"name" => 42}, %{"name" => "x"}) ==
-               %{"name" => 42}
-    end
-  end
-
-  describe "merge_translation_fields/3 — overwrite-aware merge" do
-    test "overwrite? false defers to blank-only merge (user edits win)" do
-      assert H.merge_translation_fields(
-               %{"name" => "My Custom Name"},
-               %{"name" => "Proyecto", "description" => "Generada"},
-               false
-             ) == %{"name" => "My Custom Name", "description" => "Generada"}
-    end
-
-    test "overwrite? true lets AI output win over existing non-blank values" do
-      # The "all" scope: the user explicitly asked to overwrite, so the
-      # form must mirror the worker's persisted Map.merge — otherwise a
-      # save would silently revert the just-written translation.
-      assert H.merge_translation_fields(
-               %{"name" => "Proyecto antiguo", "description" => "Vieja"},
-               %{"name" => "Proyecto nuevo"},
-               true
-             ) == %{"name" => "Proyecto nuevo", "description" => "Vieja"}
-    end
-
-    test "overwrite? true still preserves fields the AI didn't return" do
-      assert H.merge_translation_fields(
-               %{"name" => "Old", "description" => "Keep me"},
-               %{"name" => "New"},
-               true
-             ) == %{"name" => "New", "description" => "Keep me"}
-    end
-
-    test "overwrite? false fills blanks (parity with merge_blank_fields_only)" do
-      assert H.merge_translation_fields(
-               %{"name" => "", "description" => nil},
-               %{"name" => "Proyecto", "description" => "Una descripción"},
-               false
-             ) == %{"name" => "Proyecto", "description" => "Una descripción"}
     end
   end
 end
