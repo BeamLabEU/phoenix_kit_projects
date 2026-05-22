@@ -63,16 +63,36 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpers do
   @doc """
   Bump the progress-UI state when a new dispatch starts.
 
-  * `started_count` — number of langs the host just enqueued.
-    For single-lang it's `1`; for bulk `*`/`**` it's the count of
-    successfully-enqueued langs.
+  * `started_count` — number of langs the host just enqueued. For
+    single-lang it's `1`; for bulk `*`/`**` the current call sites
+    pass `length(in_flight)` from `enqueue_all_missing/2`, which is
+    `enqueued + conflicts`. See the forward-looking note below for
+    the latent accounting risk that ride-along brings.
 
   When the previous session was `nil` or `:completed`, this RESETS
   the bar to a fresh `:in_progress` session sized for the new
   dispatch. When the previous session was still `:in_progress`,
-  this ADDS to the running total — so a user that clicks "translate
-  FR" while SQ is still translating sees the bar grow to 2/2 instead
-  of restarting.
+  this ADDS to the running total.
+
+  **The additive `:in_progress` branch is forward-looking** — under
+  the current UI the dispatch button is `disabled` whenever
+  `has_in_flight?(ai_translate)` (see
+  `ai_translate_bar.ex#action_disabled?/1`), so a second dispatch
+  can't start while jobs are running and the branch is unreachable
+  through the modal. Kept so a future host that allows mid-flight
+  dispatch (e.g. a queue-style admin UI) gets correct accounting
+  without redesigning this helper.
+
+  Caveat for that future host: `enqueue_all_missing/2` reports
+  conflict-deduplicated langs alongside newly-enqueued ones in its
+  `in_flight` list. A conflict-dedup'd dispatch doesn't get its own
+  worker run — it rides along with the **same** job that was
+  already in flight, so the broadcast fan-out emits **one**
+  `:translation_completed` per actual job, not one per click. If
+  `started_count` counts both clicks, `progress` can only reach the
+  per-job number → `progress < total` forever. Switch the call site
+  to count newly-enqueued langs only (e.g. `length(in_flight -- prev_in_flight)`)
+  before enabling mid-flight dispatch.
   """
   @spec bump_translation_started(Phoenix.LiveView.Socket.t(), non_neg_integer()) ::
           Phoenix.LiveView.Socket.t()

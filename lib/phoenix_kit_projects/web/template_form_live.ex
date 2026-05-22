@@ -218,19 +218,21 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
          )
        )}
     else
-      case Projects.get_project(uuid) do
-        nil ->
-          {:noreply, socket}
+      # See `project_form_live.ex` for the rationale on merging from
+      # `payload.fields` instead of `Projects.get_project/1`.
+      new_translation = Map.get(payload, :fields, %{})
 
-        reloaded ->
-          new_translation = Map.get(reloaded.translations || %{}, lang, %{})
+      project =
+        update_in(socket.assigns.project, [Access.key(:translations)], fn current ->
+          existing = Map.get(current || %{}, lang, %{})
+          Map.put(current || %{}, lang, Map.merge(existing, new_translation))
+        end)
 
-          {:noreply,
-           socket
-           |> assign(:project, reloaded)
-           |> patch_form_translations(lang, new_translation)
-           |> put_flash(:info, gettext("Translated to %{lang}.", lang: String.upcase(lang)))}
-      end
+      {:noreply,
+       socket
+       |> assign(:project, project)
+       |> patch_form_translations(lang, new_translation)
+       |> put_flash(:info, gettext("Translated to %{lang}.", lang: String.upcase(lang)))}
     end
   end
 

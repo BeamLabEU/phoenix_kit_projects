@@ -242,6 +242,20 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
     # `repo.transaction/1` already returns `{:ok, updated}` on commit
     # and `{:error, reason}` on `repo.rollback/1` — exactly the shape
     # this function contracts, so return it directly.
+    #
+    # CONSTRAINT: `persist_translation/3` calls `Projects.update_*`,
+    # which emits a `:project_updated` / `:task_updated` PubSub
+    # broadcast as part of its success path. That broadcast fires
+    # while the row lock is still held — subscribers reacting by
+    # reading the row back would see the pre-commit state. Today
+    # this is harmless because `update_*` is the terminal step in
+    # the transaction body (success → return `updated`; no further
+    # writes can roll back the broadcast). If a future change adds
+    # work after the persist (e.g. a second mutation, a side-effect
+    # we expect to roll back together), move the broadcast outside
+    # the transaction (caller-side, after `{:ok, _}`) so subscribers
+    # see committed state. Until then, `persist_translation/3` MUST
+    # remain the last write inside this block.
     repo.transaction(fn ->
       case repo.one(query) do
         nil ->

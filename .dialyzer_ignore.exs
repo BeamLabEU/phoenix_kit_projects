@@ -12,23 +12,20 @@
   # `lib/modules/ai/translation.ex`.
   {"lib/phoenix_kit_projects/translations.ex", :unknown_function},
 
-  # `enqueue_all_missing/2` accepts a `base_params` map without
-  # `:target_lang` (drops the key explicitly and re-adds per lang
-  # in the loop). The `enqueue_params` type requires `:target_lang`,
-  # so dialyzer sees every bulk-dispatch call site as failing — and
-  # marks `maybe_flash_partial_errors/2` unused because the path
-  # supposedly never reaches it. Functionally correct; the spec
-  # just needs a separate `base_enqueue_params` type for the bulk
-  # path, queued for a separate cleanup PR.
-  ~r"lib/phoenix_kit_projects/web/(project|template|task)_form_live\.ex:\d+:\d+:(call|unused_fun)",
+  # (`base_enqueue_params` type was introduced in PR `followup-review-pr13-fixes`
+  # to give `enqueue_all_missing/2` a correct spec — the previous broad
+  # `:call|:unused_fun` ignore is gone with it.)
 
-  # `reloaded.translations || %{}` defensive fallback. The schema
-  # typespec (`field :translations, :map, default: %{}`) makes
-  # `:translations` non-nil to dialyzer, so the fallback never
-  # fires in practice. Kept across 3 LVs + the worker because a
-  # future migration / malformed DB read shouldn't crash a
-  # mid-translation render.
-  ~r"lib/phoenix_kit_projects/web/(project|template|task)_form_live\.ex:\d+:guard_fail",
+  # `resource.translations || %{}` defensive fallback in the worker's
+  # `translatable_field_map/3`. The schema typespec
+  # (`field :translations, :map, default: %{}`) makes `:translations`
+  # non-nil to dialyzer, so the fallback never fires in practice. Kept
+  # because a future migration / malformed DB read shouldn't crash a
+  # mid-translation worker. (The same defensive pattern was removed
+  # from the 3 form LVs in PR `followup-review-pr13-fixes` when
+  # `:translation_completed` switched from `Projects.get_*/1` reload
+  # to in-memory merge from `payload.fields` — `payload.fields` is
+  # always a map literal from the worker, never nil.)
   ~r"lib/phoenix_kit_projects/workers/translate_resource_worker\.ex:\d+:guard_fail",
 
   # `sanitize_reason({:persist_error, _})` clause —

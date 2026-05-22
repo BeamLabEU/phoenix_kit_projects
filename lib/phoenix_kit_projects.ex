@@ -38,7 +38,7 @@ defmodule PhoenixKitProjects do
   end
 
   @impl PhoenixKit.Module
-  def version, do: "0.5.0"
+  def version, do: "0.5.1"
 
   @impl PhoenixKit.Module
   def permission_metadata do

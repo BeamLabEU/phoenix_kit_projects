@@ -268,6 +268,22 @@ defmodule PhoenixKitProjects.Translations do
           optional(:actor_uuid) => String.t() | nil
         }
 
+  @typedoc """
+  `enqueue_params` minus `:target_lang` — the shape `enqueue_all_missing/2`
+  accepts as `base_params`. The function drops `:target_lang` explicitly
+  and re-adds it per lang in the loop, so the bulk-dispatch call sites
+  pass a map without that key. Without this separate type, dialyzer
+  flags every bulk call as `:call` will-not-succeed.
+  """
+  @type base_enqueue_params :: %{
+          required(:resource_type) => resource_type(),
+          required(:resource_uuid) => String.t(),
+          required(:endpoint_uuid) => String.t(),
+          required(:prompt_uuid) => String.t(),
+          required(:source_lang) => String.t(),
+          optional(:actor_uuid) => String.t() | nil
+        }
+
   @doc """
   Enqueue a translation job for a single resource + target language.
 
@@ -313,7 +329,7 @@ defmodule PhoenixKitProjects.Translations do
     failed langs MUST NOT spin because no worker broadcast will arrive
     to clear them.
   """
-  @spec enqueue_all_missing(enqueue_params(), [String.t()]) ::
+  @spec enqueue_all_missing(base_enqueue_params(), [String.t()]) ::
           {:ok,
            %{
              enqueued: non_neg_integer(),

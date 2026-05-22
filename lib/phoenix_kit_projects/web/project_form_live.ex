@@ -263,22 +263,28 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       # Merge ONLY the new lang's translation into the form-bound project
       # — never `Projects.change_project(fresh_reload)` here, because that
       # wipes any unsaved edits the user has made on OTHER langs /
-      # non-translatable fields. Refresh the underlying
-      # `socket.assigns.project` too so subsequent dispatches don't
-      # re-enqueue an already-translated language.
-      case Projects.get_project(uuid) do
-        nil ->
-          {:noreply, socket}
+      # non-translatable fields.
+      #
+      # The translated fields ride along on the broadcast payload, so
+      # we avoid the per-event `Projects.get_project/1` round-trip that
+      # would amplify a 40-lang bulk dispatch into 40 sequential
+      # full-resource reads. Merge the new lang into
+      # `socket.assigns.project.translations` in-memory so the
+      # missing-count recompute (via `ai_translate_missing/1`) stays
+      # current after each completion.
+      new_translation = Map.get(payload, :fields, %{})
 
-        reloaded ->
-          new_translation = Map.get(reloaded.translations || %{}, lang, %{})
+      project =
+        update_in(socket.assigns.project, [Access.key(:translations)], fn current ->
+          existing = Map.get(current || %{}, lang, %{})
+          Map.put(current || %{}, lang, Map.merge(existing, new_translation))
+        end)
 
-          {:noreply,
-           socket
-           |> assign(:project, reloaded)
-           |> patch_form_translations(lang, new_translation)
-           |> put_flash(:info, gettext("Translated to %{lang}.", lang: String.upcase(lang)))}
-      end
+      {:noreply,
+       socket
+       |> assign(:project, project)
+       |> patch_form_translations(lang, new_translation)
+       |> put_flash(:info, gettext("Translated to %{lang}.", lang: String.upcase(lang)))}
     end
   end
 
