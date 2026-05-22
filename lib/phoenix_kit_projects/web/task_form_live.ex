@@ -720,9 +720,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
             current_lang={@current_lang}
           />
 
-          <%!-- `px-6` matches daisyUI's default `.card-body` inline
-               padding — see `project_form_live.ex` for the why. --%>
-          <div class="flex items-center gap-3 px-6 py-2 border-b border-base-200">
+          <%!-- See `project_form_live.ex` for the spacing rationale. --%>
+          <div class="flex items-center gap-3 px-6 -mt-2 py-1 border-b border-base-200">
             <.ai_translate_button ai_translate={ai_translate_config(assigns)} />
             <.ai_translate_progress ai_translate={ai_translate_config(assigns)} />
           </div>
@@ -733,14 +732,15 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
             skeleton_class="card-body pt-4 space-y-4"
             fields_class="card-body pt-4 space-y-4"
           >
+            <%!-- See `project_form_live.ex` for skeleton contrast rationale. --%>
             <:skeleton>
               <div class="space-y-2">
-                <div class="skeleton h-4 w-24"></div>
-                <div class="skeleton h-12 w-full"></div>
+                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
+                <div class="bg-base-content/15 rounded h-12 w-full animate-pulse"></div>
               </div>
               <div class="space-y-2">
-                <div class="skeleton h-4 w-24"></div>
-                <div class="skeleton h-24 w-full"></div>
+                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
+                <div class="bg-base-content/15 rounded h-24 w-full animate-pulse"></div>
               </div>
             </:skeleton>
 

@@ -710,11 +710,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           />
 
           <%!-- `px-6` matches daisyUI's default `.card-body` inline
-               padding, so the row's bar and button align horizontally
-               with the input fields below. Using `px-4` shaved 8px
-               off each side and made the bar visually overflow past
-               the field column. --%>
-          <div class="flex items-center gap-3 px-6 py-2 border-b border-base-200">
+               padding so the row aligns with the input fields below.
+               `-mt-2 py-1` pulls the row tight against the language
+               tab strip above — boss wanted the AI button closer to
+               the list of languages. --%>
+          <div class="flex items-center gap-3 px-6 -mt-2 py-1 border-b border-base-200">
             <.ai_translate_button ai_translate={ai_translate_config(assigns)} />
             <.ai_translate_progress ai_translate={ai_translate_config(assigns)} />
           </div>
@@ -725,14 +725,21 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             skeleton_class="card-body pt-4 space-y-4"
             fields_class="card-body pt-4 space-y-4"
           >
+            <%!-- daisyUI's bare `.skeleton` resolves to a ~8%-opacity
+                 base-content grey, which is nearly invisible on the
+                 `bg-base-100` (pure white) card we render inside —
+                 user reported seeing what looked like a "blank white
+                 page" during the lang-switch window. `bg-base-content/15`
+                 gives a visible mid-grey on every theme + Tailwind's
+                 `animate-pulse` carries the loading affordance. --%>
             <:skeleton>
               <div class="space-y-2">
-                <div class="skeleton h-4 w-24"></div>
-                <div class="skeleton h-12 w-full"></div>
+                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
+                <div class="bg-base-content/15 rounded h-12 w-full animate-pulse"></div>
               </div>
               <div class="space-y-2">
-                <div class="skeleton h-4 w-24"></div>
-                <div class="skeleton h-24 w-full"></div>
+                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
+                <div class="bg-base-content/15 rounded h-24 w-full animate-pulse"></div>
               </div>
             </:skeleton>
 
