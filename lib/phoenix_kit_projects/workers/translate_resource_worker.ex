@@ -205,9 +205,7 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
             inspect(reason)
         )
 
-        broadcast(:translation_failed, resource, type, params,
-          reason: {:persist_error, reason}
-        )
+        broadcast(:translation_failed, resource, type, params, reason: {:persist_error, reason})
 
         {:error, {:persist_error, reason}}
     end
