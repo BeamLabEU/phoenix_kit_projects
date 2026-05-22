@@ -360,7 +360,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       prompt_uuid: prompt_uuid,
       source_lang: socket.assigns.primary_language,
       target_lang: lang,
-      actor_uuid: Activity.actor_uuid(socket)
+      actor_uuid: Activity.actor_uuid(socket),
+      # Single-lang explicit click — the user picked this specific lang,
+      # so the AI output MUST win on the form even if the lang's current
+      # value is non-blank. Without this, the LV's blank-only-merge
+      # would preserve a stale DB value (e.g. a previous buggy run's
+      # garbage-tail output) and the user would have to refresh the
+      # page to see the new clean translation. The bulk-mode "*"
+      # (missing-only) path stays `overwrite: false` because its
+      # contract is "only fill blanks".
+      overwrite: true
     }
 
     case Translations.enqueue(params) do

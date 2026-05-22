@@ -129,15 +129,19 @@ defmodule PhoenixKitProjects.Web.AITranslateFormHelpers do
   Merges AI output into the form's current lang map according to the
   job's scope.
 
-  * `overwrite? == true` (the "all" scope) — AI output wins via plain
-    `Map.merge/2`, mirroring the worker's persisted merge so the open
-    form reflects exactly what was written to the DB. Without this, an
-    "overwrite all" translation would update the DB but leave the open
-    form showing the old values, and a subsequent save would silently
-    revert the overwrite.
-  * `overwrite? == false` (missing-only / single-lang) — defers to
-    `merge_blank_fields_only/2` so edits the user made while the job
-    ran are preserved.
+  * `overwrite? == true` (the "all" scope AND explicit single-lang
+    click) — AI output wins via plain `Map.merge/2`, mirroring the
+    worker's persisted merge so the open form reflects exactly what
+    was written to the DB. Without this, the open form would keep
+    showing the old (possibly stale) value and a save would silently
+    revert the DB to it. Single-lang explicit click is in this bucket
+    because clicking "translate this specific lang" is an unambiguous
+    "AI value wins" intent — preserving the previous value would
+    require the user to refresh the page to see the new translation.
+  * `overwrite? == false` (missing-only / bulk "*") — defers to
+    `merge_blank_fields_only/2` so existing non-blank values are
+    preserved. Used only by the bulk "missing-only" scope whose
+    explicit contract is "only fill blanks".
   """
   @spec merge_translation_fields(map(), map(), boolean()) :: map()
   def merge_translation_fields(current_lang_map, new_lang_map, true)

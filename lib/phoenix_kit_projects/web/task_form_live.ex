@@ -441,7 +441,11 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       prompt_uuid: prompt_uuid,
       source_lang: socket.assigns.primary_language,
       target_lang: lang,
-      actor_uuid: Activity.actor_uuid(socket)
+      actor_uuid: Activity.actor_uuid(socket),
+      # See `project_form_live.ex` for the rationale — single-lang
+      # explicit click must overwrite so the form picks up the AI
+      # value instead of preserving stale changeset state.
+      overwrite: true
     }
 
     case Translations.enqueue(params) do
