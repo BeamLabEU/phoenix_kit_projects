@@ -709,8 +709,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             current_lang={@current_lang}
           />
 
-          <.ai_translate_button ai_translate={ai_translate_config(assigns)} />
-          <.ai_translate_progress ai_translate={ai_translate_config(assigns)} />
+          <div class="flex items-center gap-3 px-4 py-2 border-b border-base-200">
+            <.ai_translate_button ai_translate={ai_translate_config(assigns)} />
+            <.ai_translate_progress ai_translate={ai_translate_config(assigns)} />
+          </div>
 
           <.multilang_fields_wrapper
             multilang_enabled={@multilang_enabled}

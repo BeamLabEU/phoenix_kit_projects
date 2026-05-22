@@ -114,44 +114,33 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
     doc: "Configuration map — see moduledoc for the full shape."
   )
 
-  attr(:class, :string, default: "flex items-center gap-2 px-4 py-2 border-b border-base-200")
-
   @doc """
-  Compact trigger button. Shows a missing-count badge and a spinner
-  badge while any translation is in flight.
+  Compact trigger button. Shows a small spinner glyph while any
+  translation is in flight (no count, no missing badge — the
+  sibling `<.ai_translate_progress>` carries the per-session status,
+  and the modal's scope picker shows the missing count if the user
+  needs it).
 
-  Hidden entirely when `ai_translate.enabled != true`, the toggle
-  event is blank, or there's nothing to translate AND nothing in
-  flight.
+  Hidden when `ai_translate.enabled != true` or the toggle event is
+  blank. Stays visible after all langs are translated so the user can
+  re-translate at any time.
   """
   def ai_translate_button(assigns) do
     ~H"""
     <%= if button_visible?(@ai_translate) do %>
-      <div class={@class}>
-        <button
-          type="button"
-          class="btn btn-ghost btn-xs gap-2"
-          phx-click={toggle_event_name(@ai_translate)}
-          aria-haspopup="dialog"
-          aria-expanded={if modal_open?(@ai_translate), do: "true", else: "false"}
-        >
-          <Icon.icon name="hero-language" class="w-4 h-4 text-primary" />
-          <span>{gettext("AI Translate")}</span>
-
-          <%= cond do %>
-            <% has_in_flight?(@ai_translate) -> %>
-              <span class="badge badge-sm badge-primary gap-1">
-                <span class="loading loading-spinner loading-xs"></span>
-                {length(normalized_in_flight(@ai_translate))}
-              </span>
-            <% missing_count(@ai_translate) > 0 -> %>
-              <span class="badge badge-sm badge-ghost">
-                {gettext("%{count} missing", count: missing_count(@ai_translate))}
-              </span>
-            <% true -> %>
-            <% end %>
-        </button>
-      </div>
+      <button
+        type="button"
+        class="btn btn-ghost btn-xs gap-2"
+        phx-click={toggle_event_name(@ai_translate)}
+        aria-haspopup="dialog"
+        aria-expanded={if modal_open?(@ai_translate), do: "true", else: "false"}
+      >
+        <Icon.icon name="hero-language" class="w-4 h-4 text-primary" />
+        <span>{gettext("AI Translate")}</span>
+        <%= if has_in_flight?(@ai_translate) do %>
+          <span class="loading loading-spinner loading-xs"></span>
+        <% end %>
+      </button>
     <% end %>
     """
   end
@@ -333,59 +322,35 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
   attr(:ai_translate, :map,
     required: true,
     doc:
-      "Same `ai_translate` config map the button + modal accept. Reads `:translation_status`, `:translation_progress`, `:translation_total`, and `:in_flight` keys for the progress UI."
+      "Same `ai_translate` config map the button + modal accept. Reads `:translation_status`, `:translation_progress`, and `:translation_total` keys for the bar fill state."
   )
 
-  attr(:class, :string, default: "px-4 pb-2")
+  attr(:class, :string, default: "progress progress-xs h-2 flex-1 min-w-0")
 
   @doc """
-  Progress row: spinner + status text + daisyUI `<progress>` bar.
+  Slim inline progress bar — designed to sit on the same row as
+  `<.ai_translate_button>`. No text, no counter, no language list:
+  the bar's fill level is the only signal. Color flips to
+  `progress-success` when the session reaches `:completed`.
 
   Renders nothing until the host has dispatched at least one
   translation in the session (`translation_status` flips to
-  `:in_progress`). After all langs complete the bar stays visible
-  showing the success state until the next dispatch resets it.
-  Hosts that want a dismissable variant can hide via CSS or wrap
-  this in their own conditional.
+  `:in_progress`). The bar persists in the `:completed` state until
+  the next dispatch resets it.
   """
   def ai_translate_progress(assigns) do
     ~H"""
     <%= if progress_visible?(@ai_translate) do %>
-      <div class={@class}>
-        <div class="flex items-center justify-between text-sm mb-1">
-          <span class="text-base-content/70 flex items-center gap-2">
-            <%= if translation_status(@ai_translate) == :completed do %>
-              <Icon.icon name="hero-check-circle" class="w-4 h-4 text-success" />
-              <span>{gettext("Translation complete")}</span>
-            <% else %>
-              <span class="loading loading-spinner loading-xs"></span>
-              <%= case normalized_in_flight(@ai_translate) do %>
-                <% [] -> %>
-                  <span>{gettext("Translating…")}</span>
-                <% langs -> %>
-                  <span>
-                    {gettext("Translating to %{langs}…",
-                      langs: Enum.map_join(langs, ", ", &String.upcase/1)
-                    )}
-                  </span>
-              <% end %>
-            <% end %>
-          </span>
-          <span class="font-medium tabular-nums">
-            {translation_progress(@ai_translate)} / {translation_total(@ai_translate)}
-          </span>
-        </div>
-        <progress
-          class={[
-            "progress w-full",
-            translation_status(@ai_translate) == :completed && "progress-success",
-            translation_status(@ai_translate) != :completed && "progress-primary"
-          ]}
-          value={translation_progress(@ai_translate)}
-          max={max(translation_total(@ai_translate), 1)}
-        >
-        </progress>
-      </div>
+      <progress
+        class={[
+          @class,
+          translation_status(@ai_translate) == :completed && "progress-success",
+          translation_status(@ai_translate) != :completed && "progress-primary"
+        ]}
+        value={translation_progress(@ai_translate)}
+        max={max(translation_total(@ai_translate), 1)}
+      >
+      </progress>
     <% end %>
     """
   end
@@ -393,8 +358,7 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
   # ─── Visibility / state helpers ────────────────────────────────
 
   defp button_visible?(cfg) when is_map(cfg) do
-    enabled?(cfg) and toggle_event_name(cfg) != nil and
-      (missing_count(cfg) > 0 or has_in_flight?(cfg))
+    enabled?(cfg) and toggle_event_name(cfg) != nil
   end
 
   defp button_visible?(_), do: false
@@ -408,8 +372,6 @@ defmodule PhoenixKitProjects.Web.Components.AITranslateBar do
   defp modal_open?(cfg), do: get(cfg, :modal_open) == true
 
   defp enabled?(cfg), do: get(cfg, :enabled) == true
-
-  defp missing_count(cfg), do: length(actionable_missing(cfg))
 
   defp actionable_missing(cfg) do
     missing = normalized_missing(cfg)
