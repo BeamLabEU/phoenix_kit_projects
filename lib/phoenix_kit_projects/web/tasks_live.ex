@@ -41,6 +41,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         page_title: gettext("Task Library"),
         wrapper_class: wrapper_class,
         view: initial_view,
+        sort_by: :position,
+        sort_dir: :asc,
         tasks: [],
         deps_by_task: %{},
         groups: [],
@@ -83,9 +85,26 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         )
 
       _ ->
-        %{tasks: tasks, deps_by_task: deps_by_task} = Projects.list_tasks_with_deps()
+        %{tasks: tasks, deps_by_task: deps_by_task} =
+          Projects.list_tasks_with_deps(
+            sort_by: socket.assigns.sort_by,
+            sort_dir: socket.assigns.sort_dir
+          )
+
         assign(socket, tasks: tasks, deps_by_task: deps_by_task, groups: [], standalone: [])
     end
+  end
+
+  @sort_fields ~w(position title inserted_at estimated_duration)a
+  @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
+
+  defp sort_options do
+    [
+      {:position, gettext("Manual")},
+      {:title, gettext("Title")},
+      {:inserted_at, gettext("Date created")},
+      {:estimated_duration, gettext("Duration")}
+    ]
   end
 
   @impl true
@@ -118,6 +137,28 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   def handle_event("close_reorder_modal", _params, socket) do
     {:noreply, assign(socket, show_reorder_modal: false, captured_uuids: [])}
+  end
+
+  # Sort selector — see projects_live for the same pattern.
+  def handle_event("sort_form", params, socket) do
+    field_str = params["sort_by"] || Atom.to_string(socket.assigns.sort_by)
+    dir_str = params["sort_dir"] || Atom.to_string(socket.assigns.sort_dir)
+
+    field =
+      if field_str in @sort_field_strs,
+        do: String.to_existing_atom(field_str),
+        else: socket.assigns.sort_by
+
+    dir =
+      case dir_str do
+        "desc" -> :desc
+        _ -> :asc
+      end
+
+    {:noreply,
+     socket
+     |> assign(sort_by: field, sort_dir: dir)
+     |> load_tasks()}
   end
 
   # Map gates atom coercion — see projects_live for the same shape.
@@ -401,6 +442,16 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <%!-- Default flat list view. --%>
         <% lang = L10n.current_content_lang() %>
 
+        <div class="bg-base-200 rounded-lg p-3 flex flex-col gap-1">
+          <span class="label-text text-sm">{gettext("Sort by")}</span>
+          <.sort_selector
+            sort_by={@sort_by}
+            sort_dir={@sort_dir}
+            options={sort_options()}
+            manual_field={:position}
+          />
+        </div>
+
         <%= if @tasks == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
@@ -456,12 +507,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   defp render_tasks_table(assigns, lang) do
-    assigns = assign(assigns, lang: lang)
+    draggable? = assigns.sort_by == :position
+    assigns = assign(assigns, lang: lang, draggable?: draggable?)
 
     ~H"""
-    <%!-- DnD reorder is wired only on the list view (groups are
-         derived from the dep graph and don't have a stable manual
-         order). Mirrors catalogue's hand-wired `<tbody>` DnD pattern. --%>
+    <%!-- DnD reorder is gated on `sort_by=:position` (the "manual"
+         sort mode). When the list is sorted by title/date/duration
+         the rendered order doesn't reflect the position field, so
+         dragging would be lossy — the handle column is hidden too. --%>
     <.table_default id="tasks-list" size="sm">
       <.table_default_header>
         <.table_default_row>
@@ -470,7 +523,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             id="tasks-select-all"
             aria_label={gettext("Select all tasks")}
           />
-          <.table_default_header_cell class="w-8" />
+          <.table_default_header_cell :if={@draggable?} class="w-8" />
           <.table_default_header_cell>{gettext("Title")}</.table_default_header_cell>
           <.table_default_header_cell>{gettext("Duration")}</.table_default_header_cell>
           <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
@@ -478,8 +531,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       </.table_default_header>
       <tbody
         id="tasks-list-body"
-        phx-hook="SortableGrid"
-        data-sortable="true"
+        phx-hook={if @draggable?, do: "SortableGrid"}
+        data-sortable={if @draggable?, do: "true"}
         data-sortable-event="reorder_tasks"
         data-sortable-items=".sortable-item"
         data-sortable-handle=".pk-drag-handle"
@@ -487,6 +540,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <.table_default_row :for={task <- @tasks} class="sortable-item" data-id={task.uuid}>
           <.bulk_select_cell :if={@bulk_enabled?} value={task.uuid} />
           <.table_default_cell
+            :if={@draggable?}
             class="pk-drag-handle cursor-grab active:cursor-grabbing text-base-content/40"
             title={gettext("Drag to reorder")}
           >

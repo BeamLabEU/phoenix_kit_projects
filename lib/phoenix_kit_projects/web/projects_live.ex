@@ -30,6 +30,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         page_title: gettext("Projects"),
         wrapper_class: wrapper_class,
         show: "visible",
+        sort_by: :position,
+        sort_dir: :asc,
         projects: [],
         bulk_enabled?: true,
         # `captured_uuids` is the snapshot taken from the DOM at the
@@ -56,7 +58,26 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   defp load_projects(socket) do
-    assign(socket, projects: Projects.list_projects(archived: archived_opt(socket.assigns.show)))
+    assign(socket,
+      projects:
+        Projects.list_projects(
+          archived: archived_opt(socket.assigns.show),
+          sort_by: socket.assigns.sort_by,
+          sort_dir: socket.assigns.sort_dir
+        )
+    )
+  end
+
+  @sort_fields ~w(position name inserted_at updated_at)a
+  @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
+
+  defp sort_options do
+    [
+      {:position, gettext("Manual")},
+      {:name, gettext("Name")},
+      {:inserted_at, gettext("Date created")},
+      {:updated_at, gettext("Last updated")}
+    ]
   end
 
   defp archived_opt("archived"), do: true
@@ -70,6 +91,31 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     # selection from the new (unchecked) checkboxes — selection clears
     # naturally without server-side bookkeeping.
     {:noreply, socket |> assign(show: s) |> load_projects()}
+  end
+
+  # Sort selector fires `sort_form` for both field changes (via the
+  # form's phx-change) and direction toggles (via the button's
+  # phx-click). One event, two shapes — derive the missing half from
+  # current state.
+  def handle_event("sort_form", params, socket) do
+    field_str = params["sort_by"] || Atom.to_string(socket.assigns.sort_by)
+    dir_str = params["sort_dir"] || Atom.to_string(socket.assigns.sort_dir)
+
+    field =
+      if field_str in @sort_field_strs,
+        do: String.to_existing_atom(field_str),
+        else: socket.assigns.sort_by
+
+    dir =
+      case dir_str do
+        "desc" -> :desc
+        _ -> :asc
+      end
+
+    {:noreply,
+     socket
+     |> assign(sort_by: field, sort_dir: dir)
+     |> load_projects()}
   end
 
   # The bulk toolbar's Reorder button pushes this event with the
@@ -238,8 +284,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         </:actions>
       </.page_header>
 
-      <div class="bg-base-200 rounded-lg p-3">
-        <.form for={%{}} phx-change="filter" class="flex gap-3 items-end">
+      <div class="bg-base-200 rounded-lg p-3 flex flex-wrap items-end gap-4">
+        <.form for={%{}} phx-change="filter">
           <.select
             name="show"
             label={gettext("Show")}
@@ -251,20 +297,29 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             ]}
           />
         </.form>
+
+        <div class="flex flex-col gap-1">
+          <span class="label-text text-sm">{gettext("Sort by")}</span>
+          <.sort_selector
+            sort_by={@sort_by}
+            sort_dir={@sort_dir}
+            options={sort_options()}
+            manual_field={:position}
+          />
+        </div>
       </div>
 
       <%= if @projects == [] do %>
         <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects match.")} />
       <% else %>
-        <%!-- DnD only applies when the user is viewing the visible
-             (non-archived) bucket — reordering a filtered subset
-             would write inconsistent positions for the projects that
-             aren't currently visible. The hook is gated on
-             `@show == "visible"`; archived/all views render the
-             same `<.table_default>` without the SortableGrid hook
-             (drag handle column hidden too). --%>
+        <%!-- DnD applies only in "manual" sort (sort_by=:position) AND
+             when the user is viewing the visible (non-archived)
+             bucket. Sorting by name / date is a *view* — it doesn't
+             rewrite positions, so dragging would be lossy and the
+             handle is hidden. Switching back to manual restores the
+             original position order and the drag handle. --%>
         <% lang = L10n.current_content_lang() %>
-        <% draggable? = @show == "visible" %>
+        <% draggable? = @show == "visible" and @sort_by == :position %>
 
         <.bulk_select_scope
           :if={@bulk_enabled?}

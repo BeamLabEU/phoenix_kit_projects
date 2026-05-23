@@ -78,13 +78,40 @@ defmodule PhoenixKitProjects.Projects do
   above any still-zero ones; among the still-zero tasks, creation
   order wins.
   """
-  @spec list_tasks() :: [Task.t()]
-  def list_tasks do
+  @spec list_tasks(keyword()) :: [Task.t()]
+  def list_tasks(opts \\ []) do
+    sort_by = Keyword.get(opts, :sort_by, :position)
+    sort_dir = Keyword.get(opts, :sort_dir, :asc)
+
     Task
-    |> order_by([t], asc: t.position, asc: t.inserted_at)
+    |> task_order_by(sort_by, sort_dir)
     |> preload(^@task_preloads)
     |> repo().all()
   end
+
+  defp task_order_by(query, :position, _dir),
+    do: order_by(query, [t], asc: t.position, asc: t.inserted_at, asc: t.uuid)
+
+  defp task_order_by(query, :title, :desc),
+    do: order_by(query, [t], desc: t.title, asc: t.inserted_at, asc: t.uuid)
+
+  defp task_order_by(query, :title, _asc),
+    do: order_by(query, [t], asc: t.title, asc: t.inserted_at, asc: t.uuid)
+
+  defp task_order_by(query, :inserted_at, :desc),
+    do: order_by(query, [t], desc: t.inserted_at, asc: t.uuid)
+
+  defp task_order_by(query, :inserted_at, _asc),
+    do: order_by(query, [t], asc: t.inserted_at, asc: t.uuid)
+
+  defp task_order_by(query, :estimated_duration, :desc),
+    do: order_by(query, [t], desc: t.estimated_duration, asc: t.title, asc: t.uuid)
+
+  defp task_order_by(query, :estimated_duration, _asc),
+    do: order_by(query, [t], asc: t.estimated_duration, asc: t.title, asc: t.uuid)
+
+  defp task_order_by(query, _field, _dir),
+    do: order_by(query, [t], asc: t.position, asc: t.inserted_at, asc: t.uuid)
 
   @doc """
   Next available `position` for a new task — one past the current
@@ -350,8 +377,8 @@ defmodule PhoenixKitProjects.Projects do
           tasks: [Task.t()],
           deps_by_task: %{optional(String.t()) => [Task.t()]}
         }
-  def list_tasks_with_deps do
-    tasks = list_tasks()
+  def list_tasks_with_deps(opts \\ []) do
+    tasks = list_tasks(opts)
     %{tasks: tasks, deps_by_task: deps_by_task_map(tasks)}
   end
 
@@ -689,13 +716,47 @@ defmodule PhoenixKitProjects.Projects do
   def list_projects(opts \\ []) do
     archived = Keyword.get(opts, :archived, false)
     include_templates = Keyword.get(opts, :include_templates, false)
+    sort_by = Keyword.get(opts, :sort_by, :position)
+    sort_dir = Keyword.get(opts, :sort_dir, :asc)
 
     Project
     |> maybe_exclude_templates(include_templates)
     |> maybe_filter_archived(archived)
-    |> order_by([p], asc: p.position, asc: p.inserted_at, asc: p.uuid)
+    |> project_order_by(sort_by, sort_dir)
     |> repo().all()
   end
+
+  # Sort by `position` is the canonical "manual" mode and gets a
+  # multi-key tiebreak so the order is stable even when many rows
+  # share `position: 0` (newly inserted projects that haven't been
+  # touched by a drag). Other sorts get the same `inserted_at`/`uuid`
+  # tiebreaks for the same reason.
+  defp project_order_by(query, :position, _dir) do
+    order_by(query, [p], asc: p.position, asc: p.inserted_at, asc: p.uuid)
+  end
+
+  defp project_order_by(query, :name, :desc),
+    do: order_by(query, [p], desc: p.name, asc: p.inserted_at, asc: p.uuid)
+
+  defp project_order_by(query, :name, _asc),
+    do: order_by(query, [p], asc: p.name, asc: p.inserted_at, asc: p.uuid)
+
+  defp project_order_by(query, :inserted_at, :desc),
+    do: order_by(query, [p], desc: p.inserted_at, asc: p.uuid)
+
+  defp project_order_by(query, :inserted_at, _asc),
+    do: order_by(query, [p], asc: p.inserted_at, asc: p.uuid)
+
+  defp project_order_by(query, :updated_at, :desc),
+    do: order_by(query, [p], desc: p.updated_at, asc: p.uuid)
+
+  defp project_order_by(query, :updated_at, _asc),
+    do: order_by(query, [p], asc: p.updated_at, asc: p.uuid)
+
+  # Unknown sort field — fall back to position so an unrecognised
+  # query param doesn't blow up.
+  defp project_order_by(query, _field, _dir),
+    do: order_by(query, [p], asc: p.position, asc: p.inserted_at, asc: p.uuid)
 
   defp maybe_exclude_templates(q, true), do: q
   defp maybe_exclude_templates(q, _), do: where(q, [p], p.is_template == false)
