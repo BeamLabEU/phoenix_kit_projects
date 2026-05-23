@@ -2088,4 +2088,299 @@ defmodule PhoenixKitProjects.Projects do
     )
     |> repo().aggregate(:count, :uuid) == 0
   end
+
+  # ---------------------------------------------------------------
+  # Strategy-driven reorder (bulk "Sort by …" modal)
+  # ---------------------------------------------------------------
+  #
+  # DnD writes positions one drop at a time; the Reorder modal lets
+  # the user rewrite many positions at once by picking a strategy
+  # (name asc/desc, created asc/desc, reverse). Scope is either
+  # `:all` (rewrite every row contiguously) or a uuid list ("permute
+  # in place" — the selected rows keep the slots they already occupy,
+  # only the ordering within those slots changes). Non-selected rows
+  # never move under permute-in-place — that's the whole reason for
+  # the mode.
+
+  @type reorder_strategy ::
+          :name_asc | :name_desc | :created_asc | :created_desc | :reverse
+
+  @valid_project_strategies ~w(name_asc name_desc created_asc created_desc reverse)a
+  @valid_task_strategies ~w(name_asc name_desc created_asc created_desc reverse)a
+
+  @doc """
+  Bulk-reorder projects by a sort strategy.
+
+    * `scope = :all` — load every non-template project, sort by
+      strategy, write contiguous 1..N positions via the existing
+      `Reorder.reorder` primitive.
+    * `scope = [uuid, ...]` — load only those projects, validate they
+      are all non-templates, permute them within the slots they
+      already occupy (their existing `position` values). Untouched
+      projects are not re-indexed.
+
+  Returns `:ok`, `{:error, :wrong_scope}` if any uuid maps to a
+  template or unknown row, `{:error, :too_many_uuids}` past the cap,
+  or `{:error, term}` on DB failure. Audit row logged on success.
+  """
+  @spec reorder_projects_by(reorder_strategy(), :all | [uuid()], keyword()) ::
+          :ok | {:error, :wrong_scope | :too_many_uuids | term()}
+  def reorder_projects_by(strategy, scope, opts \\ [])
+
+  def reorder_projects_by(strategy, _scope, _opts) when strategy not in @valid_project_strategies,
+    do: {:error, :invalid_strategy}
+
+  def reorder_projects_by(strategy, :all, opts),
+    do: reorder_all_projects_in_scope(strategy, false, "project", opts)
+
+  def reorder_projects_by(strategy, uuids, opts) when is_list(uuids),
+    do: permute_projects_by(strategy, uuids, false, "project", opts)
+
+  @doc """
+  Bulk-reorder templates by strategy. Same shape as
+  `reorder_projects_by/3` but scoped to `is_template = true`.
+  """
+  @spec reorder_templates_by(reorder_strategy(), :all | [uuid()], keyword()) ::
+          :ok | {:error, :wrong_scope | :too_many_uuids | term()}
+  def reorder_templates_by(strategy, scope, opts \\ [])
+
+  def reorder_templates_by(strategy, _scope, _opts) when strategy not in @valid_project_strategies,
+    do: {:error, :invalid_strategy}
+
+  def reorder_templates_by(strategy, :all, opts),
+    do: reorder_all_projects_in_scope(strategy, true, "template", opts)
+
+  def reorder_templates_by(strategy, uuids, opts) when is_list(uuids),
+    do: permute_projects_by(strategy, uuids, true, "template", opts)
+
+  @doc """
+  Bulk-reorder tasks by strategy. Strategy `:name_asc` / `:name_desc`
+  sorts by `title` (tasks don't have a `name` field).
+  """
+  @spec reorder_tasks_by(reorder_strategy(), :all | [uuid()], keyword()) ::
+          :ok | {:error, :too_many_uuids | term()}
+  def reorder_tasks_by(strategy, scope, opts \\ [])
+
+  def reorder_tasks_by(strategy, _scope, _opts) when strategy not in @valid_task_strategies,
+    do: {:error, :invalid_strategy}
+
+  def reorder_tasks_by(strategy, :all, opts),
+    do: reorder_all_tasks(strategy, opts)
+
+  def reorder_tasks_by(strategy, uuids, opts) when is_list(uuids),
+    do: permute_tasks_by(strategy, uuids, opts)
+
+  # ---- :all path ------------------------------------------------
+
+  defp reorder_all_projects_in_scope(strategy, is_template?, kind, opts) do
+    rows =
+      Project
+      |> where([p], p.is_template == ^is_template?)
+      |> repo().all()
+
+    ordered_uuids = project_strategy_order(rows, strategy)
+
+    case write_project_positions(ordered_uuids) do
+      {:ok, count} ->
+        log_strategy_reorder(kind, strategy, :all, count, List.first(ordered_uuids), opts)
+        :ok
+
+      {:error, reason} ->
+        log_reorder_db_error(kind, ordered_uuids, opts)
+        {:error, reason}
+    end
+  end
+
+  defp reorder_all_tasks(strategy, opts) do
+    rows = repo().all(Task)
+    ordered_uuids = task_strategy_order(rows, strategy)
+
+    case write_task_positions(ordered_uuids) do
+      {:ok, count} ->
+        log_strategy_reorder("task", strategy, :all, count, List.first(ordered_uuids), opts)
+        :ok
+
+      {:error, reason} ->
+        log_reorder_db_error("task", ordered_uuids, opts)
+        {:error, reason}
+    end
+  end
+
+  # ---- permute-in-place path -----------------------------------
+
+  defp permute_projects_by(_strategy, uuids, _is_template?, kind, opts)
+       when is_list(uuids) and length(uuids) > @reorder_max_uuids do
+    log_reorder_rejected(kind, :too_many_uuids, length(uuids), opts)
+    {:error, :too_many_uuids}
+  end
+
+  defp permute_projects_by(strategy, uuids, is_template?, kind, opts) do
+    unique_uuids = dedupe_uuids(uuids)
+
+    case project_scope_check(is_template?, unique_uuids) do
+      :empty ->
+        :ok
+
+      :ok ->
+        rows =
+          Project
+          |> where([p], p.uuid in ^unique_uuids)
+          |> repo().all()
+
+        do_permute_in_place(
+          Project,
+          rows,
+          project_strategy_order(rows, strategy),
+          strategy,
+          kind,
+          opts
+        )
+
+      {:error, :wrong_scope} = err ->
+        log_reorder_rejected(kind, :wrong_scope, length(unique_uuids), opts)
+        err
+    end
+  end
+
+  defp permute_tasks_by(_strategy, uuids, opts)
+       when is_list(uuids) and length(uuids) > @reorder_max_uuids do
+    log_reorder_rejected("task", :too_many_uuids, length(uuids), opts)
+    {:error, :too_many_uuids}
+  end
+
+  defp permute_tasks_by(strategy, uuids, opts) do
+    unique_uuids = dedupe_uuids(uuids)
+
+    rows =
+      Task
+      |> where([t], t.uuid in ^unique_uuids)
+      |> repo().all()
+
+    do_permute_in_place(
+      Task,
+      rows,
+      task_strategy_order(rows, strategy),
+      strategy,
+      "task",
+      opts
+    )
+  end
+
+  defp do_permute_in_place(_schema, [], _ordered_uuids, _strategy, _kind, _opts), do: :ok
+  defp do_permute_in_place(_schema, [_], _ordered_uuids, _strategy, _kind, _opts), do: :ok
+
+  defp do_permute_in_place(schema, rows, ordered_uuids, strategy, kind, opts) do
+    # `slots` are the positions the selected rows currently occupy,
+    # in ascending order. `ordered_uuids` is the same set of uuids
+    # in their target order (per strategy). Zipping the two assigns
+    # each uuid to the i-th-smallest slot.
+    slots = rows |> Enum.map(& &1.position) |> Enum.sort()
+    pairs = Enum.zip(ordered_uuids, slots)
+
+    case write_permutation(schema, pairs) do
+      {:ok, count} ->
+        log_strategy_reorder(
+          kind,
+          strategy,
+          :selected,
+          count,
+          List.first(ordered_uuids),
+          opts
+        )
+
+        :ok
+
+      {:error, reason} ->
+        log_reorder_db_error(kind, ordered_uuids, opts)
+        {:error, reason}
+    end
+  end
+
+  # Two-phase write so the target positions never collide with the
+  # rows still holding their pre-write values. Phase 1 stamps
+  # negatives (no row currently holds a negative `position`, so the
+  # space is empty); phase 2 writes the real target positions.
+  defp write_permutation(schema, pairs) do
+    repo().transaction(fn ->
+      Enum.with_index(pairs, 1)
+      |> Enum.each(fn {{uuid, _pos}, idx} ->
+        from(r in schema, where: r.uuid == ^uuid)
+        |> repo().update_all(set: [position: -idx])
+      end)
+
+      Enum.reduce(pairs, 0, fn {uuid, pos}, total ->
+        {n, _} =
+          from(r in schema, where: r.uuid == ^uuid)
+          |> repo().update_all(set: [position: pos])
+
+        total + n
+      end)
+    end)
+  end
+
+  # ---- strategy implementations --------------------------------
+
+  defp project_strategy_order(rows, :reverse) do
+    rows |> Enum.sort_by(& &1.position) |> Enum.reverse() |> Enum.map(& &1.uuid)
+  end
+
+  defp project_strategy_order(rows, :name_asc) do
+    rows |> Enum.sort_by(&downcase_or_empty(&1.name)) |> Enum.map(& &1.uuid)
+  end
+
+  defp project_strategy_order(rows, :name_desc) do
+    rows |> Enum.sort_by(&downcase_or_empty(&1.name), :desc) |> Enum.map(& &1.uuid)
+  end
+
+  defp project_strategy_order(rows, :created_asc) do
+    rows |> Enum.sort_by(& &1.inserted_at, DateTime) |> Enum.map(& &1.uuid)
+  end
+
+  defp project_strategy_order(rows, :created_desc) do
+    rows |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime}) |> Enum.map(& &1.uuid)
+  end
+
+  defp task_strategy_order(rows, :reverse) do
+    rows |> Enum.sort_by(& &1.position) |> Enum.reverse() |> Enum.map(& &1.uuid)
+  end
+
+  defp task_strategy_order(rows, :name_asc) do
+    rows |> Enum.sort_by(&downcase_or_empty(&1.title)) |> Enum.map(& &1.uuid)
+  end
+
+  defp task_strategy_order(rows, :name_desc) do
+    rows |> Enum.sort_by(&downcase_or_empty(&1.title), :desc) |> Enum.map(& &1.uuid)
+  end
+
+  defp task_strategy_order(rows, :created_asc) do
+    rows |> Enum.sort_by(& &1.inserted_at, DateTime) |> Enum.map(& &1.uuid)
+  end
+
+  defp task_strategy_order(rows, :created_desc) do
+    rows |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime}) |> Enum.map(& &1.uuid)
+  end
+
+  defp downcase_or_empty(nil), do: ""
+  defp downcase_or_empty(s) when is_binary(s), do: String.downcase(s)
+
+  defp log_strategy_reorder(kind, strategy, scope, count, first_uuid, opts) do
+    extra = Keyword.get(opts, :metadata, %{})
+
+    log_activity(%{
+      action: "#{kind}.bulk_reordered",
+      mode: "manual",
+      actor_uuid: opts[:actor_uuid],
+      resource_type: kind,
+      resource_uuid: first_uuid,
+      metadata:
+        Map.merge(
+          %{
+            "count" => count,
+            "strategy" => Atom.to_string(strategy),
+            "scope" => Atom.to_string(scope)
+          },
+          extra
+        )
+    })
+  end
 end

@@ -30,7 +30,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         page_title: gettext("Projects"),
         wrapper_class: wrapper_class,
         show: "visible",
-        projects: []
+        projects: [],
+        bulk_enabled?: true,
+        selected_uuids: MapSet.new(),
+        show_reorder_modal: false
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.attach_open_embed_hook()
@@ -59,7 +62,84 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   @impl true
   def handle_event("filter", %{"show" => s}, socket) do
-    {:noreply, socket |> assign(show: s) |> load_projects()}
+    # Selection is scoped to the current view — switching filters
+    # clears it so a user can't accidentally apply a bulk action to
+    # rows they can no longer see.
+    {:noreply,
+     socket
+     |> assign(show: s, selected_uuids: MapSet.new())
+     |> load_projects()}
+  end
+
+  def handle_event("toggle_select", %{"uuid" => uuid}, socket) do
+    selected =
+      if MapSet.member?(socket.assigns.selected_uuids, uuid) do
+        MapSet.delete(socket.assigns.selected_uuids, uuid)
+      else
+        MapSet.put(socket.assigns.selected_uuids, uuid)
+      end
+
+    {:noreply, assign(socket, selected_uuids: selected)}
+  end
+
+  def handle_event("toggle_select_all", _params, socket) do
+    visible_uuids = Enum.map(socket.assigns.projects, & &1.uuid)
+    all_selected? = MapSet.size(socket.assigns.selected_uuids) == length(visible_uuids)
+
+    selected =
+      if all_selected? do
+        MapSet.new()
+      else
+        MapSet.new(visible_uuids)
+      end
+
+    {:noreply, assign(socket, selected_uuids: selected)}
+  end
+
+  def handle_event("clear_selection", _params, socket) do
+    {:noreply, assign(socket, selected_uuids: MapSet.new())}
+  end
+
+  def handle_event("open_reorder_modal", _params, socket) do
+    {:noreply, assign(socket, show_reorder_modal: true)}
+  end
+
+  def handle_event("close_reorder_modal", _params, socket) do
+    {:noreply, assign(socket, show_reorder_modal: false)}
+  end
+
+  def handle_event("apply_reorder", %{"strategy" => strategy_str}, socket) do
+    strategy = String.to_existing_atom(strategy_str)
+
+    scope =
+      case MapSet.size(socket.assigns.selected_uuids) do
+        0 -> :all
+        _ -> MapSet.to_list(socket.assigns.selected_uuids)
+      end
+
+    case Projects.reorder_projects_by(strategy, scope,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      :ok ->
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Projects reordered."))
+         |> assign(show_reorder_modal: false)
+         |> load_projects()}
+
+      {:error, :invalid_strategy} ->
+        {:noreply, put_flash(socket, :error, gettext("Unknown reorder strategy."))}
+
+      {:error, :wrong_scope} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Selection no longer valid; please reselect."))
+         |> assign(show_reorder_modal: false, selected_uuids: MapSet.new())
+         |> load_projects()}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not reorder projects."))}
+    end
   end
 
   def handle_event("reorder_projects", %{"ordered_ids" => ordered_ids} = params, socket)
@@ -164,6 +244,24 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         </.form>
       </div>
 
+      <%!-- Bulk toolbar: opt-in via `@bulk_enabled?`. Reorder-all is
+           always available while the table is non-empty (the modal
+           treats "0 selected" as "rewrite everything"). Bulk delete
+           is suppressed for now — per-row Delete still lives in the
+           row menu. --%>
+      <.bulk_actions_toolbar
+        :if={@bulk_enabled? and @projects != []}
+        selected_count={MapSet.size(@selected_uuids)}
+        total_count={length(@projects)}
+        all_selected?={MapSet.size(@selected_uuids) == length(@projects)}
+        on_toggle_select_all="toggle_select_all"
+        on_open_reorder="open_reorder_modal"
+        on_bulk_delete="bulk_delete"
+        on_clear_selection="clear_selection"
+        noun_plural={gettext("projects")}
+        allow_delete={false}
+      />
+
       <%= if @projects == [] do %>
         <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects match.")} />
       <% else %>
@@ -181,6 +279,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         <.table_default id="projects-list" size="sm">
           <.table_default_header>
             <.table_default_row>
+              <.table_default_header_cell :if={@bulk_enabled?} class="w-8" />
               <.table_default_header_cell :if={draggable?} class="w-8" />
               <.table_default_header_cell>{gettext("Name")}</.table_default_header_cell>
               <.table_default_header_cell>{gettext("Status")}</.table_default_header_cell>
@@ -196,6 +295,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             data-sortable-handle=".pk-drag-handle"
           >
             <.table_default_row :for={p <- @projects} class="sortable-item" data-id={p.uuid}>
+              <.table_default_cell :if={@bulk_enabled?} class="w-8">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  checked={MapSet.member?(@selected_uuids, p.uuid)}
+                  phx-click="toggle_select"
+                  phx-value-uuid={p.uuid}
+                />
+              </.table_default_cell>
               <.table_default_cell
                 :if={draggable?}
                 class="pk-drag-handle cursor-grab active:cursor-grabbing text-base-content/40"
@@ -243,6 +351,23 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           </tbody>
         </.table_default>
       <% end %>
+
+      <.reorder_modal
+        show={@show_reorder_modal}
+        on_close="close_reorder_modal"
+        on_apply="apply_reorder"
+        selected_count={MapSet.size(@selected_uuids)}
+        total_count={length(@projects)}
+        strategies={[
+          {"name_asc", gettext("A → Z by name")},
+          {"name_desc", gettext("Z → A by name")},
+          {"created_desc", gettext("Newest first")},
+          {"created_asc", gettext("Oldest first")},
+          {"reverse", gettext("Reverse current order")}
+        ]}
+        noun_singular={gettext("project")}
+        noun_plural={gettext("projects")}
+      />
     </div>
     """
   end
