@@ -108,8 +108,20 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     {:noreply, assign(socket, show_reorder_modal: false)}
   end
 
-  def handle_event("apply_reorder", %{"strategy" => strategy_str}, socket) do
-    strategy = String.to_existing_atom(strategy_str)
+  # Map gates atom coercion: a crafted payload can't smuggle in an
+  # unknown atom (which would crash `String.to_existing_atom` on a
+  # garbage string and otherwise leak a fresh atom slot).
+  @reorder_strategies %{
+    "name_asc" => :name_asc,
+    "name_desc" => :name_desc,
+    "created_asc" => :created_asc,
+    "created_desc" => :created_desc,
+    "reverse" => :reverse
+  }
+
+  def handle_event("apply_reorder", %{"strategy" => strategy_str}, socket)
+      when is_map_key(@reorder_strategies, strategy_str) do
+    strategy = Map.fetch!(@reorder_strategies, strategy_str)
 
     scope =
       case MapSet.size(socket.assigns.selected_uuids) do
@@ -127,9 +139,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
          |> assign(show_reorder_modal: false)
          |> load_projects()}
 
-      {:error, :invalid_strategy} ->
-        {:noreply, put_flash(socket, :error, gettext("Unknown reorder strategy."))}
-
       {:error, :wrong_scope} ->
         {:noreply,
          socket
@@ -137,9 +146,27 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
          |> assign(show_reorder_modal: false, selected_uuids: MapSet.new())
          |> load_projects()}
 
+      {:error, :duplicate_positions} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext(
+             "Selected rows share positions. Apply \"Reorder all\" first to normalise."
+           )
+         )}
+
       {:error, _reason} ->
         {:noreply, put_flash(socket, :error, gettext("Could not reorder projects."))}
     end
+  end
+
+  # Empty submit (no radio chosen) or a forged strategy string. The
+  # form has `required` on the radios so this is the fallback for
+  # defense in depth.
+  def handle_event("apply_reorder", _params, socket) do
+    {:noreply,
+     put_flash(socket, :error, gettext("Pick a strategy before applying."))}
   end
 
   def handle_event("reorder_projects", %{"ordered_ids" => ordered_ids} = params, socket)

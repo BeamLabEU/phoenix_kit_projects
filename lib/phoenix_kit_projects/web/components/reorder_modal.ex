@@ -80,6 +80,7 @@ defmodule PhoenixKitProjects.Web.Components.ReorderModal do
               type="radio"
               name="strategy"
               value={value}
+              required
               class="radio radio-sm radio-primary"
             />
             <span class="text-sm">{label}</span>

@@ -2275,24 +2275,38 @@ defmodule PhoenixKitProjects.Projects do
     # in their target order (per strategy). Zipping the two assigns
     # each uuid to the i-th-smallest slot.
     slots = rows |> Enum.map(& &1.position) |> Enum.sort()
-    pairs = Enum.zip(ordered_uuids, slots)
 
-    case write_permutation(schema, pairs) do
-      {:ok, count} ->
-        log_strategy_reorder(
-          kind,
-          strategy,
-          :selected,
-          count,
-          List.first(ordered_uuids),
-          opts
-        )
+    cond do
+      # Untouched rows (DnD-default `position: 0`) collide here: two
+      # selected rows with the same current position would receive the
+      # same target position in phase 2 and one row's update would
+      # silently overwrite the other's intent. Surface as
+      # `:duplicate_positions` so the LV can direct the user to
+      # "Reorder all" first (which normalises every row to 1..N).
+      slots != Enum.uniq(slots) ->
+        log_reorder_rejected(kind, :duplicate_positions, length(ordered_uuids), opts)
+        {:error, :duplicate_positions}
 
-        :ok
+      true ->
+        pairs = Enum.zip(ordered_uuids, slots)
 
-      {:error, reason} ->
-        log_reorder_db_error(kind, ordered_uuids, opts)
-        {:error, reason}
+        case write_permutation(schema, pairs) do
+          {:ok, count} ->
+            log_strategy_reorder(
+              kind,
+              strategy,
+              :selected,
+              count,
+              List.first(ordered_uuids),
+              opts
+            )
+
+            :ok
+
+          {:error, reason} ->
+            log_reorder_db_error(kind, ordered_uuids, opts)
+            {:error, reason}
+        end
     end
   end
 
@@ -2300,15 +2314,23 @@ defmodule PhoenixKitProjects.Projects do
   # rows still holding their pre-write values. Phase 1 stamps
   # negatives (no row currently holds a negative `position`, so the
   # space is empty); phase 2 writes the real target positions.
+  #
+  # Both phases write in `uuid`-sorted order so two concurrent
+  # permute-in-place reorders take row locks in the same deterministic
+  # order and can't deadlock against each other (each session would
+  # otherwise lock its strategy's first row, then wait on the other's
+  # — classic ABBA).
   defp write_permutation(schema, pairs) do
+    write_order = Enum.sort_by(pairs, fn {uuid, _pos} -> uuid end)
+
     repo().transaction(fn ->
-      Enum.with_index(pairs, 1)
+      Enum.with_index(write_order, 1)
       |> Enum.each(fn {{uuid, _pos}, idx} ->
         from(r in schema, where: r.uuid == ^uuid)
         |> repo().update_all(set: [position: -idx])
       end)
 
-      Enum.reduce(pairs, 0, fn {uuid, pos}, total ->
+      Enum.reduce(write_order, 0, fn {uuid, pos}, total ->
         {n, _} =
           from(r in schema, where: r.uuid == ^uuid)
           |> repo().update_all(set: [position: pos])
@@ -2363,11 +2385,15 @@ defmodule PhoenixKitProjects.Projects do
   defp downcase_or_empty(nil), do: ""
   defp downcase_or_empty(s) when is_binary(s), do: String.downcase(s)
 
+  # Bulk strategy reorders share the same action name as DnD reorders
+  # (`<kind>.reordered`) so downstream readers (admin activity feed,
+  # exports) can treat them as one event class. The `mechanism` /
+  # `strategy` / `scope` metadata distinguishes them when needed.
   defp log_strategy_reorder(kind, strategy, scope, count, first_uuid, opts) do
     extra = Keyword.get(opts, :metadata, %{})
 
     log_activity(%{
-      action: "#{kind}.bulk_reordered",
+      action: "#{kind}.reordered",
       mode: "manual",
       actor_uuid: opts[:actor_uuid],
       resource_type: kind,
@@ -2376,6 +2402,7 @@ defmodule PhoenixKitProjects.Projects do
         Map.merge(
           %{
             "count" => count,
+            "mechanism" => "strategy",
             "strategy" => Atom.to_string(strategy),
             "scope" => Atom.to_string(scope)
           },
