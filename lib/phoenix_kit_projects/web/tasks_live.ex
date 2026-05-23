@@ -46,7 +46,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         groups: [],
         standalone: [],
         bulk_enabled?: true,
-        selected_uuids: MapSet.new(),
+        captured_uuids: [],
         show_reorder_modal: false
       )
       |> WebHelpers.assign_embed_state(session)
@@ -100,52 +100,24 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   @impl true
   def handle_event("set_view", %{"view" => view}, socket) when view in @valid_views do
-    # Selection is scoped to the list view (groups view doesn't have a
-    # bulk toolbar). Clear on switch so a stale selection can't follow
-    # the user into a different render path.
-    {:noreply,
-     socket
-     |> assign(view: view, selected_uuids: MapSet.new())
-     |> load_tasks()}
+    # Switching view re-renders the table; the BulkSelectScope hook
+    # re-derives selection from the (fresh) DOM checkboxes — no
+    # server-side bookkeeping required.
+    {:noreply, socket |> assign(view: view) |> load_tasks()}
   end
 
   def handle_event("set_view", _params, socket), do: {:noreply, socket}
 
-  def handle_event("toggle_select", %{"uuid" => uuid}, socket) do
-    selected =
-      if MapSet.member?(socket.assigns.selected_uuids, uuid) do
-        MapSet.delete(socket.assigns.selected_uuids, uuid)
-      else
-        MapSet.put(socket.assigns.selected_uuids, uuid)
-      end
-
-    {:noreply, assign(socket, selected_uuids: selected)}
-  end
-
-  def handle_event("toggle_select_all", _params, socket) do
-    visible_uuids = Enum.map(socket.assigns.tasks, & &1.uuid)
-    all_selected? = MapSet.size(socket.assigns.selected_uuids) == length(visible_uuids)
-
-    selected =
-      if all_selected? do
-        MapSet.new()
-      else
-        MapSet.new(visible_uuids)
-      end
-
-    {:noreply, assign(socket, selected_uuids: selected)}
-  end
-
-  def handle_event("clear_selection", _params, socket) do
-    {:noreply, assign(socket, selected_uuids: MapSet.new())}
-  end
-
-  def handle_event("open_reorder_modal", _params, socket) do
-    {:noreply, assign(socket, show_reorder_modal: true)}
+  # The bulk toolbar's Reorder button pushes this event with the
+  # currently-selected UUIDs (gathered from the DOM by the
+  # BulkSelectScope hook). Empty list = no selection = "Reorder all".
+  def handle_event("open_reorder_modal", params, socket) do
+    uuids = sanitize_uuids(params)
+    {:noreply, assign(socket, show_reorder_modal: true, captured_uuids: uuids)}
   end
 
   def handle_event("close_reorder_modal", _params, socket) do
-    {:noreply, assign(socket, show_reorder_modal: false)}
+    {:noreply, assign(socket, show_reorder_modal: false, captured_uuids: [])}
   end
 
   # Map gates atom coercion — see projects_live for the same shape.
@@ -162,9 +134,9 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     strategy = Map.fetch!(@reorder_strategies, strategy_str)
 
     scope =
-      case MapSet.size(socket.assigns.selected_uuids) do
-        0 -> :all
-        _ -> MapSet.to_list(socket.assigns.selected_uuids)
+      case socket.assigns.captured_uuids do
+        [] -> :all
+        uuids -> uuids
       end
 
     case Projects.reorder_tasks_by(strategy, scope, actor_uuid: Activity.actor_uuid(socket)) do
@@ -172,7 +144,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         {:noreply,
          socket
          |> put_flash(:info, gettext("Tasks reordered."))
-         |> assign(show_reorder_modal: false)
+         |> assign(show_reorder_modal: false, captured_uuids: [])
          |> load_tasks()}
 
       {:error, :duplicate_positions} ->
@@ -256,6 +228,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         end
     end
   end
+
+  defp sanitize_uuids(%{"uuids" => uuids}) when is_list(uuids) do
+    Enum.filter(uuids, &is_binary/1)
+  end
+
+  defp sanitize_uuids(_), do: []
 
   defp format_duration(task) do
     PhoenixKitProjects.Schemas.Task.format_duration(
@@ -437,98 +415,23 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             </:cta>
           </.empty_state>
         <% else %>
-          <%!-- Bulk toolbar: opt-in via `@bulk_enabled?`. Only renders
-               in list view (groups view has no table). --%>
-          <.bulk_actions_toolbar
+          <.bulk_select_scope
             :if={@bulk_enabled?}
-            selected_count={MapSet.size(@selected_uuids)}
+            id="tasks-bulk-scope"
             total_count={length(@tasks)}
-            on_open_reorder="open_reorder_modal"
-            on_bulk_delete="bulk_delete"
-            on_clear_selection="clear_selection"
-            noun_plural={gettext("tasks")}
-            allow_delete={false}
-          />
+            class="flex flex-col gap-3"
+          >
+            <.bulk_actions_toolbar
+              on_open_reorder="open_reorder_modal"
+              noun_singular={gettext("task")}
+              noun_plural={gettext("tasks")}
+              allow_delete={false}
+            />
 
-          <%!-- DnD reorder is wired only on the list view (groups are
-               derived from the dep graph and don't have a stable
-               manual order). Mirrors catalogue's `<.table_default>` +
-               hand-wired `<tbody>` DnD pattern. --%>
-          <.table_default id="tasks-list" size="sm">
-            <.table_default_header>
-              <.table_default_row>
-                <.bulk_select_header_cell
-                  :if={@bulk_enabled?}
-                  id="tasks-select-all"
-                  selected_count={MapSet.size(@selected_uuids)}
-                  total_count={length(@tasks)}
-                  on_toggle="toggle_select_all"
-                  aria_label={gettext("Select all tasks")}
-                />
-                <.table_default_header_cell class="w-8" />
-                <.table_default_header_cell>{gettext("Title")}</.table_default_header_cell>
-                <.table_default_header_cell>{gettext("Duration")}</.table_default_header_cell>
-                <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
-              </.table_default_row>
-            </.table_default_header>
-            <tbody
-              id="tasks-list-body"
-              phx-hook="SortableGrid"
-              data-sortable="true"
-              data-sortable-event="reorder_tasks"
-              data-sortable-items=".sortable-item"
-              data-sortable-handle=".pk-drag-handle"
-            >
-              <.table_default_row :for={task <- @tasks} class="sortable-item" data-id={task.uuid}>
-                <.bulk_select_cell
-                  :if={@bulk_enabled?}
-                  value={task.uuid}
-                  checked={MapSet.member?(@selected_uuids, task.uuid)}
-                  on_toggle="toggle_select"
-                />
-                <.table_default_cell
-                  class="pk-drag-handle cursor-grab active:cursor-grabbing text-base-content/40"
-                  title={gettext("Drag to reorder")}
-                >
-                  <.icon name="hero-bars-3" class="w-4 h-4" />
-                </.table_default_cell>
-                <.table_default_cell class="font-medium">
-                  {TaskSchema.localized_title(task, lang)}
-                  <% desc = TaskSchema.localized_description(task, lang) %>
-                  <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md font-normal">{desc}</div>
-                  <% deps = Map.get(@deps_by_task, task.uuid, []) %>
-                  <div :if={deps != []} class="flex flex-wrap gap-1 mt-1.5">
-                    <span :for={dep <- deps} class="badge badge-outline badge-xs gap-1 font-normal">
-                      <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                      {TaskSchema.localized_title(dep, lang)}
-                    </span>
-                  </div>
-                </.table_default_cell>
-                <.table_default_cell>{format_duration(task)}</.table_default_cell>
-                <.table_default_cell class="text-right whitespace-nowrap">
-                  <.table_row_menu id={"task-menu-#{task.uuid}"}>
-                    <.smart_menu_link
-                      navigate={Paths.edit_task(task.uuid)}
-                      emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
-                      embed_mode={@embed_mode}
-                      icon="hero-pencil"
-                      label={gettext("Edit")}
-                    />
-                    <.table_row_menu_divider />
-                    <.table_row_menu_button
-                      phx-click="delete"
-                      phx-value-uuid={task.uuid}
-                      phx-disable-with={gettext("Deleting…")}
-                      data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, lang))}
-                      icon="hero-trash"
-                      label={gettext("Delete")}
-                      variant="error"
-                    />
-                  </.table_row_menu>
-                </.table_default_cell>
-              </.table_default_row>
-            </tbody>
-          </.table_default>
+            {render_tasks_table(assigns, lang)}
+          </.bulk_select_scope>
+
+          {if not @bulk_enabled?, do: render_tasks_table(assigns, lang)}
         <% end %>
       <% end %>
 
@@ -536,7 +439,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         show={@show_reorder_modal}
         on_close="close_reorder_modal"
         on_apply="apply_reorder"
-        selected_count={MapSet.size(@selected_uuids)}
+        selected_count={length(@captured_uuids)}
         total_count={length(@tasks)}
         strategies={[
           {"name_asc", gettext("A → Z by title")},
@@ -549,6 +452,83 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         noun_plural={gettext("tasks")}
       />
     </div>
+    """
+  end
+
+  defp render_tasks_table(assigns, lang) do
+    assigns = assign(assigns, lang: lang)
+
+    ~H"""
+    <%!-- DnD reorder is wired only on the list view (groups are
+         derived from the dep graph and don't have a stable manual
+         order). Mirrors catalogue's hand-wired `<tbody>` DnD pattern. --%>
+    <.table_default id="tasks-list" size="sm">
+      <.table_default_header>
+        <.table_default_row>
+          <.bulk_select_header_cell
+            :if={@bulk_enabled?}
+            id="tasks-select-all"
+            aria_label={gettext("Select all tasks")}
+          />
+          <.table_default_header_cell class="w-8" />
+          <.table_default_header_cell>{gettext("Title")}</.table_default_header_cell>
+          <.table_default_header_cell>{gettext("Duration")}</.table_default_header_cell>
+          <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
+        </.table_default_row>
+      </.table_default_header>
+      <tbody
+        id="tasks-list-body"
+        phx-hook="SortableGrid"
+        data-sortable="true"
+        data-sortable-event="reorder_tasks"
+        data-sortable-items=".sortable-item"
+        data-sortable-handle=".pk-drag-handle"
+      >
+        <.table_default_row :for={task <- @tasks} class="sortable-item" data-id={task.uuid}>
+          <.bulk_select_cell :if={@bulk_enabled?} value={task.uuid} />
+          <.table_default_cell
+            class="pk-drag-handle cursor-grab active:cursor-grabbing text-base-content/40"
+            title={gettext("Drag to reorder")}
+          >
+            <.icon name="hero-bars-3" class="w-4 h-4" />
+          </.table_default_cell>
+          <.table_default_cell class="font-medium">
+            {TaskSchema.localized_title(task, @lang)}
+            <% desc = TaskSchema.localized_description(task, @lang) %>
+            <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md font-normal">{desc}</div>
+            <% deps = Map.get(@deps_by_task, task.uuid, []) %>
+            <div :if={deps != []} class="flex flex-wrap gap-1 mt-1.5">
+              <span :for={dep <- deps} class="badge badge-outline badge-xs gap-1 font-normal">
+                <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
+                {TaskSchema.localized_title(dep, @lang)}
+              </span>
+            </div>
+          </.table_default_cell>
+          <.table_default_cell>{format_duration(task)}</.table_default_cell>
+          <.table_default_cell class="text-right whitespace-nowrap">
+            <.table_row_menu id={"task-menu-#{task.uuid}"}>
+              <.smart_menu_link
+                navigate={Paths.edit_task(task.uuid)}
+                emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
+                embed_mode={@embed_mode}
+                icon="hero-pencil"
+                label={gettext("Edit")}
+              />
+              <.table_row_menu_divider />
+              <.table_row_menu_button
+                phx-click="delete"
+                phx-value-uuid={task.uuid}
+                phx-disable-with={gettext("Deleting…")}
+                data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, @lang))}
+                icon="hero-trash"
+                label={gettext("Delete")}
+                variant="error"
+              />
+            </.table_row_menu>
+          </.table_default_cell>
+        </.table_default_row>
+      </tbody>
+    </.table_default>
     """
   end
 end
