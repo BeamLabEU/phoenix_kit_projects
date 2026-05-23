@@ -432,21 +432,16 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                derived from the dep graph and don't have a stable
                manual order). Mirrors catalogue's `<.table_default>` +
                hand-wired `<tbody>` DnD pattern. --%>
-          <% selected_n = MapSet.size(@selected_uuids) %>
-          <% total_n = length(@tasks) %>
           <.table_default id="tasks-list" size="sm">
             <.table_default_header>
               <.table_default_row>
                 <.table_default_header_cell :if={@bulk_enabled?} class="w-8">
-                  <input
-                    type="checkbox"
-                    class="checkbox checkbox-sm"
-                    checked={selected_n > 0 and selected_n == total_n}
-                    data-indeterminate={to_string(selected_n > 0 and selected_n < total_n)}
-                    phx-hook="PkCheckboxIndeterminate"
+                  <.bulk_select_header_checkbox
                     id="tasks-select-all"
-                    phx-click="toggle_select_all"
-                    aria-label={gettext("Select all tasks")}
+                    selected_count={MapSet.size(@selected_uuids)}
+                    total_count={length(@tasks)}
+                    on_toggle="toggle_select_all"
+                    aria_label={gettext("Select all tasks")}
                   />
                 </.table_default_header_cell>
                 <.table_default_header_cell class="w-8" />

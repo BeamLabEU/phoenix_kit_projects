@@ -1,15 +1,35 @@
 defmodule PhoenixKitProjects.Web.Components.BulkActionsToolbar do
   @moduledoc """
-  Toolbar that appears above a bulk-selectable table. Shows the current
-  selection count + actions (Reorder, Delete, Clear). The select-all
-  control lives in the table header (the empty checkbox column cell),
-  not here — convention for admin tables, also keeps the toolbar simple.
+  Bulk-select toolkit for admin tables. Two function components:
 
-  When `selected_count == 0`, the toolbar still renders so the
-  "Reorder all" affordance is reachable without first selecting
-  anything. Delete + Clear only appear with a non-empty selection.
+    * `<.bulk_select_header_checkbox>` — goes in the table header's
+      checkbox column. Cycles unchecked → indeterminate (partial) →
+      checked (all). Same `phx-click` event drives all transitions; the
+      consumer LV's handler picks "all" or "none" based on current count.
+
+    * `<.bulk_actions_toolbar>` — floating toolbar above the table.
+      Shows the selection count + actions (Reorder, Delete, Clear).
+      Renders only when bulk mode is engaged on the consumer side.
+
+  Both are projects-local for now; lift to core when a third consumer
+  module shows up.
 
   ## Example
+
+      <.table_default_header>
+        <.table_default_row>
+          <.table_default_header_cell class="w-8">
+            <.bulk_select_header_checkbox
+              id="projects-select-all"
+              selected_count={MapSet.size(@selected_uuids)}
+              total_count={length(@projects)}
+              on_toggle="toggle_select_all"
+              aria_label={gettext("Select all projects")}
+            />
+          </.table_default_header_cell>
+          ...
+        </.table_default_row>
+      </.table_default_header>
 
       <.bulk_actions_toolbar
         selected_count={MapSet.size(@selected_uuids)}
@@ -25,6 +45,39 @@ defmodule PhoenixKitProjects.Web.Components.BulkActionsToolbar do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
+
+  @doc """
+  Header checkbox for a bulk-selectable table. Reflects the current
+  selection as one of three states via daisyUI's `checkbox` + native
+  `indeterminate` (set by the `PkCheckboxIndeterminate` JS hook):
+
+    * 0 selected      → unchecked
+    * 0 < N < total   → indeterminate
+    * N == total      → checked
+
+  Clicking it always emits `on_toggle`; the LV handler decides whether
+  to select-all or clear based on the current state.
+  """
+  attr :id, :string, required: true
+  attr :selected_count, :integer, required: true
+  attr :total_count, :integer, required: true
+  attr :on_toggle, :string, required: true
+  attr :aria_label, :string, default: "Toggle select all"
+
+  def bulk_select_header_checkbox(assigns) do
+    ~H"""
+    <input
+      type="checkbox"
+      id={@id}
+      class="checkbox checkbox-sm"
+      checked={@selected_count > 0 and @selected_count == @total_count}
+      data-indeterminate={to_string(@selected_count > 0 and @selected_count < @total_count)}
+      phx-hook="PkCheckboxIndeterminate"
+      phx-click={@on_toggle}
+      aria-label={@aria_label}
+    />
+    """
+  end
 
   attr :selected_count, :integer, required: true
   attr :total_count, :integer, required: true

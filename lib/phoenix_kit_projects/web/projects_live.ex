@@ -275,20 +275,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         <% lang = L10n.current_content_lang() %>
         <% draggable? = @show == "visible" %>
         <.table_default id="projects-list" size="sm">
-          <% selected_n = MapSet.size(@selected_uuids) %>
-          <% total_n = length(@projects) %>
           <.table_default_header>
             <.table_default_row>
               <.table_default_header_cell :if={@bulk_enabled?} class="w-8">
-                <input
-                  type="checkbox"
-                  class="checkbox checkbox-sm"
-                  checked={selected_n > 0 and selected_n == total_n}
-                  data-indeterminate={to_string(selected_n > 0 and selected_n < total_n)}
-                  phx-hook="PkCheckboxIndeterminate"
+                <.bulk_select_header_checkbox
                   id="projects-select-all"
-                  phx-click="toggle_select_all"
-                  aria-label={gettext("Select all projects")}
+                  selected_count={MapSet.size(@selected_uuids)}
+                  total_count={length(@projects)}
+                  on_toggle="toggle_select_all"
+                  aria_label={gettext("Select all projects")}
                 />
               </.table_default_header_cell>
               <.table_default_header_cell :if={draggable?} class="w-8" />
