@@ -155,10 +155,29 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         _ -> :asc
       end
 
-    {:noreply,
-     socket
-     |> assign(sort_by: field, sort_dir: dir)
-     |> load_tasks()}
+    {:noreply, apply_sort(socket, field, dir)}
+  end
+
+  def handle_event("toggle_sort", %{"by" => field_str}, socket)
+      when field_str in @sort_field_strs do
+    field = String.to_existing_atom(field_str)
+
+    dir =
+      if field == socket.assigns.sort_by do
+        if socket.assigns.sort_dir == :asc, do: :desc, else: :asc
+      else
+        :asc
+      end
+
+    {:noreply, apply_sort(socket, field, dir)}
+  end
+
+  def handle_event("toggle_sort", _params, socket), do: {:noreply, socket}
+
+  defp apply_sort(socket, field, dir) do
+    socket
+    |> assign(sort_by: field, sort_dir: dir)
+    |> load_tasks()
   end
 
   # Map gates atom coercion — see projects_live for the same shape.
@@ -524,8 +543,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             aria_label={gettext("Select all tasks")}
           />
           <.table_default_header_cell :if={@draggable?} class="w-8" />
-          <.table_default_header_cell>{gettext("Title")}</.table_default_header_cell>
-          <.table_default_header_cell>{gettext("Duration")}</.table_default_header_cell>
+          <.sort_header_cell field={:title} sort={%{by: @sort_by, dir: @sort_dir}}>
+            {gettext("Title")}
+          </.sort_header_cell>
+          <.sort_header_cell field={:estimated_duration} sort={%{by: @sort_by, dir: @sort_dir}}>
+            {gettext("Duration")}
+          </.sort_header_cell>
           <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
         </.table_default_row>
       </.table_default_header>

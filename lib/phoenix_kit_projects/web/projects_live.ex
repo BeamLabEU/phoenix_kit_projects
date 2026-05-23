@@ -112,10 +112,31 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         _ -> :asc
       end
 
-    {:noreply,
-     socket
-     |> assign(sort_by: field, sort_dir: dir)
-     |> load_projects()}
+    {:noreply, apply_sort(socket, field, dir)}
+  end
+
+  # Header-click sort: clicking the active column flips direction,
+  # clicking a different column switches to it with :asc.
+  def handle_event("toggle_sort", %{"by" => field_str}, socket)
+      when field_str in @sort_field_strs do
+    field = String.to_existing_atom(field_str)
+
+    dir =
+      if field == socket.assigns.sort_by do
+        if socket.assigns.sort_dir == :asc, do: :desc, else: :asc
+      else
+        :asc
+      end
+
+    {:noreply, apply_sort(socket, field, dir)}
+  end
+
+  def handle_event("toggle_sort", _params, socket), do: {:noreply, socket}
+
+  defp apply_sort(socket, field, dir) do
+    socket
+    |> assign(sort_by: field, sort_dir: dir)
+    |> load_projects()
   end
 
   # The bulk toolbar's Reorder button pushes this event with the
@@ -377,7 +398,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             aria_label={gettext("Select all projects")}
           />
           <.table_default_header_cell :if={@draggable?} class="w-8" />
-          <.table_default_header_cell>{gettext("Name")}</.table_default_header_cell>
+          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}}>
+            {gettext("Name")}
+          </.sort_header_cell>
           <.table_default_header_cell>{gettext("Status")}</.table_default_header_cell>
           <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
         </.table_default_row>
