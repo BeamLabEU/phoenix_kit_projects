@@ -1,29 +1,24 @@
 defmodule PhoenixKitProjects.Web.Components.BulkActionsToolbar do
   @moduledoc """
-  Sticky toolbar that appears above a bulk-selectable table, showing
-  selection state + actions (Reorder, Delete, Clear).
+  Toolbar that appears above a bulk-selectable table. Shows the current
+  selection count + actions (Reorder, Delete, Clear). The select-all
+  control lives in the table header (the empty checkbox column cell),
+  not here — convention for admin tables, also keeps the toolbar simple.
 
-  The toolbar is always rendered when `bulk_enabled?` is true so the
-  user can engage bulk mode by checking the select-all box. When no
-  rows are selected, only the select-all checkbox + Reorder-all
-  button are interactive (Delete is disabled). When rows are
-  selected, the count appears and Delete enables.
-
-  Actions are fixed for projects' three list views (Reorder, Delete,
-  Clear). If a consumer needs different actions later, add an
-  `:actions` slot.
+  When `selected_count == 0`, the toolbar still renders so the
+  "Reorder all" affordance is reachable without first selecting
+  anything. Delete + Clear only appear with a non-empty selection.
 
   ## Example
 
       <.bulk_actions_toolbar
         selected_count={MapSet.size(@selected_uuids)}
         total_count={length(@projects)}
-        all_selected?={MapSet.size(@selected_uuids) == length(@projects)}
-        on_toggle_select_all="toggle_select_all"
         on_open_reorder="open_reorder_modal"
         on_bulk_delete="bulk_delete"
         on_clear_selection="clear_selection"
         noun_plural={gettext("projects")}
+        allow_delete={false}
       />
   """
   use Phoenix.Component
@@ -33,9 +28,7 @@ defmodule PhoenixKitProjects.Web.Components.BulkActionsToolbar do
 
   attr :selected_count, :integer, required: true
   attr :total_count, :integer, required: true
-  attr :all_selected?, :boolean, required: true
 
-  attr :on_toggle_select_all, :string, required: true
   attr :on_open_reorder, :string, required: true
   attr :on_bulk_delete, :string, required: true
   attr :on_clear_selection, :string, required: true
@@ -47,22 +40,13 @@ defmodule PhoenixKitProjects.Web.Components.BulkActionsToolbar do
   def bulk_actions_toolbar(assigns) do
     ~H"""
     <div class="flex items-center gap-3 bg-base-200 rounded-lg px-3 py-2 text-sm">
-      <label class="flex items-center gap-2 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          class="checkbox checkbox-sm"
-          checked={@all_selected? and @total_count > 0}
-          disabled={@total_count == 0}
-          phx-click={@on_toggle_select_all}
-        />
-        <span class="text-base-content/70">
-          <%= if @selected_count > 0 do %>
-            {gettext("%{count} selected", count: @selected_count)}
-          <% else %>
-            {gettext("Select all %{noun}", noun: @noun_plural)}
-          <% end %>
-        </span>
-      </label>
+      <span class="text-base-content/70">
+        <%= if @selected_count > 0 do %>
+          {gettext("%{count} selected", count: @selected_count)}
+        <% else %>
+          {gettext("No selection")}
+        <% end %>
+      </span>
 
       <div class="flex items-center gap-2 ml-auto">
         <button
@@ -79,11 +63,10 @@ defmodule PhoenixKitProjects.Web.Components.BulkActionsToolbar do
         </button>
 
         <button
-          :if={@allow_delete}
+          :if={@allow_delete and @selected_count > 0}
           type="button"
           class="btn btn-sm btn-ghost text-error"
           phx-click={@on_bulk_delete}
-          disabled={@selected_count == 0}
           data-confirm={
             gettext("Delete %{count} selected %{noun}? This cannot be undone.",
               count: @selected_count,

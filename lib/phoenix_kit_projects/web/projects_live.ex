@@ -253,8 +253,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         :if={@bulk_enabled? and @projects != []}
         selected_count={MapSet.size(@selected_uuids)}
         total_count={length(@projects)}
-        all_selected?={MapSet.size(@selected_uuids) == length(@projects)}
-        on_toggle_select_all="toggle_select_all"
         on_open_reorder="open_reorder_modal"
         on_bulk_delete="bulk_delete"
         on_clear_selection="clear_selection"
@@ -277,9 +275,22 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         <% lang = L10n.current_content_lang() %>
         <% draggable? = @show == "visible" %>
         <.table_default id="projects-list" size="sm">
+          <% selected_n = MapSet.size(@selected_uuids) %>
+          <% total_n = length(@projects) %>
           <.table_default_header>
             <.table_default_row>
-              <.table_default_header_cell :if={@bulk_enabled?} class="w-8" />
+              <.table_default_header_cell :if={@bulk_enabled?} class="w-8">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  checked={selected_n > 0 and selected_n == total_n}
+                  data-indeterminate={to_string(selected_n > 0 and selected_n < total_n)}
+                  phx-hook="PkCheckboxIndeterminate"
+                  id="projects-select-all"
+                  phx-click="toggle_select_all"
+                  aria-label={gettext("Select all projects")}
+                />
+              </.table_default_header_cell>
               <.table_default_header_cell :if={draggable?} class="w-8" />
               <.table_default_header_cell>{gettext("Name")}</.table_default_header_cell>
               <.table_default_header_cell>{gettext("Status")}</.table_default_header_cell>
