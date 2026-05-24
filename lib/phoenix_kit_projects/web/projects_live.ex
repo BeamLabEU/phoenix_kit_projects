@@ -293,20 +293,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         </:actions>
       </.page_header>
 
-      <%!-- Inner column with a smaller gap so the sort selector sits
-           tight against the bulk toolbar / table instead of paying
-           the wrapper's full gap-4 between every section. --%>
-      <div class="flex flex-col gap-2">
-        <.sort_selector
-          sort_by={@sort_by}
-          sort_dir={@sort_dir}
-          options={sort_options()}
-          manual_field={:position}
-        />
-
-        <%= if @projects == [] do %>
-          <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects match.")} />
-        <% else %>
+      <%= if @projects == [] do %>
+        <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects match.")} />
+      <% else %>
         <%!-- DnD applies only in "manual" sort (sort_by=:position).
              Sorting by name / date is a *view* — it doesn't rewrite
              positions, so dragging would be lossy and the handle is
@@ -319,23 +308,46 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           :if={@bulk_enabled?}
           id="projects-bulk-scope"
           total_count={length(@projects)}
-          class="flex flex-col gap-3"
+          class="flex flex-col gap-2"
         >
+          <%!-- Sort selector lives in the toolbar's leading slot so
+               the two read as one control row. Reorder-button gating:
+               manual sort → always shown ("Reorder all" / "Reorder N
+               selected"); other sorts → only when more than one row
+               is selected (a one-row reorder is a no-op, and the
+               view's order doesn't reflect positions anyway). --%>
           <.bulk_actions_toolbar
             on_open_reorder="open_reorder_modal"
             noun_singular={gettext("project")}
             noun_plural={gettext("projects")}
             allow_delete={false}
-          />
+            reorder_gate={if @sort_by == :position, do: :always, else: :multi}
+          >
+            <:leading>
+              <.sort_selector
+                sort_by={@sort_by}
+                sort_dir={@sort_dir}
+                options={sort_options()}
+                manual_field={:position}
+              />
+            </:leading>
+          </.bulk_actions_toolbar>
 
           {render_projects_table(assigns, draggable?, lang)}
         </.bulk_select_scope>
 
-        <%!-- When bulk-select is disabled, render the table without the
-             scope wrapper (no toolbar, no checkboxes). --%>
-        {if not @bulk_enabled?, do: render_projects_table(assigns, draggable?, lang)}
+        <%!-- When bulk-select is disabled, render just the sort
+             selector + table (no toolbar wrapper). --%>
+        <%= if not @bulk_enabled? do %>
+          <.sort_selector
+            sort_by={@sort_by}
+            sort_dir={@sort_dir}
+            options={sort_options()}
+            manual_field={:position}
+          />
+          {render_projects_table(assigns, @sort_by == :position, lang)}
         <% end %>
-      </div>
+      <% end %>
 
       <.reorder_modal
         show={@show_reorder_modal}

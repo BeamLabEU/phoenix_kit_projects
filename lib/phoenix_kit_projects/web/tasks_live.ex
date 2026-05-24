@@ -461,18 +461,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <%!-- Default flat list view. --%>
         <% lang = L10n.current_content_lang() %>
 
-        <%!-- Inner column with a smaller gap so the sort selector sits
-             tight against the bulk toolbar / table instead of paying
-             the wrapper's full gap-4 between every section. --%>
-        <div class="flex flex-col gap-2">
-          <.sort_selector
-            sort_by={@sort_by}
-            sort_dir={@sort_dir}
-            options={sort_options()}
-            manual_field={:position}
-          />
-
-          <%= if @tasks == [] do %>
+        <%= if @tasks == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
               <.smart_link
@@ -490,21 +479,38 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             :if={@bulk_enabled?}
             id="tasks-bulk-scope"
             total_count={length(@tasks)}
-            class="flex flex-col gap-3"
+            class="flex flex-col gap-2"
           >
             <.bulk_actions_toolbar
               on_open_reorder="open_reorder_modal"
               noun_singular={gettext("task")}
               noun_plural={gettext("tasks")}
               allow_delete={false}
-            />
+              reorder_gate={if @sort_by == :position, do: :always, else: :multi}
+            >
+              <:leading>
+                <.sort_selector
+                  sort_by={@sort_by}
+                  sort_dir={@sort_dir}
+                  options={sort_options()}
+                  manual_field={:position}
+                />
+              </:leading>
+            </.bulk_actions_toolbar>
 
             {render_tasks_table(assigns, lang)}
           </.bulk_select_scope>
 
-          {if not @bulk_enabled?, do: render_tasks_table(assigns, lang)}
+          <%= if not @bulk_enabled? do %>
+            <.sort_selector
+              sort_by={@sort_by}
+              sort_dir={@sort_dir}
+              options={sort_options()}
+              manual_field={:position}
+            />
+            {render_tasks_table(assigns, lang)}
           <% end %>
-        </div>
+        <% end %>
       <% end %>
 
       <.reorder_modal
