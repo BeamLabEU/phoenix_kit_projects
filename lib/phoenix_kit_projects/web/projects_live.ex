@@ -399,15 +399,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
         </.table_default_row>
       </.table_default_header>
-      <tbody
+      <.sortable_tbody
         id="projects-list-body"
-        phx-hook={if @draggable?, do: "SortableGrid"}
-        data-sortable={if @draggable?, do: "true"}
-        data-sortable-event="reorder_projects"
-        data-sortable-items=".sortable-item"
-        data-sortable-handle=".pk-drag-handle"
+        enabled={@draggable?}
+        event="reorder_projects"
       >
-        <.table_default_row :for={p <- @projects} class="sortable-item" data-id={p.uuid}>
+        <.sortable_row :for={p <- @projects} item_id={p.uuid}>
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={p.uuid} />
           <.table_default_cell class="font-medium">
@@ -446,8 +443,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
               />
             </.table_row_menu>
           </.table_default_cell>
-        </.table_default_row>
-      </tbody>
+        </.sortable_row>
+      </.sortable_tbody>
     </.table_default>
     """
   end

@@ -563,15 +563,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
           <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
         </.table_default_row>
       </.table_default_header>
-      <tbody
+      <.sortable_tbody
         id="tasks-list-body"
-        phx-hook={if @draggable?, do: "SortableGrid"}
-        data-sortable={if @draggable?, do: "true"}
-        data-sortable-event="reorder_tasks"
-        data-sortable-items=".sortable-item"
-        data-sortable-handle=".pk-drag-handle"
+        enabled={@draggable?}
+        event="reorder_tasks"
       >
-        <.table_default_row :for={task <- @tasks} class="sortable-item" data-id={task.uuid}>
+        <.sortable_row :for={task <- @tasks} item_id={task.uuid}>
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={task.uuid} />
           <.table_default_cell class="font-medium">
@@ -608,8 +605,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               />
             </.table_row_menu>
           </.table_default_cell>
-        </.table_default_row>
-      </tbody>
+        </.sortable_row>
+      </.sortable_tbody>
     </.table_default>
     """
   end

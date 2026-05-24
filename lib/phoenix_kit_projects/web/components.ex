@@ -26,7 +26,6 @@ defmodule PhoenixKitProjects.Web.Components do
       import PhoenixKitProjects.Web.Components.SmartMenuLink
       import PhoenixKitProjects.Web.Components.PopupHost
       import PhoenixKitProjects.Web.Components.AITranslateBar
-      import PhoenixKitProjects.Web.Components.ReorderModal
     end
   end
 end
