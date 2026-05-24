@@ -127,11 +127,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   def handle_event("set_view", _params, socket), do: {:noreply, socket}
 
-  # The bulk toolbar's Reorder button pushes this event with the
-  # currently-selected UUIDs (gathered from the DOM by the
-  # BulkSelectScope hook). Empty list = no selection = "Reorder all".
+  # See projects_live for the rationale on collapsing <2 uuids to :all.
   def handle_event("open_reorder_modal", params, socket) do
-    uuids = sanitize_uuids(params)
+    uuids =
+      case sanitize_uuids(params) do
+        list when length(list) < 2 -> []
+        list -> list
+      end
+
     {:noreply, assign(socket, show_reorder_modal: true, captured_uuids: uuids)}
   end
 

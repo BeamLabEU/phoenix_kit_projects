@@ -129,9 +129,17 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   # The bulk toolbar's Reorder button pushes this event with the
   # currently-selected UUIDs (gathered from the DOM by the
-  # BulkSelectScope hook). Empty list = no selection = "Reorder all".
+  # BulkSelectScope hook). Empty (or single-row) selection collapses
+  # to :all — the button label is "Reorder all" in those states, and
+  # a single-row permute is a no-op, so treating it as :all matches
+  # both the visible UI promise and the only sensible action.
   def handle_event("open_reorder_modal", params, socket) do
-    uuids = sanitize_uuids(params)
+    uuids =
+      case sanitize_uuids(params) do
+        list when length(list) < 2 -> []
+        list -> list
+      end
+
     {:noreply, assign(socket, show_reorder_modal: true, captured_uuids: uuids)}
   end
 
