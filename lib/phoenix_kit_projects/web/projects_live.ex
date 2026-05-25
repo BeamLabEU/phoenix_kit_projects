@@ -263,18 +263,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
          |> put_flash(:error, gettext("Project list changed; please try again."))
          |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
          |> load_projects()}
-
-      {:error, _reason} ->
-        # Unexpected DB error from `write_project_positions/1`. The
-        # spec doesn't enumerate these (Postgrex deadlock, constraint
-        # violation, etc.), so match a catch-all so the handler can't
-        # crash on a new reason. Reload to discard whatever half-state
-        # the user is looking at.
-        {:noreply,
-         socket
-         |> put_flash(:error, gettext("Could not reorder projects."))
-         |> push_event("sortable:flash", %{uuid: moved_id, status: "error"})
-         |> load_projects()}
     end
   end
 
