@@ -516,6 +516,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
           >
             <.bulk_actions_toolbar
               on_open_reorder="open_reorder_modal"
+              reorder_dialog_id="reorder-modal"
               noun_singular={gettext("task")}
               noun_plural={gettext("tasks")}
               allow_delete={false}

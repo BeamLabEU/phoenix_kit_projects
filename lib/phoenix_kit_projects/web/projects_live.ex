@@ -368,6 +368,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                view's order doesn't reflect positions anyway). --%>
           <.bulk_actions_toolbar
             on_open_reorder="open_reorder_modal"
+            reorder_dialog_id="reorder-modal"
             noun_singular={gettext("project")}
             noun_plural={gettext("projects")}
             allow_delete={false}
