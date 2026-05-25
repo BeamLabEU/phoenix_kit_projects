@@ -16,6 +16,20 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
   @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
 
+  # How many rows the list loads at first, and how many more "Load more"
+  # appends per click. Hardcoded for now (matches Activity Feed's 50);
+  # bump or make session-configurable when a real consumer pushes back.
+  @per_batch 50
+
+  # Pagination mode. `"off"` (default) loads every matching row —
+  # backwards-compatible with the original list behavior so existing
+  # embedders don't suddenly see a "Load more" button mid-list.
+  # `"load_more"` caps the loaded set at @per_batch and shows a footer
+  # that bumps the cap on click. Embedders opt in via
+  # `live_render(... session: %{"pagination" => "load_more"})`. A
+  # future `"pages"` mode (page-numbered) would slot in here.
+  @default_pagination "off"
+
   @impl true
   def mount(_params, session, socket) do
     WebHelpers.maybe_put_locale(session)
@@ -23,14 +37,25 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     if connected?(socket), do: ProjectsPubSub.subscribe(ProjectsPubSub.topic_all())
 
     wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
+    pagination = Map.get(session, "pagination", @default_pagination)
 
     socket =
       socket
       |> assign(
         page_title: gettext("Projects"),
         wrapper_class: wrapper_class,
+        pagination: pagination,
         sort_by: :position,
         sort_dir: :asc,
+        # Load-more pagination state. `loaded_count` is the current
+        # cap on visible rows, bumped by @per_batch on each "Load
+        # more" click. `total_count` is the DB total matching the
+        # current filter, refreshed on every load. Reset to @per_batch
+        # on sort change (NOT on DnD reorder — that would snap the
+        # user away from what they just dragged). Both ignored when
+        # `pagination == "off"`.
+        loaded_count: @per_batch,
+        total_count: 0,
         projects: [],
         bulk_enabled?: true,
         # `captured_uuids` is the snapshot taken from the DOM at the
@@ -57,13 +82,21 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   defp load_projects(socket) do
+    base_opts = [
+      archived: false,
+      sort_by: socket.assigns.sort_by,
+      sort_dir: socket.assigns.sort_dir
+    ]
+
+    list_opts =
+      case socket.assigns.pagination do
+        "load_more" -> Keyword.put(base_opts, :limit, socket.assigns.loaded_count)
+        _ -> base_opts
+      end
+
     assign(socket,
-      projects:
-        Projects.list_projects(
-          archived: false,
-          sort_by: socket.assigns.sort_by,
-          sort_dir: socket.assigns.sort_dir
-        )
+      projects: Projects.list_projects(list_opts),
+      total_count: Projects.count_projects(archived: false)
     )
   end
 
@@ -121,10 +154,20 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   def handle_event("toggle_sort", _params, socket), do: {:noreply, socket}
 
+  # Sort change resets the load-more cap (otherwise a switch from
+  # Name back to Manual would still show only the first @per_batch
+  # rows of the new sort, leaving the user confused).
   defp apply_sort(socket, field, dir) do
     socket
-    |> assign(sort_by: field, sort_dir: dir)
+    |> assign(sort_by: field, sort_dir: dir, loaded_count: @per_batch)
     |> load_projects()
+  end
+
+  def handle_event("load_more", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(loaded_count: socket.assigns.loaded_count + @per_batch)
+     |> load_projects()}
   end
 
   # The bulk toolbar's Reorder button pushes this event with the
@@ -446,6 +489,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         </.sortable_row>
       </.sortable_tbody>
     </.table_default>
+
+    <.load_more
+      :if={@pagination == "load_more"}
+      loaded={length(@projects)}
+      total={@total_count}
+      noun_plural={gettext("projects")}
+    />
     """
   end
 end

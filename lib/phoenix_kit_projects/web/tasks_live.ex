@@ -18,6 +18,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
   @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
 
+  # See projects_live for the same load-more pagination semantics +
+  # rationale on defaulting to "off" (backwards compat).
+  @per_batch 50
+  @default_pagination "off"
+
   @impl true
   def mount(_params, session, socket) do
     WebHelpers.maybe_put_locale(session)
@@ -35,14 +40,19 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         _ -> "list"
       end
 
+    pagination = Map.get(session, "pagination", @default_pagination)
+
     socket =
       socket
       |> assign(
         page_title: gettext("Task Library"),
         wrapper_class: wrapper_class,
         view: initial_view,
+        pagination: pagination,
         sort_by: :position,
         sort_dir: :asc,
+        loaded_count: @per_batch,
+        total_count: 0,
         tasks: [],
         deps_by_task: %{},
         groups: [],
@@ -85,13 +95,26 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         )
 
       _ ->
-        %{tasks: tasks, deps_by_task: deps_by_task} =
-          Projects.list_tasks_with_deps(
-            sort_by: socket.assigns.sort_by,
-            sort_dir: socket.assigns.sort_dir
-          )
+        base_opts = [
+          sort_by: socket.assigns.sort_by,
+          sort_dir: socket.assigns.sort_dir
+        ]
 
-        assign(socket, tasks: tasks, deps_by_task: deps_by_task, groups: [], standalone: [])
+        list_opts =
+          case socket.assigns.pagination do
+            "load_more" -> Keyword.put(base_opts, :limit, socket.assigns.loaded_count)
+            _ -> base_opts
+          end
+
+        %{tasks: tasks, deps_by_task: deps_by_task} = Projects.list_tasks_with_deps(list_opts)
+
+        assign(socket,
+          tasks: tasks,
+          deps_by_task: deps_by_task,
+          groups: [],
+          standalone: [],
+          total_count: Projects.count_tasks()
+        )
     end
   end
 
@@ -177,10 +200,18 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   def handle_event("toggle_sort", _params, socket), do: {:noreply, socket}
 
+  # Sort change resets the load-more cap — see projects_live.
   defp apply_sort(socket, field, dir) do
     socket
-    |> assign(sort_by: field, sort_dir: dir)
+    |> assign(sort_by: field, sort_dir: dir, loaded_count: @per_batch)
     |> load_tasks()
+  end
+
+  def handle_event("load_more", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(loaded_count: socket.assigns.loaded_count + @per_batch)
+     |> load_tasks()}
   end
 
   # Map gates atom coercion — see projects_live for the same shape.
@@ -608,6 +639,13 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         </.sortable_row>
       </.sortable_tbody>
     </.table_default>
+
+    <.load_more
+      :if={@pagination == "load_more"}
+      loaded={length(@tasks)}
+      total={@total_count}
+      noun_plural={gettext("tasks")}
+    />
     """
   end
 end

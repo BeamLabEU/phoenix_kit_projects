@@ -82,12 +82,17 @@ defmodule PhoenixKitProjects.Projects do
   def list_tasks(opts \\ []) do
     sort_by = Keyword.get(opts, :sort_by, :position)
     sort_dir = Keyword.get(opts, :sort_dir, :asc)
+    limit_n = Keyword.get(opts, :limit)
 
     Task
     |> task_order_by(sort_by, sort_dir)
+    |> maybe_limit(limit_n)
     |> preload(^@task_preloads)
     |> repo().all()
   end
+
+  defp maybe_limit(query, nil), do: query
+  defp maybe_limit(query, n) when is_integer(n) and n > 0, do: limit(query, ^n)
 
   defp task_order_by(query, :position, _dir),
     do: order_by(query, [t], asc: t.position, asc: t.inserted_at, asc: t.uuid)
@@ -718,11 +723,13 @@ defmodule PhoenixKitProjects.Projects do
     include_templates = Keyword.get(opts, :include_templates, false)
     sort_by = Keyword.get(opts, :sort_by, :position)
     sort_dir = Keyword.get(opts, :sort_dir, :asc)
+    limit_n = Keyword.get(opts, :limit)
 
     Project
     |> maybe_exclude_templates(include_templates)
     |> maybe_filter_archived(archived)
     |> project_order_by(sort_by, sort_dir)
+    |> maybe_limit(limit_n)
     |> repo().all()
   end
 
@@ -976,9 +983,25 @@ defmodule PhoenixKitProjects.Projects do
     )
   end
 
-  @doc "Total number of projects (including templates)."
-  @spec count_projects() :: non_neg_integer()
-  def count_projects, do: repo().aggregate(Project, :count, :uuid)
+  @doc """
+  Count of projects matching the given filter opts. Defaults match
+  `list_projects/1` (excludes templates, excludes archived) so the
+  count is paired with the list — sized "Showing X of Y" copy stays
+  honest about both numbers.
+
+  Pass `include_templates: true` to count both kinds, or
+  `archived: :all` to drop the archived filter.
+  """
+  @spec count_projects(keyword()) :: non_neg_integer()
+  def count_projects(opts \\ []) do
+    archived = Keyword.get(opts, :archived, false)
+    include_templates = Keyword.get(opts, :include_templates, false)
+
+    Project
+    |> maybe_exclude_templates(include_templates)
+    |> maybe_filter_archived(archived)
+    |> repo().aggregate(:count, :uuid)
+  end
 
   @doc """
   Lists projects that are templates, in `position`-then-date-added
