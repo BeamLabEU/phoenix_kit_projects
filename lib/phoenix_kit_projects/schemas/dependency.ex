@@ -38,7 +38,7 @@ defmodule PhoenixKitProjects.Schemas.Dependency do
     |> validate_required(@required)
     |> assoc_constraint(:assignment)
     |> assoc_constraint(:depends_on)
-    |> unique_constraint([:assignment_uuid, :depends_on_uuid],
+    |> unique_constraint(:depends_on_uuid,
       name: :phoenix_kit_project_dependencies_pair_index,
       message: gettext("dependency already exists")
     )

@@ -8,6 +8,9 @@ defmodule PhoenixKitProjects.Paths do
   @doc "Projects dashboard root."
   def index, do: Routes.path(@base)
 
+  @doc "Projects settings page (global, under the core Settings area)."
+  def settings, do: Routes.path("/admin/settings/projects")
+
   # Task library
   @doc "Task-library index."
   def tasks, do: Routes.path("#{@base}/tasks")

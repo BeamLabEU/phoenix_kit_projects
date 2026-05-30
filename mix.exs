@@ -70,9 +70,21 @@ defmodule PhoenixKitProjects.MixProject do
       # 1.7.117 is the floor — that's where
       # `PhoenixKit.Modules.AI.Translation.translate_fields/6` shipped
       # (core PR #557). `TranslateResourceWorker` delegates to it.
+      # NOTE: workflow statuses (PhoenixKitProjects.Statuses) need core V125
+      # (status_entity_uuid / current_status_slug on phoenix_kit_projects +
+      # the phoenix_kit_project_statuses table). Bump this pin to the V125
+      # release before merging the status feature — until then the
+      # status-suite is the cross-repo blocker (see AGENTS.md).
       {:phoenix_kit, "~> 1.7.121"},
       {:phoenix_kit_staff, "~> 0.1"},
       {:phoenix_kit_comments, "~> 0.2"},
+
+      # Optional: the entities module is the source/catalog for project
+      # workflow statuses. `optional: true` keeps it out of host closures
+      # (PhoenixKitProjects.Statuses degrades gracefully when it's absent —
+      # mirrors the AI-translation pattern) while making it loadable in this
+      # package's own compile + test build.
+      {:phoenix_kit_entities, "~> 0.1", optional: true},
 
       # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
       # for polymorphic assignee FKs (team / department / person).

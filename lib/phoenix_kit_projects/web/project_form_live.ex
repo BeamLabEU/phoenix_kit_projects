@@ -9,7 +9,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   alias PhoenixKit.PubSub.Manager, as: PubSubManager
   alias PhoenixKit.Utils.Values
-  alias PhoenixKitProjects.{Activity, Errors, L10n, Paths, Projects, Translations}
+  alias PhoenixKitProjects.{Activity, Errors, L10n, Paths, Projects, Statuses, Translations}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.AITranslateFormHelpers
@@ -40,12 +40,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign(
         wrapper_class: wrapper_class,
         embed_redirect_to: redirect_to,
-        live_action: live_action
+        live_action: live_action,
+        statuses_available: Statuses.available?(),
+        status_entities: status_entity_options()
       )
       |> AITranslateFormHelpers.assign_ai_translate_mount_state()
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
+      |> assign_status_preview()
+      |> assign_status_mode()
       |> maybe_subscribe_translations()
 
     {:ok, socket}
@@ -134,6 +138,63 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
 
+  # Grouped status-source entities for the selector (status catalogs first,
+  # then any other entity). Empty when entities is unavailable — the
+  # selector then shows just the "Shared default" option.
+  defp status_entity_options, do: Statuses.list_status_source_entities()
+
+  # Computes the preview of statuses that the currently-selected entity
+  # would supply (the records that get cemented at start). "Shared default"
+  # (nil) previews the shared catalog without provisioning it. Must run
+  # after `assign_form/2` since it reads the form's current value.
+  defp assign_status_preview(socket) do
+    preview =
+      if socket.assigns.statuses_available do
+        case selected_status_entity_uuid(socket) do
+          nil -> Statuses.shared_catalog_statuses()
+          uuid -> Statuses.list_catalog_statuses(uuid)
+        end
+      else
+        []
+      end
+
+    assign(socket, status_preview: preview)
+  end
+
+  defp selected_status_entity_uuid(socket) do
+    case socket.assigns.form[:status_entity_uuid].value do
+      v when v in [nil, ""] -> nil
+      v -> to_string(v)
+    end
+  end
+
+  # The 3-way status-translation control: "" = inherit global, "true" =
+  # force on, "false" = force off. Tracked in an assign so it survives
+  # `validate` re-renders, then folded into `settings` JSONB on save.
+  defp assign_status_mode(socket),
+    do: assign(socket, status_translation_mode: status_mode_string(socket.assigns.project))
+
+  defp status_mode_string(project) do
+    case Project.status_translation_override(project) do
+      true -> "true"
+      false -> "false"
+      _ -> ""
+    end
+  end
+
+  defp apply_status_mode_to_attrs(attrs, params, project) do
+    base = project.settings || %{}
+
+    settings =
+      case Map.get(params, "status_translation_mode") do
+        "true" -> Map.put(base, "use_status_translations", true)
+        "false" -> Map.put(base, "use_status_translations", false)
+        _ -> Map.delete(base, "use_status_translations")
+      end
+
+    Map.put(attrs, "settings", settings)
+  end
+
   @impl true
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do
     {:noreply, handle_switch_language(socket, lang_code)}
@@ -198,13 +259,26 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         enforce_scheduled_date_required: false
       )
 
-    {:noreply, socket |> assign(selected_template: selected_template) |> assign_form(cs)}
+    {:noreply,
+     socket
+     |> assign(selected_template: selected_template)
+     |> assign(
+       status_translation_mode:
+         Map.get(params, "status_translation_mode", socket.assigns.status_translation_mode)
+     )
+     |> assign_form(cs)
+     |> assign_status_preview()}
   end
 
   def handle_event("save", %{"project" => attrs} = params, socket) do
     if socket.assigns.ai_translate_in_flight == [] do
       template_uuid = Map.get(params, "template_uuid", nil) |> Values.blank_to_nil()
-      save(socket, socket.assigns.live_action, merge_attrs(attrs, socket), template_uuid)
+
+      attrs =
+        merge_attrs(attrs, socket)
+        |> apply_status_mode_to_attrs(params, socket.assigns.project)
+
+      save(socket, socket.assigns.live_action, attrs, template_uuid)
     else
       # AI translation in flight on at least one lang. Block save —
       # the worker is about to write to `translations` and a save now
@@ -218,6 +292,36 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
          :info,
          gettext("Hold on — wait for the translation to finish before saving.")
        )}
+    end
+  end
+
+  # Creates a fresh default status list (`project_statuses`, auto-incrementing
+  # if taken) and selects it for this project. Always a new entity — so a
+  # user who has edited a previous generated list gets a clean one for the
+  # next project. Reloads the selector options.
+  def handle_event("generate_default_statuses", _params, socket) do
+    case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
+      {:ok, entity} ->
+        Activity.log("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: socket.assigns.project.uuid,
+          metadata: %{"entity_name" => entity.name, "scope" => "shared"}
+        )
+
+        cs =
+          Projects.change_project(socket.assigns.project, %{"status_entity_uuid" => entity.uuid})
+
+        {:noreply,
+         socket
+         |> assign(status_entities: status_entity_options())
+         |> assign_form(cs)
+         |> assign_status_preview()
+         |> put_flash(:info, gettext("Default statuses entity created."))}
+
+      {:error, _reason} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
     end
   end
 
@@ -622,8 +726,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp save(socket, :edit, attrs, _template_uuid) do
+    old_entity = socket.assigns.project.status_entity_uuid
+
     case Projects.update_project(socket.assigns.project, attrs) do
       {:ok, project} ->
+        # A started project whose status list changed must re-cement so its
+        # local rows reflect the newly-chosen entity (unstarted projects
+        # cement at start, so nothing to do there).
+        if Statuses.started?(project) and project.status_entity_uuid != old_entity do
+          Statuses.recement_project_statuses(project)
+        end
+
         Activity.log("projects.project_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
@@ -818,6 +931,65 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             <%= if start_mode_value(@form) == "scheduled" do %>
               <.input field={@form[:scheduled_start_date]} label={gettext("Start date and time")} type="datetime-local" />
             <% end %>
+            <%!-- Workflow-status list selection (entities-backed). Sibling
+                 of the other settings (outside the multilang wrapper). The
+                 current status itself is picked on the project page; here
+                 the user only chooses which entity the project draws its
+                 statuses from. Any entity works (record title = label);
+                 status catalogs are grouped first. --%>
+            <div
+              :if={@statuses_available}
+              class="border-t border-base-300 mt-6 pt-6 flex flex-col gap-2"
+            >
+              <h3 class="text-sm font-semibold text-base-content/80">
+                {gettext("Workflow status")}
+              </h3>
+              <%!-- Status-list selector with the "Generate default" action
+                   stacked underneath (phone-friendly, matches the other
+                   form fields). "Use global default" = inherit the list
+                   chosen in projects Settings. --%>
+              <.select
+                field={@form[:status_entity_uuid]}
+                label={gettext("Custom Status")}
+                options={@status_entities}
+                prompt={gettext("Use global default")}
+              />
+              <button
+                type="button"
+                phx-click="generate_default_statuses"
+                phx-disable-with={gettext("Generating…")}
+                class="btn btn-ghost btn-sm gap-1 self-start"
+              >
+                <.icon name="hero-sparkles" class="w-4 h-4" />
+                {gettext("Generate default")}
+              </button>
+              <%!-- Preview the statuses this list supplies — the records that
+                   get cemented when the project starts. --%>
+              <div :if={@status_preview != []} class="flex flex-col gap-1">
+                <span class="text-xs text-base-content/60">
+                  {gettext("Statuses from this list:")}
+                </span>
+                <div class="flex flex-wrap gap-1">
+                  <.workflow_status_badge :for={s <- @status_preview} status={s} />
+                </div>
+              </div>
+              <%!-- Per-project override for showing translated status titles.
+                   "" = inherit the global default; translations are always
+                   saved regardless. --%>
+              <.select
+                name="status_translation_mode"
+                label={gettext("Translated status titles")}
+                value={@status_translation_mode}
+                options={[
+                  {gettext("Use global default"), ""},
+                  {gettext("Show translated"), "true"},
+                  {gettext("Show original"), "false"}
+                ]}
+              />
+              <.link navigate={Paths.settings()} class="link link-hover text-xs text-base-content/60">
+                {gettext("Change the defaults here")}
+              </.link>
+            </div>
             <div class="flex justify-end gap-2 mt-2">
               <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
                 {gettext("Cancel")}

@@ -258,4 +258,23 @@ defmodule PhoenixKitProjects do
 
     parent ++ visible_subtabs ++ hidden_subtabs
   end
+
+  @impl PhoenixKit.Module
+  def settings_tabs do
+    [
+      Tab.new!(
+        id: :admin_settings_projects,
+        label: "Projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-clipboard-document-list",
+        path: "projects",
+        priority: 930,
+        level: :admin,
+        parent: :admin_settings,
+        permission: module_key(),
+        live_view: {PhoenixKitProjects.Web.ProjectsSettingsLive, :settings}
+      )
+    ]
+  end
 end

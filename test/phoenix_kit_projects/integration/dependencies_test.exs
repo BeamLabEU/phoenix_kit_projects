@@ -58,6 +58,21 @@ defmodule PhoenixKitProjects.Integration.DependenciesTest do
       assert %{depends_on_uuid: [_ | _]} = errors_on(cs)
     end
 
+    test "rejects a duplicate edge — unique-pair error on :depends_on_uuid" do
+      project = new_project!()
+      a = new_assignment!(project, new_task!())
+      b = new_assignment!(project, new_task!())
+
+      assert {:ok, _} = Projects.add_dependency(a.uuid, b.uuid)
+
+      assert {:error, cs} = Projects.add_dependency(a.uuid, b.uuid)
+      # Constraint name identifies the pair index; the error attaches to the
+      # single :depends_on_uuid field (not both endpoints).
+      assert %{depends_on_uuid: [msg | _]} = errors_on(cs)
+      assert msg =~ "already exists"
+      refute Map.has_key?(errors_on(cs), :assignment_uuid)
+    end
+
     test "rejects a two-hop cycle (A→B, then B→A)" do
       project = new_project!()
       a = new_assignment!(project, new_task!())
@@ -111,6 +126,37 @@ defmodule PhoenixKitProjects.Integration.DependenciesTest do
 
       {:ok, _} = Projects.add_dependency(a.uuid, b.uuid)
       assert {:ok, _} = Projects.remove_dependency(a.uuid, b.uuid)
+    end
+  end
+
+  describe "scoped_assignments/2" do
+    test "returns only the uuids that belong to the given project" do
+      p1 = new_project!()
+      p2 = new_project!()
+      a1 = new_assignment!(p1, new_task!())
+      a2 = new_assignment!(p1, new_task!())
+      b1 = new_assignment!(p2, new_task!())
+
+      rows = Projects.scoped_assignments([a1.uuid, a2.uuid, b1.uuid], p1.uuid)
+
+      assert Enum.map(rows, & &1.uuid) |> Enum.sort() == Enum.sort([a1.uuid, a2.uuid])
+    end
+
+    test "two distinct in-project endpoints come back as two rows in one query" do
+      p = new_project!()
+      a = new_assignment!(p, new_task!())
+      b = new_assignment!(p, new_task!())
+
+      assert [_, _] = Projects.scoped_assignments([a.uuid, b.uuid], p.uuid)
+    end
+
+    test "a cross-project endpoint yields fewer than two rows" do
+      p1 = new_project!()
+      p2 = new_project!()
+      a = new_assignment!(p1, new_task!())
+      b = new_assignment!(p2, new_task!())
+
+      refute match?([_, _], Projects.scoped_assignments([a.uuid, b.uuid], p1.uuid))
     end
   end
 end

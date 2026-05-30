@@ -8,6 +8,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.{Projects, Statuses, StatusFixtures}
+
   setup %{conn: conn} do
     scope = fake_scope()
     conn = put_test_scope(conn, scope)
@@ -142,6 +145,68 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
 
       assert html =~ "Template not found" or
                html =~ "may have been deleted"
+    end
+  end
+
+  describe "workflow status picker" do
+    setup %{conn: conn} do
+      # Generate provisions an entity with `created_by_uuid` = the socket
+      # actor, which must be a real user (FK to phoenix_kit_users). Re-scope
+      # the conn with a registered user instead of the bare fake_scope.
+      {:ok, user} =
+        Auth.register_user(%{
+          "email" => "form-actor-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ActorPass123!"
+        })
+
+      conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid))
+      entity = StatusFixtures.seed_shared_status_entity!()
+      {:ok, conn: conn, entity: entity}
+    end
+
+    test "saving with a chosen status list persists status_entity_uuid", %{
+      conn: conn,
+      entity: entity
+    } do
+      project = fixture_project()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+
+      {:error, {:live_redirect, _}} =
+        view
+        |> form("#project-form",
+          project: %{
+            name: project.name,
+            start_mode: project.start_mode || "immediate",
+            counts_weekends: "false",
+            status_entity_uuid: entity.uuid
+          }
+        )
+        |> render_submit()
+
+      assert Projects.get_project!(project.uuid).status_entity_uuid ==
+               entity.uuid
+    end
+
+    test "Generate default creates a fresh list and selects it", %{conn: conn} do
+      # list_status_source_entities/0 returns grouped options
+      # ([{group, [{label, uuid}, ...]}]); flatten to count actual entities.
+      count = fn ->
+        Statuses.list_status_source_entities()
+        |> Enum.flat_map(fn {_group, opts} -> opts end)
+        |> length()
+      end
+
+      project = fixture_project()
+      before = count.()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+
+      html = view |> element("button", "Generate default") |> render_click()
+
+      # A fresh catalog entity is created and offered in the picker.
+      assert count.() == before + 1
+      # The selected list's statuses render in the live preview.
+      assert html =~ "Backlog"
     end
   end
 end

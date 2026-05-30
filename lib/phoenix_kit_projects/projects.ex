@@ -730,10 +730,12 @@ defmodule PhoenixKitProjects.Projects do
     sort_by = Keyword.get(opts, :sort_by, :position)
     sort_dir = Keyword.get(opts, :sort_dir, :asc)
     limit_n = Keyword.get(opts, :limit)
+    status_slug = Keyword.get(opts, :current_status_slug, :all)
 
     Project
     |> maybe_exclude_templates(include_templates)
     |> maybe_filter_archived(archived)
+    |> maybe_filter_status(status_slug)
     |> project_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
     |> repo().all()
@@ -777,6 +779,16 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_filter_archived(q, :all), do: q
   defp maybe_filter_archived(q, true), do: where(q, [p], not is_nil(p.archived_at))
   defp maybe_filter_archived(q, _false_or_nil), do: where(q, [p], is_nil(p.archived_at))
+
+  # Workflow-status filter (V125). `:all` = no filter, `nil` = "no status
+  # set", a slug = exact match. The slug is the stable cross-boundary
+  # identity, so the filter matches both pre-start (catalog-backed) and
+  # post-start (cemented) projects whose selected status shares the slug.
+  defp maybe_filter_status(q, :all), do: q
+  defp maybe_filter_status(q, nil), do: where(q, [p], is_nil(p.current_status_slug))
+
+  defp maybe_filter_status(q, slug) when is_binary(slug),
+    do: where(q, [p], p.current_status_slug == ^slug)
 
   @doc "Fetches a project by uuid, or `nil` if not found."
   @spec get_project(uuid()) :: Project.t() | nil
@@ -886,6 +898,24 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
+  @doc """
+  Sets the project's current workflow-status slug and broadcasts
+  `:project_status_changed`. Uses the dedicated, server-owned
+  `Project.current_status_changeset/2` (never the form changeset) — go
+  through `PhoenixKitProjects.Statuses.set_current_status/3` rather than
+  calling this directly, so the slug is validated against the project's
+  status list first. `nil` clears the selection.
+  """
+  @spec set_current_status_slug(Project.t(), String.t() | nil) ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
+  def set_current_status_slug(%Project{} = p, slug) do
+    with {:ok, updated} <-
+           p |> Project.current_status_changeset(%{current_status_slug: slug}) |> repo().update() do
+      ProjectsPubSub.broadcast_project(:project_status_changed, project_payload(updated))
+      {:ok, updated}
+    end
+  end
+
   @doc "Deletes a project and broadcasts `:project_deleted`."
   @spec delete_project(Project.t()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def delete_project(%Project{} = p) do
@@ -899,7 +929,10 @@ defmodule PhoenixKitProjects.Projects do
     %{
       uuid: p.uuid,
       name: p.name,
-      is_template: p.is_template
+      is_template: p.is_template,
+      status_entity_uuid: p.status_entity_uuid,
+      current_status_slug: p.current_status_slug,
+      external_id: p.external_id
     }
   end
 
@@ -1002,10 +1035,12 @@ defmodule PhoenixKitProjects.Projects do
   def count_projects(opts \\ []) do
     archived = Keyword.get(opts, :archived, false)
     include_templates = Keyword.get(opts, :include_templates, false)
+    status_slug = Keyword.get(opts, :current_status_slug, :all)
 
     Project
     |> maybe_exclude_templates(include_templates)
     |> maybe_filter_archived(archived)
+    |> maybe_filter_status(status_slug)
     |> repo().aggregate(:count, :uuid)
   end
 
@@ -1274,7 +1309,10 @@ defmodule PhoenixKitProjects.Projects do
     attrs =
       Map.merge(project_attrs, %{
         "is_template" => "false",
-        "counts_weekends" => to_string(template.counts_weekends)
+        "counts_weekends" => to_string(template.counts_weekends),
+        # Inherit the template's chosen status catalog (nil = shared). The
+        # cloned project reads it live until it starts, then cements.
+        "status_entity_uuid" => template.status_entity_uuid
       })
 
     template_assignments = list_assignments(template.uuid)
@@ -1291,7 +1329,7 @@ defmodule PhoenixKitProjects.Projects do
     # Template clones are short and rare; the isolation cost is negligible.
     repo().transaction(
       fn ->
-        project = create_project_in_tx(attrs)
+        project = attrs |> create_project_in_tx() |> inherit_status_slug_in_tx(template)
         uuid_map = clone_assignments_in_tx(template_assignments, project)
         clone_dependencies_in_tx(template_deps, uuid_map)
         project
@@ -1299,6 +1337,21 @@ defmodule PhoenixKitProjects.Projects do
       isolation: :serializable
     )
   end
+
+  # Carry the template's selected status (a slug) onto the cloned project.
+  # Uses the server-owned changeset directly (no broadcast — the project
+  # was just created in this transaction and has no subscribers yet).
+  defp inherit_status_slug_in_tx(project, %{current_status_slug: slug})
+       when is_binary(slug) and slug != "" do
+    case project
+         |> Project.current_status_changeset(%{current_status_slug: slug})
+         |> repo().update() do
+      {:ok, updated} -> updated
+      {:error, cs} -> repo().rollback(cs)
+    end
+  end
+
+  defp inherit_status_slug_in_tx(project, _template), do: project
 
   defp create_project_in_tx(attrs) do
     case create_project(attrs) do
@@ -1360,10 +1413,29 @@ defmodule PhoenixKitProjects.Projects do
   def start_project(%Project{} = p, started_at \\ nil) do
     started_at = started_at || DateTime.utc_now()
 
-    with {:ok, updated} <-
-           p |> Project.changeset(%{started_at: started_at}) |> repo().update() do
-      ProjectsPubSub.broadcast_project(:project_started, project_payload(updated))
-      {:ok, updated}
+    # Stamp `started_at` AND cement the project's workflow statuses in one
+    # transaction so a running project never exists with a half-copied
+    # status set. `cement_project_statuses/2` is a no-op when entities is
+    # unavailable or the project is already cemented (see Statuses).
+    txn =
+      repo().transaction(fn ->
+        case p |> Project.changeset(%{started_at: started_at}) |> repo().update() do
+          {:ok, updated} ->
+            PhoenixKitProjects.Statuses.cement_project_statuses(updated)
+            updated
+
+          {:error, changeset} ->
+            repo().rollback(changeset)
+        end
+      end)
+
+    case txn do
+      {:ok, updated} ->
+        ProjectsPubSub.broadcast_project(:project_started, project_payload(updated))
+        {:ok, updated}
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -1482,6 +1554,19 @@ defmodule PhoenixKitProjects.Projects do
     Assignment
     |> preload(^@assignment_preloads)
     |> repo().get(uuid)
+  end
+
+  @doc """
+  Fetches the assignments among `uuids` that belong to `project_uuid`, in a
+  single query. Used to authorize multi-endpoint operations (e.g. dependency
+  removal, which must confirm BOTH endpoints live in the viewed project)
+  without one round-trip per uuid. No preloads — callers only check scope.
+  """
+  @spec scoped_assignments([uuid()], uuid()) :: [Assignment.t()]
+  def scoped_assignments(uuids, project_uuid) when is_list(uuids) do
+    Assignment
+    |> where([a], a.uuid in ^uuids and a.project_uuid == ^project_uuid)
+    |> repo().all()
   end
 
   @doc "Returns a changeset for the given assignment."

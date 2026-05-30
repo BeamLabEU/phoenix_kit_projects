@@ -38,7 +38,7 @@ defmodule PhoenixKitProjects.Schemas.TaskDependency do
     |> validate_required(@required)
     |> assoc_constraint(:task)
     |> assoc_constraint(:depends_on_task)
-    |> unique_constraint([:task_uuid, :depends_on_task_uuid],
+    |> unique_constraint(:depends_on_task_uuid,
       name: :phoenix_kit_project_task_deps_pair_index,
       message: gettext("dependency already exists")
     )

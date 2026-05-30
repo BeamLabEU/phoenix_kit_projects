@@ -219,6 +219,41 @@ host apps that already had the single global index will auto-migrate
 on first deploy. Hosts that haven't migrated past V101 yet will get
 V105 as part of the V01..V105 chain on first run.
 
+## Re-verified 2026-05-30 (Phase-2 deferrals revisited)
+
+The "Deferred to Phase 2 quality sweep" block above was re-checked
+against current code during a Phase-1 follow-up pass. Outcome:
+
+- ~~**#15 — `error_summary/2` no gettext.**~~ **Resolved** in the Phase 2
+  sweep — `project_show_live.ex` now routes validator messages through
+  `Gettext.dngettext(PhoenixKitWeb.Gettext, "errors", …)` via a
+  `translate_validator_error/1` helper. No further work.
+- **#1 (mount-twice)** and **#7 (OverviewLive reload-all)** — retained
+  **by design**. The embed pivot (PR #5) dropped `handle_params/3`
+  module-wide so the LVs can mount under `live_render`; both are
+  documented as accepted trade-offs in `AGENTS.md` ("What this module
+  does NOT have") and the PR #4 follow-up. Not bugs.
+- ~~**#9 — redundant `unique_constraint` field-list + explicit
+  `name:`.**~~ **Fixed.** `dependency.ex` / `task_dependency.ex` now pass
+  the single `:depends_on_uuid` / `:depends_on_task_uuid` field (the
+  `name:` already identifies the pair index). Pinned by a new
+  duplicate-edge test in `dependencies_test.exs` asserting the error
+  attaches to `:depends_on_uuid` only.
+- ~~**#12 — `remove_dependency` hits `scoped_assignment/2` twice.**~~
+  **Fixed.** New `Projects.scoped_assignments/2` scope-checks both
+  endpoints in one query; `project_show_live.ex` `remove_dependency`
+  uses it. Pinned by `scoped_assignments/2` unit tests + a
+  cross-project `remove_dependency` guard test (other project's edge
+  must survive a crafted event).
+- ~~**#16 — `counts_weekends` castable-but-defaults-`false`.**~~
+  **Fixed.** `Project.changeset/3` adds `validate_required([:counts_weekends])`
+  — omission stays valid (the `false` default applies), an explicit
+  `nil` is now rejected. Pinned by two `project_test.exs` cases.
+
+`#10 (test_helper shells to psql)` remains as-is — it matches the
+cross-module convention (staff/core do the same); changing it is a
+workspace-wide decision, not a projects-local fix.
+
 ## Files touched
 
 | File | Change |

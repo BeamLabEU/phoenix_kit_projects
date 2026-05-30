@@ -49,6 +49,10 @@ defmodule PhoenixKitProjects.Schemas.Project do
           archived_at: DateTime.t() | nil,
           position: integer() | nil,
           translations: translations_map(),
+          status_entity_uuid: UUIDv7.t() | nil,
+          current_status_slug: String.t() | nil,
+          settings: map(),
+          external_id: String.t() | nil,
           assignments: [Assignment.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
@@ -72,6 +76,25 @@ defmodule PhoenixKitProjects.Schemas.Project do
     field(:archived_at, :utc_datetime)
     field(:position, :integer, default: 0)
     field(:translations, :map, default: %{})
+    # Workflow-status catalog reference (V125). `status_entity_uuid` points
+    # at the `phoenix_kit_entities` row this project/template draws statuses
+    # from (nil = shared default list). `current_status_slug` is the selected
+    # status, addressed by its stable slug so it resolves against the live
+    # catalog before start and the cemented local rows after. See
+    # `PhoenixKitProjects.Statuses`. `current_status_slug` is server-owned —
+    # written only via `current_status_changeset/2`, never the form changeset.
+    field(:status_entity_uuid, UUIDv7)
+    field(:current_status_slug, :string)
+    # Generic per-project preferences (V125). First key:
+    # `use_status_translations` (true/false/absent) — the per-project
+    # override for displaying translated status titles; absent = inherit
+    # the global `projects_use_status_translations` setting. Resolution
+    # lives in `PhoenixKitProjects.Statuses`.
+    field(:settings, :map, default: %{})
+    # Free-form external reference (V125). Ties a project to a record in some
+    # external system; holds an id, UUID, or slug. No UI — set programmatically
+    # by host apps/integrations. Indexed for lookup; not unique.
+    field(:external_id, :string)
 
     has_many(:assignments, Assignment, foreign_key: :project_uuid, on_delete: :delete_all)
 
@@ -79,17 +102,57 @@ defmodule PhoenixKitProjects.Schemas.Project do
   end
 
   @required ~w(name start_mode)a
-  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations)a
+  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id)a
 
   def changeset(project, attrs, opts \\ []) do
     project
     |> cast(attrs, @required ++ @optional)
     |> validate_required(@required)
+    # `counts_weekends` is cast-optional (forms may omit it) but must
+    # resolve to a boolean — the schema default of `false` satisfies this
+    # on omission; an explicit `nil` in attrs is rejected so the intent
+    # stays honest rather than silently coercing.
+    |> validate_required([:counts_weekends])
     |> validate_length(:name, min: 1, max: 255)
+    |> validate_length(:external_id, max: 255)
     |> validate_inclusion(:start_mode, @start_modes)
     |> validate_translations_shape()
+    |> foreign_key_constraint(:status_entity_uuid)
     |> maybe_require_date(opts)
   end
+
+  @doc """
+  Changeset for the server-owned `current_status_slug` only.
+
+  Kept separate from `changeset/3` so a form submission can never
+  mass-assign the selected workflow status — it's only ever set through
+  `PhoenixKitProjects.Statuses.set_current_status/3`, which validates the
+  slug against the project's resolved status list first. `nil` clears it.
+  Mirrors `Assignment.status_changeset/2`'s isolation of server-owned
+  completion fields.
+  """
+  @spec current_status_changeset(t(), map()) :: Ecto.Changeset.t()
+  def current_status_changeset(project, attrs) do
+    project
+    |> cast(attrs, [:current_status_slug])
+    |> validate_length(:current_status_slug, max: 255)
+  end
+
+  @doc """
+  Whether status titles should display in the viewer's content locale for
+  this project. Defaults to `true` — translations are always captured;
+  this flag only gates *display*. Stored under
+  `settings["use_status_translations"]` (only an explicit `false` disables).
+  """
+  @spec status_translation_override(t()) :: boolean() | nil
+  def status_translation_override(%__MODULE__{settings: settings}) when is_map(settings) do
+    case Map.get(settings, "use_status_translations") do
+      v when is_boolean(v) -> v
+      _ -> nil
+    end
+  end
+
+  def status_translation_override(_), do: nil
 
   # Guards the `translations` JSONB against garbage from programmatic
   # callers (the form layer cleans inputs via

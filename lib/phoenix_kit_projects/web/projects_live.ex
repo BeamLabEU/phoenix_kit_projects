@@ -5,7 +5,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -61,7 +61,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         # moment the user clicks an action button (Reorder, etc.). The
         # live selection lives client-side in the BulkSelectScope hook.
         captured_uuids: [],
-        show_reorder_modal: false
+        show_reorder_modal: false,
+        # Workflow-status filter. Options come from the shared catalog
+        # (without provisioning it); `nil` = no filter. Hidden when
+        # entities is unavailable or the shared list has no statuses yet.
+        statuses_available: Statuses.available?(),
+        status_filter: nil,
+        status_options: status_filter_options()
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.attach_open_embed_hook()
@@ -81,8 +87,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   defp load_projects(socket) do
+    status_slug = socket.assigns[:status_filter]
+
     base_opts = [
       archived: false,
+      current_status_slug: status_slug || :all,
       sort_by: socket.assigns.sort_by,
       sort_dir: socket.assigns.sort_dir
     ]
@@ -93,10 +102,47 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         _ -> base_opts
       end
 
+    projects = Projects.list_projects(list_opts)
+
     assign(socket,
-      projects: Projects.list_projects(list_opts),
-      total_count: Projects.count_projects(archived: false)
+      projects: projects,
+      total_count:
+        Projects.count_projects(archived: false, current_status_slug: status_slug || :all),
+      # Per-row current status for the list badge, batched to avoid N+1.
+      workflow_status_by_project:
+        if(socket.assigns.statuses_available,
+          do: Statuses.statuses_for_projects(projects),
+          else: %{}
+        )
     )
+  end
+
+  # Shared-catalog statuses as `{label, slug}` for the filter select.
+  # Reads only — never provisions the shared entity.
+  defp status_filter_options do
+    Statuses.shared_catalog_statuses() |> Enum.map(&{&1.label, &1.slug})
+  end
+
+  # The workflow-status filter dropdown, shown in the toolbar. Hidden when
+  # the entities module is unavailable or the shared list has no statuses
+  # yet. A self-contained form so its phx-change doesn't entangle with the
+  # sort selector's form.
+  defp status_filter_control(assigns) do
+    ~H"""
+    <form
+      :if={@statuses_available and @status_options != []}
+      phx-change="filter_status"
+      class="flex items-center"
+    >
+      <.select
+        name="status_slug"
+        value={@status_filter}
+        options={@status_options}
+        prompt={gettext("All statuses")}
+        class="select-sm"
+      />
+    </form>
+    """
   end
 
   @sort_fields ~w(position name inserted_at updated_at)a
@@ -133,6 +179,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       end
 
     {:noreply, apply_sort(socket, field, dir)}
+  end
+
+  # Workflow-status filter. Empty value clears it. Reset `loaded_count`
+  # (same reasoning as a sort change) so the filtered view starts at the
+  # first batch rather than keeping a stale deep page.
+  def handle_event("filter_status", %{"status_slug" => slug}, socket) do
+    slug = if slug in [nil, ""], do: nil, else: slug
+    {:noreply, socket |> assign(status_filter: slug, loaded_count: @per_batch) |> load_projects()}
   end
 
   # Header-click sort: clicking the active column flips direction,
@@ -376,6 +430,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 options={sort_options()}
                 manual_field={:position}
               />
+              {status_filter_control(assigns)}
             </:leading>
           </.bulk_actions_toolbar>
 
@@ -385,12 +440,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         <%!-- When bulk-select is disabled, render just the sort
              selector + table (no toolbar wrapper). --%>
         <%= if not @bulk_enabled? do %>
-          <.sort_selector
-            sort_by={@sort_by}
-            sort_dir={@sort_dir}
-            options={sort_options()}
-            manual_field={:position}
-          />
+          <div class="flex items-center gap-2">
+            <.sort_selector
+              sort_by={@sort_by}
+              sort_dir={@sort_dir}
+              options={sort_options()}
+              manual_field={:position}
+            />
+            {status_filter_control(assigns)}
+          </div>
           {render_projects_table(assigns, @sort_by == :position, lang)}
         <% end %>
       <% end %>
@@ -458,7 +516,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
           </.table_default_cell>
           <.table_default_cell>
-            <.project_status_badge project={p} />
+            <div class="flex flex-wrap items-center gap-1">
+              <.project_status_badge project={p} />
+              <.workflow_status_badge
+                :if={@statuses_available}
+                status={Map.get(@workflow_status_by_project, p.uuid)}
+              />
+            </div>
           </.table_default_cell>
           <.table_default_cell class="text-right whitespace-nowrap">
             <.table_row_menu id={"project-menu-#{p.uuid}"}>

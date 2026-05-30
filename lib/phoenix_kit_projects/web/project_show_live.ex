@@ -9,7 +9,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
@@ -63,7 +63,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        comments_resource: nil,
        comments_enabled: false,
        project_comment_count: 0,
-       assignment_comment_counts: %{}
+       assignment_comment_counts: %{},
+       statuses_available: false,
+       current_status: nil,
+       status_options: []
      )
      |> put_flash(:error, gettext("Project not found."))
      |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -104,7 +107,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            comments_resource: nil,
            comments_enabled: false,
            project_comment_count: 0,
-           assignment_comment_counts: %{}
+           assignment_comment_counts: %{},
+           statuses_available: false,
+           current_status: nil,
+           status_options: []
          )
          |> put_flash(:error, gettext("Project not found."))
          |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -124,10 +130,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
+        # Resolve the workflow-status list once (this also auto-seeds the
+        # shared catalog entity on first view when entities is available
+        # and the project draws from the shared list — the detect-or-seed
+        # provisioning UX). `current_status` is derived from the same list
+        # so we don't resolve twice.
+        statuses_available = Statuses.available?()
+        status_options = if statuses_available, do: Statuses.statuses_for(project), else: []
+
+        current_status =
+          Enum.find(status_options, &(&1.slug == project.current_status_slug))
+
         socket =
           socket
           |> assign(
             page_title: Project.localized_name(project, lang),
+            statuses_available: statuses_available,
+            status_options: status_options,
+            current_status: current_status,
             project: project,
             is_template: is_template,
             wrapper_class: wrapper_class,
@@ -176,10 +196,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   def handle_info({:projects, event, _payload}, socket)
-      when event in [:project_updated, :project_completed, :project_reopened, :project_started] do
+      when event in [
+             :project_updated,
+             :project_completed,
+             :project_reopened,
+             :project_started,
+             :project_status_changed
+           ] do
     case Projects.get_project(socket.assigns.project.uuid) do
-      nil -> {:noreply, socket}
-      p -> {:noreply, socket |> assign(project: p) |> load_assignments()}
+      nil ->
+        {:noreply, socket}
+
+      p ->
+        {:noreply, socket |> assign(project: p) |> refresh_status_state() |> load_assignments()}
     end
   end
 
@@ -231,6 +260,21 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       progress_pct: if(total > 0, do: round(progress_sum / total), else: 0),
       schedule: schedule
     )
+  end
+
+  # Recomputes the workflow-status list + current selection from the
+  # (possibly just-reloaded) project. Re-resolves against the live catalog
+  # pre-start and the cemented local rows post-start, so a `:project_started`
+  # broadcast naturally flips the source. No-op when entities is unavailable.
+  defp refresh_status_state(socket) do
+    if socket.assigns.statuses_available do
+      project = socket.assigns.project
+      options = Statuses.statuses_for(project)
+      current = Enum.find(options, &(&1.slug == project.current_status_slug))
+      assign(socket, status_options: options, current_status: current)
+    else
+      socket
+    end
   end
 
   # Updates the assignment, logs the activity on success, and returns a tuple
@@ -569,33 +613,37 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # Cross-project mismatches are silent noops (UI never offers them).
     # An actual `remove_dependency/2` failure is rare but logged via
     # `log_failed` so a Postgres outage doesn't erase the click.
-    with %{} <- scoped_assignment(socket, a_uuid),
-         %{} <- scoped_assignment(socket, d_uuid) do
-      case Projects.remove_dependency(a_uuid, d_uuid) do
-        {:ok, _} ->
-          Activity.log("projects.dependency_removed",
-            actor_uuid: Activity.actor_uuid(socket),
-            resource_type: "assignment",
-            resource_uuid: a_uuid,
-            target_uuid: d_uuid,
-            metadata: %{}
-          )
+    # Both endpoints are scope-checked in a single query (distinct uuids →
+    # exactly two rows when both live in this project); a missing or
+    # cross-project endpoint yields <2 rows and is a silent no-op.
+    case Projects.scoped_assignments([a_uuid, d_uuid], socket.assigns.project.uuid) do
+      [_, _] ->
+        case Projects.remove_dependency(a_uuid, d_uuid) do
+          {:ok, _} ->
+            Activity.log("projects.dependency_removed",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "assignment",
+              resource_uuid: a_uuid,
+              target_uuid: d_uuid,
+              metadata: %{}
+            )
 
-          {:noreply, load_assignments(socket)}
+            {:noreply, load_assignments(socket)}
 
-        {:error, _} ->
-          Activity.log_failed("projects.dependency_removed",
-            actor_uuid: Activity.actor_uuid(socket),
-            resource_type: "assignment",
-            resource_uuid: a_uuid,
-            target_uuid: d_uuid,
-            metadata: %{}
-          )
+          {:error, _} ->
+            Activity.log_failed("projects.dependency_removed",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "assignment",
+              resource_uuid: a_uuid,
+              target_uuid: d_uuid,
+              metadata: %{}
+            )
 
-          {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
-      end
-    else
-      _ -> {:noreply, socket}
+            {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
+        end
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -629,6 +677,38 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       {:error, msg} ->
         {:noreply, put_flash(socket, :error, msg)}
+    end
+  end
+
+  def handle_event("change_workflow_status", %{"status_slug" => slug}, socket) do
+    slug = if slug in [nil, ""], do: nil, else: slug
+    project = socket.assigns.project
+    previous = project.current_status_slug
+
+    case Statuses.set_current_status(project, slug, actor_uuid: Activity.actor_uuid(socket)) do
+      {:ok, updated} ->
+        Activity.log("projects.project_status_changed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: updated.uuid,
+          metadata: %{
+            "name" => updated.name,
+            "status_slug" => slug,
+            "previous_status_slug" => previous
+          }
+        )
+
+        {:noreply, socket |> assign(project: updated) |> refresh_status_state()}
+
+      {:error, _reason} ->
+        Activity.log_failed("projects.project_status_changed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: project.uuid,
+          metadata: %{"status_slug" => slug}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not change the status."))}
     end
   end
 
@@ -1202,6 +1282,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name="hero-archive-box" class="w-3.5 h-3.5" /> {gettext("Archived")}
               </span>
             <% end %>
+            <%!-- User-defined workflow status (entities-backed), alongside
+                 the computed lifecycle badges above. Renders nothing when
+                 unset or when the entities module is unavailable. --%>
+            <.workflow_status_badge :if={@statuses_available} status={@current_status} />
           </div>
           <%!-- Description sits directly under the title, above the buttons —
                title + subtitle as a stacked pair before the action row. --%>
@@ -1220,6 +1304,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             >
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
             </.smart_link>
+            <%!-- Inline workflow-status picker (the current value). The
+                 status-list *source* is chosen on the new/edit form (and the
+                 global default in Settings), not here. Hidden when no
+                 statuses exist for the project's list. --%>
+            <form
+              :if={@statuses_available and @status_options != []}
+              phx-change="change_workflow_status"
+              class="flex items-center"
+            >
+              <.select
+                name="status_slug"
+                value={@project.current_status_slug}
+                options={Enum.map(@status_options, &{&1.label, &1.slug})}
+                prompt={gettext("No status")}
+                class="select-sm"
+              />
+            </form>
             <button
               :if={@comments_enabled}
               type="button"

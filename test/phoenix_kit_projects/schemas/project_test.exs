@@ -32,6 +32,47 @@ defmodule PhoenixKitProjects.Schemas.ProjectTest do
       cs = Project.changeset(%Project{}, %{"name" => "Plan", "start_mode" => "immediate"})
       assert cs.valid?
     end
+
+    test "external_id is castable and round-trips" do
+      cs =
+        Project.changeset(%Project{}, %{
+          "name" => "Plan",
+          "start_mode" => "immediate",
+          "external_id" => "ext-abc-123"
+        })
+
+      assert cs.valid?
+      assert Ecto.Changeset.get_change(cs, :external_id) == "ext-abc-123"
+    end
+
+    test "external_id max length 255" do
+      cs =
+        Project.changeset(%Project{}, %{
+          "name" => "Plan",
+          "start_mode" => "immediate",
+          "external_id" => String.duplicate("x", 256)
+        })
+
+      refute cs.valid?
+      assert {:external_id, {_, _}} = List.keyfind(cs.errors, :external_id, 0)
+    end
+
+    test "counts_weekends omitted is valid (schema default false applies)" do
+      cs = Project.changeset(%Project{}, %{"name" => "Plan", "start_mode" => "immediate"})
+      assert cs.valid?
+    end
+
+    test "counts_weekends explicit nil is rejected" do
+      cs =
+        Project.changeset(%Project{}, %{
+          "name" => "Plan",
+          "start_mode" => "immediate",
+          "counts_weekends" => nil
+        })
+
+      refute cs.valid?
+      assert {:counts_weekends, {_, _}} = List.keyfind(cs.errors, :counts_weekends, 0)
+    end
   end
 
   describe "changeset/3 — start_mode enum + scheduled date" do

@@ -114,11 +114,17 @@ non-blocking. Every actionable finding is resolved in this sweep; the larger
 - Verified `period: :infinity` is a valid Oban `unique_period`
   (`oban/lib/oban/validation.ex:70`, `job.ex:29`).
 
+## Resolved post-triage (2026-05-30)
+
+- ~~DB-backed suites (worker, translations, LV tests) not run — no Postgres.~~
+  Run with the DB up. The three suites this finding named pass:
+  `workers/translate_resource_worker_test.exs` + `translations_test.exs` +
+  the three form-LV tests (`project`/`task`/`template`) — **58 tests, 0
+  failures**. The additive `overwrite` job-arg / payload key and the
+  handler-signature change confirmed non-breaking against the real DB. The
+  full module suite is green as well (**737 tests, 0 failures** via the core
+  path-override, per `feedback_run_tests_via_parent`).
+
 ## Open
 
-- DB-backed suites (worker, translations, LV tests) were **not run** in this
-  environment — no Postgres available. The additive `overwrite` job-arg /
-  payload key and the handler-signature change were traced against existing
-  assertions (none rely on exact arg/payload shape, and LV pattern matches are
-  non-strict), but the full `mix test` should be run where the DB is up before
-  relying on these in production.
+None.
