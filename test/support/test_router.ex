@@ -47,4 +47,16 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/templates/:id/edit", TemplateFormLive, :edit)
     end
   end
+
+  # Global Projects settings page — production mounts it via the module's
+  # `settings_tabs/0` callback under the core `/admin/settings` area.
+  scope "/en/admin/settings", PhoenixKitProjects.Web do
+    pipe_through(:browser)
+
+    live_session :projects_settings_test,
+      layout: {PhoenixKitProjects.Test.Layouts, :app},
+      on_mount: {PhoenixKitProjects.Test.Hooks, :assign_scope} do
+      live("/projects", ProjectsSettingsLive, :settings)
+    end
+  end
 end

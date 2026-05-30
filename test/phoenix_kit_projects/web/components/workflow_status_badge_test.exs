@@ -46,4 +46,29 @@ defmodule PhoenixKitProjects.Web.Components.WorkflowStatusBadgeTest do
     assert html =~ "badge-neutral"
     refute html =~ "background-color:"
   end
+
+  test "accepts shorthand and 8-digit hex colours" do
+    assert badge(%{label: "A", color: "#abc"}) =~ "background-color: #abc"
+    assert badge(%{label: "B", color: "#abcdef80"}) =~ "background-color: #abcdef80"
+  end
+
+  test "drops a non-hex colour string (CSS-injection guard)" do
+    # An attacker-controlled `data["color"]` must never reach the style attr.
+    payload = "red; background: url(javascript:alert(1)); --x: }"
+    html = badge(%{uuid: "u", label: "Evil", slug: "evil", color: payload, position: 1})
+
+    assert html =~ "Evil"
+    assert html =~ "badge-neutral"
+    refute html =~ "background-color:"
+    refute html =~ "url("
+    refute html =~ "javascript"
+  end
+
+  test "drops a CSS-keyword colour that is not bare hex" do
+    # Even benign-looking non-hex values are rejected (hex-only allowlist).
+    html = badge(%{label: "Named", color: "rebeccapurple"})
+
+    assert html =~ "badge-neutral"
+    refute html =~ "background-color:"
+  end
 end

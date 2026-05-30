@@ -957,6 +957,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               <button
                 type="button"
                 phx-click="generate_default_statuses"
+                phx-disable-with={gettext("Generating…")}
                 class="btn btn-ghost btn-sm gap-1 self-start"
               >
                 <.icon name="hero-sparkles" class="w-4 h-4" />

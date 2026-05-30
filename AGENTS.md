@@ -248,6 +248,10 @@ Every mutation logs via `PhoenixKitProjects.Activity`. Action strings: `projects
 - `projects.assignment_progress_updated`
 - `projects.assignment_duration_changed`
 - `projects.assignment_tracking_toggled`
+- `projects.project_status_changed` — workflow current-status change (show page)
+- `projects.status_entity_provisioned` — a default status list generated (per-project form OR global settings; `metadata.scope` = `"shared"` | `"global_default"`)
+- `projects.default_status_entity_set` — global default status list chosen (settings page; `resource_type: "projects_settings"`)
+- `projects.status_translations_toggled` — global translated-titles flag flipped (settings page)
 
 Guarded with `Code.ensure_loaded?/1` + rescue — logging never crashes mutations.
 
@@ -562,6 +566,14 @@ project starts. Lives in `PhoenixKitProjects.Statuses` (mirrors
   running project then uses its own frozen, independently-editable copy —
   later catalog edits don't touch it. Same template→instance philosophy
   as Assignment-copies-Task.
+
+  "Frozen" means it **stops following the live catalog**, NOT read-only.
+  The cemented rows remain editable through the context as a deliberate
+  escape hatch (there is no UI for it): `Statuses.add_project_status/2`,
+  `update_project_status_row/2`, `remove_project_status/2`,
+  `get_project_status/2`. So a started project's statuses can still be
+  changed via the API "in case it's really wanted" — pinned by the
+  "local CRUD post-start" test in `statuses_test.exs`.
 
 `started_at` is the cement boundary (`derived_status` → `:running` iff
 `started_at`). The selected status is `current_status_slug` on the

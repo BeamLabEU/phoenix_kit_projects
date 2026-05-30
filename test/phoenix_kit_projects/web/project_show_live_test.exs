@@ -508,4 +508,48 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert_redirect(view, "/en/admin/projects/list")
     end
   end
+
+  describe "workflow status picker (change_workflow_status)" do
+    setup do
+      PhoenixKitProjects.StatusFixtures.seed_shared_status_entity!()
+      project = fixture_project(%{"start_mode" => "immediate"})
+      {:ok, started} = Projects.start_project(project)
+      {:ok, project: started}
+    end
+
+    test "selecting a valid status sets current_status_slug + logs", %{
+      conn: conn,
+      project: p,
+      actor_uuid: actor_uuid
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+
+      view
+      |> element("form[phx-change=change_workflow_status]")
+      |> render_change(%{"status_slug" => "backlog"})
+
+      assert Projects.get_project!(p.uuid).current_status_slug == "backlog"
+
+      assert_activity_logged("projects.project_status_changed",
+        actor_uuid: actor_uuid,
+        resource_uuid: p.uuid,
+        metadata_has: %{"status_slug" => "backlog"}
+      )
+    end
+
+    test "selecting an unknown slug is rejected (no change) + error flash", %{
+      conn: conn,
+      project: p
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+
+      html =
+        view
+        |> element("form[phx-change=change_workflow_status]")
+        |> render_change(%{"status_slug" => "not-a-real-slug"})
+
+      assert Projects.get_project!(p.uuid).current_status_slug == nil
+      assert html =~ "Could not change the status."
+    end
+  end
 end

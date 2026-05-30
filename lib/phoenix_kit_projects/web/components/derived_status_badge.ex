@@ -68,7 +68,16 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
     """
   end
 
-  defp workflow_color(%{color: c}) when is_binary(c) and c != "", do: c
+  # Only surface a colour we can prove is a bare hex value (`#rgb`..`#rrggbbaa`).
+  # `data["color"]` is free-form JSONB (future colour picker / custom entities),
+  # and `~H` does NOT escape attribute values — so anything that isn't plain hex
+  # is dropped to nil (badge falls back to `badge-neutral`). This keeps an
+  # attacker-controlled string from ever reaching the inline `style` attribute.
+  @hex_color ~r/^#[0-9a-fA-F]{3,8}$/
+  defp workflow_color(%{color: c}) when is_binary(c) do
+    if Regex.match?(@hex_color, c), do: c, else: nil
+  end
+
   defp workflow_color(_), do: nil
 
   defp workflow_style(status) do

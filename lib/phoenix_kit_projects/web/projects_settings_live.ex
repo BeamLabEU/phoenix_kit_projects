@@ -16,6 +16,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  alias PhoenixKitProjects.Activity
   alias PhoenixKitProjects.Statuses
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -45,6 +46,12 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     uuid = if uuid in [nil, ""], do: nil, else: uuid
     Statuses.set_default_status_entity(uuid)
 
+    Activity.log("projects.default_status_entity_set",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "projects_settings",
+      metadata: %{"entity_uuid" => uuid}
+    )
+
     {:noreply,
      socket
      |> assign(default_status_entity_uuid: uuid)
@@ -52,9 +59,15 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   end
 
   def handle_event("generate_default_status_list", _params, socket) do
-    case Statuses.create_default_status_entity() do
+    case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
       {:ok, entity} ->
         Statuses.set_default_status_entity(entity.uuid)
+
+        Activity.log("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "projects_settings",
+          metadata: %{"entity_name" => entity.name, "scope" => "global_default"}
+        )
 
         {:noreply,
          socket
@@ -77,6 +90,12 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       "projects_use_status_translations",
       new_value,
       "projects"
+    )
+
+    Activity.log("projects.status_translations_toggled",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "projects_settings",
+      metadata: %{"enabled" => new_value}
     )
 
     {:noreply,
@@ -119,6 +138,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             <button
               type="button"
               phx-click="generate_default_status_list"
+              phx-disable-with={gettext("Generating…")}
               class="btn btn-ghost btn-sm gap-1 self-start"
             >
               <.icon name="hero-sparkles" class="w-4 h-4" />

@@ -49,6 +49,12 @@ defmodule PhoenixKitProjects.Statuses do
   # Title-only for now — the label rides the built-in EntityData `title`
   # column and the order rides `position`. (Colour is still read/rendered
   # if a record carries a `color` data field, but we don't seed one.)
+  # Seed vocabulary for a generated default status list. These titles are
+  # written into entity_data `title` columns (user-owned, editable, and
+  # translatable per-language in the entities admin) — they are NOT rendered
+  # through `gettext/1`, so `mix gettext.extract` does not pick them up and
+  # they ship in English. That is intentional: a generated list is a starting
+  # point the admin localises in the entities UI, not a fixed UI string.
   @default_statuses [
     %{title: "Backlog", slug: "backlog", position: 1},
     %{title: "Planned", slug: "planned", position: 2},
