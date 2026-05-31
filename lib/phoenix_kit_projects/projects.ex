@@ -889,13 +889,30 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  @doc "Updates a project and broadcasts `:project_updated`."
-  @spec update_project(Project.t(), map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
-  def update_project(%Project{} = p, attrs) do
+  @doc """
+  Updates a project and broadcasts `:project_updated`.
+
+  Pass `broadcast: false` to skip the broadcast — used by callers that run
+  the update inside a larger transaction (e.g.
+  `PhoenixKitProjects.Statuses.update_project_with_statuses/2`) and must
+  defer the broadcast until after commit, so a later rollback can't leak a
+  phantom `:project_updated` to subscribers. Such callers fire the event
+  themselves via `broadcast_project_updated/1` once the transaction commits.
+  """
+  @spec update_project(Project.t(), map(), keyword()) ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
+  def update_project(%Project{} = p, attrs, opts \\ []) do
     with {:ok, updated} <- p |> Project.changeset(attrs) |> repo().update() do
-      ProjectsPubSub.broadcast_project(:project_updated, project_payload(updated))
+      if Keyword.get(opts, :broadcast, true), do: broadcast_project_updated(updated)
       {:ok, updated}
     end
+  end
+
+  @doc "Broadcasts a `:project_updated` event for a project (post-commit use)."
+  @spec broadcast_project_updated(Project.t()) :: :ok
+  def broadcast_project_updated(%Project{} = p) do
+    ProjectsPubSub.broadcast_project(:project_updated, project_payload(p))
+    :ok
   end
 
   @doc """

@@ -421,23 +421,48 @@ defmodule PhoenixKitProjects.Statuses do
   def set_status_entity(%Project{} = project, entity_uuid, _opts \\ []) do
     entity_uuid = if entity_uuid in [nil, ""], do: nil, else: entity_uuid
 
-    if started?(project) do
-      # Repoint + re-cement + reconcile the selection in ONE transaction, so
-      # a started project never ends up pointing at a new entity while its
-      # local rows (or `current_status_slug`) still reflect the old one.
-      repo().transaction(fn ->
-        case update_status_entity(project, entity_uuid) do
-          {:ok, updated} -> do_recement(updated)
-          {:error, changeset} -> repo().rollback(changeset)
-        end
-      end)
-    else
-      update_status_entity(project, entity_uuid)
+    cond do
+      not started?(project) ->
+        update_status_entity(project, entity_uuid)
+
+      entity_uuid == project.status_entity_uuid ->
+        # Same source on a started project: nothing to repoint or re-cement.
+        # Skip the wipe so local edits (reorders, label/colour tweaks) survive.
+        {:ok, project}
+
+      true ->
+        # Repoint + re-cement + reconcile the selection in ONE transaction, so
+        # a started project never ends up pointing at a new entity while its
+        # local rows (or `current_status_slug`) still reflect the old one. The
+        # `:project_updated` broadcast is deferred until after commit (see
+        # `update_project/3`'s `broadcast: false`) so a rollback can't leak a
+        # phantom event.
+        repo().transaction(fn ->
+          case update_status_entity(project, entity_uuid, broadcast: false) do
+            {:ok, updated} -> do_recement(updated)
+            {:error, changeset} -> repo().rollback(changeset)
+          end
+        end)
+        |> broadcast_after_commit()
     end
   end
 
-  defp update_status_entity(project, entity_uuid),
-    do: PhoenixKitProjects.Projects.update_project(project, %{status_entity_uuid: entity_uuid})
+  defp update_status_entity(project, entity_uuid, opts \\ []),
+    do:
+      PhoenixKitProjects.Projects.update_project(
+        project,
+        %{status_entity_uuid: entity_uuid},
+        opts
+      )
+
+  # Fires the deferred `:project_updated` once a status transaction commits.
+  # No-op on rollback, so subscribers never see a phantom update.
+  defp broadcast_after_commit({:ok, %Project{} = project} = ok) do
+    PhoenixKitProjects.Projects.broadcast_project_updated(project)
+    ok
+  end
+
+  defp broadcast_after_commit(other), do: other
 
   @doc """
   Updates a project (arbitrary form attrs) and, when a **started** project's
@@ -452,8 +477,11 @@ defmodule PhoenixKitProjects.Statuses do
   def update_project_with_statuses(%Project{} = project, attrs) do
     old_entity = project.status_entity_uuid
 
+    # `broadcast: false` + `broadcast_after_commit/1`: the `:project_updated`
+    # event fires only once the whole transaction commits, so a re-cement
+    # failure that rolls back never leaks a phantom update to subscribers.
     repo().transaction(fn ->
-      case PhoenixKitProjects.Projects.update_project(project, attrs) do
+      case PhoenixKitProjects.Projects.update_project(project, attrs, broadcast: false) do
         {:ok, updated} ->
           if started?(updated) and updated.status_entity_uuid != old_entity,
             do: do_recement(updated),
@@ -463,6 +491,7 @@ defmodule PhoenixKitProjects.Statuses do
           repo().rollback(changeset)
       end
     end)
+    |> broadcast_after_commit()
   end
 
   @doc "True once a project has started (has a `started_at`)."
@@ -584,9 +613,17 @@ defmodule PhoenixKitProjects.Statuses do
   @spec cement_project_statuses(Project.t(), keyword()) :: :ok
   def cement_project_statuses(%Project{} = project, _opts \\ []) do
     cond do
-      already_cemented?(project) -> :ok
-      not available?() -> :ok
-      true -> do_cement(project)
+      already_cemented?(project) ->
+        :ok
+
+      not available?() ->
+        :ok
+
+      true ->
+        # `do_cement/1` returns the cemented slugs (for the re-cement reconcile
+        # path); at start we don't need them — the contract here is `:ok`.
+        _slugs = do_cement(project)
+        :ok
     end
   end
 
@@ -744,10 +781,36 @@ defmodule PhoenixKitProjects.Statuses do
   def update_project_status_row(%ProjectStatus{} = row, attrs),
     do: row |> ProjectStatus.changeset(stringify(attrs)) |> repo().update()
 
-  @doc "Deletes a cemented status row."
+  @doc """
+  Deletes a cemented status row. If the deleted row was the project's
+  currently-selected status, `current_status_slug` is cleared too (and a
+  `:project_status_changed` broadcast fires) so the selection never dangles
+  at a slug with no matching row. Slugs are unique per project, so deleting
+  the row removes the only match.
+  """
   @spec remove_project_status(ProjectStatus.t()) ::
           {:ok, ProjectStatus.t()} | {:error, Ecto.Changeset.t()}
-  def remove_project_status(%ProjectStatus{} = row), do: repo().delete(row)
+  def remove_project_status(%ProjectStatus{} = row) do
+    with {:ok, deleted} <- repo().delete(row) do
+      clear_dangling_current_status(deleted.project_uuid, deleted.slug)
+      {:ok, deleted}
+    end
+  end
+
+  # Clears a project's current selection when it points at `slug` (the row
+  # just removed). Routes through `set_current_status_slug/2` for the standard
+  # validated write + broadcast.
+  defp clear_dangling_current_status(project_uuid, slug) when is_binary(slug) do
+    case PhoenixKitProjects.Projects.get_project(project_uuid) do
+      %Project{current_status_slug: ^slug} = project ->
+        PhoenixKitProjects.Projects.set_current_status_slug(project, nil)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp clear_dangling_current_status(_project_uuid, _slug), do: :ok
 
   @doc "Fetches a cemented status row by uuid, scoped to a project."
   @spec get_project_status(Project.t(), String.t()) :: ProjectStatus.t() | nil

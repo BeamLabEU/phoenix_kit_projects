@@ -179,6 +179,30 @@ defmodule PhoenixKitProjects.StatusesTest do
       {:ok, _} = Statuses.remove_project_status(updated)
       refute Enum.any?(Statuses.list_project_statuses(started), &(&1.uuid == row.uuid))
     end
+
+    test "removing the currently-selected row clears the dangling current_status_slug" do
+      {:ok, started} = Projects.start_project(fixture_project())
+      {:ok, started} = Statuses.set_current_status(started, "done")
+      assert started.current_status_slug == "done"
+
+      done = Enum.find(Statuses.list_project_statuses(started), &(&1.slug == "done"))
+      row = Statuses.get_project_status(started, done.uuid)
+      {:ok, _} = Statuses.remove_project_status(row)
+
+      # Selection no longer points at a row that exists → cleared, not dangling.
+      assert Projects.get_project(started.uuid).current_status_slug == nil
+    end
+
+    test "removing a non-selected row leaves the current selection intact" do
+      {:ok, started} = Projects.start_project(fixture_project())
+      {:ok, started} = Statuses.set_current_status(started, "done")
+
+      backlog = Enum.find(Statuses.list_project_statuses(started), &(&1.slug == "backlog"))
+      row = Statuses.get_project_status(started, backlog.uuid)
+      {:ok, _} = Statuses.remove_project_status(row)
+
+      assert Projects.get_project(started.uuid).current_status_slug == "done"
+    end
   end
 
   describe "reverse_reference_count/1" do
@@ -374,6 +398,22 @@ defmodule PhoenixKitProjects.StatusesTest do
       {:ok, switched} = Statuses.set_status_entity(started, other.uuid)
 
       assert switched.current_status_slug == "done"
+    end
+
+    test "re-selecting the SAME entity on a started project preserves local edits (no wipe)" do
+      entity = StatusFixtures.seed_shared_status_entity!()
+      project = fixture_project(%{"status_entity_uuid" => entity.uuid})
+      {:ok, started} = Projects.start_project(project)
+      {:ok, _} = Statuses.add_project_status(started, %{label: "Local Only"})
+
+      before = length(Statuses.list_project_statuses(started))
+      assert before == length(Statuses.default_statuses()) + 1
+
+      # Same source → no re-cement, so the hand-added row survives.
+      {:ok, same} = Statuses.set_status_entity(started, entity.uuid)
+      local = Statuses.list_project_statuses(same)
+      assert length(local) == before
+      assert Enum.any?(local, &(&1.slug == "local-only"))
     end
   end
 end

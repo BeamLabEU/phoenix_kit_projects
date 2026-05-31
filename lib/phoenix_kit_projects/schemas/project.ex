@@ -183,14 +183,15 @@ defmodule PhoenixKitProjects.Schemas.Project do
   end
 
   # Drops unknown / wrongly-typed entries from the cast `settings` map so the
-  # column never accumulates attacker- or caller-supplied junk. A non-map
-  # `settings` is rejected outright.
+  # column never accumulates attacker- or caller-supplied junk. `cast/3`
+  # already rejects a non-map `settings` (the field is typed `:map`), so by the
+  # time we get a change here it is always a map.
   defp sanitize_settings(changeset) do
     case get_change(changeset, :settings) do
       nil ->
         changeset
 
-      settings when is_map(settings) ->
+      settings ->
         cleaned =
           for {k, v} <- settings,
               guard = @settings_keys[k],
@@ -199,9 +200,6 @@ defmodule PhoenixKitProjects.Schemas.Project do
               do: {k, v}
 
         put_change(changeset, :settings, cleaned)
-
-      _ ->
-        add_error(changeset, :settings, "is not a valid settings map")
     end
   end
 
