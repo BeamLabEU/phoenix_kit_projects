@@ -726,17 +726,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp save(socket, :edit, attrs, _template_uuid) do
-    old_entity = socket.assigns.project.status_entity_uuid
-
-    case Projects.update_project(socket.assigns.project, attrs) do
+    # Atomic update + re-cement: when a started project's status list changes,
+    # its local rows are re-copied (and a now-invalid `current_status_slug`
+    # cleared) in the SAME transaction as the field update — see
+    # `Statuses.update_project_with_statuses/2`. Unstarted projects cement at
+    # start, so this is just a plain update for them.
+    case Statuses.update_project_with_statuses(socket.assigns.project, attrs) do
       {:ok, project} ->
-        # A started project whose status list changed must re-cement so its
-        # local rows reflect the newly-chosen entity (unstarted projects
-        # cement at start, so nothing to do there).
-        if Statuses.started?(project) and project.status_entity_uuid != old_entity do
-          Statuses.recement_project_statuses(project)
-        end
-
         Activity.log("projects.project_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",

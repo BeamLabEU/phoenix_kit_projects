@@ -274,10 +274,16 @@ defmodule PhoenixKitProjects.Statuses do
   are always captured; this only gates display.
   """
   @spec use_status_translations?(Project.t()) :: boolean()
-  def use_status_translations?(%Project{} = project) do
+  def use_status_translations?(%Project{} = project),
+    do: use_status_translations?(project, global_use_status_translations?())
+
+  # Same, but with the global default pre-resolved — lets batch callers read
+  # the `projects_use_status_translations` setting once for a whole list.
+  @spec use_status_translations?(Project.t(), boolean()) :: boolean()
+  def use_status_translations?(%Project{} = project, global_default) do
     case Project.status_translation_override(project) do
       override when is_boolean(override) -> override
-      _ -> global_use_status_translations?()
+      _ -> global_default
     end
   end
 
@@ -292,8 +298,13 @@ defmodule PhoenixKitProjects.Statuses do
 
   # The locale to resolve status titles to for this project — the content
   # locale when translation display is on, else `nil` (primary title).
-  defp effective_status_lang(project) do
-    if use_status_translations?(project), do: L10n.current_content_lang(), else: nil
+  # Accepts a pre-resolved global default so batch callers (the list view)
+  # read the `projects_use_status_translations` setting ONCE rather than
+  # once per project.
+  defp effective_status_lang(project, global_default \\ global_use_status_translations?()) do
+    if use_status_translations?(project, global_default),
+      do: L10n.current_content_lang(),
+      else: nil
   end
 
   @doc """
@@ -313,13 +324,10 @@ defmodule PhoenixKitProjects.Statuses do
   entities is unavailable.
   """
   @spec list_catalog_statuses(String.t()) :: [status()]
-  def list_catalog_statuses(entity_uuid) when is_binary(entity_uuid) do
-    if available?() do
-      catalog_rows_at(entity_uuid, L10n.current_content_lang())
-    else
-      []
-    end
-  end
+  def list_catalog_statuses(entity_uuid) when is_binary(entity_uuid),
+    # `catalog_rows_at/2 → fetch_catalog_rows/2` already guards on
+    # `available?/0` (returning `[]` when entities is off), so no second check.
+    do: catalog_rows_at(entity_uuid, L10n.current_content_lang())
 
   def list_catalog_statuses(_), do: []
 
@@ -413,11 +421,48 @@ defmodule PhoenixKitProjects.Statuses do
   def set_status_entity(%Project{} = project, entity_uuid, _opts \\ []) do
     entity_uuid = if entity_uuid in [nil, ""], do: nil, else: entity_uuid
 
-    with {:ok, updated} <-
-           PhoenixKitProjects.Projects.update_project(project, %{status_entity_uuid: entity_uuid}) do
-      if started?(updated), do: recement_project_statuses(updated)
-      {:ok, updated}
+    if started?(project) do
+      # Repoint + re-cement + reconcile the selection in ONE transaction, so
+      # a started project never ends up pointing at a new entity while its
+      # local rows (or `current_status_slug`) still reflect the old one.
+      repo().transaction(fn ->
+        case update_status_entity(project, entity_uuid) do
+          {:ok, updated} -> do_recement(updated)
+          {:error, changeset} -> repo().rollback(changeset)
+        end
+      end)
+    else
+      update_status_entity(project, entity_uuid)
     end
+  end
+
+  defp update_status_entity(project, entity_uuid),
+    do: PhoenixKitProjects.Projects.update_project(project, %{status_entity_uuid: entity_uuid})
+
+  @doc """
+  Updates a project (arbitrary form attrs) and, when a **started** project's
+  status source changed, re-cements its local rows — all in one transaction.
+  This is the atomic edit-form entry point: `update_project/2` followed by a
+  separate re-cement would leave a failure window where the project points at
+  a new entity with stale local rows. Returns the (possibly slug-reconciled)
+  project. Unstarted projects just record the choice and cement at start.
+  """
+  @spec update_project_with_statuses(Project.t(), map()) ::
+          {:ok, Project.t()} | {:error, term()}
+  def update_project_with_statuses(%Project{} = project, attrs) do
+    old_entity = project.status_entity_uuid
+
+    repo().transaction(fn ->
+      case PhoenixKitProjects.Projects.update_project(project, attrs) do
+        {:ok, updated} ->
+          if started?(updated) and updated.status_entity_uuid != old_entity,
+            do: do_recement(updated),
+            else: updated
+
+        {:error, changeset} ->
+          repo().rollback(changeset)
+      end
+    end)
   end
 
   @doc "True once a project has started (has a `started_at`)."
@@ -427,19 +472,44 @@ defmodule PhoenixKitProjects.Statuses do
 
   @doc """
   Clear + re-copy the chosen catalog into local rows, atomically. Used when
-  a started project switches its status source (from the form save or the
-  show-page picker). Existing local edits are intentionally discarded — the
-  user chose a different list. No-op when entities is unavailable.
+  a started project switches its status source (from the show-page picker).
+  Existing local edits are intentionally discarded — the user chose a
+  different list. Returns the (possibly slug-reconciled) project, or
+  `{:error, changeset}` if the reconciling write fails. No-op (returns
+  `{:ok, project}`) when entities is unavailable.
   """
-  @spec recement_project_statuses(Project.t()) :: :ok
-  def recement_project_statuses(%Project{uuid: uuid} = project) do
-    repo().transaction(fn ->
-      repo().delete_all(from(s in ProjectStatus, where: s.project_uuid == ^uuid))
-      do_cement(project)
-    end)
-
-    :ok
+  @spec recement_project_statuses(Project.t()) :: {:ok, Project.t()} | {:error, term()}
+  def recement_project_statuses(%Project{} = project) do
+    repo().transaction(fn -> do_recement(project) end)
   end
+
+  # Clears local rows, re-copies the chosen catalog, then reconciles the
+  # current selection. Runs inside the caller's transaction; raises/rolls
+  # back on a write failure. Returns the (possibly updated) project.
+  defp do_recement(%Project{uuid: uuid} = project) do
+    repo().delete_all(from(s in ProjectStatus, where: s.project_uuid == ^uuid))
+    slugs = do_cement(project)
+    reconcile_current_status(project, slugs)
+  end
+
+  # After a re-cement the previously-selected status may no longer exist in
+  # the new list — clear `current_status_slug` so the project doesn't keep a
+  # dangling selection that silently renders as "no status".
+  defp reconcile_current_status(%Project{current_status_slug: slug} = project, slugs)
+       when is_binary(slug) and slug != "" do
+    if slug in slugs do
+      project
+    else
+      case project
+           |> Project.current_status_changeset(%{current_status_slug: nil})
+           |> repo().update() do
+        {:ok, updated} -> updated
+        {:error, changeset} -> repo().rollback(changeset)
+      end
+    end
+  end
+
+  defp reconcile_current_status(project, _slugs), do: project
 
   @doc "Cemented local status rows for a project, ordered by position."
   @spec list_project_statuses(Project.t()) :: [status()]
@@ -524,32 +594,39 @@ defmodule PhoenixKitProjects.Statuses do
     repo().exists?(from(s in ProjectStatus, where: s.project_uuid == ^uuid))
   end
 
+  # Copies the chosen catalog's rows into local `phoenix_kit_project_statuses`
+  # rows. Returns the list of cemented slugs (`[]` when there's no resolvable
+  # entity) so callers can reconcile a project's current selection.
   defp do_cement(%Project{uuid: uuid} = project) do
-    with {:ok, entity_uuid} <- resolve_catalog_entity_uuid(project) do
-      # Cement the PRIMARY-language title as the canonical label, and
-      # capture per-language title translations into the row's
-      # `translations` JSONB so a started project stays localized
-      # independent of the catalog.
-      primary_rows = entity_uuid |> catalog_rows_at(nil) |> dedupe_slugs()
-      primary_by_slug = Map.new(primary_rows, &{&1.slug, &1.label})
-      translations_by_slug = capture_translations(entity_uuid, primary_by_slug)
+    case resolve_catalog_entity_uuid(project) do
+      {:ok, entity_uuid} ->
+        # Cement the PRIMARY-language title as the canonical label, and
+        # capture per-language title translations into the row's
+        # `translations` JSONB so a started project stays localized
+        # independent of the catalog.
+        primary_rows = entity_uuid |> catalog_rows_at(nil) |> dedupe_slugs()
+        primary_by_slug = Map.new(primary_rows, &{&1.slug, &1.label})
+        translations_by_slug = capture_translations(entity_uuid, primary_by_slug)
 
-      Enum.each(primary_rows, fn s ->
-        %ProjectStatus{}
-        |> ProjectStatus.changeset(%{
-          project_uuid: uuid,
-          label: s.label,
-          slug: s.slug,
-          position: s.position,
-          data: if(s.color, do: %{"color" => s.color}, else: %{}),
-          translations: Map.get(translations_by_slug, s.slug, %{}),
-          source_entity_data_uuid: s.uuid
-        })
-        |> repo().insert!()
-      end)
+        Enum.each(primary_rows, fn s ->
+          %ProjectStatus{}
+          |> ProjectStatus.changeset(%{
+            project_uuid: uuid,
+            label: s.label,
+            slug: s.slug,
+            position: s.position,
+            data: if(s.color, do: %{"color" => s.color}, else: %{}),
+            translations: Map.get(translations_by_slug, s.slug, %{}),
+            source_entity_data_uuid: s.uuid
+          })
+          |> repo().insert!()
+        end)
+
+        Enum.map(primary_rows, & &1.slug)
+
+      {:error, _} ->
+        []
     end
-
-    :ok
   end
 
   # Builds `%{slug => %{lang => %{"label" => translated_title}}}` for every
@@ -721,13 +798,17 @@ defmodule PhoenixKitProjects.Statuses do
       |> repo().all()
       |> Enum.group_by(& &1.project_uuid)
 
+    # Resolve the global translation-display default once for the whole list
+    # instead of re-reading the setting per project.
+    global_default = global_use_status_translations?()
+
     Map.new(projects, fn p ->
       row =
         rows_by_project
         |> Map.get(p.uuid, [])
         |> Enum.find(&(&1.slug == p.current_status_slug))
 
-      {p.uuid, row && normalize_local_row(row, effective_status_lang(p))}
+      {p.uuid, row && normalize_local_row(row, effective_status_lang(p, global_default))}
     end)
   end
 
@@ -773,8 +854,15 @@ defmodule PhoenixKitProjects.Statuses do
   """
   @spec reverse_reference_count(String.t()) :: non_neg_integer()
   def reverse_reference_count(entity_uuid) when is_binary(entity_uuid) do
+    # Only count projects/templates that still draw from the catalog live.
+    # A started project has cemented its own local copy and no longer
+    # references the catalog (its `status_entity_uuid` lingers as
+    # provenance), so it must be excluded to keep the "Used by N" hint honest.
     repo().one(
-      from(p in Project, where: p.status_entity_uuid == ^entity_uuid, select: count(p.uuid))
+      from(p in Project,
+        where: p.status_entity_uuid == ^entity_uuid and is_nil(p.started_at),
+        select: count(p.uuid)
+      )
     ) || 0
   end
 

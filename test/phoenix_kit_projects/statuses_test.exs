@@ -195,6 +195,19 @@ defmodule PhoenixKitProjects.StatusesTest do
 
       assert Statuses.reverse_reference_count(entity.uuid) == 2
     end
+
+    test "excludes started (cemented) projects — they no longer reference the catalog",
+         %{entity: entity} do
+      unstarted = fixture_project(%{"status_entity_uuid" => entity.uuid})
+      started = fixture_project(%{"status_entity_uuid" => entity.uuid})
+      {:ok, _} = Projects.start_project(started)
+
+      # Only the unstarted project still draws from the catalog live; the
+      # started one cemented its own copy (its `status_entity_uuid` lingers
+      # as provenance but must not be counted).
+      assert Statuses.reverse_reference_count(entity.uuid) == 1
+      assert unstarted.status_entity_uuid == entity.uuid
+    end
   end
 
   describe "label localization" do
@@ -331,6 +344,36 @@ defmodule PhoenixKitProjects.StatusesTest do
       assert Statuses.list_project_statuses(updated) == []
       # Reads the catalog live until started.
       assert length(Statuses.statuses_for(updated)) == length(Statuses.default_statuses())
+    end
+
+    test "switching to a list WITHOUT the selected status clears the dangling selection" do
+      StatusFixtures.seed_shared_status_entity!()
+      {:ok, started} = Projects.start_project(fixture_project())
+      {:ok, started} = Statuses.set_current_status(started, "done")
+      assert started.current_status_slug == "done"
+
+      other = StatusFixtures.seed_custom_status_entity!([{"Open", "open"}, {"Closed", "closed"}])
+      {:ok, switched} = Statuses.set_status_entity(started, other.uuid)
+
+      # "done" isn't in the new list, so the now-invalid selection is cleared
+      # rather than left dangling (which would render silently as "no status").
+      assert switched.current_status_slug == nil
+      assert Statuses.current_status(switched) == nil
+
+      slugs = Enum.map(Statuses.list_project_statuses(switched), & &1.slug)
+      assert "open" in slugs
+      refute "done" in slugs
+    end
+
+    test "switching to a list that still has the selected status keeps it" do
+      StatusFixtures.seed_shared_status_entity!()
+      {:ok, started} = Projects.start_project(fixture_project())
+      {:ok, started} = Statuses.set_current_status(started, "done")
+
+      other = StatusFixtures.seed_custom_status_entity!([{"Done", "done"}, {"Open", "open"}])
+      {:ok, switched} = Statuses.set_status_entity(started, other.uuid)
+
+      assert switched.current_status_slug == "done"
     end
   end
 end

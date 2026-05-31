@@ -117,9 +117,17 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_length(:external_id, max: 255)
     |> validate_inclusion(:start_mode, @start_modes)
     |> validate_translations_shape()
+    |> sanitize_settings()
     |> foreign_key_constraint(:status_entity_uuid)
     |> maybe_require_date(opts)
   end
+
+  # The recognised keys in the `settings` JSONB and their value guards.
+  # `settings` is cast from the form, so without this a crafted post could
+  # mass-assign arbitrary keys/values. We whitelist instead of free-form
+  # validating: unknown keys are dropped, so the column only ever holds keys
+  # the module actually reads. ADD NEW SETTINGS KEYS HERE.
+  @settings_keys %{"use_status_translations" => &is_boolean/1}
 
   @doc """
   Changeset for the server-owned `current_status_slug` only.
@@ -171,6 +179,29 @@ defmodule PhoenixKitProjects.Schemas.Project do
         else
           add_error(changeset, :translations, "is not a valid translations map")
         end
+    end
+  end
+
+  # Drops unknown / wrongly-typed entries from the cast `settings` map so the
+  # column never accumulates attacker- or caller-supplied junk. A non-map
+  # `settings` is rejected outright.
+  defp sanitize_settings(changeset) do
+    case get_change(changeset, :settings) do
+      nil ->
+        changeset
+
+      settings when is_map(settings) ->
+        cleaned =
+          for {k, v} <- settings,
+              guard = @settings_keys[k],
+              is_function(guard) and guard.(v),
+              into: %{},
+              do: {k, v}
+
+        put_change(changeset, :settings, cleaned)
+
+      _ ->
+        add_error(changeset, :settings, "is not a valid settings map")
     end
   end
 

@@ -130,11 +130,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
-        # Resolve the workflow-status list once (this also auto-seeds the
-        # shared catalog entity on first view when entities is available
-        # and the project draws from the shared list — the detect-or-seed
-        # provisioning UX). `current_status` is derived from the same list
-        # so we don't resolve twice.
+        # Resolve the workflow-status list once (read-only — nothing is
+        # provisioned or seeded here; an unset shared default simply yields
+        # an empty list). `current_status` is derived from the same list so
+        # we don't resolve twice.
         statuses_available = Statuses.available?()
         status_options = if statuses_available, do: Statuses.statuses_for(project), else: []
 

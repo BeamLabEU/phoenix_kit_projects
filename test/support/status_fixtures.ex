@@ -60,4 +60,49 @@ defmodule PhoenixKitProjects.StatusFixtures do
     Statuses.set_default_status_entity(entity.uuid)
     entity
   end
+
+  @doc """
+  Provisions a custom status entity seeded with the given `{title, slug}`
+  rows (in order), WITHOUT registering it as the global default. Lets a test
+  build a status list with slugs that differ from the default vocabulary —
+  e.g. to exercise switching a started project onto a list that lacks its
+  current selection. Returns the entity.
+  """
+  def seed_custom_status_entity!(rows, opts \\ []) when is_list(rows) do
+    enable_entities!()
+    actor_uuid = ensure_actor!()
+    name = "custom_statuses_#{System.unique_integer([:positive])}"
+
+    {:ok, entity} =
+      PhoenixKitEntities.create_entity(
+        %{
+          name: name,
+          display_name: "Custom Statuses",
+          display_name_plural: "Custom Statuses",
+          description: "Test statuses.",
+          fields_definition: [],
+          settings: %{"source" => "phoenix_kit_projects", "scope" => "shared"},
+          created_by_uuid: actor_uuid
+        },
+        Keyword.put_new(opts, :actor_uuid, actor_uuid)
+      )
+
+    rows
+    |> Enum.with_index(1)
+    |> Enum.each(fn {{title, slug}, position} ->
+      {:ok, _} =
+        PhoenixKitEntities.EntityData.create(
+          %{
+            entity_uuid: entity.uuid,
+            title: title,
+            slug: slug,
+            position: position,
+            status: "published"
+          },
+          opts
+        )
+    end)
+
+    entity
+  end
 end

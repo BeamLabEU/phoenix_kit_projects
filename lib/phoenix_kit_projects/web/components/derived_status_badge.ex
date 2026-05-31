@@ -83,7 +83,49 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
   defp workflow_style(status) do
     case workflow_color(status) do
       nil -> nil
-      color -> "background-color: #{color}; border-color: #{color}; color: #fff;"
+      color -> "background-color: #{color}; border-color: #{color}; color: #{text_color(color)};"
+    end
+  end
+
+  # Pick black or white text for legibility over the (user-chosen) badge
+  # colour, by the colour's perceptual luminance. White on a pale status
+  # colour (e.g. light yellow) is unreadable, so this flips to dark text
+  # above a luminance threshold.
+  defp text_color(hex) do
+    case parse_rgb(hex) do
+      {r, g, b} ->
+        luminance = (r * 0.299 + g * 0.587 + b * 0.114) / 255
+        if luminance > 0.6, do: "#1f2937", else: "#fff"
+
+      :error ->
+        "#fff"
+    end
+  end
+
+  # Parses a bare hex colour (already validated as `#` + 3/4/6/8 hex digits)
+  # into an `{r, g, b}` 0–255 tuple. 3/4-digit forms expand each nibble
+  # (`#abc` → `#aabbcc`); 5/7-digit oddities fall through to `:error`.
+  defp parse_rgb("#" <> rest) do
+    case String.length(rest) do
+      n when n in [3, 4] ->
+        <<r::binary-1, g::binary-1, b::binary-1, _rest::binary>> = rest
+        decode_hex([r <> r, g <> g, b <> b])
+
+      n when n in [6, 8] ->
+        <<r::binary-2, g::binary-2, b::binary-2, _rest::binary>> = rest
+        decode_hex([r, g, b])
+
+      _ ->
+        :error
+    end
+  end
+
+  defp parse_rgb(_), do: :error
+
+  defp decode_hex(pairs) do
+    case Enum.map(pairs, &Integer.parse(&1, 16)) do
+      [{r, ""}, {g, ""}, {b, ""}] -> {r, g, b}
+      _ -> :error
     end
   end
 

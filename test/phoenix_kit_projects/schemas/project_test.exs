@@ -137,6 +137,46 @@ defmodule PhoenixKitProjects.Schemas.ProjectTest do
     end
   end
 
+  describe "changeset/3 — settings sanitization" do
+    test "drops unknown keys, keeping only the recognised settings" do
+      cs =
+        Project.changeset(%Project{}, %{
+          "name" => "P",
+          "start_mode" => "immediate",
+          "settings" => %{"use_status_translations" => false, "evil" => "haxx", "admin" => true}
+        })
+
+      assert cs.valid?
+      assert Changeset.get_change(cs, :settings) == %{"use_status_translations" => false}
+    end
+
+    test "drops a recognised key with the wrong value type" do
+      cs =
+        Project.changeset(%Project{}, %{
+          "name" => "P",
+          "start_mode" => "immediate",
+          "settings" => %{"use_status_translations" => "true"}
+        })
+
+      assert cs.valid?
+      # The wrongly-typed key is dropped, leaving an empty settings map (which
+      # equals the schema default, so it reads back via get_field).
+      assert Changeset.get_field(cs, :settings) == %{}
+    end
+
+    test "rejects a non-map settings value" do
+      cs =
+        Project.changeset(%Project{}, %{
+          "name" => "P",
+          "start_mode" => "immediate",
+          "settings" => "not a map"
+        })
+
+      refute cs.valid?
+      assert {:settings, {_, _}} = List.keyfind(cs.errors, :settings, 0)
+    end
+  end
+
   describe "derived_status/2" do
     test ":archived wins over every other state" do
       p = %Project{
