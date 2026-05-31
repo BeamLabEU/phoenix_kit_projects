@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.6.0"
+  @version "0.7.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -67,15 +67,13 @@ defmodule PhoenixKitProjects.MixProject do
 
   defp deps do
     [
-      # 1.7.117 is the floor — that's where
-      # `PhoenixKit.Modules.AI.Translation.translate_fields/6` shipped
-      # (core PR #557). `TranslateResourceWorker` delegates to it.
-      # NOTE: workflow statuses (PhoenixKitProjects.Statuses) need core V125
-      # (status_entity_uuid / current_status_slug on phoenix_kit_projects +
-      # the phoenix_kit_project_statuses table). Bump this pin to the V125
-      # release before merging the status feature — until then the
-      # status-suite is the cross-repo blocker (see AGENTS.md).
-      {:phoenix_kit, "~> 1.7.121"},
+      # 1.7.125 is the floor — that's the V125 release that ships the
+      # workflow-status schema (the `phoenix_kit_project_statuses` table plus
+      # `status_entity_uuid` / `current_status_slug` / `settings` / `external_id`
+      # on `phoenix_kit_projects`), which `PhoenixKitProjects.Statuses` requires.
+      # (It also still satisfies the 1.7.117 floor for the AI-translation
+      # delegation in `TranslateResourceWorker`.)
+      {:phoenix_kit, "~> 1.7.125"},
       {:phoenix_kit_staff, "~> 0.1"},
       {:phoenix_kit_comments, "~> 0.2"},
 
@@ -84,7 +82,7 @@ defmodule PhoenixKitProjects.MixProject do
       # (PhoenixKitProjects.Statuses degrades gracefully when it's absent —
       # mirrors the AI-translation pattern) while making it loadable in this
       # package's own compile + test build.
-      {:phoenix_kit_entities, "~> 0.1", optional: true},
+      {:phoenix_kit_entities, "~> 0.2", optional: true},
 
       # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
       # for polymorphic assignee FKs (team / department / person).

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0 - 2026-05-31
+
+User-defined **workflow statuses** for projects — a status vocabulary sourced from the optional `phoenix_kit_entities` catalog and **cemented locally when a project starts** (the module's template→instance philosophy), so a running project owns a frozen, independently-editable copy that later catalog edits don't touch. Also adds a free-form `external_id` reference, and folds in the PR #1/#12 follow-ups plus two rounds of post-merge review hardening.
+
+### Added
+
+- **Workflow statuses** (`PhoenixKitProjects.Statuses`) — an optional-dependency context (graceful degradation mirroring `Translations`: reads return `[]`/`nil`, provisioning returns `{:error, :entities_not_available}`, cementing is a no-op when entities is absent). A project draws its status list from a chosen `phoenix_kit_entities` catalog (or the admin-set global default); at `start_project/2` the list is snapshotted into the new `phoenix_kit_project_statuses` rows (`Schemas.ProjectStatus`) inside the same transaction. The selected status is addressed by a stable **slug** (`current_status_slug`), resolving against the live catalog before start and the cemented rows after.
+- **Status localization** — primary-language titles are cemented as canonical labels and per-language overrides captured into each row's `translations` JSONB, resolved to the viewer's content locale on read. A **global default** ("show translated status titles") plus a per-project tri-state override gate display; translations are always captured regardless.
+- **`/admin/settings/projects` page** (`ProjectsSettingsLive`, via `settings_tabs/0`) — pick the global default status list (or generate a starter one) and toggle translated-title display.
+- **UI** — workflow-status badge, form status-source picker with live preview + "Generate default", show-page current-status picker, and a list-view status filter (`list_projects/1` / `count_projects/1` gain `:current_status_slug`).
+- **`Project.external_id`** — free-form external reference (id/uuid/slug, max 255), included in the PubSub payload. No UI; set programmatically by host apps.
+- **`Projects.scoped_assignments/2`** — single-query multi-endpoint scope check (used by dependency removal).
+
+### Changed
+
+- **Minimum `phoenix_kit` is now `~> 1.7.125`** — the V125 release that ships the workflow-status schema (`phoenix_kit_project_statuses` table + `status_entity_uuid` / `current_status_slug` / `settings` / `external_id` columns).
+- **New optional dependency `phoenix_kit_entities` (`~> 0.2`)** — the status catalog source. Kept `optional: true` so it stays out of host closures; the feature degrades gracefully when it's absent.
+- **`Project` schema** gains server-owned `status_entity_uuid` / `current_status_slug` (written only via `current_status_changeset/2`, never the form changeset) and a `settings` JSONB whose keys are whitelisted on cast.
+
+### Fixed
+
+- **PR follow-ups** — `unique_constraint` single-field edge (#9), `scoped_assignments/2` endpoint check in `remove_dependency` (#12), `validate_required(:counts_weekends)` (#16).
+- **Re-cement is atomic** — switching a started project's status list updates the project, re-copies its local rows, and reconciles the selection in one transaction; `:project_updated` is broadcast only after commit, so a rollback can't leak a phantom event.
+- **No dangling selection** — `current_status_slug` is cleared when a re-cement drops the selected status or when `remove_project_status/1` deletes the selected row.
+- **`reverse_reference_count/1`** excludes started (cemented) projects, matching the entities "Used by N" semantics.
+- **CSS-injection guard** — the badge only emits a colour into the inline `style` when it's bare hex; text colour is chosen by luminance for contrast.
+- **`TranslateResourceWorker` uniqueness** — the `unique` state list now includes `:suspended` (added by Oban 2.20) so dedup covers every incomplete state and `compile --warnings-as-errors` stays clean.
+
 ## 0.6.0 - 2026-05-25
 
 The projects / tasks / templates list views move onto `phoenix_kit`'s core list-UI toolkit and gain a strategy-driven bulk reorder, clickable column sort, and opt-in load-more pagination. The Task Library's Groups tab is reworked into a card-per-group layout.

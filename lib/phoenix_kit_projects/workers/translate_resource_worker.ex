@@ -52,9 +52,10 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
   for a translation that runs longer than a minute (entirely possible
   for a multi-field AI call). With `:infinity` the dedup is bounded by
   the in-flight `states` instead of time — a duplicate is rejected as
-  long as the original is still `available`/`scheduled`/`executing`/
-  `retryable`, and a fresh job is allowed only once the previous one
-  reaches a terminal state (so re-translating later still works).
+  long as the original is still incomplete (`available`/`scheduled`/
+  `executing`/`retryable`/`suspended`), and a fresh job is allowed only
+  once the previous one reaches a terminal state (so re-translating later
+  still works).
 
   ## Auto-completion
 
@@ -72,7 +73,9 @@ defmodule PhoenixKitProjects.Workers.TranslateResourceWorker do
     unique: [
       period: :infinity,
       keys: [:resource_uuid, :target_lang],
-      states: [:available, :scheduled, :executing, :retryable]
+      # All incomplete states (Oban 2.20 added `:suspended`); dedup holds
+      # until the original reaches a terminal state, then re-enqueue works.
+      states: [:available, :scheduled, :executing, :retryable, :suspended]
     ]
 
   import Ecto.Query
