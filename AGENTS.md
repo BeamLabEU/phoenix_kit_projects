@@ -706,17 +706,17 @@ catalogue #28 / core #570. The status test suite + the new columns
 require V125 in the projects build; develop/test locally via a temporary
 `{:phoenix_kit, path: "../phoenix_kit", override: true}` until the release.
 
-## Sub-projects (project-as-task, core V126)
+## Sub-projects (project-as-task, core V127)
 
 A **sub-project** is a project embedded inside another project's task
 timeline. The model is an `Assignment` that points at a child `Project`
-via a new nullable `child_project_uuid` (V126) **instead of** a task
+via a new nullable `child_project_uuid` (V127) **instead of** a task
 template — so a sub-project gets dependencies and drag-reorder *for free*
 (both are already assignment-level and project-scoped, no changes there).
 
 ### Data model
 - `phoenix_kit_project_assignments.child_project_uuid` → FK
-  `phoenix_kit_projects(uuid) ON DELETE RESTRICT` (V126). `task_uuid` lost
+  `phoenix_kit_projects(uuid) ON DELETE RESTRICT` (V127). `task_uuid` lost
   its `NOT NULL`; a DB `CHECK ((task_uuid IS NOT NULL) <> (child_project_uuid
   IS NOT NULL))` enforces **exactly one** of task/child-project (mirrored by
   `Assignment.validate_task_xor_child/1`). A partial **unique** index on
@@ -826,10 +826,10 @@ the tier + sort helpers read it like the old flat summary.
 - Activity: `projects.subproject_created` / the existing
   `projects.assignment_removed` on teardown.
 
-### Assignee on projects + sub-projects (core V127)
+### Assignee on projects + sub-projects (core V128)
 A project carries the same polymorphic assignee as a task — `assigned_team_uuid`
 / `assigned_department_uuid` / `assigned_person_uuid` on `phoenix_kit_projects`
-(V127), one-of via a `num_nonnulls(...) <= 1` CHECK + `Project.validate_single_assignee/1`.
+(V128), one-of via a `num_nonnulls(...) <= 1` CHECK + `Project.validate_single_assignee/1`.
 Because a sub-project IS a project, this one set of columns covers assigning a
 sub-project too (its assignee lives on the child project row). `ProjectFormLive`
 gains the team/department/person picker (mirrors `AssignmentFormLive` —
@@ -850,10 +850,10 @@ unique index on `child_project_uuid`, caught at insert and mapped). The
 depth-capped propagation still fails closed on corrupt data as a backstop.
 
 ### ⚠️ Cross-repo release ordering
-V126 (`child_project_uuid` on `phoenix_kit_project_assignments`) **and V127**
+V127 (`child_project_uuid` on `phoenix_kit_project_assignments`) **and V128**
 (assignee columns on `phoenix_kit_projects`) ship in **core `phoenix_kit`**
 (`@current_version` 127). This module pins `~> 1.7.121`; the features can't run
-until core releases V126+V127 and this pin is bumped — same dance as V125.
+until core releases V127+V128 and this pin is bumped — same dance as V125.
 **CI stays red until then.** Develop/test locally via a temporary
 `{:phoenix_kit, path: "../phoenix_kit", override: true}`. Tests:
 `test/phoenix_kit_projects/integration/subprojects_test.exs` (context) +

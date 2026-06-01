@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
   @moduledoc """
-  LiveView smoke coverage for the sub-project UI on `ProjectShowLive` (V126):
+  LiveView smoke coverage for the sub-project UI on `ProjectShowLive` (V127):
   the row renders, the add-modal creates one, expand reveals the child's tasks,
   and remove tears it down. Complements the context-level
   `Integration.SubprojectsTest` by exercising the actual HEEx branch at runtime.

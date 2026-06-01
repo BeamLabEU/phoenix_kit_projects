@@ -100,7 +100,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     timestamps(type: :utc_datetime)
   end
 
-  # `task_uuid` is no longer unconditionally required (V126): a sub-project
+  # `task_uuid` is no longer unconditionally required (V127): a sub-project
   # assignment carries `child_project_uuid` instead. The XOR is enforced by
   # `validate_task_xor_child/1` + the DB check constraint.
   @required ~w(project_uuid status)a

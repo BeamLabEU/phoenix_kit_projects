@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.Web.Components.RunningCard do
   @moduledoc """
   One project in the dashboard's "Running" section, rendered as a **hierarchical
-  summary** (V126): a top line with the project name + tier + progress, a
+  summary** (V127): a top line with the project name + tier + progress, a
   one-line summary (`N tasks · M sub-projects`), a status breakdown
   (`X done · Y in progress · Z todo`), and then each embedded sub-project nested
   underneath as an indented sub-step with its own summary + breakdown — all the

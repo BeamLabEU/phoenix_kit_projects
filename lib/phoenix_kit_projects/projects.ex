@@ -777,7 +777,7 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_exclude_templates(q, true), do: q
   defp maybe_exclude_templates(q, _), do: where(q, [p], p.is_template == false)
 
-  # A project that is embedded as a sub-project of another project (V126 —
+  # A project that is embedded as a sub-project of another project (V127 —
   # its uuid is some assignment's `child_project_uuid`) is reached by drilling
   # into its parent's timeline, never as a standalone row. So every top-level
   # listing/bucket/count excludes it. `not in subquery` is self-correcting: if
@@ -950,7 +950,7 @@ defmodule PhoenixKitProjects.Projects do
   @doc """
   Deletes a project and broadcasts `:project_deleted`.
 
-  Recursive over **sub-projects** (V126): any project embedded in `p`'s
+  Recursive over **sub-projects** (V127): any project embedded in `p`'s
   timeline (and, transitively, in theirs) is torn down too. Deleting `p`
   DB-cascades its own assignment rows (`project_uuid` is `ON DELETE CASCADE`),
   including the sub-project linking rows — but the child projects those rows
@@ -1210,7 +1210,7 @@ defmodule PhoenixKitProjects.Projects do
   """
   @spec assignment_status_counts() :: %{optional(String.t()) => non_neg_integer()}
   def assignment_status_counts do
-    # `is_nil(a.child_project_uuid)` drops sub-project linking rows (V126):
+    # `is_nil(a.child_project_uuid)` drops sub-project linking rows (V127):
     # they're rollup placeholders, not real work — the sub-project's own tasks
     # are counted in their own right. Counting the placeholder too would
     # double-count the sub-project in the workload tile.
@@ -1314,7 +1314,7 @@ defmodule PhoenixKitProjects.Projects do
 
     hours_by_project = batched_planned_hours(projects_by_uuid, uuids)
 
-    # Per-project sub-project linking rows (V126), split into "has content" vs
+    # Per-project sub-project linking rows (V127), split into "has content" vs
     # "empty" (the child project has no assignments of its own yet). An EMPTY
     # sub-project is **neutral** in the progress average — it shouldn't drag a
     # parent's % down before it has any tasks. We keep the full count for the
@@ -1396,7 +1396,7 @@ defmodule PhoenixKitProjects.Projects do
 
   @doc """
   Recursive **tree summary** for a project: its own task breakdown plus a nested
-  summary for each embedded sub-project, all the way down (V126). Powers the
+  summary for each embedded sub-project, all the way down (V127). Powers the
   hierarchical dashboard card.
 
   Each node has the shape:
@@ -1500,7 +1500,7 @@ defmodule PhoenixKitProjects.Projects do
 
   defp batched_planned_hours(projects_by_uuid, uuids) do
     # LEFT join (not inner) so sub-project linking rows — which have no task
-    # template (V126) — aren't dropped. Their hours come from the denormalized
+    # template (V127) — aren't dropped. Their hours come from the denormalized
     # `estimated_duration` (the child project's rolled-up total, stored in
     # minutes), so the `a_dur && a_unit` branch below uses the assignment value
     # and never dereferences the nil task.
@@ -1788,7 +1788,7 @@ defmodule PhoenixKitProjects.Projects do
     recompute_project_completion(project_uuid, 0)
   end
 
-  # Depth guard: the parent chain (V126 sub-projects) is finite and acyclic by
+  # Depth guard: the parent chain (V127 sub-projects) is finite and acyclic by
   # construction (single-parent unique index + inline-only creation), but cap
   # the upward walk defensively so corrupted data can never spin forever.
   @max_rollup_depth 64
@@ -1950,7 +1950,7 @@ defmodule PhoenixKitProjects.Projects do
 
   @assignment_preloads [
     :task,
-    # Deep-preload the embedded child's assignee (V127) so a sub-project row can
+    # Deep-preload the embedded child's assignee (V128) so a sub-project row can
     # show who the sub-project is assigned to.
     {:child_project, [:assigned_team, :assigned_department, assigned_person: [:user]]},
     :assigned_team,
@@ -1961,7 +1961,7 @@ defmodule PhoenixKitProjects.Projects do
 
   @assignee_preloads [:assigned_team, :assigned_department, assigned_person: [:user]]
 
-  @doc "Fetches a project with its assignee associations preloaded (V127)."
+  @doc "Fetches a project with its assignee associations preloaded (V128)."
   @spec get_project_with_assignee(uuid()) :: Project.t() | nil
   def get_project_with_assignee(uuid) do
     Project |> preload(^@assignee_preloads) |> repo().get(uuid)
@@ -2103,7 +2103,7 @@ defmodule PhoenixKitProjects.Projects do
 
   @doc """
   Links an **existing** standalone project into `parent_project_uuid` as a
-  sub-project (V126) — the "nest this project" path, alongside the create-new
+  sub-project (V127) — the "nest this project" path, alongside the create-new
   `create_subproject/2`. The child keeps its whole subtree, and drops off the
   top-level list once linked.
 
@@ -2195,7 +2195,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
-  Projects eligible to be linked as a sub-project of `parent` (V126): standalone
+  Projects eligible to be linked as a sub-project of `parent` (V127): standalone
   (not already a sub-project), same `is_template`, not archived, not the parent,
   and not one of the parent's ancestors (cycle-safe). Ordered by name for a
   picker.
@@ -2213,7 +2213,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
-  Detaches a sub-project from its parent (V126) — the non-destructive inverse of
+  Detaches a sub-project from its parent (V127) — the non-destructive inverse of
   the cascade in `delete_assignment/1`. Deletes **only the linking assignment**,
   leaving the child project + its whole subtree intact; it becomes a standalone
   top-level project again. Recomputes the former parent (one fewer rolled-up
@@ -2691,7 +2691,7 @@ defmodule PhoenixKitProjects.Projects do
   @doc """
   Deletes an assignment and broadcasts `:assignment_deleted`.
 
-  For a **sub-project** linking row (`child_project_uuid` set, V126) this tears
+  For a **sub-project** linking row (`child_project_uuid` set, V127) this tears
   the child project subtree down too — "removing the sub-project task removes
   the sub-project", matching the boss's "same as a task" semantics. The linking
   row is deleted first (the `child_project_uuid` FK is `ON DELETE RESTRICT`, so
@@ -2780,7 +2780,7 @@ defmodule PhoenixKitProjects.Projects do
       on: d.assignment_uuid == a.uuid,
       where: a.project_uuid == ^project_uuid,
       # `:child_project` alongside `:task` so a dependency whose target is a
-      # sub-project (no task template, V126) can still render a label.
+      # sub-project (no task template, V127) can still render a label.
       preload: [depends_on: [:task, :child_project]]
     )
     |> repo().all()

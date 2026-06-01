@@ -169,7 +169,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp apply_action(socket, :new, %{"project_id" => project_id} = params) do
-    # `kind: "subproject"` (V126) routes the same add page into sub-project
+    # `kind: "subproject"` (V127) routes the same add page into sub-project
     # mode: the render shows a child-project form (name + assignee) + the
     # standard dependency section, instead of the task picker.
     kind = if Map.get(params, "kind") == "subproject", do: "subproject", else: "task"
@@ -200,7 +200,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           page_title: title,
           kind: kind,
           sp_form: to_form(Projects.change_project(%Project{}), as: :subproject),
-          # Sub-project add modes (V126): "new" creates a fresh child, "existing"
+          # Sub-project add modes (V127): "new" creates a fresh child, "existing"
           # nests an existing standalone project. `link_options` is the eligible
           # set (cycle-safe, same kind).
           sp_mode: "new",
@@ -260,7 +260,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
       {project, %Assignment{child_project_uuid: child_uuid} = assignment}
       when is_binary(child_uuid) ->
-        # Sub-project linking row (V126): edit the CHILD project's name +
+        # Sub-project linking row (V127): edit the CHILD project's name +
         # assignee, plus this row's dependencies. The assignee lives on the
         # child, so `assign_type` + `sp_form` come from it.
         child = Projects.get_project_with_assignee(child_uuid) || %Project{}
@@ -591,11 +591,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  # ── Sub-project mode (V126) ──────────────────────────────────────
+  # ── Sub-project mode (V127) ──────────────────────────────────────
   # Same add/edit page as a task, but the form is the child project
   # (name + assignee) and the dependency section uses the same handlers.
 
-  # Toggle between "create new child" and "nest existing project" (V126).
+  # Toggle between "create new child" and "nest existing project" (V127).
   def handle_event("set_sp_mode", %{"value" => mode}, socket)
       when mode in ~w(new existing) do
     {:noreply, assign(socket, sp_mode: mode)}
@@ -1300,7 +1300,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           class="flex flex-col gap-4"
         >
           <%!-- On :new a sub-project can either be created fresh or an existing
-               standalone project can be nested in place (V126). On :edit only
+               standalone project can be nested in place (V127). On :edit only
                the create-new fields exist (you're editing the child itself). --%>
           <.tabs_strip
             :if={@live_action == :new}

@@ -103,7 +103,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # by host apps/integrations. Indexed for lookup; not unique.
     field(:external_id, :string)
 
-    # Polymorphic assignee (V127) — at most one of team/department/person, the
+    # Polymorphic assignee (V128) — at most one of team/department/person, the
     # same shape `Assignment` uses. A sub-project is a project, so this covers
     # assigning a sub-project too (its assignee lives on the child project row).
     belongs_to(:assigned_team, Team, foreign_key: :assigned_team_uuid, references: :uuid)

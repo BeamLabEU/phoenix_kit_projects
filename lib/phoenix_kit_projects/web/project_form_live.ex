@@ -141,7 +141,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
 
-  # Assignee picker state (V127). `assign_type` ("" / "team" / "department" /
+  # Assignee picker state (V128). `assign_type` ("" / "team" / "department" /
   # "person") drives which staff `<.select>` shows; the staff option lists are
   # loaded once. Mirrors `AssignmentFormLive`'s assignee picker.
   defp assign_assignee_state(socket) do
@@ -1001,7 +1001,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               <.input field={@form[:scheduled_start_date]} label={gettext("Start date and time")} type="datetime-local" />
             <% end %>
 
-            <%!-- Assignee (V127) — same polymorphic team/department/person
+            <%!-- Assignee (V128) — same polymorphic team/department/person
                  picker tasks use. Non-translatable, so it lives outside the
                  multilang wrapper. `assign_type` chooses which staff select
                  shows; `clear_other_assignees/2` nulls the rest on change. --%>

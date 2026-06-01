@@ -175,7 +175,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             done_tasks: 0,
             progress_pct: 0,
             schedule: nil,
-            # Sub-project UI state (V126). `expanded_subprojects` holds the
+            # Sub-project UI state (V127). `expanded_subprojects` holds the
             # linking-assignment uuids whose child task list is revealed;
             # `subproject_*` maps are keyed by linking-assignment uuid and
             # filled lazily (summaries in load_assignments, child tasks on
@@ -278,7 +278,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     progress_sum = Enum.reduce(assignments, 0, &(&1.progress_pct + &2))
     schedule = calculate_schedule(socket.assigns.project, assignments)
 
-    # Sub-project rollup display data (V126): one batched summary query over
+    # Sub-project rollup display data (V127): one batched summary query over
     # all embedded child projects, keyed by the linking-assignment uuid so the
     # row can show the child's task count + progress. Expanded rows also get a
     # refreshed child task list so a change in the child reflects immediately.
@@ -412,7 +412,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   # When a mutated assignment belongs to an embedded sub-project (its row is
-  # rendered inset in the expand panel, V126), recompute that child's project so
+  # rendered inset in the expand panel, V127), recompute that child's project so
   # the rollup climbs to the shown project's linking row. A no-op for normal
   # tasks (`sync_project_completion/1` already recomputes the shown project).
   defp recompute_owning_subproject(socket, %{project_uuid: pid}) do
@@ -459,7 +459,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # user is currently viewing. Prevents an admin on project A from
   # mutating assignments in project B by crafting event params.
   # The single task-card row, shared by the main timeline and the inset
-  # sub-project task lists (V126) — "no reason to make them different".
+  # sub-project task lists (V127) — "no reason to make them different".
   # `@draggable` gates the sortable wiring + drag handle (off for inset child
   # tasks, which reorder on their own page). Child-task events work because
   # `scoped_assignment/2` accepts any displayed assignment and
@@ -639,7 +639,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   # Accepts any assignment currently displayed on the page: one belonging to the
-  # shown project, or a task inside an expanded sub-project (V126). Child-task
+  # shown project, or a task inside an expanded sub-project (V127). Child-task
   # rows render the same `task_card` and their events flow through here.
   defp scoped_assignment(socket, uuid) do
     case Projects.get_assignment(uuid) do
@@ -832,7 +832,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # ── Sub-projects (V126) ──────────────────────────────────────────
+  # ── Sub-projects (V127) ──────────────────────────────────────────
 
   def handle_event("toggle_subproject", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
@@ -1618,7 +1618,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <p :if={desc} class="text-sm text-base-content/60">
             {desc}
           </p>
-          <%!-- Assignee (V127) — who the project is assigned to. Reuses the same
+          <%!-- Assignee (V128) — who the project is assigned to. Reuses the same
                assignee helpers the task rows use; a Project carries the same
                polymorphic assignee fields. --%>
           <div :if={assignee_type(@project)} class="mt-0.5">
@@ -1639,7 +1639,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
             </.smart_link>
             <%!-- Add a sub-project via the same add page tasks use
-                 (`AssignmentFormLive` in sub-project mode, V126) — name +
+                 (`AssignmentFormLive` in sub-project mode, V127) — name +
                  assignee + dependencies. Template sub-projects deep-clone on
                  instantiation. --%>
             <.smart_link
@@ -1949,7 +1949,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                               label={gettext("Open sub-project")}
                             />
                             <%!-- Edit name/assignee/dependencies on the same form
-                                 tasks use (V126), not a special inline control. --%>
+                                 tasks use (V127), not a special inline control. --%>
                             <.smart_menu_link
                               navigate={Paths.edit_assignment(@project.uuid, a.uuid)}
                               emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "edit", "project_id" => @project.uuid, "id" => a.uuid}}}
@@ -1958,7 +1958,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                               label={gettext("Edit")}
                             />
                             <%!-- Pop the sub-project back out as a standalone
-                                 project — keeps it + its tasks (V126). --%>
+                                 project — keeps it + its tasks (V127). --%>
                             <.table_row_menu_button
                               phx-click="detach_subproject"
                               phx-value-uuid={a.uuid}

@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.Integration.SubprojectsTest do
   @moduledoc """
-  Integration tests for sub-projects (V126): an assignment that embeds a child
+  Integration tests for sub-projects (V127): an assignment that embeds a child
   project via `child_project_uuid` instead of a task template. Covers creation,
   the task/child XOR + single-parent constraints, top-level list exclusion,
   rolled-up progress/completion propagation, and recursive teardown.
@@ -149,7 +149,7 @@ defmodule PhoenixKitProjects.Integration.SubprojectsTest do
       assert %{task_uuid: _} = errors_on(cs)
     end
 
-    test "a project rejects more than one assignee (V127 single-assignee guard)" do
+    test "a project rejects more than one assignee (V128 single-assignee guard)" do
       cs =
         Project.changeset(%Project{}, %{
           "name" => "Assigned",
