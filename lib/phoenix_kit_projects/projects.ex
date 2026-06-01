@@ -1670,6 +1670,17 @@ defmodule PhoenixKitProjects.Projects do
         %{
           "name" => src.name,
           "description" => src.description,
+          # A nested sub-project has no instantiation form to re-supply these,
+          # so they must be carried from the source or the clone loses its
+          # multilang content, workflow source/settings, and assignee. Mirrors
+          # `clone_template/2` (status source) and extends it to the fields only
+          # a clone-from-source — not a form — can preserve.
+          "translations" => src.translations,
+          "settings" => src.settings,
+          "status_entity_uuid" => src.status_entity_uuid,
+          "assigned_team_uuid" => src.assigned_team_uuid,
+          "assigned_department_uuid" => src.assigned_department_uuid,
+          "assigned_person_uuid" => src.assigned_person_uuid,
           "counts_weekends" => to_string(src.counts_weekends),
           "start_mode" => src.start_mode,
           "is_template" => "false"
@@ -1677,7 +1688,9 @@ defmodule PhoenixKitProjects.Projects do
         overrides
       )
 
-    new_project = create_project_in_tx(attrs)
+    # `inherit_status_slug_in_tx/2` carries the server-owned `current_status_slug`
+    # (not a regular changeset field), same as the root template clone.
+    new_project = attrs |> create_project_in_tx() |> inherit_status_slug_in_tx(src)
     src_assignments = list_assignments(src.uuid)
     src_deps = list_all_dependencies(src.uuid)
     uuid_map = clone_assignments_in_tx(src_assignments, new_project)
@@ -2109,12 +2122,28 @@ defmodule PhoenixKitProjects.Projects do
              | :already_subproject
              | :would_create_cycle
              | Ecto.Changeset.t()}
+  # Arbitrary fixed key for the transaction-scoped advisory lock that serializes
+  # sub-project links. Global (links are rare admin actions), so two reciprocal
+  # links can't interleave their ancestor checks.
+  @subproject_link_lock 8_126_126
+
   def link_subproject(parent_project_uuid, child_project_uuid) do
-    with {:ok, parent} <- fetch_project(parent_project_uuid),
-         {:ok, child} <- fetch_project(child_project_uuid),
-         :ok <- validate_link(parent, child) do
-      do_link_subproject(parent, child)
-    end
+    repo().transaction(fn ->
+      # Without this lock, concurrent `A → B` and `B → A` links each pass the
+      # ancestor check (neither is yet the other's ancestor) and both insert,
+      # creating a cycle. The advisory lock serializes link operations so the
+      # second sees the first's committed row.
+      repo().query!("SELECT pg_advisory_xact_lock($1)", [@subproject_link_lock])
+
+      with {:ok, parent} <- fetch_project(parent_project_uuid),
+           {:ok, child} <- fetch_project(child_project_uuid),
+           :ok <- validate_link(parent, child),
+           {:ok, result} <- do_link_subproject(parent, child) do
+        result
+      else
+        {:error, reason} -> repo().rollback(reason)
+      end
+    end)
   end
 
   defp fetch_project(uuid) do

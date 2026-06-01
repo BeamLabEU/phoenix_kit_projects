@@ -251,8 +251,21 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     project_uuid = socket.assigns.project.uuid
     assignments = Projects.list_assignments(project_uuid)
 
+    expanded = socket.assigns[:expanded_subprojects] || MapSet.new()
+
+    expanded_subs =
+      Enum.filter(
+        assignments,
+        &(Assignment.subproject?(&1) and MapSet.member?(expanded, &1.uuid))
+      )
+
+    # Parent deps PLUS deps for every expanded child project — the inset child
+    # tasks render through the same `<.task_body>`, which reads
+    # `deps_by_assignment` keyed by the (globally-unique) assignment uuid. Load
+    # parent-only and a child task's dependency badges never render.
     deps_by_assignment =
-      Projects.list_all_dependencies(project_uuid)
+      [project_uuid | Enum.map(expanded_subs, & &1.child_project_uuid)]
+      |> Enum.flat_map(&Projects.list_all_dependencies/1)
       |> Enum.group_by(& &1.assignment_uuid)
 
     total = length(assignments)
@@ -271,12 +284,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # refreshed child task list so a change in the child reflects immediately.
     subproject_summaries = load_subproject_summaries(assignments)
 
-    expanded = socket.assigns[:expanded_subprojects] || MapSet.new()
-
     subproject_child_tasks =
-      assignments
-      |> Enum.filter(&(Assignment.subproject?(&1) and MapSet.member?(expanded, &1.uuid)))
-      |> Map.new(fn a -> {a.uuid, Projects.list_assignments(a.child_project_uuid)} end)
+      Map.new(expanded_subs, fn a -> {a.uuid, Projects.list_assignments(a.child_project_uuid)} end)
 
     assign(socket,
       assignments: assignments,
@@ -835,11 +844,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         else
           child_tasks = Projects.list_assignments(child_uuid)
 
+          # Merge the child's dependencies so the inset child tasks' badges
+          # render (they read `@deps_by_assignment`, keyed by assignment uuid).
+          child_deps =
+            child_uuid |> Projects.list_all_dependencies() |> Enum.group_by(& &1.assignment_uuid)
+
           {:noreply,
            assign(socket,
              expanded_subprojects: MapSet.put(expanded, uuid),
              subproject_child_tasks:
-               Map.put(socket.assigns.subproject_child_tasks, uuid, child_tasks)
+               Map.put(socket.assigns.subproject_child_tasks, uuid, child_tasks),
+             deps_by_assignment: Map.merge(socket.assigns.deps_by_assignment, child_deps)
            )}
         end
 

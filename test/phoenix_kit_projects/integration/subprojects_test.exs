@@ -94,6 +94,28 @@ defmodule PhoenixKitProjects.Integration.SubprojectsTest do
       # …carrying the sub-template's own task.
       assert length(Projects.list_assignments(cloned_child.uuid)) == 1
     end
+
+    test "the deep-clone carries the sub-project's settings + translations, not just its structure" do
+      template = fixture_template()
+
+      # A nested sub-project has no instantiation form, so the clone must copy
+      # these project-level fields from the source or they're silently lost.
+      {:ok, %{child_project: _}} =
+        Projects.create_subproject(template.uuid, %{
+          "name" => "Setup",
+          "settings" => %{"use_status_translations" => true},
+          "translations" => %{"bs" => %{"name" => "Postavke"}}
+        })
+
+      {:ok, project} =
+        Projects.create_project_from_template(template.uuid, %{"name" => "Real project"})
+
+      [link] = Enum.filter(Projects.list_assignments(project.uuid), & &1.child_project_uuid)
+      cloned_child = Projects.get_project(link.child_project_uuid)
+
+      assert cloned_child.settings == %{"use_status_translations" => true}
+      assert cloned_child.translations == %{"bs" => %{"name" => "Postavke"}}
+    end
   end
 
   describe "constraints" do

@@ -81,6 +81,45 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
     assert html =~ "No tasks in this sub-project yet."
   end
 
+  test "expanding a sub-project renders its child tasks' dependency badges", %{conn: conn} do
+    parent = fixture_project()
+
+    {:ok, %{child_project: child, assignment: link}} =
+      Projects.create_subproject(parent.uuid, %{"name" => "Buildout"})
+
+    task_a = fixture_task(%{"title" => "Pour foundation"})
+    task_b = fixture_task(%{"title" => "Frame walls"})
+
+    {:ok, a} =
+      Projects.create_assignment(%{
+        "project_uuid" => child.uuid,
+        "task_uuid" => task_a.uuid,
+        "status" => "todo"
+      })
+
+    {:ok, b} =
+      Projects.create_assignment(%{
+        "project_uuid" => child.uuid,
+        "task_uuid" => task_b.uuid,
+        "status" => "todo"
+      })
+
+    {:ok, _} = Projects.add_dependency(b.uuid, a.uuid)
+
+    {:ok, view, _html} = live(conn, path(parent))
+
+    html =
+      view
+      |> element(~s([phx-click="toggle_subproject"][phx-value-uuid="#{link.uuid}"]))
+      |> render_click()
+
+    # The dependency lives on the CHILD project, so its deps must be loaded into
+    # `deps_by_assignment` (was parent-only) for the inset badge to render.
+    assert html =~ "Frame walls"
+    assert html =~ "depends on:"
+    assert html =~ "Pour foundation"
+  end
+
   test "removing a sub-project row deletes the child and drops the row", %{conn: conn} do
     parent = fixture_project()
 
