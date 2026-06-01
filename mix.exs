@@ -67,19 +67,15 @@ defmodule PhoenixKitProjects.MixProject do
 
   defp deps do
     [
-      # 1.7.125 is the floor — that's the V125 release that ships the
-      # workflow-status schema (the `phoenix_kit_project_statuses` table plus
-      # `status_entity_uuid` / `current_status_slug` / `settings` / `external_id`
-      # on `phoenix_kit_projects`), which `PhoenixKitProjects.Statuses` requires.
-      # (It also still satisfies the 1.7.117 floor for the AI-translation
-      # delegation in `TranslateResourceWorker`.)
-      # NOTE: sub-projects need core V127 (`child_project_uuid` on
-      # `phoenix_kit_project_assignments`) + V128 (assignee columns on
-      # `phoenix_kit_projects`). Bump this pin to the core release that ships
-      # V127/V128 before merging — until then the sub-project suites are the
-      # cross-repo blocker (develop/test locally via a temporary path override;
-      # see AGENTS.md).
-      {:phoenix_kit, "~> 1.7.125"},
+      # 1.7.128 is the floor — that's the release that ships the sub-project
+      # schema: V127 (`child_project_uuid` on `phoenix_kit_project_assignments`,
+      # with `task_uuid` made nullable + the task/child XOR check) and V128
+      # (the polymorphic assignee columns on `phoenix_kit_projects`). Both are
+      # required by `Projects` and the assignment/project schemas.
+      # (It also still satisfies the earlier floors: V125 for the workflow-status
+      # schema `PhoenixKitProjects.Statuses` requires, and 1.7.117 for the
+      # AI-translation delegation in `TranslateResourceWorker`.)
+      {:phoenix_kit, "~> 1.7.128"},
       {:phoenix_kit_staff, "~> 0.1"},
       {:phoenix_kit_comments, "~> 0.2"},
 

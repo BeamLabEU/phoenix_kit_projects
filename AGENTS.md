@@ -849,13 +849,13 @@ flow originally deferred. It validates before assigning `child_project_uuid`:
 unique index on `child_project_uuid`, caught at insert and mapped). The
 depth-capped propagation still fails closed on corrupt data as a backstop.
 
-### ⚠️ Cross-repo release ordering
+### Cross-repo schema dependency
 V127 (`child_project_uuid` on `phoenix_kit_project_assignments`) **and V128**
-(assignee columns on `phoenix_kit_projects`) ship in **core `phoenix_kit`**
-(`@current_version` 127). This module pins `~> 1.7.121`; the features can't run
-until core releases V127+V128 and this pin is bumped — same dance as V125.
-**CI stays red until then.** Develop/test locally via a temporary
-`{:phoenix_kit, path: "../phoenix_kit", override: true}`. Tests:
+(assignee columns on `phoenix_kit_projects`) live in **core `phoenix_kit`**
+(`@current_version` 128). Both shipped in `1.7.128`, which this module now pins
+as its floor (`~> 1.7.128`), so the sub-project features run against any released
+core. When iterating on the schema ahead of a core release, develop/test locally
+via a temporary `{:phoenix_kit, path: "../phoenix_kit", override: true}`. Tests:
 `test/phoenix_kit_projects/integration/subprojects_test.exs` (context) +
 `test/phoenix_kit_projects/web/project_show_subprojects_test.exs` (LV render).
 
