@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.0 - 2026-06-01
+
+**Nested sub-projects** — an assignment can now embed a whole child project in its parent's timeline *instead of* a task template, so a project becomes a first-class step inside another project. The child is the source of truth; its status, progress, planned hours, and completion **roll up** the tree (depth-capped, empty children neutral) and the linking row behaves like any task — drag to reorder, give it dependencies, remove it. Also adds a polymorphic **assignee on projects** (and therefore sub-projects), mirroring the one-of team/department/person shape assignments already use.
+
+### Added
+
+- **Sub-projects** (core V127 — `child_project_uuid` on `phoenix_kit_project_assignments`). An assignment carries *exactly one* of `task_uuid` / `child_project_uuid` (DB XOR check + `Assignment.validate_task_xor_child/1`). Context API: `create_subproject/2` (fresh child), `link_subproject/2` (nest an existing standalone project), `detach_subproject/1` (pop a child back out as standalone), `available_projects_to_link/1`. The single-parent guarantee is a partial unique index; cycles are blocked by an ancestor check serialized with a transaction-scoped advisory lock.
+- **Rollup** — a linking row carries denormalized `status` / `progress_pct` / hours / completion synced from the child via `Assignment.subproject_changeset/2`; `recompute_project_completion/1` propagates changes up the parent chain after each child settles. Empty sub-projects are neutral in the progress average (kept in the count, dropped from the denominator).
+- **`Projects.project_tree_summary/1`** — recursive per-node dashboard summary (task breakdown + nested child summaries), rendered by the reworked `running_card` component.
+- **Assignee on projects** (core V128 — polymorphic `assigned_team_uuid` / `assigned_department_uuid` / `assigned_person_uuid`, one-of via a `num_nonnulls(...) <= 1` CHECK + `Project.validate_single_assignee/1`). `Projects.get_project_with_assignee/1` preloads it.
+- **Helpers** — `Assignment.label/2` (locale-aware title for a task *or* sub-project, single render source of truth), `Assignment.subproject?/1`, and `Statuses.lock_status_source/2` (server-side freeze of the status source once a project has started).
+- **UI** — sub-project rows on `ProjectShowLive` (expand/collapse inset child tasks, "Make standalone", "Open", remove-with-subtree), `AssignmentFormLive` sub-project mode ("create new child" / "nest existing project"), and a project-assignee picker on the project form.
+
+### Changed
+
+- **Minimum `phoenix_kit` is now `~> 1.7.128`** — the release shipping V127 (`child_project_uuid`, `task_uuid` made nullable, the task/child XOR check, single-parent unique index) and V128 (the project assignee columns). The features can't run on older cores.
+- **Top-level listings, buckets, counts, and the workload tile exclude sub-projects** (`exclude_subprojects/1`) — an embedded child is reached through its parent's timeline, not as a standalone row. The exclusion is self-correcting: if the linking row disappears, the child re-surfaces at the top level.
+- **Cloning a template deep-clones its sub-project subtree** — `create_project_from_template/2` recursively instantiates each sub-template into a fresh child project (the single-parent index forbids sharing), carrying multilang content, settings, status source, and assignee.
+- **Deleting is subtree-aware** — `delete_project/1` and the sub-project clause of `delete_assignment/1` tear down the whole child subtree in one transaction (the `child_project_uuid` FK is `ON DELETE RESTRICT`, so children are removed explicitly, not orphaned).
+
+### Fixed
+
+- **Show-page progress matches the dashboard** — the project header now excludes empty sub-projects from the progress denominator, the same way `project_summaries/1` and `project_tree_summary/1` already did.
+- **`delete_project/1` on a still-linked sub-project** returns `{:error, :still_a_subproject}` instead of raising `Ecto.ConstraintError` on the `ON DELETE RESTRICT` FK mid-transaction.
+- **No `nil`-task crash on crafted events** — the `start` / `complete` / `reopen` / `track_progress` / `update_progress` handlers log activity metadata via the `nil`-safe `Assignment.label/1`, so an event aimed at a sub-project linking row (which has no task) can't dereference a nil task.
+- **PR #16 review follow-ups** — clone fidelity (multilang/settings/assignee carried into deep clones), the link-cycle race (advisory lock), and child-task dependency rendering inside expanded sub-projects.
+
 ## 0.7.0 - 2026-05-31
 
 User-defined **workflow statuses** for projects — a status vocabulary sourced from the optional `phoenix_kit_entities` catalog and **cemented locally when a project starts** (the module's template→instance philosophy), so a running project owns a frozen, independently-editable copy that later catalog edits don't touch. Also adds a free-form `external_id` reference, and folds in the PR #1/#12 follow-ups plus two rounds of post-merge review hardening.
