@@ -11,6 +11,13 @@ defmodule PhoenixKitProjects.Web.Components.TabsStrip do
   tab's value is delivered as `phx-value-value`, so handlers
   match on `%{"value" => v}`.
 
+  The button also carries a native `value={value}`. LiveView's
+  `extractMeta` overwrites `meta.value` with the element's `.value`
+  DOM property after reading `phx-value-value` (view.js), so without
+  the native attribute a `<button>` (`.value === ""`) would deliver
+  an empty `"value"` and the handler would never see the tab. This
+  collision is specific to the param key being literally `value`.
+
   ## Example
 
       <.tabs_strip
@@ -44,6 +51,7 @@ defmodule PhoenixKitProjects.Web.Components.TabsStrip do
         role="tab"
         phx-click={@event}
         phx-value-value={value}
+        value={value}
         class={["tab gap-2", @active == value && "tab-active"]}
       >
         <.icon name={icon} class="w-4 h-4" /> {label}

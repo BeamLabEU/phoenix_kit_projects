@@ -30,6 +30,26 @@ defmodule PhoenixKitProjects.Web.Components.AssignmentStatusBadge do
   def color("done"), do: "bg-success"
   def color(_), do: "bg-base-300"
 
+  @doc """
+  Foreground (text) class that pairs with `color/1` on a filled dot. The `todo`
+  dot is light (`bg-base-300`), so its number needs dark text — plain `text-white`
+  was invisible. Colored states use their daisyUI `*-content` foreground.
+  """
+  @spec text_color(String.t() | nil) :: String.t()
+  def text_color("in_progress"), do: "text-warning-content"
+  def text_color("done"), do: "text-success-content"
+  def text_color(_), do: "text-base-content"
+
+  @doc """
+  Outline for a filled dot. The light `todo` dot (`bg-base-300`) is nearly
+  invisible on a white page, so it needs a border to define the circle; the
+  solid colored states stand on their own.
+  """
+  @spec ring(String.t() | nil) :: String.t()
+  def ring("in_progress"), do: ""
+  def ring("done"), do: ""
+  def ring(_), do: "border border-base-content/25"
+
   @doc "daisyUI badge variant class for an assignment status."
   @spec badge_class(String.t() | nil) :: String.t()
   def badge_class("todo"), do: "badge-ghost"

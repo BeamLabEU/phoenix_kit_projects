@@ -35,6 +35,8 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
           project: Project.t() | Ecto.Association.NotLoaded.t() | nil,
           task_uuid: UUIDv7.t() | nil,
           task: Task.t() | Ecto.Association.NotLoaded.t() | nil,
+          child_project_uuid: UUIDv7.t() | nil,
+          child_project: Project.t() | Ecto.Association.NotLoaded.t() | nil,
           status: String.t() | nil,
           position: integer() | nil,
           description: String.t() | nil,
@@ -73,6 +75,14 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
 
+    # When set, this assignment IS a sub-project: instead of a reusable task
+    # template it points at a child Project embedded in the parent's timeline.
+    # Exactly one of `task_uuid` / `child_project_uuid` is set (DB XOR check +
+    # `validate_task_xor_child/1`). The child is the source of truth; this
+    # assignment's status/progress/duration are denormalized rollup values
+    # synced by the context via `subproject_changeset/2`.
+    belongs_to(:child_project, Project, foreign_key: :child_project_uuid, references: :uuid)
+
     belongs_to(:assigned_team, Team, foreign_key: :assigned_team_uuid, references: :uuid)
 
     belongs_to(:assigned_department, Department,
@@ -90,10 +100,13 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     timestamps(type: :utc_datetime)
   end
 
-  @required ~w(project_uuid task_uuid status)a
-  @optional ~w(position description estimated_duration estimated_duration_unit
-               counts_weekends progress_pct track_progress translations
-               assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
+  # `task_uuid` is no longer unconditionally required (V126): a sub-project
+  # assignment carries `child_project_uuid` instead. The XOR is enforced by
+  # `validate_task_xor_child/1` + the DB check constraint.
+  @required ~w(project_uuid status)a
+  @optional ~w(task_uuid child_project_uuid position description estimated_duration
+               estimated_duration_unit counts_weekends progress_pct track_progress
+               translations assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
   # Server-only fields: set by trusted server code (completion tracking),
   # never cast from untrusted form params. Use `status_changeset/2`.
@@ -123,6 +136,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   defp validate(changeset) do
     changeset
     |> validate_required(@required)
+    |> validate_task_xor_child()
     |> validate_inclusion(:status, @statuses)
     |> validate_number(:estimated_duration, greater_than: 0)
     |> validate_inclusion(:estimated_duration_unit, @duration_units)
@@ -130,10 +144,84 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_translations_shape()
     |> assoc_constraint(:project)
     |> assoc_constraint(:task)
+    |> assoc_constraint(:child_project)
     |> validate_single_assignee()
     |> check_constraint(:assigned_team_uuid,
       name: :phoenix_kit_project_assignments_single_assignee,
       message: single_assignee_message()
+    )
+    |> task_xor_child_constraints()
+  end
+
+  @doc """
+  Changeset for the parent-side linking assignment of a **sub-project**.
+
+  Used both to create the linking row (`create_subproject/2`) and to sync the
+  denormalized rollup fields whenever the child project changes
+  (`sync_project_rollup/1`). Unlike `changeset/2` it:
+
+    * casts `child_project_uuid` and the server-owned rollup fields
+      (`status` / `progress_pct` / `estimated_duration` / `completed_at` /
+      `completed_by_uuid`) but never `task_uuid` — so a sub-project row can't
+      be flipped into a task-backed one via this path;
+    * does NOT require `estimated_duration > 0` — a child with no tasks rolls
+      up to 0 planned hours, which is legitimate.
+  """
+  @spec subproject_changeset(t(), map()) :: Ecto.Changeset.t()
+  def subproject_changeset(assignment, attrs) do
+    assignment
+    |> cast(attrs, [
+      :project_uuid,
+      :child_project_uuid,
+      :position,
+      :status,
+      :progress_pct,
+      :estimated_duration,
+      :estimated_duration_unit,
+      :track_progress,
+      :completed_at,
+      :completed_by_uuid
+    ])
+    |> validate_required([:project_uuid, :child_project_uuid, :status])
+    |> validate_task_xor_child()
+    |> validate_inclusion(:status, @statuses)
+    |> validate_number(:estimated_duration, greater_than_or_equal_to: 0)
+    |> validate_number(:progress_pct, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
+    |> assoc_constraint(:project)
+    |> assoc_constraint(:child_project)
+    |> unique_constraint(:child_project_uuid,
+      name: :phoenix_kit_project_assignments_child_project_unique,
+      message: gettext("project is already a sub-project of another project")
+    )
+    |> task_xor_child_constraints()
+  end
+
+  # Exactly one of task_uuid / child_project_uuid must be present. Mirrors the
+  # DB CHECK so changesets fail fast with a friendly message.
+  defp validate_task_xor_child(changeset) do
+    task = get_field(changeset, :task_uuid)
+    child = get_field(changeset, :child_project_uuid)
+
+    case {task, child} do
+      {nil, nil} ->
+        add_error(changeset, :task_uuid, gettext("a task or a sub-project is required"))
+
+      {t, c} when not is_nil(t) and not is_nil(c) ->
+        add_error(
+          changeset,
+          :child_project_uuid,
+          gettext("an assignment cannot be both a task and a sub-project")
+        )
+
+      _ ->
+        changeset
+    end
+  end
+
+  defp task_xor_child_constraints(changeset) do
+    check_constraint(changeset, :child_project_uuid,
+      name: :phoenix_kit_project_assignments_task_xor_child,
+      message: gettext("an assignment must be exactly one of a task or a sub-project")
     )
   end
 
@@ -176,6 +264,32 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     do: gettext("only one of team, department, or person can be assigned")
 
   def statuses, do: @statuses
+
+  @doc "True when this assignment embeds a child project (a sub-project row)."
+  @spec subproject?(t()) :: boolean()
+  def subproject?(%__MODULE__{child_project_uuid: nil}), do: false
+  def subproject?(%__MODULE__{child_project_uuid: _}), do: true
+
+  @doc """
+  The display label for this assignment, locale-aware: the child project's
+  name for a sub-project, otherwise the task template's title. Requires the
+  relevant association (`:child_project` or `:task`) to be preloaded — both are
+  in `Projects`' `@assignment_preloads`. `lang` may be `nil` (primary value).
+
+  Single source of truth so every render site (timeline title, comment header,
+  dependency badge, remove-confirm, activity metadata) handles the sub-project
+  case identically instead of dereferencing a `nil` task.
+  """
+  @spec label(t(), String.t() | nil) :: String.t() | nil
+  def label(assignment, lang \\ nil)
+
+  def label(%__MODULE__{child_project_uuid: nil} = a, lang),
+    do: Task.localized_title(a.task, lang)
+
+  def label(%__MODULE__{child_project: %Project{} = cp}, lang),
+    do: Project.localized_name(cp, lang)
+
+  def label(%__MODULE__{}, _lang), do: nil
 
   @doc "DB-column field names that participate in the `translations` JSONB."
   @spec translatable_fields() :: [String.t()]

@@ -1,28 +1,19 @@
 defmodule PhoenixKitProjects.Web.Components.RunningCard do
   @moduledoc """
-  One row in the dashboard's "Running" section — clickable link
-  wrapping a title, tier pill, started-X-ago metadata, done/total
-  counts, an in-progress note, and a colored progress bar.
+  One project in the dashboard's "Running" section, rendered as a **hierarchical
+  summary** (V126): a top line with the project name + tier + progress, a
+  one-line summary (`N tasks · M sub-projects`), a status breakdown
+  (`X done · Y in progress · Z todo`), and then each embedded sub-project nested
+  underneath as an indented sub-step with its own summary + breakdown — all the
+  way down.
 
-  Driven by the `project_summary` map shape returned by
-  `Projects.project_summaries/1`:
-
-      %{
-        project: %Project{},
-        total: integer,
-        done: integer,
-        in_progress: integer,
-        progress_pct: integer,
-        total_hours: number,
-        planned_end: DateTime.t() | nil
-      }
-
-  The caller passes the tier directly so the dashboard can reuse the
-  same tier classifier it uses to sort + cap the list.
+  Driven by the recursive node shape from `Projects.project_tree_summary/1`.
+  The top node also carries `total` / `progress_pct` / `planned_end`, so the
+  dashboard's tier + sort helpers read it like the old flat summary map.
 
   ## Example
 
-      <.running_card summary={s} tier={running_tier(s)} navigate={Paths.project(s.project.uuid)} lang={lang} />
+      <.running_card node={tree} tier={running_tier(tree)} embed_mode={@embed_mode} lang={lang} />
   """
 
   use Phoenix.Component
@@ -31,64 +22,124 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
   import PhoenixKitProjects.Web.Components.TierPill
   import PhoenixKitProjects.Web.Components.SmartLink
 
-  alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.{Paths, Schemas.Project}
 
-  attr(:summary, :map, required: true)
+  attr(:node, :map, required: true)
   attr(:tier, :atom, required: true, values: [:late, :near_done, :on_track, :empty])
-  attr(:navigate, :string, required: true)
-
-  attr(:emit, :any,
-    default: nil,
-    doc:
-      "`{TargetLV :: module(), session_overrides :: map()}` — required when used in embed-mode " <>
-        "callers; defaults to opening `ProjectShowLive` with the summary's project uuid."
-  )
-
   attr(:embed_mode, :atom, default: :navigate, values: [:navigate, :emit])
   attr(:lang, :string, default: nil)
 
   def running_card(assigns) do
-    assigns =
-      assign_new(assigns, :emit_resolved, fn ->
-        assigns.emit ||
-          {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => assigns.summary.project.uuid}}
-      end)
-
     ~H"""
-    <.smart_link
-      navigate={@navigate}
-      emit={@emit_resolved}
-      embed_mode={@embed_mode}
-      class="flex items-center gap-3 p-3 rounded hover:bg-base-200 transition"
-    >
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 min-w-0">
-          <div class="font-medium truncate min-w-0">
-            {Project.localized_name(@summary.project, @lang)}
-          </div>
-          <.tier_pill tier={@tier} />
-        </div>
-        <div class="flex items-center gap-2 text-xs text-base-content/60 mt-1">
-          <span>{started_when_label(@summary.project)}</span>
-          <span>·</span>
-          <span>{gettext("%{done}/%{total} tasks", done: @summary.done, total: @summary.total)}</span>
-          <%= if @summary.in_progress > 0 do %>
-            <span>·</span>
-            <span class="text-warning">{gettext("%{count} in progress", count: @summary.in_progress)}</span>
-          <% end %>
-        </div>
-        <div class="w-full bg-base-300 rounded-full h-1.5 mt-2">
-          <div
-            class="bg-success h-1.5 rounded-full transition-all"
-            style={"width: #{@summary.progress_pct}%"}
-          />
-        </div>
+    <div class="p-3 rounded hover:bg-base-200 transition">
+      <div class="flex items-center gap-2 min-w-0">
+        <.smart_link
+          navigate={path_for(@node)}
+          emit={emit_for(@node)}
+          embed_mode={@embed_mode}
+          class="font-medium truncate min-w-0 hover:underline"
+        >
+          {Project.localized_name(@node.project, @lang)}
+        </.smart_link>
+        <.tier_pill tier={@tier} />
+        <div class="ml-auto text-lg font-bold shrink-0">{@node.progress_pct}%</div>
       </div>
-      <div class="text-right shrink-0">
-        <div class="text-lg font-bold">{@summary.progress_pct}%</div>
+
+      <div class="text-xs text-base-content/60 mt-0.5">
+        {started_when_label(@node.project)} · {summary_line(@node)}
       </div>
-    </.smart_link>
+      <div :if={breakdown_line(@node)} class="text-xs text-base-content/50">
+        {breakdown_line(@node)}
+      </div>
+
+      <div :if={visible_children(@node) != []} class="mt-2 flex flex-col gap-2">
+        <.tree_node
+          :for={child <- visible_children(@node)}
+          node={child}
+          lang={@lang}
+          embed_mode={@embed_mode}
+        />
+      </div>
+    </div>
     """
+  end
+
+  @doc "One nested sub-project node — recurses for its own sub-projects."
+  attr(:node, :map, required: true)
+  attr(:lang, :string, default: nil)
+  attr(:embed_mode, :atom, default: :navigate)
+
+  def tree_node(assigns) do
+    ~H"""
+    <div class="border-l-2 border-base-300 pl-3">
+      <div class="flex items-center gap-2 min-w-0">
+        <.smart_link
+          navigate={path_for(@node)}
+          emit={emit_for(@node)}
+          embed_mode={@embed_mode}
+          class="text-sm font-medium truncate min-w-0 hover:underline"
+        >
+          {Project.localized_name(@node.project, @lang)}
+        </.smart_link>
+        <span class="ml-auto text-xs font-semibold shrink-0">{@node.progress_pct}%</span>
+      </div>
+      <div class="text-xs text-base-content/60">{summary_line(@node)}</div>
+      <div :if={breakdown_line(@node)} class="text-xs text-base-content/50">
+        {breakdown_line(@node)}
+      </div>
+
+      <div :if={visible_children(@node) != []} class="mt-1.5 flex flex-col gap-1.5">
+        <.tree_node
+          :for={child <- visible_children(@node)}
+          node={child}
+          lang={@lang}
+          embed_mode={@embed_mode}
+        />
+      </div>
+    </div>
+    """
+  end
+
+  # Hide truly-empty sub-projects (no tasks AND no sub-projects of their own) —
+  # they add noise without information. A 0-task node that still has nested
+  # sub-projects is kept (it has content below it).
+  defp visible_children(node) do
+    Enum.reject(node.children, fn c -> c.task_total == 0 and c.subproject_count == 0 end)
+  end
+
+  defp path_for(node), do: Paths.project(node.project.uuid)
+
+  defp emit_for(node),
+    do: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => node.project.uuid}}
+
+  # "5 tasks · 1 sub-project" — sub-project segment omitted when there are none.
+  defp summary_line(node) do
+    tasks = ngettext("%{count} task", "%{count} tasks", node.task_total)
+
+    if node.subproject_count > 0 do
+      subs = ngettext("%{count} sub-project", "%{count} sub-projects", node.subproject_count)
+      "#{tasks} · #{subs}"
+    else
+      tasks
+    end
+  end
+
+  # "3 done · 2 in progress · 1 todo" — zero segments dropped. `nil` (so the row
+  # is skipped) when this node has no direct tasks of its own.
+  defp breakdown_line(%{task_total: 0}), do: nil
+
+  defp breakdown_line(node) do
+    [
+      {node.task_done, gettext("done")},
+      {node.task_in_progress, gettext("in progress")},
+      {node.task_todo, gettext("todo")}
+    ]
+    |> Enum.filter(fn {n, _label} -> n > 0 end)
+    |> Enum.map_join(" · ", fn {n, label} -> "#{n} #{label}" end)
+    |> case do
+      "" -> nil
+      line -> line
+    end
   end
 
   defp started_when_label(%{started_at: %DateTime{} = dt}) do
@@ -98,9 +149,8 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
 
   defp started_when_label(_), do: gettext("Not started yet")
 
-  # Inlined here (rather than depending on a sibling LV's private
-  # helper) so the component is self-contained — its only dependency
-  # is `gettext`. Mirrors `OverviewLive.relative_day/1`.
+  # Inlined here (rather than depending on a sibling LV's private helper) so the
+  # component stays self-contained. Mirrors `OverviewLive.relative_day/1`.
   defp relative_day(0), do: gettext("today")
   defp relative_day(1), do: gettext("tomorrow")
   defp relative_day(-1), do: gettext("yesterday")

@@ -82,7 +82,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
     {top_summaries, total_active} =
       active_projects
-      |> Projects.project_summaries()
+      |> Enum.map(&Projects.project_tree_summary/1)
       |> prioritize_running()
 
     assign(socket,
@@ -341,9 +341,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
               <div class="flex flex-col gap-2 mt-2">
                 <.running_card
                   :for={s <- @active_summaries}
-                  summary={s}
+                  node={s}
                   tier={running_tier(s)}
-                  navigate={Paths.project(s.project.uuid)}
                   embed_mode={@embed_mode}
                   lang={L10n.current_content_lang()}
                 />

@@ -8,7 +8,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   import PhoenixKitWeb.Components.MultilangForm
 
   alias PhoenixKit.PubSub.Manager, as: PubSubManager
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Translations}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses, Translations}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.AITranslateFormHelpers
@@ -42,10 +42,34 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
+      |> assign_status_init()
       |> maybe_subscribe_translations()
 
     {:ok, socket}
   end
+
+  # Workflow-status assigns (V125) — a template is a project, so it picks a
+  # status-source list its cloned projects inherit. Shared logic via
+  # `WorkflowStatusFields` (imported through `use ...Web.Components`).
+  defp assign_status_init(socket) do
+    available = available?()
+
+    socket
+    |> assign(
+      statuses_available: available,
+      status_entities: if(available, do: entity_options(), else: []),
+      status_translation_mode: mode_string(socket.assigns.project),
+      status_preview: []
+    )
+    |> refresh_status_preview()
+  end
+
+  defp refresh_status_preview(%{assigns: %{statuses_available: true}} = socket) do
+    selected = selected_entity_uuid(socket.assigns.form[:status_entity_uuid])
+    assign(socket, status_preview: preview_for(selected))
+  end
+
+  defp refresh_status_preview(socket), do: socket
 
   defp maybe_subscribe_translations(%{assigns: %{live_action: :new}} = socket), do: socket
 
@@ -157,18 +181,52 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     end
   end
 
-  def handle_event("validate", %{"project" => attrs}, socket) do
+  def handle_event("validate", %{"project" => attrs} = params, socket) do
     attrs = attrs |> Map.put("is_template", "true") |> merge_attrs(socket)
     cs = socket.assigns.project |> Projects.change_project(attrs) |> Map.put(:action, :validate)
-    {:noreply, assign_form(socket, cs)}
+    mode = Map.get(params, "status_translation_mode", socket.assigns.status_translation_mode)
+
+    {:noreply,
+     socket
+     |> assign_form(cs)
+     |> assign(status_translation_mode: mode)
+     |> refresh_status_preview()}
   end
 
-  def handle_event("save", %{"project" => attrs}, socket) do
+  # A template is a project, so it gets the same "Generate default" action (V125).
+  def handle_event("generate_default_statuses", _params, socket) do
+    case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
+      {:ok, entity} ->
+        Activity.log("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "entity",
+          resource_uuid: entity.uuid,
+          metadata: %{"scope" => "template"}
+        )
+
+        cs =
+          Ecto.Changeset.put_change(socket.assigns.form.source, :status_entity_uuid, entity.uuid)
+
+        {:noreply,
+         socket
+         |> assign(status_entities: entity_options())
+         |> assign_form(cs)
+         |> refresh_status_preview()
+         |> put_flash(:info, gettext("Default statuses entity created."))}
+
+      {:error, _reason} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
+    end
+  end
+
+  def handle_event("save", %{"project" => attrs} = params, socket) do
     if socket.assigns.ai_translate_in_flight == [] do
       attrs =
         attrs
         |> Map.merge(%{"is_template" => "true", "start_mode" => "immediate"})
         |> merge_attrs(socket)
+        |> apply_mode(params, socket.assigns.project)
 
       save(socket, socket.assigns.live_action, attrs)
     else
@@ -607,6 +665,17 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
               />
               <span class="text-sm">{gettext("Count weekends in schedule")}</span>
             </label>
+
+            <%!-- Workflow status — a template is a project, so it picks the
+                 status list its cloned projects inherit (V125). --%>
+            <.workflow_status_fields
+              statuses_available={@statuses_available}
+              field={@form[:status_entity_uuid]}
+              status_entities={@status_entities}
+              status_preview={@status_preview}
+              status_translation_mode={@status_translation_mode}
+            />
+
             <div class="flex justify-end gap-2 mt-2">
               <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
                 {gettext("Cancel")}

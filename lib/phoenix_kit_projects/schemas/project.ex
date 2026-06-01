@@ -20,6 +20,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
   import Ecto.Changeset
 
   alias PhoenixKitProjects.{L10n, Schemas.Assignment}
+  alias PhoenixKitStaff.Schemas.{Department, Person, Team}
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
   @foreign_key_type UUIDv7
@@ -53,6 +54,12 @@ defmodule PhoenixKitProjects.Schemas.Project do
           current_status_slug: String.t() | nil,
           settings: map(),
           external_id: String.t() | nil,
+          assigned_team_uuid: UUIDv7.t() | nil,
+          assigned_team: Team.t() | Ecto.Association.NotLoaded.t() | nil,
+          assigned_department_uuid: UUIDv7.t() | nil,
+          assigned_department: Department.t() | Ecto.Association.NotLoaded.t() | nil,
+          assigned_person_uuid: UUIDv7.t() | nil,
+          assigned_person: Person.t() | Ecto.Association.NotLoaded.t() | nil,
           assignments: [Assignment.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil
@@ -96,13 +103,25 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # by host apps/integrations. Indexed for lookup; not unique.
     field(:external_id, :string)
 
+    # Polymorphic assignee (V127) — at most one of team/department/person, the
+    # same shape `Assignment` uses. A sub-project is a project, so this covers
+    # assigning a sub-project too (its assignee lives on the child project row).
+    belongs_to(:assigned_team, Team, foreign_key: :assigned_team_uuid, references: :uuid)
+
+    belongs_to(:assigned_department, Department,
+      foreign_key: :assigned_department_uuid,
+      references: :uuid
+    )
+
+    belongs_to(:assigned_person, Person, foreign_key: :assigned_person_uuid, references: :uuid)
+
     has_many(:assignments, Assignment, foreign_key: :project_uuid, on_delete: :delete_all)
 
     timestamps(type: :utc_datetime)
   end
 
   @required ~w(name start_mode)a
-  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id)a
+  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
   def changeset(project, attrs, opts \\ []) do
     project
@@ -119,6 +138,14 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_translations_shape()
     |> sanitize_settings()
     |> foreign_key_constraint(:status_entity_uuid)
+    |> validate_single_assignee()
+    |> assoc_constraint(:assigned_team)
+    |> assoc_constraint(:assigned_department)
+    |> assoc_constraint(:assigned_person)
+    |> check_constraint(:assigned_team_uuid,
+      name: :phoenix_kit_projects_single_assignee,
+      message: single_assignee_message()
+    )
     |> maybe_require_date(opts)
   end
 
@@ -128,6 +155,26 @@ defmodule PhoenixKitProjects.Schemas.Project do
   # validating: unknown keys are dropped, so the column only ever holds keys
   # the module actually reads. ADD NEW SETTINGS KEYS HERE.
   @settings_keys %{"use_status_translations" => &is_boolean/1}
+
+  # At most one of team/department/person (mirrors the DB CHECK + the
+  # assignments table's validator) so changesets fail fast with a friendly
+  # message instead of a raw Postgrex error.
+  defp validate_single_assignee(changeset) do
+    set =
+      Enum.count(
+        [:assigned_team_uuid, :assigned_department_uuid, :assigned_person_uuid],
+        &(get_field(changeset, &1) != nil)
+      )
+
+    if set > 1 do
+      add_error(changeset, :assigned_team_uuid, single_assignee_message())
+    else
+      changeset
+    end
+  end
+
+  defp single_assignee_message,
+    do: gettext("only one of team, department, or person can be assigned")
 
   @doc """
   Changeset for the server-owned `current_status_slug` only.

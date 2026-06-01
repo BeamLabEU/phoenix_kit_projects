@@ -208,5 +208,44 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
       # The selected list's statuses render in the live preview.
       assert html =~ "Backlog"
     end
+
+    test "a started project locks the source picker (frozen at start)", %{conn: conn} do
+      {:ok, started} = Projects.start_project(fixture_project())
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{started.uuid}/edit")
+
+      # The picker is disabled, the frozen hint shows, and "Generate default"
+      # (which would switch the source) is gone.
+      assert html =~ "Frozen at start"
+      refute html =~ "Generate default"
+
+      assert html =~ ~r/<select[^>]*name="project\[status_entity_uuid\]"[^>]*disabled/
+    end
+
+    test "a started project ignores a forced status_entity_uuid change on save", %{
+      conn: conn,
+      entity: entity
+    } do
+      {:ok, started} = Projects.start_project(fixture_project())
+      refute started.status_entity_uuid
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{started.uuid}/edit")
+
+      # The disabled picker can't be set through the form, so inject the field
+      # as crafted extra submit params. The server-side `lock_status_source/2`
+      # guard still strips it — the frozen source is unchanged.
+      {:error, {:live_redirect, _}} =
+        view
+        |> form("#project-form",
+          project: %{
+            name: started.name,
+            start_mode: started.start_mode || "immediate",
+            counts_weekends: "false"
+          }
+        )
+        |> render_submit(%{"project" => %{"status_entity_uuid" => entity.uuid}})
+
+      refute Projects.get_project!(started.uuid).status_entity_uuid
+    end
   end
 end

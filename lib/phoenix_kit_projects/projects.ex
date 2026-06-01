@@ -734,6 +734,7 @@ defmodule PhoenixKitProjects.Projects do
 
     Project
     |> maybe_exclude_templates(include_templates)
+    |> exclude_subprojects()
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> project_order_by(sort_by, sort_dir)
@@ -775,6 +776,19 @@ defmodule PhoenixKitProjects.Projects do
 
   defp maybe_exclude_templates(q, true), do: q
   defp maybe_exclude_templates(q, _), do: where(q, [p], p.is_template == false)
+
+  # A project that is embedded as a sub-project of another project (V126 —
+  # its uuid is some assignment's `child_project_uuid`) is reached by drilling
+  # into its parent's timeline, never as a standalone row. So every top-level
+  # listing/bucket/count excludes it. `not in subquery` is self-correcting: if
+  # the linking assignment ever disappears, the project re-surfaces at the top
+  # level on its own rather than orphaning.
+  defp exclude_subprojects(q) do
+    children =
+      from(a in Assignment, where: not is_nil(a.child_project_uuid), select: a.child_project_uuid)
+
+    where(q, [p], p.uuid not in subquery(children))
+  end
 
   defp maybe_filter_archived(q, :all), do: q
   defp maybe_filter_archived(q, true), do: where(q, [p], not is_nil(p.archived_at))
@@ -933,13 +947,55 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  @doc "Deletes a project and broadcasts `:project_deleted`."
-  @spec delete_project(Project.t()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
+  @doc """
+  Deletes a project and broadcasts `:project_deleted`.
+
+  Recursive over **sub-projects** (V126): any project embedded in `p`'s
+  timeline (and, transitively, in theirs) is torn down too. Deleting `p`
+  DB-cascades its own assignment rows (`project_uuid` is `ON DELETE CASCADE`),
+  including the sub-project linking rows — but the child projects those rows
+  pointed at would be left orphaned, so they're deleted explicitly here. The
+  whole subtree comes down in one transaction; `:project_deleted` is broadcast
+  for every project removed.
+  """
+  @spec delete_project(Project.t()) :: {:ok, Project.t()} | {:error, term()}
   def delete_project(%Project{} = p) do
-    with {:ok, deleted} <- repo().delete(p) do
-      ProjectsPubSub.broadcast_project(:project_deleted, project_payload(deleted))
-      {:ok, deleted}
+    repo().transaction(fn -> delete_project_tree_in_tx(p) end)
+    |> case do
+      {:ok, deleted} -> {:ok, deleted}
+      {:error, reason} -> {:error, reason}
     end
+  end
+
+  # Tears `project` and its entire sub-project subtree down inside the caller's
+  # transaction. Collects the child-project uuids embedded in this project
+  # BEFORE deleting it (the linking rows vanish with the DB cascade), deletes
+  # the project, then recurses into each former child. Broadcasts per node.
+  defp delete_project_tree_in_tx(%Project{} = project) do
+    child_uuids =
+      repo().all(
+        from(a in Assignment,
+          where: a.project_uuid == ^project.uuid and not is_nil(a.child_project_uuid),
+          select: a.child_project_uuid
+        )
+      )
+
+    deleted =
+      case repo().delete(project) do
+        {:ok, d} -> d
+        {:error, cs} -> repo().rollback(cs)
+      end
+
+    ProjectsPubSub.broadcast_project(:project_deleted, project_payload(deleted))
+
+    Enum.each(child_uuids, fn cu ->
+      case get_project(cu) do
+        nil -> :ok
+        child -> delete_project_tree_in_tx(child)
+      end
+    end)
+
+    deleted
   end
 
   defp project_payload(p) do
@@ -1056,6 +1112,7 @@ defmodule PhoenixKitProjects.Projects do
 
     Project
     |> maybe_exclude_templates(include_templates)
+    |> exclude_subprojects()
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> repo().aggregate(:count, :uuid)
@@ -1073,6 +1130,7 @@ defmodule PhoenixKitProjects.Projects do
   def list_templates do
     Project
     |> where([p], p.is_template == true)
+    |> exclude_subprojects()
     |> order_by([p], asc: p.position, asc: p.inserted_at, asc: p.uuid)
     |> repo().all()
   end
@@ -1082,6 +1140,7 @@ defmodule PhoenixKitProjects.Projects do
   def count_templates do
     Project
     |> where([p], p.is_template == true)
+    |> exclude_subprojects()
     |> repo().aggregate(:count, :uuid)
   end
 
@@ -1094,6 +1153,7 @@ defmodule PhoenixKitProjects.Projects do
       p.is_template == false and is_nil(p.archived_at) and not is_nil(p.started_at) and
         is_nil(p.completed_at)
     )
+    |> exclude_subprojects()
     |> order_by([p], desc: p.started_at)
     |> repo().all()
   end
@@ -1106,6 +1166,7 @@ defmodule PhoenixKitProjects.Projects do
       [p],
       p.is_template == false and is_nil(p.archived_at) and not is_nil(p.completed_at)
     )
+    |> exclude_subprojects()
     |> order_by([p], desc: p.completed_at)
     |> limit(^limit)
     |> repo().all()
@@ -1120,6 +1181,7 @@ defmodule PhoenixKitProjects.Projects do
       p.is_template == false and is_nil(p.archived_at) and is_nil(p.started_at) and
         p.start_mode == "scheduled" and not is_nil(p.scheduled_start_date)
     )
+    |> exclude_subprojects()
     |> order_by([p], asc: p.scheduled_start_date)
     |> repo().all()
   end
@@ -1133,6 +1195,7 @@ defmodule PhoenixKitProjects.Projects do
       p.is_template == false and is_nil(p.archived_at) and is_nil(p.started_at) and
         p.start_mode == "immediate"
     )
+    |> exclude_subprojects()
     |> order_by([p], desc: p.inserted_at)
     |> repo().all()
   end
@@ -1147,10 +1210,14 @@ defmodule PhoenixKitProjects.Projects do
   """
   @spec assignment_status_counts() :: %{optional(String.t()) => non_neg_integer()}
   def assignment_status_counts do
+    # `is_nil(a.child_project_uuid)` drops sub-project linking rows (V126):
+    # they're rollup placeholders, not real work — the sub-project's own tasks
+    # are counted in their own right. Counting the placeholder too would
+    # double-count the sub-project in the workload tile.
     from(a in Assignment,
       join: p in Project,
       on: p.uuid == a.project_uuid,
-      where: p.is_template == false and is_nil(p.archived_at),
+      where: p.is_template == false and is_nil(p.archived_at) and is_nil(a.child_project_uuid),
       group_by: a.status,
       select: {a.status, count(a.uuid)}
     )
@@ -1247,6 +1314,14 @@ defmodule PhoenixKitProjects.Projects do
 
     hours_by_project = batched_planned_hours(projects_by_uuid, uuids)
 
+    # Per-project sub-project linking rows (V126), split into "has content" vs
+    # "empty" (the child project has no assignments of its own yet). An EMPTY
+    # sub-project is **neutral** in the progress average — it shouldn't drag a
+    # parent's % down before it has any tasks. We keep the full count for the
+    # badge, but subtract the empty ones from the progress denominator.
+    {subproject_counts_by_project, empty_subproject_counts_by_project} =
+      subproject_count_maps(uuids)
+
     Enum.map(projects, fn p ->
       c = Map.get(counts_by_project, p.uuid, %{})
       done = Map.get(c, "done", 0)
@@ -1263,15 +1338,157 @@ defmodule PhoenixKitProjects.Projects do
       # page's planned-end date.
       planned_end = Project.planned_end_for(p, total_hours)
 
+      # Empty sub-project linking rows contribute 0 progress and 1 to `total`;
+      # drop them from the denominator so they don't pull the average down.
+      empty_subs = Map.get(empty_subproject_counts_by_project, p.uuid, 0)
+      progress_total = max(total - empty_subs, 0)
+
       %{
         project: p,
         total: total,
         done: done,
         in_progress: in_progress,
-        progress_pct: if(total > 0, do: round(progress_sum / total), else: 0),
+        progress_pct: if(progress_total > 0, do: round(progress_sum / progress_total), else: 0),
         total_hours: total_hours,
-        planned_end: planned_end
+        planned_end: planned_end,
+        subproject_count: Map.get(subproject_counts_by_project, p.uuid, 0)
       }
+    end)
+  end
+
+  # Returns `{counts_by_parent, empty_counts_by_parent}` for sub-project linking
+  # rows in `parent_uuids`. "Empty" = the embedded child project has no
+  # assignments of its own (no tasks, no nested sub-projects).
+  defp subproject_count_maps(parent_uuids) do
+    links =
+      from(a in Assignment,
+        where: a.project_uuid in ^parent_uuids and not is_nil(a.child_project_uuid),
+        select: {a.project_uuid, a.child_project_uuid}
+      )
+      |> repo().all()
+
+    counts = links |> Enum.frequencies_by(&elem(&1, 0))
+
+    child_uuids = links |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+    non_empty_children = non_empty_child_lookup(child_uuids)
+
+    empty_counts =
+      links
+      |> Enum.reject(fn {_parent, child} -> Map.has_key?(non_empty_children, child) end)
+      |> Enum.frequencies_by(&elem(&1, 0))
+
+    {counts, empty_counts}
+  end
+
+  # `%{child_uuid => true}` for children that have any assignments. A plain map
+  # (not a MapSet) keeps membership O(1) and dialyzer-transparent.
+  defp non_empty_child_lookup([]), do: %{}
+
+  defp non_empty_child_lookup(child_uuids) do
+    from(a in Assignment,
+      where: a.project_uuid in ^child_uuids,
+      distinct: true,
+      select: a.project_uuid
+    )
+    |> repo().all()
+    |> Map.new(&{&1, true})
+  end
+
+  @doc """
+  Recursive **tree summary** for a project: its own task breakdown plus a nested
+  summary for each embedded sub-project, all the way down (V126). Powers the
+  hierarchical dashboard card.
+
+  Each node has the shape:
+
+      %{
+        project: %Project{},
+        task_total: integer,            # direct tasks (assignments with a task)
+        task_done / task_in_progress / task_todo: integer,
+        subproject_count: integer,      # direct sub-projects
+        total: integer,                 # task_total + subproject_count
+        progress_pct: integer,          # tasks (done=100) + non-empty children
+        total_hours: float,
+        planned_end: DateTime.t() | nil,
+        children: [node, ...]           # one per sub-project, same shape
+      }
+
+  `total` + `progress_pct` + `planned_end` are kept so the existing dashboard
+  tier/sort helpers read a node like the flat `project_summaries` map. The
+  progress average counts each real task (done = 100, else its slider) and each
+  **non-empty** child's rolled progress — empty sub-projects are neutral.
+
+  One `list_assignments/1` per node; depth is bounded by the (acyclic) tree, so
+  it's fine for the handful of running projects on the dashboard.
+  """
+  @spec project_tree_summary(Project.t()) :: map()
+  def project_tree_summary(%Project{} = project), do: build_tree_node(project)
+
+  defp build_tree_node(%Project{} = project) do
+    assignments = list_assignments(project.uuid)
+    {task_rows, link_rows} = Enum.split_with(assignments, &is_nil(&1.child_project_uuid))
+
+    children =
+      link_rows
+      |> Enum.filter(& &1.child_project)
+      |> Enum.map(&build_tree_node(&1.child_project))
+
+    total_hours = node_hours(project, assignments)
+
+    %{
+      project: project,
+      task_total: length(task_rows),
+      task_done: Enum.count(task_rows, &(&1.status == "done")),
+      task_in_progress: Enum.count(task_rows, &(&1.status == "in_progress")),
+      task_todo: Enum.count(task_rows, &(&1.status == "todo")),
+      subproject_count: length(link_rows),
+      total: length(task_rows) + length(link_rows),
+      progress_pct: node_progress(task_rows, children),
+      total_hours: total_hours,
+      planned_end: Project.planned_end_for(project, total_hours),
+      children: children
+    }
+  end
+
+  # Count-weighted progress: each real task contributes 100 when done else its
+  # slider; each non-empty child contributes its own rolled progress. Empty
+  # children are excluded so they don't drag the average down.
+  defp node_progress(task_rows, children) do
+    task_contribs =
+      Enum.map(task_rows, fn a -> if a.status == "done", do: 100, else: a.progress_pct end)
+
+    child_contribs = children |> Enum.reject(&empty_tree_node?/1) |> Enum.map(& &1.progress_pct)
+    contribs = task_contribs ++ child_contribs
+
+    case contribs do
+      [] -> 0
+      _ -> round(Enum.sum(contribs) / length(contribs))
+    end
+  end
+
+  defp empty_tree_node?(%{task_total: 0, subproject_count: 0}), do: true
+  defp empty_tree_node?(_), do: false
+
+  # Sum of estimated hours across a project's assignments. Real tasks fall back
+  # to their template's duration; sub-project linking rows carry the child's
+  # rolled hours in their denormalized `estimated_duration` (minutes).
+  defp node_hours(project, assignments) do
+    Enum.reduce(assignments, 0.0, fn a, acc ->
+      cw = if is_nil(a.counts_weekends), do: project.counts_weekends, else: a.counts_weekends
+
+      {dur, unit} =
+        cond do
+          a.estimated_duration && a.estimated_duration_unit ->
+            {a.estimated_duration, a.estimated_duration_unit}
+
+          a.task ->
+            {a.task.estimated_duration, a.task.estimated_duration_unit}
+
+          true ->
+            {nil, nil}
+        end
+
+      acc + Task.to_hours(dur, unit, cw)
     end)
   end
 
@@ -1282,8 +1499,13 @@ defmodule PhoenixKitProjects.Projects do
   defp batched_planned_hours(_projects_by_uuid, []), do: %{}
 
   defp batched_planned_hours(projects_by_uuid, uuids) do
+    # LEFT join (not inner) so sub-project linking rows — which have no task
+    # template (V126) — aren't dropped. Their hours come from the denormalized
+    # `estimated_duration` (the child project's rolled-up total, stored in
+    # minutes), so the `a_dur && a_unit` branch below uses the assignment value
+    # and never dereferences the nil task.
     from(a in Assignment,
-      join: t in assoc(a, :task),
+      left_join: t in assoc(a, :task),
       where: a.project_uuid in ^uuids,
       select: {
         a.project_uuid,
@@ -1377,28 +1599,103 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  defp clone_assignments_in_tx(template_assignments, project) do
-    Enum.reduce(template_assignments, %{}, fn a, acc ->
-      case create_assignment(%{
-             "project_uuid" => project.uuid,
-             "task_uuid" => a.task_uuid,
-             "status" => "todo",
-             "position" => a.position,
-             "description" => a.description,
-             "estimated_duration" => a.estimated_duration,
-             "estimated_duration_unit" => a.estimated_duration_unit,
-             "counts_weekends" => a.counts_weekends,
-             "assigned_team_uuid" => a.assigned_team_uuid,
-             "assigned_department_uuid" => a.assigned_department_uuid,
-             "assigned_person_uuid" => a.assigned_person_uuid
-           }) do
-        {:ok, new_a} ->
-          Map.put(acc, a.uuid, new_a.uuid)
+  defp clone_assignments_in_tx(source_assignments, project) do
+    Enum.reduce(source_assignments, %{}, fn a, acc ->
+      new_uuid =
+        if is_nil(a.child_project_uuid) do
+          clone_task_assignment_in_tx(a, project)
+        else
+          clone_subproject_assignment_in_tx(a, project)
+        end
 
-        {:error, cs} ->
-          repo().rollback(cs)
-      end
+      Map.put(acc, a.uuid, new_uuid)
     end)
+  end
+
+  defp clone_task_assignment_in_tx(a, project) do
+    case create_assignment(%{
+           "project_uuid" => project.uuid,
+           "task_uuid" => a.task_uuid,
+           "status" => "todo",
+           "position" => a.position,
+           "description" => a.description,
+           "estimated_duration" => a.estimated_duration,
+           "estimated_duration_unit" => a.estimated_duration_unit,
+           "counts_weekends" => a.counts_weekends,
+           "assigned_team_uuid" => a.assigned_team_uuid,
+           "assigned_department_uuid" => a.assigned_department_uuid,
+           "assigned_person_uuid" => a.assigned_person_uuid
+         }) do
+      {:ok, new_a} -> new_a.uuid
+      {:error, cs} -> repo().rollback(cs)
+    end
+  end
+
+  # A sub-project row in the source is **deep-cloned**: its child (a sub-template
+  # when cloning a template) is recursively cloned into a fresh project, and a
+  # new linking assignment is created pointing at the clone. The single-parent
+  # unique index forbids reusing the same child, so the deep copy is mandatory.
+  defp clone_subproject_assignment_in_tx(a, project) do
+    cloned_child =
+      case get_project(a.child_project_uuid) do
+        nil ->
+          repo().rollback(:missing_child_project)
+
+        child ->
+          deep_clone_project_in_tx(child, %{"is_template" => to_string(project.is_template)})
+      end
+
+    link_attrs =
+      cloned_child.uuid
+      |> child_project_rollup()
+      |> Map.merge(%{
+        project_uuid: project.uuid,
+        child_project_uuid: cloned_child.uuid,
+        position: a.position
+      })
+
+    case %Assignment{} |> Assignment.subproject_changeset(link_attrs) |> repo().insert() do
+      {:ok, new_link} -> new_link.uuid
+      {:error, cs} -> repo().rollback(cs)
+    end
+  end
+
+  # Recursively clones `src` (template or project) into a brand-new project:
+  # copies its scalar fields, clones every assignment (tasks AND nested
+  # sub-projects, via `clone_assignments_in_tx/2`) and re-wires dependencies.
+  # `overrides` lets the caller flip `is_template` for the instantiated copy.
+  defp deep_clone_project_in_tx(%Project{} = src, overrides) do
+    attrs =
+      Map.merge(
+        %{
+          "name" => src.name,
+          "description" => src.description,
+          # A nested sub-project has no instantiation form to re-supply these,
+          # so they must be carried from the source or the clone loses its
+          # multilang content, workflow source/settings, and assignee. Mirrors
+          # `clone_template/2` (status source) and extends it to the fields only
+          # a clone-from-source — not a form — can preserve.
+          "translations" => src.translations,
+          "settings" => src.settings,
+          "status_entity_uuid" => src.status_entity_uuid,
+          "assigned_team_uuid" => src.assigned_team_uuid,
+          "assigned_department_uuid" => src.assigned_department_uuid,
+          "assigned_person_uuid" => src.assigned_person_uuid,
+          "counts_weekends" => to_string(src.counts_weekends),
+          "start_mode" => src.start_mode,
+          "is_template" => "false"
+        },
+        overrides
+      )
+
+    # `inherit_status_slug_in_tx/2` carries the server-owned `current_status_slug`
+    # (not a regular changeset field), same as the root template clone.
+    new_project = attrs |> create_project_in_tx() |> inherit_status_slug_in_tx(src)
+    src_assignments = list_assignments(src.uuid)
+    src_deps = list_all_dependencies(src.uuid)
+    uuid_map = clone_assignments_in_tx(src_assignments, new_project)
+    clone_dependencies_in_tx(src_deps, uuid_map)
+    new_project
   end
 
   defp clone_dependencies_in_tx(template_deps, uuid_map) do
@@ -1488,23 +1785,127 @@ defmodule PhoenixKitProjects.Projects do
           | {:unchanged, Project.t()}
           | {:error, term()}
   def recompute_project_completion(project_uuid) do
+    recompute_project_completion(project_uuid, 0)
+  end
+
+  # Depth guard: the parent chain (V126 sub-projects) is finite and acyclic by
+  # construction (single-parent unique index + inline-only creation), but cap
+  # the upward walk defensively so corrupted data can never spin forever.
+  @max_rollup_depth 64
+
+  defp recompute_project_completion(project_uuid, depth) do
     # Wrap the read + check + update in a transaction so two concurrent
     # status changes (e.g. task A marked done, task B reopened) can't
     # both observe the same pre-update state and try to mark the project
     # completed twice. The second wins-or-loses but it's idempotent —
     # broadcast and audit-row consumers see exactly one transition.
-    repo().transaction(fn ->
-      case get_project(project_uuid) do
-        nil -> :ok
-        %Project{is_template: true} -> :ok
-        project -> decide_completion(project)
+    result =
+      repo().transaction(fn ->
+        case get_project(project_uuid) do
+          nil -> :ok
+          %Project{is_template: true} -> :ok
+          project -> decide_completion(project)
+        end
+      end)
+      |> case do
+        {:ok, res} -> res
+        {:error, _} = err -> err
       end
-    end)
-    |> case do
-      {:ok, result} -> result
-      {:error, _} = err -> err
+
+    # After the project's own completion settles, push its rolled-up state onto
+    # the parent's linking assignment (if this project is itself a sub-project)
+    # and recompute the parent in turn — so completion/progress climbs the tree.
+    propagate_rollup_to_parent(project_uuid, depth)
+
+    result
+  end
+
+  # If `child_project_uuid` is embedded in some parent assignment, refresh that
+  # linking row's denormalized rollup (status / progress / hours / completion)
+  # from the child, then recompute the parent so the change keeps climbing.
+  # Runs AFTER the child's own transaction commits, so the rollup reads the
+  # settled child state.
+  defp propagate_rollup_to_parent(_child_project_uuid, depth) when depth >= @max_rollup_depth do
+    Logger.warning("[Projects] sub-project rollup depth cap hit (#{@max_rollup_depth}); stopping")
+    :ok
+  end
+
+  defp propagate_rollup_to_parent(child_project_uuid, depth) do
+    case repo().one(from(a in Assignment, where: a.child_project_uuid == ^child_project_uuid)) do
+      nil ->
+        :ok
+
+      link ->
+        case child_project_rollup(child_project_uuid) do
+          nil ->
+            :ok
+
+          rollup ->
+            case link |> Assignment.subproject_changeset(rollup) |> repo().update() do
+              {:ok, updated} ->
+                ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+                  uuid: updated.uuid,
+                  project_uuid: updated.project_uuid
+                })
+
+                recompute_project_completion(updated.project_uuid, depth + 1)
+
+              {:error, _cs} ->
+                :ok
+            end
+        end
     end
   end
+
+  # Computes the denormalized rollup a sub-project's linking assignment carries.
+  # The child project is the source of truth; this snapshots its current
+  # progress/hours/completion into the shape `subproject_changeset/2` casts.
+  # Hours are stored in MINUTES (`round(total_hours * 60)`) so sub-hour child
+  # totals survive the integer `estimated_duration` column without drift.
+  defp child_project_rollup(child_project_uuid) do
+    case get_project(child_project_uuid) do
+      nil -> nil
+      child -> build_child_rollup(child, project_summary(child))
+    end
+  end
+
+  defp build_child_rollup(child, summary) do
+    total_hours = rollup_val(summary, :total_hours, 0.0)
+    status = rollup_status(child, summary)
+
+    # A completed sub-project reads as 100% even though the module's
+    # `progress_pct` is the average of the per-task sliders (completing a task
+    # doesn't move its slider) — otherwise a "done" row would show 0%. For an
+    # in-progress sub-project the rolled-up slider average is the right number.
+    progress = if status == "done", do: 100, else: rollup_val(summary, :progress_pct, 0)
+
+    %{
+      status: status,
+      progress_pct: progress,
+      estimated_duration: round(total_hours * 60),
+      estimated_duration_unit: "minutes",
+      track_progress: true,
+      completed_at: child.completed_at
+    }
+  end
+
+  # A sub-project's denormalized status: "done" once the child is completed,
+  # "in_progress" once any work exists/has started, else "todo".
+  defp rollup_status(%{completed_at: %DateTime{}}, _summary), do: "done"
+
+  defp rollup_status(_child, summary) do
+    total = rollup_val(summary, :total, 0)
+    done = rollup_val(summary, :done, 0)
+    in_progress = rollup_val(summary, :in_progress, 0)
+    progress = rollup_val(summary, :progress_pct, 0)
+
+    if total > 0 and (done > 0 or in_progress > 0 or progress > 0),
+      do: "in_progress",
+      else: "todo"
+  end
+
+  defp rollup_val(nil, _key, default), do: default
+  defp rollup_val(summary, key, _default) when is_map(summary), do: Map.fetch!(summary, key)
 
   defp decide_completion(project) do
     assignments = list_assignments(project.uuid)
@@ -1549,11 +1950,22 @@ defmodule PhoenixKitProjects.Projects do
 
   @assignment_preloads [
     :task,
+    # Deep-preload the embedded child's assignee (V127) so a sub-project row can
+    # show who the sub-project is assigned to.
+    {:child_project, [:assigned_team, :assigned_department, assigned_person: [:user]]},
     :assigned_team,
     :assigned_department,
     :completed_by,
     assigned_person: [:user]
   ]
+
+  @assignee_preloads [:assigned_team, :assigned_department, assigned_person: [:user]]
+
+  @doc "Fetches a project with its assignee associations preloaded (V127)."
+  @spec get_project_with_assignee(uuid()) :: Project.t() | nil
+  def get_project_with_assignee(uuid) do
+    Project |> preload(^@assignee_preloads) |> repo().get(uuid)
+  end
 
   @doc "Lists assignments within a project, ordered by position, with related records preloaded."
   @spec list_assignments(uuid()) :: [Assignment.t()]
@@ -1610,6 +2022,238 @@ defmodule PhoenixKitProjects.Projects do
       })
 
       {:ok, a}
+    end
+  end
+
+  @doc """
+  Adds a **sub-project** to `parent_project_uuid`: creates a fresh child
+  project (named via `child_attrs`) and links it into the parent's timeline as
+  an assignment whose `child_project_uuid` points at the new child. The child
+  starts empty (immediate-start); add its own tasks by opening it. The linking
+  assignment behaves like any task — drag, dependencies — and its
+  status/progress/hours roll up from the child (see `child_project_rollup/1`).
+
+  The child **inherits the parent's `is_template` flag**: a sub-project added to
+  a template is itself a sub-template, and `create_project_from_template/2`
+  deep-clones the whole sub-template subtree into real child projects when the
+  parent template is instantiated.
+
+  Both inserts run in one transaction. Returns
+  `{:ok, %{child_project: Project.t(), assignment: Assignment.t()}}`.
+
+  Inline-only creation makes a cycle structurally impossible (the child is
+  brand-new and can't already be an ancestor), so no cycle guard runs here. A
+  future "link existing project as a sub-project" path MUST add an ancestor
+  check before assigning `child_project_uuid`.
+  """
+  @spec create_subproject(uuid(), map()) ::
+          {:ok, %{child_project: Project.t(), assignment: Assignment.t()}}
+          | {:error, :parent_not_found | Ecto.Changeset.t()}
+  def create_subproject(parent_project_uuid, child_attrs) do
+    case get_project(parent_project_uuid) do
+      nil -> {:error, :parent_not_found}
+      parent -> do_create_subproject(parent, child_attrs)
+    end
+  end
+
+  defp do_create_subproject(%Project{} = parent, child_attrs) do
+    parent_project_uuid = parent.uuid
+
+    attrs =
+      child_attrs
+      |> Map.merge(%{"is_template" => to_string(parent.is_template), "start_mode" => "immediate"})
+
+    repo().transaction(fn ->
+      child =
+        case create_project(attrs) do
+          {:ok, c} -> c
+          {:error, cs} -> repo().rollback(cs)
+        end
+
+      link_attrs =
+        child.uuid
+        |> child_project_rollup()
+        |> Map.merge(%{
+          project_uuid: parent_project_uuid,
+          child_project_uuid: child.uuid,
+          position: next_assignment_position(parent_project_uuid)
+        })
+
+      link =
+        case %Assignment{} |> Assignment.subproject_changeset(link_attrs) |> repo().insert() do
+          {:ok, a} -> a
+          {:error, cs} -> repo().rollback(cs)
+        end
+
+      %{child_project: child, assignment: link}
+    end)
+    |> case do
+      {:ok, %{assignment: link} = result} ->
+        ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+          uuid: link.uuid,
+          project_uuid: link.project_uuid
+        })
+
+        {:ok, result}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Links an **existing** standalone project into `parent_project_uuid` as a
+  sub-project (V126) — the "nest this project" path, alongside the create-new
+  `create_subproject/2`. The child keeps its whole subtree, and drops off the
+  top-level list once linked.
+
+  Guards: the child must exist, not be the parent, match the parent's
+  `is_template`, not already be a sub-project (the single-parent unique index),
+  and not be an **ancestor** of the parent (which would create a cycle). Errors:
+  `:not_found`, `:self_link`, `:kind_mismatch`, `:already_subproject`,
+  `:would_create_cycle`.
+  """
+  @spec link_subproject(uuid(), uuid()) ::
+          {:ok, %{child_project: Project.t(), assignment: Assignment.t()}}
+          | {:error,
+             :not_found
+             | :self_link
+             | :kind_mismatch
+             | :already_subproject
+             | :would_create_cycle
+             | Ecto.Changeset.t()}
+  # Arbitrary fixed key for the transaction-scoped advisory lock that serializes
+  # sub-project links. Global (links are rare admin actions), so two reciprocal
+  # links can't interleave their ancestor checks.
+  @subproject_link_lock 8_126_126
+
+  def link_subproject(parent_project_uuid, child_project_uuid) do
+    repo().transaction(fn ->
+      # Without this lock, concurrent `A → B` and `B → A` links each pass the
+      # ancestor check (neither is yet the other's ancestor) and both insert,
+      # creating a cycle. The advisory lock serializes link operations so the
+      # second sees the first's committed row.
+      repo().query!("SELECT pg_advisory_xact_lock($1)", [@subproject_link_lock])
+
+      with {:ok, parent} <- fetch_project(parent_project_uuid),
+           {:ok, child} <- fetch_project(child_project_uuid),
+           :ok <- validate_link(parent, child),
+           {:ok, result} <- do_link_subproject(parent, child) do
+        result
+      else
+        {:error, reason} -> repo().rollback(reason)
+      end
+    end)
+  end
+
+  defp fetch_project(uuid) do
+    case get_project(uuid) do
+      nil -> {:error, :not_found}
+      project -> {:ok, project}
+    end
+  end
+
+  defp validate_link(%Project{uuid: same}, %Project{uuid: same}), do: {:error, :self_link}
+
+  defp validate_link(%Project{} = parent, %Project{} = child) do
+    cond do
+      parent.is_template != child.is_template -> {:error, :kind_mismatch}
+      child.uuid in project_ancestor_uuids(parent.uuid) -> {:error, :would_create_cycle}
+      true -> :ok
+    end
+  end
+
+  defp do_link_subproject(parent, child) do
+    link_attrs =
+      child.uuid
+      |> child_project_rollup()
+      |> Map.merge(%{
+        project_uuid: parent.uuid,
+        child_project_uuid: child.uuid,
+        position: next_assignment_position(parent.uuid)
+      })
+
+    case %Assignment{} |> Assignment.subproject_changeset(link_attrs) |> repo().insert() do
+      {:ok, link} ->
+        ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+          uuid: link.uuid,
+          project_uuid: link.project_uuid
+        })
+
+        recompute_project_completion(parent.uuid)
+        {:ok, %{child_project: child, assignment: link}}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        # The partial-unique index on `child_project_uuid` means "already a
+        # sub-project of someone".
+        if Enum.any?(cs.errors, fn {field, _} -> field == :child_project_uuid end) do
+          {:error, :already_subproject}
+        else
+          {:error, cs}
+        end
+    end
+  end
+
+  @doc """
+  Projects eligible to be linked as a sub-project of `parent` (V126): standalone
+  (not already a sub-project), same `is_template`, not archived, not the parent,
+  and not one of the parent's ancestors (cycle-safe). Ordered by name for a
+  picker.
+  """
+  @spec available_projects_to_link(Project.t()) :: [Project.t()]
+  def available_projects_to_link(%Project{} = parent) do
+    excluded = [parent.uuid | project_ancestor_uuids(parent.uuid)]
+
+    Project
+    |> where([p], p.is_template == ^parent.is_template and is_nil(p.archived_at))
+    |> where([p], p.uuid not in ^excluded)
+    |> exclude_subprojects()
+    |> order_by([p], asc: p.name, asc: p.uuid)
+    |> repo().all()
+  end
+
+  @doc """
+  Detaches a sub-project from its parent (V126) — the non-destructive inverse of
+  the cascade in `delete_assignment/1`. Deletes **only the linking assignment**,
+  leaving the child project + its whole subtree intact; it becomes a standalone
+  top-level project again. Recomputes the former parent (one fewer rolled-up
+  item).
+  """
+  @spec detach_subproject(Assignment.t()) :: {:ok, Assignment.t()} | {:error, term()}
+  def detach_subproject(%Assignment{child_project_uuid: child_uuid} = link)
+      when is_binary(child_uuid) do
+    with {:ok, deleted} <- repo().delete(link) do
+      ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
+        uuid: deleted.uuid,
+        project_uuid: deleted.project_uuid
+      })
+
+      recompute_project_completion(deleted.project_uuid)
+
+      # The child is standalone again — nudge any project list to refresh.
+      case get_project(child_uuid) do
+        nil -> :ok
+        child -> ProjectsPubSub.broadcast_project(:project_updated, project_payload(child))
+      end
+
+      {:ok, deleted}
+    end
+  end
+
+  # Ancestor project uuids of `project_uuid`, walking up the linking-assignment
+  # chain (parent of X = the project whose linking row embeds X). Order
+  # unspecified; guards against a corrupt cycle by tracking visited uuids.
+  defp project_ancestor_uuids(project_uuid), do: walk_ancestors(project_uuid, [])
+
+  defp walk_ancestors(uuid, acc) do
+    case repo().one(
+           from(a in Assignment, where: a.child_project_uuid == ^uuid, select: a.project_uuid)
+         ) do
+      nil ->
+        acc
+
+      parent_uuid ->
+        if parent_uuid in acc, do: acc, else: walk_ancestors(parent_uuid, [parent_uuid | acc])
     end
   end
 
@@ -2044,9 +2688,19 @@ defmodule PhoenixKitProjects.Projects do
     end)
   end
 
-  @doc "Deletes an assignment and broadcasts `:assignment_deleted`."
-  @spec delete_assignment(Assignment.t()) :: {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
-  def delete_assignment(%Assignment{} = a) do
+  @doc """
+  Deletes an assignment and broadcasts `:assignment_deleted`.
+
+  For a **sub-project** linking row (`child_project_uuid` set, V126) this tears
+  the child project subtree down too — "removing the sub-project task removes
+  the sub-project", matching the boss's "same as a task" semantics. The linking
+  row is deleted first (the `child_project_uuid` FK is `ON DELETE RESTRICT`, so
+  the child can't be removed while it's still referenced), then the child tree
+  via `delete_project_tree_in_tx/1`. Both in one transaction.
+  """
+  @spec delete_assignment(Assignment.t()) ::
+          {:ok, Assignment.t()} | {:error, Ecto.Changeset.t() | term()}
+  def delete_assignment(%Assignment{child_project_uuid: nil} = a) do
     with {:ok, deleted} <- repo().delete(a) do
       ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
         uuid: deleted.uuid,
@@ -2054,6 +2708,35 @@ defmodule PhoenixKitProjects.Projects do
       })
 
       {:ok, deleted}
+    end
+  end
+
+  def delete_assignment(%Assignment{child_project_uuid: child_uuid} = a) do
+    repo().transaction(fn ->
+      deleted =
+        case repo().delete(a) do
+          {:ok, d} -> d
+          {:error, cs} -> repo().rollback(cs)
+        end
+
+      case get_project(child_uuid) do
+        nil -> :ok
+        child -> delete_project_tree_in_tx(child)
+      end
+
+      deleted
+    end)
+    |> case do
+      {:ok, deleted} ->
+        ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
+          uuid: deleted.uuid,
+          project_uuid: deleted.project_uuid
+        })
+
+        {:ok, deleted}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -2085,7 +2768,7 @@ defmodule PhoenixKitProjects.Projects do
   def list_dependencies(assignment_uuid) do
     Dependency
     |> where([d], d.assignment_uuid == ^assignment_uuid)
-    |> preload(depends_on: [:task])
+    |> preload(depends_on: [:task, :child_project])
     |> repo().all()
   end
 
@@ -2096,7 +2779,9 @@ defmodule PhoenixKitProjects.Projects do
       join: a in Assignment,
       on: d.assignment_uuid == a.uuid,
       where: a.project_uuid == ^project_uuid,
-      preload: [depends_on: [:task]]
+      # `:child_project` alongside `:task` so a dependency whose target is a
+      # sub-project (no task template, V126) can still render a label.
+      preload: [depends_on: [:task, :child_project]]
     )
     |> repo().all()
   end
@@ -2264,7 +2949,7 @@ defmodule PhoenixKitProjects.Projects do
         a.project_uuid == ^project_uuid and
           a.uuid != ^assignment_uuid and
           a.uuid not in subquery(existing),
-      preload: [:task],
+      preload: [:task, :child_project],
       order_by: [asc: a.position, asc: a.inserted_at]
     )
     |> repo().all()

@@ -13,8 +13,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   require Logger
 
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
-  alias PhoenixKitProjects.Schemas.{Assignment, Task}
+  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
+  alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   # Default wrapper class for the standalone admin page. Embedders can
@@ -143,6 +144,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     socket
     |> assign(
       page_title: "",
+      kind: "task",
+      sp_form: to_form(Projects.change_project(%Project{}), as: :subproject),
+      sp_mode: "new",
+      link_options: [],
       project: placeholder_project,
       assignment: placeholder_assignment,
       live_action: :new,
@@ -160,9 +165,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     )
     |> assign_options()
     |> assign_form(Projects.change_assignment(placeholder_assignment))
+    |> assign_status_init(%Project{})
   end
 
-  defp apply_action(socket, :new, %{"project_id" => project_id}) do
+  defp apply_action(socket, :new, %{"project_id" => project_id} = params) do
+    # `kind: "subproject"` (V126) routes the same add page into sub-project
+    # mode: the render shows a child-project form (name + assignee) + the
+    # standard dependency section, instead of the task picker.
+    kind = if Map.get(params, "kind") == "subproject", do: "subproject", else: "task"
+
     case Projects.get_project(project_id) do
       nil ->
         # In navigate mode, `close_or_navigate` push-navigates and the LV is
@@ -179,9 +190,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         assignment = %Assignment{project_uuid: project.uuid}
         existing_assignments = Projects.list_assignments(project.uuid)
 
+        title =
+          if kind == "subproject",
+            do: gettext("Add sub-project to %{name}", name: project.name),
+            else: gettext("Add task to %{name}", name: project.name)
+
         socket
         |> assign(
-          page_title: gettext("Add task to %{name}", name: project.name),
+          page_title: title,
+          kind: kind,
+          sp_form: to_form(Projects.change_project(%Project{}), as: :subproject),
+          # Sub-project add modes (V126): "new" creates a fresh child, "existing"
+          # nests an existing standalone project. `link_options` is the eligible
+          # set (cycle-safe, same kind).
+          sp_mode: "new",
+          link_options:
+            if(kind == "subproject", do: Projects.available_projects_to_link(project), else: []),
           project: project,
           assignment: assignment,
           live_action: :new,
@@ -213,6 +237,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
         |> assign_options()
         |> assign_form(Projects.change_assignment(assignment))
+        |> assign_status_init(%Project{})
     end
   end
 
@@ -233,23 +258,56 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         |> put_flash(:error, gettext("Assignment not found."))
         |> WebHelpers.close_or_navigate(Paths.project(project_id))
 
-      {project, assignment} ->
-        assign_type =
-          cond do
-            assignment.assigned_person_uuid -> "person"
-            assignment.assigned_team_uuid -> "team"
-            assignment.assigned_department_uuid -> "department"
-            true -> ""
-          end
+      {project, %Assignment{child_project_uuid: child_uuid} = assignment}
+      when is_binary(child_uuid) ->
+        # Sub-project linking row (V126): edit the CHILD project's name +
+        # assignee, plus this row's dependencies. The assignee lives on the
+        # child, so `assign_type` + `sp_form` come from it.
+        child = Projects.get_project_with_assignee(child_uuid) || %Project{}
 
         socket
         |> assign(
+          page_title:
+            gettext("Edit %{name}",
+              name: Project.localized_name(child, L10n.current_content_lang())
+            ),
+          kind: "subproject",
+          sp_form: to_form(Projects.change_project(child), as: :subproject),
+          sp_mode: "new",
+          link_options: [],
+          project: project,
+          assignment: assignment,
+          live_action: :edit,
+          assign_type: assignee_kind(child),
+          assignment_deps: Projects.list_dependencies(assignment.uuid),
+          available_assignment_deps:
+            Projects.available_dependencies(project.uuid, assignment.uuid),
+          pending_dep_uuids: [],
+          pending_dep_options: [],
+          task_mode: "existing",
+          selected_task_uuid: nil,
+          new_task_title: "",
+          save_as_template: false,
+          closure_tree: nil,
+          excluded_closure_uuids: MapSet.new()
+        )
+        |> assign_options()
+        |> assign_form(Projects.change_assignment(assignment))
+        |> assign_status_init(child)
+
+      {project, assignment} ->
+        socket
+        |> assign(
           page_title: gettext("Edit assignment"),
+          kind: "task",
+          sp_form: to_form(Projects.change_project(%Project{}), as: :subproject),
+          sp_mode: "new",
+          link_options: [],
           project: project,
           assignment: assignment,
           live_action: :edit,
           task_mode: "existing",
-          assign_type: assign_type,
+          assign_type: assignee_kind(assignment),
           selected_task_uuid: assignment.task_uuid,
           new_task_title: "",
           save_as_template: true,
@@ -266,6 +324,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
         |> assign_options()
         |> assign_form(Projects.change_assignment(assignment))
+        |> assign_status_init(%Project{})
     end
   end
 
@@ -282,6 +341,37 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     |> put_flash(:error, gettext("Project not found."))
     |> WebHelpers.close_or_navigate(Paths.projects())
   end
+
+  # Which assignee `<select>` is active for a record carrying the polymorphic
+  # assignee fields (an Assignment or a Project).
+  defp assignee_kind(%{assigned_person_uuid: u}) when not is_nil(u), do: "person"
+  defp assignee_kind(%{assigned_team_uuid: u}) when not is_nil(u), do: "team"
+  defp assignee_kind(%{assigned_department_uuid: u}) when not is_nil(u), do: "department"
+  defp assignee_kind(_), do: ""
+
+  # Workflow-status assigns for sub-project mode (V125) — a sub-project is a
+  # project, so it gets the same status-source picker. Delegates to the shared
+  # `WorkflowStatusFields` logic. Harmless in task mode (the section isn't
+  # rendered there).
+  defp assign_status_init(socket, record) do
+    available = WSF.available?()
+
+    socket
+    |> assign(
+      statuses_available: available,
+      status_entities: if(available, do: WSF.entity_options(), else: []),
+      status_translation_mode: WSF.mode_string(record),
+      status_preview: []
+    )
+    |> refresh_status_preview()
+  end
+
+  defp refresh_status_preview(%{assigns: %{statuses_available: true, sp_form: sp_form}} = socket) do
+    selected = WSF.selected_entity_uuid(sp_form[:status_entity_uuid])
+    assign(socket, status_preview: WSF.preview_for(selected))
+  end
+
+  defp refresh_status_preview(socket), do: socket
 
   defp assign_options(socket) do
     lang = L10n.current_content_lang()
@@ -498,6 +588,192 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {:new, "new"} -> save_with_new_task(socket, attrs, params)
       {:new, _} -> save_new(socket, attrs)
       {:edit, _} -> save_edit(socket, attrs)
+    end
+  end
+
+  # ── Sub-project mode (V126) ──────────────────────────────────────
+  # Same add/edit page as a task, but the form is the child project
+  # (name + assignee) and the dependency section uses the same handlers.
+
+  # Toggle between "create new child" and "nest existing project" (V126).
+  def handle_event("set_sp_mode", %{"value" => mode}, socket)
+      when mode in ~w(new existing) do
+    {:noreply, assign(socket, sp_mode: mode)}
+  end
+
+  def handle_event("validate_subproject", %{"subproject" => attrs} = params, socket) do
+    assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
+    mode = Map.get(params, "status_translation_mode", socket.assigns.status_translation_mode)
+    attrs = clear_other_assignees(attrs, assign_type)
+    cs = Projects.change_project(sp_source(socket), attrs)
+
+    {:noreply,
+     socket
+     |> assign(
+       sp_form: to_form(cs, as: :subproject),
+       assign_type: assign_type,
+       status_translation_mode: mode
+     )
+     |> refresh_status_preview()}
+  end
+
+  # "Link existing" mode renders no `subproject[...]` inputs, so the form's
+  # `phx-change` arrives without a "subproject" key — nothing to validate.
+  def handle_event("validate_subproject", _params, socket), do: {:noreply, socket}
+
+  # A sub-project is a project, so it gets the same "Generate default" action
+  # ProjectFormLive has (V125). Operates on `@sp_form`.
+  def handle_event("generate_default_statuses", _params, socket) do
+    case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
+      {:ok, entity} ->
+        Activity.log("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "entity",
+          resource_uuid: entity.uuid,
+          metadata: %{"scope" => "subproject"}
+        )
+
+        cs =
+          socket.assigns.sp_form.source
+          |> Ecto.Changeset.put_change(:status_entity_uuid, entity.uuid)
+
+        {:noreply,
+         socket
+         |> assign(status_entities: WSF.entity_options(), sp_form: to_form(cs, as: :subproject))
+         |> refresh_status_preview()
+         |> put_flash(:info, gettext("Default statuses entity created."))}
+
+      {:error, _reason} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
+    end
+  end
+
+  # "Link existing" mode: no `subproject[...]` inputs, just the picked child.
+  def handle_event("save_subproject", %{"link_child_uuid" => child_uuid}, socket) do
+    link_existing_subproject(socket, child_uuid)
+  end
+
+  def handle_event("save_subproject", %{"subproject" => attrs} = params, socket) do
+    assign_type = Map.get(params, "assign_type", "")
+
+    attrs =
+      attrs
+      |> clear_other_assignees(assign_type)
+      |> WSF.apply_mode(params, sp_source(socket))
+
+    case socket.assigns.live_action do
+      :new -> save_new_subproject(socket, attrs)
+      :edit -> save_edit_subproject(socket, attrs)
+    end
+  end
+
+  defp link_existing_subproject(socket, child_uuid)
+       when child_uuid in [nil, ""] do
+    {:noreply, put_flash(socket, :error, gettext("Pick a project to nest."))}
+  end
+
+  defp link_existing_subproject(socket, child_uuid) do
+    parent = socket.assigns.project
+
+    case Projects.link_subproject(parent.uuid, child_uuid) do
+      {:ok, %{child_project: child, assignment: link}} ->
+        Activity.log("projects.subproject_linked",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: link.uuid,
+          metadata: %{"name" => child.name, "child_project_uuid" => child.uuid}
+        )
+
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Existing project nested as a sub-project."))
+         |> WebHelpers.navigate_after_save(Paths.project(parent.uuid),
+           kind: :assignment,
+           record: link,
+           action: :create
+         )}
+
+      {:error, reason} ->
+        {:noreply, put_flash(socket, :error, link_error_message(reason))}
+    end
+  end
+
+  defp link_error_message(:self_link), do: gettext("A project can't be its own sub-project.")
+
+  defp link_error_message(:would_create_cycle),
+    do: gettext("That project is an ancestor — nesting it here would create a cycle.")
+
+  defp link_error_message(:already_subproject),
+    do: gettext("That project is already a sub-project of another parent.")
+
+  defp link_error_message(:kind_mismatch),
+    do: gettext("Templates and projects can't be nested into each other.")
+
+  defp link_error_message(:not_found), do: gettext("That project no longer exists.")
+  defp link_error_message(_), do: gettext("Could not nest that project.")
+
+  # The base struct the sub-project form edits (a fresh `%Project{}` on :new,
+  # the embedded child on :edit). Read off the form's changeset data.
+  defp sp_source(socket), do: socket.assigns.sp_form.source.data
+
+  defp save_new_subproject(socket, attrs) do
+    case Projects.create_subproject(socket.assigns.project.uuid, attrs) do
+      {:ok, %{child_project: child, assignment: link}} ->
+        Activity.log("projects.subproject_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: link.uuid,
+          metadata: %{"name" => child.name, "child_project_uuid" => child.uuid}
+        )
+
+        flush_pending_deps(socket, link)
+
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Sub-project added."))
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+           kind: :assignment,
+           record: link,
+           action: :create
+         )}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        {:noreply, assign(socket, sp_form: to_form(cs, as: :subproject))}
+
+      {:error, _other} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not add sub-project."))}
+    end
+  end
+
+  defp save_edit_subproject(socket, attrs) do
+    # A sub-project is a project: a started one's status source is frozen, so
+    # strip it from the attrs (the picker is also locked in the form).
+    attrs = Statuses.lock_status_source(attrs, sp_source(socket))
+
+    case Projects.update_project(sp_source(socket), attrs) do
+      {:ok, updated} ->
+        Activity.log("projects.project_updated",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: updated.uuid,
+          metadata: %{"name" => updated.name}
+        )
+
+        # Re-sync the linking row's denormalized rollup; climbs to this project.
+        Projects.recompute_project_completion(updated.uuid)
+
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Sub-project updated."))
+         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+           kind: :assignment,
+           record: socket.assigns.assignment,
+           action: :update
+         )}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        {:noreply, assign(socket, sp_form: to_form(cs, as: :subproject))}
     end
   end
 
@@ -1013,6 +1289,179 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         </:back_link>
       </.page_header>
 
+      <%= if @kind == "subproject" do %>
+        <% sp_lang = L10n.current_content_lang() %>
+        <.form
+          for={@sp_form}
+          id="subproject-form"
+          phx-change="validate_subproject"
+          phx-submit="save_subproject"
+          phx-debounce="300"
+          class="flex flex-col gap-4"
+        >
+          <%!-- On :new a sub-project can either be created fresh or an existing
+               standalone project can be nested in place (V126). On :edit only
+               the create-new fields exist (you're editing the child itself). --%>
+          <.tabs_strip
+            :if={@live_action == :new}
+            event="set_sp_mode"
+            active={@sp_mode}
+            tabs={[
+              {"new", gettext("Create new"), "hero-plus"},
+              {"existing", gettext("Nest existing"), "hero-rectangle-stack"}
+            ]}
+          />
+
+          <%= if @sp_mode == "existing" do %>
+            <div class="card bg-base-100 shadow">
+              <div class="card-body flex flex-col gap-3">
+                <p class="text-sm text-base-content/60">
+                  {gettext("Nest a standalone project under this one. It keeps its own tasks and sub-projects; its progress rolls up here.")}
+                </p>
+                <%= if @link_options == [] do %>
+                  <p class="text-sm text-base-content/50">
+                    {gettext("No eligible standalone projects to nest.")}
+                  </p>
+                <% else %>
+                  <.select
+                    name="link_child_uuid"
+                    label={gettext("Project to nest")}
+                    value=""
+                    options={Enum.map(@link_options, &{&1.name, &1.uuid})}
+                    prompt={gettext("Select a project")}
+                    required
+                  />
+                <% end %>
+              </div>
+            </div>
+          <% else %>
+          <div class="card bg-base-100 shadow">
+            <div class="card-body flex flex-col gap-3">
+              <.input field={@sp_form[:name]} label={gettext("Sub-project name")} required />
+              <.textarea field={@sp_form[:description]} label={gettext("Description (optional)")} rows="2" />
+
+              <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
+              <.select
+                name="assign_type"
+                label={gettext("Assign to")}
+                value={@assign_type}
+                options={[
+                  {gettext("Nobody"), ""},
+                  {gettext("Department"), "department"},
+                  {gettext("Team"), "team"},
+                  {gettext("Person"), "person"}
+                ]}
+              />
+              <.select :if={@assign_type == "department"} field={@sp_form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
+              <.select :if={@assign_type == "team"} field={@sp_form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
+              <.select :if={@assign_type == "person"} field={@sp_form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+            </div>
+          </div>
+
+          <%!-- Dependencies — identical to a task's (this sub-project is a row in
+               the parent's timeline). Edit mode adds/removes live; new mode
+               collects pending selections applied on save. --%>
+          <div class="card bg-base-100 shadow">
+            <div class="card-body">
+              <h2 class="card-title text-lg">{gettext("Dependencies")}</h2>
+              <p class="text-xs text-base-content/60">
+                {gettext("Items in this project that must finish before this sub-project can start.")}
+              </p>
+
+              <%= if @live_action == :edit do %>
+                <div :if={@assignment_deps != []} class="flex flex-wrap gap-2 mt-2">
+                  <%= for dep <- @assignment_deps do %>
+                    <span class="badge badge-outline gap-1">
+                      <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
+                      {Assignment.label(dep.depends_on, sp_lang)}
+                      <button type="button" phx-click="remove_assignment_dep" phx-value-uuid={dep.depends_on_uuid} phx-disable-with={gettext("Removing…")} class="hover:text-error">
+                        <.icon name="hero-x-mark" class="w-3 h-3" />
+                      </button>
+                    </span>
+                  <% end %>
+                </div>
+                <.select
+                  :if={@available_assignment_deps != []}
+                  name="depends_on_uuid"
+                  label={gettext("Add dependency")}
+                  value=""
+                  options={Enum.map(@available_assignment_deps, &{Assignment.label(&1, sp_lang), &1.uuid})}
+                  prompt={gettext("Select")}
+                  phx-change="add_assignment_dep"
+                />
+                <p :if={@assignment_deps == [] and @available_assignment_deps == []} class="text-sm text-base-content/50 mt-2">
+                  {gettext("No other items in this project to depend on.")}
+                </p>
+              <% else %>
+                <div :if={@pending_dep_uuids != []} class="flex flex-wrap gap-2 mt-2">
+                  <% by_uuid = Map.new(@pending_dep_options, &{&1.uuid, &1}) %>
+                  <%= for dep_uuid <- @pending_dep_uuids, a = Map.get(by_uuid, dep_uuid), a do %>
+                    <span class="badge badge-outline gap-1">
+                      <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
+                      {Assignment.label(a, sp_lang)}
+                      <button type="button" phx-click="remove_pending_dep" phx-value-uuid={dep_uuid} class="hover:text-error">
+                        <.icon name="hero-x-mark" class="w-3 h-3" />
+                      </button>
+                    </span>
+                  <% end %>
+                </div>
+                <% remaining = Enum.reject(@pending_dep_options, fn a -> a.uuid in @pending_dep_uuids end) %>
+                <.select
+                  :if={remaining != []}
+                  name="depends_on_uuid"
+                  label={gettext("Add dependency")}
+                  value=""
+                  options={Enum.map(remaining, &{Assignment.label(&1, sp_lang), &1.uuid})}
+                  prompt={gettext("Select")}
+                  phx-change="add_pending_dep"
+                />
+                <p :if={@pending_dep_options == []} class="text-sm text-base-content/50 mt-2">
+                  {gettext("No other items in this project to depend on.")}
+                </p>
+              <% end %>
+            </div>
+          </div>
+
+          <%!-- Workflow status — a sub-project is a project, so it gets the same
+               status-source picker (V125). --%>
+          <div :if={@statuses_available} class="card bg-base-100 shadow">
+            <div class="card-body">
+              <.workflow_status_fields
+                statuses_available={@statuses_available}
+                field={@sp_form[:status_entity_uuid]}
+                status_entities={@status_entities}
+                status_preview={@status_preview}
+                status_translation_mode={@status_translation_mode}
+                locked={Statuses.started?(@sp_form.source.data)}
+              />
+            </div>
+          </div>
+          <% end %>
+
+          <div class="flex gap-2">
+            <.smart_link
+              navigate={Paths.project(@project.uuid)}
+              emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="btn btn-ghost"
+            >
+              {gettext("Cancel")}
+            </.smart_link>
+            <button
+              type="submit"
+              phx-disable-with={gettext("Saving…")}
+              class="btn btn-primary"
+              disabled={@sp_mode == "existing" and @link_options == []}
+            >
+              {cond do
+                @live_action == :edit -> gettext("Save")
+                @sp_mode == "existing" -> gettext("Nest sub-project")
+                true -> gettext("Add sub-project")
+              end}
+            </button>
+          </div>
+        </.form>
+      <% else %>
       <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
         <%!-- Language tabs render only when multilang is on AND >1 language enabled.
              Single-field translation (description-only): no `<.multilang_fields_wrapper>`
@@ -1209,7 +1658,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   <%= for dep <- @assignment_deps do %>
                     <span class="badge badge-outline gap-1">
                       <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                      {Task.localized_title(dep.depends_on.task, lang)}
+                      {Assignment.label(dep.depends_on, lang)}
                       <button
                         type="button"
                         phx-click="remove_assignment_dep"
@@ -1229,7 +1678,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   name="depends_on_uuid"
                   label={gettext("Add dependency")}
                   value=""
-                  options={Enum.map(@available_assignment_deps, &{Task.localized_title(&1.task, lang), &1.uuid})}
+                  options={Enum.map(@available_assignment_deps, &{Assignment.label(&1, lang), &1.uuid})}
                   prompt={gettext("Select task")}
                   phx-change="add_assignment_dep"
                 />
@@ -1246,7 +1695,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   <%= for dep_uuid <- @pending_dep_uuids, a = Map.get(by_uuid, dep_uuid), a do %>
                     <span class="badge badge-outline gap-1">
                       <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                      {Task.localized_title(a.task, lang)}
+                      {Assignment.label(a, lang)}
                       <button
                         type="button"
                         phx-click="remove_pending_dep"
@@ -1268,7 +1717,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     name="depends_on_uuid"
                     label={gettext("Add dependency")}
                     value=""
-                    options={Enum.map(remaining, &{Task.localized_title(&1.task, lang), &1.uuid})}
+                    options={Enum.map(remaining, &{Assignment.label(&1, lang), &1.uuid})}
                     prompt={gettext("Select task")}
                     phx-change="add_pending_dep"
                   />
@@ -1289,6 +1738,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </button>
         </div>
       </.form>
+      <% end %>
     </div>
     """
   end

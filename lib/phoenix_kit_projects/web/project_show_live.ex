@@ -66,7 +66,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        assignment_comment_counts: %{},
        statuses_available: false,
        current_status: nil,
-       status_options: []
+       status_options: [],
+       expanded_subprojects: MapSet.new(),
+       subproject_summaries: %{},
+       subproject_child_tasks: %{}
      )
      |> put_flash(:error, gettext("Project not found."))
      |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -86,7 +89,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # `handle_params/3`) because Phoenix LiveView refuses to mount a
     # LV that exports `handle_params/3` outside a router live route,
     # which would block embedding via `live_render`.
-    case Projects.get_project(id) do
+    case Projects.get_project_with_assignee(id) do
       nil ->
         {:ok,
          socket
@@ -110,7 +113,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            assignment_comment_counts: %{},
            statuses_available: false,
            current_status: nil,
-           status_options: []
+           status_options: [],
+           expanded_subprojects: MapSet.new(),
+           subproject_summaries: %{},
+           subproject_child_tasks: %{}
          )
          |> put_flash(:error, gettext("Project not found."))
          |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -168,7 +174,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             total_tasks: 0,
             done_tasks: 0,
             progress_pct: 0,
-            schedule: nil
+            schedule: nil,
+            # Sub-project UI state (V126). `expanded_subprojects` holds the
+            # linking-assignment uuids whose child task list is revealed;
+            # `subproject_*` maps are keyed by linking-assignment uuid and
+            # filled lazily (summaries in load_assignments, child tasks on
+            # first expand).
+            expanded_subprojects: MapSet.new(),
+            subproject_summaries: %{},
+            subproject_child_tasks: %{}
           )
           |> WebHelpers.attach_open_embed_hook()
 
@@ -237,8 +251,21 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     project_uuid = socket.assigns.project.uuid
     assignments = Projects.list_assignments(project_uuid)
 
+    expanded = socket.assigns[:expanded_subprojects] || MapSet.new()
+
+    expanded_subs =
+      Enum.filter(
+        assignments,
+        &(Assignment.subproject?(&1) and MapSet.member?(expanded, &1.uuid))
+      )
+
+    # Parent deps PLUS deps for every expanded child project — the inset child
+    # tasks render through the same `<.task_body>`, which reads
+    # `deps_by_assignment` keyed by the (globally-unique) assignment uuid. Load
+    # parent-only and a child task's dependency badges never render.
     deps_by_assignment =
-      Projects.list_all_dependencies(project_uuid)
+      [project_uuid | Enum.map(expanded_subs, & &1.child_project_uuid)]
+      |> Enum.flat_map(&Projects.list_all_dependencies/1)
       |> Enum.group_by(& &1.assignment_uuid)
 
     total = length(assignments)
@@ -251,14 +278,39 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     progress_sum = Enum.reduce(assignments, 0, &(&1.progress_pct + &2))
     schedule = calculate_schedule(socket.assigns.project, assignments)
 
+    # Sub-project rollup display data (V126): one batched summary query over
+    # all embedded child projects, keyed by the linking-assignment uuid so the
+    # row can show the child's task count + progress. Expanded rows also get a
+    # refreshed child task list so a change in the child reflects immediately.
+    subproject_summaries = load_subproject_summaries(assignments)
+
+    subproject_child_tasks =
+      Map.new(expanded_subs, fn a -> {a.uuid, Projects.list_assignments(a.child_project_uuid)} end)
+
     assign(socket,
       assignments: assignments,
       deps_by_assignment: deps_by_assignment,
       total_tasks: total,
       done_tasks: done,
       progress_pct: if(total > 0, do: round(progress_sum / total), else: 0),
-      schedule: schedule
+      schedule: schedule,
+      subproject_summaries: subproject_summaries,
+      subproject_child_tasks: subproject_child_tasks
     )
+  end
+
+  # `%{linking_assignment_uuid => child_summary}` for every sub-project row.
+  defp load_subproject_summaries(assignments) do
+    subs = Enum.filter(assignments, &Assignment.subproject?/1)
+
+    children = Enum.map(subs, & &1.child_project) |> Enum.reject(&is_nil/1)
+
+    summaries_by_child =
+      children
+      |> Projects.project_summaries()
+      |> Map.new(fn s -> {s.project.uuid, s} end)
+
+    Map.new(subs, fn a -> {a.uuid, Map.get(summaries_by_child, a.child_project_uuid)} end)
   end
 
   # Recomputes the workflow-status list + current selection from the
@@ -292,6 +344,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           metadata: Keyword.get(opts, :metadata, %{})
         )
 
+        recompute_owning_subproject(socket, a)
         {:ok, socket}
 
       {:error, cs} ->
@@ -358,6 +411,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # When a mutated assignment belongs to an embedded sub-project (its row is
+  # rendered inset in the expand panel, V126), recompute that child's project so
+  # the rollup climbs to the shown project's linking row. A no-op for normal
+  # tasks (`sync_project_completion/1` already recomputes the shown project).
+  defp recompute_owning_subproject(socket, %{project_uuid: pid}) do
+    if pid != socket.assigns.project.uuid do
+      Projects.recompute_project_completion(pid)
+    end
+
+    :ok
+  end
+
   defp sync_project_completion(socket) do
     case Projects.recompute_project_completion(socket.assigns.project.uuid) do
       {:completed, project} ->
@@ -393,11 +458,207 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Looks up an assignment and verifies it belongs to the project the
   # user is currently viewing. Prevents an admin on project A from
   # mutating assignments in project B by crafting event params.
+  # The single task-card row, shared by the main timeline and the inset
+  # sub-project task lists (V126) — "no reason to make them different".
+  # `@draggable` gates the sortable wiring + drag handle (off for inset child
+  # tasks, which reorder on their own page). Child-task events work because
+  # `scoped_assignment/2` accepts any displayed assignment and
+  # `update_assignment_with_activity/5` recomputes the assignment's own project.
+  attr(:a, :map, required: true)
+  attr(:draggable, :boolean, default: true)
+  attr(:is_template, :boolean, required: true)
+  attr(:project, :map, required: true)
+  attr(:embed_mode, :atom, required: true)
+  attr(:editing_duration_uuid, :string, default: nil)
+  attr(:comments_enabled, :boolean, default: false)
+  attr(:assignment_comment_counts, :map, default: %{})
+  attr(:deps_by_assignment, :map, default: %{})
+
+  defp task_body(assigns) do
+    ~H"""
+    <div class="card-body py-3 px-4 gap-2">
+      <%!-- Title row --%>
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              <span
+                :if={@draggable}
+                class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content shrink-0"
+                title={gettext("Drag to reorder")}
+              >
+                <.icon name="hero-bars-3" class="w-4 h-4" />
+              </span>
+              <.assignment_status_badge :if={not @is_template} status={@a.status} />
+              <span class="font-medium truncate">{TaskSchema.localized_title(@a.task, L10n.current_content_lang())}</span>
+            </div>
+
+            <div class="flex items-center gap-1 shrink-0">
+              <%= if not @is_template do %>
+                <%= cond do %>
+                  <% @a.status == "todo" -> %>
+                    <button phx-click="start_task" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Starting…")} class="btn btn-warning btn-xs">
+                      {gettext("Start")}
+                    </button>
+                  <% @a.status == "in_progress" -> %>
+                    <button phx-click="complete" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Saving…")} class="btn btn-success btn-xs">
+                      <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("Done")}
+                    </button>
+                  <% @a.status == "done" -> %>
+                    <button phx-click="reopen" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Reopening…")} class="btn btn-ghost btn-xs">
+                      {gettext("Reopen")}
+                    </button>
+                <% end %>
+              <% end %>
+
+              <% a_comment_count = Map.get(@assignment_comment_counts, @a.uuid, 0) %>
+              <button
+                :if={@comments_enabled and not @is_template}
+                type="button"
+                phx-click="open_comments"
+                phx-value-type="assignment"
+                phx-value-uuid={@a.uuid}
+                phx-value-title={TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
+                class="btn btn-ghost btn-xs gap-1"
+                title={gettext("Open comments")}
+              >
+                <.icon name="hero-chat-bubble-left" class="w-3.5 h-3.5" />
+                <span :if={a_comment_count > 0} class="badge badge-xs badge-primary">{a_comment_count}</span>
+              </button>
+              <.table_row_menu id={"assignment-menu-#{@a.uuid}"}>
+                <.smart_menu_link
+                  navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid)}
+                  emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid}}}
+                  embed_mode={@embed_mode}
+                  icon="hero-pencil"
+                  label={gettext("Edit")}
+                />
+                <.table_row_menu_divider />
+                <.table_row_menu_button
+                  phx-click="remove_assignment"
+                  phx-value-uuid={@a.uuid}
+                  phx-disable-with={gettext("Removing…")}
+                  data-confirm={gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(@a.task, L10n.current_content_lang()))}
+                  icon="hero-trash"
+                  label={gettext("Remove")}
+                  variant="error"
+                />
+              </.table_row_menu>
+            </div>
+          </div>
+
+          <%!-- Description --%>
+          <% lang = L10n.current_content_lang() %>
+          <% shown_desc = Assignment.localized_description(@a, lang) || TaskSchema.localized_description(@a.task, lang) %>
+          <div :if={shown_desc} class="text-xs text-base-content/60">{shown_desc}</div>
+
+          <%!-- Meta row: duration, assignee, completed by --%>
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <%= if @editing_duration_uuid == @a.uuid do %>
+              <% prefill_dur = @a.estimated_duration || @a.task.estimated_duration %>
+              <% prefill_unit = @a.estimated_duration_unit || @a.task.estimated_duration_unit || "hours" %>
+              <form phx-submit="save_duration" class="flex items-center gap-1">
+                <input type="hidden" name="uuid" value={@a.uuid} />
+                <input type="number" name="estimated_duration" value={prefill_dur} class="input input-xs w-16" min="1" />
+                <.select name="estimated_duration_unit" value={prefill_unit} options={duration_unit_options()} class="select-xs w-auto" />
+                <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-success btn-xs">
+                  <.icon name="hero-check" class="w-3 h-3" />
+                </button>
+                <button type="button" phx-click="cancel_edit_duration" class="btn btn-ghost btn-xs">
+                  <.icon name="hero-x-mark" class="w-3 h-3" />
+                </button>
+              </form>
+            <% else %>
+              <% dur = format_duration(@a) %>
+              <button
+                phx-click="edit_duration"
+                phx-value-uuid={@a.uuid}
+                class={[
+                  "badge badge-sm gap-1 cursor-pointer transition-colors",
+                  dur != "—" && "badge-outline hover:bg-primary hover:text-primary-content hover:border-primary",
+                  dur == "—" && "badge-ghost hover:bg-base-300"
+                ]}
+              >
+                <.icon name="hero-clock" class="w-3 h-3" />
+                {if dur != "—", do: dur, else: gettext("Set duration")}
+              </button>
+            <% end %>
+
+            <% atype = assignee_type(@a) %>
+            <span :if={atype} class="badge badge-outline badge-sm gap-1">
+              <.icon name="hero-user" class="w-3 h-3" /> {atype}: {assignee_label(@a)}
+            </span>
+
+            <% weekends? = task_counts_weekends?(@a, @project) %>
+            <span class={"badge badge-sm gap-1 #{if weekends?, do: "badge-info badge-outline", else: "badge-ghost"}"}>
+              <%= if weekends? do %>
+                <.icon name="hero-calendar" class="w-3 h-3" /> {gettext("incl. weekends")}
+              <% else %>
+                {gettext("weekdays only")}
+              <% end %>
+            </span>
+
+            <%= if not @is_template do %>
+              <%= if @a.track_progress do %>
+                <.form for={%{}} phx-change="update_progress" class="flex items-center gap-1">
+                  <input type="hidden" name="uuid" value={@a.uuid} />
+                  <input type="range" name="progress_pct" value={@a.progress_pct} min="0" max="100" step="5" phx-debounce="300" class="range range-xs range-primary w-20" />
+                  <span class="text-xs text-base-content/60 w-8">{@a.progress_pct}%</span>
+                  <button type="button" phx-click="toggle_tracking" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Saving…")} title={gettext("Disable percentage tracking")} class="btn btn-ghost btn-xs btn-circle">
+                    <.icon name="hero-x-mark" class="w-3 h-3" />
+                  </button>
+                </.form>
+              <% else %>
+                <button type="button" phx-click="toggle_tracking" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Saving…")} class="badge badge-ghost badge-sm gap-1 cursor-pointer hover:badge-primary" title={gettext("Track progress as a percentage")}>
+                  <.icon name="hero-chart-bar" class="w-3 h-3" /> {gettext("Track %")}
+                </button>
+              <% end %>
+            <% end %>
+
+            <span :if={@a.completed_by} class="badge badge-success badge-sm gap-1">
+              <.icon name="hero-check-circle" class="w-3 h-3" />
+              {@a.completed_by.email}<%= if @a.completed_at do %>
+                · {L10n.format_month_day_time(@a.completed_at)}
+              <% end %>
+            </span>
+          </div>
+
+          <%!-- Dependencies --%>
+          <% deps = Map.get(@deps_by_assignment, @a.uuid, []) %>
+          <div :if={deps != []} class="flex flex-wrap gap-1 mt-1">
+            <%= for dep <- deps do %>
+              <span class="badge badge-outline badge-xs gap-1">
+                <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
+                {gettext("depends on:")} {Assignment.label(dep.depends_on, L10n.current_content_lang())}
+                <button phx-click="remove_dependency" phx-value-assignment={@a.uuid} phx-value-depends_on={dep.depends_on_uuid} phx-disable-with={gettext("Removing…")} class="hover:text-error">
+                  <.icon name="hero-x-mark" class="w-3 h-3" />
+                </button>
+              </span>
+            <% end %>
+          </div>
+        </div>
+    """
+  end
+
+  # Accepts any assignment currently displayed on the page: one belonging to the
+  # shown project, or a task inside an expanded sub-project (V126). Child-task
+  # rows render the same `task_card` and their events flow through here.
   defp scoped_assignment(socket, uuid) do
     case Projects.get_assignment(uuid) do
-      %{project_uuid: pid} = a when pid == socket.assigns.project.uuid -> a
-      _ -> nil
+      %{project_uuid: pid} = a when pid == socket.assigns.project.uuid ->
+        a
+
+      %{uuid: id} = a ->
+        if displayed_child_task?(socket, id), do: a, else: nil
+
+      _ ->
+        nil
     end
+  end
+
+  defp displayed_child_task?(socket, uuid) do
+    socket.assigns
+    |> Map.get(:subproject_child_tasks, %{})
+    |> Map.values()
+    |> Enum.any?(fn tasks -> Enum.any?(tasks, &(&1.uuid == uuid)) end)
   end
 
   # ── Events ──────────────────────────────────────────────────────
@@ -507,6 +768,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               }
             )
 
+            recompute_owning_subproject(socket, a)
+
             {:noreply,
              socket
              |> assign(editing_duration_uuid: nil)
@@ -544,8 +807,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               actor_uuid: Activity.actor_uuid(socket),
               resource_type: "assignment",
               resource_uuid: uuid,
-              metadata: %{"task" => a.task.title}
+              metadata: %{"task" => Assignment.label(a)}
             )
+
+            recompute_owning_subproject(socket, a)
 
             {:noreply,
              socket
@@ -559,11 +824,69 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               actor_uuid: Activity.actor_uuid(socket),
               resource_type: "assignment",
               resource_uuid: uuid,
-              metadata: %{"task" => a.task.title}
+              metadata: %{"task" => Assignment.label(a)}
             )
 
             {:noreply, put_flash(socket, :error, gettext("Could not remove task."))}
         end
+    end
+  end
+
+  # ── Sub-projects (V126) ──────────────────────────────────────────
+
+  def handle_event("toggle_subproject", %{"uuid" => uuid}, socket) do
+    case scoped_assignment(socket, uuid) do
+      %Assignment{child_project_uuid: child_uuid} when is_binary(child_uuid) ->
+        expanded = socket.assigns.expanded_subprojects
+
+        if MapSet.member?(expanded, uuid) do
+          {:noreply, assign(socket, expanded_subprojects: MapSet.delete(expanded, uuid))}
+        else
+          child_tasks = Projects.list_assignments(child_uuid)
+
+          # Merge the child's dependencies so the inset child tasks' badges
+          # render (they read `@deps_by_assignment`, keyed by assignment uuid).
+          child_deps =
+            child_uuid |> Projects.list_all_dependencies() |> Enum.group_by(& &1.assignment_uuid)
+
+          {:noreply,
+           assign(socket,
+             expanded_subprojects: MapSet.put(expanded, uuid),
+             subproject_child_tasks:
+               Map.put(socket.assigns.subproject_child_tasks, uuid, child_tasks),
+             deps_by_assignment: Map.merge(socket.assigns.deps_by_assignment, child_deps)
+           )}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("detach_subproject", %{"uuid" => uuid}, socket) do
+    case scoped_assignment(socket, uuid) do
+      %Assignment{child_project_uuid: child_uuid} = a when is_binary(child_uuid) ->
+        case Projects.detach_subproject(a) do
+          {:ok, _} ->
+            Activity.log("projects.subproject_detached",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "project",
+              resource_uuid: child_uuid,
+              metadata: %{"parent_project_uuid" => socket.assigns.project.uuid}
+            )
+
+            {:noreply,
+             socket
+             |> put_flash(:info, gettext("Sub-project is now a standalone project."))
+             |> sync_project_completion()
+             |> load_assignments()}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, gettext("Could not detach the sub-project."))}
+        end
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -591,6 +914,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               metadata: %{"task" => a.task.title, "track_progress" => new_value}
             )
 
+            recompute_owning_subproject(socket, a)
             {:noreply, load_assignments(socket)}
 
           {:error, _} ->
@@ -978,6 +1302,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           metadata: %{"task" => a.task.title, "progress_pct" => pct}
         )
 
+        recompute_owning_subproject(socket, a)
+
         socket =
           if attrs.status != a.status, do: sync_project_completion(socket), else: socket
 
@@ -1292,6 +1618,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <p :if={desc} class="text-sm text-base-content/60">
             {desc}
           </p>
+          <%!-- Assignee (V127) — who the project is assigned to. Reuses the same
+               assignee helpers the task rows use; a Project carries the same
+               polymorphic assignee fields. --%>
+          <div :if={assignee_type(@project)} class="mt-0.5">
+            <span class="badge badge-outline badge-sm gap-1">
+              <.icon name="hero-user" class="w-3 h-3" />
+              {assignee_type(@project)}: {assignee_label(@project)}
+            </span>
+          </div>
           <%!-- Action buttons. Separate row so a long title never crowds
                them out; `flex-wrap` keeps the row tidy on narrow viewports. --%>
           <div class="flex flex-wrap gap-2">
@@ -1302,6 +1637,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               class="btn btn-primary btn-sm"
             >
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
+            </.smart_link>
+            <%!-- Add a sub-project via the same add page tasks use
+                 (`AssignmentFormLive` in sub-project mode, V126) — name +
+                 assignee + dependencies. Template sub-projects deep-clone on
+                 instantiation. --%>
+            <.smart_link
+              navigate={Paths.new_assignment(@project.uuid) <> "?kind=subproject"}
+              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid, "kind" => "subproject"}}}
+              embed_mode={@embed_mode}
+              class="btn btn-outline btn-sm gap-1"
+            >
+              <.icon name="hero-folder-plus" class="w-4 h-4" /> {gettext("Add sub-project")}
             </.smart_link>
             <%!-- Inline workflow-status picker (the current value). The
                  status-list *source* is chosen on the new/edit form (and the
@@ -1544,7 +1891,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <div class="relative flex gap-4 py-3 sortable-item" data-id={a.uuid}>
                 <%!-- Status dot on the timeline --%>
                 <div class="relative z-10 shrink-0 flex flex-col items-center">
-                  <div class={"w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold #{AssignmentStatusBadge.color(a.status)}"}>
+                  <div class={"w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold #{AssignmentStatusBadge.color(a.status)} #{AssignmentStatusBadge.text_color(a.status)} #{AssignmentStatusBadge.ring(a.status)}"}>
                     <%= if a.status == "done" do %>
                       <.icon name="hero-check" class="w-5 h-5" />
                     <% else %>
@@ -1555,257 +1902,116 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
                 <%!-- Card --%>
                 <div class={"flex-1 card bg-base-100 shadow-sm border #{if not @is_template and a.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"}"}>
-                  <div class="card-body py-3 px-4 gap-2">
-                    <%!-- Title row --%>
-                    <div class="flex items-center justify-between gap-2">
-                      <div class="flex items-center gap-2 min-w-0">
-                        <span class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content shrink-0" title={gettext("Drag to reorder")}>
-                          <.icon name="hero-bars-3" class="w-4 h-4" />
-                        </span>
-                        <.assignment_status_badge :if={not @is_template} status={a.status} />
-                        <span class="font-medium truncate">{TaskSchema.localized_title(a.task, L10n.current_content_lang())}</span>
-                      </div>
+                  <%= if Assignment.subproject?(a) do %>
+                    <div class="card-body py-3 px-4 gap-2">
+                      <% sp_lang = L10n.current_content_lang() %>
+                      <% child = a.child_project %>
+                      <% sp_summary = Map.get(@subproject_summaries, a.uuid) %>
+                      <% sp_expanded? = MapSet.member?(@expanded_subprojects, a.uuid) %>
 
-                      <div class="flex items-center gap-1 shrink-0">
-                        <%= if not @is_template do %>
-                          <%= cond do %>
-                            <% a.status == "todo" -> %>
-                              <button
-                                phx-click="start_task"
-                                phx-value-uuid={a.uuid}
-                                phx-disable-with={gettext("Starting…")}
-                                class="btn btn-warning btn-xs"
-                              >
-                                {gettext("Start")}
-                              </button>
-                            <% a.status == "in_progress" -> %>
-                              <button
-                                phx-click="complete"
-                                phx-value-uuid={a.uuid}
-                                phx-disable-with={gettext("Saving…")}
-                                class="btn btn-success btn-xs"
-                              >
-                                <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("Done")}
-                              </button>
-                            <% a.status == "done" -> %>
-                              <button
-                                phx-click="reopen"
-                                phx-value-uuid={a.uuid}
-                                phx-disable-with={gettext("Reopening…")}
-                                class="btn btn-ghost btn-xs"
-                              >
-                                {gettext("Reopen")}
-                              </button>
-                          <% end %>
-                        <% end %>
-
-                        <% a_comment_count = Map.get(@assignment_comment_counts, a.uuid, 0) %>
-                        <button
-                          :if={@comments_enabled and not @is_template}
-                          type="button"
-                          phx-click="open_comments"
-                          phx-value-type="assignment"
-                          phx-value-uuid={a.uuid}
-                          phx-value-title={TaskSchema.localized_title(a.task, L10n.current_content_lang())}
-                          class="btn btn-ghost btn-xs gap-1"
-                          title={gettext("Open comments")}
-                        >
-                          <.icon name="hero-chat-bubble-left" class="w-3.5 h-3.5" />
-                          <span :if={a_comment_count > 0} class="badge badge-xs badge-primary">
-                            {a_comment_count}
+                      <%!-- Sub-project title row --%>
+                      <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <span class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content shrink-0" title={gettext("Drag to reorder")}>
+                            <.icon name="hero-bars-3" class="w-4 h-4" />
                           </span>
-                        </button>
-                        <.table_row_menu id={"assignment-menu-#{a.uuid}"}>
-                          <.smart_menu_link
-                            navigate={Paths.edit_assignment(@project.uuid, a.uuid)}
-                            emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "edit", "project_id" => @project.uuid, "id" => a.uuid}}}
-                            embed_mode={@embed_mode}
-                            icon="hero-pencil"
-                            label={gettext("Edit")}
-                          />
-                          <.table_row_menu_divider />
-                          <.table_row_menu_button
-                            phx-click="remove_assignment"
-                            phx-value-uuid={a.uuid}
-                            phx-disable-with={gettext("Removing…")}
-                            data-confirm={gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(a.task, L10n.current_content_lang()))}
-                            icon="hero-trash"
-                            label={gettext("Remove")}
-                            variant="error"
-                          />
-                        </.table_row_menu>
-                      </div>
-                    </div>
-
-                    <%!-- Description --%>
-                    <% lang = L10n.current_content_lang() %>
-                    <% a_desc = Assignment.localized_description(a, lang) %>
-                    <% t_desc = TaskSchema.localized_description(a.task, lang) %>
-                    <% shown_desc = a_desc || t_desc %>
-                    <div :if={shown_desc} class="text-xs text-base-content/60">
-                      {shown_desc}
-                    </div>
-
-                    <%!-- Meta row: duration, assignee, completed by --%>
-                    <div class="flex flex-wrap items-center gap-2 text-xs">
-                      <%!-- Duration (clickable to edit) --%>
-                      <%= if @editing_duration_uuid == a.uuid do %>
-                        <%!-- Inline editor. All three controls (input,
-                             select, buttons) need matching `*-xs`
-                             modifiers — without `select-xs` daisyUI's
-                             default select-md renders ~2x taller and the
-                             row visually staggers.
-
-                             The badge above renders `format_duration(a)`
-                             which already falls back from the assignment
-                             to its task template when the assignment
-                             doesn't override. Mirror the same fallback
-                             on the edit inputs — otherwise the user
-                             opens the editor and sees blank fields,
-                             which the boss correctly flagged as
-                             inconsistent with the badge they just
-                             clicked. --%>
-                        <% prefill_dur = a.estimated_duration || a.task.estimated_duration %>
-                        <% prefill_unit = a.estimated_duration_unit || a.task.estimated_duration_unit || "hours" %>
-                        <form phx-submit="save_duration" class="flex items-center gap-1">
-                          <input
-                            type="number"
-                            name="estimated_duration"
-                            value={prefill_dur}
-                            class="input input-xs w-16"
-                            min="1"
-                          />
-                          <.select
-                            name="estimated_duration_unit"
-                            value={prefill_unit}
-                            options={duration_unit_options()}
-                            class="select-xs w-auto"
-                          />
-                          <button
-                            type="submit"
-                            phx-disable-with={gettext("Saving…")}
-                            class="btn btn-success btn-xs"
-                          >
-                            <.icon name="hero-check" class="w-3 h-3" />
-                          </button>
-                          <button type="button" phx-click="cancel_edit_duration" class="btn btn-ghost btn-xs">
-                            <.icon name="hero-x-mark" class="w-3 h-3" />
-                          </button>
-                        </form>
-                      <% else %>
-                        <% dur = format_duration(a) %>
-                        <%= if dur != "—" do %>
-                          <%!-- Explicit Tailwind hover utilities instead
-                               of `hover:badge-primary` — daisyUI's class
-                               composition collapses text-color to the
-                               outline color, which on some themes is
-                               near-white once the bg flips to primary.
-                               Forcing bg + text + border together keeps
-                               contrast theme-independent. --%>
-                          <button
-                            phx-click="edit_duration"
-                            phx-value-uuid={a.uuid}
-                            class="badge badge-outline badge-sm gap-1 cursor-pointer hover:bg-primary hover:text-primary-content hover:border-primary transition-colors"
-                          >
-                            <.icon name="hero-clock" class="w-3 h-3" />
-                            {dur}
-                          </button>
-                        <% else %>
-                          <button
-                            phx-click="edit_duration"
-                            phx-value-uuid={a.uuid}
-                            class="badge badge-ghost badge-sm gap-1 cursor-pointer hover:bg-base-300 transition-colors"
-                          >
-                            <.icon name="hero-clock" class="w-3 h-3" /> {gettext("Set duration")}
-                          </button>
-                        <% end %>
-                      <% end %>
-
-                      <%!-- Assignee --%>
-                      <% atype = assignee_type(a) %>
-                      <% alabel = assignee_label(a) %>
-                      <%= if atype do %>
-                        <span class="badge badge-outline badge-sm gap-1">
-                          <.icon name="hero-user" class="w-3 h-3" />
-                          {atype}: {alabel}
-                        </span>
-                      <% end %>
-
-                      <%!-- Weekends indicator --%>
-                      <% weekends? = task_counts_weekends?(a, @project) %>
-                      <span class={"badge badge-sm gap-1 #{if weekends?, do: "badge-info badge-outline", else: "badge-ghost"}"}>
-                        <%= if weekends? do %>
-                          <.icon name="hero-calendar" class="w-3 h-3" /> {gettext("incl. weekends")}
-                        <% else %>
-                          {gettext("weekdays only")}
-                        <% end %>
-                      </span>
-
-                      <%!-- Progress tracking (optional) --%>
-                      <%= if not @is_template do %>
-                        <%= if a.track_progress do %>
-                          <.form
-                            for={%{}}
-                            phx-change="update_progress"
-                            class="flex items-center gap-1"
-                          >
-                            <input type="hidden" name="uuid" value={a.uuid} />
-                            <input
-                              type="range"
-                              name="progress_pct"
-                              value={a.progress_pct}
-                              min="0"
-                              max="100"
-                              step="5"
-                              phx-debounce="300"
-                              class="range range-xs range-primary w-20"
-                            />
-                            <span class="text-xs text-base-content/60 w-8">{a.progress_pct}%</span>
-                            <button
-                              type="button"
-                              phx-click="toggle_tracking"
-                              phx-value-uuid={a.uuid}
-                              phx-disable-with={gettext("Saving…")}
-                              title={gettext("Disable percentage tracking")}
-                              class="btn btn-ghost btn-xs btn-circle"
-                            >
-                              <.icon name="hero-x-mark" class="w-3 h-3" />
-                            </button>
-                          </.form>
-                        <% else %>
                           <button
                             type="button"
-                            phx-click="toggle_tracking"
+                            phx-click="toggle_subproject"
                             phx-value-uuid={a.uuid}
-                            phx-disable-with={gettext("Saving…")}
-                            class="badge badge-ghost badge-sm gap-1 cursor-pointer hover:badge-primary"
-                            title={gettext("Track progress as a percentage")}
+                            class="btn btn-ghost btn-xs btn-circle"
+                            title={gettext("Show sub-project tasks")}
                           >
-                            <.icon name="hero-chart-bar" class="w-3 h-3" /> {gettext("Track %")}
+                            <.icon name={if sp_expanded?, do: "hero-chevron-down", else: "hero-chevron-right"} class="w-4 h-4" />
                           </button>
-                        <% end %>
-                      <% end %>
+                          <span class="badge badge-secondary badge-sm gap-1 shrink-0">
+                            <.icon name="hero-folder" class="w-3 h-3" /> {gettext("Sub-project")}
+                          </span>
+                          <.assignment_status_badge :if={not @is_template} status={a.status} />
+                          <span class="font-medium truncate">{Project.localized_name(child, sp_lang)}</span>
+                        </div>
 
-                      <%!-- Completed by --%>
-                      <%= if a.completed_by do %>
-                        <span class="badge badge-success badge-sm gap-1">
-                          <.icon name="hero-check-circle" class="w-3 h-3" />
-                          {a.completed_by.email}
-                          <%= if a.completed_at do %>
-                            · {L10n.format_month_day_time(a.completed_at)}
-                          <% end %>
+                        <div class="flex items-center gap-1 shrink-0">
+                          <.smart_link
+                            navigate={Paths.project(child.uuid)}
+                            emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child.uuid}}}
+                            embed_mode={@embed_mode}
+                            class="btn btn-ghost btn-xs gap-1"
+                          >
+                            <.icon name="hero-arrow-top-right-on-square" class="w-3.5 h-3.5" /> {gettext("Open")}
+                          </.smart_link>
+                          <.table_row_menu id={"assignment-menu-#{a.uuid}"}>
+                            <.smart_menu_link
+                              navigate={Paths.project(child.uuid)}
+                              emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child.uuid}}}
+                              embed_mode={@embed_mode}
+                              icon="hero-arrow-top-right-on-square"
+                              label={gettext("Open sub-project")}
+                            />
+                            <%!-- Edit name/assignee/dependencies on the same form
+                                 tasks use (V126), not a special inline control. --%>
+                            <.smart_menu_link
+                              navigate={Paths.edit_assignment(@project.uuid, a.uuid)}
+                              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "edit", "project_id" => @project.uuid, "id" => a.uuid}}}
+                              embed_mode={@embed_mode}
+                              icon="hero-pencil"
+                              label={gettext("Edit")}
+                            />
+                            <%!-- Pop the sub-project back out as a standalone
+                                 project — keeps it + its tasks (V126). --%>
+                            <.table_row_menu_button
+                              phx-click="detach_subproject"
+                              phx-value-uuid={a.uuid}
+                              phx-disable-with={gettext("Detaching…")}
+                              data-confirm={gettext("Make \"%{name}\" a standalone project? It keeps all its tasks — it just won't be a sub-project anymore.", name: Project.localized_name(child, sp_lang))}
+                              icon="hero-arrow-up-on-square"
+                              label={gettext("Make standalone")}
+                            />
+                            <.table_row_menu_divider />
+                            <.table_row_menu_button
+                              phx-click="remove_assignment"
+                              phx-value-uuid={a.uuid}
+                              phx-disable-with={gettext("Removing…")}
+                              data-confirm={gettext("Remove sub-project \"%{name}\" and everything inside it?", name: Project.localized_name(child, sp_lang))}
+                              icon="hero-trash"
+                              label={gettext("Remove")}
+                              variant="error"
+                            />
+                          </.table_row_menu>
+                        </div>
+                      </div>
+
+                      <%!-- Sub-project description --%>
+                      <% sp_desc = Project.localized_description(child, sp_lang) %>
+                      <div :if={sp_desc} class="text-xs text-base-content/60">{sp_desc}</div>
+
+                      <%!-- Rolled-up meta (read-only — driven by the child) --%>
+                      <div :if={sp_summary} class="flex flex-wrap items-center gap-2 text-xs">
+                        <span class="badge badge-outline badge-sm gap-1">
+                          <.icon name="hero-rectangle-stack" class="w-3 h-3" />
+                          {gettext("%{done}/%{total} tasks", done: sp_summary.done, total: sp_summary.total)}
                         </span>
-                      <% end %>
-                    </div>
+                        <% {sp_hv, sp_hu} = humanize_hours(sp_summary.total_hours) %>
+                        <span :if={sp_summary.total_hours > 0} class="badge badge-ghost badge-sm gap-1">
+                          <.icon name="hero-clock" class="w-3 h-3" /> {sp_hv} {sp_hu}
+                        </span>
+                        <div class="flex items-center gap-1">
+                          <progress class="progress progress-primary w-20" value={a.progress_pct} max="100"></progress>
+                          <span class="text-base-content/60 w-8">{a.progress_pct}%</span>
+                        </div>
+                        <span :if={assignee_type(child)} class="badge badge-outline badge-sm gap-1">
+                          <.icon name="hero-user" class="w-3 h-3" />
+                          {assignee_type(child)}: {assignee_label(child)}
+                        </span>
+                      </div>
 
-                    <%!-- Dependencies --%>
-                    <% deps = Map.get(@deps_by_assignment, a.uuid, []) %>
-                    <%= if deps != [] do %>
-                      <div class="flex flex-wrap gap-1 mt-1">
-                        <%= for dep <- deps do %>
+                      <%!-- This sub-project's own dependencies (on siblings) --%>
+                      <% sp_deps = Map.get(@deps_by_assignment, a.uuid, []) %>
+                      <div :if={sp_deps != []} class="flex flex-wrap gap-1 mt-1">
+                        <%= for dep <- sp_deps do %>
                           <span class="badge badge-outline badge-xs gap-1">
                             <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                            {gettext("depends on:")} {TaskSchema.localized_title(dep.depends_on.task, L10n.current_content_lang())}
+                            {gettext("depends on:")} {Assignment.label(dep.depends_on, sp_lang)}
                             <button
                               phx-click="remove_dependency"
                               phx-value-assignment={a.uuid}
@@ -1818,9 +2024,85 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           </span>
                         <% end %>
                       </div>
-                    <% end %>
 
-                  </div>
+                      <%!-- Expanded: the child's own task list + add-dependency --%>
+                      <div :if={sp_expanded?} class="mt-2 rounded-lg bg-base-200/60 p-3 flex flex-col gap-2">
+                        <% child_tasks = Map.get(@subproject_child_tasks, a.uuid, []) %>
+                        <%= if child_tasks == [] do %>
+                          <p class="text-xs text-base-content/50">
+                            {gettext("No tasks in this sub-project yet.")}
+                            <.smart_link
+                              navigate={Paths.new_assignment(child.uuid)}
+                              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => child.uuid}}}
+                              embed_mode={@embed_mode}
+                              class="link link-primary"
+                            >
+                              {gettext("Add one")}
+                            </.smart_link>
+                          </p>
+                        <% else %>
+                          <div class="flex flex-col gap-2">
+                            <%= for {ct, ci} <- Enum.with_index(child_tasks) do %>
+                              <%= if Assignment.subproject?(ct) do %>
+                                <%!-- A nested sub-project: a compact link (open it to drill in). --%>
+                                <div class="flex items-center gap-2 text-xs">
+                                  <.assignment_status_badge status={ct.status} />
+                                  <span class="badge badge-secondary badge-xs shrink-0">{gettext("Sub-project")}</span>
+                                  <.smart_link
+                                    navigate={Paths.project(ct.child_project.uuid)}
+                                    emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => ct.child_project.uuid}}}
+                                    embed_mode={@embed_mode}
+                                    class="truncate flex-1 hover:underline"
+                                  >
+                                    {Project.localized_name(ct.child_project, sp_lang)}
+                                  </.smart_link>
+                                  <span class="text-base-content/50">{ct.progress_pct}%</span>
+                                </div>
+                              <% else %>
+                                <%!-- Same task card as the top-level timeline, just inset. --%>
+                                <div class="relative flex gap-3">
+                                  <div class="relative z-10 shrink-0 flex flex-col items-center">
+                                    <div class={"w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold #{AssignmentStatusBadge.color(ct.status)} #{AssignmentStatusBadge.text_color(ct.status)} #{AssignmentStatusBadge.ring(ct.status)}"}>
+                                      <%= if ct.status == "done" do %>
+                                        <.icon name="hero-check" class="w-4 h-4" />
+                                      <% else %>
+                                        {ci + 1}
+                                      <% end %>
+                                    </div>
+                                  </div>
+                                  <div class={"flex-1 card bg-base-100 shadow-sm border #{if ct.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"}"}>
+                                    <.task_body
+                                      a={ct}
+                                      draggable={false}
+                                      is_template={@is_template}
+                                      project={child}
+                                      embed_mode={@embed_mode}
+                                      editing_duration_uuid={@editing_duration_uuid}
+                                      comments_enabled={@comments_enabled}
+                                      assignment_comment_counts={@assignment_comment_counts}
+                                      deps_by_assignment={@deps_by_assignment}
+                                    />
+                                  </div>
+                                </div>
+                              <% end %>
+                            <% end %>
+                          </div>
+                        <% end %>
+                      </div>
+                    </div>
+                  <% else %>
+                    <.task_body
+                      a={a}
+                      draggable={true}
+                      is_template={@is_template}
+                      project={@project}
+                      embed_mode={@embed_mode}
+                      editing_duration_uuid={@editing_duration_uuid}
+                      comments_enabled={@comments_enabled}
+                      assignment_comment_counts={@assignment_comment_counts}
+                      deps_by_assignment={@deps_by_assignment}
+                    />
+                  <% end %>
                 </div>
               </div>
             <% end %>

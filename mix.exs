@@ -73,6 +73,12 @@ defmodule PhoenixKitProjects.MixProject do
       # on `phoenix_kit_projects`), which `PhoenixKitProjects.Statuses` requires.
       # (It also still satisfies the 1.7.117 floor for the AI-translation
       # delegation in `TranslateResourceWorker`.)
+      # NOTE: sub-projects need core V126 (`child_project_uuid` on
+      # `phoenix_kit_project_assignments`) + V127 (assignee columns on
+      # `phoenix_kit_projects`). Bump this pin to the core release that ships
+      # V126/V127 before merging — until then the sub-project suites are the
+      # cross-repo blocker (develop/test locally via a temporary path override;
+      # see AGENTS.md).
       {:phoenix_kit, "~> 1.7.125"},
       {:phoenix_kit_staff, "~> 0.1"},
       {:phoenix_kit_comments, "~> 0.2"},

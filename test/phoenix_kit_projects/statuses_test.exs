@@ -416,4 +416,27 @@ defmodule PhoenixKitProjects.StatusesTest do
       assert Enum.any?(local, &(&1.slug == "local-only"))
     end
   end
+
+  describe "lock_status_source/2" do
+    test "drops the status source from attrs once the project has started" do
+      {:ok, started} = Projects.start_project(fixture_project())
+
+      assert started.started_at
+
+      assert Statuses.lock_status_source(%{"status_entity_uuid" => "x", "name" => "n"}, started) ==
+               %{"name" => "n"}
+
+      # Atom keys are handled too.
+      assert Statuses.lock_status_source(%{status_entity_uuid: "x", name: "n"}, started) ==
+               %{name: "n"}
+    end
+
+    test "leaves attrs untouched for an unstarted project (source is still a live choice)" do
+      project = fixture_project()
+      refute project.started_at
+      attrs = %{"status_entity_uuid" => "x", "name" => "n"}
+
+      assert Statuses.lock_status_source(attrs, project) == attrs
+    end
+  end
 end

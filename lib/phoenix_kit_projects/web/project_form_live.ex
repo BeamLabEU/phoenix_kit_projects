@@ -15,6 +15,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Web.AITranslateFormHelpers
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
+  require Logger
+
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
   @default_wrapper_class "flex flex-col mx-auto max-w-xl px-4 py-6 gap-4"
@@ -48,6 +50,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
+      |> assign_assignee_state()
       |> assign_status_preview()
       |> assign_status_mode()
       |> maybe_subscribe_translations()
@@ -137,6 +140,71 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
+
+  # Assignee picker state (V127). `assign_type` ("" / "team" / "department" /
+  # "person") drives which staff `<.select>` shows; the staff option lists are
+  # loaded once. Mirrors `AssignmentFormLive`'s assignee picker.
+  defp assign_assignee_state(socket) do
+    assign(socket,
+      assign_type: assignee_type(socket.assigns.project),
+      team_options: load_teams(),
+      department_options: load_departments(),
+      person_options: load_people()
+    )
+  end
+
+  defp assignee_type(%Project{assigned_person_uuid: u}) when not is_nil(u), do: "person"
+  defp assignee_type(%Project{assigned_team_uuid: u}) when not is_nil(u), do: "team"
+  defp assignee_type(%Project{assigned_department_uuid: u}) when not is_nil(u), do: "department"
+  defp assignee_type(_), do: ""
+
+  # `rescue` so a `phoenix_kit_staff` DB hiccup degrades to an empty picker
+  # rather than taking the form down (same pattern as the context's staff
+  # lookups + `AssignmentFormLive`).
+  defp load_teams do
+    PhoenixKitStaff.Teams.list() |> Enum.map(&{"#{&1.name} (#{&1.department.name})", &1.uuid})
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Projects] load_teams failed: #{Exception.message(e)}")
+      []
+  end
+
+  defp load_departments do
+    PhoenixKitStaff.Departments.list() |> Enum.map(&{&1.name, &1.uuid})
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Projects] load_departments failed: #{Exception.message(e)}")
+      []
+  end
+
+  defp load_people do
+    PhoenixKitStaff.Staff.list_people()
+    |> Enum.map(&{(&1.user && &1.user.email) || "—", &1.uuid})
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Projects] load_people failed: #{Exception.message(e)}")
+      []
+  end
+
+  # Null out the assignee fields that don't match the chosen `assign_type`, so
+  # switching from Team to Person doesn't leave a stale team uuid set (which the
+  # single-assignee CHECK would then reject).
+  defp clear_other_assignees(attrs, "team"),
+    do: Map.merge(attrs, %{"assigned_department_uuid" => nil, "assigned_person_uuid" => nil})
+
+  defp clear_other_assignees(attrs, "department"),
+    do: Map.merge(attrs, %{"assigned_team_uuid" => nil, "assigned_person_uuid" => nil})
+
+  defp clear_other_assignees(attrs, "person"),
+    do: Map.merge(attrs, %{"assigned_team_uuid" => nil, "assigned_department_uuid" => nil})
+
+  defp clear_other_assignees(attrs, _),
+    do:
+      Map.merge(attrs, %{
+        "assigned_team_uuid" => nil,
+        "assigned_department_uuid" => nil,
+        "assigned_person_uuid" => nil
+      })
 
   # Grouped status-source entities for the selector (status catalogs first,
   # then any other entity). Empty when entities is unavailable — the
@@ -252,7 +320,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # `start_mode_value(@form)` stay in sync with form state.
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     selected_template = Map.get(params, "template_uuid", socket.assigns.selected_template)
-    attrs = merge_attrs(attrs, socket)
+    assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
+    attrs = attrs |> merge_attrs(socket) |> clear_other_assignees(assign_type)
 
     cs =
       Projects.change_project(socket.assigns.project, attrs,
@@ -261,7 +330,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     {:noreply,
      socket
-     |> assign(selected_template: selected_template)
+     |> assign(selected_template: selected_template, assign_type: assign_type)
      |> assign(
        status_translation_mode:
          Map.get(params, "status_translation_mode", socket.assigns.status_translation_mode)
@@ -273,9 +342,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   def handle_event("save", %{"project" => attrs} = params, socket) do
     if socket.assigns.ai_translate_in_flight == [] do
       template_uuid = Map.get(params, "template_uuid", nil) |> Values.blank_to_nil()
+      assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
 
       attrs =
         merge_attrs(attrs, socket)
+        |> clear_other_assignees(assign_type)
         |> apply_status_mode_to_attrs(params, socket.assigns.project)
 
       save(socket, socket.assigns.live_action, attrs, template_uuid)
@@ -726,11 +797,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp save(socket, :edit, attrs, _template_uuid) do
-    # Atomic update + re-cement: when a started project's status list changes,
-    # its local rows are re-copied (and a now-invalid `current_status_slug`
-    # cleared) in the SAME transaction as the field update — see
-    # `Statuses.update_project_with_statuses/2`. Unstarted projects cement at
-    # start, so this is just a plain update for them.
+    # A started project's status source is frozen (cemented at start): the
+    # picker is locked in the form and this strips any forced change. With the
+    # source unchanged, the re-cement branch inside
+    # `update_project_with_statuses/2` never fires for a started project;
+    # unstarted projects (source still editable) cement at start as usual.
+    attrs = Statuses.lock_status_source(attrs, socket.assigns.project)
+
     case Statuses.update_project_with_statuses(socket.assigns.project, attrs) do
       {:ok, project} ->
         Activity.log("projects.project_updated",
@@ -927,65 +1000,45 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             <%= if start_mode_value(@form) == "scheduled" do %>
               <.input field={@form[:scheduled_start_date]} label={gettext("Start date and time")} type="datetime-local" />
             <% end %>
-            <%!-- Workflow-status list selection (entities-backed). Sibling
-                 of the other settings (outside the multilang wrapper). The
-                 current status itself is picked on the project page; here
-                 the user only chooses which entity the project draws its
-                 statuses from. Any entity works (record title = label);
-                 status catalogs are grouped first. --%>
-            <div
-              :if={@statuses_available}
-              class="border-t border-base-300 mt-6 pt-6 flex flex-col gap-2"
-            >
-              <h3 class="text-sm font-semibold text-base-content/80">
-                {gettext("Workflow status")}
-              </h3>
-              <%!-- Status-list selector with the "Generate default" action
-                   stacked underneath (phone-friendly, matches the other
-                   form fields). "Use global default" = inherit the list
-                   chosen in projects Settings. --%>
-              <.select
-                field={@form[:status_entity_uuid]}
-                label={gettext("Custom Status")}
-                options={@status_entities}
-                prompt={gettext("Use global default")}
-              />
-              <button
-                type="button"
-                phx-click="generate_default_statuses"
-                phx-disable-with={gettext("Generating…")}
-                class="btn btn-ghost btn-sm gap-1 self-start"
-              >
-                <.icon name="hero-sparkles" class="w-4 h-4" />
-                {gettext("Generate default")}
-              </button>
-              <%!-- Preview the statuses this list supplies — the records that
-                   get cemented when the project starts. --%>
-              <div :if={@status_preview != []} class="flex flex-col gap-1">
-                <span class="text-xs text-base-content/60">
-                  {gettext("Statuses from this list:")}
-                </span>
-                <div class="flex flex-wrap gap-1">
-                  <.workflow_status_badge :for={s <- @status_preview} status={s} />
-                </div>
-              </div>
-              <%!-- Per-project override for showing translated status titles.
-                   "" = inherit the global default; translations are always
-                   saved regardless. --%>
-              <.select
-                name="status_translation_mode"
-                label={gettext("Translated status titles")}
-                value={@status_translation_mode}
-                options={[
-                  {gettext("Use global default"), ""},
-                  {gettext("Show translated"), "true"},
-                  {gettext("Show original"), "false"}
-                ]}
-              />
-              <.link navigate={Paths.settings()} class="link link-hover text-xs text-base-content/60">
-                {gettext("Change the defaults here")}
-              </.link>
-            </div>
+
+            <%!-- Assignee (V127) — same polymorphic team/department/person
+                 picker tasks use. Non-translatable, so it lives outside the
+                 multilang wrapper. `assign_type` chooses which staff select
+                 shows; `clear_other_assignees/2` nulls the rest on change. --%>
+            <.select
+              name="assign_type"
+              label={gettext("Assign to")}
+              value={@assign_type}
+              options={[
+                {gettext("Nobody"), ""},
+                {gettext("Department"), "department"},
+                {gettext("Team"), "team"},
+                {gettext("Person"), "person"}
+              ]}
+            />
+            <%= if @assign_type == "department" do %>
+              <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
+            <% end %>
+            <%= if @assign_type == "team" do %>
+              <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
+            <% end %>
+            <%= if @assign_type == "person" do %>
+              <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+            <% end %>
+
+            <%!-- Workflow-status list selection (entities-backed), via the
+                 shared `<.workflow_status_fields>` so projects, templates and
+                 sub-projects render an identical section. The source is a
+                 pre-start choice — `locked` once the project has started,
+                 since its statuses were cemented at `started_at`. --%>
+            <.workflow_status_fields
+              statuses_available={@statuses_available}
+              field={@form[:status_entity_uuid]}
+              status_entities={@status_entities}
+              status_preview={@status_preview}
+              status_translation_mode={@status_translation_mode}
+              locked={Statuses.started?(@project)}
+            />
             <div class="flex justify-end gap-2 mt-2">
               <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
                 {gettext("Cancel")}

@@ -500,6 +500,22 @@ defmodule PhoenixKitProjects.Statuses do
   def started?(_), do: false
 
   @doc """
+  Server-side mate to the edit form's locked status-source picker: a started
+  project's statuses were cemented at `started_at` and are frozen, so this
+  drops any `status_entity_uuid` from incoming update attrs once `started?/1`.
+  Unstarted projects and templates pass through unchanged (the source is still
+  a live, pre-start choice). Handles string- and atom-keyed attrs.
+  """
+  @spec lock_status_source(map(), Project.t()) :: map()
+  def lock_status_source(attrs, %Project{} = project) when is_map(attrs) do
+    if started?(project) do
+      attrs |> Map.delete("status_entity_uuid") |> Map.delete(:status_entity_uuid)
+    else
+      attrs
+    end
+  end
+
+  @doc """
   Clear + re-copy the chosen catalog into local rows, atomically. Used when
   a started project switches its status source (from the show-page picker).
   Existing local edits are intentionally discarded — the user chose a
