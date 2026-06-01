@@ -698,13 +698,12 @@ Informational only (never a delete-blocker). Counts projects/templates
 currently *sourcing* from a catalog entity — started projects no longer
 reference it (cemented), which is the intended semantics.
 
-### ⚠️ Cross-repo release ordering
-V125 ships in **core `phoenix_kit`**. This module pins `phoenix_kit
-~> 1.7.121`; the feature can't run until core releases V125 (≥1.7.122)
-and this pin is bumped. **Projects CI stays red until then** — same as
-catalogue #28 / core #570. The status test suite + the new columns
-require V125 in the projects build; develop/test locally via a temporary
-`{:phoenix_kit, path: "../phoenix_kit", override: true}` until the release.
+### Cross-repo release ordering (resolved)
+V125 ships in **core `phoenix_kit`**, released in 1.7.125. This module now pins
+`phoenix_kit ~> 1.7.128` (which carries V125 plus the sub-project/assignee
+V127/V128), so the status feature runs on Hex. (Historically this was the
+cross-repo blocker — pin `~> 1.7.121`, CI red until the V125 release — same
+shape as catalogue #28 / core #570.)
 
 ## Sub-projects (project-as-task, core V127)
 
@@ -849,13 +848,14 @@ flow originally deferred. It validates before assigning `child_project_uuid`:
 unique index on `child_project_uuid`, caught at insert and mapped). The
 depth-capped propagation still fails closed on corrupt data as a backstop.
 
-### ⚠️ Cross-repo release ordering
+### Cross-repo release ordering (resolved)
 V127 (`child_project_uuid` on `phoenix_kit_project_assignments`) **and V128**
 (assignee columns on `phoenix_kit_projects`) ship in **core `phoenix_kit`**
-(`@current_version` 127). This module pins `~> 1.7.121`; the features can't run
-until core releases V127+V128 and this pin is bumped — same dance as V125.
-**CI stays red until then.** Develop/test locally via a temporary
-`{:phoenix_kit, path: "../phoenix_kit", override: true}`. Tests:
+(`@current_version` 128 — V126 there is standalone notifications). Released in
+core **1.7.128**; this module pins `~> 1.7.128`, so the features run on Hex and
+CI is green. (Historically these were drafted as core V126/V127 and the module
+pinned `~> 1.7.121`; core took V126 for notifications, so they renumbered to
+V127/V128 and the pin moved to 1.7.128.) Tests:
 `test/phoenix_kit_projects/integration/subprojects_test.exs` (context) +
 `test/phoenix_kit_projects/web/project_show_subprojects_test.exs` (LV render).
 
