@@ -100,7 +100,11 @@ defmodule PhoenixKitProjects.AITranslatable do
         fresh ->
           merged = merge_translation(fresh, target_lang, fields)
 
-          case update_fn.(fresh, %{"translations" => merged}) do
+          # `broadcast: false` — the write happens inside this FOR UPDATE
+          # transaction, so suppress the updater's own `:*_updated` event (it
+          # would fire pre-commit / look like a user edit). Translation
+          # completion is signalled by core's `:translation_completed`.
+          case update_fn.(fresh, %{"translations" => merged}, broadcast: false) do
             {:ok, updated} -> updated
             {:error, reason} -> repo.rollback(reason)
           end
@@ -119,7 +123,7 @@ defmodule PhoenixKitProjects.AITranslatable do
   defp fields_for(%Assignment{}), do: Assignment.translatable_fields()
   defp fields_for(%Project{}), do: Project.translatable_fields()
 
-  defp persist_target(%Task{}), do: {Task, &Projects.update_task/2}
-  defp persist_target(%Assignment{}), do: {Assignment, &Projects.update_assignment_form/2}
-  defp persist_target(%Project{}), do: {Project, &Projects.update_project/2}
+  defp persist_target(%Task{}), do: {Task, &Projects.update_task/3}
+  defp persist_target(%Assignment{}), do: {Assignment, &Projects.update_assignment_form/3}
+  defp persist_target(%Project{}), do: {Project, &Projects.update_project/3}
 end
