@@ -28,15 +28,13 @@ defmodule PhoenixKitProjects.AITranslateBinding do
   end
 
   defp has_any_field?(lang_map, fields) when is_map(lang_map) do
-    Enum.any?(fields, fn field ->
-      case Map.get(lang_map, field) do
-        v when is_binary(v) -> String.trim(v) != ""
-        _ -> false
-      end
-    end)
+    Enum.any?(fields, fn field -> present?(Map.get(lang_map, field)) end)
   end
 
   defp has_any_field?(_, _), do: false
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(_), do: false
 
   @impl true
   def apply_translation(_resource_type, changeset, lang, fields) do

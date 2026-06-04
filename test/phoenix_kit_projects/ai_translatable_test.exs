@@ -60,15 +60,36 @@ defmodule PhoenixKitProjects.AITranslatableTest do
     end
 
     test "a secondary-language override is preferred over the column" do
-      project = fixture_project(%{"name" => "Launch", "translations" => %{"es" => %{"name" => "Lanzamiento"}}})
+      project =
+        fixture_project(%{
+          "name" => "Launch",
+          "translations" => %{"es" => %{"name" => "Lanzamiento"}}
+        })
+
       assert AITranslatable.source_fields(project, "es")["name"] == "Lanzamiento"
+    end
+
+    test "a blank/whitespace override falls back to the primary column" do
+      project =
+        fixture_project(%{"name" => "Launch", "translations" => %{"es" => %{"name" => "   "}}})
+
+      assert AITranslatable.source_fields(project, "es")["name"] == "Launch"
+    end
+
+    test "blank source fields are skipped entirely" do
+      project = fixture_project(%{"name" => "Launch", "description" => "   "})
+      fields = AITranslatable.source_fields(project, primary())
+      assert fields["name"] == "Launch"
+      refute Map.has_key?(fields, "description")
     end
   end
 
   describe "put_translation/4" do
     test "merges into translations[lang] under plain field keys" do
       project = fixture_project()
-      assert {:ok, _} = AITranslatable.put_translation(project, "es", %{"name" => "Lanzamiento"}, [])
+
+      assert {:ok, _} =
+               AITranslatable.put_translation(project, "es", %{"name" => "Lanzamiento"}, [])
 
       assert Projects.get_project(project.uuid).translations["es"]["name"] == "Lanzamiento"
     end
@@ -88,6 +109,20 @@ defmodule PhoenixKitProjects.AITranslatableTest do
       project = fixture_project(%{"name" => "ABC-1"})
       {:ok, _} = AITranslatable.put_translation(project, "es", %{"name" => "ABC-1"}, [])
       assert Projects.get_project(project.uuid).translations["es"]["name"] == "ABC-1"
+    end
+
+    test "persists a task translation under plain field keys" do
+      task = fixture_task(%{"title" => "Audit"})
+      assert {:ok, _} = AITranslatable.put_translation(task, "es", %{"title" => "Auditoría"}, [])
+      assert Projects.get_task(task.uuid).translations["es"]["title"] == "Auditoría"
+    end
+
+    test "a row deleted mid-flight rolls back with :resource_not_found" do
+      project = fixture_project()
+      {:ok, _} = Projects.delete_project(project)
+
+      assert {:error, :resource_not_found} =
+               AITranslatable.put_translation(project, "es", %{"name" => "Lanzamiento"}, [])
     end
   end
 end

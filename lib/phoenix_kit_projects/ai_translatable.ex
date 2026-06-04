@@ -60,25 +60,32 @@ defmodule PhoenixKitProjects.AITranslatable do
 
     for field <- fields_for(resource),
         value = source_value(resource, field, lang_map),
-        is_binary(value) and String.trim(value) != "",
+        present?(value),
         into: %{},
         do: {field, value}
   end
 
   # A secondary source language reads its own subtree; fall back to the
-  # primary column (rows only have columns until translated).
+  # primary column (rows only have columns until translated). A blank or
+  # non-string override is treated as absent, so we never feed an empty
+  # string to the translator when the column still has real content.
   defp source_value(resource, field, lang_map) do
-    case Map.get(lang_map, field) do
-      v when is_binary(v) -> if String.trim(v) != "", do: v, else: column_value(resource, field)
-      _ -> column_value(resource, field)
-    end
+    override = Map.get(lang_map, field)
+    if present?(override), do: override, else: column_value(resource, field)
   end
 
   defp column_value(resource, field) do
     Map.get(resource, String.to_existing_atom(field))
   rescue
+    # `field` always comes from a schema's `translatable_fields/0`, so the
+    # atom exists and this can't fire today. Kept as a guard against a field
+    # being listed in `translatable_fields/0` without a matching column: skip
+    # it (nil) rather than crash the translation job into an infinite retry.
     ArgumentError -> nil
   end
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
+  defp present?(_), do: false
 
   @impl true
   def put_translation(resource, target_lang, fields, _opts) do
