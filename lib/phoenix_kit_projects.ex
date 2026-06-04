@@ -54,6 +54,16 @@ defmodule PhoenixKitProjects do
   def css_sources, do: [:phoenix_kit_projects]
 
   @impl PhoenixKit.Module
+  def ai_translatables do
+    [
+      {"project", PhoenixKitProjects.AITranslatable},
+      {"template", PhoenixKitProjects.AITranslatable},
+      {"task", PhoenixKitProjects.AITranslatable},
+      {"assignment", PhoenixKitProjects.AITranslatable}
+    ]
+  end
+
+  @impl PhoenixKit.Module
   def admin_tabs do
     parent = [
       %Tab{

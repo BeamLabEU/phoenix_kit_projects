@@ -179,11 +179,21 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  @doc "Updates a task and broadcasts `:task_updated`."
-  @spec update_task(Task.t(), map()) :: {:ok, Task.t()} | {:error, Ecto.Changeset.t()}
-  def update_task(%Task{} = t, attrs) do
+  @doc """
+  Updates a task and broadcasts `:task_updated`.
+
+  Pass `broadcast: false` to skip the broadcast — used by callers that write
+  inside their own transaction (e.g. the AI-translation adapter) and don't
+  want a `:task_updated` to fire before commit / masquerade as a user edit.
+  """
+  @spec update_task(Task.t(), map(), keyword()) ::
+          {:ok, Task.t()} | {:error, Ecto.Changeset.t()}
+  def update_task(%Task{} = t, attrs, opts \\ []) do
     with {:ok, updated} <- t |> Task.changeset(attrs) |> repo().update() do
-      ProjectsPubSub.broadcast_task(:task_updated, %{uuid: updated.uuid, title: updated.title})
+      if Keyword.get(opts, :broadcast, true) do
+        ProjectsPubSub.broadcast_task(:task_updated, %{uuid: updated.uuid, title: updated.title})
+      end
+
       {:ok, updated}
     end
   end
@@ -2578,14 +2588,16 @@ defmodule PhoenixKitProjects.Projects do
   The `_form` suffix is a deliberate smell: if you reach for this
   function, double-check whether your caller is really a form handler.
   """
-  @spec update_assignment_form(Assignment.t(), map()) ::
+  @spec update_assignment_form(Assignment.t(), map(), keyword()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
-  def update_assignment_form(%Assignment{} = a, attrs) do
+  def update_assignment_form(%Assignment{} = a, attrs, opts \\ []) do
     with {:ok, updated} <- a |> Assignment.changeset(attrs) |> repo().update() do
-      ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
-        uuid: updated.uuid,
-        project_uuid: updated.project_uuid
-      })
+      if Keyword.get(opts, :broadcast, true) do
+        ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+          uuid: updated.uuid,
+          project_uuid: updated.project_uuid
+        })
+      end
 
       {:ok, updated}
     end
