@@ -20,7 +20,8 @@ defmodule PhoenixKitProjects.AITranslatable do
   text already in the target language) is still persisted — the field fills
   in and the language stops reading as "missing", with no extra handling.
 
-  Registered from `PhoenixKitProjects.ai_translatables/0`. The enqueue, the
+  Registered via the `c:PhoenixKit.Module.ai_translatables/0` callback on
+  `PhoenixKitProjects`. The enqueue, the
   AI call, the per-resource PubSub broadcasts, the retry policy, and the
   audit log all live in core — this module only reads source fields and
   merges results back atomically.

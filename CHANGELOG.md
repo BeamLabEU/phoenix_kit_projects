@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1 - 2026-06-04
+
+### Fixed
+
+- **HexDocs warning** — `AITranslatable`'s moduledoc referenced the hidden `ai_translatables/0` impl as a function link; now points at the `c:PhoenixKit.Module.ai_translatables/0` callback instead. Docs-only; no code change.
+
 ## 0.9.0 - 2026-06-04
 
 **AI translation now runs on core's shared pipeline.** The module's bespoke AI-translation stack (its own `Translations` context, `TranslateResourceWorker`, and `AITranslateBar`) is replaced by core's generic pipeline plus the shared translate modal/glue — the same one catalogue uses. Net deletion of ~3300 lines of duplicated machinery. Translatable fields are unchanged (project/template: `name` + `description`; task: `title` + `description`; assignment: `description`), stored as before in each schema's `translations` JSONB.
