@@ -77,6 +77,7 @@ defmodule PhoenixKitProjects.MixProject do
       # V128 project-assignee columns shipped in 1.7.128, V125 for the
       # workflow-status schema `PhoenixKitProjects.Statuses` requires.)
       {:phoenix_kit, "~> 1.7.130"},
+      {:phoenix_kit_ai, "~> 0.3"},
       {:phoenix_kit_staff, "~> 0.1"},
       {:phoenix_kit_comments, "~> 0.2"},
 

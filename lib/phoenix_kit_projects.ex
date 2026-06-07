@@ -53,8 +53,7 @@ defmodule PhoenixKitProjects do
   @impl PhoenixKit.Module
   def css_sources, do: [:phoenix_kit_projects]
 
-  @impl PhoenixKit.Module
-  def ai_translatables do
+    def ai_translatables do
     [
       {"project", PhoenixKitProjects.AITranslatable},
       {"template", PhoenixKitProjects.AITranslatable},

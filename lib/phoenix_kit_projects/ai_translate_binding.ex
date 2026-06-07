@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.AITranslateBinding do
   @moduledoc """
-  `PhoenixKitWeb.Components.AITranslate.FormBinding` for projects forms — the
+  `PhoenixKitAI.Components.AITranslate.FormBinding` for projects forms — the
   storage-specific half of the shared AI-translate glue.
 
   Projects store translations in a `translations` JSONB column shaped
@@ -10,7 +10,7 @@ defmodule PhoenixKitProjects.AITranslateBinding do
   (description) — read from each schema's `translatable_fields/0`.
   """
 
-  @behaviour PhoenixKitWeb.Components.AITranslate.FormBinding
+  @behaviour PhoenixKitAI.Components.AITranslate.FormBinding
 
   alias PhoenixKitProjects.Activity
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}

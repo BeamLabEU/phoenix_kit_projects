@@ -4,7 +4,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
-  use PhoenixKitWeb.Components.AITranslate.Embed
+  use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.MultilangForm
 
@@ -13,7 +13,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Task
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
-  alias PhoenixKitWeb.Components.AITranslate.FormGlue
+  alias PhoenixKitAI.Components.AITranslate.FormGlue
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
@@ -176,7 +176,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
 
   # AI-translate modal events (ai_toggle_modal/ai_select_*/ai_generate_prompt/
-  # ai_translate_lang) are handled by `use PhoenixKitWeb.Components.AITranslate.Embed`.
+  # ai_translate_lang) are handled by `use PhoenixKitAI.Components.AITranslate.Embed`.
   @impl true
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do
     {:noreply, handle_switch_language(socket, lang_code)}
@@ -268,7 +268,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   end
 
   # {:ai_translation, ...} progress/result events are folded into the form
-  # by `use PhoenixKitWeb.Components.AITranslate.Embed`.
+  # by `use PhoenixKitAI.Components.AITranslate.Embed`.
 
   defp merge_attrs(attrs, socket) do
     in_flight = WebHelpers.in_flight_record(socket, :form, :task)

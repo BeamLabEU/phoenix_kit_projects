@@ -2,7 +2,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   @moduledoc "Create or edit a project."
 
   use PhoenixKitWeb, :live_view
-  use PhoenixKitWeb.Components.AITranslate.Embed
+  use PhoenixKitAI.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
@@ -12,7 +12,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.{Activity, Errors, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
-  alias PhoenixKitWeb.Components.AITranslate.FormGlue
+  alias PhoenixKitAI.Components.AITranslate.FormGlue
 
   require Logger
 

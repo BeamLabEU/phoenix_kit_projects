@@ -2,7 +2,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   @moduledoc "Create or edit a project template."
 
   use PhoenixKitWeb, :live_view
-  use PhoenixKitWeb.Components.AITranslate.Embed
+  use PhoenixKitAI.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
@@ -11,7 +11,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
-  alias PhoenixKitWeb.Components.AITranslate.FormGlue
+  alias PhoenixKitAI.Components.AITranslate.FormGlue
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.

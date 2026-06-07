@@ -29,7 +29,7 @@ defmodule PhoenixKitProjects.Web.Components do
       # Shared core AI-translate UI (button / modal / progress / hint) —
       # replaces the module-local AITranslateBar, now backed by core's
       # generic translation pipeline.
-      import PhoenixKitWeb.Components.AITranslate
+      import PhoenixKitAI.Components.AITranslate
     end
   end
 end
