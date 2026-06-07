@@ -4,6 +4,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
+  use PhoenixKitWeb.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.MultilangForm
 
@@ -174,25 +175,9 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
 
+  # AI-translate modal events (ai_toggle_modal/ai_select_*/ai_generate_prompt/
+  # ai_translate_lang) are handled by `use PhoenixKitWeb.Components.AITranslate.Embed`.
   @impl true
-  def handle_event("ai_translate_lang", %{"lang" => lang}, socket),
-    do: {:noreply, FormGlue.dispatch_ai_translate(socket, lang)}
-
-  def handle_event("ai_toggle_modal", _p, socket),
-    do: {:noreply, FormGlue.toggle_ai_modal(socket)}
-
-  def handle_event("ai_select_endpoint", %{"endpoint_uuid" => uuid}, socket),
-    do: {:noreply, FormGlue.select_ai_endpoint(socket, uuid)}
-
-  def handle_event("ai_select_prompt", %{"prompt_uuid" => uuid}, socket),
-    do: {:noreply, FormGlue.select_ai_prompt(socket, uuid)}
-
-  def handle_event("ai_select_scope", %{"scope" => scope}, socket),
-    do: {:noreply, FormGlue.select_ai_scope(socket, scope)}
-
-  def handle_event("ai_generate_prompt", _p, socket),
-    do: {:noreply, FormGlue.generate_ai_prompt(socket)}
-
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do
     {:noreply, handle_switch_language(socket, lang_code)}
   end
@@ -282,9 +267,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     {:noreply, reload_task_deps(socket)}
   end
 
-  @impl true
-  def handle_info({:ai_translation, event, payload}, socket),
-    do: {:noreply, FormGlue.handle_ai_translation_event(socket, event, payload, &assign_form/2)}
+  # {:ai_translation, ...} progress/result events are folded into the form
+  # by `use PhoenixKitWeb.Components.AITranslate.Embed`.
 
   defp merge_attrs(attrs, socket) do
     in_flight = WebHelpers.in_flight_record(socket, :form, :task)

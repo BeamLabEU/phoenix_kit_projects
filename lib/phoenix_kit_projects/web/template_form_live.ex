@@ -2,6 +2,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   @moduledoc "Create or edit a project template."
 
   use PhoenixKitWeb, :live_view
+  use PhoenixKitWeb.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
@@ -138,23 +139,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     {:noreply, handle_switch_language(socket, lang_code)}
   end
 
-  def handle_event("ai_translate_lang", %{"lang" => lang}, socket),
-    do: {:noreply, FormGlue.dispatch_ai_translate(socket, lang)}
-
-  def handle_event("ai_toggle_modal", _p, socket),
-    do: {:noreply, FormGlue.toggle_ai_modal(socket)}
-
-  def handle_event("ai_select_endpoint", %{"endpoint_uuid" => uuid}, socket),
-    do: {:noreply, FormGlue.select_ai_endpoint(socket, uuid)}
-
-  def handle_event("ai_select_prompt", %{"prompt_uuid" => uuid}, socket),
-    do: {:noreply, FormGlue.select_ai_prompt(socket, uuid)}
-
-  def handle_event("ai_select_scope", %{"scope" => scope}, socket),
-    do: {:noreply, FormGlue.select_ai_scope(socket, scope)}
-
-  def handle_event("ai_generate_prompt", _p, socket),
-    do: {:noreply, FormGlue.generate_ai_prompt(socket)}
+  # AI-translate modal events handled by `use ...AITranslate.Embed`.
 
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     attrs = attrs |> Map.put("is_template", "true") |> merge_attrs(socket)
@@ -218,9 +203,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     {:noreply, WebHelpers.close_or_navigate(socket, Paths.templates())}
   end
 
-  @impl true
-  def handle_info({:ai_translation, event, payload}, socket),
-    do: {:noreply, FormGlue.handle_ai_translation_event(socket, event, payload, &assign_form/2)}
+  # {:ai_translation, ...} events folded into the form by `use ...AITranslate.Embed`.
 
   # Folds the in-flight secondary-language translation map into `attrs`
   # so the changeset writes both the primary column (when on the

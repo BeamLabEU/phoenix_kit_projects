@@ -242,6 +242,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply, load_comment_counts(socket)}
   end
 
+  # Forward the comments composer's Leaf editor content ({:leaf_changed, ...})
+  # to the CommentsComponent, or "Post Comment" silently no-ops (the content
+  # never reaches the component). Runtime-resolved; safe no-op if unavailable.
+  def handle_info({:leaf_changed, _} = msg, socket) do
+    case Code.ensure_loaded(PhoenixKitComments.Web.CommentsComponent) do
+      {:module, mod} ->
+        case mod.forward_leaf_event(msg, socket) do
+          {:noreply, socket} -> {:noreply, socket}
+          _ -> {:noreply, socket}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_info(msg, socket) do
     Logger.debug("[ProjectShowLive] unexpected handle_info: #{inspect(msg)}")
     {:noreply, socket}

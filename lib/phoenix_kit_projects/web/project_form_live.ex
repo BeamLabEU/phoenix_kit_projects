@@ -2,6 +2,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   @moduledoc "Create or edit a project."
 
   use PhoenixKitWeb, :live_view
+  use PhoenixKitWeb.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
@@ -259,23 +260,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     {:noreply, handle_switch_language(socket, lang_code)}
   end
 
-  def handle_event("ai_translate_lang", %{"lang" => lang}, socket),
-    do: {:noreply, FormGlue.dispatch_ai_translate(socket, lang)}
-
-  def handle_event("ai_toggle_modal", _p, socket),
-    do: {:noreply, FormGlue.toggle_ai_modal(socket)}
-
-  def handle_event("ai_select_endpoint", %{"endpoint_uuid" => uuid}, socket),
-    do: {:noreply, FormGlue.select_ai_endpoint(socket, uuid)}
-
-  def handle_event("ai_select_prompt", %{"prompt_uuid" => uuid}, socket),
-    do: {:noreply, FormGlue.select_ai_prompt(socket, uuid)}
-
-  def handle_event("ai_select_scope", %{"scope" => scope}, socket),
-    do: {:noreply, FormGlue.select_ai_scope(socket, scope)}
-
-  def handle_event("ai_generate_prompt", _p, socket),
-    do: {:noreply, FormGlue.generate_ai_prompt(socket)}
+  # AI-translate modal events handled by `use ...AITranslate.Embed`.
 
   # Don't stamp `:action, :validate` here. Phoenix's `to_form/1` only
   # surfaces field errors when the changeset has an action set, so leaving
@@ -369,9 +354,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     {:noreply, WebHelpers.close_or_navigate(socket, Paths.projects())}
   end
 
-  @impl true
-  def handle_info({:ai_translation, event, payload}, socket),
-    do: {:noreply, FormGlue.handle_ai_translation_event(socket, event, payload, &assign_form/2)}
+  # {:ai_translation, ...} events folded into the form by `use ...AITranslate.Embed`.
 
   defp merge_attrs(attrs, socket) do
     in_flight = WebHelpers.in_flight_record(socket, :form, :project)
