@@ -9,6 +9,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  # Forwards the comment composer's {:leaf_changed, …} process message into
+  # CommentsComponent.forward_leaf_event/2 via a :handle_info lifecycle hook
+  # (halts only :leaf_changed, passes everything else through); without it
+  # "Post Comment" silently submits empty content. comments is a hard dep here.
+  use PhoenixKitComments.Embed
+
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
@@ -240,22 +246,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # :deleted`) that we don't need to discriminate on here.
   def handle_info({:comments_updated, _payload}, socket) do
     {:noreply, load_comment_counts(socket)}
-  end
-
-  # Forward the comments composer's Leaf editor content ({:leaf_changed, ...})
-  # to the CommentsComponent, or "Post Comment" silently no-ops (the content
-  # never reaches the component). Runtime-resolved; safe no-op if unavailable.
-  def handle_info({:leaf_changed, _} = msg, socket) do
-    case Code.ensure_loaded(PhoenixKitComments.Web.CommentsComponent) do
-      {:module, mod} ->
-        case mod.forward_leaf_event(msg, socket) do
-          {:noreply, socket} -> {:noreply, socket}
-          _ -> {:noreply, socket}
-        end
-
-      _ ->
-        {:noreply, socket}
-    end
   end
 
   def handle_info(msg, socket) do
