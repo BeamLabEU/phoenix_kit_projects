@@ -65,6 +65,20 @@ defmodule PhoenixKitProjects.MixProject do
     ]
   end
 
+  # phoenix_kit deps resolve from Hex by default. For cross-repo work against a
+  # local checkout, export <APP>_PATH — e.g. PHOENIX_KIT_PATH=../phoenix_kit or
+  # PHOENIX_KIT_AI_PATH=../phoenix_kit_ai. Unset => the published pin, so
+  # mix hex.publish is unaffected.
+  defp pk_dep(app, requirement, opts \\ []) do
+    env_var = String.upcase(Atom.to_string(app)) <> "_PATH"
+
+    case System.get_env(env_var) do
+      nil when opts == [] -> {app, requirement}
+      nil -> {app, requirement, opts}
+      path -> {app, [path: path, override: true] ++ opts}
+    end
+  end
+
   defp deps do
     [
       # 1.7.130 is the floor — that's the release that ships the generic
@@ -76,17 +90,17 @@ defmodule PhoenixKitProjects.MixProject do
       # (It also still satisfies the earlier floors: V127 `child_project_uuid` +
       # V128 project-assignee columns shipped in 1.7.128, V125 for the
       # workflow-status schema `PhoenixKitProjects.Statuses` requires.)
-      {:phoenix_kit, "~> 1.7.130"},
-      {:phoenix_kit_ai, "~> 0.3"},
-      {:phoenix_kit_staff, "~> 0.1"},
-      {:phoenix_kit_comments, "~> 0.2"},
+      pk_dep(:phoenix_kit, "~> 1.7.130"),
+      pk_dep(:phoenix_kit_ai, "~> 0.3"),
+      pk_dep(:phoenix_kit_staff, "~> 0.1"),
+      pk_dep(:phoenix_kit_comments, "~> 0.2"),
 
       # Optional: the entities module is the source/catalog for project
       # workflow statuses. `optional: true` keeps it out of host closures
       # (PhoenixKitProjects.Statuses degrades gracefully when it's absent —
       # mirrors the AI-translation pattern) while making it loadable in this
       # package's own compile + test build.
-      {:phoenix_kit_entities, "~> 0.2", optional: true},
+      pk_dep(:phoenix_kit_entities, "~> 0.2", optional: true),
 
       # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
       # for polymorphic assignee FKs (team / department / person).
