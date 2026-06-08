@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.2 - 2026-06-08
+
+### Fixed
+
+- **`phoenix_kit_ai` floor raised to `~> 0.4`** — the AI-translation move (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`) actually ships in `phoenix_kit_ai` 0.4.0. The previous `~> 0.3` floor (shipped in 0.9.0/0.9.1) resolved to 0.3.0, which predates the move and fails to compile against this module's `AITranslatable` / `AITranslateBinding` / form LVs. Fresh installs of 0.9.0/0.9.1 were broken; this corrects the constraint.
+
+### Changed
+
+- Reordered the `PhoenixKitAI.Components.AITranslate.FormGlue` alias in the project/task/template form LiveViews so the `PhoenixKitAI.*` alias sorts ahead of `PhoenixKitProjects.*` (Credo `--strict` alphabetical-alias check). No behavior change.
+
 ## 0.9.1 - 2026-06-04
 
 ### Fixed
