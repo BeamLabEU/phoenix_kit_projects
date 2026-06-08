@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3 - 2026-06-08
+
+### Fixed
+
+- **HexDocs warning** — `AITranslatable`'s moduledoc referenced the now-removed `c:PhoenixKit.Module.ai_translatables/0` callback (core dropped the callback in the AI-translation move). It now links the plain `PhoenixKitProjects.ai_translatables/0` function that PhoenixKitAI discovers by duck-typing, and the surrounding prose credits PhoenixKitAI (not core) for the pipeline. Docs-only; no code change.
+
 ## 0.9.2 - 2026-06-08
 
 ### Fixed
