@@ -81,16 +81,13 @@ defmodule PhoenixKitProjects.MixProject do
 
   defp deps do
     [
-      # 1.7.130 is the floor — that's the release that ships the generic
-      # AI-translation pipeline this module now plugs into: the
-      # `PhoenixKit.Modules.AI.{Translatable,Translations,TranslateWorker}`
-      # behaviour/orchestration + the shared
-      # `PhoenixKitWeb.Components.AITranslate.{FormGlue,FormBinding}` UI
-      # (consumed by `AITranslatable` / `AITranslateBinding` and the form LVs).
-      # (It also still satisfies the earlier floors: V127 `child_project_uuid` +
+      # 1.7.130 is the core floor. It still satisfies the earlier floors:
+      # V127 `child_project_uuid` +
       # V128 project-assignee columns shipped in 1.7.128, V125 for the
-      # workflow-status schema `PhoenixKitProjects.Statuses` requires.)
+      # workflow-status schema `PhoenixKitProjects.Statuses` requires.
       pk_dep(:phoenix_kit, "~> 1.7.130"),
+      # PhoenixKitAI owns the generic AI-translation pipeline this module's
+      # `AITranslatable` / `AITranslateBinding` code plugs into.
       pk_dep(:phoenix_kit_ai, "~> 0.3"),
       pk_dep(:phoenix_kit_staff, "~> 0.1"),
       pk_dep(:phoenix_kit_comments, "~> 0.2"),

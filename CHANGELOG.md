@@ -8,25 +8,25 @@
 
 ## 0.9.0 - 2026-06-04
 
-**AI translation now runs on core's shared pipeline.** The module's bespoke AI-translation stack (its own `Translations` context, `TranslateResourceWorker`, and `AITranslateBar`) is replaced by core's generic pipeline plus the shared translate modal/glue — the same one catalogue uses. Net deletion of ~3300 lines of duplicated machinery. Translatable fields are unchanged (project/template: `name` + `description`; task: `title` + `description`; assignment: `description`), stored as before in each schema's `translations` JSONB.
+**AI translation now runs on the shared PhoenixKitAI pipeline.** The module's bespoke AI-translation stack (its own `Translations` context, `TranslateResourceWorker`, and `AITranslateBar`) is replaced by PhoenixKitAI's generic pipeline plus the shared translate modal/glue — the same one catalogue uses. Net deletion of ~3300 lines of duplicated machinery. Translatable fields are unchanged (project/template: `name` + `description`; task: `title` + `description`; assignment: `description`), stored as before in each schema's `translations` JSONB.
 
 ### Added
 
-- **`PhoenixKitProjects.AITranslatable`** — the `PhoenixKit.Modules.AI.Translatable` adapter for the four resource types (`project`, `template`, `task`, `assignment`), registered via the new `ai_translatables/0` callback. `source_fields/2` reads each schema's `translatable_fields/0` from `translations[lang]` or the primary column; `put_translation/4` merges results into the `translations` JSONB under a `FOR UPDATE` row lock so concurrent per-language jobs can't drop sibling languages; `fetch/2` validates the `is_template` flag so a project job can't cross-translate a template (or vice versa).
-- **`PhoenixKitProjects.AITranslateBinding`** — the `PhoenixKitWeb.Components.AITranslate.FormBinding` for the project/task/template form LVs (existing-translation langs, changeset merge, actor uuid).
+- **`PhoenixKitProjects.AITranslatable`** — the `PhoenixKitAI.Translatable` adapter for the four resource types (`project`, `template`, `task`, `assignment`), registered via `ai_translatables/0`. `source_fields/2` reads each schema's `translatable_fields/0` from `translations[lang]` or the primary column; `put_translation/4` merges results into the `translations` JSONB under a `FOR UPDATE` row lock so concurrent per-language jobs can't drop sibling languages; `fetch/2` validates the `is_template` flag so a project job can't cross-translate a template (or vice versa).
+- **`PhoenixKitProjects.AITranslateBinding`** — the `PhoenixKitAI.Components.AITranslate.FormBinding` for the project/task/template form LVs (existing-translation langs, changeset merge, actor uuid).
 - **"Taking a while" stall hint** on bulk translations — comes for free from the shared `FormGlue`.
 - Adapter unit tests (`fetch` with `is_template` validation, `source_fields` column/override/blank handling, `put_translation` merge + `:resource_not_found` rollback).
 
 ### Changed
 
-- **Minimum `phoenix_kit` is now `~> 1.7.130`** — the release shipping the generic AI-translation pipeline (`PhoenixKit.Modules.AI.{Translatable,Translations,TranslateWorker}` + the shared `AITranslate.{FormGlue,FormBinding}` UI) this module now depends on.
+- **Added `phoenix_kit_ai ~> 0.3`** — the AI plugin now owns the generic translation pipeline (`PhoenixKitAI.{Translatable,Translations,TranslateWorker}` + the shared `AITranslate.{FormGlue,FormBinding}` UI) this module depends on.
 - The project/task/template form LVs delegate their AI-translate wiring to the shared `FormGlue` instead of carrying an inline copy of the dispatch/config/handle_info state machine.
 - The per-translation audit entry is now core's generic `ai.translation_added` (module `"ai"`) rather than `projects.translation_added`.
 - `update_task/3` and `update_assignment_form/3` gain a `broadcast: false` option (mirroring `update_project/3`); the translation adapter passes it so a write inside its `FOR UPDATE` transaction doesn't fire a pre-commit `:*_updated` broadcast. Existing 2-arity callers are unaffected.
 
 ### Removed
 
-- The bespoke `PhoenixKitProjects.Translations` context, `Workers.TranslateResourceWorker`, and `Web.Components.AITranslateBar` (plus the `Web.AITranslateFormHelpers` module) — behaviour is now covered by core.
+- The bespoke `PhoenixKitProjects.Translations` context, `Workers.TranslateResourceWorker`, and `Web.Components.AITranslateBar` (plus the `Web.AITranslateFormHelpers` module) — behaviour is now covered by PhoenixKitAI.
 
 ### Fixed
 
@@ -127,7 +127,7 @@ AI-driven translation for projects, templates, and tasks — an Oban-backed work
 
 ### Added
 
-- **AI translation** — `PhoenixKitProjects.Translations` public API (`enqueue/1`, `enqueue_all_missing/2`, AI endpoint/prompt resolution, and default-prompt provisioning) backed by `PhoenixKitProjects.Workers.TranslateResourceWorker`, an Oban worker that translates `Project` / `Template` / `Task` / `Assignment` translatable fields via `PhoenixKit.Modules.AI.Translation.translate_fields/6`. Deterministic failures discard instead of retrying (no token burn), and failure reasons are sanitized before logging / activity-metadata writes.
+- **AI translation** — `PhoenixKitProjects.Translations` public API (`enqueue/1`, `enqueue_all_missing/2`, AI endpoint/prompt resolution, and default-prompt provisioning) backed by `PhoenixKitProjects.Workers.TranslateResourceWorker`, an Oban worker that translates `Project` / `Template` / `Task` / `Assignment` translatable fields via the shared translation helper. Deterministic failures discard instead of retrying (no token burn), and failure reasons are sanitized before logging / activity-metadata writes.
 - **`<.ai_translate_bar>` + AI Translation modal** on the project / template / task form LVs — a compact trigger above the multilang tabs with endpoint/prompt selectors and a scope picker (missing-only / all-overwrite / current tab). Hidden when AI is unavailable or on `:new`. Status streams over scoped per-resource PubSub; completion patches **only** the `translations` field of the live changeset, so unsaved edits survive a job finishing mid-edit.
 - **Translatable templates** — `TemplateFormLive` gains the multilang plumbing (tabs, language switcher, translatable name + description) already present on projects.
 - **Partial-progress rollup** — overall project progress now averages each assignment's `progress_pct` instead of counting only `done`. Project auto-completion stays binary (flips to `:completed` only when every assignment is `done`).
@@ -136,7 +136,7 @@ AI-driven translation for projects, templates, and tasks — an Oban-backed work
 
 ### Changed
 
-- Minimum `phoenix_kit` is now `~> 1.7.117` — it ships `PhoenixKit.Modules.AI.Translation.translate_fields/6` (core PR #557) that the translation worker delegates to.
+- Minimum `phoenix_kit` is now `~> 1.7.117` — it ships the shared translation parser/helper that the translation worker delegates to.
 - Popup child frames now fill the modal box — `PopupHostLive` injects a full-width `wrapper_class` unless the host passes its own, fixing form LVs that stacked their standalone `max-w-xl` cap inside the popup.
 
 ### Fixed

@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.AITranslatable do
   @moduledoc """
   `PhoenixKitAI.Translatable` adapter for projects resources —
-  the small per-module hook into core's generic AI-translation pipeline.
+  the small per-module hook into PhoenixKitAI's generic AI-translation pipeline.
 
   Serves four resource types — `"project"`, `"template"` (a `Project` with
   `is_template: true`), `"task"`, and `"assignment"` — each translating the
