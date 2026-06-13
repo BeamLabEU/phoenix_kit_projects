@@ -245,7 +245,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              :project_started,
              :project_status_changed
            ] do
-    case Projects.get_project(socket.assigns.project.uuid) do
+    # Must re-preload the assignee: the render derefs @project.assigned_person.user
+    # (assignee_label/1), so a plain get_project/1 here leaves it NotLoaded and the
+    # re-render crashes when the project has an assignee.
+    case Projects.get_project_with_assignee(socket.assigns.project.uuid) do
       nil ->
         {:noreply, socket}
 

@@ -16,6 +16,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitStaff.Schemas.Person
 
   setup %{conn: conn} do
     # Use a real registered user — the `complete` / `reopen` paths
@@ -491,6 +493,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       send(view.pid, {:projects, :project_started, %{}})
 
       _ = render(view)
+      assert Process.alive?(view.pid)
+    end
+
+    test "project_updated re-preloads the assignee (regression: NotLoaded crash)",
+         %{conn: conn, actor_uuid: actor_uuid} do
+      # A project WITH an assignee: the render derefs @project.assigned_person.user
+      # (assignee_label/1). Before the fix the handler reloaded via get_project/1
+      # (no preload), so the re-render crashed on the NotLoaded assoc.
+      {:ok, person} =
+        Repo.insert(%Person{user_uuid: actor_uuid, status: "active"})
+
+      project = fixture_project(%{"assigned_person_uuid" => person.uuid})
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      assert html =~ "Person"
+
+      send(view.pid, {:projects, :project_updated, %{}})
+
+      # render/1 raises if the LV crashed re-rendering the assignee badge.
+      assert render(view) =~ "Person"
       assert Process.alive?(view.pid)
     end
 
