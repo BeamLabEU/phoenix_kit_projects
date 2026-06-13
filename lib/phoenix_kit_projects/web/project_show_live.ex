@@ -1729,16 +1729,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             >
               <.icon name="hero-folder-plus" class="w-4 h-4" /> {gettext("Add sub-project")}
             </.smart_link>
-            <%!-- Switch to the Gantt / waterfall timeline view of the same
-                 project (read-only horizontal bars + dependency arrows). --%>
-            <.smart_link
-              navigate={Paths.project_gantt(@project.uuid)}
-              emit={{PhoenixKitProjects.Web.ProjectGanttLive, %{"id" => @project.uuid}}}
-              embed_mode={@embed_mode}
-              class="btn btn-outline btn-sm gap-1"
-            >
-              <.icon name="hero-chart-bar-square" class="w-4 h-4" /> {gettext("Timeline")}
-            </.smart_link>
+            <%!-- The Gantt/timeline view is now the "Timeline" tab below the
+                 header (router-mounted only), so no separate link here. --%>
             <%!-- Inline workflow-status picker (the current value). The
                  status-list *source* is chosen on the new/edit form (and the
                  global default in Settings), not here. Hidden when no
@@ -1944,7 +1936,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- View tabs (List / Timeline). Router-mounted only — an embedded
            live_render of this page stays list-only. The phx-hook syncs the URL
            (push/popstate); the tabs still switch instantly without it. --%>
-      <div :if={@router_mounted?} id={"project-tabs-#{@project.uuid}"} phx-hook="ProjectTabsUrl">
+      <div
+        :if={@router_mounted? and not @is_template}
+        id={"project-tabs-#{@project.uuid}"}
+        phx-hook="ProjectTabsUrl"
+      >
         <.nav_tabs
           active_tab={to_string(@active_tab)}
           on_change="switch_tab"
@@ -2220,7 +2216,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            then kept (so its own zoom/expand survive switching back). It's a
            nested LiveView with its own PubSub/state; `headless` drops its
            back-link since the tabs replace it. --%>
-      <div :if={@router_mounted?} class={if(@active_tab != :gantt, do: "hidden")}>
+      <div :if={@router_mounted? and not @is_template} class={if(@active_tab != :gantt, do: "hidden")}>
         <%= if @gantt_mounted? do %>
           {live_render(@socket, PhoenixKitProjects.Web.ProjectGanttLive,
             id: "project-gantt-live-#{@project.uuid}",

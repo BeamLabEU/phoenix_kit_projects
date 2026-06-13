@@ -610,5 +610,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       refute html =~ ~s(role="tablist")
       refute html =~ "lg-wrap"
     end
+
+    test "a template show page (router-mounted) renders no tabs — no template gantt route",
+         %{conn: conn} do
+      template = fixture_template()
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates/#{template.uuid}")
+
+      refute html =~ ~s(role="tablist")
+    end
+
+    test "switch_tab pushes the URL event; a history-sourced switch does not", %{conn: conn} do
+      project = started_project_for_tabs()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_click(view, "switch_tab", %{"tab" => "gantt"})
+      assert_push_event(view, "project_tab_url", %{tab: "gantt"})
+
+      # A switch that came FROM the URL (browser back/forward) must NOT push the
+      # URL again, or pushState/popstate would loop.
+      render_click(view, "switch_tab", %{"tab" => "list", "source" => "history"})
+      refute_push_event(view, "project_tab_url", %{})
+    end
   end
 end

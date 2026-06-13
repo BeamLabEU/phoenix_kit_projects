@@ -45,6 +45,7 @@ defmodule PhoenixKitProjects.Test.Router do
 
       live("/templates", TemplatesLive, :index)
       live("/templates/new", TemplateFormLive, :new)
+      live("/templates/:id", ProjectShowLive, :show_template)
       live("/templates/:id/edit", TemplateFormLive, :edit)
     end
   end
