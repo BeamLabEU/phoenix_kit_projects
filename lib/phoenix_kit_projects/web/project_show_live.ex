@@ -1883,53 +1883,48 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <% end %>
       </div>
 
-      <%= if @project.started_at != nil and @schedule do %>
-        <% {rem_v, rem_u} = humanize_hours(@schedule.remaining_hours) %>
-        <div class="flex flex-wrap items-center gap-3 bg-base-200/50 rounded-lg px-4 py-2 text-xs">
-          <%= if @project.completed_at do %>
-            <div class="flex items-center gap-2">
-              <.icon name="hero-check-circle" class="w-4 h-4 text-success" />
-              <span class="text-base-content/60">{gettext("Finished:")}</span>
-              <span class="font-medium">{L10n.format_datetime(@schedule.projected_end)}</span>
-            </div>
-          <% else %>
-            <div class="flex items-center gap-2">
-              <.icon name="hero-clock" class="w-4 h-4 text-base-content/60" />
-              <span class="text-base-content/60">{gettext("Remaining:")}</span>
-              <span class="font-medium">{rem_v} {rem_u}</span>
-            </div>
-            <span class="text-base-content/40">·</span>
-            <div class="flex items-center gap-2">
-              <.icon name="hero-arrow-trending-up" class={"w-4 h-4 #{if @schedule.ahead?, do: "text-success", else: "text-error"}"} />
-              <span class="text-base-content/60">{gettext("ETA:")}</span>
-              <span class={[
-                "font-medium",
-                @schedule.ahead? && "text-success",
-                not @schedule.ahead? && "text-error"
-              ]}>
-                {L10n.format_datetime(@schedule.projected_end)}
-              </span>
-              <span class="text-base-content/40">{gettext("at planned pace")}</span>
+      <%!-- Schedule summary + progress as ONE card: the progress bar is the
+           card's bottom edge (a thin flush strip), so the two read as a unit. --%>
+      <% show_schedule = @project.started_at != nil and @schedule != nil %>
+      <% show_progress = @total_tasks > 0 and not @is_template %>
+      <%= if show_schedule or show_progress do %>
+        <div class="bg-base-200/50 rounded-t-lg overflow-hidden">
+          <%= if show_schedule do %>
+            <% {rem_v, rem_u} = humanize_hours(@schedule.remaining_hours) %>
+            <div class="flex flex-wrap items-center gap-3 px-4 py-2 text-xs">
+              <%= if @project.completed_at do %>
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="w-4 h-4 text-success" />
+                  <span class="text-base-content/60">{gettext("Finished:")}</span>
+                  <span class="font-medium">{L10n.format_datetime(@schedule.projected_end)}</span>
+                </div>
+              <% else %>
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-clock" class="w-4 h-4 text-base-content/60" />
+                  <span class="text-base-content/60">{gettext("Remaining:")}</span>
+                  <span class="font-medium">{rem_v} {rem_u}</span>
+                </div>
+                <span class="text-base-content/40">·</span>
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-arrow-trending-up" class={"w-4 h-4 #{if @schedule.ahead?, do: "text-success", else: "text-error"}"} />
+                  <span class="text-base-content/60">{gettext("ETA:")}</span>
+                  <span class={[
+                    "font-medium",
+                    @schedule.ahead? && "text-success",
+                    not @schedule.ahead? && "text-error"
+                  ]}>
+                    {L10n.format_datetime(@schedule.projected_end)}
+                  </span>
+                  <span class="text-base-content/40">{gettext("at planned pace")}</span>
+                </div>
+              <% end %>
             </div>
           <% end %>
-        </div>
-      <% end %>
-
-      <%!-- Progress bar (not for templates) --%>
-      <%= if @total_tasks > 0 and not @is_template do %>
-        <div class="flex items-center gap-3">
-          <div class="flex-1">
-            <div class="w-full bg-base-300 rounded-full h-2">
-              <div
-                class="bg-success h-2 rounded-full transition-all duration-300"
-                style={"width: #{@progress_pct}%"}
-              >
-              </div>
+          <%!-- Progress bar — the card's bottom border (not for templates). --%>
+          <div :if={show_progress} class="w-full bg-base-300 h-1.5" title={gettext("%{done}/%{total} done", done: @done_tasks, total: @total_tasks)}>
+            <div class="bg-success h-1.5 transition-all duration-300" style={"width: #{@progress_pct}%"}>
             </div>
           </div>
-          <span class="text-sm text-base-content/60 shrink-0">
-            {gettext("%{done}/%{total} done", done: @done_tasks, total: @total_tasks)}
-          </span>
         </div>
       <% end %>
 
