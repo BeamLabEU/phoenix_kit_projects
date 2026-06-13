@@ -70,6 +70,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
       page_title: "",
       project: %Project{},
       is_template: false,
+      # Headless = nested as a tab inside ProjectShowLive: drop the "Back to
+      # project" link (the tabs replace it). Standalone/emit renders keep it.
+      headless: Map.get(session, "headless", false),
       wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
       # `:auto` → load_gantt picks an initial zoom that fits the project's span;
       # resolved to a concrete zoom on first load, so manual switching sticks.
@@ -570,6 +573,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     slot = window_slot_minutes(zoom)
 
     starts = events |> Enum.map(& &1.start) |> Enum.reject(&is_nil/1) |> Enum.map(&as_naive/1)
+
     ends =
       events
       |> Enum.map(&PhoenixLiveGantt.Task.effective_end/1)
@@ -601,6 +605,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
 
   defp ceil_to_slot(%NaiveDateTime{} = t, slot) do
     floored = floor_to_slot(t, slot)
+
     if NaiveDateTime.compare(t, floored) == :eq,
       do: floored,
       else: NaiveDateTime.add(floored, slot, :minute)
@@ -639,7 +644,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <div class="flex flex-wrap items-center justify-between gap-2">
+      <%!-- Own header (back-link + title) — dropped when headless (nested as a
+           tab inside ProjectShowLive, which already shows the project header). --%>
+      <div :if={not @headless} class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex flex-col gap-1 min-w-0">
           <.smart_link
             navigate={if @is_template, do: Paths.template(@project.uuid), else: Paths.project(@project.uuid)}

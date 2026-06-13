@@ -213,7 +213,9 @@ defmodule PhoenixKitProjects do
         permission: module_key(),
         parent: :admin_projects,
         visible: false,
-        live_view: {PhoenixKitProjects.Web.ProjectGanttLive, :show}
+        # Same LiveView as the show page, different live_action — the gantt is a
+        # tab on the show page, not a separate page. `:gantt` selects that tab.
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :gantt}
       },
       %Tab{
         id: :admin_projects_template_new,

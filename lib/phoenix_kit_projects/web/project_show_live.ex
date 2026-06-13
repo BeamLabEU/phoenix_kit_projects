@@ -36,7 +36,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   @impl true
   def mount(:not_mounted_at_router, %{"id" => id} = session, socket) do
     WebHelpers.maybe_put_locale(session)
-    mount(%{"id" => id}, session, socket)
+    # Reuse the router mount, then force the tab bar off: embedded/emit renders
+    # are list-only (no tabs, no nested gantt — avoids nested-within-nested
+    # live_render). `live_action` is nil here, so `active_tab` already defaults
+    # to `:list`; we only have to flip `router_mounted?`.
+    {:ok, socket} = mount(%{"id" => id}, session, socket)
+    {:ok, assign(socket, router_mounted?: false, gantt_mounted?: false)}
   end
 
   # Fail-closed: emit-session lacking `"id"` lands here. Without this
@@ -57,6 +62,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        project: %Project{},
        is_template: false,
        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
+       router_mounted?: false,
+       active_tab: :list,
+       gantt_mounted?: false,
        assignments: [],
        deps_by_assignment: %{},
        total_tasks: 0,
@@ -104,6 +112,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            project: %Project{},
            is_template: false,
            wrapper_class: @default_wrapper_class,
+           router_mounted?: false,
+           active_tab: :list,
+           gantt_mounted?: false,
            assignments: [],
            deps_by_assignment: %{},
            total_tasks: 0,
@@ -142,6 +153,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
+        # Which tab the page opens on, straight from the route's live_action
+        # (`/list/:id/gantt` → `:gantt`, everything else → `:list`). Server-side
+        # so a direct/bookmarked `/gantt` load renders the gantt before any JS.
+        active_tab = tab_for_action(socket)
+
         # Resolve the workflow-status list once (read-only — nothing is
         # provisioned or seeded here; an unset shared default simply yields
         # an empty list). `current_status` is derived from the same list so
@@ -162,6 +178,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             project: project,
             is_template: is_template,
             wrapper_class: wrapper_class,
+            # Tab state. `router_mounted?` gates the whole tab bar — an
+            # embedded/emit `live_render` mount renders list-only. The gantt is
+            # lazy-mounted: it only `live_render`s once its tab is first opened,
+            # then stays mounted so its zoom/expand survive switching back.
+            router_mounted?: true,
+            active_tab: active_tab,
+            gantt_mounted?: active_tab == :gantt,
             editing_duration_uuid: nil,
             start_modal_open: false,
             start_form: to_form(%{"start_at" => default_start_at_local()}),
@@ -688,7 +711,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # ── Events ──────────────────────────────────────────────────────
 
+  # Switch the List/Timeline tab. Instant (an assign flip, no navigation) and
+  # the gantt's nested LV stays mounted, so its zoom/expand survive. The gantt
+  # is lazy-mounted the first time its tab opens and never unmounted. We push
+  # the URL change to the `ProjectTabsUrl` hook — except when the switch itself
+  # CAME from the URL (browser back/forward), to avoid a push/popstate loop.
   @impl true
+  def handle_event("switch_tab", %{"tab" => tab} = params, socket) do
+    active = if tab == "gantt", do: :gantt, else: :list
+
+    socket =
+      socket
+      |> assign(active_tab: active)
+      |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
+
+    socket =
+      if params["source"] == "history",
+        do: socket,
+        else: push_event(socket, "project_tab_url", %{tab: tab})
+
+    {:noreply, socket}
+  end
+
   def handle_event("complete", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
@@ -1247,6 +1291,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> DateTime.to_naive()
     |> NaiveDateTime.to_iso8601()
     |> String.slice(0, 16)
+  end
+
+  # The active tab, derived from the route's live_action. `:gantt` is the gantt
+  # tab; `:show`, `:show_template`, and the embedded (nil live_action) mount all
+  # default to the list.
+  defp tab_for_action(socket) do
+    case Map.get(socket.assigns, :live_action) do
+      :gantt -> :gantt
+      _ -> :list
+    end
   end
 
   defp do_start_project(socket, started_at) do
@@ -1887,6 +1941,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </div>
       <% end %>
 
+      <%!-- View tabs (List / Timeline). Router-mounted only — an embedded
+           live_render of this page stays list-only. The phx-hook syncs the URL
+           (push/popstate); the tabs still switch instantly without it. --%>
+      <div :if={@router_mounted?} id={"project-tabs-#{@project.uuid}"} phx-hook="ProjectTabsUrl">
+        <.nav_tabs
+          active_tab={to_string(@active_tab)}
+          on_change="switch_tab"
+          tabs={[
+            %{id: "list", label: gettext("List"), icon: "hero-list-bullet"},
+            %{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"}
+          ]}
+        />
+      </div>
+
+      <%!-- List tab --%>
+      <div class={if(@router_mounted? and @active_tab != :list, do: "hidden")}>
       <%!-- Timeline --%>
       <%= if @assignments == [] do %>
         <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
@@ -2144,6 +2214,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           </div>
         </div>
       <% end %>
+      </div>
+
+      <%!-- Gantt tab — router-mounted only, lazy-mounted on first activation and
+           then kept (so its own zoom/expand survive switching back). It's a
+           nested LiveView with its own PubSub/state; `headless` drops its
+           back-link since the tabs replace it. --%>
+      <div :if={@router_mounted?} class={if(@active_tab != :gantt, do: "hidden")}>
+        <%= if @gantt_mounted? do %>
+          {live_render(@socket, PhoenixKitProjects.Web.ProjectGanttLive,
+            id: "project-gantt-live-#{@project.uuid}",
+            session: %{
+              "id" => @project.uuid,
+              "headless" => true,
+              "locale" => L10n.current_content_lang()
+            })}
+        <% end %>
+      </div>
 
       <%!-- Start-project modal — date editable so the user can backdate
            an already-running project or queue a future start. The
