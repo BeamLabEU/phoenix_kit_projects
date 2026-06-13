@@ -111,6 +111,39 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     assert html =~ ~s(data-to-id="#{a2.uuid}")
   end
 
+  test "maps a dependency BETWEEN sub-project tasks to a connector (tree-wide)",
+       %{conn: conn} do
+    # A dependency between two tasks INSIDE a sub-project is stored on the CHILD
+    # project, not the parent. The gantt must gather dependencies across the
+    # whole rendered tree — the old parent-only query returned nothing, so a
+    # project built entirely from sub-project tasks showed NO arrows at all.
+    project = fixture_project(%{"start_mode" => "immediate"})
+    {:ok, _} = Projects.start_project(project)
+    project = Projects.get_project!(project.uuid)
+
+    {:ok, %{child_project: child, assignment: link}} =
+      Projects.create_subproject(project.uuid, %{"name" => "Phase 1"})
+
+    t1 = fixture_task(%{"estimated_duration" => 2, "estimated_duration_unit" => "days"})
+    t2 = fixture_task(%{"estimated_duration" => 2, "estimated_duration_unit" => "days"})
+
+    {:ok, c1} =
+      Projects.create_assignment(%{"project_uuid" => child.uuid, "task_uuid" => t1.uuid})
+
+    {:ok, c2} =
+      Projects.create_assignment(%{"project_uuid" => child.uuid, "task_uuid" => t2.uuid})
+
+    {:ok, _} = Projects.add_dependency(c2.uuid, c1.uuid)
+
+    {:ok, view, _html} = live(conn, Paths.project_gantt(project.uuid))
+    # Expand so both child tasks are visible; the intra-sub-project arrow draws.
+    html = render_click(view, "toggle_subproject", %{"event-id" => link.uuid})
+
+    assert html =~ "lg-connector"
+    assert html =~ ~s(data-from-id="#{c1.uuid}")
+    assert html =~ ~s(data-to-id="#{c2.uuid}")
+  end
+
   test "zoom switcher updates the chart", %{conn: conn, actor_uuid: actor} do
     {project, _a1, _a2} = started_project_with_tasks(actor)
 

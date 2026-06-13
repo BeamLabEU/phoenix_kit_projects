@@ -204,10 +204,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
 
   defp load_gantt(socket) do
     project = socket.assigns.project
-    deps = Projects.list_all_dependencies(project.uuid)
     lang = L10n.current_content_lang()
 
-    {events, connectors} = build_gantt(project, deps, lang)
+    {events, connectors} = build_gantt(project, lang)
 
     socket
     |> assign(events: events, connectors: connectors)
@@ -287,7 +286,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   # layout (sequential waterfall, sub-project span) is delegated to
   # `PhoenixLiveGantt.Layout.sequential/2`; we supply each task's weekday/weekend
   # calendar via `:advance`. Dependencies become finish-to-start connectors.
-  defp build_gantt(project, deps, lang) do
+  defp build_gantt(project, lang) do
     items = collect_items(project, nil, 0)
 
     layout =
@@ -311,8 +310,21 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
         build_task(it, s, e, lang)
       end)
 
-    connectors = Enum.map(deps, fn d -> %{from: d.depends_on_uuid, to: d.assignment_uuid} end)
-    {events, connectors}
+    {events, tree_connectors(items)}
+  end
+
+  # A dependency is stored on the project that OWNS the dependent assignment, so
+  # a sub-project task's dependencies live under the CHILD project, not the
+  # parent. `list_all_dependencies/1` is single-project; gather across every
+  # project in the rendered tree (parent + descendants) so arrows inside and
+  # between sub-projects draw — otherwise a project built entirely from
+  # sub-project tasks shows no connectors at all.
+  defp tree_connectors(items) do
+    items
+    |> Enum.map(& &1.project.uuid)
+    |> Enum.uniq()
+    |> Enum.flat_map(&Projects.list_all_dependencies/1)
+    |> Enum.map(fn d -> %{from: d.depends_on_uuid, to: d.assignment_uuid} end)
   end
 
   # Flattens the project tree into layout items, each carrying its owning project
