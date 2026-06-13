@@ -631,5 +631,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       render_click(view, "switch_tab", %{"tab" => "list", "source" => "history"})
       refute_push_event(view, "project_tab_url", %{})
     end
+
+    test "the schedule summary and progress bar render as one fused card", %{conn: conn} do
+      project = started_project_for_tabs()
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # The schedule line renders.
+      assert html =~ "Remaining:"
+      assert html =~ "ETA:"
+
+      # One rounded-top container with a square bottom, so the progress bar reads
+      # as the card's bottom border.
+      assert html =~ "rounded-t-lg overflow-hidden"
+
+      # The progress bar is the thin (h-1.5) strip at the card's bottom edge, and
+      # the task count lives only in its title tooltip — not a visible "N/M done"
+      # label (which the merge intentionally removed).
+      assert html =~ ~r/class="w-full bg-base-300 h-1\.5"\s+title="[^"]*done"/
+    end
   end
 end
