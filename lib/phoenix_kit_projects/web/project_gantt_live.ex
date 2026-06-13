@@ -2,7 +2,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   @moduledoc """
   Gantt / waterfall view of a project — the same data as
   `ProjectShowLive`, rendered as horizontal bars on a date axis via the
-  `LiveGantt` component instead of the vertical timeline.
+  `PhoenixLiveGantt` component instead of the vertical timeline.
 
   Read-only: it visualizes the project's assignments as a sequential
   schedule (each task starts where the previous one ends, honoring the
@@ -171,11 +171,11 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     {:noreply, socket |> assign(nav_range: nil) |> reflow_display()}
   end
 
-  # Toggle a sub-project's expand state (the LiveGantt chevron fires this).
-  # Events already carry every descendant (tagged with parent_id); LiveGantt
+  # Toggle a sub-project's expand state (the PhoenixLiveGantt chevron fires this).
+  # Events already carry every descendant (tagged with parent_id); PhoenixLiveGantt
   # shows/hides them from `expanded`, so no reload/requery is needed here.
   def handle_event("toggle_subproject", %{"event-id" => uuid}, socket) do
-    {:noreply, update(socket, :expanded, &LiveGantt.toggle_expanded(&1, uuid))}
+    {:noreply, update(socket, :expanded, &PhoenixLiveGantt.toggle_expanded(&1, uuid))}
   end
 
   # Popover "Edit" action on a task bar → the assignment edit form. The owning
@@ -273,25 +273,25 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   defp span_days(events) do
     dates =
       Enum.flat_map(events, fn e ->
-        [as_date(e.start), as_date(LiveGantt.Task.effective_end(e))]
+        [as_date(e.start), as_date(PhoenixLiveGantt.Task.effective_end(e))]
       end)
 
     Date.diff(Enum.max(dates, Date), Enum.min(dates, Date))
   end
 
   # Maps the project's assignments — and every sub-project's descendants — onto
-  # `LiveGantt.Task` structs, ALWAYS at the real (hour-precise) schedule so the
+  # `PhoenixLiveGantt.Task` structs, ALWAYS at the real (hour-precise) schedule so the
   # layout is identical at every display zoom — a 2-hour task is a 2-hour bar,
   # not padded out to a whole day. The display zoom only changes column density,
   # so tasks pack the same in day, week, or hour view. The durations→dates
   # layout (sequential waterfall, sub-project span) is delegated to
-  # `LiveGantt.Layout.sequential/2`; we supply each task's weekday/weekend
+  # `PhoenixLiveGantt.Layout.sequential/2`; we supply each task's weekday/weekend
   # calendar via `:advance`. Dependencies become finish-to-start connectors.
   defp build_gantt(project, deps, lang) do
     items = collect_items(project, nil, 0)
 
     layout =
-      LiveGantt.Layout.sequential(items,
+      PhoenixLiveGantt.Layout.sequential(items,
         start: DateTime.to_naive(schedule_anchor(project)),
         id: & &1.uuid,
         parent_id: & &1.parent_uuid,
@@ -300,7 +300,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
         advance: &advance_through_calendar/3,
         # No artificial minimum — reflect the real schedule. A task spans exactly
         # its duration; a zero-duration task collapses to a milestone (diamond),
-        # the standard Gantt convention. LiveGantt still floors the rendered bar
+        # the standard Gantt convention. PhoenixLiveGantt still floors the rendered bar
         # at a few px so a short task stays visible/clickable.
         min_span: {:second, 0}
       )
@@ -317,7 +317,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
 
   # Flattens the project tree into layout items, each carrying its owning project
   # (for the per-project calendar) and its linking-assignment parent (nil at top
-  # level). Sub-project descendants ALWAYS appear so LiveGantt can draw the
+  # level). Sub-project descendants ALWAYS appear so PhoenixLiveGantt can draw the
   # chevron and hide/show them via `expanded`. `@max_subproject_depth` guards
   # against pathological/corrupt nesting.
   @max_subproject_depth 32
@@ -346,10 +346,10 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     Assignment.subproject?(a) and not is_nil(a.child_project) and depth < @max_subproject_depth
   end
 
-  # `LiveGantt.Layout` `:advance` callback — move `cursor` forward by `hours`
+  # `PhoenixLiveGantt.Layout` `:advance` callback — move `cursor` forward by `hours`
   # honoring the assignment's effective weekday/weekend rule. The cursor is a
   # `Date` (day zoom) or `NaiveDateTime` (hour zoom); the result keeps that type
-  # so Layout/LiveGantt position it at the right resolution. Layout enforces the
+  # so Layout/PhoenixLiveGantt position it at the right resolution. Layout enforces the
   # minimum span, so a 0-hour task still occupies one slot.
   defp advance_through_calendar(cursor, hours, %{assignment: a, project: project}) do
     cal_project = %{project | counts_weekends: task_counts_weekends?(a, project)}
@@ -373,7 +373,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
       %{actions: task_actions(a, it.project.uuid)}
       |> then(&if(it.parent_uuid, do: Map.put(&1, :parent_id, it.parent_uuid), else: &1))
 
-    %LiveGantt.Task{
+    %PhoenixLiveGantt.Task{
       id: a.uuid,
       title: Assignment.label(a, lang) || gettext("(untitled task)"),
       start: start_date,
@@ -386,7 +386,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   end
 
   # Popover action buttons per bar. A sub-project gets "Open" (drill into the
-  # child project); LiveGantt adds the expand/collapse toggle itself. A leaf
+  # child project); PhoenixLiveGantt adds the expand/collapse toggle itself. A leaf
   # task gets "Edit" (its assignment form). The owning project uuid rides along
   # so the handler can build the nested edit path for child tasks.
   defp task_actions(%Assignment{} = a, project_uuid) do
@@ -462,7 +462,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   # Fit the visible window to the TASKS (small padding either side), NOT to
   # today — otherwise a project whose work is weeks away from today stretches
   # the chart across the empty gap just to keep the today marker on screen.
-  # When today falls outside this window, LiveGantt shows an off-screen
+  # When today falls outside this window, PhoenixLiveGantt shows an off-screen
   # directional "Today" hint at the edge instead of widening the axis.
   defp compute_range([], _zoom) do
     today = Date.utc_today()
@@ -474,7 +474,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     # so collapse every endpoint to its date.
     dates =
       Enum.flat_map(events, fn e ->
-        [as_date(e.start), as_date(LiveGantt.Task.effective_end(e))]
+        [as_date(e.start), as_date(PhoenixLiveGantt.Task.effective_end(e))]
       end)
 
     # One empty day of buffer on the left (a task ends on its exclusive `end`
@@ -500,7 +500,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     starts = events |> Enum.map(& &1.start) |> Enum.reject(&is_nil/1) |> Enum.map(&as_naive/1)
     ends =
       events
-      |> Enum.map(&LiveGantt.Task.effective_end/1)
+      |> Enum.map(&PhoenixLiveGantt.Task.effective_end/1)
       |> Enum.reject(&is_nil/1)
       |> Enum.map(&as_naive/1)
 
@@ -602,7 +602,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
         </.empty_state>
       <% else %>
         <div class="border border-base-200 rounded-lg overflow-hidden">
-          <LiveGantt.gantt
+          <PhoenixLiveGantt.gantt
             id={"project-gantt-#{@project.uuid}"}
             events={@events}
             connectors={@connectors}
@@ -630,14 +630,14 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
                 class="btn btn-xs btn-ghost"
                 phx-click={
                   Phoenix.LiveView.JS.push("fit_project")
-                  |> LiveGantt.scroll_to_start("project-gantt-#{@project.uuid}")
+                  |> PhoenixLiveGantt.scroll_to_start("project-gantt-#{@project.uuid}")
                 }
                 title={gettext("Fit the project's tasks")}
               >
                 {gettext("Project")}
               </button>
             </:toolbar_start>
-          </LiveGantt.gantt>
+          </PhoenixLiveGantt.gantt>
         </div>
       <% end %>
     </div>

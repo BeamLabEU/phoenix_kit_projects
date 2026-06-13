@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
   @moduledoc """
   Smoke tests for `ProjectGanttLive` — the Gantt/waterfall view that
-  reuses `ProjectShowLive`'s data through the `LiveGantt` component.
+  reuses `ProjectShowLive`'s data through the `PhoenixLiveGantt` component.
   Verifies the assignment→bar mapping, dependency→connector mapping,
   the date-range computation, zoom switching, and the empty state.
   """
