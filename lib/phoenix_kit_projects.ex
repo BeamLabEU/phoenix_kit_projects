@@ -9,6 +9,11 @@ defmodule PhoenixKitProjects do
 
   use PhoenixKit.Module
 
+  # Single source of truth: read the version from mix.exs at compile time so
+  # version/0 can't drift from @version on a release (baked in — no Mix at
+  # runtime). The project's own config is in scope when this module compiles.
+  @version Mix.Project.config()[:version]
+
   alias PhoenixKit.Dashboard.Tab
   alias PhoenixKit.Settings
 
@@ -38,7 +43,7 @@ defmodule PhoenixKitProjects do
   end
 
   @impl PhoenixKit.Module
-  def version, do: "0.9.1"
+  def version, do: @version
 
   @impl PhoenixKit.Module
   def permission_metadata do
