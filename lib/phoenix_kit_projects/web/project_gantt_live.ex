@@ -107,7 +107,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
       window_start: nil,
       window_end: nil,
       today: Date.utc_today(),
-      # True between the connected mount and the {:continue, :load_gantt} that
+      # True between the connected mount and the `:load_gantt` message that
       # builds the chart — drives the loading skeleton so the first paint isn't
       # blocked on N per-project queries (and doesn't flash the empty state).
       gantt_loading: false

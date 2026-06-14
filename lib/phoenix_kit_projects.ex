@@ -61,11 +61,17 @@ defmodule PhoenixKitProjects do
   # css-sources compiler resolves the dep atom to deps/phoenix_live_gantt.
   def css_sources, do: [:phoenix_kit_projects, :phoenix_live_gantt]
 
-  @impl PhoenixKit.Module
   # The Timeline tab renders the gantt with enable_hooks={true}, so the host's
   # LiveSocket needs the gantt's JS hooks. Declaring the bundle here lets the
   # :phoenix_kit_js_sources compiler wire it into the host automatically — no
   # manual app.js import/spread. The bundle ships in phoenix_live_gantt's priv/.
+  #
+  # NOTE: no `@impl PhoenixKit.Module` — the core behaviour doesn't declare a
+  # `js_sources/0` callback yet (it ships with the core js-sources compiler PR).
+  # Annotating @impl against the released core warns ("behaviour does not specify
+  # such callback") and fails `mix precommit` (compile --warnings-as-errors).
+  # Until core ships the callback this is a harmless plain function core never
+  # calls; re-add @impl once the core release includes it.
   def js_sources do
     [
       %{

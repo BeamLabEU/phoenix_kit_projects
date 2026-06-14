@@ -171,7 +171,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         # Which tab the page opens on, straight from the route's live_action
         # (`/list/:id/gantt` → `:gantt`, everything else → `:list`). Server-side
         # so a direct/bookmarked `/gantt` load renders the gantt before any JS.
-        active_tab = tab_for_action(socket)
+        # Templates have no tabs/gantt (both are `not @is_template`), so a template
+        # uuid reached via the `/list/:id/gantt` route falls back to the list —
+        # otherwise both the list and the gantt would render hidden (blank page).
+        active_tab = tab_for_action(socket, is_template)
 
         # Resolve the workflow-status list once (read-only — nothing is
         # provisioned or seeded here; an unset shared default simply yields
@@ -1313,8 +1316,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # The active tab, derived from the route's live_action. `:gantt` is the gantt
   # tab; `:show`, `:show_template`, and the embedded (nil live_action) mount all
-  # default to the list.
-  defp tab_for_action(socket) do
+  # default to the list. Templates never expose the gantt, so they pin to `:list`
+  # even on the `/gantt` route (the tab bar + gantt are `not @is_template`).
+  defp tab_for_action(_socket, true), do: :list
+
+  defp tab_for_action(socket, _is_template) do
     case Map.get(socket.assigns, :live_action) do
       :gantt -> :gantt
       _ -> :list
