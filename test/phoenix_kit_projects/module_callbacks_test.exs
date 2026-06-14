@@ -42,8 +42,22 @@ defmodule PhoenixKitProjects.ModuleCallbacksTest do
       assert PhoenixKitProjects.version() == mix_version
     end
 
-    test "css_sources/0 returns the OTP app name" do
-      assert PhoenixKitProjects.css_sources() == [:phoenix_kit_projects]
+    test "css_sources/0 includes the module and the gantt dep" do
+      # :phoenix_live_gantt is included so the host's Tailwind scans the
+      # gantt's classes (Timeline tab) via core's css-sources compiler.
+      assert PhoenixKitProjects.css_sources() == [:phoenix_kit_projects, :phoenix_live_gantt]
+    end
+
+    test "js_sources/0 declares the gantt hook bundle" do
+      # Pins the bundle core's :phoenix_kit_js_sources compiler wires into
+      # the host LiveSocket so the Timeline tab's enable_hooks work.
+      assert PhoenixKitProjects.js_sources() == [
+               %{
+                 app: :phoenix_live_gantt,
+                 file: "static/assets/phoenix_live_gantt.js",
+                 global: "PhoenixLiveGanttHooks"
+               }
+             ]
     end
 
     test "permission_metadata/0 returns the projects key + label" do

@@ -36,6 +36,8 @@ defmodule PhoenixKitProjects.Paths do
   def new_project, do: Routes.path("#{@base}/list/new")
   @doc "Show page for a single project."
   def project(id), do: Routes.path("#{@base}/list/#{id}")
+  @doc "Gantt/waterfall timeline view for a single project."
+  def project_gantt(id), do: Routes.path("#{@base}/list/#{id}/gantt")
   @doc "Edit form for a project."
   def edit_project(id), do: Routes.path("#{@base}/list/#{id}/edit")
 

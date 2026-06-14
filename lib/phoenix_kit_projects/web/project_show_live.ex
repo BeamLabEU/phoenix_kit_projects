@@ -3,6 +3,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   Show a project with a vertical timeline of assignments.
   Supports inline status changes, duration editing, dependency
   management, and tracks who completed each task.
+
+  ## List / Timeline tabs
+
+  The page has two views — the vertical task list and the embedded
+  `ProjectGanttLive` Timeline — toggled by tabs under the shared header.
+  Switching is instant (an assign flip) and the gantt is lazily mounted on first
+  open. Keeping the URL in sync (the trailing `/gantt` segment + browser
+  back/forward) is an **optional host-app concern**: the host registers a
+  `ProjectTabsUrl` JS hook that pushes/reads `history` state. The tabs work
+  fully without it — only the URL won't follow the active tab.
   """
 
   use PhoenixKitWeb, :live_view
@@ -22,6 +32,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
+  # Schedule/assignee helpers shared with ProjectGanttLive — imported so the
+  # template's bare calls resolve. See PhoenixKitProjects.Web.Helpers.
+  import PhoenixKitProjects.Web.Helpers,
+    only: [assignee_label: 1, task_counts_weekends?: 2, assignment_hours: 2]
+
   require Logger
 
   # Default wrapper class for the standalone admin page. Embedders can
@@ -36,7 +51,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   @impl true
   def mount(:not_mounted_at_router, %{"id" => id} = session, socket) do
     WebHelpers.maybe_put_locale(session)
-    mount(%{"id" => id}, session, socket)
+    # Reuse the router mount, then force the tab bar off: embedded/emit renders
+    # are list-only (no tabs, no nested gantt — avoids nested-within-nested
+    # live_render). `live_action` is nil here, so `active_tab` already defaults
+    # to `:list`; we only have to flip `router_mounted?`.
+    {:ok, socket} = mount(%{"id" => id}, session, socket)
+    {:ok, assign(socket, router_mounted?: false, gantt_mounted?: false)}
   end
 
   # Fail-closed: emit-session lacking `"id"` lands here. Without this
@@ -57,6 +77,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        project: %Project{},
        is_template: false,
        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
+       router_mounted?: false,
+       active_tab: :list,
+       gantt_mounted?: false,
        assignments: [],
        deps_by_assignment: %{},
        total_tasks: 0,
@@ -104,6 +127,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            project: %Project{},
            is_template: false,
            wrapper_class: @default_wrapper_class,
+           router_mounted?: false,
+           active_tab: :list,
+           gantt_mounted?: false,
            assignments: [],
            deps_by_assignment: %{},
            total_tasks: 0,
@@ -142,6 +168,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
+        # Which tab the page opens on, straight from the route's live_action
+        # (`/list/:id/gantt` → `:gantt`, everything else → `:list`). Server-side
+        # so a direct/bookmarked `/gantt` load renders the gantt before any JS.
+        active_tab = tab_for_action(socket)
+
         # Resolve the workflow-status list once (read-only — nothing is
         # provisioned or seeded here; an unset shared default simply yields
         # an empty list). `current_status` is derived from the same list so
@@ -162,6 +193,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             project: project,
             is_template: is_template,
             wrapper_class: wrapper_class,
+            # Tab state. `router_mounted?` gates the whole tab bar — an
+            # embedded/emit `live_render` mount renders list-only. The gantt is
+            # lazy-mounted: it only `live_render`s once its tab is first opened,
+            # then stays mounted so its zoom/expand survive switching back.
+            router_mounted?: true,
+            active_tab: active_tab,
+            gantt_mounted?: active_tab == :gantt,
             editing_duration_uuid: nil,
             start_modal_open: false,
             start_form: to_form(%{"start_at" => default_start_at_local()}),
@@ -222,7 +260,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              :project_started,
              :project_status_changed
            ] do
-    case Projects.get_project(socket.assigns.project.uuid) do
+    # Must re-preload the assignee: the render derefs @project.assigned_person.user
+    # (assignee_label/1), so a plain get_project/1 here leaves it NotLoaded and the
+    # re-render crashes when the project has an assignee.
+    case Projects.get_project_with_assignee(socket.assigns.project.uuid) do
       nil ->
         {:noreply, socket}
 
@@ -688,7 +729,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # ── Events ──────────────────────────────────────────────────────
 
+  # Switch the List/Timeline tab. Instant (an assign flip, no navigation) and
+  # the gantt's nested LV stays mounted, so its zoom/expand survive. The gantt
+  # is lazy-mounted the first time its tab opens and never unmounted. We push
+  # the URL change to the `ProjectTabsUrl` hook — except when the switch itself
+  # CAME from the URL (browser back/forward), to avoid a push/popstate loop.
   @impl true
+  def handle_event("switch_tab", %{"tab" => tab} = params, socket) do
+    active = if tab == "gantt", do: :gantt, else: :list
+
+    socket =
+      socket
+      |> assign(active_tab: active)
+      |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
+
+    socket =
+      if params["source"] == "history",
+        do: socket,
+        else: push_event(socket, "project_tab_url", %{tab: tab})
+
+    {:noreply, socket}
+  end
+
   def handle_event("complete", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
@@ -1249,6 +1311,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> String.slice(0, 16)
   end
 
+  # The active tab, derived from the route's live_action. `:gantt` is the gantt
+  # tab; `:show`, `:show_template`, and the embedded (nil live_action) mount all
+  # default to the list.
+  defp tab_for_action(socket) do
+    case Map.get(socket.assigns, :live_action) do
+      :gantt -> :gantt
+      _ -> :list
+    end
+  end
+
   defp do_start_project(socket, started_at) do
     case Projects.start_project(socket.assigns.project, started_at) do
       {:ok, project} ->
@@ -1347,15 +1419,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  defp assignee_label(a) do
-    cond do
-      a.assigned_person && a.assigned_person.user -> a.assigned_person.user.email
-      a.assigned_team -> a.assigned_team.name
-      a.assigned_department -> a.assigned_department.name
-      true -> nil
-    end
-  end
-
   defp assignee_type(a) do
     cond do
       a.assigned_person_uuid -> gettext("Person")
@@ -1366,25 +1429,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   # ── Schedule calculation ─────────────────────────────────────────
-
-  defp to_hours(n, unit, counts_weekends), do: TaskSchema.to_hours(n, unit, counts_weekends)
-
-  defp task_counts_weekends?(a, project) do
-    case a.counts_weekends do
-      nil -> project.counts_weekends
-      val -> val
-    end
-  end
-
-  defp assignment_hours(a, project) do
-    weekends? = task_counts_weekends?(a, project)
-
-    if a.estimated_duration && a.estimated_duration_unit do
-      to_hours(a.estimated_duration, a.estimated_duration_unit, weekends?)
-    else
-      to_hours(a.task.estimated_duration, a.task.estimated_duration_unit, weekends?)
-    end
-  end
 
   defp calculate_schedule(%{started_at: nil}, _), do: nil
   defp calculate_schedule(_project, []), do: nil
@@ -1675,6 +1719,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             >
               <.icon name="hero-folder-plus" class="w-4 h-4" /> {gettext("Add sub-project")}
             </.smart_link>
+            <%!-- The Gantt/timeline view is now the "Timeline" tab below the
+                 header (router-mounted only), so no separate link here. --%>
             <%!-- Inline workflow-status picker (the current value). The
                  status-list *source* is chosen on the new/edit form (and the
                  global default in Settings), not here. Hidden when no
@@ -1827,56 +1873,71 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <% end %>
       </div>
 
-      <%= if @project.started_at != nil and @schedule do %>
-        <% {rem_v, rem_u} = humanize_hours(@schedule.remaining_hours) %>
-        <div class="flex flex-wrap items-center gap-3 bg-base-200/50 rounded-lg px-4 py-2 text-xs">
-          <%= if @project.completed_at do %>
-            <div class="flex items-center gap-2">
-              <.icon name="hero-check-circle" class="w-4 h-4 text-success" />
-              <span class="text-base-content/60">{gettext("Finished:")}</span>
-              <span class="font-medium">{L10n.format_datetime(@schedule.projected_end)}</span>
-            </div>
-          <% else %>
-            <div class="flex items-center gap-2">
-              <.icon name="hero-clock" class="w-4 h-4 text-base-content/60" />
-              <span class="text-base-content/60">{gettext("Remaining:")}</span>
-              <span class="font-medium">{rem_v} {rem_u}</span>
-            </div>
-            <span class="text-base-content/40">·</span>
-            <div class="flex items-center gap-2">
-              <.icon name="hero-arrow-trending-up" class={"w-4 h-4 #{if @schedule.ahead?, do: "text-success", else: "text-error"}"} />
-              <span class="text-base-content/60">{gettext("ETA:")}</span>
-              <span class={[
-                "font-medium",
-                @schedule.ahead? && "text-success",
-                not @schedule.ahead? && "text-error"
-              ]}>
-                {L10n.format_datetime(@schedule.projected_end)}
-              </span>
-              <span class="text-base-content/40">{gettext("at planned pace")}</span>
+      <%!-- Schedule summary + progress as ONE card: the progress bar is the
+           card's bottom edge (a thin flush strip), so the two read as a unit. --%>
+      <% show_schedule = @project.started_at != nil and @schedule != nil %>
+      <% show_progress = @total_tasks > 0 and not @is_template %>
+      <%= if show_schedule or show_progress do %>
+        <div class="bg-base-200/50 rounded-t-lg overflow-hidden">
+          <%= if show_schedule do %>
+            <% {rem_v, rem_u} = humanize_hours(@schedule.remaining_hours) %>
+            <div class="flex flex-wrap items-center gap-3 px-4 py-2 text-xs">
+              <%= if @project.completed_at do %>
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-check-circle" class="w-4 h-4 text-success" />
+                  <span class="text-base-content/60">{gettext("Finished:")}</span>
+                  <span class="font-medium">{L10n.format_datetime(@schedule.projected_end)}</span>
+                </div>
+              <% else %>
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-clock" class="w-4 h-4 text-base-content/60" />
+                  <span class="text-base-content/60">{gettext("Remaining:")}</span>
+                  <span class="font-medium">{rem_v} {rem_u}</span>
+                </div>
+                <span class="text-base-content/40">·</span>
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-arrow-trending-up" class={"w-4 h-4 #{if @schedule.ahead?, do: "text-success", else: "text-error"}"} />
+                  <span class="text-base-content/60">{gettext("ETA:")}</span>
+                  <span class={[
+                    "font-medium",
+                    @schedule.ahead? && "text-success",
+                    not @schedule.ahead? && "text-error"
+                  ]}>
+                    {L10n.format_datetime(@schedule.projected_end)}
+                  </span>
+                  <span class="text-base-content/40">{gettext("at planned pace")}</span>
+                </div>
+              <% end %>
             </div>
           <% end %>
-        </div>
-      <% end %>
-
-      <%!-- Progress bar (not for templates) --%>
-      <%= if @total_tasks > 0 and not @is_template do %>
-        <div class="flex items-center gap-3">
-          <div class="flex-1">
-            <div class="w-full bg-base-300 rounded-full h-2">
-              <div
-                class="bg-success h-2 rounded-full transition-all duration-300"
-                style={"width: #{@progress_pct}%"}
-              >
-              </div>
+          <%!-- Progress bar — the card's bottom border (not for templates). --%>
+          <div :if={show_progress} class="w-full bg-base-300 h-1.5" title={gettext("%{done}/%{total} done", done: @done_tasks, total: @total_tasks)}>
+            <div class="bg-success h-1.5 transition-all duration-300" style={"width: #{@progress_pct}%"}>
             </div>
           </div>
-          <span class="text-sm text-base-content/60 shrink-0">
-            {gettext("%{done}/%{total} done", done: @done_tasks, total: @total_tasks)}
-          </span>
         </div>
       <% end %>
 
+      <%!-- View tabs (List / Timeline). Router-mounted only — an embedded
+           live_render of this page stays list-only. The phx-hook syncs the URL
+           (push/popstate); the tabs still switch instantly without it. --%>
+      <div
+        :if={@router_mounted? and not @is_template}
+        id={"project-tabs-#{@project.uuid}"}
+        phx-hook="ProjectTabsUrl"
+      >
+        <.nav_tabs
+          active_tab={to_string(@active_tab)}
+          on_change="switch_tab"
+          tabs={[
+            %{id: "list", label: gettext("List"), icon: "hero-list-bullet"},
+            %{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"}
+          ]}
+        />
+      </div>
+
+      <%!-- List tab --%>
+      <div class={if(@router_mounted? and @active_tab != :list, do: "hidden")}>
       <%!-- Timeline --%>
       <%= if @assignments == [] do %>
         <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
@@ -2134,6 +2195,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           </div>
         </div>
       <% end %>
+      </div>
+
+      <%!-- Gantt tab — router-mounted only, lazy-mounted on first activation and
+           then kept (so its own zoom/expand survive switching back). It's a
+           nested LiveView with its own PubSub/state; `headless` drops its
+           back-link since the tabs replace it. --%>
+      <div :if={@router_mounted? and not @is_template} class={if(@active_tab != :gantt, do: "hidden")}>
+        <%= if @gantt_mounted? do %>
+          {live_render(@socket, PhoenixKitProjects.Web.ProjectGanttLive,
+            id: "project-gantt-live-#{@project.uuid}",
+            session: %{
+              "id" => @project.uuid,
+              "headless" => true,
+              # No wrapper padding — the show page already pads this content area;
+              # the gantt's own `px-4 py-6` would double it and push the chart down.
+              "wrapper_class" => "",
+              "locale" => L10n.current_content_lang()
+            })}
+        <% end %>
+      </div>
 
       <%!-- Start-project modal — date editable so the user can backdate
            an already-running project or queue a future start. The

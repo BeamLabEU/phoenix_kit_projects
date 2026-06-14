@@ -9,6 +9,11 @@ defmodule PhoenixKitProjects do
 
   use PhoenixKit.Module
 
+  # Single source of truth: read the version from mix.exs at compile time so
+  # version/0 can't drift from @version on a release (baked in — no Mix at
+  # runtime). The project's own config is in scope when this module compiles.
+  @version Mix.Project.config()[:version]
+
   alias PhoenixKit.Dashboard.Tab
   alias PhoenixKit.Settings
 
@@ -38,7 +43,7 @@ defmodule PhoenixKitProjects do
   end
 
   @impl PhoenixKit.Module
-  def version, do: "0.9.1"
+  def version, do: @version
 
   @impl PhoenixKit.Module
   def permission_metadata do
@@ -51,7 +56,25 @@ defmodule PhoenixKitProjects do
   end
 
   @impl PhoenixKit.Module
-  def css_sources, do: [:phoenix_kit_projects]
+  # Includes :phoenix_live_gantt so the host's Tailwind scans the gantt's
+  # classes (used by the Timeline tab) with no manual `@source` — the
+  # css-sources compiler resolves the dep atom to deps/phoenix_live_gantt.
+  def css_sources, do: [:phoenix_kit_projects, :phoenix_live_gantt]
+
+  @impl PhoenixKit.Module
+  # The Timeline tab renders the gantt with enable_hooks={true}, so the host's
+  # LiveSocket needs the gantt's JS hooks. Declaring the bundle here lets the
+  # :phoenix_kit_js_sources compiler wire it into the host automatically — no
+  # manual app.js import/spread. The bundle ships in phoenix_live_gantt's priv/.
+  def js_sources do
+    [
+      %{
+        app: :phoenix_live_gantt,
+        file: "static/assets/phoenix_live_gantt.js",
+        global: "PhoenixLiveGanttHooks"
+      }
+    ]
+  end
 
   def ai_translatables do
     [
@@ -202,6 +225,20 @@ defmodule PhoenixKitProjects do
         parent: :admin_projects,
         visible: false,
         live_view: {PhoenixKitProjects.Web.ProjectShowLive, :show}
+      },
+      %Tab{
+        id: :admin_projects_project_gantt,
+        label: "Timeline",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/:id/gantt",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        # Same LiveView as the show page, different live_action — the gantt is a
+        # tab on the show page, not a separate page. `:gantt` selects that tab.
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :gantt}
       },
       %Tab{
         id: :admin_projects_template_new,

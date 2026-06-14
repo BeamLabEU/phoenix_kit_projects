@@ -497,7 +497,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           }
         )
 
-      assert html =~ "Edit assignment"
+      # Title references the assignment's task (falls back to "Edit assignment"
+      # only when the task can't be resolved).
+      assert html =~ "Edit task:"
     end
   end
 end

@@ -8,11 +8,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
+  use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.MultilangForm
 
   require Logger
 
+  alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
@@ -46,8 +48,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
+      |> assign_ai_translate()
 
     {:ok, socket}
+  end
+
+  # Wires the AI-translate modal/buttons for the assignment's `description`.
+  # Only the task-assignment case is translatable here (sub-project links edit
+  # the child project elsewhere), so the resource is the assignment only when
+  # editing a task row. Events are handled by `use ...AITranslate.Embed`.
+  defp assign_ai_translate(socket) do
+    resource =
+      if socket.assigns[:live_action] == :edit and socket.assigns[:kind] == "task",
+        do: socket.assigns[:assignment],
+        else: nil
+
+    FormGlue.assign_ai_translation(
+      socket,
+      "assignment",
+      resource,
+      PhoenixKitProjects.AITranslateBinding
+    )
   end
 
   # Recursive function component for the closure-pull tree. Renders
@@ -296,9 +317,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         |> assign_status_init(child)
 
       {project, assignment} ->
+        task_name =
+          assignment.task && Task.localized_title(assignment.task, L10n.current_content_lang())
+
         socket
         |> assign(
-          page_title: gettext("Edit assignment"),
+          page_title:
+            if(task_name,
+              do: gettext("Edit task: %{name}", name: task_name),
+              else: gettext("Edit assignment")
+            ),
           kind: "task",
           sp_form: to_form(Projects.change_project(%Project{}), as: :subproject),
           sp_mode: "new",
@@ -1463,20 +1491,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         </.form>
       <% else %>
       <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
-        <%!-- Language tabs render only when multilang is on AND >1 language enabled.
-             Single-field translation (description-only): no `<.multilang_fields_wrapper>`
-             needed — the rest of the form keeps its primary-language values across
-             tab switches because their inputs aren't translatable. --%>
-        <%= if @multilang_enabled do %>
-          <div class="card bg-base-100 shadow">
-            <.multilang_tabs
-              multilang_enabled={@multilang_enabled}
-              language_tabs={@language_tabs}
-              current_lang={@current_lang}
-            />
-          </div>
-        <% end %>
-
         <div class="card bg-base-100 shadow">
           <div class="card-body flex flex-col gap-3">
             <%= if @live_action == :new do %>
@@ -1537,31 +1551,69 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <% else %>
                 <.input name="new_task_title" label={gettext("Task title")} value={@new_task_title} required />
               <% end %>
-            <% else %>
-              <div class="text-sm text-base-content/60">
-                {gettext("Task:")} <span class="font-medium">{@assignment.task && Task.localized_title(@assignment.task, L10n.current_content_lang())}</span>
-              </div>
+
+              <%!-- Separates task-selection from the details below (new form only;
+                   the edit form's task is already named in the page header). --%>
+              <div class="divider text-xs text-base-content/50 my-1">{gettext("Details")}</div>
             <% end %>
 
-            <div class="divider text-xs text-base-content/50 my-1">{gettext("Details")}</div>
-
-            <.translatable_field
-              field_name="description"
-              form_prefix="assignment"
-              changeset={@form.source}
-              schema_field={:description}
+            <%!-- `description` is the only translatable field: the language tabs
+                 sit above it and the field goes INSIDE the wrapper so a language
+                 switch shows the skeleton + cleanly re-mounts. The non-translatable
+                 fields below stay outside the wrapper (and keep their values). --%>
+            <.multilang_tabs
+              :if={@multilang_enabled}
               multilang_enabled={@multilang_enabled}
+              language_tabs={@language_tabs}
               current_lang={@current_lang}
-              primary_language={@primary_language}
-              lang_data={WebHelpers.lang_data(@form, @current_lang)}
-              secondary_name={"assignment[translations][#{@current_lang}][description]"}
-              lang_data_key="description"
-              label={gettext("Description")}
-              type="textarea"
-              rows={3}
             />
 
-            <div class="flex gap-2">
+            <%!-- AI-translate row, tucked under the tabs with a separator above
+                 the field — matches the project/task/template forms (no px-6
+                 here since this row already sits inside a padded card-body). --%>
+            <div
+              :if={@multilang_enabled}
+              class="flex items-center gap-3 -mt-1 py-1 border-b border-base-200"
+            >
+              <.ai_translate_button ai_translate={FormGlue.ai_translate_config(assigns)} />
+              <.ai_translate_progress ai_translate={FormGlue.ai_translate_config(assigns)} />
+              <.ai_translate_hint ai_translate={FormGlue.ai_translate_config(assigns)} />
+            </div>
+
+            <.multilang_fields_wrapper
+              multilang_enabled={@multilang_enabled}
+              current_lang={@current_lang}
+              skeleton_class="space-y-2"
+              fields_class=""
+            >
+              <:skeleton>
+                <div class="space-y-2">
+                  <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
+                  <div class="bg-base-content/15 rounded h-16 w-full animate-pulse"></div>
+                </div>
+              </:skeleton>
+
+              <.translatable_field
+                field_name="description"
+                form_prefix="assignment"
+                changeset={@form.source}
+                schema_field={:description}
+                multilang_enabled={@multilang_enabled}
+                current_lang={@current_lang}
+                primary_language={@primary_language}
+                lang_data={WebHelpers.lang_data(@form, @current_lang)}
+                secondary_name={"assignment[translations][#{@current_lang}][description]"}
+                lang_data_key="description"
+                label={gettext("Description")}
+                type="textarea"
+                rows={3}
+                disabled={@current_lang in @ai_in_flight}
+              />
+            </.multilang_fields_wrapper>
+
+            <%!-- Bigger gap separating the translatable Description (governed by
+                 the language tabs) from the non-translatable fields below. --%>
+            <div class="flex gap-2 mt-4">
               <div class="flex-1">
                 <.input field={@form[:estimated_duration]} label={gettext("Duration")} type="number" />
               </div>
@@ -1737,6 +1789,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <%= if @live_action == :new, do: gettext("Add"), else: gettext("Save") %>
           </button>
         </div>
+
+        <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
       </.form>
       <% end %>
     </div>

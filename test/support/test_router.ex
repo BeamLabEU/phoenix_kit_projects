@@ -37,6 +37,7 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/list", ProjectsLive, :index)
       live("/list/new", ProjectFormLive, :new)
       live("/list/:id", ProjectShowLive, :show)
+      live("/list/:id/gantt", ProjectShowLive, :gantt)
       live("/list/:id/edit", ProjectFormLive, :edit)
 
       live("/list/:project_id/assignments/new", AssignmentFormLive, :new)
@@ -44,6 +45,7 @@ defmodule PhoenixKitProjects.Test.Router do
 
       live("/templates", TemplatesLive, :index)
       live("/templates/new", TemplateFormLive, :new)
+      live("/templates/:id", ProjectShowLive, :show_template)
       live("/templates/:id/edit", TemplateFormLive, :edit)
     end
   end

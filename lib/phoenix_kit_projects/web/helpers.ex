@@ -28,8 +28,63 @@ defmodule PhoenixKitProjects.Web.Helpers do
   """
 
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
 
   require Logger
+
+  # ─────────────────────────────────────────────────────────────────
+  # Schedule & assignee helpers
+  #
+  # Shared by ProjectShowLive (vertical list) and ProjectGanttLive
+  # (Timeline) — the gantt was split out of the show page, so these
+  # live here rather than duplicated in both LVs.
+  # ─────────────────────────────────────────────────────────────────
+
+  @doc """
+  The display label for an assignment's assignee (person email / team /
+  department name), or `nil` when unassigned. Requires the assignee assocs
+  to be preloaded.
+  """
+  def assignee_label(a) do
+    cond do
+      a.assigned_person && a.assigned_person.user -> a.assigned_person.user.email
+      a.assigned_team -> a.assigned_team.name
+      a.assigned_department -> a.assigned_department.name
+      true -> nil
+    end
+  end
+
+  @doc """
+  Whether an assignment counts weekends — its own override, falling back to
+  the project's setting.
+  """
+  def task_counts_weekends?(a, project) do
+    case a.counts_weekends do
+      nil -> project.counts_weekends
+      val -> val
+    end
+  end
+
+  @doc """
+  The estimated hours for an assignment: its own duration override if set,
+  otherwise the underlying task's duration (nil-safe). Weekends are honored
+  per `task_counts_weekends?/2`.
+  """
+  def assignment_hours(a, project) do
+    weekends? = task_counts_weekends?(a, project)
+
+    if a.estimated_duration && a.estimated_duration_unit do
+      TaskSchema.to_hours(a.estimated_duration, a.estimated_duration_unit, weekends?)
+    else
+      task = a.task
+
+      TaskSchema.to_hours(
+        task && task.estimated_duration,
+        task && task.estimated_duration_unit,
+        weekends?
+      )
+    end
+  end
 
   # ─────────────────────────────────────────────────────────────────
   # Embeddable LV whitelist

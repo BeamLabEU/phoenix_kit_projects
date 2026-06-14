@@ -16,6 +16,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitStaff.Schemas.Person
 
   setup %{conn: conn} do
     # Use a real registered user — the `complete` / `reopen` paths
@@ -494,6 +496,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert Process.alive?(view.pid)
     end
 
+    test "project_updated re-preloads the assignee (regression: NotLoaded crash)",
+         %{conn: conn, actor_uuid: actor_uuid} do
+      # A project WITH an assignee: the render derefs @project.assigned_person.user
+      # (assignee_label/1). Before the fix the handler reloaded via get_project/1
+      # (no preload), so the re-render crashed on the NotLoaded assoc.
+      {:ok, person} =
+        Repo.insert(%Person{user_uuid: actor_uuid, status: "active"})
+
+      project = fixture_project(%{"assigned_person_uuid" => person.uuid})
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      assert html =~ "Person"
+
+      send(view.pid, {:projects, :project_updated, %{}})
+
+      # render/1 raises if the LV crashed re-rendering the assignee badge.
+      assert render(view) =~ "Person"
+      assert Process.alive?(view.pid)
+    end
+
     test "project_deleted flashes + redirects to projects index",
          %{conn: conn, project: p} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
@@ -550,6 +571,110 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       assert Projects.get_project!(p.uuid).current_status_slug == nil
       assert html =~ "Could not change the status."
+    end
+  end
+
+  describe "view tabs (list / gantt)" do
+    defp started_project_for_tabs do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      {:ok, _} = Projects.start_project(project)
+      project = Projects.get_project!(project.uuid)
+      task = fixture_task(%{"estimated_duration" => 2, "estimated_duration_unit" => "days"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => task.uuid})
+
+      project
+    end
+
+    test "the list route shows the tab bar but does NOT mount the gantt (lazy)", %{conn: conn} do
+      project = started_project_for_tabs()
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert html =~ ~s(role="tablist")
+      assert html =~ "Timeline"
+      # Lazy: the nested gantt is not live_rendered until its tab is opened.
+      refute html =~ "lg-wrap"
+    end
+
+    test "the /gantt route opens the gantt tab with the nested chart mounted", %{conn: conn} do
+      project = started_project_for_tabs()
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/gantt")
+
+      assert html =~ ~s(role="tablist")
+      # Same page, gantt tab active → the nested ProjectGanttLive is rendered.
+      # Its build is deferred off the first paint, so settle the child LV before
+      # asserting the chart (render/1 drains the child's :load_gantt message).
+      gantt = find_live_child(view, "project-gantt-live-#{project.uuid}")
+      chart = render(gantt)
+      assert chart =~ "lg-wrap"
+      assert chart =~ "lg-bar"
+    end
+
+    test "switch_tab mounts the gantt on first open, then keeps it mounted", %{conn: conn} do
+      project = started_project_for_tabs()
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      refute html =~ "lg-wrap"
+
+      render_click(view, "switch_tab", %{"tab" => "gantt"})
+      gantt = find_live_child(view, "project-gantt-live-#{project.uuid}")
+      assert render(gantt) =~ "lg-wrap"
+
+      # Switching back hides it (CSS) but keeps it mounted (lazy-once) — the
+      # built chart stays in the (hidden) DOM.
+      html = render_click(view, "switch_tab", %{"tab" => "list"})
+      assert html =~ "lg-wrap"
+    end
+
+    test "embedded ProjectShowLive renders no tabs and no nested gantt", %{conn: conn} do
+      project = started_project_for_tabs()
+
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid}
+        )
+
+      refute html =~ ~s(role="tablist")
+      refute html =~ "lg-wrap"
+    end
+
+    test "a template show page (router-mounted) renders no tabs — no template gantt route",
+         %{conn: conn} do
+      template = fixture_template()
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates/#{template.uuid}")
+
+      refute html =~ ~s(role="tablist")
+    end
+
+    test "switch_tab pushes the URL event; a history-sourced switch does not", %{conn: conn} do
+      project = started_project_for_tabs()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_click(view, "switch_tab", %{"tab" => "gantt"})
+      assert_push_event(view, "project_tab_url", %{tab: "gantt"})
+
+      # A switch that came FROM the URL (browser back/forward) must NOT push the
+      # URL again, or pushState/popstate would loop.
+      render_click(view, "switch_tab", %{"tab" => "list", "source" => "history"})
+      refute_push_event(view, "project_tab_url", %{})
+    end
+
+    test "the schedule summary and progress bar render as one fused card", %{conn: conn} do
+      project = started_project_for_tabs()
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # The schedule line renders.
+      assert html =~ "Remaining:"
+      assert html =~ "ETA:"
+
+      # One rounded-top container with a square bottom, so the progress bar reads
+      # as the card's bottom border.
+      assert html =~ "rounded-t-lg overflow-hidden"
+
+      # The progress bar is the thin (h-1.5) strip at the card's bottom edge, and
+      # the task count lives only in its title tooltip — not a visible "N/M done"
+      # label (which the merge intentionally removed).
+      assert html =~ ~r/class="w-full bg-base-300 h-1\.5"\s+title="[^"]*done"/
     end
   end
 end
