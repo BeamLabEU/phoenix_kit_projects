@@ -13,6 +13,18 @@ defmodule PhoenixKitProjects.AITranslatableTest do
 
   defp primary, do: Multilang.primary_language()
 
+  defp fixture_assignment(attrs \\ %{}) do
+    project = fixture_project()
+    task = fixture_task()
+
+    {:ok, a} =
+      Projects.create_assignment(
+        Map.merge(%{"project_uuid" => project.uuid, "task_uuid" => task.uuid}, attrs)
+      )
+
+    a
+  end
+
   describe "fetch/2 with is_template validation" do
     test "project type loads a real project, rejects a template" do
       project = fixture_project()
@@ -123,6 +135,25 @@ defmodule PhoenixKitProjects.AITranslatableTest do
 
       assert {:error, :resource_not_found} =
                AITranslatable.put_translation(project, "es", %{"name" => "Lanzamiento"}, [])
+    end
+  end
+
+  describe "assignment adapter (description-only)" do
+    test "fetch/2 loads an assignment; source_fields reads its description" do
+      a = fixture_assignment(%{"description" => "Kickoff notes"})
+
+      assert {:ok, loaded} = AITranslatable.fetch("assignment", a.uuid)
+      assert loaded.uuid == a.uuid
+      assert AITranslatable.source_fields(a, primary())["description"] == "Kickoff notes"
+    end
+
+    test "put_translation/4 merges the description into translations[lang]" do
+      a = fixture_assignment()
+
+      assert {:ok, _} =
+               AITranslatable.put_translation(a, "es", %{"description" => "Notas"}, [])
+
+      assert Projects.get_assignment(a.uuid).translations["es"]["description"] == "Notas"
     end
   end
 end

@@ -8,11 +8,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
+  use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.MultilangForm
 
   require Logger
 
+  alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
@@ -46,8 +48,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
+      |> assign_ai_translate()
 
     {:ok, socket}
+  end
+
+  # Wires the AI-translate modal/buttons for the assignment's `description`.
+  # Only the task-assignment case is translatable here (sub-project links edit
+  # the child project elsewhere), so the resource is the assignment only when
+  # editing a task row. Events are handled by `use ...AITranslate.Embed`.
+  defp assign_ai_translate(socket) do
+    resource =
+      if socket.assigns[:live_action] == :edit and socket.assigns[:kind] == "task",
+        do: socket.assigns[:assignment],
+        else: nil
+
+    FormGlue.assign_ai_translation(
+      socket,
+      "assignment",
+      resource,
+      PhoenixKitProjects.AITranslateBinding
+    )
   end
 
   # Recursive function component for the closure-pull tree. Renders
@@ -1547,6 +1568,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               current_lang={@current_lang}
             />
 
+            <%!-- AI-translate row, tucked under the tabs with a separator above
+                 the field — matches the project/task/template forms (no px-6
+                 here since this row already sits inside a padded card-body). --%>
+            <div
+              :if={@multilang_enabled}
+              class="flex items-center gap-3 -mt-1 py-1 border-b border-base-200"
+            >
+              <.ai_translate_button ai_translate={FormGlue.ai_translate_config(assigns)} />
+              <.ai_translate_progress ai_translate={FormGlue.ai_translate_config(assigns)} />
+              <.ai_translate_hint ai_translate={FormGlue.ai_translate_config(assigns)} />
+            </div>
+
             <.multilang_fields_wrapper
               multilang_enabled={@multilang_enabled}
               current_lang={@current_lang}
@@ -1574,6 +1607,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 label={gettext("Description")}
                 type="textarea"
                 rows={3}
+                disabled={@current_lang in @ai_in_flight}
               />
             </.multilang_fields_wrapper>
 
@@ -1755,6 +1789,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <%= if @live_action == :new, do: gettext("Add"), else: gettext("Save") %>
           </button>
         </div>
+
+        <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
       </.form>
       <% end %>
     </div>
