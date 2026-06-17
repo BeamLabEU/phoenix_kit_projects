@@ -268,6 +268,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     end
   end
 
+  @spec start_modes() :: [String.t()]
   def start_modes, do: @start_modes
 
   @typedoc """

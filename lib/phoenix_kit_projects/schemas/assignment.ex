@@ -265,6 +265,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   defp single_assignee_message,
     do: gettext("only one of team, department, or person can be assigned")
 
+  @spec statuses() :: [String.t()]
   def statuses, do: @statuses
 
   @doc "True when this assignment embeds a child project (a sub-project row)."
