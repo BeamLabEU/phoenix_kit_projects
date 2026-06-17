@@ -230,6 +230,45 @@ sweep:
   embedding_test.exs` (28 tests) is the single source of truth for the
   embed contract. CI runs it on every PR.
 
+### Follow-up — embedded auth identity (`current_user_uuid`)
+
+A second-order consequence of "no `on_mount` for embedded LVs": core's
+`:phoenix_kit_ensure_admin` hook is what assigns `:phoenix_kit_current_scope`
+/ `:phoenix_kit_current_user` on the standalone admin page, and it never
+runs for a `live_render` mount. So an embedded LV had **no current user** —
+which surfaced as the comments drawer composer showing "Sign in to post a
+comment." for a logged-in host user, and as `Activity.actor_uuid/1`
+recording `nil` for every embedded mutation (~25 call sites).
+
+Fix: the host passes its viewer's UUID as `session["current_user_uuid"]`,
+and `Helpers.assign_embed_user/2` (called after `assign_embed_state/2` in
+every embeddable LV's mount) reloads the user via
+`PhoenixKit.Users.Auth.get_user/1` + `ensure_active_user/1` and rebuilds
+the scope with `Scope.for_user/1`. The router path is untouched (the helper
+no-ops when a scope is already present — the on_mount hook ran before
+`mount/3`). `PopupHostLive` forwards the key into every child session.
+A string UUID is passed (never the `%User{}` struct — the signed
+`live_render` session is client-readable and would leak the password hash).
+Tests live in the `ProjectShowLive embed — current_user_uuid contract`
+describe block. Full contract: `dev_docs/embedding_emit.md` →
+"Identity — `current_user_uuid`".
+
+**Rejected alternative — `sticky: true`:** a nested LV is
+`:not_mounted_at_router` regardless of stickiness, so it never inherits the
+router `live_session`'s `on_mount` hooks; sticky only governs navigation
+persistence. And the contract must stay host-agnostic (hosts that aren't a
+PhoenixKit admin `live_session`). Session-carried identity is the portable
+mechanism.
+
+**Known limitation:** the reconstructed scope is a mount-time snapshot with
+no live refresh hook, so a mid-session permission change / account switch
+isn't reflected in the embed until it remounts.
+
+**Open for core:** `assign_embed_user/2` is uuid→scope reconstruction over
+core's own Auth functions; every embeddable PhoenixKit module hits this
+gap. It's a candidate to promote to a core `PhoenixKitWeb`-level helper
+(release-gated) so siblings don't re-implement it.
+
 ## Test convention to prevent regression
 
 Every read-only LV that's intended to be embeddable gets a
@@ -287,6 +326,12 @@ opening the PR:
   with a default assigned in `mount/3` reading `session["wrapper_class"]`.
 - [ ] A `describe "embedded (live_isolated)"` block exists in the test
   file with the three canonical assertions.
+- [ ] If the LV reads the current user (comments, activity actor, any
+  permission/ownership check), call `WebHelpers.assign_embed_user/2`
+  after `assign_embed_state/2` in mount, and read the user via
+  **bracket access** (`assigns[:phoenix_kit_current_user]`), never the
+  `@`-form (it raises `KeyError` off-router; enforced by the
+  "no bang-form @phoenix_kit_* refs" guard test).
 
 ## Why no `handle_params/3`?
 

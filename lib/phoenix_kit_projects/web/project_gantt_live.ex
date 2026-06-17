@@ -39,7 +39,11 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
 
   def mount(%{"id" => id}, session, socket) do
     WebHelpers.maybe_put_locale(session)
-    socket = WebHelpers.assign_embed_state(socket, session)
+
+    socket =
+      socket
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
 
     case Projects.get_project_with_assignee(id) do
       nil ->
@@ -234,6 +238,12 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   defp load_gantt(socket) do
     project = socket.assigns.project
     lang = L10n.current_content_lang()
+
+    # Subscribe to the root project's topic BEFORE reading the tree, so a
+    # broadcast that lands while `build_gantt/2` runs can't be dropped on the
+    # floor (mirrors the list LVs' subscribe-before-read). `subscribe_tree/2`
+    # is idempotent, so the full-tree subscribe below skips the root.
+    socket = subscribe_tree(socket, [project.uuid])
 
     {events, connectors, project_uuids} = build_gantt(project, lang)
 

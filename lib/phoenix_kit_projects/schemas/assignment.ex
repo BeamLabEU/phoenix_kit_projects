@@ -116,6 +116,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   Form-facing changeset. Does NOT allow setting `completed_by_uuid` or
   `completed_at` — those are server-owned fields (use `status_changeset/2`).
   """
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(assignment, attrs) do
     assignment
     |> cast(attrs, @required ++ @optional)
@@ -127,6 +128,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   Use from context functions that own the completion transition, e.g.
   progress updates, explicit `complete_assignment/2`, or `reopen_assignment/1`.
   """
+  @spec status_changeset(t(), map()) :: Ecto.Changeset.t()
   def status_changeset(assignment, attrs) do
     assignment
     |> cast(attrs, @required ++ @optional ++ @server_only)
@@ -263,6 +265,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   defp single_assignee_message,
     do: gettext("only one of team, department, or person can be assigned")
 
+  @spec statuses() :: [String.t()]
   def statuses, do: @statuses
 
   @doc "True when this assignment embeds a child project (a sub-project row)."

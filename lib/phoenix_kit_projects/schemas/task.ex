@@ -38,6 +38,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
   }
 
   @doc "Converts a duration to hours under a given calendar mode."
+  @spec to_hours(number() | nil, String.t() | nil, boolean()) :: number()
   def to_hours(nil, _, _), do: 0
   def to_hours(_, nil, _), do: 0
 
@@ -105,6 +106,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
                default_assigned_team_uuid default_assigned_department_uuid
                default_assigned_person_uuid)a
 
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(task, attrs) do
     task
     |> cast(attrs, @required ++ @optional)
@@ -160,6 +162,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
     end
   end
 
+  @spec duration_units() :: [String.t()]
   def duration_units, do: @duration_units
 
   @doc "DB-column field names that participate in the `translations` JSONB."
@@ -198,6 +201,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
 
   defp lookup_translation(_translations, _lang, _field), do: nil
 
+  @spec format_duration(integer() | nil, String.t() | nil) :: String.t()
   def format_duration(nil, _), do: "—"
   def format_duration(_, nil), do: "—"
 

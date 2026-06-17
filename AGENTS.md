@@ -100,11 +100,33 @@ exist, the per-LV fix shapes, the test convention, and the pre-flight
 checklist for new LVs. Read it before adding a new LV.
 
 **All 9 LVs are embeddable.** The regression gate is
-`test/phoenix_kit_projects/web/embedding_test.exs` — 28
-`live_isolated/3` tests pinning the embed contract. Coverage:
+`test/phoenix_kit_projects/web/embedding_test.exs` — 36
+`live_isolated/3` + `render_hook` tests pinning the embed contract
+(including the `current_user_uuid` identity contract). Coverage:
 `OverviewLive`, `ProjectsLive`, `TemplatesLive`, `TasksLive`,
 `ProjectShowLive`, `ProjectFormLive`, `TaskFormLive`,
 `TemplateFormLive`, `AssignmentFormLive`.
+
+> **Host responsibility — pass the viewer's identity.** Any user-aware
+> behavior in an embed (the `ProjectShowLive` comments composer, and
+> activity-log actor attribution on *every* mutating LV) needs the host to
+> pass `session["current_user_uuid"]` — see the contract below. Without it
+> the embed degrades to anonymous (the comments composer shows "Sign in to
+> post a comment.", `Activity.actor_uuid/1` records `nil`) but never
+> crashes. This is unavoidable: a `live_render` child is a separate
+> `:not_mounted_at_router` process and can't see the host's `conn`,
+> assigns, or the router's auth `on_mount` hook — it only gets the
+> `session` map you hand it. Same mechanism as `session["locale"]`.
+>
+> ⚠️ **Identity ≠ authorization.** The `permission: "projects"` gate lives
+> in core's `:phoenix_kit_ensure_admin` `on_mount`, which runs only for
+> router-mounted admin pages — **never** for an off-router `live_render`
+> mount. So embedded mutation handlers are NOT role-gated, and
+> `current_user_uuid` reconstructs the viewer for audit + the comments
+> composer only. **The host MUST gate the embedding page to
+> projects-authorized users** (and source the uuid from its own trusted
+> scope, never request params — the signed session stops client tampering,
+> not unauthorized hosts).
 
 Common shape for **read-only LVs** (Overview / Projects / Templates /
 Tasks / ProjectShow):
@@ -112,11 +134,17 @@ Tasks / ProjectShow):
 ```heex
 {live_render(@socket, PhoenixKitProjects.Web.OverviewLive,
    id: "embedded-projects-overview",
-   session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-6"})}
+   session: %{
+     "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-6",
+     # Viewer identity — needed for the comments composer + activity actor.
+     # Source from the host's own authenticated scope, never request params.
+     "current_user_uuid" => @phoenix_kit_current_scope.user.uuid
+   })}
 ```
 
 `ProjectShowLive` additionally requires `session["id"]` (the project
-UUID). `TasksLive` accepts `session["view"]` (`"list"` or `"groups"`).
+UUID) and reads `session["current_user_uuid"]` for the comments-drawer
+composer. `TasksLive` accepts `session["view"]` (`"list"` or `"groups"`).
 
 Common shape for **form LVs** (ProjectForm / AssignmentForm /
 TaskForm / TemplateForm):
@@ -126,7 +154,9 @@ TaskForm / TemplateForm):
    id: "embedded-new-project",
    session: %{"live_action" => "new",
               "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4",
-              "redirect_to" => "/host/orders/#{@order_id}"})}
+              "redirect_to" => "/host/orders/#{@order_id}",
+              # So the form's activity log attributes to the real actor.
+              "current_user_uuid" => @phoenix_kit_current_scope.user.uuid})}
 ```
 
 Contract (all keys optional unless noted):
@@ -151,6 +181,23 @@ Contract (all keys optional unless noted):
   locale are restored inside the embedded LV's mount so translations
   render in the host's language. Backward-compatible — absent key is a
   no-op and the backend default (English) is used.
+- `session["current_user_uuid"]` — **the viewing user's UUID** (string).
+  Required for any user-aware behavior in an embed: the comments drawer's
+  composer (else it shows "Sign in to post a comment.") and activity-log
+  actor attribution (`Activity.actor_uuid/1` would otherwise record
+  `nil`). An off-router `live_render` mount runs no `on_mount` hook, so
+  `:phoenix_kit_current_scope` / `:phoenix_kit_current_user` are absent;
+  `WebHelpers.assign_embed_user/2` reloads the user from this uuid and
+  rebuilds the scope. The host MUST source it from its own trusted
+  server-side assign (its `phoenix_kit_current_scope` → `scope.user.uuid`),
+  **never** request params. Pass a string UUID, **not** the `%User{}`
+  struct — a struct would serialize the password hash into the
+  client-readable signed `live_render` session. Absent / unknown / inactive
+  uuid degrades to an anonymous scope (composer disabled), never crashes.
+  Backward-compatible. The reconstructed scope is a mount-time snapshot
+  with no live refresh hook, so a mid-session permission change isn't
+  reflected until remount. `PopupHostLive` forwards this key into every
+  child session, so a host using it passes the uuid once.
 - `session["redirect_to"]` — form LVs only. String path. When set,
   `push_navigate` on save / mount-error fires to this path instead of
   the admin default. Lets the host close a modal, refresh state, etc.
@@ -167,7 +214,11 @@ Behavior notes:
   `redirect_to` seam exists.
 - All `phx-click` events, PubSub subscriptions, and the comments
   drawer (on `ProjectShowLive`) are scoped to the embedded socket;
-  reactivity works the same as on the standalone page.
+  reactivity works the same as on the standalone page. The drawer's
+  composer is enabled only when the viewer was supplied via
+  `session["current_user_uuid"]` (reconstructed by
+  `WebHelpers.assign_embed_user/2`); otherwise it renders the read-only
+  thread + a "Sign in to post a comment." prompt.
 - Two embeds of different resources can coexist on one host page;
   PubSub fan-out (`projects:all` etc.) is global so both will rerender
   on cross-resource events. Per-project topic
@@ -203,6 +254,12 @@ Event vocabulary (UI-intent verbs, disjoint from
 {:projects, :deleted, %{kind, uuid, close, frame_ref}}
 ```
 
+`record` on `:saved` is **`%{uuid: ...}` only**, never the full Ecto
+struct — the payload rides a host-supplied PubSub topic that may be
+relayed over the client-readable wire, and a preloaded record (e.g.
+`assigned_person: [:user]`) would leak PII. `kind` conveys the type;
+the host re-fetches by uuid if it needs the record.
+
 `close: bool` — emitter-controlled "should the modal frame pop after
 this event?" `navigate_after_save/3` defaults to `true` (form saves
 are terminal). `notify_deleted_or_navigate/4` emits `true` (resource
@@ -220,6 +277,22 @@ For zero-config popup UX, host mounts
 `PhoenixKitProjects.Web.PopupHostLive` once with an optional
 `root_view` session key — it subscribes, manages a daisyUI `<dialog>`
 modal stack, and renders requested LVs inside via `live_render`.
+
+`PopupHostLive` also reads `session["current_user_uuid"]` (and
+`session["locale"]`) from its own session and **forwards** them into
+every child session it renders — root view and each stacked frame. So a
+popup-host integration passes the viewer's uuid **once** to PopupHost
+and the comments composer / activity actor work in every nested LV:
+
+```heex
+{Phoenix.Component.live_render(@socket, PhoenixKitProjects.Web.PopupHostLive,
+   id: "projects-popup-host",
+   session: %{
+     "pubsub_topic" => "host:orders:#{@order_id}",
+     "current_user_uuid" => @phoenix_kit_current_scope.user.uuid,
+     "root_view" => %{"lv" => "Elixir.PhoenixKitProjects.Web.OverviewLive"}
+   })}
+```
 
 ## Database
 
@@ -280,6 +353,8 @@ Every mutation logs via `PhoenixKitProjects.Activity`. Action strings: `projects
 Guarded with `Code.ensure_loaded?/1` + rescue — logging never crashes mutations.
 
 **Where to log:** activity logging happens at the **LiveView layer**, not inside context functions in `PhoenixKitProjects.Projects`. LiveViews have `actor_uuid` via `socket.assigns[:phoenix_kit_current_user]` and know the user's intent; contexts stay pure, returning `{:ok, record} | {:error, changeset}`. The LiveView logs on success.
+
+**Embedded mounts and the actor:** `socket.assigns[:phoenix_kit_current_user]` is set by core's `:phoenix_kit_ensure_admin` `on_mount` hook on the standalone admin page, but that hook does **not** run for a `live_render` (`:not_mounted_at_router`) mount. There, the assign comes from `WebHelpers.assign_embed_user/2`, which reconstructs the user from `session["current_user_uuid"]` (see the embedding contract above). If the host doesn't pass that key, embedded mutations log `actor_uuid: nil` — by design, not a crash. `Activity.actor_uuid/1` reads the assign with bracket access, so it tolerates the missing key.
 
 **Sugar helpers don't log on their own:** `complete_assignment/2` and `reopen_assignment/1` are thin wrappers that delegate to the server-trusted `update_assignment_status/2`. They emit the same PubSub broadcast, but do **not** emit an activity log entry themselves. If a caller wants `projects.assignment_completed` or `projects.assignment_reopened` recorded, the caller must log it explicitly.
 
@@ -1127,3 +1202,25 @@ forces expected_pct = 100" fix). Resolves the impedance mismatch
 where the proportional model correctly handles "5 days = Mon→Fri" but
 overstates "52 minutes started Saturday evening" as not-yet-due until
 Monday morning.
+
+## TODOs
+
+Workspace-tracked cleanups not ready for an inline `# TODO` in `lib/`.
+
+### Drop the embed-user core-helper fallback (after the next core release)
+
+`Web.Helpers.assign_embed_user/2` delegates to core's
+`PhoenixKitWeb.Users.Auth.assign_embedded_current_user/2` **only when the
+running `phoenix_kit` exposes it** — a `function_exported?`/`apply`
+forward-compat guard — and otherwise falls back to a local copy
+(`local_assign_embed_user/2` + `resolve_embed_identity/1`) so the
+Hex-pinned build stays green against older cores. The two paths are
+behaviourally identical.
+
+Once the `phoenix_kit` requirement floor in `mix.exs` includes the release
+that ships `assign_embedded_current_user/2`: **remove the guard, the
+`local_assign_embed_user/2` fallback, and `resolve_embed_identity/1`, and
+call the core helper directly.** The core helper landed in core's local
+tree (unpushed, riding a separate core change) on 2026-06-17; this cleanup
+unblocks once that core release is out and the pin is bumped. Reference:
+projects PR #22 (`53224a3`).

@@ -123,6 +123,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
   @required ~w(name start_mode)a
   @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
+  @spec changeset(t(), map(), keyword()) :: Ecto.Changeset.t()
   def changeset(project, attrs, opts \\ []) do
     project
     |> cast(attrs, @required ++ @optional)
@@ -267,6 +268,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     end
   end
 
+  @spec start_modes() :: [String.t()]
   def start_modes, do: @start_modes
 
   @typedoc """

@@ -6,6 +6,7 @@ defmodule PhoenixKitProjects.Activity do
   @module "projects"
 
   @doc "Logs a projects activity entry via `PhoenixKit.Activity`. Swallows errors so it never crashes the caller."
+  @spec log(binary(), keyword()) :: term()
   def log(action, opts) when is_binary(action) and is_list(opts) do
     if Code.ensure_loaded?(PhoenixKit.Activity) do
       PhoenixKit.Activity.log(%{
@@ -46,12 +47,14 @@ defmodule PhoenixKitProjects.Activity do
 
   Identical signature to `log/2`. Same rescue/catch shape.
   """
+  @spec log_failed(binary(), keyword()) :: term()
   def log_failed(action, opts) when is_binary(action) and is_list(opts) do
     metadata = Keyword.get(opts, :metadata, %{}) |> Map.put("db_pending", true)
     log(action, Keyword.put(opts, :metadata, metadata))
   end
 
   @doc "Extracts `user.uuid` from the LiveView socket assigns."
+  @spec actor_uuid(Phoenix.LiveView.Socket.t()) :: binary() | nil
   def actor_uuid(socket) do
     case socket.assigns[:phoenix_kit_current_user] do
       %{uuid: uuid} -> uuid

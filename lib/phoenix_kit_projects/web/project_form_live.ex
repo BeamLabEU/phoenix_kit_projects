@@ -46,6 +46,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         status_entities: status_entity_options()
       )
       |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
       |> assign_assignee_state()

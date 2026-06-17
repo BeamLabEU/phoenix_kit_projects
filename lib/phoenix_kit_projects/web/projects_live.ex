@@ -70,6 +70,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         status_options: status_filter_options()
       )
       |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
 
     # Load on both disconnected + connected mount so the first paint has

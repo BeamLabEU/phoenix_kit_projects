@@ -34,18 +34,24 @@ defmodule PhoenixKitProjects.PubSub do
   alias PhoenixKit.PubSub.Manager
 
   @doc "Topic for any project, template, task, or assignment mutation."
+  @spec topic_all() :: String.t()
   def topic_all, do: "projects:all"
   @doc "Topic for task-library mutations."
+  @spec topic_tasks() :: String.t()
   def topic_tasks, do: "projects:tasks"
   @doc "Topic for template-project mutations."
+  @spec topic_templates() :: String.t()
   def topic_templates, do: "projects:templates"
   @doc "Topic scoped to a single project."
+  @spec topic_project(binary()) :: String.t()
   def topic_project(uuid), do: "projects:project:#{uuid}"
 
   @doc "Subscribes the calling process to the given PubSub topic."
+  @spec subscribe(String.t()) :: :ok | {:error, term()}
   def subscribe(topic), do: Manager.subscribe(topic)
 
   @doc "Broadcasts a project event. Templates also fan out to the templates topic."
+  @spec broadcast_project(atom(), map()) :: :ok | {:error, term()}
   def broadcast_project(event, %{uuid: uuid, is_template: true} = payload) do
     msg = {:projects, event, payload}
     Manager.broadcast(topic_all(), msg)
@@ -60,6 +66,7 @@ defmodule PhoenixKitProjects.PubSub do
   end
 
   @doc "Broadcasts a task-library event to the all-projects and tasks topics."
+  @spec broadcast_task(atom(), map()) :: :ok | {:error, term()}
   def broadcast_task(event, %{uuid: _uuid} = payload) do
     msg = {:projects, event, payload}
     Manager.broadcast(topic_all(), msg)
@@ -67,6 +74,7 @@ defmodule PhoenixKitProjects.PubSub do
   end
 
   @doc "Broadcasts an assignment event to the all-projects and the parent project's topic."
+  @spec broadcast_assignment(atom(), map()) :: :ok | {:error, term()}
   def broadcast_assignment(event, %{project_uuid: project_uuid} = payload) do
     msg = {:projects, event, payload}
     Manager.broadcast(topic_all(), msg)
@@ -74,6 +82,7 @@ defmodule PhoenixKitProjects.PubSub do
   end
 
   @doc "Broadcasts a dependency event to the all-projects and the parent project's topic."
+  @spec broadcast_dependency(atom(), map()) :: :ok | {:error, term()}
   def broadcast_dependency(event, %{project_uuid: project_uuid} = payload) do
     msg = {:projects, event, payload}
     Manager.broadcast(topic_all(), msg)

@@ -123,17 +123,23 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
     wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
     host_locale = Map.get(session, "locale")
+    # The host's authenticated user uuid, forwarded into every child
+    # session so embedded LVs can reconstruct the scope across the
+    # `live_render` boundary (see `WebHelpers.assign_embed_user/2`).
+    host_current_user_uuid = Map.get(session, "current_user_uuid")
     max_stack_depth = decode_max_stack_depth(Map.get(session, "max_stack_depth"))
     modal_box_class = Map.get(session, "modal_box_class")
 
     if connected?(socket), do: ProjectsPubSub.subscribe(topic)
 
-    root_view = decode_root_view(Map.get(session, "root_view"), topic, host_locale)
+    root_view =
+      decode_root_view(Map.get(session, "root_view"), topic, host_locale, host_current_user_uuid)
 
     {:ok,
      assign(socket,
        host_topic: topic,
        host_locale: host_locale,
+       host_current_user_uuid: host_current_user_uuid,
        wrapper_class: wrapper_class,
        max_stack_depth: max_stack_depth,
        modal_box_class: modal_box_class,
@@ -164,9 +170,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     @default_max_stack_depth
   end
 
-  defp decode_root_view(nil, _topic, _locale), do: nil
+  defp decode_root_view(nil, _topic, _locale, _current_user_uuid), do: nil
 
-  defp decode_root_view(%{"lv" => lv_str} = config, topic, locale) do
+  defp decode_root_view(%{"lv" => lv_str} = config, topic, locale, current_user_uuid) do
     with {:ok, lv} <- WebHelpers.decode_embeddable_lv(lv_str),
          {:ok, session} <- WebHelpers.decode_session(Map.get(config, "session")) do
       child_session =
@@ -175,6 +181,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
         |> Map.put("pubsub_topic", topic)
         |> Map.put_new("wrapper_class", @default_root_wrapper_class)
         |> maybe_put_locale_key(locale)
+        |> maybe_put_current_user_uuid(current_user_uuid)
 
       %{
         lv: lv,
@@ -195,7 +202,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     end
   end
 
-  defp decode_root_view(other, _topic, _locale) do
+  defp decode_root_view(other, _topic, _locale, _current_user_uuid) do
     Logger.warning(
       ~s([PopupHostLive] root_view must be a map with "lv" and "session" keys, got #{inspect(other)})
     )
@@ -213,6 +220,18 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   end
 
   defp maybe_put_locale_key(session, _), do: session
+
+  # Threads the host's authenticated user uuid into the child LV's session
+  # so embedded LVs can reconstruct the current user across the
+  # `live_render` boundary (the `:phoenix_kit_ensure_admin` on_mount hook
+  # doesn't run for them). `put_new` so a child session that already
+  # carries an explicit uuid wins. See `WebHelpers.assign_embed_user/2`.
+  defp maybe_put_current_user_uuid(session, uuid)
+       when is_binary(uuid) and uuid != "" do
+    Map.put_new(session, "current_user_uuid", uuid)
+  end
+
+  defp maybe_put_current_user_uuid(session, _), do: session
 
   defp lv_slug(mod) when is_atom(mod) do
     mod
@@ -355,8 +374,12 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # Content-broadcast events (`:project_updated` etc.) on the host topic
   # are ignored here — they're meant for the host's own subscribers, not
   # for modal-stack management. Catch-all keeps the LV alive across any
-  # unexpected message.
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  # unexpected message, logging at :debug per the module convention so a
+  # future unhandled message shape leaves a breadcrumb.
+  def handle_info(msg, socket) do
+    Logger.debug("[PopupHostLive] unexpected handle_info: #{inspect(msg)}")
+    {:noreply, socket}
+  end
 
   @impl true
   def handle_event("close_top_modal", params, socket) do
@@ -420,6 +443,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       |> Map.put("frame_ref", frame_ref)
       |> Map.put_new("wrapper_class", @child_wrapper_class)
       |> maybe_put_locale_key(socket.assigns[:host_locale])
+      |> maybe_put_current_user_uuid(socket.assigns[:host_current_user_uuid])
 
     frame = %{
       frame_ref: frame_ref,

@@ -32,6 +32,7 @@ defmodule PhoenixKitProjects.Schemas.TaskDependency do
 
   @required ~w(task_uuid depends_on_task_uuid)a
 
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(dep, attrs) do
     dep
     |> cast(attrs, @required)

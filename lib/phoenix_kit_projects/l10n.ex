@@ -14,6 +14,7 @@ defmodule PhoenixKitProjects.L10n do
   use Gettext, backend: PhoenixKitWeb.Gettext
 
   @doc "Formats a `Date`/`DateTime` as `Mon DD, YYYY`. Returns `nil` for nil."
+  @spec format_date(Date.t() | DateTime.t() | NaiveDateTime.t() | nil) :: String.t() | nil
   def format_date(nil), do: nil
 
   def format_date(%DateTime{} = dt),
@@ -28,6 +29,7 @@ defmodule PhoenixKitProjects.L10n do
   @doc """
   Formats as `Mon DD, YYYY at HH:MM`. For DateTimes.
   """
+  @spec format_datetime(DateTime.t() | nil) :: String.t() | nil
   def format_datetime(nil), do: nil
 
   def format_datetime(%DateTime{} = dt) do
@@ -40,6 +42,7 @@ defmodule PhoenixKitProjects.L10n do
   end
 
   @doc "Formats as `Mon DD HH:MM` — month, day, and time only."
+  @spec format_month_day_time(DateTime.t() | nil) :: String.t() | nil
   def format_month_day_time(nil), do: nil
 
   def format_month_day_time(%DateTime{} = dt) do
@@ -51,6 +54,7 @@ defmodule PhoenixKitProjects.L10n do
   end
 
   @doc "24-hour time string as `HH:MM` (locale-neutral)."
+  @spec format_time(DateTime.t()) :: String.t()
   def format_time(%DateTime{hour: h, minute: m}),
     do: :io_lib.format("~2..0B:~2..0B", [h, m]) |> IO.iodata_to_binary()
 
@@ -103,6 +107,7 @@ defmodule PhoenixKitProjects.L10n do
   def valid_translations_shape?(_), do: false
 
   @doc "Short 3-letter month name, translated (`Jan`, `Feb`, ...)."
+  @spec short_month(1..12) :: String.t()
   def short_month(1), do: gettext("Jan")
   def short_month(2), do: gettext("Feb")
   def short_month(3), do: gettext("Mar")

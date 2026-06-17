@@ -616,6 +616,70 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
     end
   end
 
+  describe "current_user_uuid threading through the popup host" do
+    test "host current_user_uuid flows into the root_view child session", %{conn: conn} do
+      topic = unique_topic()
+      uuid = Ecto.UUID.generate()
+
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{
+            "pubsub_topic" => topic,
+            "current_user_uuid" => uuid,
+            "root_view" => %{
+              "lv" => "Elixir.PhoenixKitProjects.Web.OverviewLive",
+              "session" => %{}
+            }
+          }
+        )
+
+      root_view = :sys.get_state(view.pid).socket.assigns.root_view
+      assert root_view.session["current_user_uuid"] == uuid
+    end
+
+    test "host current_user_uuid flows into stacked modal frames too", %{conn: conn} do
+      topic = unique_topic()
+      uuid = Ecto.UUID.generate()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic, "current_user_uuid" => uuid}
+        )
+
+      ProjectsPubSub.broadcast_embed(topic, :opened, %{
+        lv: PhoenixKitProjects.Web.OverviewLive,
+        session: %{},
+        frame_ref: nil
+      })
+
+      _ = render(view)
+
+      [frame] = :sys.get_state(view.pid).socket.assigns.modal_stack
+      assert frame.session["current_user_uuid"] == uuid
+    end
+
+    test "an explicit child current_user_uuid wins over the host's (put_new)", %{conn: conn} do
+      topic = unique_topic()
+      host_uuid = Ecto.UUID.generate()
+      child_uuid = Ecto.UUID.generate()
+
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{
+            "pubsub_topic" => topic,
+            "current_user_uuid" => host_uuid,
+            "root_view" => %{
+              "lv" => "Elixir.PhoenixKitProjects.Web.OverviewLive",
+              "session" => %{"current_user_uuid" => child_uuid}
+            }
+          }
+        )
+
+      root_view = :sys.get_state(view.pid).socket.assigns.root_view
+      assert root_view.session["current_user_uuid"] == child_uuid
+    end
+  end
+
   describe "stack depth cap" do
     test "refuses to push beyond max_stack_depth (5)", %{conn: conn} do
       topic = unique_topic()

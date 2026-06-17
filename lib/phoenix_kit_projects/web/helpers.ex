@@ -13,11 +13,16 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   ## Embed-mode helpers (PR follow-up to PR #6 audit)
 
-  `assign_embed_state/2`, `navigate_or_open/2`, `close_or_navigate/2`,
-  `navigate_after_save/3`, `notify_deleted_or_navigate/4`,
-  `attach_open_embed_hook/1`, `embeddable_lv?/1`, plus the
-  `decode_embeddable_lv/1` and `decode_session/1` decoders used by the
-  shared `open_embed` event handler.
+  `assign_embed_state/2`, `assign_embed_user/2`, `navigate_or_open/2`,
+  `close_or_navigate/2`, `navigate_after_save/3`,
+  `notify_deleted_or_navigate/4`, `attach_open_embed_hook/1`,
+  `embeddable_lv?/1`, plus the `decode_embeddable_lv/1` and
+  `decode_session/1` decoders used by the shared `open_embed` event
+  handler.
+
+  `assign_embed_user/2` bridges the current user across the `live_render`
+  process boundary (the `on_mount` auth hook doesn't run for embedded
+  LVs); the host passes `session["current_user_uuid"]`. See its docstring.
 
   When a host mounts an embedded LV with `session["mode"] = "emit"` +
   `session["pubsub_topic"] = topic`, no `push_navigate` ever fires from
@@ -27,6 +32,8 @@ defmodule PhoenixKitProjects.Web.Helpers do
   See `dev_docs/embedding_emit.md` for the full contract.
   """
 
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
 
@@ -45,6 +52,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   department name), or `nil` when unassigned. Requires the assignee assocs
   to be preloaded.
   """
+  @spec assignee_label(
+          PhoenixKitProjects.Schemas.Assignment.t()
+          | PhoenixKitProjects.Schemas.Project.t()
+        ) :: String.t() | nil
   def assignee_label(a) do
     cond do
       a.assigned_person && a.assigned_person.user -> a.assigned_person.user.email
@@ -58,6 +69,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   Whether an assignment counts weekends — its own override, falling back to
   the project's setting.
   """
+  @spec task_counts_weekends?(
+          PhoenixKitProjects.Schemas.Assignment.t(),
+          PhoenixKitProjects.Schemas.Project.t()
+        ) :: boolean()
   def task_counts_weekends?(a, project) do
     case a.counts_weekends do
       nil -> project.counts_weekends
@@ -70,6 +85,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   otherwise the underlying task's duration (nil-safe). Weekends are honored
   per `task_counts_weekends?/2`.
   """
+  @spec assignment_hours(
+          PhoenixKitProjects.Schemas.Assignment.t(),
+          PhoenixKitProjects.Schemas.Project.t()
+        ) :: number()
   def assignment_hours(a, project) do
     weekends? = task_counts_weekends?(a, project)
 
@@ -442,11 +461,17 @@ defmodule PhoenixKitProjects.Web.Helpers do
   navigation fires. `opts` must include `:kind` and `:record`; `:action`
   defaults to `:update`.
 
+  The broadcast `record` in the payload is **only `%{uuid: record.uuid}`**,
+  never the full struct (it may ride the client-readable wire and a
+  preloaded record would leak PII). `kind` conveys the type; a host that
+  needs the record re-fetches it by uuid.
+
   ## Opts
 
     * `:kind` (atom) — `:project | :task | :template | :assignment`.
       Required in emit mode; ignored in navigate mode.
-    * `:record` (struct) — the saved record. Required in emit mode.
+    * `:record` (struct) — the saved record. Required in emit mode. Only
+      its `uuid` is broadcast (see above).
     * `:action` (atom) — `:create | :update`. Defaults to `:update`.
     * `:next` (`{module(), map()} | nil`) — optional follow-up LV the
       host should open after the save. When set, `PopupHostLive` pops
@@ -564,6 +589,136 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   defp decode_frame_ref(_), do: nil
+
+  @doc """
+  Reconstructs the current user + scope for an **embedded** LiveView mount.
+
+  Router-mounted LVs receive `:phoenix_kit_current_scope` /
+  `:phoenix_kit_current_user` from core's `:phoenix_kit_ensure_admin`
+  `on_mount` hook, which runs *before* `mount/3`. An LV mounted via
+  `live_render` (`:not_mounted_at_router`) never enters that
+  `live_session`, so the hook never runs and both assigns are absent —
+  leaving user-aware embedded UI blind to who's acting: the comments
+  drawer's composer flips to "Sign in to post a comment." and
+  `PhoenixKitProjects.Activity.actor_uuid/1` records `nil`.
+
+  The host bridges identity across the `live_render` process boundary by
+  passing its **own authenticated user's** uuid as
+  `session["current_user_uuid"]` — a string, never the `%User{}` struct
+  (a `live_render` session is serialized into the client-readable,
+  signed-but-not-encrypted `data-phx-session` token, so a struct would
+  leak the password hash to the browser). This helper reloads that user
+  and assigns both `:phoenix_kit_current_user` and
+  `:phoenix_kit_current_scope`.
+
+  Contract:
+
+    * If `:phoenix_kit_current_scope` is **already present** (router
+      mount — the hook ran before `mount/3`) this is a **no-op**: the
+      canonical scope is never clobbered.
+    * Else if `session["current_user_uuid"]` resolves to an **active**
+      user → assigns that user + `Scope.for_user(user)`.
+    * Else → assigns a `nil` user + `Scope.for_user(nil)` (anonymous), so
+      the assigns always exist and downstream `scope.user` reads stay
+      nil-safe.
+
+  A provided-but-unresolvable uuid (unknown, inactive, or a transient DB
+  error) degrades to the anonymous branch and logs a warning — comments
+  fall back to "Sign in to post a comment." rather than crashing the
+  embed.
+
+  > ## Host responsibilities
+  >
+  > The uuid MUST come from the host's trusted server-side assign — its
+  > `phoenix_kit_current_scope` assign, i.e. `scope.user.uuid` — and
+  > **never** from request params: the host owns the page and must not
+  > forward attacker-controlled input. The signed `live_render` session
+  > only stops a *client* from swapping the value after render; it is **not**
+  > server-side authorization — nothing here re-verifies the uuid belongs to
+  > a projects-authorized user.
+  >
+  > **This helper reconstructs identity, NOT authorization.** Core's
+  > `:phoenix_kit_ensure_admin` `on_mount` (the `permission: "projects"`
+  > gate) runs only for router-mounted admin pages — never for an
+  > off-router `live_render` mount. Embedded mutation handlers are therefore
+  > NOT role-gated, so the **host MUST gate the embedding page** to
+  > projects-authorized users. The reconstructed user only drives audit
+  > attribution (`Activity.actor_uuid/1`) and the comments composer.
+  >
+  > The reconstructed scope is a **snapshot** taken at mount. Unlike the
+  > standalone admin page it carries no live scope-refresh hook, so a
+  > permission change / account switch mid-session is not reflected until
+  > the embed remounts. Acceptable for an embedded panel/drawer.
+  """
+  @spec assign_embed_user(Phoenix.LiveView.Socket.t(), map()) ::
+          Phoenix.LiveView.Socket.t()
+  def assign_embed_user(socket, session) when is_map(session) do
+    # Prefer core's canonical implementation when the running phoenix_kit
+    # exposes it (the release that promoted this helper into
+    # `PhoenixKitWeb.Users.Auth`); fall back to the local copy against older
+    # cores so the Hex-pinned build stays green. `apply/3` (not a direct
+    # call) keeps compilation warning-free against a core that lacks the
+    # function. The two are behaviourally identical — drop the fallback
+    # (and `resolve_embed_identity/1`) once the `phoenix_kit` floor includes
+    # the core helper.
+    if function_exported?(PhoenixKitWeb.Users.Auth, :assign_embedded_current_user, 2) do
+      apply(PhoenixKitWeb.Users.Auth, :assign_embedded_current_user, [socket, session])
+    else
+      local_assign_embed_user(socket, session)
+    end
+  end
+
+  def assign_embed_user(socket, _session), do: socket
+
+  defp local_assign_embed_user(socket, session) do
+    # A non-nil scope means the on_mount hook already ran (router mount).
+    # on_mount runs before mount/3, so an embedded mount — which skips the
+    # live_session entirely — always sees nil here. Don't clobber a real
+    # scope with a reconstructed one.
+    if is_nil(socket.assigns[:phoenix_kit_current_scope]) do
+      {user, scope} = resolve_embed_identity(Map.get(session, "current_user_uuid"))
+
+      Phoenix.Component.assign(socket,
+        phoenix_kit_current_user: user,
+        phoenix_kit_current_scope: scope
+      )
+    else
+      socket
+    end
+  end
+
+  # Loads the user behind the host-supplied uuid and pairs it with a scope.
+  # `get_user/1` is nil-safe (validates the uuid shape, returns nil on a
+  # miss); `ensure_active_user/1` drops a deactivated user so a revoked
+  # account can't act through an embed. The DB-error rescue mirrors the
+  # module-wide convention (see the cross-module staff-lookup rule in
+  # AGENTS.md) so a transient DB blip degrades to anonymous instead of
+  # 500-ing the host page.
+  defp resolve_embed_identity(uuid) when is_binary(uuid) and uuid != "" do
+    user =
+      uuid
+      |> Auth.get_user()
+      |> Auth.ensure_active_user()
+
+    if is_nil(user) do
+      Logger.warning(
+        "[phoenix_kit_projects] embed session current_user_uuid=#{inspect(uuid)} " <>
+          "did not resolve to an active user — embedded UI degrades to anonymous"
+      )
+    end
+
+    {user, Scope.for_user(user)}
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning(
+        "[phoenix_kit_projects] failed to load embed user #{inspect(uuid)}: " <>
+          Exception.message(e) <> " — degrading to anonymous"
+      )
+
+      {nil, Scope.for_user(nil)}
+  end
+
+  defp resolve_embed_identity(_), do: {nil, Scope.for_user(nil)}
 
   @doc """
   Routes per `:embed_mode`. In navigate mode: `push_navigate(to: opts[:to])`.
@@ -827,6 +982,12 @@ defmodule PhoenixKitProjects.Web.Helpers do
   defp emit_saved(socket, opts) do
     kind = Keyword.fetch!(opts, :kind)
     record = Keyword.fetch!(opts, :record)
+    # Emit only the uuid, never the full Ecto struct: the `:saved` payload
+    # rides a host-supplied PubSub topic that a host may relay over the
+    # (client-readable, signed-not-encrypted) wire, and a preloaded record
+    # (e.g. `assigned_person: [:user]`) would leak user PII. `kind` conveys
+    # the type; the host re-fetches by uuid if it needs the record.
+    record_ref = %{uuid: record.uuid}
     action = Keyword.get(opts, :action, :update)
     close = Keyword.get(opts, :close, true)
     next = Keyword.get(opts, :next)
@@ -848,7 +1009,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
       %{
         kind: kind,
         action: action,
-        record: record,
+        record: record_ref,
         close: close,
         next: next,
         frame_ref: socket.assigns[:embed_frame_ref]

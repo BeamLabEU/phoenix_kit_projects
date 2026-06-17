@@ -103,4 +103,45 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
       assert log =~ "[ProjectShowLive] unexpected handle_info"
     end
   end
+
+  # Not router-mounted — both are reached only via `live_render` (PopupHost is
+  # mounted by the host; the gantt is nested inside ProjectShowLive). Drive them
+  # with `live_isolated/3`.
+  describe "PopupHostLive" do
+    test "logs unexpected handle_info at debug", %{conn: conn} do
+      topic = "catchall:popup:#{System.unique_integer([:positive])}"
+
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic}
+        )
+
+      log =
+        capture_log([level: :debug], fn ->
+          send(view.pid, :unexpected_message_for_test)
+          _ = render(view)
+        end)
+
+      assert log =~ "[PopupHostLive] unexpected handle_info"
+    end
+  end
+
+  describe "ProjectGanttLive" do
+    test "logs unexpected handle_info at debug", %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectGanttLive,
+          session: %{"id" => project.uuid}
+        )
+
+      log =
+        capture_log([level: :debug], fn ->
+          send(view.pid, :unexpected_message_for_test)
+          _ = render(view)
+        end)
+
+      assert log =~ "[ProjectGanttLive] unexpected handle_info"
+    end
+  end
 end

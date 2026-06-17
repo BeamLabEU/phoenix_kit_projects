@@ -337,8 +337,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert_receive {:projects, :saved, payload}, 500
       assert payload.kind == :template
       assert payload.action == :create
-      assert payload.record.name == "Emit Template"
-      assert payload.record.is_template == true
+      # `:saved` carries only the record uuid — never the full struct, which
+      # could leak preloaded PII over the (host-relayed, client-readable) wire.
+      assert payload.record == %{uuid: payload.record.uuid}
+      assert is_binary(payload.record.uuid)
       assert payload.frame_ref == 11
     end
   end
@@ -369,7 +371,8 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert_receive {:projects, :saved, payload}, 500
       assert payload.kind == :template
       assert payload.action == :update
-      assert payload.record.name == "Renamed"
+      assert payload.record == %{uuid: payload.record.uuid}
+      assert is_binary(payload.record.uuid)
       assert payload.frame_ref == 13
     end
   end
@@ -427,7 +430,8 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert_receive {:projects, :saved, payload}, 500
       assert payload.kind == :task
       assert payload.action == :create
-      assert payload.record.title == "Emit Task"
+      assert payload.record == %{uuid: payload.record.uuid}
+      assert is_binary(payload.record.uuid)
       assert payload.frame_ref == 8
     end
   end
@@ -532,7 +536,8 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert_receive {:projects, :saved, payload}, 500
       assert payload.kind == :project
       assert payload.action == :create
-      assert payload.record.name == "Emit Project"
+      assert payload.record == %{uuid: payload.record.uuid}
+      assert is_binary(payload.record.uuid)
       assert payload.frame_ref == 31
     end
 
