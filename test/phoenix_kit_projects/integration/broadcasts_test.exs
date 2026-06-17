@@ -150,4 +150,76 @@ defmodule PhoenixKitProjects.Integration.BroadcastsTest do
       assert pp == project.uuid
     end
   end
+
+  # Pins the broadcast-after-commit refactor: every in-transaction broadcast
+  # was moved out so a rollback can't leak a phantom event. The two observable,
+  # deterministic mechanisms the refactor relies on are (a) the `broadcast:
+  # false` suppression opt and (b) emitting a single broadcast *after* the
+  # transaction commits — so multi-step ops (clone) don't fan out per-row events
+  # mid-transaction. A regression here (dropping `broadcast: false`, or
+  # broadcasting inside the tx) would re-introduce the rollback-leak bug.
+  describe "broadcast-after-commit / suppression" do
+    test "create_project broadcast: false suppresses :project_created" do
+      ProjectsPubSub.subscribe(ProjectsPubSub.topic_all())
+
+      {:ok, _p} =
+        Projects.create_project(
+          %{
+            "name" => "Quiet #{System.unique_integer([:positive])}",
+            "status" => "active",
+            "start_mode" => "immediate"
+          },
+          broadcast: false
+        )
+
+      refute_receive {:projects, :project_created, _}, 200
+    end
+
+    test "create_assignment broadcast: false suppresses :assignment_created" do
+      project = new_project!()
+      task = new_task!()
+      ProjectsPubSub.subscribe(ProjectsPubSub.topic_project(project.uuid))
+
+      {:ok, _a} =
+        Projects.create_assignment(
+          %{
+            "project_uuid" => project.uuid,
+            "task_uuid" => task.uuid,
+            "status" => "todo"
+          },
+          broadcast: false
+        )
+
+      refute_receive {:projects, :assignment_created, _}, 200
+    end
+
+    test "cloning a template fires one :project_created and suppresses per-row events" do
+      template = new_project!(%{"is_template" => true})
+      task = new_task!()
+
+      # An assignment inside the template — its clone must NOT fan out an
+      # :assignment_created (suppressed inside the clone transaction); only the
+      # top cloned project broadcasts, once, after commit.
+      {:ok, _} =
+        Projects.create_assignment(%{
+          "project_uuid" => template.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      ProjectsPubSub.subscribe(ProjectsPubSub.topic_all())
+
+      {:ok, cloned} =
+        Projects.create_project_from_template(template.uuid, %{
+          "name" => "Clone #{System.unique_integer([:positive])}",
+          "start_mode" => "immediate"
+        })
+
+      assert_receive {:projects, :project_created, %{uuid: uuid}}, 500
+      assert uuid == cloned.uuid
+      # No second project_created and no per-cloned-row assignment_created.
+      refute_receive {:projects, :project_created, _}, 200
+      refute_receive {:projects, :assignment_created, _}, 200
+    end
+  end
 end

@@ -239,6 +239,12 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     project = socket.assigns.project
     lang = L10n.current_content_lang()
 
+    # Subscribe to the root project's topic BEFORE reading the tree, so a
+    # broadcast that lands while `build_gantt/2` runs can't be dropped on the
+    # floor (mirrors the list LVs' subscribe-before-read). `subscribe_tree/2`
+    # is idempotent, so the full-tree subscribe below skips the root.
+    socket = subscribe_tree(socket, [project.uuid])
+
     {events, connectors, project_uuids} = build_gantt(project, lang)
 
     socket

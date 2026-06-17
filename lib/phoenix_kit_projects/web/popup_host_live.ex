@@ -374,8 +374,12 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # Content-broadcast events (`:project_updated` etc.) on the host topic
   # are ignored here — they're meant for the host's own subscribers, not
   # for modal-stack management. Catch-all keeps the LV alive across any
-  # unexpected message.
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  # unexpected message, logging at :debug per the module convention so a
+  # future unhandled message shape leaves a breadcrumb.
+  def handle_info(msg, socket) do
+    Logger.debug("[PopupHostLive] unexpected handle_info: #{inspect(msg)}")
+    {:noreply, socket}
+  end
 
   @impl true
   def handle_event("close_top_modal", params, socket) do

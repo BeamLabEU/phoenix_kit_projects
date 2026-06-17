@@ -52,6 +52,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   department name), or `nil` when unassigned. Requires the assignee assocs
   to be preloaded.
   """
+  @spec assignee_label(
+          PhoenixKitProjects.Schemas.Assignment.t()
+          | PhoenixKitProjects.Schemas.Project.t()
+        ) :: String.t() | nil
   def assignee_label(a) do
     cond do
       a.assigned_person && a.assigned_person.user -> a.assigned_person.user.email
@@ -65,6 +69,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   Whether an assignment counts weekends — its own override, falling back to
   the project's setting.
   """
+  @spec task_counts_weekends?(
+          PhoenixKitProjects.Schemas.Assignment.t(),
+          PhoenixKitProjects.Schemas.Project.t()
+        ) :: boolean()
   def task_counts_weekends?(a, project) do
     case a.counts_weekends do
       nil -> project.counts_weekends
@@ -77,6 +85,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   otherwise the underlying task's duration (nil-safe). Weekends are honored
   per `task_counts_weekends?/2`.
   """
+  @spec assignment_hours(
+          PhoenixKitProjects.Schemas.Assignment.t(),
+          PhoenixKitProjects.Schemas.Project.t()
+        ) :: number()
   def assignment_hours(a, project) do
     weekends? = task_counts_weekends?(a, project)
 
@@ -449,11 +461,17 @@ defmodule PhoenixKitProjects.Web.Helpers do
   navigation fires. `opts` must include `:kind` and `:record`; `:action`
   defaults to `:update`.
 
+  The broadcast `record` in the payload is **only `%{uuid: record.uuid}`**,
+  never the full struct (it may ride the client-readable wire and a
+  preloaded record would leak PII). `kind` conveys the type; a host that
+  needs the record re-fetches it by uuid.
+
   ## Opts
 
     * `:kind` (atom) — `:project | :task | :template | :assignment`.
       Required in emit mode; ignored in navigate mode.
-    * `:record` (struct) — the saved record. Required in emit mode.
+    * `:record` (struct) — the saved record. Required in emit mode. Only
+      its `uuid` is broadcast (see above).
     * `:action` (atom) — `:create | :update`. Defaults to `:update`.
     * `:next` (`{module(), map()} | nil`) — optional follow-up LV the
       host should open after the save. When set, `PopupHostLive` pops
@@ -614,8 +632,18 @@ defmodule PhoenixKitProjects.Web.Helpers do
   > The uuid MUST come from the host's trusted server-side assign — its
   > `phoenix_kit_current_scope` assign, i.e. `scope.user.uuid` — and
   > **never** from request params: the host owns the page and must not
-  > forward attacker-controlled input. (After render the signed session
-  > prevents tampering.)
+  > forward attacker-controlled input. The signed `live_render` session
+  > only stops a *client* from swapping the value after render; it is **not**
+  > server-side authorization — nothing here re-verifies the uuid belongs to
+  > a projects-authorized user.
+  >
+  > **This helper reconstructs identity, NOT authorization.** Core's
+  > `:phoenix_kit_ensure_admin` `on_mount` (the `permission: "projects"`
+  > gate) runs only for router-mounted admin pages — never for an
+  > off-router `live_render` mount. Embedded mutation handlers are therefore
+  > NOT role-gated, so the **host MUST gate the embedding page** to
+  > projects-authorized users. The reconstructed user only drives audit
+  > attribution (`Activity.actor_uuid/1`) and the comments composer.
   >
   > The reconstructed scope is a **snapshot** taken at mount. Unlike the
   > standalone admin page it carries no live scope-refresh hook, so a
@@ -938,6 +966,12 @@ defmodule PhoenixKitProjects.Web.Helpers do
   defp emit_saved(socket, opts) do
     kind = Keyword.fetch!(opts, :kind)
     record = Keyword.fetch!(opts, :record)
+    # Emit only the uuid, never the full Ecto struct: the `:saved` payload
+    # rides a host-supplied PubSub topic that a host may relay over the
+    # (client-readable, signed-not-encrypted) wire, and a preloaded record
+    # (e.g. `assigned_person: [:user]`) would leak user PII. `kind` conveys
+    # the type; the host re-fetches by uuid if it needs the record.
+    record_ref = %{uuid: record.uuid}
     action = Keyword.get(opts, :action, :update)
     close = Keyword.get(opts, :close, true)
     next = Keyword.get(opts, :next)
@@ -959,7 +993,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
       %{
         kind: kind,
         action: action,
-        record: record,
+        record: record_ref,
         close: close,
         next: next,
         frame_ref: socket.assigns[:embed_frame_ref]

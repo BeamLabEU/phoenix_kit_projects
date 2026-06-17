@@ -687,8 +687,32 @@ defmodule PhoenixKitProjects.Projects do
         :ok
 
       targets ->
-        repo().transaction(fn -> Enum.each(targets, &add_template_dep_in_tx(assignment, &1)) end)
+        repo().transaction(fn -> collect_template_deps(assignment, targets) end)
+        |> case do
+          {:ok, deps} ->
+            # Per-edge `:dependency_added` broadcasts were suppressed inside the
+            # transaction; emit them now the batch has committed so a rollback
+            # can't leak an edge that never persisted.
+            Enum.each(deps, &broadcast_dep(&1, :dependency_added))
+            {:ok, deps}
+
+          {:error, _reason} = err ->
+            err
+        end
     end
+  end
+
+  # Inserts each template-derived dependency (broadcast-suppressed) inside the
+  # caller's transaction, accumulating the created `Dependency` rows for the
+  # post-commit broadcast. A `nil` from `add_template_dep_in_tx/2` is an
+  # already-existing edge (idempotent skip).
+  defp collect_template_deps(assignment, targets) do
+    Enum.reduce(targets, [], fn target, acc ->
+      case add_template_dep_in_tx(assignment, target) do
+        nil -> acc
+        dep -> [dep | acc]
+      end
+    end)
   end
 
   defp template_dep_targets(assignment) do
@@ -713,13 +737,15 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp add_template_dep_in_tx(assignment, dep_assignment_uuid) do
-    case add_dependency(assignment.uuid, dep_assignment_uuid) do
-      {:ok, _} ->
-        :ok
+    # `broadcast: false` — emitted post-commit by `apply_template_dependencies/1`.
+    # Returns the dep (to broadcast later) or nil for an already-existing edge.
+    case add_dependency(assignment.uuid, dep_assignment_uuid, broadcast: false) do
+      {:ok, dep} ->
+        dep
 
       # Duplicate pair is fine — the unique constraint already enforces it.
       {:error, %Ecto.Changeset{} = cs} ->
-        if duplicate_constraint?(cs), do: :ok, else: repo().rollback(cs)
+        if duplicate_constraint?(cs), do: nil, else: repo().rollback(cs)
     end
   end
 
@@ -875,9 +901,16 @@ defmodule PhoenixKitProjects.Projects do
   def change_project(%Project{} = p, attrs \\ %{}, opts \\ []),
     do: Project.changeset(p, attrs, opts)
 
-  @doc "Inserts a project and broadcasts `:project_created`."
-  @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
-  def create_project(attrs) do
+  @doc """
+  Inserts a project and broadcasts `:project_created`.
+
+  Pass `broadcast: false` to skip the broadcast — used by callers that create
+  the project inside a larger transaction (template clone) and emit a single
+  event once the transaction commits, so a rollback can't leak a
+  `:project_created` for a project that never persisted.
+  """
+  @spec create_project(map(), keyword()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
+  def create_project(attrs, opts \\ []) do
     # Auto-assign the next position scoped to the project's
     # `is_template` bucket so a new row lands at the bottom of either
     # the project list or the template list (whichever the row
@@ -887,7 +920,10 @@ defmodule PhoenixKitProjects.Projects do
     attrs = put_default_position(attrs, fn -> next_project_position(is_template?) end)
 
     with {:ok, project} <- %Project{} |> Project.changeset(attrs) |> repo().insert() do
-      ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
+      if Keyword.get(opts, :broadcast, true) do
+        ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
+      end
+
       {:ok, project}
     end
   end
@@ -982,8 +1018,17 @@ defmodule PhoenixKitProjects.Projects do
     else
       repo().transaction(fn -> delete_project_tree_in_tx(p) end)
       |> case do
-        {:ok, deleted} -> {:ok, deleted}
-        {:error, reason} -> {:error, reason}
+        {:ok, [top | _] = deleted_projects} ->
+          # Broadcast AFTER the transaction commits — a rollback must not leak
+          # a `:project_deleted` for a project that still exists.
+          Enum.each(deleted_projects, fn d ->
+            ProjectsPubSub.broadcast_project(:project_deleted, project_payload(d))
+          end)
+
+          {:ok, top}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
   end
@@ -998,7 +1043,11 @@ defmodule PhoenixKitProjects.Projects do
   # Tears `project` and its entire sub-project subtree down inside the caller's
   # transaction. Collects the child-project uuids embedded in this project
   # BEFORE deleting it (the linking rows vanish with the DB cascade), deletes
-  # the project, then recurses into each former child. Broadcasts per node.
+  # the project, then recurses into each former child. Returns the list of
+  # deleted projects (this node first, then descendants); broadcasting is
+  # deferred to the non-transactional entry points (`delete_project/1`,
+  # `delete_assignment/1`) so a rollback can't leak a `:project_deleted`.
+  @spec delete_project_tree_in_tx(Project.t()) :: [Project.t()]
   defp delete_project_tree_in_tx(%Project{} = project) do
     child_uuids =
       repo().all(
@@ -1014,16 +1063,15 @@ defmodule PhoenixKitProjects.Projects do
         {:error, cs} -> repo().rollback(cs)
       end
 
-    ProjectsPubSub.broadcast_project(:project_deleted, project_payload(deleted))
+    descendants =
+      Enum.flat_map(child_uuids, fn cu ->
+        case get_project(cu) do
+          nil -> []
+          child -> delete_project_tree_in_tx(child)
+        end
+      end)
 
-    Enum.each(child_uuids, fn cu ->
-      case get_project(cu) do
-        nil -> :ok
-        child -> delete_project_tree_in_tx(child)
-      end
-    end)
-
-    deleted
+    [deleted | descendants]
   end
 
   defp project_payload(p) do
@@ -1603,6 +1651,18 @@ defmodule PhoenixKitProjects.Projects do
       end,
       isolation: :serializable
     )
+    |> case do
+      {:ok, project} ->
+        # Every per-row create/dep broadcast inside the clone transaction was
+        # suppressed (`broadcast: false`); emit one `:project_created` now that
+        # the whole tree has committed, so a rollback leaks nothing and
+        # subscribers still learn the new project exists.
+        ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
+        {:ok, project}
+
+      {:error, _reason} = err ->
+        err
+    end
   end
 
   # Carry the template's selected status (a slug) onto the cloned project.
@@ -1621,7 +1681,9 @@ defmodule PhoenixKitProjects.Projects do
   defp inherit_status_slug_in_tx(project, _template), do: project
 
   defp create_project_in_tx(attrs) do
-    case create_project(attrs) do
+    # `broadcast: false`: the project is created inside the clone transaction;
+    # `clone_template/2` emits a single `:project_created` after commit.
+    case create_project(attrs, broadcast: false) do
       {:ok, project} -> project
       {:error, cs} -> repo().rollback(cs)
     end
@@ -1641,19 +1703,24 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp clone_task_assignment_in_tx(a, project) do
-    case create_assignment(%{
-           "project_uuid" => project.uuid,
-           "task_uuid" => a.task_uuid,
-           "status" => "todo",
-           "position" => a.position,
-           "description" => a.description,
-           "estimated_duration" => a.estimated_duration,
-           "estimated_duration_unit" => a.estimated_duration_unit,
-           "counts_weekends" => a.counts_weekends,
-           "assigned_team_uuid" => a.assigned_team_uuid,
-           "assigned_department_uuid" => a.assigned_department_uuid,
-           "assigned_person_uuid" => a.assigned_person_uuid
-         }) do
+    # `broadcast: false` — cloned inside the clone transaction; the post-commit
+    # `:project_created` in `clone_template/2` signals the whole new tree.
+    case create_assignment(
+           %{
+             "project_uuid" => project.uuid,
+             "task_uuid" => a.task_uuid,
+             "status" => "todo",
+             "position" => a.position,
+             "description" => a.description,
+             "estimated_duration" => a.estimated_duration,
+             "estimated_duration_unit" => a.estimated_duration_unit,
+             "counts_weekends" => a.counts_weekends,
+             "assigned_team_uuid" => a.assigned_team_uuid,
+             "assigned_department_uuid" => a.assigned_department_uuid,
+             "assigned_person_uuid" => a.assigned_person_uuid
+           },
+           broadcast: false
+         ) do
       {:ok, new_a} -> new_a.uuid
       {:error, cs} -> repo().rollback(cs)
     end
@@ -1736,7 +1803,9 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp clone_one_dependency_in_tx(assignment_uuid, depends_on_uuid) do
-    case add_dependency(assignment_uuid, depends_on_uuid) do
+    # `broadcast: false` — inside the clone transaction; the post-commit
+    # `:project_created` covers the cloned tree.
+    case add_dependency(assignment_uuid, depends_on_uuid, broadcast: false) do
       {:ok, _} -> :ok
       {:error, cs} -> repo().rollback(cs)
     end
@@ -1839,6 +1908,21 @@ defmodule PhoenixKitProjects.Projects do
         {:ok, res} -> res
         {:error, _} = err -> err
       end
+
+    # Broadcast the completion transition AFTER the transaction commits, so a
+    # rollback can't leak a `:project_completed`/`:project_reopened` for a
+    # project that didn't actually settle. `mark_completed`/`mark_reopened`
+    # only persist + return the transition; the broadcast lives here.
+    case result do
+      {:completed, project} ->
+        ProjectsPubSub.broadcast_project(:project_completed, project_payload(project))
+
+      {:reopened, project} ->
+        ProjectsPubSub.broadcast_project(:project_reopened, project_payload(project))
+
+      _ ->
+        :ok
+    end
 
     # After the project's own completion settles, push its rolled-up state onto
     # the parent's linking assignment (if this project is itself a sub-project)
@@ -1952,25 +2036,22 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
+  # Persists completion and returns the transition; the `:project_completed`
+  # broadcast is emitted by `recompute_project_completion/2` after its
+  # transaction commits (never from inside the tx).
   defp mark_completed(project) do
     case project |> Project.changeset(%{completed_at: DateTime.utc_now()}) |> repo().update() do
-      {:ok, updated} ->
-        ProjectsPubSub.broadcast_project(:project_completed, project_payload(updated))
-        {:completed, updated}
-
-      other ->
-        other
+      {:ok, updated} -> {:completed, updated}
+      other -> other
     end
   end
 
+  # Persists reopening and returns the transition; the `:project_reopened`
+  # broadcast is emitted by `recompute_project_completion/2` after commit.
   defp mark_reopened(project) do
     case project |> Project.changeset(%{completed_at: nil}) |> repo().update() do
-      {:ok, updated} ->
-        ProjectsPubSub.broadcast_project(:project_reopened, project_payload(updated))
-        {:reopened, updated}
-
-      other ->
-        other
+      {:ok, updated} -> {:reopened, updated}
+      other -> other
     end
   end
 
@@ -2030,9 +2111,16 @@ defmodule PhoenixKitProjects.Projects do
   @spec change_assignment(Assignment.t(), map()) :: Ecto.Changeset.t()
   def change_assignment(%Assignment{} = a, attrs \\ %{}), do: Assignment.changeset(a, attrs)
 
-  @doc "Inserts an assignment and broadcasts `:assignment_created`."
-  @spec create_assignment(map()) :: {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
-  def create_assignment(attrs) do
+  @doc """
+  Inserts an assignment and broadcasts `:assignment_created`.
+
+  Pass `broadcast: false` to skip the broadcast — used by callers inserting
+  inside a larger transaction (template clone, closure-pull) that emit their
+  own event after the transaction commits.
+  """
+  @spec create_assignment(map(), keyword()) ::
+          {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
+  def create_assignment(attrs, opts \\ []) do
     # Auto-assign the next position so a fresh add lands at the
     # bottom of the project's manually-reordered timeline. Caller-
     # supplied positions win — covers `clone_template/2` (which
@@ -2044,10 +2132,12 @@ defmodule PhoenixKitProjects.Projects do
       put_default_position(attrs, fn -> next_assignment_position(project_uuid) end)
 
     with {:ok, a} <- %Assignment{} |> Assignment.changeset(attrs) |> repo().insert() do
-      ProjectsPubSub.broadcast_assignment(:assignment_created, %{
-        uuid: a.uuid,
-        project_uuid: a.project_uuid
-      })
+      if Keyword.get(opts, :broadcast, true) do
+        ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+          uuid: a.uuid,
+          project_uuid: a.project_uuid
+        })
+      end
 
       {:ok, a}
     end
@@ -2172,6 +2262,23 @@ defmodule PhoenixKitProjects.Projects do
         {:error, reason} -> repo().rollback(reason)
       end
     end)
+    |> case do
+      {:ok, %{assignment: link} = result} ->
+        # Broadcast + roll up AFTER the transaction commits — a rollback (cycle
+        # guard, unique-index race) must not leak an `:assignment_created` for a
+        # link that never persisted. `recompute_project_completion/1` runs its
+        # own transaction over the committed state.
+        ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+          uuid: link.uuid,
+          project_uuid: link.project_uuid
+        })
+
+        recompute_project_completion(link.project_uuid)
+        {:ok, result}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp fetch_project(uuid) do
@@ -2203,12 +2310,8 @@ defmodule PhoenixKitProjects.Projects do
 
     case %Assignment{} |> Assignment.subproject_changeset(link_attrs) |> repo().insert() do
       {:ok, link} ->
-        ProjectsPubSub.broadcast_assignment(:assignment_created, %{
-          uuid: link.uuid,
-          project_uuid: link.project_uuid
-        })
-
-        recompute_project_completion(parent.uuid)
+        # Broadcast + recompute happen in `link_subproject/2` after the
+        # transaction commits (see the `|> case` there) — never inside the tx.
         {:ok, %{child_project: child, assignment: link}}
 
       {:error, %Ecto.Changeset{} = cs} ->
@@ -2355,6 +2458,24 @@ defmodule PhoenixKitProjects.Projects do
         end,
         isolation: :serializable
       )
+      |> case do
+        {:ok, %{root: root, extras: extras} = result} ->
+          # Every per-row create/dep broadcast inside the serializable closure
+          # transaction was suppressed (`broadcast: false`); emit the
+          # `:assignment_created` events now the batch has committed, so a
+          # rollback leaks nothing.
+          for a <- [root | extras], not is_nil(a) do
+            ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+              uuid: a.uuid,
+              project_uuid: a.project_uuid
+            })
+          end
+
+          {:ok, result}
+
+        {:error, _reason} = err ->
+          err
+      end
     end
   end
 
@@ -2395,17 +2516,21 @@ defmodule PhoenixKitProjects.Projects do
               |> Map.put("task_uuid", task_uuid)
               |> Map.put("project_uuid", project_uuid)
 
-            case create_assignment(full_attrs) do
+            # `broadcast: false` — created inside the serializable closure
+            # transaction; `create_assignments_with_closure/4` emits the
+            # `:assignment_created` events after commit.
+            case create_assignment(full_attrs, broadcast: false) do
               {:ok, a} -> {a, extras_acc, Map.put(map, task_uuid, a.uuid)}
               {:error, reason} -> repo().rollback(reason)
             end
 
           # Closure-pulled task: insert with template defaults.
           true ->
-            case create_assignment_from_template(task_uuid, %{
-                   "project_uuid" => project_uuid,
-                   "status" => "todo"
-                 }) do
+            case create_assignment_from_template(
+                   task_uuid,
+                   %{"project_uuid" => project_uuid, "status" => "todo"},
+                   broadcast: false
+                 ) do
               {:ok, a} -> {root_acc, [a | extras_acc], Map.put(map, task_uuid, a.uuid)}
               {:error, reason} -> repo().rollback(reason)
             end
@@ -2532,7 +2657,9 @@ defmodule PhoenixKitProjects.Projects do
   defp wire_assignment_dependency(_, nil), do: :ok
 
   defp wire_assignment_dependency(parent_assignment, child_assignment) do
-    case add_dependency(parent_assignment, child_assignment) do
+    # `broadcast: false` — wired inside the closure transaction; the post-commit
+    # `:assignment_created` events trigger the subscriber refresh.
+    case add_dependency(parent_assignment, child_assignment, broadcast: false) do
       {:ok, _} ->
         :ok
 
@@ -2547,9 +2674,9 @@ defmodule PhoenixKitProjects.Projects do
   (description, duration, default assignee). The caller's attrs override
   any template values.
   """
-  @spec create_assignment_from_template(uuid(), map()) ::
+  @spec create_assignment_from_template(uuid(), map(), keyword()) ::
           {:ok, Assignment.t()} | {:error, :task_not_found | Ecto.Changeset.t()}
-  def create_assignment_from_template(task_uuid, attrs) do
+  def create_assignment_from_template(task_uuid, attrs, opts \\ []) do
     case get_task(task_uuid) do
       nil ->
         {:error, :task_not_found}
@@ -2566,7 +2693,7 @@ defmodule PhoenixKitProjects.Projects do
         }
 
         merged = Map.merge(defaults, drop_blanks(attrs))
-        create_assignment(merged)
+        create_assignment(merged, opts)
     end
   end
 
@@ -2749,19 +2876,27 @@ defmodule PhoenixKitProjects.Projects do
           {:error, cs} -> repo().rollback(cs)
         end
 
-      case get_project(child_uuid) do
-        nil -> :ok
-        child -> delete_project_tree_in_tx(child)
-      end
+      deleted_projects =
+        case get_project(child_uuid) do
+          nil -> []
+          child -> delete_project_tree_in_tx(child)
+        end
 
-      deleted
+      {deleted, deleted_projects}
     end)
     |> case do
-      {:ok, deleted} ->
+      {:ok, {deleted, deleted_projects}} ->
+        # Broadcast AFTER commit (mirrors `delete_project/1`): the linking-row
+        # delete and the child subtree both have to survive the transaction
+        # before any subscriber is told they're gone.
         ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
           uuid: deleted.uuid,
           project_uuid: deleted.project_uuid
         })
+
+        Enum.each(deleted_projects, fn d ->
+          ProjectsPubSub.broadcast_project(:project_deleted, project_payload(d))
+        end)
 
         {:ok, deleted}
 
@@ -2841,9 +2976,9 @@ defmodule PhoenixKitProjects.Projects do
   outer transaction is itself opened at `:serializable` (which
   `clone_template/2` does).
   """
-  @spec add_dependency(uuid(), uuid()) ::
+  @spec add_dependency(uuid(), uuid(), keyword()) ::
           {:ok, Dependency.t()} | {:error, Ecto.Changeset.t()}
-  def add_dependency(assignment_uuid, depends_on_uuid) do
+  def add_dependency(assignment_uuid, depends_on_uuid, opts \\ []) do
     changeset =
       Dependency.changeset(%Dependency{}, %{
         assignment_uuid: assignment_uuid,
@@ -2851,13 +2986,13 @@ defmodule PhoenixKitProjects.Projects do
       })
 
     if changeset.valid? do
-      do_add_dependency_in_serializable_tx(assignment_uuid, depends_on_uuid, changeset)
+      do_add_dependency_in_serializable_tx(assignment_uuid, depends_on_uuid, changeset, opts)
     else
       {:error, %{changeset | action: :insert}}
     end
   end
 
-  defp do_add_dependency_in_serializable_tx(assignment_uuid, depends_on_uuid, changeset) do
+  defp do_add_dependency_in_serializable_tx(assignment_uuid, depends_on_uuid, changeset, opts) do
     result =
       repo().transaction(
         fn ->
@@ -2882,7 +3017,10 @@ defmodule PhoenixKitProjects.Projects do
 
     case result do
       {:ok, dep} ->
-        broadcast_dep(dep, :dependency_added)
+        # Callers inside a larger transaction (clone, closure-pull, template-dep
+        # application) pass `broadcast: false` and emit their own event after the
+        # outer transaction commits, so a rollback can't leak a `:dependency_added`.
+        if Keyword.get(opts, :broadcast, true), do: broadcast_dep(dep, :dependency_added)
         {:ok, dep}
 
       {:error, %Ecto.Changeset{} = cs} ->

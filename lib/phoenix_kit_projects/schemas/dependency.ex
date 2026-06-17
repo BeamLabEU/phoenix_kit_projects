@@ -32,6 +32,7 @@ defmodule PhoenixKitProjects.Schemas.Dependency do
 
   @required ~w(assignment_uuid depends_on_uuid)a
 
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(dep, attrs) do
     dep
     |> cast(attrs, @required)

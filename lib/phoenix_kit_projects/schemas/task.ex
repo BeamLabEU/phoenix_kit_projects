@@ -105,6 +105,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
                default_assigned_team_uuid default_assigned_department_uuid
                default_assigned_person_uuid)a
 
+  @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(task, attrs) do
     task
     |> cast(attrs, @required ++ @optional)
