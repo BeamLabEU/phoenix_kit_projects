@@ -61,6 +61,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         show_reorder_modal: false
       )
       |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
 
     # Load on both disconnected + connected mount so the first paint has

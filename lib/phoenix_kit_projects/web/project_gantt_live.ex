@@ -39,7 +39,11 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
 
   def mount(%{"id" => id}, session, socket) do
     WebHelpers.maybe_put_locale(session)
-    socket = WebHelpers.assign_embed_state(socket, session)
+
+    socket =
+      socket
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
 
     case Projects.get_project_with_assignee(id) do
       nil ->

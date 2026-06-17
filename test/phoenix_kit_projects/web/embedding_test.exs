@@ -174,6 +174,100 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     end
   end
 
+  describe "ProjectShowLive embed — current_user_uuid contract" do
+    # The fix for the embedded comments drawer (and embed-mode activity
+    # actor attribution): an off-router mount runs no on_mount hook, so
+    # the host bridges identity by passing `session["current_user_uuid"]`.
+    # `WebHelpers.assign_embed_user/2` reloads it into the
+    # `:phoenix_kit_current_user` / `:phoenix_kit_current_scope` assigns.
+    setup %{actor_uuid: actor_uuid} do
+      {:ok, project} =
+        Projects.create_project(%{
+          "name" => "Embed user test #{System.unique_integer([:positive])}",
+          "start_mode" => "immediate",
+          "started_at" => DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      _ = actor_uuid
+      {:ok, project: project}
+    end
+
+    test "current_user_uuid reconstructs the viewer and enables the composer", %{
+      conn: conn,
+      project: project,
+      actor_uuid: actor_uuid
+    } do
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid, "current_user_uuid" => actor_uuid}
+        )
+
+      # The user is reconstructed at mount, so both the comments-drawer
+      # `current_user` and `Activity.actor_uuid/1` see the real viewer.
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns[:phoenix_kit_current_user].uuid == actor_uuid
+      assert assigns[:phoenix_kit_current_scope].user.uuid == actor_uuid
+
+      html =
+        render_hook(view, "open_comments", %{
+          "type" => "project",
+          "uuid" => project.uuid,
+          "title" => project.name
+        })
+
+      # `can_post?` is true (current_user present) => the composer renders
+      # instead of the sign-in prompt that was the reported bug.
+      assert html =~ ~s|aria-label="Comments"|
+      refute html =~ "Sign in to post a comment."
+    end
+
+    test "absent current_user_uuid degrades to an anonymous scope (no crash)", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid}
+        )
+
+      # Anonymous, but a real %Scope{user: nil} struct — not a bare nil —
+      # so downstream `scope.user` reads stay nil-safe.
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert is_nil(assigns[:phoenix_kit_current_user])
+      assert assigns[:phoenix_kit_current_scope].user == nil
+
+      html =
+        render_hook(view, "open_comments", %{
+          "type" => "project",
+          "uuid" => project.uuid,
+          "title" => project.name
+        })
+
+      assert html =~ ~s|aria-label="Comments"|
+      assert html =~ "Sign in to post a comment."
+    end
+
+    test "unknown current_user_uuid degrades gracefully without crashing", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid, "current_user_uuid" => Ecto.UUID.generate()}
+        )
+
+      html =
+        render_hook(view, "open_comments", %{
+          "type" => "project",
+          "uuid" => project.uuid,
+          "title" => project.name
+        })
+
+      assert html =~ ~s|aria-label="Comments"|
+      assert html =~ "Sign in to post a comment."
+    end
+  end
+
   describe "ProjectsLive embed" do
     test "mounts via live_isolated", %{conn: conn} do
       {:ok, _view, html} =

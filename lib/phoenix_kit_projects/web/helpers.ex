@@ -13,11 +13,16 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   ## Embed-mode helpers (PR follow-up to PR #6 audit)
 
-  `assign_embed_state/2`, `navigate_or_open/2`, `close_or_navigate/2`,
-  `navigate_after_save/3`, `notify_deleted_or_navigate/4`,
-  `attach_open_embed_hook/1`, `embeddable_lv?/1`, plus the
-  `decode_embeddable_lv/1` and `decode_session/1` decoders used by the
-  shared `open_embed` event handler.
+  `assign_embed_state/2`, `assign_embed_user/2`, `navigate_or_open/2`,
+  `close_or_navigate/2`, `navigate_after_save/3`,
+  `notify_deleted_or_navigate/4`, `attach_open_embed_hook/1`,
+  `embeddable_lv?/1`, plus the `decode_embeddable_lv/1` and
+  `decode_session/1` decoders used by the shared `open_embed` event
+  handler.
+
+  `assign_embed_user/2` bridges the current user across the `live_render`
+  process boundary (the `on_mount` auth hook doesn't run for embedded
+  LVs); the host passes `session["current_user_uuid"]`. See its docstring.
 
   When a host mounts an embedded LV with `session["mode"] = "emit"` +
   `session["pubsub_topic"] = topic`, no `push_navigate` ever fires from
@@ -27,6 +32,8 @@ defmodule PhoenixKitProjects.Web.Helpers do
   See `dev_docs/embedding_emit.md` for the full contract.
   """
 
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
 
@@ -564,6 +571,110 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   defp decode_frame_ref(_), do: nil
+
+  @doc """
+  Reconstructs the current user + scope for an **embedded** LiveView mount.
+
+  Router-mounted LVs receive `:phoenix_kit_current_scope` /
+  `:phoenix_kit_current_user` from core's `:phoenix_kit_ensure_admin`
+  `on_mount` hook, which runs *before* `mount/3`. An LV mounted via
+  `live_render` (`:not_mounted_at_router`) never enters that
+  `live_session`, so the hook never runs and both assigns are absent —
+  leaving user-aware embedded UI blind to who's acting: the comments
+  drawer's composer flips to "Sign in to post a comment." and
+  `PhoenixKitProjects.Activity.actor_uuid/1` records `nil`.
+
+  The host bridges identity across the `live_render` process boundary by
+  passing its **own authenticated user's** uuid as
+  `session["current_user_uuid"]` — a string, never the `%User{}` struct
+  (a `live_render` session is serialized into the client-readable,
+  signed-but-not-encrypted `data-phx-session` token, so a struct would
+  leak the password hash to the browser). This helper reloads that user
+  and assigns both `:phoenix_kit_current_user` and
+  `:phoenix_kit_current_scope`.
+
+  Contract:
+
+    * If `:phoenix_kit_current_scope` is **already present** (router
+      mount — the hook ran before `mount/3`) this is a **no-op**: the
+      canonical scope is never clobbered.
+    * Else if `session["current_user_uuid"]` resolves to an **active**
+      user → assigns that user + `Scope.for_user(user)`.
+    * Else → assigns a `nil` user + `Scope.for_user(nil)` (anonymous), so
+      the assigns always exist and downstream `scope.user` reads stay
+      nil-safe.
+
+  A provided-but-unresolvable uuid (unknown, inactive, or a transient DB
+  error) degrades to the anonymous branch and logs a warning — comments
+  fall back to "Sign in to post a comment." rather than crashing the
+  embed.
+
+  > ## Host responsibilities
+  >
+  > The uuid MUST come from the host's trusted server-side assign — its
+  > `phoenix_kit_current_scope` assign, i.e. `scope.user.uuid` — and
+  > **never** from request params: the host owns the page and must not
+  > forward attacker-controlled input. (After render the signed session
+  > prevents tampering.)
+  >
+  > The reconstructed scope is a **snapshot** taken at mount. Unlike the
+  > standalone admin page it carries no live scope-refresh hook, so a
+  > permission change / account switch mid-session is not reflected until
+  > the embed remounts. Acceptable for an embedded panel/drawer.
+  """
+  @spec assign_embed_user(Phoenix.LiveView.Socket.t(), map()) ::
+          Phoenix.LiveView.Socket.t()
+  def assign_embed_user(socket, session) when is_map(session) do
+    # A non-nil scope means the on_mount hook already ran (router mount).
+    # on_mount runs before mount/3, so an embedded mount — which skips the
+    # live_session entirely — always sees nil here. Don't clobber a real
+    # scope with a reconstructed one.
+    if is_nil(socket.assigns[:phoenix_kit_current_scope]) do
+      {user, scope} = resolve_embed_identity(Map.get(session, "current_user_uuid"))
+
+      Phoenix.Component.assign(socket,
+        phoenix_kit_current_user: user,
+        phoenix_kit_current_scope: scope
+      )
+    else
+      socket
+    end
+  end
+
+  def assign_embed_user(socket, _session), do: socket
+
+  # Loads the user behind the host-supplied uuid and pairs it with a scope.
+  # `get_user/1` is nil-safe (validates the uuid shape, returns nil on a
+  # miss); `ensure_active_user/1` drops a deactivated user so a revoked
+  # account can't act through an embed. The DB-error rescue mirrors the
+  # module-wide convention (see the cross-module staff-lookup rule in
+  # AGENTS.md) so a transient DB blip degrades to anonymous instead of
+  # 500-ing the host page.
+  defp resolve_embed_identity(uuid) when is_binary(uuid) and uuid != "" do
+    user =
+      uuid
+      |> Auth.get_user()
+      |> Auth.ensure_active_user()
+
+    if is_nil(user) do
+      Logger.warning(
+        "[phoenix_kit_projects] embed session current_user_uuid=#{inspect(uuid)} " <>
+          "did not resolve to an active user — embedded UI degrades to anonymous"
+      )
+    end
+
+    {user, Scope.for_user(user)}
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning(
+        "[phoenix_kit_projects] failed to load embed user #{inspect(uuid)}: " <>
+          Exception.message(e) <> " — degrading to anonymous"
+      )
+
+      {nil, Scope.for_user(nil)}
+  end
+
+  defp resolve_embed_identity(_), do: {nil, Scope.for_user(nil)}
 
   @doc """
   Routes per `:embed_mode`. In navigate mode: `push_navigate(to: opts[:to])`.

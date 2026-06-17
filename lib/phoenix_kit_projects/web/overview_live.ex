@@ -64,6 +64,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         status_counts: %{}
       )
       |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
 
     {:ok, reload(socket)}

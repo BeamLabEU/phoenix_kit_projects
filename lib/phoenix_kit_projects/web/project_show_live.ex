@@ -68,7 +68,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # contract and avoids an English flash on a misrouted modal.
   def mount(:not_mounted_at_router, session, socket) do
     WebHelpers.maybe_put_locale(session)
-    socket = WebHelpers.assign_embed_state(socket, session)
+
+    socket =
+      socket
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
 
     {:ok,
      socket
@@ -108,8 +112,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # Locale first so any error flashes / placeholders render in the
     # right language. Embed state second so the not-found path can
     # honor emit mode (broadcasting `:closed` instead of push_navigate).
+    # Embed user third: when this LV is rendered via `live_render` the
+    # `:phoenix_kit_ensure_admin` on_mount hook never runs, so the host
+    # supplies the current user via `session["current_user_uuid"]`. On the
+    # router path the hook already set the scope and this is a no-op.
     WebHelpers.maybe_put_locale(session)
-    socket = WebHelpers.assign_embed_state(socket, session)
+
+    socket =
+      socket
+      |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
 
     # `get_project/1` stays in mount/3 because the not-found path
     # has to redirect before render, and the per-project PubSub
@@ -2217,7 +2229,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # No wrapper padding — the show page already pads this content area;
               # the gantt's own `px-4 py-6` would double it and push the chart down.
               "wrapper_class" => "",
-              "locale" => L10n.current_content_lang()
+              "locale" => L10n.current_content_lang(),
+              # Forward the viewer so the nested gantt reconstructs the same
+              # user/scope across this second `live_render` hop (see
+              # `WebHelpers.assign_embed_user/2`). Bracket access (not `@`) so
+              # an off-router mount missing the assign degrades to nil rather
+              # than raising — matches the module's no-bang-form convention.
+              "current_user_uuid" =>
+                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
             })}
         <% end %>
       </div>
@@ -2317,9 +2336,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               id={"comments-drawer-#{@comments_resource.type}-#{@comments_resource.uuid}"}
               resource_type={@comments_resource.type}
               resource_uuid={@comments_resource.uuid}
-              current_user={
-                (scope = assigns[:phoenix_kit_current_scope]) && scope.user
-              }
+              current_user={assigns[:phoenix_kit_current_user]}
               title=""
               show_likes={true}
             />

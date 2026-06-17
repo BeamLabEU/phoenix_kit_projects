@@ -40,6 +40,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         live_action: live_action
       )
       |> WebHelpers.assign_embed_state(session)
+      |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
       |> assign_ai_translate()
