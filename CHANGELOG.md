@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.12.0 - 2026-06-18
+
+**Timeline tab in embedded project views + host-insertable Gantt.** A host that embeds `ProjectShowLive` now gets the **List / Timeline** tab pair (previously embeds were list-only), and `ProjectGanttLive` (the Timeline view) is now in the embeddable-LV whitelist so hosts can insert it directly. URL-sync stays opt-in and off by default for embeds, so an embedded page never rewrites the host's address bar.
+
+### Added
+
+- **Timeline tab renders in embeds.** The List/Timeline tab bar now renders in every `ProjectShowLive` mount context (only templates stay list-only). The Timeline tab is a nested `live_render` of `ProjectGanttLive` — server-rendered SVG, so the chart shows even before any JS loads. The gantt stays lazy-mounted (only `live_render`ed once its tab is first opened) so a list-only embed pays nothing for it.
+- **`ProjectGanttLive` is host-insertable.** Added to `Web.Helpers.embeddable_lvs/0` so `PopupHostLive` (`root_view`), `<.smart_link emit>`, emit `:opened`, and `next` frames can insert the Timeline view by module — the admin tab always rendered it via a direct `live_render`, which never consulted the whitelist, so it ran in our own UI yet stayed un-insertable by other apps. **All 10 LVs are now embeddable.**
+- **`session["tab_url_sync"]` embed key** (`ProjectShowLive` only). Boolean, **defaults `false`** in embeds. Pass `true` (a real boolean) to opt an embed into `/gantt` deep-linking via the `ProjectTabsUrl` hook; the router-mounted standalone admin page enables it implicitly so its existing deep-linking keeps working.
+
+### Changed
+
+- **Embedded `ProjectShowLive` no longer rewrites the host URL on tab switch.** URL sync is off by default in embeds — `switch_tab` only pushes the `project_tab_url` event when `tab_url_sync?` is on, and the `ProjectTabsUrl` hook isn't attached otherwise. The tabs still switch instantly with or without it.
+- **Dependency upgrade** — `phoenix_kit` → 1.7.162.
+
+### Internal
+
+- Embedding regression coverage grown to 43 `live_isolated/3` tests: `ProjectGanttLive` embed (off-router mount, `wrapper_class` override, whitelist round-trip through the `decode_embeddable_lv/1` decoder), embedded `ProjectShowLive` rendering the tab bar with a still-lazy gantt, and the URL-sync default-off / opt-in pair. `AGENTS.md` + `dev_docs/embedding_*` updated for the contract change (incl. the host-side gantt-JS-hooks note for the embedded Timeline).
+
 ## 0.11.0 - 2026-06-18
 
 **Embedded current-user identity + broadcast-after-commit correctness.** Fixes the reported bug where the integrated comments composer showed *"Sign in to post a comment."* when an embeddable LiveView is rendered in a host app, and hardens every projects mutation so a rolled-back transaction can no longer leak a PubSub event.
