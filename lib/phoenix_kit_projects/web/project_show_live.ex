@@ -9,10 +9,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   The page has two views — the vertical task list and the embedded
   `ProjectGanttLive` Timeline — toggled by tabs under the shared header.
   Switching is instant (an assign flip) and the gantt is lazily mounted on first
-  open. Keeping the URL in sync (the trailing `/gantt` segment + browser
-  back/forward) is an **optional host-app concern**: the host registers a
-  `ProjectTabsUrl` JS hook that pushes/reads `history` state. The tabs work
-  fully without it — only the URL won't follow the active tab.
+  open. **The tabs render in every mount context, embedded `live_render` renders
+  included** (only templates stay list-only). Note this means the Timeline tab is
+  a nested `live_render` of `ProjectGanttLive`, which is itself a nested LV when
+  the show page is embedded — deliberate, server-rendered, so the chart shows
+  even before any JS loads.
+
+  Keeping the URL in sync (the trailing `/gantt` segment + browser back/forward)
+  is **optional and off by default**: it's only on when `@tab_url_sync?` is true,
+  which the router-mounted standalone admin page sets (so its deep-linking keeps
+  working) and an embed can opt into via `session["tab_url_sync"]`. When on, the
+  `ProjectTabsUrl` JS hook pushes/reads `history` state. With it off the tabs
+  still switch fully — they just never touch the host page's URL (the right
+  default for an embed, which must not rewrite the host's address bar).
   """
 
   use PhoenixKitWeb, :live_view
@@ -51,12 +60,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   @impl true
   def mount(:not_mounted_at_router, %{"id" => id} = session, socket) do
     WebHelpers.maybe_put_locale(session)
-    # Reuse the router mount, then force the tab bar off: embedded/emit renders
-    # are list-only (no tabs, no nested gantt — avoids nested-within-nested
-    # live_render). `live_action` is nil here, so `active_tab` already defaults
-    # to `:list`; we only have to flip `router_mounted?`.
+    # Reuse the router mount, then adjust for the embed context. The List/Timeline
+    # tabs DO render in embeds now (the gantt is a nested `live_render`, which is
+    # fine — it's server-rendered). Two things differ from the router mount:
+    #   * `router_mounted?: false` — purely informational now (a few comments key
+    #     off it); the tab bar no longer gates on it.
+    #   * `tab_url_sync?` — OFF by default in an embed (an embed must not rewrite
+    #     the host's URL); a host can opt back in with `session["tab_url_sync"]`.
+    # `live_action` is nil here, so `active_tab` already defaults to `:list`.
     {:ok, socket} = mount(%{"id" => id}, session, socket)
-    {:ok, assign(socket, router_mounted?: false, gantt_mounted?: false)}
+
+    {:ok,
+     assign(socket,
+       router_mounted?: false,
+       gantt_mounted?: false,
+       # Strict `== true` so only a real boolean opt-in turns it on (a stray
+       # string would otherwise read as truthy and re-enable URL rewriting).
+       tab_url_sync?: Map.get(session, "tab_url_sync", false) == true
+     )}
   end
 
   # Fail-closed: emit-session lacking `"id"` lands here. Without this
@@ -82,6 +103,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        is_template: false,
        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
        router_mounted?: false,
+       tab_url_sync?: false,
        active_tab: :list,
        gantt_mounted?: false,
        assignments: [],
@@ -140,6 +162,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            is_template: false,
            wrapper_class: @default_wrapper_class,
            router_mounted?: false,
+           # Must be assigned: the tab bar now renders on `not @is_template`
+           # (true here), so the render reads `@tab_url_sync?`. Router-mount
+           # context → true (matches the success branch); the embedded wrapper
+           # overrides it to the session value when this path is reached via an
+           # off-router mount with an unknown id.
+           tab_url_sync?: true,
            active_tab: :list,
            gantt_mounted?: false,
            assignments: [],
@@ -208,11 +236,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             project: project,
             is_template: is_template,
             wrapper_class: wrapper_class,
-            # Tab state. `router_mounted?` gates the whole tab bar — an
-            # embedded/emit `live_render` mount renders list-only. The gantt is
-            # lazy-mounted: it only `live_render`s once its tab is first opened,
-            # then stays mounted so its zoom/expand survive switching back.
+            # Tab state. The tab bar renders in every context now (only
+            # templates stay list-only); `router_mounted?` is kept as an
+            # informational flag a few comments key off. URL sync is ON here —
+            # this is the standalone admin page, which owns a real `/gantt` URL
+            # to deep-link; embeds default it off (see the embed mount clause).
+            # The gantt is lazy-mounted: it only `live_render`s once its tab is
+            # first opened, then stays mounted so its zoom/expand survive.
             router_mounted?: true,
+            tab_url_sync?: true,
             active_tab: active_tab,
             gantt_mounted?: active_tab == :gantt,
             editing_duration_uuid: nil,
@@ -747,8 +779,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Switch the List/Timeline tab. Instant (an assign flip, no navigation) and
   # the gantt's nested LV stays mounted, so its zoom/expand survive. The gantt
   # is lazy-mounted the first time its tab opens and never unmounted. We push
-  # the URL change to the `ProjectTabsUrl` hook — except when the switch itself
-  # CAME from the URL (browser back/forward), to avoid a push/popstate loop.
+  # the URL change to the `ProjectTabsUrl` hook — except when URL sync is off
+  # (the default for embeds), or when the switch itself CAME from the URL
+  # (browser back/forward), to avoid a push/popstate loop. With sync off the
+  # `ProjectTabsUrl` hook isn't even attached, so the event would no-op anyway;
+  # gating it server-side keeps the intent explicit.
   @impl true
   def handle_event("switch_tab", %{"tab" => tab} = params, socket) do
     active = if tab == "gantt", do: :gantt, else: :list
@@ -759,7 +794,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
 
     socket =
-      if params["source"] == "history",
+      if not socket.assigns.tab_url_sync? or params["source"] == "history",
         do: socket,
         else: push_event(socket, "project_tab_url", %{tab: tab})
 
@@ -1936,13 +1971,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </div>
       <% end %>
 
-      <%!-- View tabs (List / Timeline). Router-mounted only — an embedded
-           live_render of this page stays list-only. The phx-hook syncs the URL
-           (push/popstate); the tabs still switch instantly without it. --%>
+      <%!-- View tabs (List / Timeline). Rendered in every context (templates
+           excepted). The `ProjectTabsUrl` phx-hook — which syncs the URL on
+           push/popstate — is attached ONLY when `@tab_url_sync?` (the standalone
+           admin page; off by default for embeds so they never touch the host's
+           URL). The tabs switch instantly with or without the hook. --%>
       <div
-        :if={@router_mounted? and not @is_template}
+        :if={not @is_template}
         id={"project-tabs-#{@project.uuid}"}
-        phx-hook="ProjectTabsUrl"
+        phx-hook={if @tab_url_sync?, do: "ProjectTabsUrl"}
       >
         <.nav_tabs
           active_tab={to_string(@active_tab)}
@@ -1955,7 +1992,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       </div>
 
       <%!-- List tab --%>
-      <div class={if(@router_mounted? and @active_tab != :list, do: "hidden")}>
+      <div class={if(@active_tab != :list, do: "hidden")}>
       <%!-- Timeline --%>
       <%= if @assignments == [] do %>
         <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
@@ -2215,11 +2252,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <% end %>
       </div>
 
-      <%!-- Gantt tab — router-mounted only, lazy-mounted on first activation and
-           then kept (so its own zoom/expand survive switching back). It's a
-           nested LiveView with its own PubSub/state; `headless` drops its
-           back-link since the tabs replace it. --%>
-      <div :if={@router_mounted? and not @is_template} class={if(@active_tab != :gantt, do: "hidden")}>
+      <%!-- Gantt tab — rendered in every context (templates excepted),
+           lazy-mounted on first activation and then kept (so its own zoom/expand
+           survive switching back). It's a nested LiveView with its own
+           PubSub/state — when the show page is itself embedded this is a
+           nested-within-nested `live_render`, which is fine (server-rendered
+           SVG; only the popover/auto-scroll need the gantt JS hooks in the
+           host). `headless` drops its back-link since the tabs replace it. --%>
+      <div :if={not @is_template} class={if(@active_tab != :gantt, do: "hidden")}>
         <%= if @gantt_mounted? do %>
           {live_render(@socket, PhoenixKitProjects.Web.ProjectGanttLive,
             id: "project-gantt-live-#{@project.uuid}",

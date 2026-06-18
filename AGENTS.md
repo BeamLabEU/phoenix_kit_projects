@@ -99,13 +99,21 @@ Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../ne
 exist, the per-LV fix shapes, the test convention, and the pre-flight
 checklist for new LVs. Read it before adding a new LV.
 
-**All 9 LVs are embeddable.** The regression gate is
-`test/phoenix_kit_projects/web/embedding_test.exs` — 36
+**All 10 LVs are embeddable.** The regression gate is
+`test/phoenix_kit_projects/web/embedding_test.exs` — 43
 `live_isolated/3` + `render_hook` tests pinning the embed contract
 (including the `current_user_uuid` identity contract). Coverage:
 `OverviewLive`, `ProjectsLive`, `TemplatesLive`, `TasksLive`,
-`ProjectShowLive`, `ProjectFormLive`, `TaskFormLive`,
+`ProjectShowLive`, `ProjectGanttLive`, `ProjectFormLive`, `TaskFormLive`,
 `TemplateFormLive`, `AssignmentFormLive`.
+
+The whitelist that gates **host-driven** insertion (PopupHost `root_view`,
+`<.smart_link emit>`, emit `:opened`, `next` frames) is the single
+`Web.Helpers.embeddable_lvs/0` list — an LV must be in it to be insertable
+by another app, even if its `mount/3` already handles the off-router embed
+contract. (The admin Timeline tab renders `ProjectGanttLive` via a direct
+`live_render`, which never consulted the whitelist — which is why the Gantt
+ran in our own UI yet stayed un-insertable until it was added to the list.)
 
 > **Host responsibility — pass the viewer's identity.** Any user-aware
 > behavior in an embed (the `ProjectShowLive` comments composer, and
@@ -129,7 +137,7 @@ checklist for new LVs. Read it before adding a new LV.
 > not unauthorized hosts).
 
 Common shape for **read-only LVs** (Overview / Projects / Templates /
-Tasks / ProjectShow):
+Tasks / ProjectShow / ProjectGantt):
 
 ```heex
 {live_render(@socket, PhoenixKitProjects.Web.OverviewLive,
@@ -143,8 +151,28 @@ Tasks / ProjectShow):
 ```
 
 `ProjectShowLive` additionally requires `session["id"]` (the project
-UUID) and reads `session["current_user_uuid"]` for the comments-drawer
-composer. `TasksLive` accepts `session["view"]` (`"list"` or `"groups"`).
+UUID), reads `session["current_user_uuid"]` for the comments-drawer
+composer, and renders the **List/Timeline tab bar in embeds too** (the
+Timeline tab is a nested `live_render` of `ProjectGanttLive`); its URL-sync
+hook is opt-in via `session["tab_url_sync"]` (off by default — see the
+contract bullet). `ProjectGanttLive` (the read-only Timeline view) also
+requires `session["id"]` and accepts `session["headless"]` (drops the
+back-link when nested as the show page's tab). `TasksLive` accepts
+`session["view"]` (`"list"` or `"groups"`).
+
+> ⚠️ **Embedded Timeline needs the gantt JS hooks in the host's
+> LiveSocket.** When a host embeds `ProjectShowLive` and the user opens
+> the Timeline tab, the nested `ProjectGanttLive` renders with
+> `enable_hooks={true}`, expecting `window.PhoenixLiveGanttHooks`
+> (`LgBarPopover` / `LgAutoScroll`). The chart itself is server-rendered
+> SVG and shows without them, but the bar popover + scroll-to-today are
+> inert until they're loaded. A PhoenixKit-core host gets them
+> zero-config via this module's `js_sources/0` + core's
+> `:phoenix_kit_js_sources` compiler (core ≥ 1.7.146; run
+> `mix phoenix_kit.update`, recompile, rebuild assets). A non-PhoenixKit
+> host must import `phoenix_live_gantt/priv/static/assets/phoenix_live_gantt.js`
+> in its `app.js` and spread `window.PhoenixLiveGanttHooks` into its
+> LiveSocket `hooks`.
 
 Common shape for **form LVs** (ProjectForm / AssignmentForm /
 TaskForm / TemplateForm):
@@ -161,8 +189,8 @@ TaskForm / TemplateForm):
 
 Contract (all keys optional unless noted):
 
-- `session["id"]` — required for `ProjectShowLive` and for `:edit`
-  actions on form LVs. String UUID.
+- `session["id"]` — required for `ProjectShowLive`, `ProjectGanttLive`,
+  and for `:edit` actions on form LVs. String UUID.
 - `session["project_id"]` — required for `AssignmentFormLive` (both
   `:new` and `:edit`).
 - `session["live_action"]` — `"new"` or `"edit"` for form LVs.
@@ -202,6 +230,14 @@ Contract (all keys optional unless noted):
   `push_navigate` on save / mount-error fires to this path instead of
   the admin default. Lets the host close a modal, refresh state, etc.
   without yanking the user to `/admin/projects/...`.
+- `session["tab_url_sync"]` — `ProjectShowLive` only. Boolean,
+  **defaults `false`** in embeds. The List/Timeline tab bar renders in
+  every embed (only templates stay list-only), but the `ProjectTabsUrl`
+  hook that pushes the active tab onto the browser URL is **off by
+  default** — an embed must not rewrite the host's address bar. Pass
+  `true` (a real boolean, not `"true"`) only if the host mounts the show
+  page as its own full-page route and wants `/gantt` deep-linking. The
+  router-mounted standalone admin page enables it implicitly.
 - `id:` opt on `live_render` should be unique per logical embed (e.g.
   include the resource UUID) so two embeddings of the same LV on one
   page don't collide.

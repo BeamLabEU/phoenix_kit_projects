@@ -115,6 +115,12 @@ defmodule PhoenixKitProjects.Web.Helpers do
     PhoenixKitProjects.Web.TemplatesLive,
     PhoenixKitProjects.Web.TasksLive,
     PhoenixKitProjects.Web.ProjectShowLive,
+    # The Timeline view. Embed-ready (off-router mount, requires session["id"]
+    # like ProjectShowLive). The admin tab renders it via a direct live_render,
+    # which never needed this list — but host-driven insertion (PopupHost
+    # root_view, <.smart_link emit>, emit :opened, `next` frames) all gate on
+    # the whitelist, so it must be listed to be insertable by other apps.
+    PhoenixKitProjects.Web.ProjectGanttLive,
     PhoenixKitProjects.Web.ProjectFormLive,
     PhoenixKitProjects.Web.TaskFormLive,
     PhoenixKitProjects.Web.TemplateFormLive,

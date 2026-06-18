@@ -1,10 +1,12 @@
 # Embedding Audit — phoenix_kit_projects
 
-**Status:** All 9 LiveViews are embeddable via `live_render`. Initial
+**Status:** All 10 LiveViews are embeddable via `live_render`. Initial
 fix on `ProjectShowLive` shipped in response to upstream issue
 [#5](https://github.com/BeamLabEU/phoenix_kit_projects/issues/5); the
 remaining 8 LVs were brought to the same standard in the follow-up
-sweep. Coverage is pinned by 28 `live_isolated/3` tests in
+sweep, and `ProjectGanttLive` (the Timeline view) was born embed-ready
+and added to the `embeddable_lvs/0` whitelist so hosts can insert it too.
+Coverage is pinned by 43 `live_isolated/3` tests in
 `test/phoenix_kit_projects/web/embedding_test.exs`.
 
 This doc is the bulletproof reference — what was blocked, why it was
@@ -59,9 +61,12 @@ The third is soft (the LV mounts but looks broken).
 
 ## Per-LV diagnosis
 
-All 9 LVs are fixed; the catalogue below records what was blocked and
+All 10 LVs are fixed; the catalogue below records what was blocked and
 what shape each fix took, so future-me (or the next contributor) can
-match new LVs against the playbook.
+match new LVs against the playbook. (`ProjectGanttLive`, added after the
+original sweep, never had a blocker — it was written embed-ready from the
+start; its only requirement was being listed in `embeddable_lvs/0` so
+host-driven insertion paths accept it.)
 
 ### Tier 1 — read-only LVs, high embed value
 
