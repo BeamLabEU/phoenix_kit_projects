@@ -160,6 +160,20 @@ requires `session["id"]` and accepts `session["headless"]` (drops the
 back-link when nested as the show page's tab). `TasksLive` accepts
 `session["view"]` (`"list"` or `"groups"`).
 
+> ⚠️ **Embedded Timeline needs the gantt JS hooks in the host's
+> LiveSocket.** When a host embeds `ProjectShowLive` and the user opens
+> the Timeline tab, the nested `ProjectGanttLive` renders with
+> `enable_hooks={true}`, expecting `window.PhoenixLiveGanttHooks`
+> (`LgBarPopover` / `LgAutoScroll`). The chart itself is server-rendered
+> SVG and shows without them, but the bar popover + scroll-to-today are
+> inert until they're loaded. A PhoenixKit-core host gets them
+> zero-config via this module's `js_sources/0` + core's
+> `:phoenix_kit_js_sources` compiler (core ≥ 1.7.146; run
+> `mix phoenix_kit.update`, recompile, rebuild assets). A non-PhoenixKit
+> host must import `phoenix_live_gantt/priv/static/assets/phoenix_live_gantt.js`
+> in its `app.js` and spread `window.PhoenixLiveGanttHooks` into its
+> LiveSocket `hooks`.
+
 Common shape for **form LVs** (ProjectForm / AssignmentForm /
 TaskForm / TemplateForm):
 

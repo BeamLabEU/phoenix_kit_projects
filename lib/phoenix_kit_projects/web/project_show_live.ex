@@ -162,6 +162,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            is_template: false,
            wrapper_class: @default_wrapper_class,
            router_mounted?: false,
+           # Must be assigned: the tab bar now renders on `not @is_template`
+           # (true here), so the render reads `@tab_url_sync?`. Router-mount
+           # context → true (matches the success branch); the embedded wrapper
+           # overrides it to the session value when this path is reached via an
+           # off-router mount with an unknown id.
+           tab_url_sync?: true,
            active_tab: :list,
            gantt_mounted?: false,
            assignments: [],
