@@ -349,6 +349,61 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     end
   end
 
+  describe "ProjectGanttLive embed" do
+    # The Timeline view is host-insertable just like ProjectShowLive — it
+    # mounts off-router, requires session["id"], and reads
+    # current_user_uuid / locale / wrapper_class / headless. The regression
+    # that prompted this block: ProjectGanttLive shipped embed-ready but was
+    # absent from embeddable_lvs/0, so PopupHost / <.smart_link emit> / emit
+    # :opened all refused to insert it (the admin Timeline tab renders it via
+    # a direct live_render, which never needed the whitelist).
+    setup %{actor_uuid: actor_uuid} do
+      {:ok, project} =
+        Projects.create_project(%{
+          "name" => "Embed gantt test #{System.unique_integer([:positive])}",
+          "start_mode" => "immediate",
+          "started_at" => DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      _ = actor_uuid
+      {:ok, project: project}
+    end
+
+    test "mounts off-router via live_isolated with session id", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectGanttLive,
+          session: %{"id" => project.uuid}
+        )
+
+      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
+    end
+
+    test "wrapper_class override replaces the default", %{conn: conn, project: project} do
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectGanttLive,
+          session: %{"id" => project.uuid, "wrapper_class" => "host-gantt-class"}
+        )
+
+      assert html =~ "host-gantt-class"
+      refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
+    end
+
+    test "is registered in the embeddable-LV whitelist so hosts can insert it" do
+      assert WebHelpers.embeddable_lv?(PhoenixKitProjects.Web.ProjectGanttLive)
+
+      # Both the Elixir.-prefixed (on-the-wire) and human-friendly forms
+      # round-trip through the PopupHost / smart_link decoder.
+      assert {:ok, PhoenixKitProjects.Web.ProjectGanttLive} =
+               WebHelpers.decode_embeddable_lv("Elixir.PhoenixKitProjects.Web.ProjectGanttLive")
+
+      assert {:ok, PhoenixKitProjects.Web.ProjectGanttLive} =
+               WebHelpers.decode_embeddable_lv("PhoenixKitProjects.Web.ProjectGanttLive")
+    end
+  end
+
   describe "ProjectsLive embed" do
     test "mounts via live_isolated", %{conn: conn} do
       {:ok, _view, html} =

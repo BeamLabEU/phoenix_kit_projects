@@ -1,8 +1,10 @@
 # Emit Mode + Popup Host — `phoenix_kit_projects`
 
-**Status:** Shipped. All 9 LVs in this module honor the emit-mode
+**Status:** Shipped. All 10 LVs in this module honor the emit-mode
 contract; the `<.popup_host>` function component + `PopupHostLive`
-LiveView ship the opinionated "popup-driven embed" UX. Regression
+LiveView ship the opinionated "popup-driven embed" UX. (`ProjectGanttLive`
+is read-only, so it only ever emits `:opened` / `:closed` — never the
+`:saved` / `:deleted` verbs the mutating LVs use.) Regression
 gate: `test/phoenix_kit_projects/web/embedding_emit_test.exs` +
 `popup_host_live_test.exs`.
 
@@ -226,7 +228,7 @@ that the hook decodes against the whitelist and emits.
 
 ## Whitelist guard
 
-`Helpers.embeddable_lvs/0` is a compile-time list of the 9 LVs this
+`Helpers.embeddable_lvs/0` is a compile-time list of the 10 LVs this
 module exposes. `Helpers.embeddable_lv?/1` rejects anything else.
 The `open_embed` handler validates `phx-value-lv` against this list
 before calling `String.to_existing_atom/1`, and `PopupHostLive`

@@ -626,7 +626,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert html =~ "lg-wrap"
     end
 
-    test "embedded ProjectShowLive renders no tabs and no nested gantt", %{conn: conn} do
+    test "embedded ProjectShowLive renders the List/Timeline tabs (lazy gantt)", %{conn: conn} do
       project = started_project_for_tabs()
 
       {:ok, _view, html} =
@@ -634,8 +634,40 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
           session: %{"id" => project.uuid}
         )
 
-      refute html =~ ~s(role="tablist")
+      # The tab bar now renders in embeds too (only templates stay list-only),
+      # so a host embedding the show page gets the Timeline switch as well.
+      assert html =~ ~s(role="tablist")
+      assert html =~ "Timeline"
+      # Still lazy — the nested gantt isn't live_rendered until its tab opens.
       refute html =~ "lg-wrap"
+    end
+
+    test "embedded ProjectShowLive does not sync the URL on tab switch (off by default)", %{
+      conn: conn
+    } do
+      project = started_project_for_tabs()
+
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid}
+        )
+
+      render_click(view, "switch_tab", %{"tab" => "gantt"})
+      # URL sync defaults OFF in embeds: an embed must never rewrite the host
+      # page's address bar, so no `project_tab_url` push fires.
+      refute_push_event(view, "project_tab_url", %{})
+    end
+
+    test "an embed can opt into URL sync via session[\"tab_url_sync\"]", %{conn: conn} do
+      project = started_project_for_tabs()
+
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => project.uuid, "tab_url_sync" => true}
+        )
+
+      render_click(view, "switch_tab", %{"tab" => "gantt"})
+      assert_push_event(view, "project_tab_url", %{tab: "gantt"})
     end
 
     test "a template show page (router-mounted) renders no tabs — no template gantt route",
