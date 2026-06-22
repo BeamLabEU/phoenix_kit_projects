@@ -351,7 +351,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
         start: DateTime.to_naive(schedule_anchor(project)),
         id: & &1.uuid,
         parent_id: & &1.parent_uuid,
-        order: & &1.position,
+        # Dependency-respecting order (prerequisites first), assigned in
+        # `collect_items` — NOT raw drag-position. See `order_by_dependencies/2`.
+        order: & &1.order,
         duration: fn it -> assignment_hours(it.assignment, it.project) end,
         advance: &advance_through_calendar/3,
         # No artificial minimum — reflect the real schedule. A task spans exactly
@@ -404,13 +406,20 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   defp collect_items(project, parent_uuid, depth) do
     project.uuid
     |> Projects.list_assignments()
-    |> Enum.flat_map(fn a ->
+    |> order_by_dependencies(project.uuid)
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {a, order} ->
       item = %{
         uuid: a.uuid,
         assignment: a,
         project: project,
         parent_uuid: parent_uuid,
-        position: a.position
+        position: a.position,
+        # Dependency-respecting rank within this project's assignments. Drives
+        # both the waterfall layout (`Layout.sequential` `:order`) and the row
+        # order (`extra.order`), so a prerequisite is never charted after the
+        # task that depends on it.
+        order: order
       }
 
       children =
@@ -420,6 +429,81 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
 
       [item | children]
     end)
+  end
+
+  # Orders a project's assignments so every prerequisite precedes the task that
+  # depends on it, with drag-`position` as the tiebreaker between tasks that have
+  # no ordering constraint. The vertical timeline lays tasks out by position
+  # alone; for the Gantt that draws a backward ("conflict", red dashed) arrow
+  # whenever a prerequisite is positioned AFTER its dependent, and forces the
+  # dependent's bar to weave around the misplaced prerequisite. A
+  # dependency-respecting order keeps the waterfall and every finish-to-start
+  # arrow pointing forward. When position already respects dependencies (the
+  # normal case) this is a no-op — the output equals the position order.
+  #
+  # Greedy stable topological sort: repeatedly emit the lowest-position task
+  # whose in-scope prerequisites are all already emitted. A dependency cycle
+  # (the schema rejects self-refs and the graph is a DAG, so this shouldn't
+  # happen) degrades gracefully — once nothing is ready, the remaining tasks are
+  # appended in position order rather than dropped.
+  # `O(n^2)` (an `Enum.find` + `Enum.reject` per emitted item); fine for the tens
+  # of assignments a project realistically has. Sets are plain maps (`%{uuid =>
+  # true}`), not `MapSet` — `MapSet` is an opaque type and building one in-module
+  # trips dialyzer's opaqueness checker; plain maps give the same membership
+  # semantics without the false positive.
+  @spec order_by_dependencies([map()], binary()) :: [map()]
+  defp order_by_dependencies(assignments, project_uuid) do
+    uuids = Map.new(assignments, &{&1.uuid, true})
+
+    prereqs =
+      project_uuid
+      |> Projects.list_all_dependencies()
+      |> Enum.reduce(%{}, fn dep, acc ->
+        if Map.has_key?(uuids, dep.assignment_uuid) and
+             Map.has_key?(uuids, dep.depends_on_uuid) do
+          Map.update(acc, dep.assignment_uuid, [dep.depends_on_uuid], &[dep.depends_on_uuid | &1])
+        else
+          acc
+        end
+      end)
+
+    if prereqs == %{} do
+      # No in-scope dependencies — keep the existing position order verbatim.
+      assignments
+    else
+      assignments
+      |> Enum.sort_by(& &1.position)
+      |> emit_in_dependency_order(prereqs, %{}, [])
+    end
+  end
+
+  @spec emit_in_dependency_order(
+          [map()],
+          %{optional(binary()) => [binary()]},
+          %{optional(binary()) => true},
+          [map()]
+        ) :: [map()]
+  defp emit_in_dependency_order([], _prereqs, _emitted, acc), do: Enum.reverse(acc)
+
+  defp emit_in_dependency_order(remaining, prereqs, emitted, acc) do
+    ready =
+      Enum.find(remaining, fn a ->
+        prereqs |> Map.get(a.uuid, []) |> Enum.all?(&Map.has_key?(emitted, &1))
+      end)
+
+    case ready do
+      # Cycle / all-blocked: append the rest (already position-sorted) unchanged.
+      nil ->
+        Enum.reverse(acc) ++ remaining
+
+      a ->
+        emit_in_dependency_order(
+          Enum.reject(remaining, &(&1.uuid == a.uuid)),
+          prereqs,
+          Map.put(emitted, a.uuid, true),
+          [a | acc]
+        )
+    end
   end
 
   defp subproject_with_children?(%Assignment{} = a, depth) do
