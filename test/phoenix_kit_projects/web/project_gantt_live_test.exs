@@ -116,28 +116,21 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     assert html =~ ~s(data-to-id="#{a2.uuid}")
   end
 
-  test "charts a prerequisite before its dependent even when positioned later",
+  test "keeps the user's drag order instead of reordering by dependency",
        %{conn: conn, actor_uuid: actor} do
-    # Real-world bug: a1 (created first → position 0) DEPENDS ON a2 (created
-    # second → position 1). Laying out by raw drag-position put the prerequisite
-    # a2 AFTER a1, so its finish-to-start arrow pointed backward (red "conflict"
-    # dashed detour) and the dependent's bar had to weave around the misplaced
-    # prerequisite bar. The gantt must order a2 (prerequisite) before a1.
+    # a1 (created first → position 0) DEPENDS ON a2 (position 1) — the manual
+    # order places the dependent BEFORE its prerequisite. We no longer silently
+    # reorder to dependency order: the chart keeps the order the user gave. The
+    # gantt's connector router draws the resulting backward dependency followably
+    # and flags it honestly, rather than hiding it behind a reorder.
     {project, a1, a2} = started_project_with_tasks(actor)
     {:ok, _} = Projects.add_dependency(a1.uuid, a2.uuid)
 
     {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
     html = render(view)
 
-    # Prerequisite charted above its dependent...
-    assert row_index(html, a2.uuid) < row_index(html, a1.uuid),
-           "prerequisite a2 must be ordered before dependent a1"
-
-    # ...and scheduled no later, so the arrow points forward (not a conflict).
-    assert bar_left_pct(html, a2.uuid) <= bar_left_pct(html, a1.uuid)
-
-    refute html =~ "lg-connector stroke-current text-error",
-           "the forward dependency must not render as a backward conflict"
+    assert row_index(html, a1.uuid) < row_index(html, a2.uuid),
+           "the given order (a1 then a2) must be preserved, not reordered by dependency"
   end
 
   test "maps a dependency BETWEEN sub-project tasks to a connector (tree-wide)",
@@ -384,22 +377,6 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
       end
 
     round(pct / 100 * content_width)
-  end
-
-  defp bar_left_pct(html, event_id) do
-    case Regex.run(
-           ~r/style="[^"]*?left:\s*([\d.]+)%[^"]*?"[^>]*?data-event-id="#{event_id}"/,
-           html
-         ) ||
-           Regex.run(~r/data-event-id="#{event_id}"[^>]*?style="[^"]*?left:\s*([\d.]+)%/, html) do
-      [_, p] ->
-        elem(Float.parse(p), 0)
-
-      # Fail loudly rather than defaulting to 0.0 — a silent default would make
-      # the `<=` comparison pass trivially if the gantt bar markup ever changes.
-      _ ->
-        flunk("no left% found for event #{event_id} — gantt bar markup may have changed")
-    end
   end
 
   test "empty project shows the empty state, no chart", %{conn: conn} do

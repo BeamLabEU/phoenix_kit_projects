@@ -110,10 +110,11 @@ defmodule PhoenixKitProjects.MixProject do
       # for polymorphic assignee FKs (team / department / person).
       {:phoenix_live_view, "~> 1.1"},
       {:ecto_sql, "~> 3.13"},
-      # Gantt/waterfall chart for the project timeline view. Hex by default
-      # (publish-safe); export PHOENIX_LIVE_GANTT_PATH=../phoenix_live_gantt to
-      # build against a local checkout.
-      pk_dep(:phoenix_live_gantt, "~> 0.1"),
+      # Gantt/waterfall chart for the project timeline view. 0.3 is the floor —
+      # its connector router lays out any task order followably (so the timeline
+      # no longer pre-sorts by dependency). Hex by default (publish-safe); export
+      # PHOENIX_LIVE_GANTT_PATH=../phoenix_live_gantt to build against a local checkout.
+      pk_dep(:phoenix_live_gantt, "~> 0.3"),
       # Already transitive via :phoenix_kit, but pinned explicitly here so
       # `mix gettext.extract` / `mix gettext.merge` run against this app's
       # own `PhoenixKitProjects.Gettext` backend (call sites for project-
