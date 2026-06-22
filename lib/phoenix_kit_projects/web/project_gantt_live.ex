@@ -442,7 +442,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   # normal case) this is a no-op — the output equals the position order.
   #
   # Greedy stable topological sort: repeatedly emit the lowest-position task
-  # whose in-scope prerequisites are all already emitted. A dependency cycle
+  # whose in-scope prerequisites are all already emitted. `assignments` already
+  # arrives position-ordered (`list_assignments` sorts by `asc: position`), so we
+  # neither re-sort here nor in the no-dependency branch. A dependency cycle
   # (the schema rejects self-refs and the graph is a DAG, so this shouldn't
   # happen) degrades gracefully — once nothing is ready, the remaining tasks are
   # appended in position order rather than dropped.
@@ -471,9 +473,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
       # No in-scope dependencies — keep the existing position order verbatim.
       assignments
     else
-      assignments
-      |> Enum.sort_by(& &1.position)
-      |> emit_in_dependency_order(prereqs, %{}, [])
+      emit_in_dependency_order(assignments, prereqs, %{}, [])
     end
   end
 

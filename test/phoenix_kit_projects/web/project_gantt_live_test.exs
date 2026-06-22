@@ -392,8 +392,13 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
            html
          ) ||
            Regex.run(~r/data-event-id="#{event_id}"[^>]*?style="[^"]*?left:\s*([\d.]+)%/, html) do
-      [_, p] -> elem(Float.parse(p), 0)
-      _ -> 0.0
+      [_, p] ->
+        elem(Float.parse(p), 0)
+
+      # Fail loudly rather than defaulting to 0.0 — a silent default would make
+      # the `<=` comparison pass trivially if the gantt bar markup ever changes.
+      _ ->
+        flunk("no left% found for event #{event_id} — gantt bar markup may have changed")
     end
   end
 
