@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
   import PhoenixKitProjects.StatusFixtures
 
   alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.GanttDisplay
   alias PhoenixKitProjects.Statuses
 
   @path "/en/admin/settings/projects"
@@ -47,7 +48,9 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
     } do
       {:ok, view, _html} = live(conn, @path)
 
-      view |> element("form") |> render_change(%{"entity_uuid" => ""})
+      view
+      |> element(~s(form[phx-change="select_default_status_entity"]))
+      |> render_change(%{"entity_uuid" => ""})
 
       assert Statuses.global_default_status_entity_uuid() == nil
 
@@ -64,7 +67,9 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       Statuses.set_default_status_entity(nil)
       {:ok, view, _html} = live(conn, @path)
 
-      view |> element("form") |> render_change(%{"entity_uuid" => entity.uuid})
+      view
+      |> element(~s(form[phx-change="select_default_status_entity"]))
+      |> render_change(%{"entity_uuid" => entity.uuid})
 
       assert Statuses.global_default_status_entity_uuid() == entity.uuid
 
@@ -136,7 +141,9 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
           session: %{"current_user_uuid" => actor_uuid}
         )
 
-      view |> element("form") |> render_change(%{"entity_uuid" => entity.uuid})
+      view
+      |> element(~s(form[phx-change="select_default_status_entity"]))
+      |> render_change(%{"entity_uuid" => entity.uuid})
 
       assert Statuses.global_default_status_entity_uuid() == entity.uuid
 
@@ -154,6 +161,71 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       {:ok, _view, html} = live(conn, @path)
       assert html =~ "entities module is not enabled"
       refute html =~ ~r/name="entity_uuid"/
+    end
+  end
+
+  # The Timeline-labels card is independent of the entities module — it's always
+  # present, with a live demo chart driven by the same settings.
+  describe "timeline chart settings" do
+    test "renders the Timeline chart card + the live demo chart", %{conn: conn} do
+      {:ok, _view, html} = live(conn, @path)
+      assert html =~ "Timeline chart"
+      assert html =~ ~s(name="label_position")
+      assert html =~ ~s(name="row_height")
+      assert html =~ ~s(id="gantt-settings-demo")
+    end
+
+    test "changing the label style persists the setting + logs it", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
+      GanttDisplay.put("label_position", "fit")
+      {:ok, view, _html} = live(conn, @path)
+
+      view
+      |> element("#gantt-labels-form")
+      |> render_change(%{"_target" => ["label_position"], "label_position" => "watermark"})
+
+      assert GanttDisplay.read().label_position == :watermark
+
+      assert_activity_logged("projects.gantt_display_changed",
+        actor_uuid: actor_uuid,
+        metadata_has: %{"field" => "label_position"}
+      )
+    end
+
+    test "the new chart controls persist (row height select + smart-routing toggle)", %{
+      conn: conn
+    } do
+      # ensure the dependency-arrows section (and its toggle) renders
+      GanttDisplay.put_flag("show_connectors", true)
+      {:ok, view, _html} = live(conn, @path)
+
+      view
+      |> element("#gantt-bars-form")
+      |> render_change(%{"_target" => ["row_height"], "row_height" => "comfortable"})
+
+      assert GanttDisplay.read().row_height == "3rem"
+
+      view
+      |> element(~s(input[phx-value-field="avoid_collisions"]))
+      |> render_click()
+
+      refute GanttDisplay.read().avoid_collisions
+    end
+
+    test "reset to defaults restores settings + logs it", %{conn: conn, actor_uuid: actor_uuid} do
+      GanttDisplay.put("label_position", "watermark")
+      GanttDisplay.put("row_height", "comfortable")
+      {:ok, view, _html} = live(conn, @path)
+
+      view |> element(~s(button[phx-click="reset_gantt_display"])) |> render_click()
+
+      d = GanttDisplay.read()
+      assert d.label_position == :fit
+      assert d.row_height_choice == :normal
+
+      assert_activity_logged("projects.gantt_display_reset", actor_uuid: actor_uuid)
     end
   end
 end

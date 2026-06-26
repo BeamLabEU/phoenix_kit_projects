@@ -15,7 +15,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{L10n, Paths, Projects}
+  alias PhoenixKitProjects.{GanttDisplay, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -111,6 +111,10 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
       window_start: nil,
       window_end: nil,
       today: Date.utc_today(),
+      # Bar-label display settings (style + tuning), set globally on
+      # /admin/settings/projects. Read once at mount; a change applies on the next
+      # load. Safe defaults (:fit / 0.4) when unconfigured.
+      gantt_display: GanttDisplay.read(),
       # True between the connected mount and the `:load_gantt` message that
       # builds the chart — drives the loading skeleton so the first paint isn't
       # blocked on N per-project queries (and doesn't flash the empty state).
@@ -697,11 +701,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
         </.empty_state>
       <% else %>
         <div class="border border-base-200 rounded-lg overflow-hidden">
-          <%!-- Show each task's name ON the bars that are wide enough to fit it
-               (≥ half the label), and a clean bar on the ones that aren't — the
-               fit test is a per-bar CSS container query, so it tracks the bar's
-               rendered width at every zoom. Other options: :none / :outside /
-               :inside; tune the threshold with label_fit_ratio. --%>
+          <%!-- Bar-label style + tuning come from the global projects settings
+               (/admin/settings/projects → Timeline labels), read into
+               @gantt_display at mount. --%>
           <PhoenixLiveGantt.gantt
             id={"project-gantt-#{@project.uuid}"}
             events={@events}
@@ -718,8 +720,19 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
             on_navigate="navigate"
             on_scroll_today="jump_today"
             zooms={[:min5, :min15, :hour, :day, :week, :month]}
-            label_position={:fit}
-            label_fit_ratio={0.4}
+            label_position={@gantt_display.label_position}
+            label_side={@gantt_display.label_side}
+            label_overflow={@gantt_display.label_overflow}
+            label_fit_ratio={@gantt_display.label_fit_ratio}
+            label_watermark_opacity={@gantt_display.label_watermark_opacity}
+            show_progress={@gantt_display.show_progress}
+            show_connectors={@gantt_display.show_connectors}
+            show_today={@gantt_display.show_today}
+            tiny_bar_px={@gantt_display.tiny_bar_px}
+            min_bar_px={@gantt_display.min_bar_px}
+            row_height={@gantt_display.row_height}
+            avoid_collisions={@gantt_display.avoid_collisions}
+            bus_attach_mode={@gantt_display.bus_attach_mode}
             show_header={true}
             show_navigation={true}
             show_edge_indicators={false}
