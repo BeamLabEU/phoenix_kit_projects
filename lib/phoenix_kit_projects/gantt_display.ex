@@ -57,11 +57,19 @@ defmodule PhoenixKitProjects.GanttDisplay do
   @bool_flags ~w(show_progress show_connectors show_today tiny_markers avoid_collisions)
 
   @doc "Allowed string values for each enum field (used to build the settings form)."
+  @spec positions() :: [String.t()]
   def positions, do: @positions
+  @spec sides() :: [String.t()]
   def sides, do: @sides
+  @spec overflows() :: [String.t()]
   def overflows, do: @overflows
+  @spec row_heights() :: [String.t()]
   def row_heights, do: @row_heights
+  @spec attach_modes() :: [String.t()]
   def attach_modes, do: @attach_modes
+
+  @doc "Upper bound (px) for the `min_bar_px` setting; used to clamp the slider."
+  @spec min_bar_max() :: pos_integer()
   def min_bar_max, do: @min_bar_max
 
   @doc """

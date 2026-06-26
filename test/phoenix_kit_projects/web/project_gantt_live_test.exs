@@ -140,6 +140,50 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     assert html =~ ~s(data-to-id="#{a1.uuid}")
   end
 
+  test "a reorder reflects on an open chart (the :assignment_reordered broadcast)",
+       %{conn: conn, actor_uuid: actor} do
+    # The chart lays tasks out in `position` order; a reorder in one session must
+    # reach another open chart via the broadcast `reorder_assignments` now fires.
+    {project, a1, a2} = started_project_with_tasks(actor)
+
+    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    assert row_index(render(view), a1.uuid) < row_index(render(view), a2.uuid)
+
+    # Flip the order in the DB (suppress the broadcast so we drive handle_info
+    # deterministically), then deliver the event reorder_assignments broadcasts.
+    :ok = Projects.reorder_assignments(project.uuid, [a2.uuid, a1.uuid], broadcast: false)
+    send(view.pid, {:projects, :assignment_reordered, %{project_uuid: project.uuid}})
+
+    html = render(view)
+
+    assert row_index(html, a2.uuid) < row_index(html, a1.uuid),
+           "the chart must reload into the new order when :assignment_reordered arrives"
+  end
+
+  test "a project-lifecycle broadcast reloads the chart", %{conn: conn, actor_uuid: actor} do
+    # :project_archived / :project_unarchived / :project_status_changed are handled
+    # alongside :project_completed/:reopened/:started — a handled event reloads;
+    # the catch-all would silently ignore it. Pin that one of the added events
+    # actually triggers a reload (a new assignment, added without its own
+    # broadcast, only appears if the lifecycle event pulled in fresh data).
+    {project, _a1, _a2} = started_project_with_tasks(actor)
+    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+
+    t3 = fixture_task(%{"estimated_duration" => 1, "estimated_duration_unit" => "days"})
+
+    {:ok, a3} =
+      Projects.create_assignment(
+        %{"project_uuid" => project.uuid, "task_uuid" => t3.uuid, "status" => "todo"},
+        broadcast: false
+      )
+
+    refute render(view) =~ a3.uuid
+    send(view.pid, {:projects, :project_archived, %{uuid: project.uuid}})
+
+    assert render(view) =~ a3.uuid,
+           "a handled project-lifecycle event must reload the chart"
+  end
+
   test "maps a dependency BETWEEN sub-project tasks to a connector (tree-wide)",
        %{conn: conn} do
     # A dependency between two tasks INSIDE a sub-project is stored on the CHILD

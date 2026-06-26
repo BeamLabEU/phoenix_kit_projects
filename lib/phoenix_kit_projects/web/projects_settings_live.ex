@@ -399,6 +399,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               type="button"
               class="btn btn-ghost btn-xs"
               phx-click="reset_gantt_display"
+              phx-disable-with={gettext("Resetting…")}
               data-confirm={gettext("Reset all Timeline chart settings to their defaults?")}
             >
               {gettext("Reset to defaults")}

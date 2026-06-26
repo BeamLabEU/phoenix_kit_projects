@@ -194,8 +194,9 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       )
     end
 
-    test "the new chart controls persist (row height select + smart-routing toggle)", %{
-      conn: conn
+    test "the new chart controls persist + log (row height select + smart-routing toggle)", %{
+      conn: conn,
+      actor_uuid: actor_uuid
     } do
       # ensure the dependency-arrows section (and its toggle) renders
       GanttDisplay.put_flag("show_connectors", true)
@@ -207,11 +208,21 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
 
       assert GanttDisplay.read().row_height == "3rem"
 
+      assert_activity_logged("projects.gantt_display_changed",
+        actor_uuid: actor_uuid,
+        metadata_has: %{"field" => "row_height"}
+      )
+
       view
       |> element(~s(input[phx-value-field="avoid_collisions"]))
       |> render_click()
 
       refute GanttDisplay.read().avoid_collisions
+
+      assert_activity_logged("projects.gantt_display_changed",
+        actor_uuid: actor_uuid,
+        metadata_has: %{"field" => "avoid_collisions"}
+      )
     end
 
     test "reset to defaults restores settings + logs it", %{conn: conn, actor_uuid: actor_uuid} do
