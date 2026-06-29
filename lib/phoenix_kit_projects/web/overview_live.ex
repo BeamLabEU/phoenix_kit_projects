@@ -5,7 +5,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, CalendarDisplay, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Project, Task}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -61,7 +61,16 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         setup_projects: [],
         any_projects?: false,
         my_assignments: [],
-        status_counts: %{}
+        status_counts: %{},
+        today: Date.utc_today(),
+        tz_offset: "0",
+        calendar_events: [],
+        # Which VIEW of the running projects is shown: :list (vertical list,
+        # default) or :calendar (the month view), toggled by tabs. The calendar is
+        # lazy-mounted on first switch, then kept (hidden) so its paged month
+        # survives toggling.
+        overview_tab: :list,
+        calendar_seen?: false
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
@@ -81,10 +90,39 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       active_projects != [] or completed_projects != [] or upcoming_projects != [] or
         setup_projects != []
 
-    {top_summaries, total_active} =
+    # One `now` (UTC instant — "has the deadline passed" is timezone-independent)
+    # and one `today` (the viewer's local calendar day — for every day/date
+    # display). Computing both once keeps the whole Overview internally
+    # consistent.
+    now = DateTime.utc_now()
+    offset = resolve_offset(socket)
+    today = to_local_date(now, offset)
+
+    # Compute every active project's tree summary once and tag its lifecycle
+    # tier (with that single `now`), so the Running cards, the sort order, and
+    # the calendar's late-blink all agree on which projects are late. The
+    # capped/sorted slice feeds the cards; the full list feeds the calendar.
+    all_summaries =
       active_projects
       |> Enum.map(&Projects.project_tree_summary/1)
-      |> prioritize_running()
+      |> Enum.map(fn s ->
+        tier = running_tier(s, now)
+        s |> Map.put(:tier, tier) |> Map.put(:late, tier == :late)
+      end)
+
+    {top_summaries, total_active} = prioritize_running(all_summaries, today, now)
+
+    overdue_anim = CalendarDisplay.read_animation()
+
+    calendar_events =
+      CalendarDisplay.events(
+        all_summaries,
+        completed_projects,
+        upcoming_projects,
+        L10n.current_content_lang(),
+        today,
+        offset
+      )
 
     assign(socket,
       task_count: Projects.count_tasks(),
@@ -97,7 +135,51 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       setup_projects: setup_projects,
       any_projects?: any_projects?,
       my_assignments: if(user_uuid, do: Projects.list_assignments_for_user(user_uuid), else: []),
-      status_counts: Projects.assignment_status_counts()
+      status_counts: Projects.assignment_status_counts(),
+      today: today,
+      tz_offset: offset,
+      calendar_events: calendar_events,
+      # The overdue-animation <style>, generated from the settings on
+      # /admin/settings/projects (mode/speed/brightness), plus the mode itself so
+      # the calendar's info popover can describe it accurately. Read once here so a
+      # page (re)load reflects the latest config.
+      overdue_style: CalendarDisplay.animation_style(overdue_anim),
+      overdue_mode: overdue_anim.mode,
+      overdue_pattern: overdue_anim.pattern
+    )
+  end
+
+  # The viewer's timezone offset. Precedence matches the rest of PhoenixKit
+  # (`Utils.Date.get_user_timezone/1`): the current user's own `user_timezone`,
+  # else the website's `time_zone` setting, else UTC ("0").
+  defp resolve_offset(socket) do
+    case socket.assigns[:phoenix_kit_current_user] do
+      %{} = user -> PhoenixKit.Utils.Date.get_user_timezone(user)
+      _ -> PhoenixKit.Settings.get_setting("time_zone", "0")
+    end
+  rescue
+    _ -> "0"
+  end
+
+  # A stored UTC datetime as a calendar Date in the viewer's timezone, so every
+  # day/date display on the Overview shares the same (local) basis as `today`.
+  # The module otherwise works in UTC, but day boundaries are where a viewer
+  # notices the difference — at 00:30 in UTC+3 it's already tomorrow locally.
+  defp to_local_date(%DateTime{} = dt, offset) do
+    dt |> PhoenixKit.Utils.Date.shift_to_offset(offset) |> DateTime.to_date()
+  end
+
+  # The calendar info-popover sentence describing the overdue indicator, worded
+  # to match the configured animation mode (set on /admin/settings/projects).
+  defp overdue_legend("solid") do
+    gettext(
+      "When a project runs past its planned end, that overdue stretch is filled with the inverse of its colour — the longer it is, the more overdue the project."
+    )
+  end
+
+  defp overdue_legend(_stripes) do
+    gettext(
+      "When a project runs past its planned end, that overdue stretch is marked with diagonal stripes — the longer the striped part, the more overdue the project."
     )
   end
 
@@ -112,12 +194,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # Tier 3 ("empty"):   total == 0 tasks. Sinks to the bottom regardless of age —
   #                     these projects can't show meaningful progress and would
   #                     otherwise outrank real work via the recency sort.
-  defp prioritize_running(summaries) do
-    today = Date.utc_today()
-
+  defp prioritize_running(summaries, today, now) do
     sorted =
       summaries
-      |> Enum.map(&{running_sort_key(&1, today), &1})
+      |> Enum.map(&{running_sort_key(&1, today, now), &1})
       |> Enum.sort_by(fn {key, _} -> key end)
       |> Enum.map(fn {_, s} -> s end)
 
@@ -129,9 +209,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # progress < 100. When a project has no durations we fall back to
   # the 14-day age heuristic since there's no real budget to compare
   # against.
-  defp running_tier(summary) do
+  defp running_tier(summary, now) do
     %{project: project, progress_pct: pct, total: total, planned_end: planned_end} = summary
-    now = DateTime.utc_now()
 
     cond do
       total == 0 ->
@@ -158,9 +237,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   defp late?(_, _, _, _), do: false
 
-  defp running_sort_key(summary, today) do
-    %{project: project, progress_pct: pct, total: total} = summary
-    tier = running_tier(summary)
+  defp running_sort_key(summary, today, now) do
+    %{project: project, progress_pct: pct, total: total, tier: tier} = summary
 
     days_running =
       case project.started_at do
@@ -172,7 +250,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       :late ->
         # Tier 0: most overdue first. Use seconds-past-planned_end when
         # available, else fall back to age. Negated for ascending sort.
-        overdue_seconds = overdue_seconds(summary)
+        overdue_seconds = overdue_seconds(summary, now)
         {0, -overdue_seconds, project.uuid}
 
       :near_done ->
@@ -190,19 +268,40 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     end
   end
 
-  defp overdue_seconds(%{planned_end: %DateTime{} = planned_end}) do
-    DateTime.diff(DateTime.utc_now(), planned_end, :second)
+  defp overdue_seconds(%{planned_end: %DateTime{} = planned_end}, now) do
+    DateTime.diff(now, planned_end, :second)
   end
 
-  defp overdue_seconds(%{project: %{started_at: %DateTime{} = started_at}}) do
-    DateTime.diff(DateTime.utc_now(), started_at, :second)
+  defp overdue_seconds(%{project: %{started_at: %DateTime{} = started_at}}, now) do
+    DateTime.diff(now, started_at, :second)
   end
 
-  defp overdue_seconds(_), do: 0
+  defp overdue_seconds(_, _now), do: 0
+
+  # Running card tabs. The calendar is lazy-mounted on first open (then kept
+  # hidden when inactive, so its paged month survives toggling back and forth).
+  @impl true
+  def handle_event("switch_overview_tab", %{"tab" => "calendar"}, socket) do
+    {:noreply, assign(socket, overview_tab: :calendar, calendar_seen?: true)}
+  end
+
+  def handle_event("switch_overview_tab", _params, socket) do
+    {:noreply, assign(socket, overview_tab: :list)}
+  end
 
   @impl true
   def handle_info({:projects, _event, _payload}, socket) do
     {:noreply, reload(socket)}
+  end
+
+  # A project bar on the calendar was clicked — open that project (navigate in
+  # standalone, emit an :opened intent when embedded).
+  def handle_info({:calendar_open_project, uuid}, socket) when is_binary(uuid) do
+    {:noreply,
+     WebHelpers.navigate_or_open(socket,
+       to: Paths.project(uuid),
+       open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => uuid}}
+     )}
   end
 
   def handle_info(msg, socket) do
@@ -214,8 +313,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # was retyped to `:utc_datetime` in V112; this helper preserves the
   # daily-cadence comparison by collapsing datetimes to their date
   # portion.
-  defp days_until(%DateTime{} = dt), do: days_until(DateTime.to_date(dt))
-  defp days_until(%Date{} = date), do: Date.diff(date, Date.utc_today())
+  defp days_until(%DateTime{} = dt, today, offset),
+    do: days_until(to_local_date(dt, offset), today, offset)
+
+  defp days_until(%Date{} = date, today, _offset), do: Date.diff(date, today)
 
   defp relative_day(days) do
     cond do
@@ -276,7 +377,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <%!-- Left: Active projects (span 2) --%>
         <div class="lg:col-span-2 card bg-base-100 shadow">
-          <div class="card-body">
+          <%!-- Tighter body padding on phones so the 7-column calendar isn't squeezed. --%>
+          <div class="card-body max-sm:p-3">
             <div class="flex items-start justify-between gap-3">
               <div>
                 <h2 class="card-title text-lg">
@@ -300,7 +402,21 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
               </.smart_link>
             </div>
 
-            <%= if @active_summaries == [] do %>
+            <%!-- Same running projects, two views to choose from: a vertical list
+                 (default) and the month calendar. --%>
+            <.nav_tabs
+              active_tab={to_string(@overview_tab)}
+              on_change="switch_overview_tab"
+              tabs={[
+                %{id: "list", label: gettext("List"), icon: "hero-list-bullet"},
+                %{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}
+              ]}
+              class="mt-3"
+            />
+
+            <%!-- List view --%>
+            <div class={["mt-2", if(@overview_tab != :list, do: "hidden")]}>
+              <%= if @active_summaries == [] do %>
               <%= if @any_projects? do %>
                 <.empty_state
                   icon="hero-clipboard-document-list"
@@ -343,12 +459,47 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                 <.running_card
                   :for={s <- @active_summaries}
                   node={s}
-                  tier={running_tier(s)}
+                  tier={s.tier}
                   embed_mode={@embed_mode}
                   lang={L10n.current_content_lang()}
                 />
               </div>
             <% end %>
+            </div>
+
+            <%!-- Calendar tab. Lazy-mounted on first open, then kept (hidden when
+                 inactive) so its paged month + animation state survive toggling.
+                 The overdue <style> + SyncAnimations wrapper come along with it. --%>
+            <div class={["mt-2", if(@overview_tab != :calendar, do: "hidden")]}>
+              <%= if @calendar_seen? do %>
+                {Phoenix.HTML.raw(@overdue_style)}
+                <div id="overview-calendar-sync" phx-hook="SyncAnimations">
+                  <.live_component
+                    module={PhoenixLiveCalendar.CalendarComponent}
+                    id="projects-overview-calendar"
+                    events={@calendar_events}
+                    views={[:month]}
+                    date={@today}
+                    today={@today}
+                    fixed_weeks={false}
+                    expand_cells={true}
+                    info_label={gettext("About this calendar")}
+                    on_event_click={fn id -> send(self(), {:calendar_open_project, id}) end}
+                  >
+                    <:info>
+                      <p class="mb-1 text-sm font-semibold text-base-content">
+                        {gettext("Reading the calendar")}
+                      </p>
+                      <p>{gettext("Each project is an ongoing line across the month.")}</p>
+                      <p class="mt-1.5">{overdue_legend(@overdue_pattern)}</p>
+                      <p class="mt-1.5 text-base-content/50">
+                        {gettext("Late projects are grouped at the top.")}
+                      </p>
+                    </:info>
+                  </.live_component>
+                </div>
+              <% end %>
+            </div>
           </div>
         </div>
 
@@ -410,7 +561,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                     <div class="flex-1 min-w-0">
                       <div class="text-sm font-medium truncate">{Project.localized_name(p, L10n.current_content_lang())}</div>
                       <div class="text-xs text-base-content/60">
-                        {relative_day(Date.diff(DateTime.to_date(p.completed_at), Date.utc_today()))}
+                        {relative_day(Date.diff(to_local_date(p.completed_at, @tz_offset), @today))}
                       </div>
                     </div>
                   </.smart_link>
@@ -455,7 +606,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       <div class="text-sm font-medium truncate">{Project.localized_name(p, L10n.current_content_lang())}</div>
                       <div class="text-xs text-base-content/60">
                         {L10n.format_datetime(p.scheduled_start_date)}
-                        · {relative_day(days_until(p.scheduled_start_date))}
+                        · {relative_day(days_until(p.scheduled_start_date, @today, @tz_offset))}
                       </div>
                     </div>
                   </.smart_link>

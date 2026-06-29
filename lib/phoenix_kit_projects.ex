@@ -56,10 +56,10 @@ defmodule PhoenixKitProjects do
   end
 
   @impl PhoenixKit.Module
-  # Includes :phoenix_live_gantt so the host's Tailwind scans the gantt's
-  # classes (used by the Timeline tab) with no manual `@source` — the
-  # css-sources compiler resolves the dep atom to deps/phoenix_live_gantt.
-  def css_sources, do: [:phoenix_kit_projects, :phoenix_live_gantt]
+  # Includes :phoenix_live_gantt (Timeline tab) and :phoenix_live_calendar (the
+  # Overview calendar) so the host's Tailwind scans their classes with no manual
+  # `@source` — the css-sources compiler resolves each dep atom to deps/<dep>.
+  def css_sources, do: [:phoenix_kit_projects, :phoenix_live_gantt, :phoenix_live_calendar]
 
   # The Timeline tab renders the gantt with enable_hooks={true}, so the host's
   # LiveSocket needs the gantt's JS hooks. Declaring the bundle here lets the
@@ -78,6 +78,14 @@ defmodule PhoenixKitProjects do
         app: :phoenix_live_gantt,
         file: "static/assets/phoenix_live_gantt.js",
         global: "PhoenixLiveGanttHooks"
+      },
+      # The Overview calendar renders without JS (Phoenix-first); these hooks are
+      # progressive enhancement (marker ticker / popover-pause) wired the same way
+      # as the gantt's so they're available if the calendar opts into them.
+      %{
+        app: :phoenix_live_calendar,
+        file: "static/assets/phoenix_live_calendar.js",
+        global: "PhoenixLiveCalendarHooks"
       }
     ]
   end

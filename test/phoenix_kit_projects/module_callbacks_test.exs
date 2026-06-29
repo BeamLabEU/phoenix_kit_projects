@@ -42,20 +42,30 @@ defmodule PhoenixKitProjects.ModuleCallbacksTest do
       assert PhoenixKitProjects.version() == mix_version
     end
 
-    test "css_sources/0 includes the module and the gantt dep" do
-      # :phoenix_live_gantt is included so the host's Tailwind scans the
-      # gantt's classes (Timeline tab) via core's css-sources compiler.
-      assert PhoenixKitProjects.css_sources() == [:phoenix_kit_projects, :phoenix_live_gantt]
+    test "css_sources/0 includes the module and the chart deps" do
+      # :phoenix_live_gantt (Timeline tab) and :phoenix_live_calendar (Overview
+      # calendar) are included so the host's Tailwind scans their classes via
+      # core's css-sources compiler.
+      assert PhoenixKitProjects.css_sources() == [
+               :phoenix_kit_projects,
+               :phoenix_live_gantt,
+               :phoenix_live_calendar
+             ]
     end
 
-    test "js_sources/0 declares the gantt hook bundle" do
-      # Pins the bundle core's :phoenix_kit_js_sources compiler wires into
-      # the host LiveSocket so the Timeline tab's enable_hooks work.
+    test "js_sources/0 declares the gantt + schedule hook bundles" do
+      # Pins the bundles core's :phoenix_kit_js_sources compiler wires into
+      # the host LiveSocket (gantt Timeline hooks + schedule enhancement hooks).
       assert PhoenixKitProjects.js_sources() == [
                %{
                  app: :phoenix_live_gantt,
                  file: "static/assets/phoenix_live_gantt.js",
                  global: "PhoenixLiveGanttHooks"
+               },
+               %{
+                 app: :phoenix_live_calendar,
+                 file: "static/assets/phoenix_live_calendar.js",
+                 global: "PhoenixLiveCalendarHooks"
                }
              ]
     end

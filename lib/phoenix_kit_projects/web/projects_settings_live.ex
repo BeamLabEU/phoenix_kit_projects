@@ -17,6 +17,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.CalendarDisplay
   alias PhoenixKitProjects.GanttDisplay
   alias PhoenixKitProjects.Statuses
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -39,6 +40,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
        default_status_entity_uuid: Statuses.global_default_status_entity_uuid(),
        use_status_translations: Statuses.global_use_status_translations?(),
        gantt_display: GanttDisplay.read(),
+       calendar_anim: CalendarDisplay.read_animation(),
        demo_events: demo_events(),
        demo_connectors: demo_connectors(),
        demo_range: demo_range(),
@@ -162,6 +164,34 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     )
 
     {:noreply, assign(socket, gantt_display: GanttDisplay.read())}
+  end
+
+  # One overdue-animation control changed (mode / speed / brightness / wave step).
+  # `_target` names the field, matching CalendarDisplay.put_animation/2.
+  def handle_event("set_calendar_anim", %{"_target" => [field]} = params, socket) do
+    CalendarDisplay.put_animation(field, params[field])
+
+    Activity.log("projects.calendar_display_changed",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "projects_settings",
+      metadata: %{"field" => field}
+    )
+
+    {:noreply, assign(socket, calendar_anim: CalendarDisplay.read_animation())}
+  end
+
+  def handle_event("set_calendar_anim", _params, socket), do: {:noreply, socket}
+
+  # Restore every overdue-animation setting to its default.
+  def handle_event("reset_calendar_anim", _params, socket) do
+    CalendarDisplay.reset_animation()
+
+    Activity.log("projects.calendar_display_reset",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "projects_settings"
+    )
+
+    {:noreply, assign(socket, calendar_anim: CalendarDisplay.read_animation())}
   end
 
   # Expand/collapse the demo sub-project (preview only — not a persisted setting).
@@ -304,6 +334,26 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       {gettext("Centered"), "center"}
     ]
   end
+
+  defp calendar_pattern_options do
+    [
+      {gettext("Stripes — diagonal inverse-colour stripes"), "stripes"},
+      {gettext("Solid — fill with the inverse colour"), "solid"}
+    ]
+  end
+
+  defp calendar_mode_options do
+    [
+      {gettext("Wave — one band travels across"), "wave"},
+      {gettext("Flash — all pulse together"), "flash"},
+      {gettext("Off — static, no motion"), "off"}
+    ]
+  end
+
+  # Min/max bounds for a numeric overdue-animation field (from CalendarDisplay),
+  # used to bound the matching range slider.
+  defp anim_min(field), do: CalendarDisplay.anim_range(field) |> elem(0)
+  defp anim_max(field), do: CalendarDisplay.anim_range(field) |> elem(1)
 
   # One boolean display toggle (a checkbox that flips its global setting).
   attr(:field, :string, required: true)
@@ -587,6 +637,132 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               label_watermark_opacity={@gantt_display.label_watermark_opacity}
               class="max-h-80"
             />
+          </div>
+        </div>
+      </div>
+
+      <%!-- Overdue-animation appearance for the Overview calendar + a live preview.
+           Each control writes one global setting (via CalendarDisplay); the preview
+           re-renders from the same settings so the effect is immediate. --%>
+      <div class="card bg-base-100 shadow">
+        <div class="card-body gap-5">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="card-title text-base">{gettext("Calendar overdue animation")}</h2>
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs"
+              phx-click="reset_calendar_anim"
+              phx-disable-with={gettext("Resetting…")}
+              data-confirm={gettext("Reset the calendar overdue animation to its defaults?")}
+            >
+              {gettext("Reset to defaults")}
+            </button>
+          </div>
+          <p class="text-xs text-base-content/60">
+            {gettext(
+              "How the overdue part of a late project's bar animates on the Overview calendar. It always shows in the inverse of the bar's own color; these control the motion. The preview below updates as you change them."
+            )}
+          </p>
+
+          <form
+            id="calendar-anim-form"
+            phx-change="set_calendar_anim"
+            class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+          >
+            <.select
+              name="pattern"
+              label={gettext("Marker")}
+              value={@calendar_anim.pattern}
+              options={calendar_pattern_options()}
+            />
+            <.select
+              name="mode"
+              label={gettext("Animation")}
+              value={@calendar_anim.mode}
+              options={calendar_mode_options()}
+            />
+            <label :if={@calendar_anim.mode != "off"} class="flex flex-col gap-1">
+              <span class="text-sm font-medium">
+                {gettext("Speed (cycle)")}: {@calendar_anim.speed}s
+              </span>
+              <input
+                type="range"
+                name="speed"
+                min={anim_min("speed")}
+                max={anim_max("speed")}
+                step="0.5"
+                value={@calendar_anim.speed}
+                phx-debounce="150"
+                class="range range-sm"
+              />
+            </label>
+            <label
+              :if={@calendar_anim.pattern == "solid" and @calendar_anim.mode == "wave"}
+              class="flex flex-col gap-1"
+            >
+              <span class="text-sm font-medium">
+                {gettext("Wave spread (per day)")}: {@calendar_anim.wave_step}s
+              </span>
+              <input
+                type="range"
+                name="wave_step"
+                min={anim_min("wave_step")}
+                max={anim_max("wave_step")}
+                step="0.02"
+                value={@calendar_anim.wave_step}
+                phx-debounce="150"
+                class="range range-sm"
+              />
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">
+                {gettext("Dim (min brightness)")}: {@calendar_anim.brightness_min}
+              </span>
+              <input
+                type="range"
+                name="brightness_min"
+                min={anim_min("brightness_min")}
+                max={anim_max("brightness_min")}
+                step="0.02"
+                value={@calendar_anim.brightness_min}
+                phx-debounce="150"
+                class="range range-sm"
+              />
+            </label>
+            <label :if={@calendar_anim.mode != "off"} class="flex flex-col gap-1">
+              <span class="text-sm font-medium">
+                {gettext("Peak brightness")}: {@calendar_anim.brightness_max}
+              </span>
+              <input
+                type="range"
+                name="brightness_max"
+                min={anim_min("brightness_max")}
+                max={anim_max("brightness_max")}
+                step="0.02"
+                value={@calendar_anim.brightness_max}
+                phx-debounce="150"
+                class="range range-sm"
+              />
+            </label>
+          </form>
+
+          <%!-- Live preview: a single project bar. The blue cells are the on-time
+               stretch; the rest is the "overdue" tail, rendered exactly as on the
+               Overview (the generated CSS + chosen marker/motion). The
+               SyncAnimations hook aligns the stripes + syncs the animation across
+               the cells, same as the real calendar. raw/1 is safe — the CSS is
+               built only from validated/clamped numbers + enums. --%>
+          {Phoenix.HTML.raw("<style>" <> CalendarDisplay.animation_css(@calendar_anim) <> "</style>")}
+          <div class="flex flex-col gap-1">
+            <span class="text-xs text-base-content/60">{gettext("Preview")}</span>
+            <div id="calendar-anim-preview" phx-hook="SyncAnimations" class="flex gap-0.5">
+              <div
+                :for={i <- 0..15}
+                class={["h-7 flex-1 rounded-sm bg-blue-600", i >= 5 && "pk-overdue"]}
+                style={if i >= 5, do: "--pk-hl-day: #{i}"}
+              >
+              </div>
+            </div>
           </div>
         </div>
       </div>

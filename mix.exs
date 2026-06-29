@@ -118,6 +118,11 @@ defmodule PhoenixKitProjects.MixProject do
       # 0.4.0. Hex by default (publish-safe); export
       # PHOENIX_LIVE_GANTT_PATH=../phoenix_live_gantt to build against a local checkout.
       pk_dep(:phoenix_live_gantt, "~> 0.4"),
+      # Calendar/scheduling component used by the Overview dashboard to show all
+      # projects as ongoing multi-day bars on a month grid. Hex by default
+      # (publish-safe); export PHOENIX_LIVE_CALENDAR_PATH=../phoenix_live_calendar
+      # to build against a local checkout.
+      pk_dep(:phoenix_live_calendar, "~> 0.1"),
       # Already transitive via :phoenix_kit, but pinned explicitly here so
       # `mix gettext.extract` / `mix gettext.merge` run against this app's
       # own `PhoenixKitProjects.Gettext` backend (call sites for project-
