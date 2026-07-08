@@ -44,6 +44,20 @@ defmodule PhoenixKitProjects.DashboardWidgetsTest do
     end
   end
 
+  test "deadlines supports the employee filter (only_mine) and the pure filter works" do
+    widget = Enum.find(DashboardWidgets.all(), &(&1.key == "projects.deadlines"))
+    assert Enum.any?(widget.settings_schema, &(&1.key == "only_mine" and &1.type == :boolean))
+
+    rows = [
+      %{project: %{uuid: "a"}, planned_end: nil},
+      %{project: %{uuid: "b"}, planned_end: nil}
+    ]
+
+    alias PhoenixKitProjects.Web.Widgets.DeadlinesWidget
+    assert [%{project: %{uuid: "a"}}] = DeadlinesWidget.filter_mine(rows, MapSet.new(["a"]))
+    assert [] = DeadlinesWidget.filter_mine(rows, MapSet.new([]))
+  end
+
   test "single-project widgets pick their project from a SELECT of {name, uuid}" do
     for key <- ~w(projects.status projects.tasks projects.schedule) do
       widget = Enum.find(DashboardWidgets.all(), &(&1.key == key))

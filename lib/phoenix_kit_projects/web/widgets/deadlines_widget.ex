@@ -23,6 +23,11 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
     if available?() do
       settings = assigns[:settings] || %{}
 
+      rows =
+        limit(settings)
+        |> deadline_rows()
+        |> maybe_only_mine(only_mine?(settings), scope_user_uuid(assigns[:scope]))
+
       {:ok,
        socket
        |> assign(:available, true)
@@ -31,7 +36,7 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
          :view,
          effective_view(assigns[:view], ~w(detailed compact), small?(assigns[:size], 4, 2))
        )
-       |> assign(:rows, deadline_rows(limit(settings)))
+       |> assign(:rows, rows)
        |> assign(:now, DateTime.utc_now())}
     else
       {:ok, assign(socket, available: false, compact: false)}
@@ -43,6 +48,23 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
       {n, _} when n > 0 -> n
       _ -> @default_limit
     end
+  end
+
+  @doc false
+  # Pure (unit-tested): keep only the rows whose project is in `mine_uuids`.
+  def filter_mine(rows, %MapSet{} = mine_uuids) do
+    Enum.filter(rows, &MapSet.member?(mine_uuids, &1.project.uuid))
+  end
+
+  defp only_mine?(settings), do: settings["only_mine"] in [true, "true"]
+
+  defp maybe_only_mine(rows, false, _user_uuid), do: rows
+  # "Only my projects" with no resolvable viewer = no rows (never leak all).
+  defp maybe_only_mine(_rows, true, nil), do: []
+
+  defp maybe_only_mine(rows, true, user_uuid) do
+    mine = user_uuid |> Projects.list_assignments_for_user() |> MapSet.new(& &1.project_uuid)
+    filter_mine(rows, mine)
   end
 
   # Started, unfinished projects with a computable planned end, soonest first.

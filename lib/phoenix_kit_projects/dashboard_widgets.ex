@@ -133,7 +133,10 @@ defmodule PhoenixKitProjects.DashboardWidgets do
           %{key: "detailed", name: "Detailed", min_size: %{w: 3, h: 2}},
           %{key: "compact", name: "Compact", min_size: %{w: 2, h: 2}}
         ],
-        settings_schema: [@limit_field]
+        settings_schema: [
+          @limit_field,
+          %{key: "only_mine", type: :boolean, label: "Only my projects", default: false}
+        ]
       },
       %{
         key: "projects.status",
