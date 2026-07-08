@@ -99,6 +99,10 @@ defmodule PhoenixKitProjects do
     ]
   end
 
+  # Dashboard widgets contributed to `phoenix_kit_dashboards` (duck-typed contract
+  # discovered by its Registry — no dependency on that package, no `@impl`).
+  def phoenix_kit_widgets, do: PhoenixKitProjects.DashboardWidgets.all()
+
   @impl PhoenixKit.Module
   def admin_tabs do
     parent = [
