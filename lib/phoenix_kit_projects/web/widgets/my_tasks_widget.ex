@@ -64,9 +64,11 @@ defmodule PhoenixKitProjects.Web.Widgets.MyTasksWidget do
     ~H"""
     <div class="contents">
       <.frame title={gettext("My tasks")} icon="hero-user-circle" compact={@compact}>
-        <p :if={@tasks == []} class="text-sm text-base-content/50">
-          {gettext("Nothing assigned to you right now.")}
-        </p>
+        <.empty
+          :if={@tasks == []}
+          icon="hero-check-circle"
+          message={gettext("Nothing assigned to you right now.")}
+        />
 
         <ul :if={@tasks != []} class="flex flex-col divide-y divide-base-200">
           <li :for={a <- @tasks} class="flex items-center gap-2 py-1.5">

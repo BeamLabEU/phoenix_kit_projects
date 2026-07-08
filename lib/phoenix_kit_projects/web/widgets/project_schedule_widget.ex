@@ -72,7 +72,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
     ~H"""
     <div class="contents">
       <.frame compact={@compact} title={gettext("Schedule")} icon="hero-calendar-days">
-        <p class="text-sm text-base-content/50">{gettext("No project found.")}</p>
+        <.empty message={gettext("No project found — pick one in this widget's settings.")} />
       </.frame>
     </div>
     """

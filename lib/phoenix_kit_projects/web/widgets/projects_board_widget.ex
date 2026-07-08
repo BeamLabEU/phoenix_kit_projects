@@ -57,7 +57,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
     ~H"""
     <div class="contents">
       <.frame compact={@compact} title={gettext("Projects board")} icon="hero-squares-2x2" href={Paths.projects()}>
-      <p :if={@projects == []} class="text-sm text-base-content/50">{gettext("No projects yet.")}</p>
+      <.empty :if={@projects == []} icon="hero-squares-2x2" message={gettext("No projects yet.")} />
 
       <div :if={@view == "grid"} class="flex flex-wrap gap-1.5">
         <.link

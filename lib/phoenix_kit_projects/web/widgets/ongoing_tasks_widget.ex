@@ -66,7 +66,7 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
     ~H"""
     <div class="contents">
       <.frame compact={@compact} title={gettext("Ongoing tasks")}>
-        <p class="text-sm text-base-content/50">{gettext("No project found.")}</p>
+        <.empty message={gettext("No project found — pick one in this widget's settings.")} />
       </.frame>
     </div>
     """
@@ -76,9 +76,7 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
     ~H"""
     <div class="contents">
       <.frame compact={@compact} title={gettext("Ongoing — %{name}", name: @project.name)} href={Paths.project(@project.uuid)}>
-      <p :if={@tasks == []} class="text-sm text-base-content/50">
-        {gettext("No ongoing tasks. 🎉")}
-      </p>
+      <.empty :if={@tasks == []} icon="hero-check-circle" message={gettext("No ongoing tasks. 🎉")} />
       <ul class="flex flex-col divide-y divide-base-200">
         <li :for={a <- @tasks} class="flex items-center gap-2 py-1.5">
           <span

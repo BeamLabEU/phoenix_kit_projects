@@ -136,6 +136,19 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
     """
   end
 
+  @doc "A centered, iconed empty-state body (widgets must never look broken-empty)."
+  attr(:icon, :string, default: "hero-clipboard-document-list")
+  attr(:message, :string, required: true)
+
+  def empty(assigns) do
+    ~H"""
+    <div class="flex h-full flex-col items-center justify-center gap-1 py-2 text-center text-base-content/40">
+      <.icon name={@icon} class="h-6 w-6" />
+      <p class="text-xs">{@message}</p>
+    </div>
+    """
+  end
+
   @doc "The 'projects module is off' placeholder body."
   def unavailable(assigns) do
     ~H"""

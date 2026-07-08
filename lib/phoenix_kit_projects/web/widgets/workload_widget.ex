@@ -64,26 +64,31 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
         />
       </div>
 
-      <div :if={@view == "detailed"} class="flex flex-col gap-2">
+      <div :if={@view == "detailed"} class="flex h-full flex-col justify-center gap-2">
         <div>
           <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/40">
             {gettext("Projects")} · {@total}
           </p>
-          <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-            <.line label={gettext("Running")} value={count(@lifecycle, :running)} />
-            <.line label={gettext("Overdue")} value={count(@lifecycle, :overdue)} />
-            <.line label={gettext("Scheduled")} value={count(@lifecycle, :scheduled)} />
-            <.line label={gettext("Completed")} value={count(@lifecycle, :completed)} />
+          <div class="grid grid-cols-4 gap-1.5">
+            <.kpi small label={gettext("Running")} value={count(@lifecycle, :running)} tone="text-success" />
+            <.kpi
+              small
+              label={gettext("Overdue")}
+              value={count(@lifecycle, :overdue)}
+              tone={if(count(@lifecycle, :overdue) > 0, do: "text-error", else: "text-base-content/70")}
+            />
+            <.kpi small label={gettext("Scheduled")} value={count(@lifecycle, :scheduled)} tone="text-info" />
+            <.kpi small label={gettext("Completed")} value={count(@lifecycle, :completed)} tone="text-base-content/70" />
           </div>
         </div>
         <div>
           <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/40">
             {gettext("Tasks")}
           </p>
-          <div class="grid grid-cols-3 gap-x-3 text-xs">
-            <.line label={gettext("Todo")} value={@tasks["todo"] || 0} />
-            <.line label={gettext("Active")} value={@tasks["in_progress"] || 0} />
-            <.line label={gettext("Done")} value={@tasks["done"] || 0} />
+          <div class="grid grid-cols-3 gap-1.5">
+            <.kpi small label={gettext("Todo")} value={@tasks["todo"] || 0} tone="text-base-content" />
+            <.kpi small label={gettext("Active")} value={@tasks["in_progress"] || 0} tone="text-warning" />
+            <.kpi small label={gettext("Done")} value={@tasks["done"] || 0} tone="text-success" />
           </div>
         </div>
       </div>
@@ -97,24 +102,22 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
   attr(:label, :string, required: true)
   attr(:value, :any, required: true)
   attr(:tone, :string, default: "text-base-content")
+  attr(:small, :boolean, default: false)
 
   defp kpi(assigns) do
     ~H"""
-    <div class="flex flex-col items-center justify-center rounded bg-base-200/50 py-2">
-      <span class={["text-2xl font-bold tabular-nums", @tone]}>{@value}</span>
-      <span class="text-xs text-base-content/50">{@label}</span>
-    </div>
-    """
-  end
-
-  attr(:label, :string, required: true)
-  attr(:value, :any, required: true)
-
-  defp line(assigns) do
-    ~H"""
-    <div class="flex items-baseline justify-between gap-2">
-      <span class="text-base-content/50">{@label}</span>
-      <span class="font-medium tabular-nums">{@value}</span>
+    <div class={[
+      "flex flex-col items-center justify-center rounded bg-base-200/50",
+      if(@small, do: "py-1.5", else: "py-2")
+    ]}>
+      <span class={[
+        "font-bold tabular-nums",
+        if(@small, do: "text-lg leading-6", else: "text-2xl"),
+        @tone
+      ]}>
+        {@value}
+      </span>
+      <span class="text-[11px] text-base-content/50">{@label}</span>
     </div>
     """
   end

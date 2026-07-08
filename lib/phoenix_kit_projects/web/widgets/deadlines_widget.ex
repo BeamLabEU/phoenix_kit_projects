@@ -69,9 +69,11 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
     ~H"""
     <div class="contents">
       <.frame title={gettext("Deadlines")} icon="hero-flag" compact={@compact}>
-        <p :if={@rows == []} class="text-sm text-base-content/50">
-          {gettext("No running projects with a planned end.")}
-        </p>
+        <.empty
+          :if={@rows == []}
+          icon="hero-flag"
+          message={gettext("No running projects with a planned end.")}
+        />
 
         <ul :if={@rows != []} class="flex flex-col divide-y divide-base-200">
           <li :for={row <- @rows} class="flex items-center gap-2 py-1.5">

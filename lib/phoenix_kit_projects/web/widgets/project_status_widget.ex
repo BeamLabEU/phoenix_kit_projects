@@ -74,9 +74,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
     ~H"""
     <div class="contents">
       <.frame compact={@compact} title={gettext("Project status")}>
-        <p class="text-sm text-base-content/50">
-          {gettext("No project found — set one in this widget's settings.")}
-        </p>
+        <.empty message={gettext("No project found — pick one in this widget's settings.")} />
       </.frame>
     </div>
     """
