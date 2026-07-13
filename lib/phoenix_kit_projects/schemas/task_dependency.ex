@@ -5,6 +5,7 @@ defmodule PhoenixKitProjects.Schemas.TaskDependency do
   """
 
   use Ecto.Schema
+  use PhoenixKit.SchemaPrefix
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import Ecto.Changeset

@@ -92,7 +92,7 @@ defmodule PhoenixKitProjects.MixProject do
       # is required for `PhoenixKitWeb.Components.Core.Checkbox`'s
       # `disabled`/`wrapper_class`/`title`/`:description` support, used by
       # the module's own hand-rolled-checkbox migration.
-      pk_dep(:phoenix_kit, ">= 1.7.184"),
+      pk_dep(:phoenix_kit, ">= 1.7.189"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move

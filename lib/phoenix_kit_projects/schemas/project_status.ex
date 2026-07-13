@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Schemas.ProjectStatus do
   """
 
   use Ecto.Schema
+  use PhoenixKit.SchemaPrefix
 
   import Ecto.Changeset
 

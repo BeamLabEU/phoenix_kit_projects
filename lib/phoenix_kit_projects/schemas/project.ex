@@ -15,6 +15,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
   """
 
   use Ecto.Schema
+  use PhoenixKit.SchemaPrefix
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import Ecto.Changeset
