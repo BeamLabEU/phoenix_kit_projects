@@ -128,7 +128,9 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
             </.link>
           </div>
         </div>
-        <div class="min-h-0 flex-1 overflow-auto">
+        <%!-- Dashboards are one screenful — content CLIPS at the box, never
+        scrolls (widgets budget their rows via the "limit" setting). --%>
+        <div class="min-h-0 flex-1 overflow-hidden">
           {render_slot(@inner_block)}
         </div>
       </div>
