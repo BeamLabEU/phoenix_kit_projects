@@ -15,14 +15,14 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{GanttDisplay, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{GanttDisplay, L10n, Paths, Projects, ScheduleLayout}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
-  # Schedule/assignee helpers shared with ProjectShowLive. See WebHelpers.
-  import PhoenixKitProjects.Web.Helpers,
-    only: [assignee_label: 1, task_counts_weekends?: 2, assignment_hours: 2]
+  # Assignee display helper shared with ProjectShowLive. See WebHelpers.
+  # (The schedule math itself lives in ScheduleLayout.)
+  import PhoenixKitProjects.Web.Helpers, only: [assignee_label: 1]
 
   require Logger
 
@@ -347,31 +347,13 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   # `PhoenixLiveGantt.Task` structs, ALWAYS at the real (hour-precise) schedule so the
   # layout is identical at every display zoom — a 2-hour task is a 2-hour bar,
   # not padded out to a whole day. The display zoom only changes column density,
-  # so tasks pack the same in day, week, or hour view. The durations→dates
-  # layout (sequential waterfall, sub-project span) is delegated to
-  # `PhoenixLiveGantt.Layout.sequential/2`; we supply each task's weekday/weekend
-  # calendar via `:advance`. Dependencies become finish-to-start connectors.
+  # so tasks pack the same in day, week, or hour view. The tree flattening +
+  # durations→dates layout (sequential waterfall, sub-project span, drag-order
+  # placement) live in the shared `ScheduleLayout` — the Calendar tab renders
+  # the same walk, so the two views can't disagree. Dependencies become
+  # finish-to-start connectors.
   defp build_gantt(project, lang) do
-    items = collect_items(project, nil, 0)
-
-    layout =
-      PhoenixLiveGantt.Layout.sequential(items,
-        start: DateTime.to_naive(schedule_anchor(project)),
-        id: & &1.uuid,
-        parent_id: & &1.parent_uuid,
-        # Lay tasks out in the order the user gave them (drag position). The
-        # Gantt's connector router handles any order followably, so we no longer
-        # pre-sort by dependency here — a manual order that violates a dependency
-        # shows an honest backward conflict arrow rather than being reordered.
-        order: & &1.position,
-        duration: fn it -> assignment_hours(it.assignment, it.project) end,
-        advance: &advance_through_calendar/3,
-        # No artificial minimum — reflect the real schedule. A task spans exactly
-        # its duration; a zero-duration task collapses to a milestone (diamond),
-        # the standard Gantt convention. PhoenixLiveGantt still floors the rendered bar
-        # at a few px so a short task stays visible/clickable.
-        min_span: {:second, 0}
-      )
+    {items, layout} = ScheduleLayout.tree(project)
 
     # `items` is already in flattened tree order (each sub-project parent
     # immediately followed by its descendants). Pass that index as `extra.order`
@@ -406,57 +388,6 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     |> Enum.flat_map(&Projects.list_all_dependencies/1)
     |> Enum.map(fn d -> %{from: d.depends_on_uuid, to: d.assignment_uuid} end)
   end
-
-  # Flattens the project tree into layout items, each carrying its owning project
-  # (for the per-project calendar) and its linking-assignment parent (nil at top
-  # level). Sub-project descendants ALWAYS appear so PhoenixLiveGantt can draw the
-  # chevron and hide/show them via `expanded`. `@max_subproject_depth` guards
-  # against pathological/corrupt nesting.
-  @max_subproject_depth 32
-  defp collect_items(project, parent_uuid, depth) do
-    project.uuid
-    |> Projects.list_assignments()
-    |> Enum.flat_map(fn a ->
-      item = %{
-        uuid: a.uuid,
-        assignment: a,
-        project: project,
-        parent_uuid: parent_uuid,
-        position: a.position
-      }
-
-      children =
-        if subproject_with_children?(a, depth),
-          do: collect_items(a.child_project, a.uuid, depth + 1),
-          else: []
-
-      [item | children]
-    end)
-  end
-
-  defp subproject_with_children?(%Assignment{} = a, depth) do
-    Assignment.subproject?(a) and not is_nil(a.child_project) and depth < @max_subproject_depth
-  end
-
-  # `PhoenixLiveGantt.Layout` `:advance` callback — move `cursor` forward by `hours`
-  # honoring the assignment's effective weekday/weekend rule. The cursor is a
-  # `Date` (day zoom) or `NaiveDateTime` (hour zoom); the result keeps that type
-  # so Layout/PhoenixLiveGantt position it at the right resolution. Layout enforces the
-  # minimum span, so a 0-hour task still occupies one slot.
-  defp advance_through_calendar(cursor, hours, %{assignment: a, project: project}) do
-    cal_project = %{project | counts_weekends: task_counts_weekends?(a, project)}
-
-    case Project.eta_from(cal_project, to_utc_dt(cursor), hours) do
-      %DateTime{} = ended -> from_utc_dt(ended, cursor)
-      _ -> cursor
-    end
-  end
-
-  defp to_utc_dt(%Date{} = d), do: DateTime.new!(d, ~T[00:00:00], "Etc/UTC")
-  defp to_utc_dt(%NaiveDateTime{} = t), do: DateTime.from_naive!(t, "Etc/UTC")
-
-  defp from_utc_dt(dt, %Date{}), do: DateTime.to_date(dt)
-  defp from_utc_dt(dt, %NaiveDateTime{}), do: DateTime.to_naive(dt)
 
   defp build_task(it, start_date, end_date, lang, order) do
     a = it.assignment
@@ -504,14 +435,6 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
       ]
     end
   end
-
-  # ── Schedule helpers ────────────────────────────────────────────
-
-  # Anchor for the sequential walk: the real start when running, the planned
-  # start when scheduled, else "now" so an unstarted project still previews.
-  defp schedule_anchor(%Project{started_at: %DateTime{} = at}), do: at
-  defp schedule_anchor(%Project{scheduled_start_date: %DateTime{} = at}), do: at
-  defp schedule_anchor(_), do: DateTime.utc_now()
 
   # ── Display helpers ─────────────────────────────────────────────
 

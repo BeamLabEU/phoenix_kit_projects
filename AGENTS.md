@@ -83,14 +83,28 @@ Under `PhoenixKitProjects.Web.*`:
 - `OverviewLive` — dashboard
 - `TasksLive`, `TaskFormLive` — task library
 - `ProjectsLive`, `ProjectFormLive`, `ProjectShowLive` — projects
+- `ProjectGanttLive`, `ProjectCalendarLive` — the show page's Timeline / Calendar tabs (read-only alternate views, nested via `live_render`)
 - `TemplatesLive`, `TemplateFormLive` — templates (reuses `ProjectShowLive` for view)
 - `AssignmentFormLive` — add/edit task-in-project
 
 `ProjectShowLive` is large (~900 lines) — handles the vertical timeline, status transitions, inline duration editing, per-task progress sliders, dependency badges, schedule/projected-end calculation. Sections are marked with `<%!-- ... --%>` HEEx comments for navigation.
 
+**Show-page tabs (List / Timeline / Calendar):** both alternate views render
+the SAME schedule through the shared `PhoenixKitProjects.ScheduleLayout`
+(tree flatten + `PhoenixLiveGantt.Layout.sequential/2` walk, hour-precise,
+weekday/weekend-aware), so they can never disagree about a task's dates. The
+Timeline is `ProjectGanttLive` (`phoenix_live_gantt`); the Calendar is
+`ProjectCalendarLive` (`phoenix_live_calendar` month grid, top-level
+assignments as all-day status-colored bars; a sub-project is one bar spanning
+its subtree, click drills into the child; dates deliberately UTC-unshifted to
+match the Timeline, unlike the Overview calendar). Tabs are instant assign
+flips; each nested LV lazy-mounts on first open and stays mounted. URL sync
+(`/gantt` / `/calendar` suffix) is the `ProjectTabsUrl` host hook, opt-in via
+`session["tab_url_sync"]` for embeds.
+
 ### URL paths
 
-Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../new`, `.../:id`, `.../:id/edit`, and assignment routes like `list/:project_id/assignments/new`. Use `PhoenixKitProjects.Paths`.
+Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../new`, `.../:id`, `.../:id/edit`, `.../:id/gantt`, `.../:id/calendar`, and assignment routes like `list/:project_id/assignments/new`. Use `PhoenixKitProjects.Paths`.
 
 ### Embedding LiveViews via `live_render`
 
@@ -99,13 +113,13 @@ Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../ne
 exist, the per-LV fix shapes, the test convention, and the pre-flight
 checklist for new LVs. Read it before adding a new LV.
 
-**All 10 LVs are embeddable.** The regression gate is
+**All 11 LVs are embeddable.** The regression gate is
 `test/phoenix_kit_projects/web/embedding_test.exs` — 43
 `live_isolated/3` + `render_hook` tests pinning the embed contract
 (including the `current_user_uuid` identity contract). Coverage:
 `OverviewLive`, `ProjectsLive`, `TemplatesLive`, `TasksLive`,
-`ProjectShowLive`, `ProjectGanttLive`, `ProjectFormLive`, `TaskFormLive`,
-`TemplateFormLive`, `AssignmentFormLive`.
+`ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`,
+`ProjectFormLive`, `TaskFormLive`, `TemplateFormLive`, `AssignmentFormLive`.
 
 The whitelist that gates **host-driven** insertion (PopupHost `root_view`,
 `<.smart_link emit>`, emit `:opened`, `next` frames) is the single
@@ -152,13 +166,14 @@ Tasks / ProjectShow / ProjectGantt):
 
 `ProjectShowLive` additionally requires `session["id"]` (the project
 UUID), reads `session["current_user_uuid"]` for the comments-drawer
-composer, and renders the **List/Timeline tab bar in embeds too** (the
-Timeline tab is a nested `live_render` of `ProjectGanttLive`); its URL-sync
-hook is opt-in via `session["tab_url_sync"]` (off by default — see the
-contract bullet). `ProjectGanttLive` (the read-only Timeline view) also
-requires `session["id"]` and accepts `session["headless"]` (drops the
-back-link when nested as the show page's tab). `TasksLive` accepts
-`session["view"]` (`"list"` or `"groups"`).
+composer, and renders the **List/Timeline/Calendar tab bar in embeds too**
+(the Timeline/Calendar tabs are nested `live_render`s of `ProjectGanttLive`
+/ `ProjectCalendarLive`); its URL-sync hook is opt-in via
+`session["tab_url_sync"]` (off by default — see the contract bullet).
+`ProjectGanttLive` (the read-only Timeline view) and `ProjectCalendarLive`
+(the read-only month-calendar view) also require `session["id"]` and accept
+`session["headless"]` (drops the back-link when nested as the show page's
+tab). `TasksLive` accepts `session["view"]` (`"list"` or `"groups"`).
 
 > ⚠️ **Embedded Timeline needs the gantt JS hooks in the host's
 > LiveSocket.** When a host embeds `ProjectShowLive` and the user opens
@@ -231,12 +246,15 @@ Contract (all keys optional unless noted):
   the admin default. Lets the host close a modal, refresh state, etc.
   without yanking the user to `/admin/projects/...`.
 - `session["tab_url_sync"]` — `ProjectShowLive` only. Boolean,
-  **defaults `false`** in embeds. The List/Timeline tab bar renders in
-  every embed (only templates stay list-only), but the `ProjectTabsUrl`
-  hook that pushes the active tab onto the browser URL is **off by
-  default** — an embed must not rewrite the host's address bar. Pass
-  `true` (a real boolean, not `"true"`) only if the host mounts the show
-  page as its own full-page route and wants `/gantt` deep-linking. The
+  **defaults `false`** in embeds. The List/Timeline/Calendar tab bar
+  renders in every embed (only templates stay list-only), but the
+  `ProjectTabsUrl` hook that mirrors the active tab onto the browser URL
+  (via `history.replaceState` — no history entries; back/forward return to
+  the previous page, and per-tab entries are impossible without
+  `handle_params/3`, which would block embedding) is **off by default** —
+  an embed must not rewrite the host's address bar. Pass `true` (a real
+  boolean, not `"true"`) only if the host mounts the show page as its own
+  full-page route and wants `/gantt` / `/calendar` deep-linking. The
   router-mounted standalone admin page enables it implicitly.
 - `id:` opt on `live_render` should be unique per logical embed (e.g.
   include the resource UUID) so two embeddings of the same LV on one
@@ -410,9 +428,12 @@ Guarded with `Code.ensure_loaded?/1` + rescue — logging never crashes mutation
 lib/phoenix_kit_projects.ex                  # Main module (PhoenixKit.Module behaviour)
 lib/phoenix_kit_projects/
 ├── activity.ex                              # Activity logging wrapper
+├── calendar_display.ex                      # Overview month-calendar mapper (projects → events) + overdue-marker settings
+├── gantt_display.ex                         # Timeline bar-label/display settings (read on /admin/settings/projects)
 ├── l10n.ex                                  # Date/time localization helpers
 ├── paths.ex                                 # Path helpers (/admin/projects/*)
 ├── projects.ex                              # Context: tasks, projects, assignments, deps
+├── schedule_layout.ex                       # Shared durations→dates walk behind the Timeline + Calendar tabs
 ├── statuses.ex                              # Workflow statuses (entities-backed, cement-at-start)
 ├── pub_sub.ex                               # Topics + broadcast helpers
 ├── schemas/
@@ -435,7 +456,9 @@ lib/phoenix_kit_projects/
     │   ├── tabs_strip.ex                    # `<.tabs_strip>` — daisyUI tabs-boxed switcher
     │   └── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
     ├── overview_live.ex
+    ├── project_calendar_live.ex             # Calendar tab — month grid over the ScheduleLayout walk
     ├── project_form_live.ex
+    ├── project_gantt_live.ex                # Timeline tab — gantt over the ScheduleLayout walk
     ├── project_show_live.ex                 # Large (~1700 lines) — timeline, schedule math
     ├── projects_live.ex
     ├── task_form_live.ex

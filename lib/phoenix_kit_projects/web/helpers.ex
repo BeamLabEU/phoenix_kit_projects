@@ -35,7 +35,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
-  alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
 
   require Logger
 
@@ -67,43 +66,18 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   @doc """
   Whether an assignment counts weekends — its own override, falling back to
-  the project's setting.
+  the project's setting. Delegates to `PhoenixKitProjects.ScheduleLayout`,
+  where the schedule math lives; kept here so LV imports stay one-stop.
   """
-  @spec task_counts_weekends?(
-          PhoenixKitProjects.Schemas.Assignment.t(),
-          PhoenixKitProjects.Schemas.Project.t()
-        ) :: boolean()
-  def task_counts_weekends?(a, project) do
-    case a.counts_weekends do
-      nil -> project.counts_weekends
-      val -> val
-    end
-  end
+  defdelegate task_counts_weekends?(a, project), to: PhoenixKitProjects.ScheduleLayout
 
   @doc """
   The estimated hours for an assignment: its own duration override if set,
   otherwise the underlying task's duration (nil-safe). Weekends are honored
-  per `task_counts_weekends?/2`.
+  per `task_counts_weekends?/2`. Delegates to
+  `PhoenixKitProjects.ScheduleLayout`.
   """
-  @spec assignment_hours(
-          PhoenixKitProjects.Schemas.Assignment.t(),
-          PhoenixKitProjects.Schemas.Project.t()
-        ) :: number()
-  def assignment_hours(a, project) do
-    weekends? = task_counts_weekends?(a, project)
-
-    if a.estimated_duration && a.estimated_duration_unit do
-      TaskSchema.to_hours(a.estimated_duration, a.estimated_duration_unit, weekends?)
-    else
-      task = a.task
-
-      TaskSchema.to_hours(
-        task && task.estimated_duration,
-        task && task.estimated_duration_unit,
-        weekends?
-      )
-    end
-  end
+  defdelegate assignment_hours(a, project), to: PhoenixKitProjects.ScheduleLayout
 
   # ─────────────────────────────────────────────────────────────────
   # Embeddable LV whitelist
@@ -121,6 +95,9 @@ defmodule PhoenixKitProjects.Web.Helpers do
     # root_view, <.smart_link emit>, emit :opened, `next` frames) all gate on
     # the whitelist, so it must be listed to be insertable by other apps.
     PhoenixKitProjects.Web.ProjectGanttLive,
+    # The Calendar view — same embed contract as the gantt (off-router mount,
+    # requires session["id"]).
+    PhoenixKitProjects.Web.ProjectCalendarLive,
     PhoenixKitProjects.Web.ProjectFormLive,
     PhoenixKitProjects.Web.TaskFormLive,
     PhoenixKitProjects.Web.TemplateFormLive,

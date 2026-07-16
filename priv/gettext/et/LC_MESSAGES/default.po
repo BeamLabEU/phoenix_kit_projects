@@ -1756,7 +1756,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:379
 #, elixir-autogen, elixir-format
 msgid "About this calendar"
-msgstr ""
+msgstr "Sellest kalendrist"
 
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:97
 #, elixir-autogen, elixir-format
@@ -1836,7 +1836,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2011
 #, elixir-autogen, elixir-format
 msgid "Calendar"
-msgstr ""
+msgstr "Kalender"
 
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:650
 #, elixir-autogen, elixir-format
@@ -1856,7 +1856,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:404
 #, elixir-autogen, elixir-format
 msgid "Click a task to edit it; a sub-project opens the child project."
-msgstr ""
+msgstr "Klõpsa ülesandel, et seda muuta; alamprojekt avab alluva projekti."
 
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:317
 #, elixir-autogen, elixir-format
@@ -2006,7 +2006,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:387
 #, elixir-autogen, elixir-format
 msgid "Each task spans the days it is scheduled to run, in the project's task order — the same schedule as the Timeline tab."
-msgstr ""
+msgstr "Iga ülesanne hõlmab päevi, milleks ta on plaanitud, projekti ülesannete järjekorras — sama ajakava nagu Ajajoone vahelehel."
 
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:328
 #, elixir-autogen, elixir-format
@@ -2146,7 +2146,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:344
 #, elixir-autogen, elixir-format
 msgid "Loading the calendar…"
-msgstr ""
+msgstr "Kalendri laadimine…"
 
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:605
 #, elixir-autogen, elixir-format
@@ -2262,7 +2262,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:355
 #, elixir-autogen, elixir-format
 msgid "No tasks to place on the calendar yet."
-msgstr ""
+msgstr "Kalendrisse pole veel ühtegi ülesannet paigutada."
 
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:407
 #, elixir-autogen, elixir-format
@@ -2413,7 +2413,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:384
 #, elixir-autogen, elixir-format
 msgid "Reading the calendar"
-msgstr ""
+msgstr "Kalendri lugemine"
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:665
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2140
@@ -2642,7 +2642,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2010
 #, elixir-autogen, elixir-format
 msgid "Timeline"
-msgstr ""
+msgstr "Ajajoon"
 
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:447
 #, elixir-autogen, elixir-format
