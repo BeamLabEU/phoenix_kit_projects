@@ -885,7 +885,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       </button>
                     </div>
 
-                    <form :if={@assignee_people != []} phx-change="pick_assignee_person">
+                    <form
+                      :if={@assignee_people != []}
+                      id="overview-assignee-picker"
+                      phx-change="pick_assignee_person"
+                    >
                       <label class="select select-xs w-44">
                         <select name="person">
                           <option value="">{gettext("Person…")}</option>

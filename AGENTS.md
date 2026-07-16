@@ -6,7 +6,7 @@ Guidance for AI agents working on the `phoenix_kit_projects` plugin module.
 
 A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) with subtabs:
 
-- **Overview** — active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker)
+- **Overview** — active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker). Tasks mode carries an **assignee filter** (Everyone / Me / person picker / Unassigned-with-count; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows). The raw walk is cached in assigns; filter flips are in-memory
 - **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee)
 - **Projects** — list of projects (filterable by status)
 - **Templates** — reusable project templates cloned into real projects
@@ -95,7 +95,8 @@ the SAME schedule through the shared `PhoenixKitProjects.ScheduleLayout`
 weekday/weekend-aware), so they can never disagree about a task's dates. The
 Timeline is `ProjectGanttLive` (`phoenix_live_gantt`); the Calendar is
 `ProjectCalendarLive` (`phoenix_live_calendar` month grid, top-level
-assignments as all-day status-colored bars; a sub-project is one bar spanning
+assignments as all-day status-colored bars capped per day with "+N more" and
+the same whole-day popup as the Overview; a sub-project is one bar spanning
 its subtree, click drills into the child; dates deliberately UTC-unshifted to
 match the Timeline, unlike the Overview calendar). Tabs are instant assign
 flips; each nested LV lazy-mounts on first open and stays mounted. URL sync
@@ -428,7 +429,8 @@ Guarded with `Code.ensure_loaded?/1` + rescue — logging never crashes mutation
 lib/phoenix_kit_projects.ex                  # Main module (PhoenixKit.Module behaviour)
 lib/phoenix_kit_projects/
 ├── activity.ex                              # Activity logging wrapper
-├── calendar_display.ex                      # Overview month-calendar mappers (Tasks mode task_events/3 + Projects mode events/6) + overdue-marker settings
+├── assignees.ex                             # Effective-assignee resolver (person∪teams∪departments scope, match provenance)
+├── calendar_display.ex                      # Overview month-calendar mappers (Tasks mode task_events/4 + Projects mode events/6) + overdue-marker settings
 ├── gantt_display.ex                         # Timeline bar-label/display settings (read on /admin/settings/projects)
 ├── l10n.ex                                  # Date/time localization helpers
 ├── paths.ex                                 # Path helpers (/admin/projects/*)

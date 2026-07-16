@@ -323,4 +323,206 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       assert html =~ "day_popup_open_project"
     end
   end
+
+  describe "calendar assignee filter + overdue" do
+    alias PhoenixKit.Users.Auth
+    alias PhoenixKitProjects.Projects, as: Prj
+    alias PhoenixKitStaff.{Departments, Staff, Teams}
+
+    defp reg_user do
+      {:ok, user} =
+        Auth.register_user(%{
+          "email" => "filter-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ActorPass123!"
+        })
+
+      user
+    end
+
+    # A person (linked to `user`) in a team; a project with one task assigned
+    # directly to the person, one to the team, and one unassigned.
+    defp filter_fixture(user) do
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "FDept-#{n}"})
+      {:ok, team} = Teams.create(%{"name" => "FTeam-#{n}", "department_uuid" => dept.uuid})
+
+      {:ok, person} =
+        Staff.create_person(%{
+          "user_uuid" => user.uuid,
+          "name" => "Filter Person #{n}",
+          "employment_type" => "full_time"
+        })
+
+      {:ok, _} = Staff.add_team_person(team.uuid, person.uuid)
+
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Prj.start_project(project)
+
+      make = fn title, extra ->
+        task =
+          fixture_task(%{
+            "title" => title,
+            "estimated_duration" => 10,
+            "estimated_duration_unit" => "minutes"
+          })
+
+        {:ok, a} =
+          Prj.create_assignment(
+            Map.merge(%{"project_uuid" => project.uuid, "task_uuid" => task.uuid}, extra)
+          )
+
+        %{a | task: task}
+      end
+
+      %{
+        project: project,
+        person: person,
+        team: team,
+        direct: make.("Direct-#{n}", %{"assigned_person_uuid" => person.uuid}),
+        team_task: make.("TeamTask-#{n}", %{"assigned_team_uuid" => team.uuid}),
+        loose: make.("Loose-#{n}", %{})
+      }
+    end
+
+    defp mount_with_user(conn, user) do
+      scope = fake_scope(user_uuid: user.uuid)
+      conn = put_test_scope(conn, scope)
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      render_click(view, "switch_overview_tab", %{"tab" => "calendar"})
+      view
+    end
+
+    test "Me filter (inherited) keeps direct + team tasks, drops unassigned", %{conn: conn} do
+      user = reg_user()
+      fx = filter_fixture(user)
+      view = mount_with_user(conn, user)
+
+      html = render_click(view, "set_assignee_filter", %{"filter" => "me"})
+      assert html =~ fx.direct.task.title
+      assert html =~ fx.team_task.task.title
+      refute html =~ fx.loose.task.title
+    end
+
+    test "Direct only narrows a Me scope to personal assignments", %{conn: conn} do
+      user = reg_user()
+      fx = filter_fixture(user)
+      view = mount_with_user(conn, user)
+
+      render_click(view, "set_assignee_filter", %{"filter" => "me"})
+      html = render_click(view, "toggle_assignee_direct", %{})
+      assert html =~ fx.direct.task.title
+      refute html =~ fx.team_task.task.title
+    end
+
+    test "Unassigned filter shows only unassigned tasks; the count badge is live", %{
+      conn: conn
+    } do
+      # View as a DIFFERENT admin so the direct task can't leak into the
+      # page via the "My tasks" sidebar.
+      fx = filter_fixture(reg_user())
+      view = mount_with_user(conn, reg_user())
+
+      html = render_click(view, "set_assignee_filter", %{"filter" => "unassigned"})
+      assert html =~ fx.loose.task.title
+      refute html =~ fx.direct.task.title
+    end
+
+    test "the person picker filters to that person and shows provenance in the popup", %{
+      conn: conn
+    } do
+      user = reg_user()
+      fx = filter_fixture(user)
+      # View as a DIFFERENT admin — the picker targets an arbitrary person.
+      viewer = reg_user()
+      view = mount_with_user(conn, viewer)
+
+      html = render_change(view, "pick_assignee_person", %{"person" => fx.person.uuid})
+      assert html =~ fx.direct.task.title
+      assert html =~ fx.team_task.task.title
+      refute html =~ fx.loose.task.title
+
+      # The team task's popup row explains WHY it's in this person's view.
+      send(view.pid, {:calendar_day_click, Date.utc_today()})
+      html = render(view)
+      assert html =~ "via"
+      assert html =~ fx.team.name
+
+      # Empty selection resets to everyone.
+      html = render_change(view, "pick_assignee_person", %{"person" => ""})
+      assert html =~ fx.loose.task.title
+    end
+
+    test "a viewer without a staff person gets no Me button; the event is a no-op", %{
+      conn: conn
+    } do
+      user = reg_user()
+      _fx = filter_fixture(reg_user())
+      view = mount_with_user(conn, user)
+
+      html = render(view)
+      refute html =~ ~s(phx-value-filter="me")
+
+      # Server-side guard: a crafted "me" is ignored.
+      html = render_click(view, "set_assignee_filter", %{"filter" => "me"})
+      assert html =~ ~s(phx-value-filter="everyone")
+    end
+
+    test "Overdue only keeps late tasks and drops on-schedule/done ones", %{conn: conn} do
+      user = reg_user()
+      n = System.unique_integer([:positive])
+
+      # Backdated project: its 10-minute tasks were scheduled to finish days
+      # ago. The done one must NOT read as late.
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Prj.start_project(project, DateTime.add(DateTime.utc_now(), -3 * 24 * 3600))
+
+      late_task =
+        fixture_task(%{
+          "title" => "LateOne-#{n}",
+          "estimated_duration" => 10,
+          "estimated_duration_unit" => "minutes"
+        })
+
+      done_task =
+        fixture_task(%{
+          "title" => "DoneOne-#{n}",
+          "estimated_duration" => 10,
+          "estimated_duration_unit" => "minutes"
+        })
+
+      {:ok, _} =
+        Prj.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => late_task.uuid})
+
+      {:ok, _} =
+        Prj.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => done_task.uuid,
+          "status" => "done"
+        })
+
+      # A second, on-schedule project: its task runs for weeks — not late.
+      current = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Prj.start_project(current)
+
+      ok_task =
+        fixture_task(%{
+          "title" => "OnTime-#{n}",
+          "estimated_duration" => 3,
+          "estimated_duration_unit" => "weeks"
+        })
+
+      {:ok, _} =
+        Prj.create_assignment(%{"project_uuid" => current.uuid, "task_uuid" => ok_task.uuid})
+
+      view = mount_with_user(conn, user)
+      html = render_click(view, "toggle_overdue_only", %{})
+
+      assert html =~ late_task.title
+      refute html =~ "DoneOne-#{n}"
+      refute html =~ ok_task.title
+
+      # The late chip carries the red ring marker.
+      assert html =~ "ring-error"
+    end
+  end
 end

@@ -213,6 +213,52 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert html =~ "cal-container"
   end
 
+  test "a day-cell or +N more click fills the whole-day popup; a row click navigates", %{
+    conn: conn
+  } do
+    {project, a1, _a2} = started_project_with_tasks()
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+    render(view)
+
+    # Both triggers land on the same popup; rows carry the status badge.
+    {items, layout} = ScheduleLayout.tree(Projects.get_project_with_assignee(project.uuid))
+    %{start: s} = Map.fetch!(layout, a1.uuid)
+    day = NaiveDateTime.to_date(s)
+    a1_title = Enum.find(items, &(&1.uuid == a1.uuid)).assignment.task.title
+
+    send(view.pid, {:calendar_date_click, day})
+    html = render(view)
+    assert html =~ a1_title
+    assert html =~ "day_popup_item_click"
+
+    send(view.pid, {:calendar_more_click, day})
+    assert render(view) =~ a1_title
+
+    # Closing resets to the skeleton.
+    html = render_click(view, "close_day_popup", %{})
+    refute html =~ "day_popup_item_click"
+
+    # A row click routes like a chip click — to the assignment edit form.
+    send(view.pid, {:calendar_date_click, day})
+    render(view)
+    render_click(view, "day_popup_item_click", %{"uuid" => a1.uuid})
+    assert_redirect(view, Paths.edit_assignment(project.uuid, a1.uuid))
+  end
+
+  test "an empty day's popup says nothing is scheduled", %{conn: conn} do
+    {project, _a1, _a2} = started_project_with_tasks()
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+    render(view)
+    send(view.pid, {:calendar_date_click, Date.add(Date.utc_today(), 400)})
+    assert render(view) =~ "Nothing scheduled this day."
+  end
+
   test "reloads on a projects PubSub broadcast (new assignment appears)", %{conn: conn} do
     {project, _a1, _a2} = started_project_with_tasks()
 

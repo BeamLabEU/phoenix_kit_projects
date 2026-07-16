@@ -440,6 +440,35 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       assert e3.color == p2_bg
     end
 
+    test "flags a not-done task past its span as late (ring class + meta)" do
+      p = project(%{name: "P"})
+      todo = task_item(p, %{status: "todo"})
+      done = task_item(p, %{status: "done"})
+      s = span(~N[2026-06-10 08:00:00], ~N[2026-06-10 10:00:00])
+      now = ~N[2026-06-12 09:00:00]
+
+      {[late_e, done_e], meta} =
+        CalendarDisplay.task_events([{todo, s}, {done, s}], nil, "0", now: now)
+
+      assert late_e.class =~ "ring-error"
+      assert meta[late_e.id].late
+
+      refute done_e.class
+      refute meta[done_e.id].late
+    end
+
+    test "a task still inside its span is not late" do
+      p = project(%{name: "P"})
+      item = task_item(p, %{status: "in_progress"})
+      s = span(~N[2026-06-10 08:00:00], ~N[2026-06-14 10:00:00])
+
+      {[e], meta} =
+        CalendarDisplay.task_events([{item, s}], nil, "0", now: ~N[2026-06-12 09:00:00])
+
+      refute e.class
+      refute meta[e.id].late
+    end
+
     test "falls back to the untitled label when the assignment has no resolvable title" do
       # A sub-project link whose child_project isn't loaded resolves no label;
       # the mapper must degrade to "(untitled task)" rather than crash. (The
