@@ -94,16 +94,17 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         task_calendar_meta: %{},
         task_calendar_loaded?: false,
         # Assignee filter over the Tasks mode: :everyone | :me | :unassigned |
-        # {:person, uuid}. Inherited semantics by default (the person, their
-        # teams, their departments — resolved once into `assignee_scope` by
-        # PhoenixKitProjects.Assignees); `assignee_direct_only?` narrows to
-        # personal assignments. `me_scope` caches the viewer's own resolution
-        # (:unresolved until the first calendar load; nil = no staff person,
-        # which hides the Me shortcut).
+        # :people (one or more picked via the core search_picker — chips in
+        # `assignee_selected`, resolved scopes in `assignee_scopes`). Inherited
+        # semantics by default (the person, their teams, their departments —
+        # resolved by PhoenixKitProjects.Assignees); `assignee_direct_only?`
+        # narrows to personal assignments. `me_scope` caches the viewer's own
+        # resolution (:unresolved until the first calendar load; nil = no
+        # staff person, which hides the Me shortcut).
         assignee_filter: :everyone,
-        assignee_scope: nil,
+        assignee_selected: [],
+        assignee_scopes: %{},
         assignee_direct_only?: false,
-        assignee_people: [],
         me_scope: :unresolved,
         unassigned_count: 0,
         # Show only late tasks (not done + scheduled span already ended).
@@ -237,7 +238,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       task_calendar_items: items_with_spans,
       task_calendar_loaded?: true,
       tz_offset: offset,
-      assignee_people: Assignees.people_options(),
       me_scope: me_scope,
       unassigned_count:
         Enum.count(items_with_spans, fn {it, _} -> Assignees.unassigned?(it.assignment) end)
@@ -256,10 +256,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       tz_offset: offset
     } = socket.assigns
 
-    scope = current_scope(socket)
+    scopes = current_scopes(socket)
     now = DateTime.utc_now() |> DateTime.to_naive()
 
-    {kept, provenance} = filter_items(items, filter, scope, direct_only?)
+    {kept, provenance} = filter_items(items, filter, scopes, direct_only?)
 
     {events, meta} =
       CalendarDisplay.task_events(kept, L10n.current_content_lang(), offset, now: now)
@@ -282,27 +282,33 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     assign(socket, task_calendar_events: events, task_calendar_meta: meta)
   end
 
-  defp current_scope(%{assigns: %{assignee_filter: :me, me_scope: %{} = scope}}), do: scope
+  # The resolved scopes the current filter matches against — [me] for :me,
+  # the picked people's scopes for :people, [] otherwise.
+  defp current_scopes(%{assigns: %{assignee_filter: :me, me_scope: %{} = scope}}), do: [scope]
 
-  defp current_scope(%{assigns: %{assignee_filter: {:person, _}, assignee_scope: scope}}),
-    do: scope
+  defp current_scopes(%{assigns: %{assignee_filter: :people} = assigns}) do
+    assigns.assignee_selected
+    |> Enum.map(&Map.get(assigns.assignee_scopes, &1.uuid))
+    |> Enum.reject(&is_nil/1)
+  end
 
-  defp current_scope(_socket), do: nil
+  defp current_scopes(_socket), do: []
 
   # Applies the assignee filter to the raw items. For person scopes, returns
   # the provenance map (uuid => :direct | {:team, name} | {:department, name})
-  # alongside; direct-only narrows to :direct matches.
-  defp filter_items(items, :everyone, _scope, _direct), do: {items, %{}}
+  # alongside; direct-only narrows to :direct matches. Multiple selected
+  # people match as a UNION — a task counts when ANY of them would see it.
+  defp filter_items(items, :everyone, _scopes, _direct), do: {items, %{}}
 
-  defp filter_items(items, :unassigned, _scope, _direct) do
+  defp filter_items(items, :unassigned, _scopes, _direct) do
     {Enum.filter(items, fn {it, _} -> Assignees.unassigned?(it.assignment) end), %{}}
   end
 
-  defp filter_items(items, _person_or_me, nil, _direct), do: {items, %{}}
+  defp filter_items(items, _person_or_me, [], _direct), do: {items, %{}}
 
-  defp filter_items(items, _person_or_me, scope, direct_only?) do
+  defp filter_items(items, _person_or_me, scopes, direct_only?) do
     Enum.reduce(items, {[], %{}}, fn {it, span}, {kept, prov} ->
-      case Assignees.match(it.assignment, scope) do
+      case match_any(it.assignment, scopes) do
         nil -> {kept, prov}
         :direct -> {[{it, span} | kept], prov}
         _via when direct_only? -> {kept, prov}
@@ -310,6 +316,19 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       end
     end)
     |> then(fn {kept, prov} -> {Enum.reverse(kept), prov} end)
+  end
+
+  # Match across every selected scope; a :direct hit for anyone wins (so
+  # direct-only keeps a task any selected person holds personally), otherwise
+  # the first inherited provenance found labels the row.
+  defp match_any(assignment, scopes) do
+    Enum.reduce_while(scopes, nil, fn scope, acc ->
+      case Assignees.match(assignment, scope) do
+        nil -> {:cont, acc}
+        :direct -> {:halt, :direct}
+        via -> {:cont, acc || via}
+      end
+    end)
   end
 
   # First-open build (reload/1 skips the walk until the tab has been seen).
@@ -480,7 +499,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   end
 
   # Assignee quick filters. "me" only applies when the viewer resolved to a
-  # staff person (the button is hidden otherwise, but the guard is server-side).
+  # staff person (the button is hidden otherwise, but the guard is
+  # server-side). A quick filter clears any picked-people chips.
   def handle_event("set_assignee_filter", %{"filter" => filter}, socket) do
     new =
       case filter do
@@ -493,33 +513,79 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     if new do
       {:noreply,
        socket
-       |> assign(assignee_filter: new, assignee_scope: nil)
+       |> assign(assignee_filter: new, assignee_selected: [], assignee_scopes: %{})
        |> apply_task_filter()}
     else
       {:noreply, socket}
     end
   end
 
-  # The person picker (a phx-change form). An empty value resets to Everyone;
-  # an unknown uuid resolves to nil scope and falls back to Everyone too.
-  def handle_event("pick_assignee_person", %{"person" => ""}, socket) do
-    {:noreply,
-     socket
-     |> assign(assignee_filter: :everyone, assignee_scope: nil)
-     |> apply_task_filter()}
+  # ── Person picker (core <.search_picker> contract) ──────────────
+  # The dropdown renders client-side; this answers with rows + has_more
+  # (limit+1 probe at the DB — nothing loads the whole people table).
+  def handle_event("assignee_search", %{"q" => q} = params, socket) do
+    limit =
+      case params["limit"] do
+        n when is_integer(n) and n > 0 ->
+          n
+
+        n when is_binary(n) ->
+          case Integer.parse(n) do
+            {i, _} -> max(i, 1)
+            :error -> 8
+          end
+
+        _ ->
+          8
+      end
+
+    {rows, has_more} = Assignees.search_people(q, limit)
+
+    {:noreply, push_event(socket, "assignee_results", %{q: q, results: rows, has_more: has_more})}
   end
 
-  def handle_event("pick_assignee_person", %{"person" => uuid}, socket) when is_binary(uuid) do
-    case Assignees.scope_for_person(uuid, L10n.current_content_lang()) do
+  # A person picked from the dropdown — add a chip (deduped) and switch the
+  # filter to the picked set. `assignee_staged` confirms so the hook clears
+  # the input. An unknown uuid resolves to nil scope and is ignored.
+  def handle_event("assignee_pick", %{"uuid" => uuid}, socket) when is_binary(uuid) do
+    already? = Enum.any?(socket.assigns.assignee_selected, &(&1.uuid == uuid))
+
+    case if(already?,
+           do: :duplicate,
+           else: Assignees.scope_for_person(uuid, L10n.current_content_lang())
+         ) do
       nil ->
         {:noreply, socket}
+
+      :duplicate ->
+        {:noreply, push_event(socket, "assignee_staged", %{})}
 
       scope ->
         {:noreply,
          socket
-         |> assign(assignee_filter: {:person, uuid}, assignee_scope: scope)
-         |> apply_task_filter()}
+         |> assign(
+           assignee_filter: :people,
+           assignee_selected:
+             socket.assigns.assignee_selected ++ [%{uuid: uuid, name: scope.person_name}],
+           assignee_scopes: Map.put(socket.assigns.assignee_scopes, uuid, scope)
+         )
+         |> apply_task_filter()
+         |> push_event("assignee_staged", %{})}
     end
+  end
+
+  # Chip ✕ — drop one picked person; an empty set falls back to Everyone.
+  def handle_event("remove_assignee_person", %{"uuid" => uuid}, socket) when is_binary(uuid) do
+    selected = Enum.reject(socket.assigns.assignee_selected, &(&1.uuid == uuid))
+
+    {:noreply,
+     socket
+     |> assign(
+       assignee_selected: selected,
+       assignee_scopes: Map.delete(socket.assigns.assignee_scopes, uuid),
+       assignee_filter: if(selected == [], do: :everyone, else: :people)
+     )
+     |> apply_task_filter()}
   end
 
   # "Direct only" narrows a person scope to personal assignments (team/
@@ -885,27 +951,48 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       </button>
                     </div>
 
-                    <form
-                      :if={@assignee_people != []}
-                      id="overview-assignee-picker"
-                      phx-change="pick_assignee_person"
+                    <%!-- Instant person typeahead (core search_picker): the
+                         dropdown renders client-side, the server answers
+                         "assignee_search" with limit+1-probed pages (Load
+                         more built in) — nothing preloads the people table.
+                         Picked people become removable chips; several chips
+                         filter as a union. --%>
+                    <div class="w-44">
+                      <.search_picker
+                        id="overview-assignee-search"
+                        dropdown_id="overview-assignee-dropdown"
+                        search_event="assignee_search"
+                        results_event="assignee_results"
+                        pick_event="assignee_pick"
+                        staged_event="assignee_staged"
+                        placeholder={gettext("Add person…")}
+                        class="input input-bordered input-xs w-full"
+                        searching_label={gettext("Searching…")}
+                        more_label={gettext("Load more")}
+                        loading_more_label={gettext("Loading…")}
+                        no_matches_label={gettext("No matches")}
+                        data-search-on-focus
+                      />
+                    </div>
+
+                    <span
+                      :for={p <- @assignee_selected}
+                      class="badge badge-sm badge-outline gap-1 max-w-40"
                     >
-                      <label class="select select-xs w-44">
-                        <select name="person">
-                          <option value="">{gettext("Person…")}</option>
-                          <option
-                            :for={{name, uuid} <- @assignee_people}
-                            value={uuid}
-                            selected={@assignee_filter == {:person, uuid}}
-                          >
-                            {name}
-                          </option>
-                        </select>
-                      </label>
-                    </form>
+                      <span class="truncate">{p.name}</span>
+                      <button
+                        type="button"
+                        phx-click="remove_assignee_person"
+                        phx-value-uuid={p.uuid}
+                        class="shrink-0 hover:text-error"
+                        aria-label={gettext("Remove %{name}", name: p.name)}
+                      >
+                        <.icon name="hero-x-mark" class="w-3 h-3" />
+                      </button>
+                    </span>
 
                     <label
-                      :if={@assignee_filter == :me or match?({:person, _}, @assignee_filter)}
+                      :if={@assignee_filter in [:me, :people]}
                       class="label cursor-pointer gap-1.5 text-xs"
                     >
                       <input

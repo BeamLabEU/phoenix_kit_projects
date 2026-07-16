@@ -115,15 +115,51 @@ defmodule PhoenixKitProjects.AssigneesTest do
     end
   end
 
-  describe "people_options/0" do
-    test "lists people as {name, uuid} sorted by name" do
+  describe "search_people/2 (picker contract)" do
+    test "empty query is browse mode: first page, name-sorted, DB-limited" do
       %{person: person} = staff_fixture()
 
-      options = Assignees.people_options()
-      assert {"Anna Assignee", person.uuid} in options
+      {rows, _has_more} = Assignees.search_people("", 50)
 
-      names = Enum.map(options, fn {name, _} -> String.downcase(name) end)
-      assert names == Enum.sort(names)
+      row = Enum.find(rows, &(&1.uuid == person.uuid))
+      assert %{kind: "person", label: "Anna Assignee", icon: "hero-user"} = row
+      assert row.sublabel =~ "@example.com"
+
+      labels = Enum.map(rows, &String.downcase(&1.label))
+      assert labels == Enum.sort(labels)
+    end
+
+    test "limit+1 probes has_more and pages stay at the limit" do
+      for _ <- 1..3, do: staff_fixture()
+
+      {rows, has_more} = Assignees.search_people("", 2)
+      assert length(rows) == 2
+      assert has_more
+
+      {_all, false} = Assignees.search_people("", 50)
+    end
+
+    test "matches name or email, case-insensitively" do
+      %{person: person} = staff_fixture()
+
+      {by_name, _} = Assignees.search_people("anna assign", 10)
+      assert Enum.any?(by_name, &(&1.uuid == person.uuid))
+
+      {by_email, _} = Assignees.search_people("anna-", 10)
+      assert Enum.any?(by_email, &(&1.uuid == person.uuid))
+
+      {none, _} = Assignees.search_people("zzz-no-such-person", 10)
+      assert none == []
+    end
+
+    test "ILIKE wildcards in the query are escaped, not interpreted" do
+      _ = staff_fixture()
+
+      {rows, _} = Assignees.search_people("%", 10)
+      assert rows == []
+
+      {rows, _} = Assignees.search_people("_", 10)
+      assert rows == []
     end
   end
 end

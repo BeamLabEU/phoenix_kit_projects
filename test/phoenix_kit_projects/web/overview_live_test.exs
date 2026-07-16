@@ -427,19 +427,22 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       refute html =~ fx.direct.task.title
     end
 
-    test "the person picker filters to that person and shows provenance in the popup", %{
+    test "the person picker filters to picked people and shows provenance in the popup", %{
       conn: conn
     } do
       user = reg_user()
       fx = filter_fixture(user)
-      # View as a DIFFERENT admin — the picker targets an arbitrary person.
+      # View as a DIFFERENT admin — the picker targets arbitrary people.
       viewer = reg_user()
       view = mount_with_user(conn, viewer)
 
-      html = render_change(view, "pick_assignee_person", %{"person" => fx.person.uuid})
+      html = render_click(view, "assignee_pick", %{"uuid" => fx.person.uuid})
+      # The pick confirms to the hook (clears the input) and renders a chip.
+      assert_push_event(view, "assignee_staged", %{})
       assert html =~ fx.direct.task.title
       assert html =~ fx.team_task.task.title
       refute html =~ fx.loose.task.title
+      assert html =~ "remove_assignee_person"
 
       # The team task's popup row explains WHY it's in this person's view.
       send(view.pid, {:calendar_day_click, Date.utc_today()})
@@ -447,9 +450,46 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       assert html =~ "via"
       assert html =~ fx.team.name
 
-      # Empty selection resets to everyone.
-      html = render_change(view, "pick_assignee_person", %{"person" => ""})
+      # Removing the chip resets to everyone.
+      html = render_click(view, "remove_assignee_person", %{"uuid" => fx.person.uuid})
       assert html =~ fx.loose.task.title
+    end
+
+    test "picking several people filters as a union", %{conn: conn} do
+      fx1 = filter_fixture(reg_user())
+      fx2 = filter_fixture(reg_user())
+      view = mount_with_user(conn, reg_user())
+
+      render_click(view, "assignee_pick", %{"uuid" => fx1.person.uuid})
+      html = render_click(view, "assignee_pick", %{"uuid" => fx2.person.uuid})
+
+      # Both people's direct tasks show; unassigned still filtered out.
+      assert html =~ fx1.direct.task.title
+      assert html =~ fx2.direct.task.title
+      refute html =~ fx1.loose.task.title
+
+      # A duplicate pick is a no-op (still confirms so the input clears).
+      html2 = render_click(view, "assignee_pick", %{"uuid" => fx2.person.uuid})
+      assert html2 =~ fx2.direct.task.title
+
+      # A quick filter clears the picked chips.
+      html3 = render_click(view, "set_assignee_filter", %{"filter" => "everyone"})
+      refute html3 =~ "remove_assignee_person"
+    end
+
+    test "assignee_search answers the picker with rows + has_more", %{conn: conn} do
+      fx = filter_fixture(reg_user())
+      view = mount_with_user(conn, reg_user())
+
+      render_click(view, "assignee_search", %{"q" => fx.person.name, "limit" => 8})
+
+      assert_push_event(view, "assignee_results", %{q: q, results: results, has_more: _})
+      assert q == fx.person.name
+      assert Enum.any?(results, &(&1.uuid == fx.person.uuid))
+
+      # A malformed limit degrades to the default instead of crashing.
+      render_click(view, "assignee_search", %{"q" => "", "limit" => "bogus"})
+      assert_push_event(view, "assignee_results", %{results: _})
     end
 
     test "a viewer without a staff person gets no Me button; the event is a no-op", %{

@@ -123,19 +123,71 @@ defmodule PhoenixKitProjects.Assignees do
   end
 
   @doc """
-  People options for an assignee picker: `{display_name, uuid}` sorted by
-  name. Trashed people are excluded by the staff context. Empty on a failed
-  staff read.
+  Searches people for the assignee picker (core `<.search_picker>` contract):
+  name/email typeahead, LIMITed at the database (limit+1 probes `has_more` for
+  the picker's Load more), trashed people excluded. An empty query is browse
+  mode — the first page of everyone, name-sorted — per the workspace picker
+  rule that a picker must offer options before any typing.
+
+  Returns `{rows, has_more}` where each row is the picker's
+  `%{kind:, uuid:, label:, sublabel:, icon:}` shape. `{[], false}` on a
+  failed staff read.
+
+  Queries the staff `Person` schema directly (already a hard schema dep via
+  the assignment FKs) because the staff context's `list_people/1` has no
+  LIMIT — the whole point here is not loading 1000 people per keystroke.
   """
-  @spec people_options() :: [{String.t(), String.t()}]
-  def people_options do
-    Staff.list_people(preload: [:user])
-    |> Enum.map(&{Person.display_name(&1), &1.uuid})
-    |> Enum.sort_by(fn {name, _} -> String.downcase(name) end)
+  @spec search_people(String.t() | nil, pos_integer()) :: {[map()], boolean()}
+  def search_people(query, limit \\ 8) do
+    import Ecto.Query
+
+    limit = limit |> max(1) |> min(50)
+    q = query |> to_string() |> String.trim()
+
+    base =
+      from(p in Person,
+        left_join: u in assoc(p, :user),
+        where: p.status != "trashed",
+        order_by: [asc: fragment("coalesce(?, ?)", p.name, u.email)],
+        limit: ^(limit + 1),
+        select: %{uuid: p.uuid, name: p.name, email: u.email}
+      )
+
+    rows =
+      if q == "" do
+        base
+      else
+        escaped =
+          q
+          |> String.replace("\\", "\\\\")
+          |> String.replace("%", "\\%")
+          |> String.replace("_", "\\_")
+
+        pattern = "%#{escaped}%"
+        where(base, [p, u], ilike(p.name, ^pattern) or ilike(u.email, ^pattern))
+      end
+      |> PhoenixKit.RepoHelper.repo().all()
+
+    {page, rest} = Enum.split(rows, limit)
+
+    picker_rows =
+      Enum.map(page, fn r ->
+        label = r.name || r.email || "?"
+
+        %{
+          kind: "person",
+          uuid: r.uuid,
+          label: label,
+          sublabel: if(r.name && r.email, do: r.email),
+          icon: "hero-user"
+        }
+      end)
+
+    {picker_rows, rest != []}
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
-      Logger.warning("[Assignees] people listing failed: #{Exception.message(e)}")
-      []
+      Logger.warning("[Assignees] people search failed: #{Exception.message(e)}")
+      {[], false}
   end
 
   defp build_scope(person, lang) do
