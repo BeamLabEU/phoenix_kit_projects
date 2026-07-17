@@ -33,6 +33,10 @@ defmodule PhoenixKitProjects.Web.AssigneeFilter do
 
   alias PhoenixKitProjects.{Activity, Assignees, L10n}
 
+  # Page size when the picker sends no parseable limit — matches the
+  # SearchPicker hook's own default page.
+  @default_search_limit 8
+
   @events ~w(clear_assignee_filter toggle_me_chip toggle_unassigned assignee_search
              assignee_pick remove_assignee_person toggle_assignee_direct toggle_overdue_only)
 
@@ -120,11 +124,11 @@ defmodule PhoenixKitProjects.Web.AssigneeFilter do
         n when is_binary(n) ->
           case Integer.parse(n) do
             {i, _} -> max(i, 1)
-            :error -> 8
+            :error -> @default_search_limit
           end
 
         _ ->
-          8
+          @default_search_limit
       end
 
     # Already-picked people don't reappear as suggestions.

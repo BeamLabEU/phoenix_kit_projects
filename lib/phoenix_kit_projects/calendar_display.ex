@@ -109,8 +109,8 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   Builds the calendar event list from the dashboard's already-loaded data.
 
     * `active_summaries` — `Projects.project_tree_summary/1` maps for running
-      projects (carry `:project`, `:planned_end`, `:progress_pct`), each tagged
-      by the caller with `:late` (boolean) to drive the blink
+      projects (carry `:project` and `:planned_end`), each tagged by the
+      caller with `:late` (boolean) to drive the blink
     * `completed` / `upcoming` — `[Project.t()]` (recently completed / scheduled)
     * `lang` — content language for project titles
     * `today` — anchor so a running project's bar always reaches at least today
@@ -177,7 +177,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       start_d = to_date(naive_to_utc(span.start), offset)
       end_d = exclusive_end_date(start_d, span.end, offset)
       {bg, text} = color_for(project.uuid)
-      late? = late?(a, span, now)
+      late? = task_late?(a, span, now)
 
       event =
         PhoenixLiveCalendar.event(a.uuid, start_d,
@@ -200,19 +200,67 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     end)
   end
 
-  # A task is late when it isn't done and its scheduled span ended before
-  # `now` — the schedule says it should already have finished.
-  defp late?(_a, _span, nil), do: false
+  @doc """
+  Per-day caps for the month grids, shared by BOTH calendars — the "+N more"
+  link / whole-day popup contract depends on the two grids agreeing on when
+  a day overflows. `max_events/0` caps single-day chips, `max_multiday/0`
+  caps multi-day bar slots.
+  """
+  @spec max_events() :: pos_integer()
+  def max_events, do: 3
 
-  defp late?(a, span, %NaiveDateTime{} = now) do
+  @spec max_multiday() :: pos_integer()
+  def max_multiday, do: 4
+
+  @doc """
+  Events whose `[start, end)` span covers `date`, soonest-starting first —
+  the shared day-popup row source for both calendars.
+  """
+  @spec events_on([Event.t()], Date.t()) :: [Event.t()]
+  def events_on(events, date) do
+    events
+    |> Enum.filter(fn e ->
+      Date.compare(e.start, date) != :gt and Date.compare(date, Date.add(e.end, -1)) != :gt
+    end)
+    |> Enum.sort_by(&{&1.start, &1.title})
+  end
+
+  @doc """
+  A task is late when it isn't done and its scheduled span ended before
+  `now` — the schedule says it should already have finished. The shared rule
+  behind both calendars' red rings, `late` badges, and Overdue-only filters
+  (a `nil` `now` flags nothing — pure date math only).
+  """
+  @spec task_late?(map(), %{:end => NaiveDateTime.t(), optional(atom()) => term()}, NaiveDateTime.t() | nil) ::
+          boolean()
+  def task_late?(_a, _span, nil), do: false
+
+  def task_late?(a, span, %NaiveDateTime{} = now) do
     a.status != "done" and NaiveDateTime.compare(span.end, now) == :lt
   end
 
-  # The exclusive end DATE for a span ending at `e` (UTC naive), evaluated in
-  # the viewer's local frame: an end that falls exactly on local midnight
-  # doesn't occupy that day, any later instant does. Floored one day past the
-  # start so a zero-length span still shows as a one-day chip.
-  defp exclusive_end_date(start_d, %NaiveDateTime{} = e, offset) do
+  @doc """
+  The exclusive end DATE for a span ending at `e` (UTC naive). With a viewer
+  `offset` (`"+3"`) the end is evaluated in the local frame; `nil` keeps UTC —
+  the project Calendar tab's Timeline-parity frame. An end falling exactly on
+  (local) midnight doesn't occupy that day, any later instant does. Floored
+  one day past the start so a zero-length span still shows as a one-day chip.
+  """
+  @spec exclusive_end_date(Date.t(), NaiveDateTime.t(), String.t() | nil) :: Date.t()
+  def exclusive_end_date(start_d, e, offset \\ nil)
+
+  def exclusive_end_date(start_d, %NaiveDateTime{} = e, nil) do
+    e_date = NaiveDateTime.to_date(e)
+
+    exclusive =
+      if NaiveDateTime.compare(e, NaiveDateTime.new!(e_date, ~T[00:00:00])) == :eq,
+        do: e_date,
+        else: Date.add(e_date, 1)
+
+    Enum.max([exclusive, Date.add(start_d, 1)], Date)
+  end
+
+  def exclusive_end_date(start_d, %NaiveDateTime{} = e, offset) do
     local_end = PhoenixKit.Utils.Date.shift_to_offset(naive_to_utc(e), offset)
     e_date = DateTime.to_date(local_end)
 
@@ -247,7 +295,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       |> overdue_highlight(planned_end_d, today)
       |> Map.put(:slot_priority, if(late?, do: 0, else: 1))
 
-    event(project, start_d, last_day, summary[:progress_pct], lang, extra)
+    event(project, start_d, last_day, lang, extra)
   end
 
   defp running_event(_, _, _, _), do: nil
@@ -280,27 +328,25 @@ defmodule PhoenixKitProjects.CalendarDisplay do
        ) do
     start_d = to_date(started, offset)
 
-    event(project, start_d, latest([start_d, to_date(done, offset)]), 100, lang, %{
-      slot_priority: 1
-    })
+    event(project, start_d, latest([start_d, to_date(done, offset)]), lang, %{slot_priority: 1})
   end
 
   # Completed without a recorded start → a one-day marker on the completion day.
   defp completed_event(%Project{completed_at: %DateTime{} = done} = project, lang, offset) do
     d = to_date(done, offset)
-    event(project, d, d, 100, lang, %{slot_priority: 1})
+    event(project, d, d, lang, %{slot_priority: 1})
   end
 
   defp completed_event(_, _, _), do: nil
 
   defp scheduled_event(%Project{scheduled_start_date: %DateTime{} = at} = project, lang, offset) do
     d = to_date(at, offset)
-    event(project, d, d, nil, lang, %{slot_priority: 1})
+    event(project, d, d, lang, %{slot_priority: 1})
   end
 
   defp scheduled_event(_, _, _), do: nil
 
-  defp event(%Project{} = project, start_d, last_day_inclusive, pct, lang, extra) do
+  defp event(%Project{} = project, start_d, last_day_inclusive, lang, extra) do
     {bg, text} = color_for(project.uuid)
 
     PhoenixLiveCalendar.event(project.uuid, start_d,
@@ -309,7 +355,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       all_day: true,
       color: bg,
       text_color: text,
-      extra: Map.put(extra, :progress_pct, pct)
+      extra: extra
     )
   end
 
@@ -464,14 +510,11 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   end
 
   @doc """
-  The `<style>` block for the overdue animation, generated from the current
-  settings. Safe to inject with `Phoenix.HTML.raw/1`: every interpolated value
-  is a validated enum or clamped number, never free text.
+  The `<style>` block for the overdue animation, from an already-`read_animation/0`
+  config map (callers thread the map so one read serves style + legend). Safe to
+  inject with `Phoenix.HTML.raw/1`: every interpolated value is a validated enum
+  or clamped number, never free text.
   """
-  @spec animation_style() :: String.t()
-  def animation_style, do: animation_style(read_animation())
-
-  @doc "As `animation_style/0`, for an already-read config map (avoids a re-read)."
   @spec animation_style(map()) :: String.t()
   def animation_style(cfg) do
     "<style>\n" <> animation_css(cfg) <> "\n" <> label_css() <> "\n</style>"

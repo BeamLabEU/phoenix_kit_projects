@@ -253,20 +253,23 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   defp open_day_popup(socket, date) do
     rows =
       socket.assigns.events
-      |> Enum.filter(fn e ->
-        Date.compare(e.start, date) != :gt and Date.compare(date, Date.add(e.end, -1)) != :gt
-      end)
-      |> Enum.sort_by(&{&1.start, &1.title})
+      |> CalendarDisplay.events_on(date)
       |> Enum.map(fn e ->
         extra = e.extra || %{}
 
         %{
-          id: e.id,
+          value: e.id,
           title: e.title,
           color: e.color,
           status: extra[:status],
           late: extra[:late] || false,
-          via: extra[:via]
+          # The provenance rider explains WHY a row appears in a
+          # person-scoped view (team/department inheritance, not personal).
+          subtitle:
+            case extra[:via] do
+              {_kind, name} -> gettext("via %{name}", name: name)
+              _ -> nil
+            end
         }
       end)
 
@@ -339,7 +342,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             []
 
           via ->
-            late? = it.assignment.status != "done" and NaiveDateTime.compare(span.end, now) == :lt
+            late? = CalendarDisplay.task_late?(it.assignment, span, now)
 
             if socket.assigns.overdue_only? and not late? do
               []
@@ -415,7 +418,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   defp to_event(it, %NaiveDateTime{} = s, %NaiveDateTime{} = e, lang, late?, via) do
     a = it.assignment
     start_d = NaiveDateTime.to_date(s)
-    end_d = exclusive_end_date(start_d, e)
+    # UTC frame (nil offset) — Timeline-tab parity, unlike the Overview's
+    # viewer-local dates.
+    end_d = CalendarDisplay.exclusive_end_date(start_d, e)
 
     PhoenixLiveCalendar.event(a.uuid, start_d,
       title: Assignment.label(a, lang) || gettext("(untitled task)"),
@@ -425,20 +430,6 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       class: if(late?, do: "ring-2 ring-error ring-inset"),
       extra: %{status: a.status, late: late?, via: via}
     )
-  end
-
-  # The exclusive end DATE for a span ending at `e`: a span that ends exactly
-  # at midnight doesn't occupy that day, any later instant does. Floored one
-  # day past the start so a zero-length span still shows as a one-day chip.
-  defp exclusive_end_date(start_d, %NaiveDateTime{} = e) do
-    e_date = NaiveDateTime.to_date(e)
-
-    exclusive =
-      if NaiveDateTime.compare(e, NaiveDateTime.new!(e_date, ~T[00:00:00])) == :eq,
-        do: e_date,
-        else: Date.add(e_date, 1)
-
-    Enum.max([exclusive, Date.add(start_d, 1)], Date)
   end
 
   # Status → bar color, matching the Timeline tab's bars (NOT the list badges:
@@ -553,8 +544,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
               today={@today}
               fixed_weeks={false}
               expand_cells={true}
-              max_events={3}
-              max_multiday={4}
+              max_events={CalendarDisplay.max_events()}
+              max_multiday={CalendarDisplay.max_multiday()}
               info_label={gettext("About this calendar")}
               on_event_click={fn id -> send(self(), {:calendar_event_click, id}) end}
               on_date_select={fn date -> send(self(), {:calendar_date_click, date}) end}
@@ -607,67 +598,11 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             </.live_component>
           </div>
 
-          <%!-- Whole-day popup. Kept in the DOM so PkDialogTrigger can open it
-               in the same frame as the click; the body is a skeleton until the
-               server round-trip fills @day_popup. --%>
-          <.modal
-            keep_in_dom
+          <.day_popup_modal
             id={"project-day-modal-#{@project.uuid}"}
-            show={@day_popup != nil}
-            on_close="close_day_popup"
-            max_width="md"
-          >
-            <:title>
-              <%= if @day_popup do %>
-                <.icon name="hero-calendar-days" class="w-5 h-5" />
-                {L10n.format_date(@day_popup.date)}
-              <% else %>
-                <span class="inline-block w-28 h-5 bg-base-content/10 rounded animate-pulse">
-                </span>
-              <% end %>
-            </:title>
-
-            <%= if @day_popup do %>
-              <%= if @day_popup.rows == [] do %>
-                <p class="text-sm text-base-content/50 py-4 text-center">
-                  {gettext("Nothing scheduled this day.")}
-                </p>
-              <% else %>
-                <div class="flex flex-col gap-1">
-                  <button
-                    :for={row <- @day_popup.rows}
-                    type="button"
-                    phx-click="day_popup_item_click"
-                    phx-value-uuid={row.id}
-                    class={[
-                      "flex items-center gap-2.5 w-full p-2 rounded-lg hover:bg-base-200 text-left transition",
-                      CalendarDisplay.loading_class()
-                    ]}
-                  >
-                    <span class={["w-2.5 h-2.5 rounded-full shrink-0", row.color]}></span>
-                    <span class="flex-1 min-w-0">
-                      <span class="block text-sm font-medium truncate">{row.title}</span>
-                      <span
-                        :if={match?({_kind, _name}, row.via)}
-                        class="block text-xs text-base-content/60 truncate"
-                      >
-                        {gettext("via %{name}", name: elem(row.via, 1))}
-                      </span>
-                    </span>
-                    <span :if={row.late} class="badge badge-xs badge-error">
-                      {gettext("late")}
-                    </span>
-                    <.assignment_status_badge :if={row.status} status={row.status} size="xs" />
-                  </button>
-                </div>
-              <% end %>
-            <% else %>
-              <div class="flex flex-col gap-2 py-1">
-                <div :for={_i <- 1..3} class="h-9 bg-base-content/10 rounded-lg animate-pulse">
-                </div>
-              </div>
-            <% end %>
-          </.modal>
+            day_popup={@day_popup}
+            row_click="day_popup_item_click"
+          />
         <% end %>
       <% end %>
     </div>

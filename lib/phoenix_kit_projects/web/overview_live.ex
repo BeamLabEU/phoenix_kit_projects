@@ -187,11 +187,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       tz_offset: offset,
       calendar_events: calendar_events,
       # The overdue-animation <style>, generated from the settings on
-      # /admin/settings/projects (mode/speed/brightness), plus the mode itself so
-      # the calendar's info popover can describe it accurately. Read once here so a
-      # page (re)load reflects the latest config.
+      # /admin/settings/projects (mode/speed/brightness), plus the pattern so
+      # the calendar's info popover can describe it accurately. Read once here
+      # so a page (re)load reflects the latest config.
       overdue_style: CalendarDisplay.animation_style(overdue_anim),
-      overdue_mode: overdue_anim.mode,
       overdue_pattern: overdue_anim.pattern
     )
   end
@@ -305,12 +304,19 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # (`Utils.Date.get_user_timezone/1`): the current user's own `user_timezone`,
   # else the website's `time_zone` setting, else UTC ("0").
   defp resolve_offset(socket) do
+    # Match the field, not just a map: a partial user (a test scope, a
+    # degraded embed) without :user_timezone falls through to the site
+    # setting instead of KeyError-ing inside get_user_timezone/1.
     case socket.assigns[:phoenix_kit_current_user] do
-      %{} = user -> PhoenixKit.Utils.Date.get_user_timezone(user)
+      %{user_timezone: _} = user -> PhoenixKit.Utils.Date.get_user_timezone(user)
       _ -> PhoenixKit.Settings.get_setting("time_zone", "0")
     end
   rescue
-    _ -> "0"
+    # DB-read resilience only — a genuine programming error should surface,
+    # not silently pin every viewer to UTC.
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.debug("[OverviewLive] timezone read failed: #{Exception.message(e)}")
+      "0"
   end
 
   # A stored UTC datetime as a calendar Date in the viewer's timezone, so every
@@ -578,34 +584,32 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     meta = socket.assigns.task_calendar_meta
 
     socket.assigns.task_calendar_events
-    |> events_on(date)
+    |> CalendarDisplay.events_on(date)
     |> Enum.map(fn e ->
       m = Map.get(meta, e.id, %{})
 
       %{
-        id: e.id,
+        value: m[:project_uuid],
         title: e.title,
         color: e.color,
         subtitle: row_subtitle(m),
         status: m[:status],
-        late: m[:late] || false,
-        project_uuid: m[:project_uuid]
+        late: m[:late] || false
       }
     end)
   end
 
   defp day_rows(socket, date) do
     socket.assigns.calendar_events
-    |> events_on(date)
+    |> CalendarDisplay.events_on(date)
     |> Enum.map(fn e ->
       %{
-        id: e.id,
+        value: e.id,
         title: e.title,
         color: e.color,
         subtitle: project_span_label(e),
         status: nil,
-        late: false,
-        project_uuid: e.id
+        late: false
       }
     end)
   end
@@ -618,15 +622,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       {_kind, name} -> "#{m[:project_name]} · #{gettext("via %{name}", name: name)}"
       _ -> m[:project_name]
     end
-  end
-
-  # Events whose [start, end) span covers `date`, soonest-starting first.
-  defp events_on(events, date) do
-    events
-    |> Enum.filter(fn e ->
-      Date.compare(e.start, date) != :gt and Date.compare(date, Date.add(e.end, -1)) != :gt
-    end)
-    |> Enum.sort_by(&{&1.start, &1.title})
   end
 
   # "May 3 – Jul 16, 2026" (single-day bars collapse to one date). `end` is
@@ -836,8 +831,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       today={@today}
                       fixed_weeks={false}
                       expand_cells={true}
-                      max_events={3}
-                      max_multiday={4}
+                      max_events={CalendarDisplay.max_events()}
+                      max_multiday={CalendarDisplay.max_multiday()}
                       info_label={gettext("About this calendar")}
                       on_event_click={fn id -> send(self(), {:calendar_open_task, id}) end}
                       on_date_select={fn date -> send(self(), {:calendar_day_click, date}) end}
@@ -917,64 +912,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   </div>
                 </div>
 
-                <%!-- Whole-day popup. Kept in the DOM so PkDialogTrigger can open
-                     it in the same frame as the click; the body is a skeleton
-                     until the server round-trip fills @day_popup. --%>
-                <.modal
-                  keep_in_dom
+                <.day_popup_modal
                   id="overview-day-modal"
-                  show={@day_popup != nil}
-                  on_close="close_day_popup"
-                  max_width="md"
-                >
-                  <:title>
-                    <%= if @day_popup do %>
-                      <.icon name="hero-calendar-days" class="w-5 h-5" />
-                      {L10n.format_date(@day_popup.date)}
-                    <% else %>
-                      <span class="inline-block w-28 h-5 bg-base-content/10 rounded animate-pulse">
-                      </span>
-                    <% end %>
-                  </:title>
-
-                  <%= if @day_popup do %>
-                    <%= if @day_popup.rows == [] do %>
-                      <p class="text-sm text-base-content/50 py-4 text-center">
-                        {gettext("Nothing scheduled this day.")}
-                      </p>
-                    <% else %>
-                      <div class="flex flex-col gap-1">
-                        <button
-                          :for={row <- @day_popup.rows}
-                          type="button"
-                          phx-click="day_popup_open_project"
-                          phx-value-uuid={row.project_uuid}
-                          class={[
-                            "flex items-center gap-2.5 w-full p-2 rounded-lg hover:bg-base-200 text-left transition",
-                            CalendarDisplay.loading_class()
-                          ]}
-                        >
-                          <span class={["w-2.5 h-2.5 rounded-full shrink-0", row.color]}></span>
-                          <span class="flex-1 min-w-0">
-                            <span class="block text-sm font-medium truncate">{row.title}</span>
-                            <span :if={row.subtitle} class="block text-xs text-base-content/60 truncate">
-                              {row.subtitle}
-                            </span>
-                          </span>
-                          <span :if={row.late} class="badge badge-xs badge-error">
-                            {gettext("late")}
-                          </span>
-                          <.assignment_status_badge :if={row.status} status={row.status} size="xs" />
-                        </button>
-                      </div>
-                    <% end %>
-                  <% else %>
-                    <div class="flex flex-col gap-2 py-1">
-                      <div :for={_i <- 1..3} class="h-9 bg-base-content/10 rounded-lg animate-pulse">
-                      </div>
-                    </div>
-                  <% end %>
-                </.modal>
+                  day_popup={@day_popup}
+                  row_click="day_popup_open_project"
+                />
               <% end %>
             </div>
           </div>
