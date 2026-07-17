@@ -397,6 +397,14 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   end
 
   @doc """
+  Tasks-mode late marker: a red inset ring on the chip/bar. Returned from a
+  function (not duplicated as a literal per call site) so the Overview
+  calendar and the project Calendar tab can't drift apart.
+  """
+  @spec late_class() :: String.t()
+  def late_class, do: @late_class
+
+  @doc """
   A `<style>` block giving the calendar LIBRARY's clickable nodes (event
   chips, multi-day bars, day cells, "+N more") the same in-flight pulse —
   their classes are lib-rendered, so the Tailwind-variant approach above

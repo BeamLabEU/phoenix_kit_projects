@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.18.0 - 2026-07-17
+
+**Calendar everywhere + quality sweep.** Every project now has a **Calendar tab** alongside List/Timeline, rendering the exact same schedule as the Timeline (shared `ScheduleLayout` walk) as all-day bars on a month grid. The Overview dashboard's calendar is reworked **task-first**: every task from every project on the day it runs, Google Calendar-style, with a whole-day popup on a busy day or its "+N more" link. Both calendars share a new **assignee/overdue filter** — person chips (inherited through team/department by default, with a "Direct only" narrow), an Unassigned lens, and an Overdue-only toggle — living in a Filters popup. Floors `phoenix_live_calendar ~> 0.3`, whose new toolbar slots host the filter inside the calendar chrome itself. A quality sweep (PR-review catch-up on #25–#28, a delta audit, and an AI-panel triage) rode the same branch; this release's own review (see `dev_docs/pull_requests/2026/30-calendar-everywhere-assignee-filters/CLAUDE_REVIEW.md`) found and fixed three more issues on top.
+
+### Added
+
+- **Project Calendar tab (`ProjectCalendarLive`).** List / Timeline / Calendar tabs on every project; the Calendar renders the shared `ScheduleLayout` schedule as month-grid bars, colored by status, with a sub-project bar spanning its subtree (descendant-aware — any matching descendant keeps the parent bar under a filter). Lazy-mounted on first open, kept mounted after. Embeddable via `live_render` like the Timeline tab.
+- **`PhoenixKitProjects.ScheduleLayout`.** The tree-flatten + hour-precise, weekday/weekend-aware walk shared by the Timeline and Calendar tabs, so the two views can never disagree about a task's dates.
+- **Task-first Overview calendar.** Tasks mode (every task across every project, capped per day with a "+N more") is now the default, with a whole-day popup (`<.day_popup_modal>`) listing everything scheduled that day — status, lateness, provenance. The original one-bar-per-project view stays as Projects mode; an Agenda view was added to Tasks mode.
+- **Assignee & overdue filters (`PhoenixKitProjects.Assignees`, `Web.AssigneeFilter`, `<.assignee_filter_panel>`).** A Filters popup shared by both calendars: a multi-person search picker, quick-adders for Me/Unassigned, "Personal only" (direct assignment only, vs. inherited through team/department), and "Overdue only" (not done, past its scheduled span). All active filters union.
+- **New dependency — `phoenix_live_calendar ~> 0.3`** (toolbar slots for embedding the filter panel in the calendar's own chrome).
+
+### Fixed
+
+- **`ProjectsBoardWidget` crashed on every render of its default Grid view** (stray `@compact` reference to an assign the widget never sets — this widget has no compact view). Fixed at review; see the review doc for detail.
+- **An open whole-day popup went stale after a PubSub reload or filter change**, in both the Overview and the project Calendar tab — a task's status/lateness could be shown stale, or a removed task could still be listed, until the popup was closed and reopened. Both calendars now refresh an open popup's rows whenever the underlying event data is rebuilt.
+- **Widget DB-read resilience rescues (added in the PR #28 follow-up) logged nothing.** Every "never crash the host dashboard" rescue across the seven dashboard widgets now logs a warning with the actual exception, instead of failing silently.
+
 ## 0.17.0 - 2026-07-08
 
 **Dashboard widgets for `phoenix_kit_dashboards`.** Projects now contributes **seven** dashboard widgets through the duck-typed `PhoenixKitProjects.phoenix_kit_widgets/0` — a one-way contract (projects has no dependency on the dashboards package; its Registry discovers the plain-map list and gates visibility on the `"projects"` module + permission). Each widget is a `Phoenix.LiveComponent` the host renders with `settings` / `view` / `size` / `scope`, re-querying on the host's refresh tick, with per-view `min_size` floors so minimum boxes fit without scrollbars. Every data read is guarded behind an enablement check and reuses the projects badge components and attacker-proof colour guard.

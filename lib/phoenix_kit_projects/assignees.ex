@@ -151,7 +151,7 @@ defmodule PhoenixKitProjects.Assignees do
       from(p in Person,
         left_join: u in assoc(p, :user),
         where: p.status != "trashed" and p.uuid not in ^exclude,
-        order_by: [asc: fragment("coalesce(?, ?)", p.name, u.email)],
+        order_by: [asc: fragment("coalesce(?, ?)", p.name, u.email), asc: p.uuid],
         limit: ^(limit + 1),
         select: %{uuid: p.uuid, name: p.name, email: u.email}
       )

@@ -9,6 +9,8 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
   use Phoenix.LiveComponent
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   import PhoenixKitProjects.Web.Components.DerivedStatusBadge
   import PhoenixKitProjects.Web.Widgets.Helpers
 
@@ -49,7 +51,9 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
   rescue
     # Never crash the host dashboard: a transient DB error just drops the
     # workflow colours/buckets (tiles fall back to the neutral status).
-    _ -> %{}
+    e ->
+      Logger.warning("[ProjectsBoardWidget] statuses_by_project failed: #{Exception.message(e)}")
+      %{}
   end
 
   # Group projects by their workflow status label (nil → "No status"), keeping a
@@ -87,7 +91,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
             <span class={["h-2 w-2 shrink-0 rounded-full", dot(t.lifecycle)]} aria-hidden="true" />
             <span class="truncate text-xs font-medium">{t.project.name}</span>
           </span>
-          <span :if={not @compact} class="mt-0.5 flex min-w-0 items-center gap-1 pl-3.5">
+          <span class="mt-0.5 flex min-w-0 items-center gap-1 pl-3.5">
             <span
               :if={workflow_color(@status_by[t.project.uuid] || %{})}
               class="h-1.5 w-1.5 shrink-0 rounded-full"

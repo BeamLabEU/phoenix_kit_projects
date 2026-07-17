@@ -7,6 +7,8 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
   use Phoenix.LiveComponent
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   import PhoenixKitProjects.Web.Components.DerivedStatusBadge
   import PhoenixKitProjects.Web.Widgets.Helpers
 
@@ -64,7 +66,9 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
   rescue
     # Never crash the host dashboard: a transient DB error just drops the
     # workflow badge (the render already tolerates a nil status).
-    _ -> nil
+    e ->
+      Logger.warning("[ProjectStatusWidget] workflow_status failed: #{Exception.message(e)}")
+      nil
   end
 
   @impl true

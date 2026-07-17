@@ -251,29 +251,30 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   # The popup's rows for `date`: every event whose [start, end) span covers
   # it, soonest-starting first, with the status badge the chips can't show.
   defp open_day_popup(socket, date) do
-    rows =
-      socket.assigns.events
-      |> CalendarDisplay.events_on(date)
-      |> Enum.map(fn e ->
-        extra = e.extra || %{}
+    assign(socket, day_popup: %{date: date, rows: day_popup_rows(socket, date)})
+  end
 
-        %{
-          value: e.id,
-          title: e.title,
-          color: e.color,
-          status: extra[:status],
-          late: extra[:late] || false,
-          # The provenance rider explains WHY a row appears in a
-          # person-scoped view (team/department inheritance, not personal).
-          subtitle:
-            case extra[:via] do
-              {_kind, name} -> gettext("via %{name}", name: name)
-              _ -> nil
-            end
-        }
-      end)
+  defp day_popup_rows(socket, date) do
+    socket.assigns.events
+    |> CalendarDisplay.events_on(date)
+    |> Enum.map(fn e ->
+      extra = e.extra || %{}
 
-    assign(socket, day_popup: %{date: date, rows: rows})
+      %{
+        value: e.id,
+        title: e.title,
+        color: e.color,
+        status: extra[:status],
+        late: extra[:late] || false,
+        # The provenance rider explains WHY a row appears in a
+        # person-scoped view (team/department inheritance, not personal).
+        subtitle:
+          case extra[:via] do
+            {_kind, name} -> gettext("via %{name}", name: name)
+            _ -> nil
+          end
+      }
+    end)
   end
 
   # ── Data loading ────────────────────────────────────────────────
@@ -352,9 +353,19 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
         end
       end)
 
-    socket
-    |> assign(events: events)
-    |> put_initial_anchor(events)
+    socket = socket |> assign(events: events) |> put_initial_anchor(events)
+
+    # An open whole-day popup caches its rows at open time; both a PubSub
+    # reload (via load_calendar/1) and a filter toggle land here having just
+    # rebuilt `events`, so refresh the popup too — otherwise it keeps showing
+    # a task's stale status/lateness, or one no longer matching the filter.
+    case socket.assigns[:day_popup] do
+      %{date: date} ->
+        assign(socket, day_popup: %{date: date, rows: day_popup_rows(socket, date)})
+
+      nil ->
+        socket
+    end
   end
 
   # A bar's matchable assignments: its own, plus every descendant's for a
@@ -427,7 +438,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       end: end_d,
       all_day: true,
       color: status_color(a.status),
-      class: if(late?, do: "ring-2 ring-error ring-inset"),
+      class: if(late?, do: CalendarDisplay.late_class()),
       extra: %{status: a.status, late: late?, via: via}
     )
   end

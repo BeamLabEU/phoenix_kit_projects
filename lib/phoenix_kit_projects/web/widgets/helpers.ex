@@ -12,6 +12,8 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
   use Phoenix.Component
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   import PhoenixKitWeb.Components.Core.Icon
 
   alias PhoenixKitProjects.Projects
@@ -40,7 +42,9 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
       true -> find_project(key)
     end
   rescue
-    _ -> nil
+    e ->
+      Logger.warning("[Widgets.Helpers] resolve_project failed: #{Exception.message(e)}")
+      nil
   end
 
   @doc """
@@ -52,7 +56,9 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
   def safe_list_projects do
     Projects.list_projects()
   rescue
-    _ -> []
+    e ->
+      Logger.warning("[Widgets.Helpers] safe_list_projects failed: #{Exception.message(e)}")
+      []
   end
 
   @doc """
@@ -63,7 +69,9 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
   def safe_project_summary(%Project{} = project) do
     Projects.project_summary(project)
   rescue
-    _ -> nil
+    e ->
+      Logger.warning("[Widgets.Helpers] safe_project_summary failed: #{Exception.message(e)}")
+      nil
   end
 
   defp default_project do

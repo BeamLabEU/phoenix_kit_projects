@@ -7,6 +7,8 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   use Phoenix.LiveComponent
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   import PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   import PhoenixKitProjects.Web.Widgets.Helpers
 
@@ -56,7 +58,9 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   rescue
     # Never crash the host dashboard: a transient DB error renders the
     # widget's empty state instead of taking down the host LiveView.
-    _ -> []
+    e ->
+      Logger.warning("[OngoingTasksWidget] ongoing_tasks failed: #{Exception.message(e)}")
+      []
   end
 
   @impl true

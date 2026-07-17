@@ -10,6 +10,8 @@ defmodule PhoenixKitProjects.Web.Widgets.MyTasksWidget do
   use Phoenix.LiveComponent
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   import PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   import PhoenixKitProjects.Web.Widgets.Helpers
 
@@ -51,9 +53,13 @@ defmodule PhoenixKitProjects.Web.Widgets.MyTasksWidget do
   defp my_tasks(user_uuid, limit) do
     user_uuid |> Projects.list_assignments_for_user() |> Enum.take(limit)
   rescue
-    # Never crash the host dashboard: a transient DB error renders the
-    # widget's empty state instead of taking down the host LiveView.
-    _ -> []
+    # Never crash the host dashboard: ANY raise here (a transient DB error,
+    # or a malformed viewer uuid escaping list_assignments_for_user/1's own
+    # narrower rescue as an Ecto.Query.CastError) renders the widget's empty
+    # state instead of taking down the host LiveView.
+    e ->
+      Logger.warning("[MyTasksWidget] my_tasks failed: #{Exception.message(e)}")
+      []
   end
 
   @impl true

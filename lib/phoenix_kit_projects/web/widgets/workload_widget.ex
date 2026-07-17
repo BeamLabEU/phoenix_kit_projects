@@ -7,6 +7,8 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
   use Phoenix.LiveComponent
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   import PhoenixKitProjects.Web.Widgets.Helpers
 
   alias PhoenixKitProjects.{Paths, Projects}
@@ -38,7 +40,9 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
   defp task_counts do
     Projects.assignment_status_counts()
   rescue
-    _ -> %{"todo" => 0, "in_progress" => 0, "done" => 0}
+    e ->
+      Logger.warning("[WorkloadWidget] task_counts failed: #{Exception.message(e)}")
+      %{"todo" => 0, "in_progress" => 0, "done" => 0}
   end
 
   @impl true

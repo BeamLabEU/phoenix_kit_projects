@@ -10,6 +10,8 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
   use Phoenix.LiveComponent
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   import PhoenixKitProjects.Web.Widgets.Helpers
 
   alias PhoenixKitProjects.{Paths, Projects}
@@ -78,8 +80,13 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
     user_uuid |> Projects.list_assignments_for_user() |> MapSet.new(& &1.project_uuid)
   rescue
     # Never crash the host dashboard; nil keeps the "no resolvable viewer ⇒
-    # empty, never leak all" semantics of scope_and_limit/4.
-    _ -> nil
+    # empty, never leak all" semantics of scope_and_limit/4. ANY raise here
+    # (a transient DB error, or a malformed viewer uuid escaping
+    # list_assignments_for_user/1's own narrower rescue as an
+    # Ecto.Query.CastError) degrades the same way.
+    e ->
+      Logger.warning("[DeadlinesWidget] mine_uuids failed: #{Exception.message(e)}")
+      nil
   end
 
   # Started, unfinished projects with a computable planned end, soonest first.
@@ -90,7 +97,9 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
     |> Enum.filter(&(&1.planned_end && &1.progress_pct < 100))
     |> Enum.sort_by(& &1.planned_end, DateTime)
   rescue
-    _ -> []
+    e ->
+      Logger.warning("[DeadlinesWidget] deadline_candidates failed: #{Exception.message(e)}")
+      []
   end
 
   @impl true

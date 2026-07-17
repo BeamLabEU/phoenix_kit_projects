@@ -177,28 +177,39 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           ),
         else: socket
 
-    assign(socket,
-      task_count: Projects.count_tasks(),
-      project_count: Projects.count_projects(),
-      template_count: Projects.count_templates(),
-      active_count: total_active,
-      active_summaries: top_summaries,
-      completed_projects: completed_projects,
-      upcoming_projects: upcoming_projects,
-      setup_projects: setup_projects,
-      any_projects?: any_projects?,
-      my_assignments: if(user_uuid, do: Projects.list_assignments_for_user(user_uuid), else: []),
-      status_counts: Projects.assignment_status_counts(),
-      today: today,
-      tz_offset: offset,
-      calendar_events: calendar_events,
-      # The overdue-animation <style>, generated from the settings on
-      # /admin/settings/projects (mode/speed/brightness), plus the pattern so
-      # the calendar's info popover can describe it accurately. Read once here
-      # so a page (re)load reflects the latest config.
-      overdue_style: CalendarDisplay.animation_style(overdue_anim),
-      overdue_pattern: overdue_anim.pattern
-    )
+    socket =
+      assign(socket,
+        task_count: Projects.count_tasks(),
+        project_count: Projects.count_projects(),
+        template_count: Projects.count_templates(),
+        active_count: total_active,
+        active_summaries: top_summaries,
+        completed_projects: completed_projects,
+        upcoming_projects: upcoming_projects,
+        setup_projects: setup_projects,
+        any_projects?: any_projects?,
+        my_assignments:
+          if(user_uuid, do: Projects.list_assignments_for_user(user_uuid), else: []),
+        status_counts: Projects.assignment_status_counts(),
+        today: today,
+        tz_offset: offset,
+        calendar_events: calendar_events,
+        # The overdue-animation <style>, generated from the settings on
+        # /admin/settings/projects (mode/speed/brightness), plus the pattern so
+        # the calendar's info popover can describe it accurately. Read once here
+        # so a page (re)load reflects the latest config.
+        overdue_style: CalendarDisplay.animation_style(overdue_anim),
+        overdue_pattern: overdue_anim.pattern
+      )
+
+    # An open whole-day popup caches its rows at open time; a broadcast-driven
+    # reload just rebuilt the events/meta those rows come from, so refresh it
+    # too — otherwise the popup keeps showing a task's stale status/lateness
+    # (or one that was deleted/reassigned) until the viewer closes and reopens it.
+    case socket.assigns[:day_popup] do
+      %{date: date} -> assign(socket, day_popup: %{date: date, rows: day_rows(socket, date)})
+      nil -> socket
+    end
   end
 
   # Builds the Tasks-mode calendar: run the shared schedule walk per project
