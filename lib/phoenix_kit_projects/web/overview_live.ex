@@ -17,6 +17,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
+  alias PhoenixKitProjects.Web.AssigneeFilter
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -36,6 +37,9 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
   @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-6"
+
+  # The shared filter's events, forwarded to Web.AssigneeFilter.update/3.
+  @assignee_filter_events AssigneeFilter.events()
 
   @impl true
   def mount(_params, session, socket) do
@@ -93,31 +97,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         task_calendar_events: [],
         task_calendar_meta: %{},
         task_calendar_loaded?: false,
-        # Assignee filter over the Tasks mode — ONE unified chip model (the
-        # AI-panel consensus, Linear-style): person chips picked via the core
-        # search_picker (Me = one-tap toggle for the viewer's own chip) plus an
-        # Unassigned toggle, all filtering as a UNION ("Me + Alice +
-        # Unassigned" works). No chips + no unassigned = everything (the
-        # resting state; a Clear button renders only while filtering, and
-        # resets Overdue/Personal-only too). Inherited semantics by
-        # default (a person's chip covers them, their teams, their departments
-        # — resolved by PhoenixKitProjects.Assignees); `assignee_direct_only?`
-        # narrows person matches to personal assignments (never affects the
-        # Unassigned part). `me_scope` caches the viewer's own resolution
-        # (:unresolved until the first calendar load; nil = no staff person,
-        # which hides the Me toggle).
-        assignee_selected: [],
-        assignee_scopes: %{},
-        include_unassigned?: false,
-        assignee_direct_only?: false,
-        me_scope: :unresolved,
-        unassigned_count: 0,
-        # Show only late tasks (not done + scheduled span already ended).
-        overdue_only?: false,
+        # Assignee/overdue filter state comes from Web.AssigneeFilter.defaults()
+        # (piped in below) — the shared chip-rail glue both calendars use.
         # The whole-day popup (Google-style): nil when closed, else
         # %{date: Date, rows: [row]} filled by a day-cell / "+N more" click.
         day_popup: nil
       )
+      |> assign(AssigneeFilter.defaults())
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
@@ -229,21 +215,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
       end)
 
-    me_scope =
-      case socket.assigns.me_scope do
-        :unresolved ->
-          Assignees.scope_for_user(socket.assigns[:user_uuid], L10n.current_content_lang())
-
-        resolved ->
-          resolved
-      end
-
     socket
+    |> AssigneeFilter.resolve_me()
     |> assign(
       task_calendar_items: items_with_spans,
       task_calendar_loaded?: true,
       tz_offset: offset,
-      me_scope: me_scope,
       unassigned_count:
         Enum.count(items_with_spans, fn {it, _} -> Assignees.unassigned?(it.assignment) end)
     )
@@ -261,7 +238,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       tz_offset: offset
     } = socket.assigns
 
-    scopes = current_scopes(socket)
+    scopes = AssigneeFilter.current_scopes(socket.assigns)
     now = DateTime.utc_now() |> DateTime.to_naive()
 
     {kept, provenance} = filter_items(items, scopes, include_unassigned?, direct_only?)
@@ -287,14 +264,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     assign(socket, task_calendar_events: events, task_calendar_meta: meta)
   end
 
-  # The resolved scopes of the picked person chips (Me is just the viewer's
-  # own chip, so it needs no special case here).
-  defp current_scopes(%{assigns: assigns}) do
-    assigns.assignee_selected
-    |> Enum.map(&Map.get(assigns.assignee_scopes, &1.uuid))
-    |> Enum.reject(&is_nil/1)
-  end
-
   # Applies the unified assignee filter to the raw items: a task is kept when
   # it's unassigned (and the Unassigned toggle is on) OR any selected person's
   # scope matches it — one UNION across chips + toggle. No chips and no
@@ -308,7 +277,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       if include_unassigned? and Assignees.unassigned?(it.assignment) do
         {[{it, span} | kept], prov}
       else
-        case match_any(it.assignment, scopes) do
+        case AssigneeFilter.match_any(it.assignment, scopes) do
           nil -> {kept, prov}
           :direct -> {[{it, span} | kept], prov}
           _via when direct_only? -> {kept, prov}
@@ -317,52 +286,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       end
     end)
     |> then(fn {kept, prov} -> {Enum.reverse(kept), prov} end)
-  end
-
-  # Whether the viewer's own chip is in the selection (lights the Me toggle).
-  defp me_chip_active?(%{person_uuid: uuid}, selected),
-    do: Enum.any?(selected, &(&1.uuid == uuid))
-
-  defp me_chip_active?(_me_scope, _selected), do: false
-
-  # How many filters are active — badges the funnel button so the state stays
-  # visible while the controls live in the popup.
-  defp active_filter_count(assigns) do
-    length(assigns.assignee_selected) +
-      if(assigns.include_unassigned?, do: 1, else: 0) +
-      if(assigns.overdue_only?, do: 1, else: 0) +
-      if(assigns.assignee_direct_only? and assigns.assignee_selected != [], do: 1, else: 0)
-  end
-
-  defp add_person_chip(socket, uuid, name, scope) do
-    socket
-    |> assign(
-      assignee_selected: socket.assigns.assignee_selected ++ [%{uuid: uuid, name: name}],
-      assignee_scopes: Map.put(socket.assigns.assignee_scopes, uuid, scope)
-    )
-    |> apply_task_filter()
-  end
-
-  defp remove_person_chip(socket, uuid) do
-    socket
-    |> assign(
-      assignee_selected: Enum.reject(socket.assigns.assignee_selected, &(&1.uuid == uuid)),
-      assignee_scopes: Map.delete(socket.assigns.assignee_scopes, uuid)
-    )
-    |> apply_task_filter()
-  end
-
-  # Match across every selected scope; a :direct hit for anyone wins (so
-  # direct-only keeps a task any selected person holds personally), otherwise
-  # the first inherited provenance found labels the row.
-  defp match_any(assignment, scopes) do
-    Enum.reduce_while(scopes, nil, fn scope, acc ->
-      case Assignees.match(assignment, scope) do
-        nil -> {:cont, acc}
-        :direct -> {:halt, :direct}
-        via -> {:cont, acc || via}
-      end
-    end)
   end
 
   # First-open build (reload/1 skips the walk until the tab has been seen).
@@ -532,118 +455,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     end
   end
 
-  # "Clear" — the full filter reset (chips, Unassigned, Overdue, Personal
-  # only), back to the unfiltered resting state. The button itself only
-  # renders while something is filtered.
-  def handle_event("clear_assignee_filter", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(
-       assignee_selected: [],
-       assignee_scopes: %{},
-       include_unassigned?: false,
-       overdue_only?: false,
-       assignee_direct_only?: false
-     )
-     |> apply_task_filter()}
-  end
-
-  # "Me" — a one-tap toggle for the viewer's OWN person chip (it composes
-  # with other chips like any pick). Only applies when the viewer resolved
-  # to a staff person (the button is hidden otherwise; guard is server-side).
-  def handle_event("toggle_me_chip", _params, socket) do
-    case socket.assigns.me_scope do
-      %{person_uuid: uuid, person_name: name} = scope ->
-        if Enum.any?(socket.assigns.assignee_selected, &(&1.uuid == uuid)) do
-          {:noreply, remove_person_chip(socket, uuid)}
-        else
-          {:noreply, add_person_chip(socket, uuid, name, scope)}
-        end
-
-      _ ->
-        {:noreply, socket}
+  # Every assignee/overdue-filter event routes through the shared glue; a
+  # state change re-derives the filtered events, picker searches just reply.
+  def handle_event(event, params, socket) when event in @assignee_filter_events do
+    case AssigneeFilter.update(socket, event, params) do
+      {socket, :reapply} -> {:noreply, apply_task_filter(socket)}
+      {socket, :noop} -> {:noreply, socket}
     end
-  end
-
-  # "Unassigned" — a toggleable part of the same union (a triage lens that
-  # composes with person chips: "Me + Unassigned" is a real view).
-  def handle_event("toggle_unassigned", _params, socket) do
-    {:noreply,
-     socket
-     |> update(:include_unassigned?, &(not &1))
-     |> apply_task_filter()}
-  end
-
-  # ── Person picker (core <.search_picker> contract) ──────────────
-  # The dropdown renders client-side; this answers with rows + has_more
-  # (limit+1 probe at the DB — nothing loads the whole people table).
-  def handle_event("assignee_search", %{"q" => q} = params, socket) do
-    limit =
-      case params["limit"] do
-        n when is_integer(n) and n > 0 ->
-          n
-
-        n when is_binary(n) ->
-          case Integer.parse(n) do
-            {i, _} -> max(i, 1)
-            :error -> 8
-          end
-
-        _ ->
-          8
-      end
-
-    # Already-picked people don't reappear as suggestions.
-    exclude = Enum.map(socket.assigns.assignee_selected, & &1.uuid)
-    {rows, has_more} = Assignees.search_people(q, limit, exclude: exclude)
-
-    {:noreply, push_event(socket, "assignee_results", %{q: q, results: rows, has_more: has_more})}
-  end
-
-  # A person picked from the dropdown — add their chip (deduped) to the
-  # union. `assignee_staged` confirms so the hook clears the input. An
-  # unknown uuid resolves to nil scope and is ignored.
-  def handle_event("assignee_pick", %{"uuid" => uuid}, socket) when is_binary(uuid) do
-    already? = Enum.any?(socket.assigns.assignee_selected, &(&1.uuid == uuid))
-
-    case if(already?,
-           do: :duplicate,
-           else: Assignees.scope_for_person(uuid, L10n.current_content_lang())
-         ) do
-      nil ->
-        {:noreply, socket}
-
-      :duplicate ->
-        {:noreply, push_event(socket, "assignee_staged", %{})}
-
-      scope ->
-        {:noreply,
-         socket
-         |> add_person_chip(uuid, scope.person_name, scope)
-         |> push_event("assignee_staged", %{})}
-    end
-  end
-
-  # Chip ✕ — drop one picked person from the union.
-  def handle_event("remove_assignee_person", %{"uuid" => uuid}, socket) when is_binary(uuid) do
-    {:noreply, remove_person_chip(socket, uuid)}
-  end
-
-  # "Personal only" narrows a person scope to personal assignments (team/
-  # department inheritance off).
-  def handle_event("toggle_assignee_direct", _params, socket) do
-    {:noreply,
-     socket
-     |> update(:assignee_direct_only?, &(not &1))
-     |> apply_task_filter()}
-  end
-
-  # "Overdue only" — late tasks (not done, scheduled span already ended).
-  def handle_event("toggle_overdue_only", _params, socket) do
-    {:noreply,
-     socket
-     |> update(:overdue_only?, &(not &1))
-     |> apply_task_filter()}
   end
 
   # Close the whole-day popup (the PkDialog hook mirrors ESC/backdrop/✕ back
@@ -965,173 +783,16 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                      wrapper for outside-click dismiss (clicks on the funnel
                      itself are inside the wrapper, so they only toggle). --%>
                 <div class="flex flex-wrap items-center gap-2 mb-2">
-                  <div
+                  <.assignee_filter_panel
                     :if={@calendar_mode == :tasks}
-                    class="relative"
-                    phx-click-away={Phoenix.LiveView.JS.hide(to: "#overview-filter-panel")}
-                  >
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-ghost border-base-300 gap-1.5 tooltip"
-                      data-tip={gettext("Filters")}
-                      aria-label={gettext("Filters")}
-                      phx-click={Phoenix.LiveView.JS.toggle(to: "#overview-filter-panel")}
-                    >
-                      <.icon name="hero-funnel" class="w-4 h-4" />
-                      {gettext("Filters")}
-                      <span :if={active_filter_count(assigns) > 0} class="badge badge-xs badge-primary">
-                        {active_filter_count(assigns)}
-                      </span>
-                    </button>
-
-                    <div
-                      id="overview-filter-panel"
-                      class="hidden absolute left-0 top-full mt-2 z-30 w-80 max-w-[90vw] card bg-base-100 border border-base-200 shadow-lg"
-                    >
-                      <div class="card-body p-4 gap-3">
-                        <div class="flex items-center justify-between">
-                          <span class="text-sm font-semibold">{gettext("Filters")}</span>
-                          <%!-- One tap back to the unfiltered everything-view;
-                               only exists while something is filtered. --%>
-                          <button
-                            :if={active_filter_count(assigns) > 0}
-                            type="button"
-                            class={["btn btn-xs btn-ghost", CalendarDisplay.loading_class()]}
-                            phx-click="clear_assignee_filter"
-                          >
-                            <.icon name="hero-x-mark" class="w-3 h-3" /> {gettext("Clear")}
-                          </button>
-                        </div>
-
-                        <%!-- The instant person typeahead: dropdown renders
-                             client-side; the server answers "assignee_search"
-                             with limit+1-probed pages (Load more built in) —
-                             nothing preloads the people table. --%>
-                        <.search_picker
-                      id="overview-assignee-search"
-                      dropdown_id="overview-assignee-dropdown"
-                      search_event="assignee_search"
-                      results_event="assignee_results"
-                      pick_event="assignee_pick"
-                      staged_event="assignee_staged"
-                      placeholder={gettext("Add person…")}
-                      class="input input-bordered input-sm w-full"
-                      searching_label={gettext("Searching…")}
-                      more_label={gettext("Load more")}
-                      loading_more_label={gettext("Loading…")}
-                          no_matches_label={gettext("No matches")}
-                          data-search-on-focus
-                        />
-
-                        <%!-- Quick-adders + active chips, one wrapping rail: a
-                             tap inserts the corresponding chip and the button
-                             steps aside — the chip IS the visible state,
-                             removable like any other. --%>
-                        <div class="flex flex-wrap items-center gap-2">
-                          <button
-                            :if={match?(%{}, @me_scope) and not me_chip_active?(@me_scope, @assignee_selected)}
-                            type="button"
-                            class={["btn btn-xs btn-ghost border-base-300 tooltip", CalendarDisplay.loading_class()]}
-                            data-tip={gettext("Your work — assigned to you, your teams, or your departments")}
-                            phx-click="toggle_me_chip"
-                          >
-                            <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Me")}
-                          </button>
-
-                          <button
-                            :if={not @include_unassigned?}
-                            type="button"
-                            class={["btn btn-xs btn-ghost border-base-300 tooltip", CalendarDisplay.loading_class()]}
-                            data-tip={gettext("Tasks nobody is assigned to yet — combines with picked people")}
-                            phx-click="toggle_unassigned"
-                          >
-                            <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Unassigned")}
-                            <span class="badge badge-xs badge-ghost">{@unassigned_count}</span>
-                          </button>
-
-                          <%!-- The Unassigned lens as a first-class, visibly-
-                               toggled chip — dashed to say "no person". --%>
-                          <span :if={@include_unassigned?} class="badge badge-dash gap-1.5">
-                            <.icon name="hero-user-minus" class="w-3 h-3" />
-                            {gettext("Unassigned")}
-                            <span class="badge badge-xs badge-ghost">{@unassigned_count}</span>
-                            <button
-                              type="button"
-                              phx-click={
-                                Phoenix.LiveView.JS.hide(
-                                  to: {:closest, "span.badge"},
-                                  transition:
-                                    {"transition-opacity duration-100", "opacity-100", "opacity-0"}
-                                )
-                                |> Phoenix.LiveView.JS.push("toggle_unassigned")
-                              }
-                              class="shrink-0 cursor-pointer rounded-full p-0.5 -m-0.5 transition-colors hover:bg-error hover:text-error-content tooltip"
-                              data-tip={gettext("Remove %{name}", name: gettext("Unassigned"))}
-                              aria-label={gettext("Remove %{name}", name: gettext("Unassigned"))}
-                            >
-                              <.icon name="hero-x-mark" class="w-3 h-3 block" />
-                            </button>
-                          </span>
-
-                          <span :for={p <- @assignee_selected} class="badge badge-outline gap-1.5 max-w-56">
-                            <span class="truncate">{p.name}</span>
-                            <%!-- Bare buttons get no pointer cursor from Tailwind
-                                 v4's preflight and a 12px hover target is easy
-                                 to miss — pointer, padded hit area, red disc. --%>
-                            <button
-                              type="button"
-                              phx-click={
-                                Phoenix.LiveView.JS.hide(
-                                  to: {:closest, "span.badge"},
-                                  transition:
-                                    {"transition-opacity duration-100", "opacity-100", "opacity-0"}
-                                )
-                                |> Phoenix.LiveView.JS.push("remove_assignee_person",
-                                  value: %{uuid: p.uuid}
-                                )
-                              }
-                              class="shrink-0 cursor-pointer rounded-full p-0.5 -m-0.5 transition-colors hover:bg-error hover:text-error-content tooltip"
-                              data-tip={gettext("Remove %{name}", name: p.name)}
-                              aria-label={gettext("Remove %{name}", name: p.name)}
-                            >
-                              <.icon name="hero-x-mark" class="w-3 h-3 block" />
-                            </button>
-                          </span>
-                        </div>
-
-                        <div class="divider my-0"></div>
-
-                        <%!-- Refinements. "Personal only" sits with the chips it
-                             refines and never affects the Unassigned lens. --%>
-                        <label
-                          :if={@assignee_selected != []}
-                          class="label cursor-pointer justify-start gap-2 text-xs tooltip"
-                          data-tip={gettext("Only tasks assigned to these people personally — hides work they inherit from teams and departments")}
-                        >
-                          <input
-                            type="checkbox"
-                            class={["checkbox checkbox-xs", CalendarDisplay.loading_class()]}
-                            checked={@assignee_direct_only?}
-                            phx-click="toggle_assignee_direct"
-                          />
-                          {gettext("Personal only")}
-                        </label>
-
-                        <label
-                          class="label cursor-pointer justify-start gap-2 text-xs tooltip"
-                          data-tip={gettext("Only late tasks — not done and past their scheduled days")}
-                        >
-                          <input
-                            type="checkbox"
-                            class={["checkbox checkbox-xs checkbox-error", CalendarDisplay.loading_class()]}
-                            checked={@overdue_only?}
-                            phx-click="toggle_overdue_only"
-                          />
-                          {gettext("Overdue only")}
-                        </label>
-                      </div>
-                    </div>
-                  </div>
+                    id="overview-filter"
+                    assignee_selected={@assignee_selected}
+                    include_unassigned?={@include_unassigned?}
+                    unassigned_count={@unassigned_count}
+                    assignee_direct_only?={@assignee_direct_only?}
+                    overdue_only?={@overdue_only?}
+                    me_scope={@me_scope}
+                  />
 
                   <div class="join ml-auto">
                     <button

@@ -259,6 +259,169 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert render(view) =~ "Nothing scheduled this day."
   end
 
+  describe "assignee filter (shared panel)" do
+    alias PhoenixKitStaff.{Departments, Staff, Teams}
+
+    defp person_fixture do
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "PCDept-#{n}"})
+      {:ok, team} = Teams.create(%{"name" => "PCTeam-#{n}", "department_uuid" => dept.uuid})
+
+      {:ok, user} =
+        Auth.register_user(%{
+          "email" => "pc-#{n}@example.com",
+          "password" => "ActorPass123!"
+        })
+
+      {:ok, person} =
+        Staff.create_person(%{
+          "user_uuid" => user.uuid,
+          "name" => "PC Person #{n}",
+          "employment_type" => "full_time"
+        })
+
+      {:ok, _} = Staff.add_team_person(team.uuid, person.uuid)
+      %{person: person, team: team}
+    end
+
+    test "filters bars by picked person; the panel renders", %{conn: conn} do
+      %{person: person} = person_fixture()
+
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Projects.start_project(project)
+      project = Projects.get_project!(project.uuid)
+
+      mine =
+        fixture_task(%{
+          "title" => "MineTask-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 2,
+          "estimated_duration_unit" => "days"
+        })
+
+      other =
+        fixture_task(%{
+          "title" => "OtherTask-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 2,
+          "estimated_duration_unit" => "days"
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => mine.uuid,
+          "assigned_person_uuid" => person.uuid
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => other.uuid})
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+      html = render(view)
+      assert html =~ "assignee_search"
+      assert html =~ mine.title
+      assert html =~ other.title
+
+      html = render_click(view, "assignee_pick", %{"uuid" => person.uuid})
+      assert html =~ mine.title
+      refute html =~ other.title
+
+      # Unassigned lens composes back in the other task.
+      html = render_click(view, "toggle_unassigned", %{})
+      assert html =~ other.title
+
+      # Clear resets to everything.
+      html = render_click(view, "clear_assignee_filter", %{})
+      assert html =~ mine.title
+      assert html =~ other.title
+    end
+
+    test "a sub-project bar matches when a CHILD task belongs to the person", %{conn: conn} do
+      %{person: person, team: team} = person_fixture()
+
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Projects.start_project(project)
+      project = Projects.get_project!(project.uuid)
+
+      {:ok, %{child_project: child}} =
+        Projects.create_subproject(project.uuid, %{
+          "name" => "SubMatch-#{System.unique_integer([:positive])}"
+        })
+
+      child_task = fixture_task(%{"estimated_duration" => 1, "estimated_duration_unit" => "days"})
+
+      # The child task is TEAM-assigned — descendant + inherited matching.
+      {:ok, _} =
+        Projects.create_assignment(%{
+          "project_uuid" => child.uuid,
+          "task_uuid" => child_task.uuid,
+          "assigned_team_uuid" => team.uuid
+        })
+
+      # A sibling top-level task nobody holds.
+      loose =
+        fixture_task(%{
+          "title" => "LooseSib-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 1,
+          "estimated_duration_unit" => "days"
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => loose.uuid})
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+      render(view)
+      html = render_click(view, "assignee_pick", %{"uuid" => person.uuid})
+
+      # The sub-project bar stays (child team task -> person via team);
+      # the loose sibling drops.
+      assert html =~ "SubMatch-"
+      refute html =~ loose.title
+
+      # Personal only drops the inherited sub-project match too.
+      html = render_click(view, "toggle_assignee_direct", %{})
+      refute html =~ "SubMatch-"
+    end
+
+    test "overdue only keeps late bars", %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Projects.start_project(project, DateTime.add(DateTime.utc_now(), -5 * 24 * 3600))
+      project = Projects.get_project!(project.uuid)
+
+      late =
+        fixture_task(%{
+          "title" => "LateBar-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 1,
+          "estimated_duration_unit" => "days"
+        })
+
+      ontime =
+        fixture_task(%{
+          "title" => "OnTimeBar-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 3,
+          "estimated_duration_unit" => "weeks"
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => late.uuid})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => ontime.uuid})
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+      render(view)
+      html = render_click(view, "toggle_overdue_only", %{})
+      assert html =~ late.title
+      refute html =~ ontime.title
+      assert html =~ "ring-error"
+    end
+  end
+
   test "reloads on a projects PubSub broadcast (new assignment appears)", %{conn: conn} do
     {project, _a1, _a2} = started_project_with_tasks()
 

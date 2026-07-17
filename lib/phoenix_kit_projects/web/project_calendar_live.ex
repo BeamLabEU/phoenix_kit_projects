@@ -26,14 +26,18 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{CalendarDisplay, L10n, Paths, Projects, ScheduleLayout}
+  alias PhoenixKitProjects.{Assignees, CalendarDisplay, L10n, Paths, Projects, ScheduleLayout}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitProjects.Web.AssigneeFilter
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
 
   @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
+
+  # The shared filter's events, forwarded to Web.AssigneeFilter.update/3.
+  @assignee_filter_events AssigneeFilter.events()
 
   # ── Mount ───────────────────────────────────────────────────────
 
@@ -99,6 +103,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       # project" link (the tabs replace it). Standalone/emit renders keep it.
       headless: Map.get(session, "headless", false),
       wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
+      # The raw walk ({items, layout}) — the filtered events derive from it
+      # in memory, so filter flips never re-query.
+      calendar_items: {[], %{}},
       events: [],
       # `%{assignment_uuid => click target}` for event clicks — a leaf task
       # opens its assignment edit form, a sub-project drills into the child.
@@ -120,7 +127,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       # drives the loading skeleton so the first paint isn't blocked on the
       # per-project queries (and doesn't flash the empty state).
       calendar_loading: false
-    ]
+    ] ++ AssigneeFilter.defaults()
   end
 
   # Deferred initial build (off the first paint — see mount).
@@ -190,6 +197,15 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     {:noreply, socket |> assign(day_popup: nil) |> navigate_to_target(uuid)}
   end
 
+  # Every assignee/overdue-filter event routes through the shared glue; a
+  # state change re-derives the filtered events, picker searches just reply.
+  def handle_event(event, params, socket) when event in @assignee_filter_events do
+    case AssigneeFilter.update(socket, event, params) do
+      {socket, :reapply} -> {:noreply, apply_calendar_filter(socket)}
+      {socket, :noop} -> {:noreply, socket}
+    end
+  end
+
   # A leaf task opens its assignment edit form; a sub-project drills into the
   # child project. Unknown id (stale render) is a no-op.
   defp navigate_to_target(socket, assignment_uuid) do
@@ -227,7 +243,16 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       end)
       |> Enum.sort_by(&{&1.start, &1.title})
       |> Enum.map(fn e ->
-        %{id: e.id, title: e.title, color: e.color, status: Map.get(e.extra || %{}, :status)}
+        extra = e.extra || %{}
+
+        %{
+          id: e.id,
+          title: e.title,
+          color: e.color,
+          status: extra[:status],
+          late: extra[:late] || false,
+          via: extra[:via]
+        }
       end)
 
     assign(socket, day_popup: %{date: date, rows: rows})
@@ -237,7 +262,6 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
 
   defp load_calendar(socket) do
     project = socket.assigns.project
-    lang = L10n.current_content_lang()
 
     # Subscribe to the root project's topic BEFORE reading the tree, so a
     # broadcast that lands while the build runs can't be dropped on the floor.
@@ -248,17 +272,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     {items, layout} = ScheduleLayout.tree(project)
 
     # Only top-level assignments become bars: a sub-project's span already
-    # covers its children's walk (ScheduleLayout sizes parents over their
-    # subtree), so rendering the descendants too would double-draw the same
-    # scheduled time. The child project's own calendar shows its tasks.
+    # covers its children's walk. Click targets stay UNFILTERED so a stale
+    # render can't route a click wrong.
     top_items = Enum.filter(items, &is_nil(&1.parent_uuid))
-
-    events =
-      Enum.map(top_items, fn it ->
-        %{start: s, end: e} = Map.fetch!(layout, it.uuid)
-        to_event(it, s, e, lang)
-      end)
-
     click_targets = Map.new(top_items, fn it -> {it.uuid, click_target(it.assignment)} end)
 
     # Live updates: a sub-project's tasks broadcast on the CHILD project's
@@ -267,14 +283,99 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     project_uuids = items |> Enum.map(& &1.project.uuid) |> Enum.uniq()
 
     socket
+    |> AssigneeFilter.resolve_me()
     |> subscribe_tree(project_uuids)
     |> assign(
-      events: events,
+      calendar_items: {items, layout},
       click_targets: click_targets,
       today: Date.utc_today(),
-      calendar_loading: false
+      calendar_loading: false,
+      # "Nobody holds this" — a bar counts as unassigned only when its own
+      # assignment AND (for a sub-project) every descendant is unassigned.
+      unassigned_count:
+        Enum.count(top_items, fn it ->
+          Enum.all?(assignment_refs(it, items), &Assignees.unassigned?/1)
+        end)
     )
+    |> apply_calendar_filter()
+  end
+
+  # Derives the visible events from the cached walk + the current filter.
+  # In-memory only — filter flips never re-query. A sub-project bar matches a
+  # person when ANY task in its subtree does (descendant-aware), and its
+  # provenance labels the bar; direct-only needs a personal hit anywhere in
+  # the subtree.
+  defp apply_calendar_filter(socket) do
+    %{calendar_items: {items, layout}} = socket.assigns
+    lang = L10n.current_content_lang()
+    scopes = AssigneeFilter.current_scopes(socket.assigns)
+    include_unassigned? = socket.assigns.include_unassigned?
+    direct_only? = socket.assigns.assignee_direct_only?
+    now = DateTime.utc_now() |> DateTime.to_naive()
+
+    top_items = Enum.filter(items, &is_nil(&1.parent_uuid))
+
+    events =
+      top_items
+      |> Enum.map(fn it -> {it, Map.fetch!(layout, it.uuid), assignment_refs(it, items)} end)
+      |> Enum.flat_map(fn {it, span, refs} ->
+        case bar_match(refs, scopes, include_unassigned?, direct_only?) do
+          :drop ->
+            []
+
+          via ->
+            late? = it.assignment.status != "done" and NaiveDateTime.compare(span.end, now) == :lt
+
+            if socket.assigns.overdue_only? and not late? do
+              []
+            else
+              [to_event(it, span.start, span.end, lang, late?, via)]
+            end
+        end
+      end)
+
+    socket
+    |> assign(events: events)
     |> put_initial_anchor(events)
+  end
+
+  # A bar's matchable assignments: its own, plus every descendant's for a
+  # sub-project (parent chains walked over the flattened item list).
+  defp assignment_refs(top_item, items) do
+    children = Enum.group_by(items, & &1.parent_uuid)
+
+    collect = fn collect, uuid ->
+      Enum.flat_map(Map.get(children, uuid, []), fn child ->
+        [child.assignment | collect.(collect, child.uuid)]
+      end)
+    end
+
+    [top_item.assignment | collect.(collect, top_item.uuid)]
+  end
+
+  # :drop | nil (kept, no provenance) | :direct | {:team|:department, name}
+  defp bar_match(refs, [], false, _direct), do: if(refs, do: nil)
+
+  defp bar_match(refs, scopes, include_unassigned?, direct_only?) do
+    if include_unassigned? and Enum.all?(refs, &Assignees.unassigned?/1) do
+      nil
+    else
+      refs
+      |> Enum.map(&AssigneeFilter.match_any(&1, scopes))
+      |> Enum.reduce(:drop, fn
+        :direct, _acc -> :direct
+        _any, :direct -> :direct
+        nil, acc -> acc
+        via, :drop -> via
+        _via, acc -> acc
+      end)
+      |> case do
+        :drop -> :drop
+        :direct -> :direct
+        via when direct_only? and not is_nil(via) -> :drop
+        via -> via
+      end
+    end
   end
 
   defp subscribe_tree(socket, project_uuids) do
@@ -294,8 +395,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   # calendar days. All-day (DATE-pair) rendering keeps the month grid honest
   # for multi-day tasks and stacks same-day short tasks as chips — the
   # hour-precise detail lives one tab over. `phoenix_live_calendar` ends are
-  # exclusive (`[start, end)`).
-  defp to_event(it, %NaiveDateTime{} = s, %NaiveDateTime{} = e, lang) do
+  # exclusive (`[start, end)`). Late bars get the shared red inset ring;
+  # `via` carries the filter provenance for the day popup.
+  defp to_event(it, %NaiveDateTime{} = s, %NaiveDateTime{} = e, lang, late?, via) do
     a = it.assignment
     start_d = NaiveDateTime.to_date(s)
     end_d = exclusive_end_date(start_d, e)
@@ -305,9 +407,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       end: end_d,
       all_day: true,
       color: status_color(a.status),
-      # For the whole-day popup's status badge (the bar color already encodes
-      # status on the grid, but a popup row spells it out).
-      extra: %{status: a.status}
+      class: if(late?, do: "ring-2 ring-error ring-inset"),
+      extra: %{status: a.status, late: late?, via: via}
     )
   end
 
@@ -398,7 +499,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
           <div class="h-4 w-3/5 bg-base-200/70 rounded animate-pulse"></div>
         </div>
       <% else %>
-        <%= if @events == [] do %>
+        <%= if elem(@calendar_items, 0) == [] do %>
           <.empty_state
             icon="hero-calendar-days"
             title={gettext("No tasks to place on the calendar yet.")}
@@ -415,6 +516,22 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             </:cta>
           </.empty_state>
         <% else %>
+          <%!-- Same shared Filters popup as the Overview calendar (person
+               chips with descendant-aware sub-project matching, Unassigned,
+               Personal/Overdue-only). Filtering can empty the month — the
+               panel stays reachable, its badge showing why. --%>
+          <div class="flex items-center gap-2 mb-2">
+            <.assignee_filter_panel
+              id={"project-cal-filter-#{@project.uuid}"}
+              assignee_selected={@assignee_selected}
+              include_unassigned?={@include_unassigned?}
+              unassigned_count={@unassigned_count}
+              assignee_direct_only?={@assignee_direct_only?}
+              overdue_only?={@overdue_only?}
+              me_scope={@me_scope}
+            />
+          </div>
+
           <%!-- PkDialogTrigger makes a day-cell / "+N more" click open the
                whole-day popup in the same frame; event chips have their own
                phx-click and correctly don't match — they navigate instead. --%>
@@ -512,6 +629,15 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                     <span class={["w-2.5 h-2.5 rounded-full shrink-0", row.color]}></span>
                     <span class="flex-1 min-w-0">
                       <span class="block text-sm font-medium truncate">{row.title}</span>
+                      <span
+                        :if={match?({_kind, _name}, row.via)}
+                        class="block text-xs text-base-content/60 truncate"
+                      >
+                        {gettext("via %{name}", name: elem(row.via, 1))}
+                      </span>
+                    </span>
+                    <span :if={row.late} class="badge badge-xs badge-error">
+                      {gettext("late")}
                     </span>
                     <.assignment_status_badge :if={row.status} status={row.status} size="xs" />
                   </button>

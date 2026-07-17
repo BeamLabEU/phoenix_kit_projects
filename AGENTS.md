@@ -95,8 +95,10 @@ the SAME schedule through the shared `PhoenixKitProjects.ScheduleLayout`
 weekday/weekend-aware), so they can never disagree about a task's dates. The
 Timeline is `ProjectGanttLive` (`phoenix_live_gantt`); the Calendar is
 `ProjectCalendarLive` (`phoenix_live_calendar` month grid, top-level
-assignments as all-day status-colored bars capped per day with "+N more" and
-the same whole-day popup as the Overview; a sub-project is one bar spanning
+assignments as all-day status-colored bars capped per day with "+N more",
+the same whole-day popup as the Overview, and the same Filters panel (shared
+`Web.AssigneeFilter` glue + `<.assignee_filter_panel>`; sub-project bars match
+DESCENDANT-aware — any subtree task belonging to the person keeps the bar); a sub-project is one bar spanning
 its subtree, click drills into the child; dates deliberately UTC-unshifted to
 match the Timeline, unlike the Overview calendar). Tabs are instant assign
 flips; each nested LV lazy-mounts on first open and stays mounted. URL sync
