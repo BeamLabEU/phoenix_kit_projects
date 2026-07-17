@@ -13,6 +13,8 @@ defmodule PhoenixKitProjects.DashboardWidgets do
   `scope` and re-queries on the host's refresh tick. Views declare their own
   `min_size` where the layouts genuinely differ (a detailed table needs more
   room than a KPI strip), so the dashboards builder floors resizing per view.
+  Sizes are in the dashboards **lattice units** (25px nominal square cells —
+  a screenful is e.g. 64×36).
 
   The single-project widgets pick their project from a **select of current
   projects** (`project_options/0` — evaluated when the widget catalog is built,
@@ -77,12 +79,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
         module_key: "projects",
         component: ProjectsBoardWidget,
         category: "Projects",
-        default_size: %{w: 6, h: 3},
-        min_size: %{w: 2, h: 1},
+        default_size: %{w: 24, h: 12},
+        min_size: %{w: 8, h: 4},
         refresh_interval: 15_000,
         views: [
-          %{key: "grid", name: "Grid", min_size: %{w: 3, h: 2}},
-          %{key: "counts", name: "Counts", min_size: %{w: 2, h: 1}}
+          %{key: "grid", name: "Grid", min_size: %{w: 12, h: 8}},
+          %{key: "counts", name: "Counts", min_size: %{w: 8, h: 4}}
         ]
       },
       %{
@@ -93,12 +95,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
         module_key: "projects",
         component: WorkloadWidget,
         category: "Projects",
-        default_size: %{w: 4, h: 2},
-        min_size: %{w: 2, h: 1},
+        default_size: %{w: 16, h: 8},
+        min_size: %{w: 8, h: 4},
         refresh_interval: 15_000,
         views: [
-          %{key: "detailed", name: "Detailed", min_size: %{w: 3, h: 2}},
-          %{key: "simple", name: "Simple (KPIs)", min_size: %{w: 2, h: 1}}
+          %{key: "detailed", name: "Detailed", min_size: %{w: 12, h: 8}},
+          %{key: "simple", name: "Simple (KPIs)", min_size: %{w: 8, h: 4}}
         ]
       },
       %{
@@ -109,12 +111,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
         module_key: "projects",
         component: MyTasksWidget,
         category: "Projects",
-        default_size: %{w: 4, h: 3},
-        min_size: %{w: 2, h: 2},
+        default_size: %{w: 16, h: 12},
+        min_size: %{w: 8, h: 8},
         refresh_interval: 15_000,
         views: [
-          %{key: "detailed", name: "Detailed", min_size: %{w: 3, h: 2}},
-          %{key: "compact", name: "Compact", min_size: %{w: 2, h: 2}}
+          %{key: "detailed", name: "Detailed", min_size: %{w: 12, h: 8}},
+          %{key: "compact", name: "Compact", min_size: %{w: 8, h: 8}}
         ],
         settings_schema: [%{@limit_field | default: "8"}]
       },
@@ -126,12 +128,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
         module_key: "projects",
         component: DeadlinesWidget,
         category: "Projects",
-        default_size: %{w: 4, h: 3},
-        min_size: %{w: 2, h: 2},
+        default_size: %{w: 16, h: 12},
+        min_size: %{w: 8, h: 8},
         refresh_interval: 30_000,
         views: [
-          %{key: "detailed", name: "Detailed", min_size: %{w: 3, h: 2}},
-          %{key: "compact", name: "Compact", min_size: %{w: 2, h: 2}}
+          %{key: "detailed", name: "Detailed", min_size: %{w: 12, h: 8}},
+          %{key: "compact", name: "Compact", min_size: %{w: 8, h: 8}}
         ],
         settings_schema: [
           @limit_field,
@@ -146,12 +148,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
         module_key: "projects",
         component: ProjectStatusWidget,
         category: "Projects",
-        default_size: %{w: 4, h: 3},
-        min_size: %{w: 2, h: 2},
+        default_size: %{w: 16, h: 12},
+        min_size: %{w: 8, h: 8},
         refresh_interval: 15_000,
         views: [
-          %{key: "detailed", name: "Detailed", min_size: %{w: 3, h: 2}},
-          %{key: "simple", name: "Simple", min_size: %{w: 2, h: 2}}
+          %{key: "detailed", name: "Detailed", min_size: %{w: 12, h: 8}},
+          %{key: "simple", name: "Simple", min_size: %{w: 8, h: 8}}
         ],
         settings_schema: [project_field()]
       },
@@ -163,12 +165,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
         module_key: "projects",
         component: OngoingTasksWidget,
         category: "Projects",
-        default_size: %{w: 4, h: 3},
-        min_size: %{w: 2, h: 2},
+        default_size: %{w: 16, h: 12},
+        min_size: %{w: 8, h: 8},
         refresh_interval: 15_000,
         views: [
-          %{key: "detailed", name: "Detailed", min_size: %{w: 3, h: 2}},
-          %{key: "compact", name: "Compact", min_size: %{w: 2, h: 2}}
+          %{key: "detailed", name: "Detailed", min_size: %{w: 12, h: 8}},
+          %{key: "compact", name: "Compact", min_size: %{w: 8, h: 8}}
         ],
         settings_schema: [
           project_field(),
@@ -183,12 +185,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
         module_key: "projects",
         component: ProjectScheduleWidget,
         category: "Projects",
-        default_size: %{w: 4, h: 2},
-        min_size: %{w: 2, h: 1},
+        default_size: %{w: 16, h: 8},
+        min_size: %{w: 8, h: 4},
         refresh_interval: 30_000,
         views: [
-          %{key: "detailed", name: "Detailed", min_size: %{w: 3, h: 2}},
-          %{key: "simple", name: "Simple", min_size: %{w: 2, h: 1}}
+          %{key: "detailed", name: "Detailed", min_size: %{w: 12, h: 8}},
+          %{key: "simple", name: "Simple", min_size: %{w: 8, h: 4}}
         ],
         settings_schema: [project_field()]
       }

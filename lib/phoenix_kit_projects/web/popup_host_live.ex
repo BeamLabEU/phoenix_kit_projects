@@ -303,10 +303,11 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   # `:saved` and `:deleted` carry `close: bool` so the emitter controls
   # whether the modal frame should pop. Form-LV saves default to
-  # `close: true` (form is terminal; modal closes). Form-LV "this
-  # resource is gone" deletes via `notify_deleted_or_navigate/4` also
-  # emit `close: true`. List-LV row-delete via `notify_deleted/3` emits
-  # `close: false` — the list stays open showing the post-delete state.
+  # `close: true` (form is terminal; modal closes). List-LV row-delete
+  # via `notify_deleted/3` emits `close: false` — the list stays open
+  # showing the post-delete state. (An LV whose own resource is gone
+  # pops through `close_or_navigate/2` / `:closed` instead; `close:
+  # true` deletes are reserved vocabulary.)
   #
   # `:saved` additionally carries `next: {lv, session} | nil` for the
   # create-then-edit / create-then-show flow: pop the current frame,

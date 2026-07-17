@@ -574,7 +574,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
   end
 
-  describe "view tabs (list / gantt)" do
+  describe "view tabs (list / gantt / calendar)" do
     defp started_project_for_tabs do
       project = fixture_project(%{"start_mode" => "immediate"})
       {:ok, _} = Projects.start_project(project)
@@ -593,8 +593,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       assert html =~ ~s(role="tablist")
       assert html =~ "Timeline"
-      # Lazy: the nested gantt is not live_rendered until its tab is opened.
+      assert html =~ "Calendar"
+      # Lazy: neither nested view is live_rendered until its tab is opened.
       refute html =~ "lg-wrap"
+      refute html =~ "cal-container"
     end
 
     test "the /gantt route opens the gantt tab with the nested chart mounted", %{conn: conn} do
@@ -624,6 +626,38 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       # built chart stays in the (hidden) DOM.
       html = render_click(view, "switch_tab", %{"tab" => "list"})
       assert html =~ "lg-wrap"
+    end
+
+    test "the /calendar route opens the calendar tab with the nested grid mounted", %{
+      conn: conn
+    } do
+      project = started_project_for_tabs()
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/calendar")
+
+      assert html =~ ~s(role="tablist")
+      # Same page, calendar tab active → the nested ProjectCalendarLive is
+      # rendered. Its build is deferred off the first paint, so settle the
+      # child LV before asserting the grid.
+      calendar = find_live_child(view, "project-calendar-live-#{project.uuid}")
+      grid = render(calendar)
+      assert grid =~ "cal-container"
+      assert grid =~ "cal-month-grid"
+    end
+
+    test "switch_tab mounts the calendar on first open, then keeps it mounted", %{conn: conn} do
+      project = started_project_for_tabs()
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      refute html =~ "cal-container"
+
+      render_click(view, "switch_tab", %{"tab" => "calendar"})
+      assert_push_event(view, "project_tab_url", %{tab: "calendar"})
+      calendar = find_live_child(view, "project-calendar-live-#{project.uuid}")
+      assert render(calendar) =~ "cal-container"
+
+      # Switching back hides it (CSS) but keeps it mounted (lazy-once) — the
+      # built grid stays in the (hidden) DOM, so its month nav survives.
+      html = render_click(view, "switch_tab", %{"tab" => "list"})
+      assert html =~ "cal-container"
     end
 
     test "embedded ProjectShowLive renders the List/Timeline tabs (lazy gantt)", %{conn: conn} do

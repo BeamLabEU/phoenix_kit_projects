@@ -125,7 +125,7 @@ defmodule PhoenixKitProjects.MixProject do
       # projects as ongoing multi-day bars on a month grid. Hex by default
       # (publish-safe); export PHOENIX_LIVE_CALENDAR_PATH=../phoenix_live_calendar
       # to build against a local checkout.
-      pk_dep(:phoenix_live_calendar, "~> 0.1"),
+      pk_dep(:phoenix_live_calendar, "~> 0.3"),
       # Already transitive via :phoenix_kit, but pinned explicitly here so
       # `mix gettext.extract` / `mix gettext.merge` run against this app's
       # own `PhoenixKitProjects.Gettext` backend (call sites for project-

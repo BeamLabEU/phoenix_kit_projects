@@ -27,15 +27,15 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
       {:ok,
        socket
        |> assign(:available, true)
-       |> assign(:compact, compact?(assigns[:size]))
        |> assign(:project, project)
        |> assign(
          :view,
-         effective_view(assigns[:view], ~w(detailed compact), small?(assigns[:size], 4, 2))
+         effective_view(assigns[:view], ~w(detailed compact))
        )
-       |> assign(:tasks, ongoing_tasks(project, limit(settings)))}
+       |> assign(:tasks, ongoing_tasks(project, limit(settings)))
+       |> assign(:budget, limit(settings))}
     else
-      {:ok, assign(socket, available: false, compact: false)}
+      {:ok, assign(socket, :available, false)}
     end
   end
 
@@ -53,19 +53,23 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
     |> Projects.list_assignments()
     |> Enum.filter(&(&1.status in ["todo", "in_progress"]))
     |> Enum.take(limit)
+  rescue
+    # Never crash the host dashboard: a transient DB error renders the
+    # widget's empty state instead of taking down the host LiveView.
+    _ -> []
   end
 
   @impl true
   def render(%{available: false} = assigns) do
     ~H"""
-    <div class="contents"><.frame compact={@compact} title={gettext("Ongoing tasks")}><.unavailable /></.frame></div>
+    <div class="contents"><.frame title={gettext("Ongoing tasks")}><.unavailable /></.frame></div>
     """
   end
 
   def render(%{project: nil} = assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Ongoing tasks")}>
+      <.frame title={gettext("Ongoing tasks")}>
         <.empty message={gettext("No project found — pick one in this widget's settings.")} />
       </.frame>
     </div>
@@ -75,28 +79,40 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Ongoing — %{name}", name: @project.name)} href={Paths.project(@project.uuid)}>
+      <.frame title={gettext("Ongoing — %{name}", name: @project.name)} href={Paths.project(@project.uuid)}>
       <.empty :if={@tasks == []} icon="hero-check-circle" message={gettext("No ongoing tasks. 🎉")} />
-      <ul class="flex flex-col divide-y divide-base-200">
-        <li :for={a <- @tasks} class="flex items-center gap-2 py-1.5">
+      <%!-- N-SLOT self-fit: `limit` budget of slots; cq row type. --%>
+      <ul :if={@tasks != []} class="flex h-full min-h-0 flex-col divide-y divide-base-200">
+        <li
+          :for={a <- @tasks}
+          class="flex min-h-0 flex-1 items-center gap-2 overflow-hidden [container-type:size]"
+        >
           <span
             :if={@view == "compact"}
-            class={["h-2 w-2 shrink-0 rounded-full", dot_class(a.status)]}
+            class={["h-[10cqh] w-[10cqh] shrink-0 rounded-full", dot_class(a.status)]}
           />
           <div class="min-w-0 flex-1">
-            <p class="truncate text-sm">{task_label(a)}</p>
-            <p :if={@view == "detailed" and assignee(a)} class="truncate text-xs text-base-content/50">
+            <p class="truncate leading-tight" style={fit_text(11, "34cqh", 15)}>
+              {task_label(a)}
+            </p>
+            <p
+              :if={@view == "detailed" and assignee(a)}
+              class="pk-slot-meta truncate leading-tight text-base-content/50"
+              style={fit_text(9, "24cqh", 12)}
+            >
               {assignee(a)}
             </p>
           </div>
           <span
             :if={@view == "detailed" and a.track_progress}
-            class="shrink-0 text-xs tabular-nums text-base-content/50"
+            class="shrink-0 leading-none tabular-nums text-base-content/50"
+            style={fit_text(10, "26cqh", 13)}
           >
             {a.progress_pct}%
           </span>
           <.assignment_status_badge :if={@view == "detailed"} status={a.status} size="sm" />
         </li>
+        <li :for={_pad <- 1..max(@budget - length(@tasks), 0)//1} class="min-h-0 flex-1"></li>
       </ul>
       </.frame>
     </div>

@@ -10,7 +10,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
   import PhoenixKitWeb.Components.Core.Icon
   import PhoenixKitProjects.Web.Widgets.Helpers
 
-  alias PhoenixKitProjects.{Paths, Projects}
+  alias PhoenixKitProjects.Paths
   alias PhoenixKitProjects.Schemas.Project
 
   @impl true
@@ -23,15 +23,14 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
       {:ok,
        socket
        |> assign(:available, true)
-       |> assign(:compact, compact?(assigns[:size]))
        |> assign(:project, project)
        |> assign(
          :view,
-         effective_view(assigns[:view], ~w(detailed simple), small?(assigns[:size], 4, 2))
+         effective_view(assigns[:view], ~w(detailed simple))
        )
        |> assign_schedule(project)}
     else
-      {:ok, assign(socket, available: false, compact: false)}
+      {:ok, assign(socket, :available, false)}
     end
   end
 
@@ -39,7 +38,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
 
   defp assign_schedule(socket, %Project{} = project) do
     now = DateTime.utc_now()
-    summary = Projects.project_summary(project)
+    summary = safe_project_summary(project)
 
     remaining =
       if summary,
@@ -63,7 +62,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
   def render(%{available: false} = assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Schedule")} icon="hero-calendar-days"><.unavailable /></.frame>
+      <.frame title={gettext("Schedule")} icon="hero-calendar-days"><.unavailable /></.frame>
     </div>
     """
   end
@@ -71,7 +70,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
   def render(%{summary: nil} = assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Schedule")} icon="hero-calendar-days">
+      <.frame title={gettext("Schedule")} icon="hero-calendar-days">
         <.empty message={gettext("No project found — pick one in this widget's settings.")} />
       </.frame>
     </div>
@@ -81,7 +80,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={@project.name} icon="hero-calendar-days" href={Paths.project(@project.uuid)}>
+      <.frame title={@project.name} icon="hero-calendar-days" href={Paths.project(@project.uuid)}>
       <div class="flex flex-col gap-2">
         <div>
           <div class="mb-0.5 flex items-center justify-between text-xs text-base-content/60">

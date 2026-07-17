@@ -71,9 +71,10 @@ defmodule PhoenixKitProjects.L10n do
   """
   @spec current_content_lang() :: String.t() | nil
   def current_content_lang do
+    # Reads the process dictionary (never the DB) — with a compiled backend
+    # it cannot fail, so no rescue: a blanket one here would only mask
+    # genuine bugs introduced by future refactors.
     Gettext.get_locale(PhoenixKitWeb.Gettext)
-  rescue
-    _ -> nil
   end
 
   @doc """

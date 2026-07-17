@@ -51,6 +51,9 @@ defmodule PhoenixKitProjects.Paths do
   @doc "Gantt/waterfall timeline view for a single project."
   @spec project_gantt(String.t()) :: String.t()
   def project_gantt(id), do: Routes.path("#{@base}/list/#{id}/gantt")
+  @doc "Month-calendar view for a single project."
+  @spec project_calendar(String.t()) :: String.t()
+  def project_calendar(id), do: Routes.path("#{@base}/list/#{id}/calendar")
   @doc "Edit form for a project."
   @spec edit_project(String.t()) :: String.t()
   def edit_project(id), do: Routes.path("#{@base}/list/#{id}/edit")

@@ -259,6 +259,20 @@ defmodule PhoenixKitProjects do
         live_view: {PhoenixKitProjects.Web.ProjectShowLive, :gantt}
       },
       %Tab{
+        id: :admin_projects_project_calendar,
+        label: "Calendar",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/:id/calendar",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        # Same LiveView as the show page, different live_action — the calendar
+        # is a tab on the show page, not a separate page. `:calendar` selects it.
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :calendar}
+      },
+      %Tab{
         id: :admin_projects_template_new,
         label: "New Template",
         gettext_backend: PhoenixKitProjects.Gettext,

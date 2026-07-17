@@ -188,6 +188,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
 
       assert GanttDisplay.read().label_position == :watermark
 
+      await_display_log_flush(view)
+
       assert_activity_logged("projects.gantt_display_changed",
         actor_uuid: actor_uuid,
         metadata_has: %{"field" => "label_position"}
@@ -207,6 +209,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       |> render_change(%{"_target" => ["row_height"], "row_height" => "comfortable"})
 
       assert GanttDisplay.read().row_height == "3rem"
+
+      await_display_log_flush(view)
 
       assert_activity_logged("projects.gantt_display_changed",
         actor_uuid: actor_uuid,
@@ -238,5 +242,76 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
 
       assert_activity_logged("projects.gantt_display_reset", actor_uuid: actor_uuid)
     end
+  end
+
+  describe "coalesced slider audit logs" do
+    test "a slider burst settles into ONE row carrying the final value", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
+      {:ok, view, _html} = live(conn, @path)
+
+      for v <- ~w(0.2 0.3 0.5) do
+        view
+        |> element("#gantt-labels-form")
+        |> render_change(%{"_target" => ["label_fit_ratio"], "label_fit_ratio" => v})
+      end
+
+      await_display_log_flush(view)
+
+      # assert_activity_logged flunks on MORE than one matching row, so this
+      # also pins that the three ticks didn't each write their own.
+      assert_activity_logged("projects.gantt_display_changed",
+        actor_uuid: actor_uuid,
+        metadata_has: %{"field" => "label_fit_ratio", "value" => "0.5"}
+      )
+    end
+
+    test "a reset supersedes queued change rows", %{conn: conn, actor_uuid: actor_uuid} do
+      {:ok, view, _html} = live(conn, @path)
+
+      view
+      |> element("#gantt-labels-form")
+      |> render_change(%{"_target" => ["label_fit_ratio"], "label_fit_ratio" => "0.9"})
+
+      # Reset lands INSIDE the quiet window — the queued change row must not
+      # flush after it (a pre-reset value after the reset reads backwards).
+      view |> element(~s(button[phx-click="reset_gantt_display"])) |> render_click()
+
+      await_display_log_flush(view)
+
+      assert_activity_logged("projects.gantt_display_reset", actor_uuid: actor_uuid)
+
+      refute_activity_logged("projects.gantt_display_changed",
+        metadata_has: %{"field" => "label_fit_ratio"}
+      )
+    end
+
+    test "calendar animation sliders coalesce the same way", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
+      {:ok, view, _html} = live(conn, @path)
+
+      for v <- ~w(3 9 12) do
+        view
+        |> element("#calendar-anim-form")
+        |> render_change(%{"_target" => ["speed"], "speed" => v})
+      end
+
+      await_display_log_flush(view)
+
+      assert_activity_logged("projects.calendar_display_changed",
+        actor_uuid: actor_uuid,
+        metadata_has: %{"field" => "speed"}
+      )
+    end
+  end
+
+  # Outwait the (test-shortened, 30ms) coalescing window, then sync with the
+  # LV so the flush handle_info has been processed before asserting.
+  defp await_display_log_flush(view) do
+    Process.sleep(80)
+    render(view)
   end
 end

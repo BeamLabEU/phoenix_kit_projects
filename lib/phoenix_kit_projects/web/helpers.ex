@@ -14,11 +14,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   ## Embed-mode helpers (PR follow-up to PR #6 audit)
 
   `assign_embed_state/2`, `assign_embed_user/2`, `navigate_or_open/2`,
-  `close_or_navigate/2`, `navigate_after_save/3`,
-  `notify_deleted_or_navigate/4`, `attach_open_embed_hook/1`,
-  `embeddable_lv?/1`, plus the `decode_embeddable_lv/1` and
-  `decode_session/1` decoders used by the shared `open_embed` event
-  handler.
+  `close_or_navigate/2`, `navigate_after_save/3`, `notify_deleted/3`,
+  `attach_open_embed_hook/1`, `embeddable_lv?/1`, plus the
+  `decode_embeddable_lv/1` and `decode_session/1` decoders used by the
+  shared `open_embed` event handler.
 
   `assign_embed_user/2` bridges the current user across the `live_render`
   process boundary (the `on_mount` auth hook doesn't run for embedded
@@ -35,7 +34,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
-  alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
 
   require Logger
 
@@ -67,43 +65,18 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   @doc """
   Whether an assignment counts weekends — its own override, falling back to
-  the project's setting.
+  the project's setting. Delegates to `PhoenixKitProjects.ScheduleLayout`,
+  where the schedule math lives; kept here so LV imports stay one-stop.
   """
-  @spec task_counts_weekends?(
-          PhoenixKitProjects.Schemas.Assignment.t(),
-          PhoenixKitProjects.Schemas.Project.t()
-        ) :: boolean()
-  def task_counts_weekends?(a, project) do
-    case a.counts_weekends do
-      nil -> project.counts_weekends
-      val -> val
-    end
-  end
+  defdelegate task_counts_weekends?(a, project), to: PhoenixKitProjects.ScheduleLayout
 
   @doc """
   The estimated hours for an assignment: its own duration override if set,
   otherwise the underlying task's duration (nil-safe). Weekends are honored
-  per `task_counts_weekends?/2`.
+  per `task_counts_weekends?/2`. Delegates to
+  `PhoenixKitProjects.ScheduleLayout`.
   """
-  @spec assignment_hours(
-          PhoenixKitProjects.Schemas.Assignment.t(),
-          PhoenixKitProjects.Schemas.Project.t()
-        ) :: number()
-  def assignment_hours(a, project) do
-    weekends? = task_counts_weekends?(a, project)
-
-    if a.estimated_duration && a.estimated_duration_unit do
-      TaskSchema.to_hours(a.estimated_duration, a.estimated_duration_unit, weekends?)
-    else
-      task = a.task
-
-      TaskSchema.to_hours(
-        task && task.estimated_duration,
-        task && task.estimated_duration_unit,
-        weekends?
-      )
-    end
-  end
+  defdelegate assignment_hours(a, project), to: PhoenixKitProjects.ScheduleLayout
 
   # ─────────────────────────────────────────────────────────────────
   # Embeddable LV whitelist
@@ -121,6 +94,9 @@ defmodule PhoenixKitProjects.Web.Helpers do
     # root_view, <.smart_link emit>, emit :opened, `next` frames) all gate on
     # the whitelist, so it must be listed to be insertable by other apps.
     PhoenixKitProjects.Web.ProjectGanttLive,
+    # The Calendar view — same embed contract as the gantt (off-router mount,
+    # requires session["id"]).
+    PhoenixKitProjects.Web.ProjectCalendarLive,
     PhoenixKitProjects.Web.ProjectFormLive,
     PhoenixKitProjects.Web.TaskFormLive,
     PhoenixKitProjects.Web.TemplateFormLive,
@@ -795,36 +771,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   @doc """
-  Delete-success path that **navigates**. In navigate mode:
-  `push_navigate(to: fallback_path)`. In emit mode: broadcasts
-  `{:projects, :deleted, %{kind, uuid, frame_ref}}` and returns the
-  socket unchanged.
-
-  Use this when the LV must leave the current view after a delete
-  (e.g. deleting the project you're showing). For list-LV delete
-  handlers that stay on the same page, use `notify_deleted/3`.
-  """
-  @spec notify_deleted_or_navigate(
-          Phoenix.LiveView.Socket.t(),
-          atom(),
-          binary(),
-          String.t()
-        ) :: Phoenix.LiveView.Socket.t()
-  def notify_deleted_or_navigate(socket, kind, uuid, fallback_path)
-      when is_atom(kind) and is_binary(uuid) and is_binary(fallback_path) do
-    case socket.assigns[:embed_mode] do
-      :emit ->
-        # `close: true` — the LV's resource is gone, the modal frame
-        # that was showing it should pop.
-        emit_deleted(socket, kind, uuid, true)
-        socket
-
-      _ ->
-        Phoenix.LiveView.push_navigate(socket, to: fallback_path)
-    end
-  end
-
-  @doc """
   Emits `{:projects, :deleted, %{kind, uuid, close: false, frame_ref}}`
   on the host topic when in emit mode, no-ops in navigate mode.
 
@@ -835,9 +781,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   through the canonical UI-intent vocabulary; the list itself stays
   open showing the post-delete state.
 
-  Contrast with `notify_deleted_or_navigate/4` which emits `close: true`
-  — used when the LV's *own resource* was deleted and the modal should
-  pop.
+  An LV whose *own* resource was deleted reacts through
+  `close_or_navigate/2` instead (pops the frame in emit mode) — the
+  `:deleted` vocabulary reserves `close: true` for that shape should an
+  emitter ever need it.
   """
   @spec notify_deleted(Phoenix.LiveView.Socket.t(), atom(), binary()) ::
           Phoenix.LiveView.Socket.t()
@@ -1032,9 +979,9 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   # `close: true` signals to PopupHost "this resource is gone — pop the
   # modal frame that was showing it." `close: false` is informational
-  # ("a row in my view was deleted; I'm staying open"). The emitter's
-  # call site decides — see `notify_deleted_or_navigate/4` vs
-  # `notify_deleted/3`.
+  # ("a row in my view was deleted; I'm staying open") — the shape
+  # `notify_deleted/3` emits. `close: true` is currently reserved
+  # vocabulary (own-resource-gone LVs pop via `close_or_navigate/2`).
   defp emit_deleted(socket, kind, uuid, close) do
     payload = %{
       kind: kind,

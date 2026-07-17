@@ -12,6 +12,9 @@ A [PhoenixKit](https://github.com/BeamLabEU/phoenix_kit) plugin for **project + 
 - **Templates** — project templates cloned into real projects inside a single transaction
 - **Polymorphic assignees** — team _or_ department _or_ person (at-most-one, enforced at DB + changeset layer)
 - **Schedule math** — planned vs. projected end with velocity tracking; per-task `counts_weekends` override
+- **Timeline & Calendar views** — every project has List/Timeline/Calendar tabs over one shared schedule walk (`ScheduleLayout`); the Overview calendar shows every task across all projects (Google-style per-day caps + whole-day popup) or one line per project with a configurable overdue marker
+- **Assignee filters** — a Filters panel on both calendars: multi-person typeahead (DB-paged), Unassigned lens, personal-only and overdue-only refinements, with inherited team/department semantics (`Assignees`)
+- **Dashboard widgets** — seven widgets for `phoenix_kit_dashboards` (board, workload, my tasks, deadlines, per-project status/schedule/tasks), duck-typed and crash-isolated
 - **Mass-assignment guard** — `completed_by_uuid` / `completed_at` can only be set through the server-trusted `status_changeset/2`
 - Real-time updates via `PhoenixKit.PubSub.Manager`
 - Activity logging for every mutation

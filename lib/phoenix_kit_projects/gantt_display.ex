@@ -94,29 +94,36 @@ defmodule PhoenixKitProjects.GanttDisplay do
           bus_attach_mode: atom()
         }
   def read do
-    tiny = flag(@tiny_key, true)
-    row_choice = enum(@row_height_key, @row_heights, @default_row_height)
+    # One batched, uncached query for all 13 keys instead of a SELECT per key —
+    # read/0 runs in mounts that fire twice (dead render + WS connect), so the
+    # per-key shape cost ~26 scalar queries per Timeline page load. Direct (not
+    # cached) reads are load-bearing: the settings page's live demo re-reads
+    # immediately after each write and must see the fresh value.
+    values = PhoenixKit.Settings.get_settings_direct(all_keys())
+
+    tiny = flag(values, @tiny_key, true)
+    row_choice = enum(values, @row_height_key, @row_heights, @default_row_height)
 
     %{
-      label_position: enum(@position_key, @positions, @default_position),
-      label_side: enum(@side_key, @sides, @default_side),
-      label_overflow: enum(@overflow_key, @overflows, @default_overflow),
-      label_fit_ratio: ratio(@fit_ratio_key, @default_fit_ratio),
-      label_watermark_opacity: ratio(@watermark_opacity_key, @default_watermark_opacity),
-      show_progress: flag(@progress_key, true),
-      show_connectors: flag(@connectors_key, true),
-      show_today: flag(@today_key, true),
+      label_position: enum(values, @position_key, @positions, @default_position),
+      label_side: enum(values, @side_key, @sides, @default_side),
+      label_overflow: enum(values, @overflow_key, @overflows, @default_overflow),
+      label_fit_ratio: ratio(values, @fit_ratio_key, @default_fit_ratio),
+      label_watermark_opacity: ratio(values, @watermark_opacity_key, @default_watermark_opacity),
+      show_progress: flag(values, @progress_key, true),
+      show_connectors: flag(values, @connectors_key, true),
+      show_today: flag(values, @today_key, true),
       # `tiny_markers` is the boolean for the form/toggle; `tiny_bar_px` is the
       # px attr the gantt takes (0 = off).
       tiny_markers: tiny,
       tiny_bar_px: if(tiny, do: @tiny_bar_px, else: 0),
-      min_bar_px: int_clamped(@min_bar_key, @default_min_bar, 0, @min_bar_max),
+      min_bar_px: int_clamped(values, @min_bar_key, @default_min_bar, 0, @min_bar_max),
       # `row_height_choice` (atom) drives the form select; `row_height` is the CSS
       # dimension the gantt takes.
       row_height_choice: row_choice,
       row_height: row_height_rem(row_choice),
-      avoid_collisions: flag(@avoid_collisions_key, true),
-      bus_attach_mode: enum(@attach_key, @attach_modes, @default_attach)
+      avoid_collisions: flag(values, @avoid_collisions_key, true),
+      bus_attach_mode: enum(values, @attach_key, @attach_modes, @default_attach)
     }
   end
 
@@ -166,8 +173,26 @@ defmodule PhoenixKitProjects.GanttDisplay do
 
   # ── internals ───────────────────────────────────────────────────
 
-  defp enum(key, allowed, default) do
-    value = PhoenixKit.Settings.get_setting(key, default)
+  defp all_keys do
+    [
+      @position_key,
+      @side_key,
+      @overflow_key,
+      @fit_ratio_key,
+      @watermark_opacity_key,
+      @progress_key,
+      @connectors_key,
+      @today_key,
+      @tiny_key,
+      @min_bar_key,
+      @row_height_key,
+      @avoid_collisions_key,
+      @attach_key
+    ]
+  end
+
+  defp enum(values, key, allowed, default) do
+    value = Map.get(values, key, default)
     valid = if value in allowed, do: value, else: default
     # `valid` is always one of the fixed allowed strings, so `to_atom` is bounded
     # (and safe) — and unlike `to_existing_atom` it doesn't depend on the gantt
@@ -175,8 +200,8 @@ defmodule PhoenixKitProjects.GanttDisplay do
     String.to_atom(valid)
   end
 
-  defp ratio(key, default) do
-    case Float.parse(PhoenixKit.Settings.get_setting(key, to_string(default))) do
+  defp ratio(values, key, default) do
+    case Float.parse(Map.get(values, key) || to_string(default)) do
       {f, _} -> clamp_ratio(f)
       :error -> default
     end
@@ -200,8 +225,8 @@ defmodule PhoenixKitProjects.GanttDisplay do
 
   defp clamp_ratio(f), do: f |> max(0.0) |> min(1.0)
 
-  defp int_clamped(key, default, lo, hi) do
-    case Integer.parse(PhoenixKit.Settings.get_setting(key, to_string(default))) do
+  defp int_clamped(values, key, default, lo, hi) do
+    case Integer.parse(Map.get(values, key) || to_string(default)) do
       {n, _} -> n |> max(lo) |> min(hi)
       :error -> default
     end
@@ -225,7 +250,15 @@ defmodule PhoenixKitProjects.GanttDisplay do
   defp row_height_rem(:comfortable), do: "3rem"
   defp row_height_rem(_normal), do: "2.5rem"
 
-  defp flag(key, default), do: PhoenixKit.Settings.get_boolean_setting(key, default)
+  # Same "true"/"false"-string contract as core's get_boolean_setting/2, read
+  # from the batched map (and therefore fresh, matching the other fields).
+  defp flag(values, key, default) do
+    case Map.get(values, key) do
+      "true" -> true
+      "false" -> false
+      _ -> default
+    end
+  end
 
   defp put_bool(key, on?) when is_boolean(on?),
     do: PhoenixKit.Settings.update_boolean_setting_with_module(key, on?, @module)

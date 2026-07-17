@@ -56,6 +56,9 @@ defmodule PhoenixKitProjects.ModuleExtrasTest do
       assert :admin_projects_template_show in tab_ids
       assert :admin_projects_assignment_new in tab_ids
       assert :admin_projects_assignment_edit in tab_ids
+      # The show page's alternate-view tabs (same LV, different live_action).
+      assert :admin_projects_project_gantt in tab_ids
+      assert :admin_projects_project_calendar in tab_ids
     end
 
     test "every hidden subtab has visible: false" do

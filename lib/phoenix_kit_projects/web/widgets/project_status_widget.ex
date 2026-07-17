@@ -10,7 +10,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
   import PhoenixKitProjects.Web.Components.DerivedStatusBadge
   import PhoenixKitProjects.Web.Widgets.Helpers
 
-  alias PhoenixKitProjects.{Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Paths, Statuses}
   alias PhoenixKitProjects.Schemas.Project
 
   @impl true
@@ -23,15 +23,14 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
       {:ok,
        socket
        |> assign(:available, true)
-       |> assign(:compact, compact?(assigns[:size]))
        |> assign(:project, project)
        |> assign(
          :view,
-         effective_view(assigns[:view], ~w(detailed simple), small?(assigns[:size], 4, 2))
+         effective_view(assigns[:view], ~w(detailed simple))
        )
        |> assign_project_data(project)}
     else
-      {:ok, assign(socket, available: false, compact: false)}
+      {:ok, assign(socket, :available, false)}
     end
   end
 
@@ -40,7 +39,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
   end
 
   defp assign_project_data(socket, %Project{} = project) do
-    summary = Projects.project_summary(project)
+    summary = safe_project_summary(project)
 
     remaining =
       if summary,
@@ -50,10 +49,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
     socket
     |> assign(:summary, summary)
     |> assign(:lifecycle, Project.derived_status(project))
-    |> assign(
-      :wf_status,
-      if(Statuses.available?(), do: Statuses.current_status(project), else: nil)
-    )
+    |> assign(:wf_status, workflow_status(project))
     |> assign(
       :eta,
       if(project.started_at,
@@ -63,17 +59,25 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
     )
   end
 
+  defp workflow_status(project) do
+    if Statuses.available?(), do: Statuses.current_status(project), else: nil
+  rescue
+    # Never crash the host dashboard: a transient DB error just drops the
+    # workflow badge (the render already tolerates a nil status).
+    _ -> nil
+  end
+
   @impl true
   def render(%{available: false} = assigns) do
     ~H"""
-    <div class="contents"><.frame compact={@compact} title={gettext("Project status")}><.unavailable /></.frame></div>
+    <div class="contents"><.frame title={gettext("Project status")}><.unavailable /></.frame></div>
     """
   end
 
   def render(%{project: nil} = assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Project status")}>
+      <.frame title={gettext("Project status")}>
         <.empty message={gettext("No project found — pick one in this widget's settings.")} />
       </.frame>
     </div>
@@ -83,7 +87,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={@project.name} href={Paths.project(@project.uuid)}>
+      <.frame title={@project.name} href={Paths.project(@project.uuid)}>
       <div class="flex flex-col gap-2">
         <div class="flex flex-wrap items-center gap-1">
           <.project_status_badge project={@project} />

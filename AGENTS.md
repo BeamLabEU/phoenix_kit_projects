@@ -6,7 +6,7 @@ Guidance for AI agents working on the `phoenix_kit_projects` plugin module.
 
 A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) with subtabs:
 
-- **Overview** — active projects with progress bars, my tasks, upcoming/setup/completed projects, stats
+- **Overview** — active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions) plus quick-adders for **Me** and **Unassigned** (a dashed chip with live count) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows). The raw walk is cached in assigns; filter flips are in-memory
 - **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee)
 - **Projects** — list of projects (filterable by status)
 - **Templates** — reusable project templates cloned into real projects
@@ -83,14 +83,31 @@ Under `PhoenixKitProjects.Web.*`:
 - `OverviewLive` — dashboard
 - `TasksLive`, `TaskFormLive` — task library
 - `ProjectsLive`, `ProjectFormLive`, `ProjectShowLive` — projects
+- `ProjectGanttLive`, `ProjectCalendarLive` — the show page's Timeline / Calendar tabs (read-only alternate views, nested via `live_render`)
 - `TemplatesLive`, `TemplateFormLive` — templates (reuses `ProjectShowLive` for view)
 - `AssignmentFormLive` — add/edit task-in-project
 
 `ProjectShowLive` is large (~900 lines) — handles the vertical timeline, status transitions, inline duration editing, per-task progress sliders, dependency badges, schedule/projected-end calculation. Sections are marked with `<%!-- ... --%>` HEEx comments for navigation.
 
+**Show-page tabs (List / Timeline / Calendar):** both alternate views render
+the SAME schedule through the shared `PhoenixKitProjects.ScheduleLayout`
+(tree flatten + `PhoenixLiveGantt.Layout.sequential/2` walk, hour-precise,
+weekday/weekend-aware), so they can never disagree about a task's dates. The
+Timeline is `ProjectGanttLive` (`phoenix_live_gantt`); the Calendar is
+`ProjectCalendarLive` (`phoenix_live_calendar` month grid, top-level
+assignments as all-day status-colored bars capped per day with "+N more",
+the same whole-day popup as the Overview, and the same Filters panel (shared
+`Web.AssigneeFilter` glue + `<.assignee_filter_panel>`; sub-project bars match
+DESCENDANT-aware — any subtree task belonging to the person keeps the bar); a sub-project is one bar spanning
+its subtree, click drills into the child; dates deliberately UTC-unshifted to
+match the Timeline, unlike the Overview calendar). Tabs are instant assign
+flips; each nested LV lazy-mounts on first open and stays mounted. URL sync
+(`/gantt` / `/calendar` suffix) is the `ProjectTabsUrl` host hook, opt-in via
+`session["tab_url_sync"]` for embeds.
+
 ### URL paths
 
-Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../new`, `.../:id`, `.../:id/edit`, and assignment routes like `list/:project_id/assignments/new`. Use `PhoenixKitProjects.Paths`.
+Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../new`, `.../:id`, `.../:id/edit`, `.../:id/gantt`, `.../:id/calendar`, and assignment routes like `list/:project_id/assignments/new`. Use `PhoenixKitProjects.Paths`.
 
 ### Embedding LiveViews via `live_render`
 
@@ -99,13 +116,16 @@ Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../ne
 exist, the per-LV fix shapes, the test convention, and the pre-flight
 checklist for new LVs. Read it before adding a new LV.
 
-**All 10 LVs are embeddable.** The regression gate is
-`test/phoenix_kit_projects/web/embedding_test.exs` — 43
-`live_isolated/3` + `render_hook` tests pinning the embed contract
-(including the `current_user_uuid` identity contract). Coverage:
+**All 11 LVs are embeddable.** The regression gate is
+`test/phoenix_kit_projects/web/embedding_test.exs` (navigate-mode
+contract, including the `current_user_uuid` identity contract) plus
+`embedding_emit_test.exs` (emit-mode contract — every LV that renders a
+`<.smart_link emit>` needs a block there, or a missing
+`attach_open_embed_hook/1` ships as a click-crash). Coverage, one
+describe block per LV in each file:
 `OverviewLive`, `ProjectsLive`, `TemplatesLive`, `TasksLive`,
-`ProjectShowLive`, `ProjectGanttLive`, `ProjectFormLive`, `TaskFormLive`,
-`TemplateFormLive`, `AssignmentFormLive`.
+`ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`,
+`ProjectFormLive`, `TaskFormLive`, `TemplateFormLive`, `AssignmentFormLive`.
 
 The whitelist that gates **host-driven** insertion (PopupHost `root_view`,
 `<.smart_link emit>`, emit `:opened`, `next` frames) is the single
@@ -152,13 +172,14 @@ Tasks / ProjectShow / ProjectGantt):
 
 `ProjectShowLive` additionally requires `session["id"]` (the project
 UUID), reads `session["current_user_uuid"]` for the comments-drawer
-composer, and renders the **List/Timeline tab bar in embeds too** (the
-Timeline tab is a nested `live_render` of `ProjectGanttLive`); its URL-sync
-hook is opt-in via `session["tab_url_sync"]` (off by default — see the
-contract bullet). `ProjectGanttLive` (the read-only Timeline view) also
-requires `session["id"]` and accepts `session["headless"]` (drops the
-back-link when nested as the show page's tab). `TasksLive` accepts
-`session["view"]` (`"list"` or `"groups"`).
+composer, and renders the **List/Timeline/Calendar tab bar in embeds too**
+(the Timeline/Calendar tabs are nested `live_render`s of `ProjectGanttLive`
+/ `ProjectCalendarLive`); its URL-sync hook is opt-in via
+`session["tab_url_sync"]` (off by default — see the contract bullet).
+`ProjectGanttLive` (the read-only Timeline view) and `ProjectCalendarLive`
+(the read-only month-calendar view) also require `session["id"]` and accept
+`session["headless"]` (drops the back-link when nested as the show page's
+tab). `TasksLive` accepts `session["view"]` (`"list"` or `"groups"`).
 
 > ⚠️ **Embedded Timeline needs the gantt JS hooks in the host's
 > LiveSocket.** When a host embeds `ProjectShowLive` and the user opens
@@ -231,12 +252,15 @@ Contract (all keys optional unless noted):
   the admin default. Lets the host close a modal, refresh state, etc.
   without yanking the user to `/admin/projects/...`.
 - `session["tab_url_sync"]` — `ProjectShowLive` only. Boolean,
-  **defaults `false`** in embeds. The List/Timeline tab bar renders in
-  every embed (only templates stay list-only), but the `ProjectTabsUrl`
-  hook that pushes the active tab onto the browser URL is **off by
-  default** — an embed must not rewrite the host's address bar. Pass
-  `true` (a real boolean, not `"true"`) only if the host mounts the show
-  page as its own full-page route and wants `/gantt` deep-linking. The
+  **defaults `false`** in embeds. The List/Timeline/Calendar tab bar
+  renders in every embed (only templates stay list-only), but the
+  `ProjectTabsUrl` hook that mirrors the active tab onto the browser URL
+  (via `history.replaceState` — no history entries; back/forward return to
+  the previous page, and per-tab entries are impossible without
+  `handle_params/3`, which would block embedding) is **off by default** —
+  an embed must not rewrite the host's address bar. Pass `true` (a real
+  boolean, not `"true"`) only if the host mounts the show page as its own
+  full-page route and wants `/gantt` / `/calendar` deep-linking. The
   router-mounted standalone admin page enables it implicitly.
 - `id:` opt on `live_render` should be unique per logical embed (e.g.
   include the resource UUID) so two embeddings of the same LV on one
@@ -377,11 +401,22 @@ Every mutation logs via `PhoenixKitProjects.Activity`. Action strings: `projects
 - `projects.task_created/updated/deleted`
 - `projects.task_dependency_added/removed`
 - `projects.dependency_added/removed`
-- `projects.assignment_created/started/completed/reopened/removed`
+- `projects.assignment_created/updated/started/completed/reopened/removed`
 - `projects.assignment_progress_updated`
 - `projects.assignment_duration_changed`
 - `projects.assignment_tracking_toggled`
+- `projects.project_archived/unarchived`
+- `projects.subproject_created/linked/detached`
 - `projects.project_status_changed` — workflow current-status change (show page)
+- `projects.gantt_display_changed/reset` — Timeline-chart display settings (settings page; `resource_type: "projects_settings"`)
+- `projects.calendar_display_changed/reset` — Overview-calendar overdue-animation settings (settings page; `resource_type: "projects_settings"`)
+
+The two `_changed` actions are **coalesced per field**: a slider drag emits a
+debounced `phx-change` per step, but only ONE audit row — the settled value —
+flushes after ~1s of quiet (`@display_log_flush_ms`; a reset supersedes any
+still-queued change rows, and `terminate/2` best-effort-flushes on navigation).
+Discrete controls (toggles, resets, selects outside the two display forms) log
+immediately.
 - `projects.status_entity_provisioned` — a default status list generated (per-project form OR global settings; `metadata.scope` = `"shared"` | `"global_default"`)
 - `projects.default_status_entity_set` — global default status list chosen (settings page; `resource_type: "projects_settings"`)
 - `projects.status_translations_toggled` — global translated-titles flag flipped (settings page)
@@ -410,9 +445,13 @@ Guarded with `Code.ensure_loaded?/1` + rescue — logging never crashes mutation
 lib/phoenix_kit_projects.ex                  # Main module (PhoenixKit.Module behaviour)
 lib/phoenix_kit_projects/
 ├── activity.ex                              # Activity logging wrapper
+├── assignees.ex                             # Effective-assignee resolver (person∪teams∪departments scope, match provenance)
+├── calendar_display.ex                      # Overview month-calendar mappers (Tasks mode task_events/4 + Projects mode events/6) + overdue-marker settings
+├── gantt_display.ex                         # Timeline bar-label/display settings (read on /admin/settings/projects)
 ├── l10n.ex                                  # Date/time localization helpers
 ├── paths.ex                                 # Path helpers (/admin/projects/*)
 ├── projects.ex                              # Context: tasks, projects, assignments, deps
+├── schedule_layout.ex                       # Shared durations→dates walk behind the Timeline + Calendar tabs
 ├── statuses.ex                              # Workflow statuses (entities-backed, cement-at-start)
 ├── pub_sub.ex                               # Topics + broadcast helpers
 ├── schemas/
@@ -426,6 +465,8 @@ lib/phoenix_kit_projects/
     ├── assignment_form_live.ex
     ├── components.ex                         # `use` aggregator — imports every web/components/*.ex
     ├── components/
+    │   ├── assignee_filter_panel.ex         # `<.assignee_filter_panel>` — the Filters funnel + popup (chips/picker/toggles)
+    │   ├── day_popup_modal.ex               # `<.day_popup_modal>` — the whole-day popup both calendars share
     │   ├── derived_status_badge.ex          # `<.derived_status_badge>` + `<.project_status_badge>`
     │   ├── empty_state.ex                   # `<.empty_state>` — icon + heading + sub + CTA slot
     │   ├── page_header.ex                   # `<.page_header>` — title + description + actions + back_link slots
@@ -435,7 +476,9 @@ lib/phoenix_kit_projects/
     │   ├── tabs_strip.ex                    # `<.tabs_strip>` — daisyUI tabs-boxed switcher
     │   └── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
     ├── overview_live.ex
+    ├── project_calendar_live.ex             # Calendar tab — month grid over the ScheduleLayout walk
     ├── project_form_live.ex
+    ├── project_gantt_live.ex                # Timeline tab — gantt over the ScheduleLayout walk
     ├── project_show_live.ex                 # Large (~1700 lines) — timeline, schedule math
     ├── projects_live.ex
     ├── task_form_live.ex

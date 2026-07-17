@@ -75,6 +75,11 @@ defmodule PhoenixKitProjects.PathsTest do
     test "edit_project/1 interpolates the id" do
       assert Paths.edit_project("p-1") == "#{@prefix}/list/p-1/edit"
     end
+
+    test "project_gantt/1 and project_calendar/1 address the show page's tabs" do
+      assert Paths.project_gantt("p-1") == "#{@prefix}/list/p-1/gantt"
+      assert Paths.project_calendar("p-1") == "#{@prefix}/list/p-1/calendar"
+    end
   end
 
   describe "Assignment paths" do

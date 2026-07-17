@@ -17,22 +17,21 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
     socket = assign(socket, :id, assigns.id)
 
     if available?() do
-      projects = Projects.list_projects()
+      projects = safe_list_projects()
       lifecycle = Enum.frequencies_by(projects, &Project.derived_status/1)
 
       {:ok,
        socket
        |> assign(:available, true)
-       |> assign(:compact, compact?(assigns[:size]))
        |> assign(
          :view,
-         effective_view(assigns[:view], ~w(detailed simple), small?(assigns[:size], 4, 2))
+         effective_view(assigns[:view], ~w(detailed simple))
        )
        |> assign(:total, length(projects))
        |> assign(:lifecycle, lifecycle)
        |> assign(:tasks, task_counts())}
     else
-      {:ok, assign(socket, available: false, compact: false)}
+      {:ok, assign(socket, :available, false)}
     end
   end
 
@@ -46,7 +45,7 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
   def render(%{available: false} = assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Projects workload")} icon="hero-chart-pie"><.unavailable /></.frame>
+      <.frame title={gettext("Projects workload")} icon="hero-chart-pie"><.unavailable /></.frame>
     </div>
     """
   end
@@ -54,8 +53,10 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Projects workload")} icon="hero-chart-pie" href={Paths.projects()}>
-      <div :if={@view == "simple"} class="grid grid-cols-2 gap-2">
+      <.frame title={gettext("Projects workload")} icon="hero-chart-pie" href={Paths.projects()}>
+      <%!-- Bands and KPI boxes self-fit via cq units — the whole body always
+      fits its box (dashboards are one screenful: nothing scrolls or clips). --%>
+      <div :if={@view == "simple"} class="grid h-full min-h-0 grid-cols-2 gap-2">
         <.kpi label={gettext("Running")} value={count(@lifecycle, :running)} tone="text-success" />
         <.kpi
           label={gettext("Overdue")}
@@ -64,12 +65,15 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
         />
       </div>
 
-      <div :if={@view == "detailed"} class="flex h-full flex-col justify-center gap-2">
-        <div>
-          <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/40">
+      <div :if={@view == "detailed"} class="flex h-full min-h-0 flex-col gap-[2cqh] [container-type:size]">
+        <div class="flex min-h-0 flex-1 flex-col">
+          <p
+            class="mb-[1cqh] font-semibold uppercase leading-tight tracking-wide text-base-content/40"
+            style={fit_text(9, "10cqh", 11)}
+          >
             {gettext("Projects")} · {@total}
           </p>
-          <div class="grid grid-cols-4 gap-1.5">
+          <div class="grid min-h-0 flex-1 grid-cols-4 gap-1.5">
             <.kpi small label={gettext("Running")} value={count(@lifecycle, :running)} tone="text-success" />
             <.kpi
               small
@@ -77,15 +81,26 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
               value={count(@lifecycle, :overdue)}
               tone={if(count(@lifecycle, :overdue) > 0, do: "text-error", else: "text-base-content/70")}
             />
-            <.kpi small label={gettext("Scheduled")} value={count(@lifecycle, :scheduled)} tone="text-info" />
+            <%!-- :scheduled (start planned for later) + :setup (immediate
+                 start, not started yet) fold into one "Not started" tile so
+                 the four tiles always sum to the headline total. --%>
+            <.kpi
+              small
+              label={gettext("Not started")}
+              value={count(@lifecycle, :scheduled) + count(@lifecycle, :setup)}
+              tone="text-info"
+            />
             <.kpi small label={gettext("Completed")} value={count(@lifecycle, :completed)} tone="text-base-content/70" />
           </div>
         </div>
-        <div>
-          <p class="mb-1 text-xs font-semibold uppercase tracking-wide text-base-content/40">
+        <div class="flex min-h-0 flex-1 flex-col">
+          <p
+            class="mb-[1cqh] font-semibold uppercase leading-tight tracking-wide text-base-content/40"
+            style={fit_text(9, "10cqh", 11)}
+          >
             {gettext("Tasks")}
           </p>
-          <div class="grid grid-cols-3 gap-1.5">
+          <div class="grid min-h-0 flex-1 grid-cols-3 gap-1.5">
             <.kpi small label={gettext("Todo")} value={@tasks["todo"] || 0} tone="text-base-content" />
             <.kpi small label={gettext("Active")} value={@tasks["in_progress"] || 0} tone="text-warning" />
             <.kpi small label={gettext("Done")} value={@tasks["done"] || 0} tone="text-success" />
@@ -106,18 +121,13 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
 
   defp kpi(assigns) do
     ~H"""
-    <div class={[
-      "flex flex-col items-center justify-center rounded bg-base-200/50",
-      if(@small, do: "py-1.5", else: "py-2")
-    ]}>
-      <span class={[
-        "font-bold tabular-nums",
-        if(@small, do: "text-lg leading-6", else: "text-2xl"),
-        @tone
-      ]}>
+    <div class="flex min-h-0 flex-col items-center justify-center overflow-hidden rounded bg-base-200/50 [container-type:size]">
+      <span class={["font-bold leading-none tabular-nums", @tone]} style={fit_text(14, "45cqh", 22)}>
         {@value}
       </span>
-      <span class="text-[11px] text-base-content/50">{@label}</span>
+      <span class="truncate leading-tight text-base-content/50" style={fit_text(9, "20cqh", 11)}>
+        {@label}
+      </span>
     </div>
     """
   end

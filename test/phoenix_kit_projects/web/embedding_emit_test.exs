@@ -1050,6 +1050,105 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
     end
   end
 
+  describe "ProjectShowLive emit forwarding into nested tabs" do
+    test "an emit-embedded show page's Calendar tab mounts in emit mode too", %{conn: conn} do
+      project = fixture_project(%{"name" => "Emit tab forwarding"})
+      topic = unique_topic()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "id" => project.uuid,
+            "frame_ref" => 0
+          }
+        )
+
+      # Lazy-mounted: the nested live_render only exists after activation.
+      render_click(view, "switch_tab", %{"tab" => "calendar"})
+
+      child = find_live_child(view, "project-calendar-live-#{project.uuid}")
+      assert child, "nested calendar LV did not mount"
+
+      # The forwarded mode reaches the child: its empty-state "Add a task"
+      # smart_link renders as an open_embed button, not a navigate link.
+      # Without the forwarding it silently falls back to :navigate and a
+      # click would push_navigate the host page away.
+      assert render(child) =~ ~s(phx-click="open_embed")
+    end
+  end
+
+  # ─────────────────────────────────────────────────────────────────
+  # ProjectGanttLive / ProjectCalendarLive — the two read-only tab LVs.
+  # Regression that prompted these blocks: both rendered emit-mode
+  # smart_link buttons ("Back to project", "Add a task") without
+  # attaching the open_embed hook, so a host that emit-embedded either
+  # crashed it on click (FunctionClauseError — exactly the class this
+  # file's moduledoc promises to guard).
+  # ─────────────────────────────────────────────────────────────────
+
+  for {name, lv} <- [
+        {"ProjectGanttLive", PhoenixKitProjects.Web.ProjectGanttLive},
+        {"ProjectCalendarLive", PhoenixKitProjects.Web.ProjectCalendarLive}
+      ] do
+    describe "#{name} emit mode" do
+      @lv lv
+
+      test "mounts in emit mode and renders open_embed buttons", %{conn: conn} do
+        project = fixture_project(%{"name" => "Emit tab #{System.unique_integer([:positive])}"})
+        topic = unique_topic()
+
+        {:ok, _view, html} =
+          live_isolated(conn, @lv,
+            session: %{
+              "mode" => "emit",
+              "pubsub_topic" => topic,
+              "id" => project.uuid,
+              "frame_ref" => 0
+            }
+          )
+
+        # "Back to project" renders as an emit button (not headless here).
+        assert html =~ ~s(phx-click="open_embed")
+      end
+
+      test "clicking 'Back to project' emits :opened for ProjectShowLive", %{conn: conn} do
+        project = fixture_project(%{"name" => "Emit back #{System.unique_integer([:positive])}"})
+        topic = unique_topic()
+        ProjectsPubSub.subscribe(topic)
+
+        {:ok, view, _} =
+          live_isolated(conn, @lv,
+            session: %{
+              "mode" => "emit",
+              "pubsub_topic" => topic,
+              "id" => project.uuid,
+              "frame_ref" => 3
+            }
+          )
+
+        view
+        |> element("button[phx-click=open_embed]", "Back to project")
+        |> render_click()
+
+        assert_receive {:projects, :opened, payload}, 500
+        assert payload.lv == PhoenixKitProjects.Web.ProjectShowLive
+        assert payload.session == %{"id" => project.uuid}
+        assert payload.frame_ref == 3
+      end
+
+      test "navigate-mode behaviour is unchanged (regression guard)", %{conn: conn} do
+        project = fixture_project(%{"name" => "Nav tab #{System.unique_integer([:positive])}"})
+
+        {:ok, _view, html} =
+          live_isolated(conn, @lv, session: %{"id" => project.uuid})
+
+        refute html =~ ~s(phx-click="open_embed")
+      end
+    end
+  end
+
   defp unique_topic do
     "emit-test-#{System.unique_integer([:positive])}"
   end

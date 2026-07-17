@@ -43,6 +43,29 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
     _ -> nil
   end
 
+  @doc """
+  `Projects.list_projects/0` with the widget no-crash guard: a transient DB
+  error (connection loss, mid-migration missing table) degrades to an empty
+  list — a widget must never crash the host dashboard.
+  """
+  @spec safe_list_projects() :: [Project.t()]
+  def safe_list_projects do
+    Projects.list_projects()
+  rescue
+    _ -> []
+  end
+
+  @doc """
+  `Projects.project_summary/1` with the widget no-crash guard — `nil` on a DB
+  error, which every consuming widget already renders as its empty state.
+  """
+  @spec safe_project_summary(Project.t()) :: map() | nil
+  def safe_project_summary(%Project{} = project) do
+    Projects.project_summary(project)
+  rescue
+    _ -> nil
+  end
+
   defp default_project do
     List.first(Projects.list_active_projects()) || List.first(Projects.list_projects())
   end
@@ -59,26 +82,24 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
 
   @doc """
   Pick the effective view: honor the selected `view` if it's one of `valid`,
-  else the first valid view. `small?` lets a widget force its most compact view.
+  else the first valid view. The user's choice is NEVER overridden by size —
+  content self-fits via container-query type scaling instead.
   """
-  @spec effective_view(String.t() | nil, [String.t()], boolean()) :: String.t()
-  def effective_view(view, valid, small? \\ false)
-  def effective_view(_view, valid, true), do: List.last(valid)
-  def effective_view(view, valid, _small?) when view in ["", nil], do: List.first(valid)
+  @spec effective_view(String.t() | nil, [String.t()]) :: String.t()
+  def effective_view(view, valid) when view in ["", nil], do: List.first(valid)
+  def effective_view(view, valid), do: if(view in valid, do: view, else: List.first(valid))
 
-  def effective_view(view, valid, _small?),
-    do: if(view in valid, do: view, else: List.first(valid))
-
-  @doc "A widget is small (force compact) when narrower than `w` or shorter than `h`."
-  @spec small?(map() | nil, integer(), integer()) :: boolean()
-  def small?(size, w, h) do
-    match?(%{w: sw} when sw < w, size) or match?(%{h: sh} when sh < h, size)
+  @doc """
+  A scale-aware self-fit font-size style: the type grows with its cq slot but
+  stays clamped to a consistent px range, so widgets look cohesive at any box
+  size (no comically large list rows, no unreadable KPI labels). The
+  `--pk-scale` var (set by the dashboards fit hook) keeps the clamp
+  proportional when the board renders scaled down.
+  """
+  @spec fit_text(number(), String.t(), number()) :: String.t()
+  def fit_text(min_px, cq, max_px) do
+    "font-size: clamp(calc(#{min_px}px * var(--pk-scale, 1)), #{cq}, calc(#{max_px}px * var(--pk-scale, 1)))"
   end
-
-  @doc "A single-row instance renders dense (tighter frame, smaller title)."
-  @spec compact?(map() | nil) :: boolean()
-  def compact?(%{h: h}) when is_integer(h), do: h < 2
-  def compact?(_size), do: false
 
   @doc "The current user's uuid out of the host-provided scope assign, or nil."
   @spec scope_user_uuid(term()) :: String.t() | nil
@@ -102,23 +123,27 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
 
   @doc """
   A shared widget card frame: header (icon + title + optional link) + body slot.
-  `compact` (a single-row instance) tightens the paddings so the minimum box
-  fits without a scrollbar.
   """
   attr(:title, :string, required: true)
   attr(:icon, :string, default: "hero-clipboard-document-list")
   attr(:href, :string, default: nil)
-  attr(:compact, :boolean, default: false)
   slot(:inner_block, required: true)
   slot(:actions)
 
   def frame(assigns) do
     ~H"""
+    <style>
+      @container (max-height: 26px) {
+        .pk-slot-meta {
+          display: none !important;
+        }
+      }
+    </style>
     <div class="card h-full overflow-hidden bg-base-100">
-      <div class={["flex h-full flex-col", if(@compact, do: "p-2", else: "p-3")]}>
-        <div class={["flex items-center gap-2", if(@compact, do: "mb-1", else: "mb-2")]}>
+      <div class="flex h-full flex-col p-3">
+        <div class="mb-2 flex items-center gap-2">
           <.icon name={@icon} class="h-4 w-4 shrink-0 text-base-content/50" />
-          <h3 class={["truncate font-semibold", if(@compact, do: "text-xs", else: "text-sm")]}>
+          <h3 class="truncate text-sm font-semibold">
             {@title}
           </h3>
           <div class="ml-auto flex items-center gap-1">
@@ -128,7 +153,9 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
             </.link>
           </div>
         </div>
-        <div class="min-h-0 flex-1 overflow-auto">
+        <%!-- Dashboards are one screenful — content CLIPS at the box, never
+        scrolls (widgets budget their rows via the "limit" setting). --%>
+        <div class="min-h-0 flex-1 overflow-hidden">
           {render_slot(@inner_block)}
         </div>
       </div>

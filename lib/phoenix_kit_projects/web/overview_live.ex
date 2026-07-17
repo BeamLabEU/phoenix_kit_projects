@@ -5,9 +5,19 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{Activity, CalendarDisplay, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{
+    Activity,
+    Assignees,
+    CalendarDisplay,
+    L10n,
+    Paths,
+    Projects,
+    ScheduleLayout
+  }
+
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
-  alias PhoenixKitProjects.Schemas.{Project, Task}
+  alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
+  alias PhoenixKitProjects.Web.AssigneeFilter
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -27,6 +37,9 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
   @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-6"
+
+  # The shared filter's events, forwarded to Web.AssigneeFilter.update/3.
+  @assignee_filter_events AssigneeFilter.events()
 
   @impl true
   def mount(_params, session, socket) do
@@ -48,6 +61,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       socket
       |> assign(
         user_uuid: Activity.actor_uuid(socket),
+        # Per-instance DOM-id suffix: this LV is embeddable, and its calendar
+        # chrome is wired by CSS-selector JS (PkDialogTrigger's data-dialog,
+        # the SearchPicker's picker_target). Static ids would cross-route two
+        # embeds on one host page to the first match. socket.id is stable
+        # across the dead render and the join, so ids match on hydration.
+        sfx: socket.id,
         page_title: gettext("Projects"),
         wrapper_class: wrapper_class,
         task_count: 0,
@@ -70,8 +89,27 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         # lazy-mounted on first switch, then kept (hidden) so its paged month
         # survives toggling.
         overview_tab: :list,
-        calendar_seen?: false
+        calendar_seen?: false,
+        # Calendar mode: :tasks (default — every task across all projects, on
+        # the days it's scheduled) or :projects (the original one-bar-per-project
+        # view). Both stay mounted once seen; the toggle hides with CSS so each
+        # grid keeps its own month navigation.
+        calendar_mode: :tasks,
+        # Tasks-mode data — computed lazily on the first calendar open (the
+        # schedule walk is per-project queries), then kept fresh by reload/1.
+        # `task_calendar_items` caches the raw {item, span} walk; the filtered
+        # events/meta derive from it in memory, so filter flips never re-query.
+        task_calendar_items: [],
+        task_calendar_events: [],
+        task_calendar_meta: %{},
+        task_calendar_loaded?: false,
+        # Assignee/overdue filter state comes from Web.AssigneeFilter.defaults()
+        # (piped in below) — the shared chip-rail glue both calendars use.
+        # The whole-day popup (Google-style): nil when closed, else
+        # %{date: Date, rows: [row]} filled by a day-cell / "+N more" click.
+        day_popup: nil
       )
+      |> assign(AssigneeFilter.defaults())
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
@@ -124,6 +162,21 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         offset
       )
 
+    # Tasks-mode events are only worth their per-project schedule walks once
+    # the calendar tab has been opened; until then reload keeps the empty
+    # defaults and the tab-switch handler does the first build.
+    socket =
+      if socket.assigns[:calendar_seen?],
+        do:
+          load_task_calendar(
+            socket,
+            active_projects,
+            upcoming_projects,
+            completed_projects,
+            offset
+          ),
+        else: socket
+
     assign(socket,
       task_count: Projects.count_tasks(),
       project_count: Projects.count_projects(),
@@ -140,12 +193,116 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       tz_offset: offset,
       calendar_events: calendar_events,
       # The overdue-animation <style>, generated from the settings on
-      # /admin/settings/projects (mode/speed/brightness), plus the mode itself so
-      # the calendar's info popover can describe it accurately. Read once here so a
-      # page (re)load reflects the latest config.
+      # /admin/settings/projects (mode/speed/brightness), plus the pattern so
+      # the calendar's info popover can describe it accurately. Read once here
+      # so a page (re)load reflects the latest config.
       overdue_style: CalendarDisplay.animation_style(overdue_anim),
-      overdue_mode: overdue_anim.mode,
       overdue_pattern: overdue_anim.pattern
+    )
+  end
+
+  # Builds the Tasks-mode calendar: run the shared schedule walk per project
+  # (same walk as the show page's Timeline/Calendar tabs), keep LEAF tasks
+  # (sub-project containers excluded — their child tasks stand for
+  # themselves), cache the raw {item, span} list, and derive the filtered
+  # events/meta from it. Also resolves the picker options, the unassigned
+  # count (over ALL items — it's a triage signal, not a filtered view), and
+  # the viewer's own assignee scope (once per mount).
+  defp load_task_calendar(socket, active, upcoming, completed, offset) do
+    items_with_spans =
+      (active ++ upcoming ++ completed)
+      |> Enum.uniq_by(& &1.uuid)
+      |> Enum.flat_map(fn project ->
+        {items, layout} = ScheduleLayout.tree(project)
+
+        items
+        |> Enum.reject(&Assignment.subproject?(&1.assignment))
+        |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
+      end)
+
+    socket
+    |> AssigneeFilter.resolve_me()
+    |> assign(
+      task_calendar_items: items_with_spans,
+      task_calendar_loaded?: true,
+      tz_offset: offset,
+      unassigned_count:
+        Enum.count(items_with_spans, fn {it, _} -> Assignees.unassigned?(it.assignment) end)
+    )
+    |> apply_task_filter()
+  end
+
+  # Derives the visible events/meta from the cached walk + the current
+  # assignee/overdue filter. In-memory only — filter flips never re-query.
+  defp apply_task_filter(socket) do
+    %{
+      task_calendar_items: items,
+      include_unassigned?: include_unassigned?,
+      assignee_direct_only?: direct_only?,
+      overdue_only?: overdue_only?,
+      tz_offset: offset
+    } = socket.assigns
+
+    scopes = AssigneeFilter.current_scopes(socket.assigns)
+    now = DateTime.utc_now() |> DateTime.to_naive()
+
+    {kept, provenance} = filter_items(items, scopes, include_unassigned?, direct_only?)
+
+    {events, meta} =
+      CalendarDisplay.task_events(kept, L10n.current_content_lang(), offset, now: now)
+
+    # Provenance ("via <team>") rides the meta so popup rows can show WHY a
+    # task is in a person's view without implying personal ownership.
+    meta =
+      Map.new(meta, fn {uuid, entry} ->
+        {uuid, Map.put(entry, :via, Map.get(provenance, uuid))}
+      end)
+
+    {events, meta} =
+      if overdue_only? do
+        late = events |> Enum.filter(&meta[&1.id].late) |> MapSet.new(& &1.id)
+        {Enum.filter(events, &MapSet.member?(late, &1.id)), meta}
+      else
+        {events, meta}
+      end
+
+    assign(socket, task_calendar_events: events, task_calendar_meta: meta)
+  end
+
+  # Applies the unified assignee filter to the raw items: a task is kept when
+  # it's unassigned (and the Unassigned toggle is on) OR any selected person's
+  # scope matches it — one UNION across chips + toggle. No chips and no
+  # toggle = everything. Person matches return the provenance map (uuid =>
+  # :direct | {:team, name} | {:department, name}) alongside; direct-only
+  # narrows PERSON matches to :direct (it never affects the Unassigned part).
+  defp filter_items(items, [], false, _direct), do: {items, %{}}
+
+  defp filter_items(items, scopes, include_unassigned?, direct_only?) do
+    Enum.reduce(items, {[], %{}}, fn {it, span}, {kept, prov} ->
+      if include_unassigned? and Assignees.unassigned?(it.assignment) do
+        {[{it, span} | kept], prov}
+      else
+        case AssigneeFilter.match_any(it.assignment, scopes) do
+          nil -> {kept, prov}
+          :direct -> {[{it, span} | kept], prov}
+          _via when direct_only? -> {kept, prov}
+          via -> {[{it, span} | kept], Map.put(prov, it.uuid, via)}
+        end
+      end
+    end)
+    |> then(fn {kept, prov} -> {Enum.reverse(kept), prov} end)
+  end
+
+  # First-open build (reload/1 skips the walk until the tab has been seen).
+  defp ensure_task_calendar(%{assigns: %{task_calendar_loaded?: true}} = socket), do: socket
+
+  defp ensure_task_calendar(socket) do
+    load_task_calendar(
+      socket,
+      Projects.list_active_projects(),
+      Projects.list_upcoming_projects(),
+      Projects.list_recently_completed_projects(),
+      resolve_offset(socket)
     )
   end
 
@@ -153,12 +310,19 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # (`Utils.Date.get_user_timezone/1`): the current user's own `user_timezone`,
   # else the website's `time_zone` setting, else UTC ("0").
   defp resolve_offset(socket) do
+    # Match the field, not just a map: a partial user (a test scope, a
+    # degraded embed) without :user_timezone falls through to the site
+    # setting instead of KeyError-ing inside get_user_timezone/1.
     case socket.assigns[:phoenix_kit_current_user] do
-      %{} = user -> PhoenixKit.Utils.Date.get_user_timezone(user)
+      %{user_timezone: _} = user -> PhoenixKit.Utils.Date.get_user_timezone(user)
       _ -> PhoenixKit.Settings.get_setting("time_zone", "0")
     end
   rescue
-    _ -> "0"
+    # DB-read resilience only — a genuine programming error should surface,
+    # not silently pin every viewer to UTC.
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.debug("[OverviewLive] timezone read failed: #{Exception.message(e)}")
+      "0"
   end
 
   # A stored UTC datetime as a calendar Date in the viewer's timezone, so every
@@ -167,6 +331,42 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # notices the difference — at 00:30 in UTC+3 it's already tomorrow locally.
   defp to_local_date(%DateTime{} = dt, offset) do
     dt |> PhoenixKit.Utils.Date.shift_to_offset(offset) |> DateTime.to_date()
+  end
+
+  # The Tasks/Projects mode toggle, rendered into BOTH calendar grids'
+  # toolbar_end slots (each grid shows its own copy; only one grid is visible
+  # at a time). tooltip-left on the edge button so it doesn't clip.
+  defp mode_toggle(assigns) do
+    ~H"""
+    <div class="join">
+      <button
+        type="button"
+        class={[
+          "btn btn-xs join-item tooltip",
+          CalendarDisplay.loading_class(),
+          @calendar_mode == :tasks && "btn-active"
+        ]}
+        data-tip={gettext("Every task on the days it is scheduled to run")}
+        phx-click="set_calendar_mode"
+        phx-value-mode="tasks"
+      >
+        {gettext("Tasks")}
+      </button>
+      <button
+        type="button"
+        class={[
+          "btn btn-xs join-item tooltip tooltip-left",
+          CalendarDisplay.loading_class(),
+          @calendar_mode == :projects && "btn-active"
+        ]}
+        data-tip={gettext("One line per project, with the overdue marker")}
+        phx-click="set_calendar_mode"
+        phx-value-mode="projects"
+      >
+        {gettext("Projects")}
+      </button>
+    </div>
+    """
   end
 
   # The calendar info-popover sentence describing the overdue indicator, worded
@@ -279,14 +479,54 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   defp overdue_seconds(_, _now), do: 0
 
   # Running card tabs. The calendar is lazy-mounted on first open (then kept
-  # hidden when inactive, so its paged month survives toggling back and forth).
+  # hidden when inactive, so its paged month survives toggling back and forth);
+  # the first open also builds the Tasks-mode events (per-project walks that
+  # reload/1 skips until the tab has been seen).
   @impl true
   def handle_event("switch_overview_tab", %{"tab" => "calendar"}, socket) do
-    {:noreply, assign(socket, overview_tab: :calendar, calendar_seen?: true)}
+    {:noreply,
+     socket
+     |> assign(overview_tab: :calendar, calendar_seen?: true)
+     |> ensure_task_calendar()}
   end
 
   def handle_event("switch_overview_tab", _params, socket) do
     {:noreply, assign(socket, overview_tab: :list)}
+  end
+
+  # Calendar mode toggle: :tasks (default) | :projects. Hardcoded map — never
+  # String.to_existing_atom on a client param.
+  def handle_event("set_calendar_mode", %{"mode" => mode}, socket) do
+    case %{"tasks" => :tasks, "projects" => :projects} do
+      %{^mode => new_mode} -> {:noreply, assign(socket, calendar_mode: new_mode)}
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # Every assignee/overdue-filter event routes through the shared glue; a
+  # state change re-derives the filtered events, picker searches just reply.
+  def handle_event(event, params, socket) when event in @assignee_filter_events do
+    case AssigneeFilter.update(socket, event, params) do
+      {socket, :reapply} -> {:noreply, apply_task_filter(socket)}
+      {socket, :noop} -> {:noreply, socket}
+    end
+  end
+
+  # Close the whole-day popup (the PkDialog hook mirrors ESC/backdrop/✕ back
+  # to this event so the server flag stays in sync).
+  def handle_event("close_day_popup", _params, socket) do
+    {:noreply, assign(socket, day_popup: nil)}
+  end
+
+  # A row inside the day popup — open the owning project.
+  def handle_event("day_popup_open_project", %{"uuid" => uuid}, socket) when is_binary(uuid) do
+    {:noreply,
+     socket
+     |> assign(day_popup: nil)
+     |> WebHelpers.navigate_or_open(
+       to: Paths.project(uuid),
+       open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => uuid}}
+     )}
   end
 
   @impl true
@@ -304,9 +544,100 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
      )}
   end
 
+  # A task chip on the Tasks-mode calendar was clicked — open its OWNING
+  # project (a child task inside a sub-project opens the sub-project). The
+  # meta map is server-built; an unknown id (stale render) is a no-op.
+  def handle_info({:calendar_open_task, uuid}, socket) when is_binary(uuid) do
+    case Map.get(socket.assigns.task_calendar_meta, uuid) do
+      %{project_uuid: project_uuid} ->
+        {:noreply,
+         WebHelpers.navigate_or_open(socket,
+           to: Paths.project(project_uuid),
+           open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => project_uuid}}
+         )}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  # A day cell or its "+N more" link was clicked — fill the whole-day popup.
+  # (The PkDialogTrigger hook already opened the dialog client-side in the
+  # same frame; these assigns replace its skeleton with the day's rows.)
+  def handle_info({:calendar_day_click, %Date{} = date}, socket) do
+    {:noreply, open_day_popup(socket, date)}
+  end
+
+  def handle_info({:calendar_day_more, %Date{} = date}, socket) do
+    {:noreply, open_day_popup(socket, date)}
+  end
+
   def handle_info(msg, socket) do
     Logger.debug("[OverviewLive] unexpected handle_info: #{inspect(msg)}")
     {:noreply, socket}
+  end
+
+  # ── Whole-day popup ─────────────────────────────────────────────
+
+  defp open_day_popup(socket, date) do
+    assign(socket, day_popup: %{date: date, rows: day_rows(socket, date)})
+  end
+
+  # The popup's rows for `date`, from the CURRENT mode's already-built event
+  # list: Tasks mode enriches each event with its meta (project name/status);
+  # Projects mode lists that day's project bars with their date span.
+  defp day_rows(%{assigns: %{calendar_mode: :tasks}} = socket, date) do
+    meta = socket.assigns.task_calendar_meta
+
+    socket.assigns.task_calendar_events
+    |> CalendarDisplay.events_on(date)
+    |> Enum.map(fn e ->
+      m = Map.get(meta, e.id, %{})
+
+      %{
+        value: m[:project_uuid],
+        title: e.title,
+        color: e.color,
+        subtitle: row_subtitle(m),
+        status: m[:status],
+        late: m[:late] || false
+      }
+    end)
+  end
+
+  defp day_rows(socket, date) do
+    socket.assigns.calendar_events
+    |> CalendarDisplay.events_on(date)
+    |> Enum.map(fn e ->
+      %{
+        value: e.id,
+        title: e.title,
+        color: e.color,
+        subtitle: project_span_label(e),
+        status: nil,
+        late: false
+      }
+    end)
+  end
+
+  # "Project · via Team" — the provenance rider explains WHY a task appears
+  # in a person-scoped view (it may be a team/department assignment, not a
+  # personal one).
+  defp row_subtitle(m) do
+    case m[:via] do
+      {_kind, name} -> "#{m[:project_name]} · #{gettext("via %{name}", name: name)}"
+      _ -> m[:project_name]
+    end
+  end
+
+  # "May 3 – Jul 16, 2026" (single-day bars collapse to one date). `end` is
+  # exclusive, so the shown last day is end - 1.
+  defp project_span_label(e) do
+    last = Date.add(e.end, -1)
+
+    if Date.compare(e.start, last) == :eq,
+      do: L10n.format_date(e.start),
+      else: "#{L10n.format_date(e.start)} – #{L10n.format_date(last)}"
   end
 
   # Accepts either a `Date` or a `DateTime` — `scheduled_start_date`
@@ -468,36 +799,130 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
             </div>
 
             <%!-- Calendar tab. Lazy-mounted on first open, then kept (hidden when
-                 inactive) so its paged month + animation state survive toggling.
-                 The overdue <style> + SyncAnimations wrapper come along with it. --%>
+                 inactive) so month + animation state survive toggling. Two modes,
+                 both kept mounted once seen (CSS-hidden, so each grid keeps its
+                 own month navigation): Tasks (default — every task across all
+                 projects, capped per day with a Google-style "+N more") and
+                 Projects (the original one-bar-per-project view, with its overdue
+                 <style> + SyncAnimations wrapper). The PkDialogTrigger wrapper
+                 makes a day-cell or "+N more" click open the whole-day popup
+                 INSTANTLY (client dispatch); the matching server event fills the
+                 rows in. Event chips/bars have their own phx-click and correctly
+                 don't match the trigger — they navigate instead. --%>
             <div class={["mt-2", if(@overview_tab != :calendar, do: "hidden")]}>
               <%= if @calendar_seen? do %>
-                {Phoenix.HTML.raw(@overdue_style)}
-                <div id="overview-calendar-sync" phx-hook="SyncAnimations">
-                  <.live_component
-                    module={PhoenixLiveCalendar.CalendarComponent}
-                    id="projects-overview-calendar"
-                    events={@calendar_events}
-                    views={[:month]}
-                    date={@today}
-                    today={@today}
-                    fixed_weeks={false}
-                    expand_cells={true}
-                    info_label={gettext("About this calendar")}
-                    on_event_click={fn id -> send(self(), {:calendar_open_project, id}) end}
-                  >
-                    <:info>
-                      <p class="mb-1 text-sm font-semibold text-base-content">
-                        {gettext("Reading the calendar")}
-                      </p>
-                      <p>{gettext("Each project is an ongoing line across the month.")}</p>
-                      <p class="mt-1.5">{overdue_legend(@overdue_pattern)}</p>
-                      <p class="mt-1.5 text-base-content/50">
-                        {gettext("Late projects are grouped at the top.")}
-                      </p>
-                    </:info>
-                  </.live_component>
+                <%!-- No header row at all: the Filters funnel lives in the
+                     tasks-calendar's OWN toolbar (lib 0.3.0 toolbar_start slot)
+                     and the Tasks/Projects mode toggle rides toolbar_end of
+                     BOTH grids — the calendar chrome is the chrome. --%>
+                <div
+                  id={"overview-calendar-day-trigger-#{@sfx}"}
+                  phx-hook="PkDialogTrigger"
+                  data-dialog={"overview-day-modal-#{@sfx}"}
+                  data-trigger=".cal-day-cell, .cal-more-link"
+                >
+                  <%!-- In-flight pulse for the LIB-rendered clickables (chips/
+                       bars/cells/more-links) — their classes aren't ours to
+                       extend, so a tiny static style covers them. --%>
+                  {Phoenix.HTML.raw(CalendarDisplay.loading_style())}
+                  <%!-- Tasks mode (default): capped day cells — at most 4 bars +
+                       3 chips per day, the rest behind "+N more". --%>
+                  <div class={if(@calendar_mode != :tasks, do: "hidden")}>
+                    <.live_component
+                      module={PhoenixLiveCalendar.CalendarComponent}
+                      id={"overview-tasks-calendar-#{@sfx}"}
+                      events={@task_calendar_events}
+                      views={[:month, :agenda]}
+                      date={@today}
+                      today={@today}
+                      fixed_weeks={false}
+                      expand_cells={true}
+                      max_events={CalendarDisplay.max_events()}
+                      max_multiday={CalendarDisplay.max_multiday()}
+                      info_label={gettext("About this calendar")}
+                      on_event_click={fn id -> send(self(), {:calendar_open_task, id}) end}
+                      on_date_select={fn date -> send(self(), {:calendar_day_click, date}) end}
+                      on_more_click={fn date -> send(self(), {:calendar_day_more, date}) end}
+                    >
+                      <:toolbar_start>
+                        <.assignee_filter_panel
+                          id={"overview-filter-#{@sfx}"}
+                          assignee_selected={@assignee_selected}
+                          include_unassigned?={@include_unassigned?}
+                          unassigned_count={@unassigned_count}
+                          assignee_direct_only?={@assignee_direct_only?}
+                          overdue_only?={@overdue_only?}
+                          me_scope={@me_scope}
+                          picker_target={"#overview-calendar-day-trigger-#{@sfx}"}
+                        />
+                      </:toolbar_start>
+                      <:toolbar_end>
+                        {mode_toggle(%{calendar_mode: @calendar_mode})}
+                      </:toolbar_end>
+                      <:info>
+                        <p class="mb-1 text-sm font-semibold text-base-content">
+                          {gettext("Reading the calendar")}
+                        </p>
+                        <p>
+                          {gettext("Every task from every project, shown on the days it is scheduled to run.")}
+                        </p>
+                        <p class="mt-1.5">
+                          {gettext("Tasks share their project's color. Click a task to open its project.")}
+                        </p>
+                        <p class="mt-1.5">
+                          {gettext("A red ring marks a late task — not done, but past its scheduled days.")}
+                        </p>
+                        <p class="mt-1.5 text-base-content/50">
+                          {gettext("Busy days cap the list — click the day or its +N more link to see everything scheduled that day.")}
+                        </p>
+                        <p class="mt-1.5 text-base-content/50">
+                          {gettext("Placement is computed from each project's task order and durations — it moves as tasks are edited, reordered, or completed.")}
+                        </p>
+                      </:info>
+                    </.live_component>
+                  </div>
+
+                  <%!-- Projects mode: the original ongoing-line view. --%>
+                  <div class={if(@calendar_mode != :projects, do: "hidden")}>
+                    {Phoenix.HTML.raw(@overdue_style)}
+                    <div id={"overview-calendar-sync-#{@sfx}"} phx-hook="SyncAnimations">
+                      <.live_component
+                        module={PhoenixLiveCalendar.CalendarComponent}
+                        id={"projects-overview-calendar-#{@sfx}"}
+                        events={@calendar_events}
+                        views={[:month]}
+                        date={@today}
+                        today={@today}
+                        fixed_weeks={false}
+                        expand_cells={true}
+                        info_label={gettext("About this calendar")}
+                        on_event_click={fn id -> send(self(), {:calendar_open_project, id}) end}
+                        on_date_select={fn date -> send(self(), {:calendar_day_click, date}) end}
+                        on_more_click={fn date -> send(self(), {:calendar_day_more, date}) end}
+                      >
+                        <:toolbar_end>
+                          {mode_toggle(%{calendar_mode: @calendar_mode})}
+                        </:toolbar_end>
+                        <:info>
+                          <p class="mb-1 text-sm font-semibold text-base-content">
+                            {gettext("Reading the calendar")}
+                          </p>
+                          <p>{gettext("Each project is an ongoing line across the month.")}</p>
+                          <p class="mt-1.5">{overdue_legend(@overdue_pattern)}</p>
+                          <p class="mt-1.5 text-base-content/50">
+                            {gettext("Late projects are grouped at the top.")}
+                          </p>
+                        </:info>
+                      </.live_component>
+                    </div>
+                  </div>
                 </div>
+
+                <.day_popup_modal
+                  id={"overview-day-modal-#{@sfx}"}
+                  day_popup={@day_popup}
+                  row_click="day_popup_open_project"
+                />
               <% end %>
             </div>
           </div>

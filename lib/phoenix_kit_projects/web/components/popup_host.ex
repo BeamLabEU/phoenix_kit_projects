@@ -56,6 +56,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
   """
 
   use Phoenix.Component
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   attr(:modal_stack, :list, required: true)
   attr(:on_close, :string, default: "close_top_modal")
@@ -146,7 +147,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
           phx-click={@on_close}
           phx-value-frame-ref={frame.frame_ref}
           class="modal-backdrop"
-          aria-label="Close"
+          aria-label={gettext("Close")}
         ></button>
       </dialog>
     </div>

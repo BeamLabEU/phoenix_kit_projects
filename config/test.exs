@@ -32,3 +32,7 @@ config :phoenix_kit_projects, PhoenixKitProjects.Test.Endpoint,
 config :phoenix, :json_library, Jason
 
 config :logger, level: :warning
+
+# Shrink the slider-audit coalescing window so tests can wait it out
+# deterministically (runtime default: 1s of quiet).
+config :phoenix_kit_projects, :display_log_flush_ms, 30

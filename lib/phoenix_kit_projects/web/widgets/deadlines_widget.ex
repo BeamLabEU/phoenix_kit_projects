@@ -32,15 +32,15 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
       {:ok,
        socket
        |> assign(:available, true)
-       |> assign(:compact, compact?(assigns[:size]))
        |> assign(
          :view,
-         effective_view(assigns[:view], ~w(detailed compact), small?(assigns[:size], 4, 2))
+         effective_view(assigns[:view], ~w(detailed compact))
        )
        |> assign(:rows, rows)
+       |> assign(:budget, limit(settings))
        |> assign(:now, DateTime.utc_now())}
     else
-      {:ok, assign(socket, available: false, compact: false)}
+      {:ok, assign(socket, :available, false)}
     end
   end
 
@@ -74,8 +74,13 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
 
   defp mine_uuids(nil), do: nil
 
-  defp mine_uuids(user_uuid),
-    do: user_uuid |> Projects.list_assignments_for_user() |> MapSet.new(& &1.project_uuid)
+  defp mine_uuids(user_uuid) do
+    user_uuid |> Projects.list_assignments_for_user() |> MapSet.new(& &1.project_uuid)
+  rescue
+    # Never crash the host dashboard; nil keeps the "no resolvable viewer ⇒
+    # empty, never leak all" semantics of scope_and_limit/4.
+    _ -> nil
+  end
 
   # Started, unfinished projects with a computable planned end, soonest first.
   # No cap here — `scope_and_limit/4` filters to the viewer first, then takes.
@@ -92,7 +97,7 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
   def render(%{available: false} = assigns) do
     ~H"""
     <div class="contents">
-      <.frame title={gettext("Deadlines")} compact={@compact}><.unavailable /></.frame>
+      <.frame title={gettext("Deadlines")}><.unavailable /></.frame>
     </div>
     """
   end
@@ -100,36 +105,55 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame title={gettext("Deadlines")} icon="hero-flag" compact={@compact}>
+      <.frame title={gettext("Deadlines")} icon="hero-flag">
         <.empty
           :if={@rows == []}
           icon="hero-flag"
           message={gettext("No running projects with a planned end.")}
         />
 
-        <ul :if={@rows != []} class="flex flex-col divide-y divide-base-200">
-          <li :for={row <- @rows} class="flex items-center gap-2 py-1.5">
+        <%!-- N-SLOT self-fit (dashboards contract): the box divides into the
+        `limit` budget of fixed slots, each row's type scales to its slot via
+        container-query units — the list always fits, nothing scrolls. --%>
+        <ul :if={@rows != []} class="flex h-full min-h-0 flex-col divide-y divide-base-200">
+          <li
+            :for={row <- @rows}
+            class="flex min-h-0 flex-1 items-center gap-2 overflow-hidden [container-type:size]"
+          >
             <div class="min-w-0 flex-1">
               <.link
                 navigate={Paths.project(row.project.uuid)}
-                class="block truncate text-sm hover:underline"
+                class="block truncate leading-tight hover:underline"
+                style={fit_text(11, "34cqh", 15)}
               >
                 {row.project.name}
               </.link>
-              <p :if={@view == "detailed"} class="text-xs tabular-nums text-base-content/50">
+              <p
+                :if={@view == "detailed"}
+                class="pk-slot-meta truncate leading-tight tabular-nums text-base-content/50"
+                style={fit_text(9, "24cqh", 12)}
+              >
                 {row.progress_pct}% · {row.done}/{row.total} {gettext("tasks")}
               </p>
             </div>
-            <span class={[
-              "shrink-0 text-xs tabular-nums",
-              if(late?(row, @now), do: "font-medium text-error", else: "text-base-content/60")
-            ]}>
+            <span
+              class={[
+                "shrink-0 leading-none tabular-nums",
+                if(late?(row, @now), do: "font-medium text-error", else: "text-base-content/60")
+              ]}
+              style={fit_text(10, "26cqh", 13)}
+            >
               {date(row.planned_end)}
             </span>
-            <span :if={late?(row, @now)} class="badge badge-error badge-xs gap-0.5 shrink-0">
+            <span
+              :if={late?(row, @now)}
+              class="shrink-0 rounded-full bg-error/15 px-[0.6em] py-[0.15em] font-medium leading-tight text-error"
+              style={fit_text(9, "22cqh", 12)}
+            >
               {gettext("late")}
             </span>
           </li>
+          <li :for={_pad <- 1..max(@budget - length(@rows), 0)//1} class="min-h-0 flex-1"></li>
         </ul>
       </.frame>
     </div>

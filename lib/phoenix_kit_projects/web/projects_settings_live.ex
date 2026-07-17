@@ -25,6 +25,16 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
 
   @impl true
+  # Quiet window before a queued slider-change audit row flushes. A range
+  # drag emits a debounced phx-change per step; auditing each step is noise —
+  # ONE row with the settled value is the record of intent (AI-panel
+  # consensus, 2026-07-17). Compile-time so the test config can shrink it.
+  @display_log_flush_ms Application.compile_env(
+                          :phoenix_kit_projects,
+                          :display_log_flush_ms,
+                          1_000
+                        )
+
   def mount(_params, session, socket) do
     WebHelpers.maybe_put_locale(session)
     wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
@@ -41,6 +51,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
        use_status_translations: Statuses.global_use_status_translations?(),
        gantt_display: GanttDisplay.read(),
        calendar_anim: CalendarDisplay.read_animation(),
+       # Coalesced audit rows for slider drags: %{{action, field} => %{ref:, opts:}}.
+       # Each new tick replaces the pending entry (and its timer token), so
+       # only the settled value flushes — see queue_display_log/4.
+       pending_display_logs: %{},
        demo_events: demo_events(),
        demo_connectors: demo_connectors(),
        demo_range: demo_range(),
@@ -129,11 +143,12 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   def handle_event("set_gantt_label", %{"_target" => [field]} = params, socket) do
     GanttDisplay.put(field, params[field])
 
-    Activity.log("projects.gantt_display_changed",
-      actor_uuid: Activity.actor_uuid(socket),
-      resource_type: "projects_settings",
-      metadata: %{"field" => field, "value" => params[field]}
-    )
+    socket =
+      queue_display_log(socket, "projects.gantt_display_changed", field,
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "projects_settings",
+        metadata: %{"field" => field, "value" => params[field]}
+      )
 
     {:noreply, assign(socket, gantt_display: GanttDisplay.read())}
   end
@@ -163,7 +178,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       resource_type: "projects_settings"
     )
 
-    {:noreply, assign(socket, gantt_display: GanttDisplay.read())}
+    {:noreply,
+     socket
+     |> drop_pending_display_logs("projects.gantt_display_changed")
+     |> assign(gantt_display: GanttDisplay.read())}
   end
 
   # One overdue-animation control changed (mode / speed / brightness / wave step).
@@ -171,11 +189,12 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   def handle_event("set_calendar_anim", %{"_target" => [field]} = params, socket) do
     CalendarDisplay.put_animation(field, params[field])
 
-    Activity.log("projects.calendar_display_changed",
-      actor_uuid: Activity.actor_uuid(socket),
-      resource_type: "projects_settings",
-      metadata: %{"field" => field}
-    )
+    socket =
+      queue_display_log(socket, "projects.calendar_display_changed", field,
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "projects_settings",
+        metadata: %{"field" => field}
+      )
 
     {:noreply, assign(socket, calendar_anim: CalendarDisplay.read_animation())}
   end
@@ -191,12 +210,65 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       resource_type: "projects_settings"
     )
 
-    {:noreply, assign(socket, calendar_anim: CalendarDisplay.read_animation())}
+    {:noreply,
+     socket
+     |> drop_pending_display_logs("projects.calendar_display_changed")
+     |> assign(calendar_anim: CalendarDisplay.read_animation())}
   end
 
   # Expand/collapse the demo sub-project (preview only — not a persisted setting).
   def handle_event("toggle_demo_subproject", %{"event-id" => id}, socket) do
     {:noreply, update(socket, :demo_expanded, &PhoenixLiveGantt.toggle_expanded(&1, id))}
+  end
+
+  # ── Coalesced slider audit logs ─────────────────────────────────
+  # A drag = one audit row. Each tick replaces the pending entry and mints a
+  # fresh timer token; only the timer whose token still matches flushes, so
+  # stale timers from earlier ticks fall through silently.
+
+  defp queue_display_log(socket, action, field, opts) do
+    key = {action, field}
+    ref = make_ref()
+    Process.send_after(self(), {:flush_display_log, key, ref}, @display_log_flush_ms)
+
+    pending = Map.put(socket.assigns.pending_display_logs, key, %{ref: ref, opts: opts})
+    assign(socket, pending_display_logs: pending)
+  end
+
+  # A reset supersedes any queued change rows for that card — flushing a
+  # pre-reset value AFTER the reset row would read backwards in the trail.
+  defp drop_pending_display_logs(socket, action) do
+    pending =
+      socket.assigns.pending_display_logs
+      |> Enum.reject(fn {{a, _field}, _} -> a == action end)
+      |> Map.new()
+
+    assign(socket, pending_display_logs: pending)
+  end
+
+  @impl true
+  def handle_info({:flush_display_log, key, ref}, socket) do
+    case socket.assigns.pending_display_logs do
+      %{^key => %{ref: ^ref, opts: opts}} = pending ->
+        {action, _field} = key
+        Activity.log(action, opts)
+        {:noreply, assign(socket, pending_display_logs: Map.delete(pending, key))}
+
+      _stale_or_gone ->
+        {:noreply, socket}
+    end
+  end
+
+  # Best effort: don't lose the settled value when the admin navigates away
+  # inside the quiet window. (A crash skips this — acceptable for UI-tuning
+  # audit rows.)
+  @impl true
+  def terminate(_reason, socket) do
+    Enum.each(socket.assigns[:pending_display_logs] || %{}, fn {{action, _field}, %{opts: opts}} ->
+      Activity.log(action, opts)
+    end)
+
+    :ok
   end
 
   defp current_flag(display, "show_progress"), do: display.show_progress

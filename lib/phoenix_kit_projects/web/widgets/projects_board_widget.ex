@@ -12,7 +12,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
   import PhoenixKitProjects.Web.Components.DerivedStatusBadge
   import PhoenixKitProjects.Web.Widgets.Helpers
 
-  alias PhoenixKitProjects.{Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Paths, Statuses}
   alias PhoenixKitProjects.Schemas.Project
 
   # Attention-first tile order: what needs eyes sorts before what's fine.
@@ -23,10 +23,8 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
     socket = assign(socket, :id, assigns.id)
 
     if available?() do
-      projects = Projects.list_projects()
-
-      status_by =
-        if Statuses.available?(), do: Statuses.statuses_for_projects(projects), else: %{}
+      projects = safe_list_projects()
+      status_by = statuses_by_project(projects)
 
       tiles =
         projects
@@ -36,15 +34,22 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
       {:ok,
        socket
        |> assign(:available, true)
-       |> assign(:compact, compact?(assigns[:size]))
        |> assign(:view, effective_view(assigns[:view], ~w(grid counts)))
        |> assign(:projects, projects)
        |> assign(:tiles, tiles)
        |> assign(:status_by, status_by)
        |> assign(:buckets, buckets(projects, status_by))}
     else
-      {:ok, assign(socket, available: false, compact: false)}
+      {:ok, assign(socket, :available, false)}
     end
+  end
+
+  defp statuses_by_project(projects) do
+    if Statuses.available?(), do: Statuses.statuses_for_projects(projects), else: %{}
+  rescue
+    # Never crash the host dashboard: a transient DB error just drops the
+    # workflow colours/buckets (tiles fall back to the neutral status).
+    _ -> %{}
   end
 
   # Group projects by their workflow status label (nil → "No status"), keeping a
@@ -60,7 +65,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
   def render(%{available: false} = assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Projects board")} icon="hero-squares-2x2"><.unavailable /></.frame>
+      <.frame title={gettext("Projects board")} icon="hero-squares-2x2"><.unavailable /></.frame>
     </div>
     """
   end
@@ -68,7 +73,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
   def render(assigns) do
     ~H"""
     <div class="contents">
-      <.frame compact={@compact} title={gettext("Projects board")} icon="hero-squares-2x2" href={Paths.projects()}>
+      <.frame title={gettext("Projects board")} icon="hero-squares-2x2" href={Paths.projects()}>
       <.empty :if={@projects == []} icon="hero-squares-2x2" message={gettext("No projects yet.")} />
 
       <div :if={@view == "grid"} class="grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-1.5">
