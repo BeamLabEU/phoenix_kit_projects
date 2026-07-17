@@ -26,7 +26,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{L10n, Paths, Projects, ScheduleLayout}
+  alias PhoenixKitProjects.{CalendarDisplay, L10n, Paths, Projects, ScheduleLayout}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -425,6 +425,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             data-trigger=".cal-day-cell, .cal-more-link"
             class="border border-base-200 rounded-lg overflow-hidden"
           >
+            <%!-- In-flight pulse for the lib-rendered clickables (chips/bars/
+                 cells/more-links) — their classes aren't ours to extend. --%>
+            {Phoenix.HTML.raw(CalendarDisplay.loading_style())}
             <.live_component
               module={PhoenixLiveCalendar.CalendarComponent}
               id={"project-calendar-#{@project.uuid}"}
@@ -501,7 +504,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                     type="button"
                     phx-click="day_popup_item_click"
                     phx-value-uuid={row.id}
-                    class="flex items-center gap-2.5 w-full p-2 rounded-lg hover:bg-base-200 text-left transition"
+                    class={[
+                      "flex items-center gap-2.5 w-full p-2 rounded-lg hover:bg-base-200 text-left transition",
+                      CalendarDisplay.loading_class()
+                    ]}
                   >
                     <span class={["w-2.5 h-2.5 rounded-full shrink-0", row.color]}></span>
                     <span class="flex-1 min-w-0">

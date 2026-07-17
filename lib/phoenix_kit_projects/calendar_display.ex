@@ -333,6 +333,45 @@ defmodule PhoenixKitProjects.CalendarDisplay do
 
   # ── Overdue animation settings + CSS generation ─────────────────────────────
 
+  @doc """
+  Tailwind classes giving any of OUR clickable controls in-flight feedback:
+  LiveView tags the clicked element with `phx-click-loading` for the round
+  trip; these arbitrary variants pulse + dim it and block double-clicks.
+  Returned from a function (not inlined per call site) so every control
+  shares one literal for the Tailwind scan.
+  """
+  @spec loading_class() :: String.t()
+  def loading_class do
+    "[&.phx-click-loading]:opacity-60 [&.phx-click-loading]:animate-pulse " <>
+      "[&.phx-click-loading]:pointer-events-none"
+  end
+
+  @doc """
+  A `<style>` block giving the calendar LIBRARY's clickable nodes (event
+  chips, multi-day bars, day cells, "+N more") the same in-flight pulse —
+  their classes are lib-rendered, so the Tailwind-variant approach above
+  can't reach them. Static CSS, safe for `Phoenix.HTML.raw/1`.
+  """
+  @spec loading_style() :: String.t()
+  def loading_style do
+    """
+    <style>
+    .cal-event.phx-click-loading, .cal-multiday-bar.phx-click-loading,
+    .cal-day-cell.phx-click-loading, .cal-more-link.phx-click-loading {
+      opacity: 0.5;
+      animation: pk-cal-click-pulse 1s ease-in-out infinite;
+    }
+    @keyframes pk-cal-click-pulse { 50% { opacity: 0.25; } }
+    @media (prefers-reduced-motion: reduce) {
+      .cal-event.phx-click-loading, .cal-multiday-bar.phx-click-loading,
+      .cal-day-cell.phx-click-loading, .cal-more-link.phx-click-loading {
+        animation: none;
+      }
+    }
+    </style>
+    """
+  end
+
   @doc "Allowed overdue-animation modes (for the settings form)."
   @spec anim_modes() :: [String.t()]
   def anim_modes, do: @anim_modes

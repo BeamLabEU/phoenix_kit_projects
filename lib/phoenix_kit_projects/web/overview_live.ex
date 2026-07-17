@@ -957,6 +957,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                         type="button"
                         class={[
                           "btn btn-xs join-item tooltip",
+                          CalendarDisplay.loading_class(),
                           @assignee_selected == [] and not @include_unassigned? && "btn-active"
                         ]}
                         data-tip={gettext("Show every task — clears the person filters")}
@@ -969,6 +970,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                         type="button"
                         class={[
                           "btn btn-xs join-item tooltip",
+                          CalendarDisplay.loading_class(),
                           me_chip_active?(@me_scope, @assignee_selected) && "btn-active"
                         ]}
                         data-tip={gettext("Your work — assigned to you, your teams, or your departments")}
@@ -978,7 +980,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       </button>
                       <button
                         type="button"
-                        class={["btn btn-xs join-item tooltip", @include_unassigned? && "btn-active"]}
+                        class={[
+                          "btn btn-xs join-item tooltip",
+                          CalendarDisplay.loading_class(),
+                          @include_unassigned? && "btn-active"
+                        ]}
                         data-tip={gettext("Tasks nobody is assigned to yet — combines with picked people")}
                         phx-click="toggle_unassigned"
                       >
@@ -993,7 +999,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                     >
                       <input
                         type="checkbox"
-                        class="checkbox checkbox-xs checkbox-error"
+                        class={["checkbox checkbox-xs checkbox-error", CalendarDisplay.loading_class()]}
                         checked={@overdue_only?}
                         phx-click="toggle_overdue_only"
                       />
@@ -1004,7 +1010,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   <div class="join ml-auto">
                     <button
                       type="button"
-                      class={["btn btn-xs join-item tooltip", @calendar_mode == :tasks && "btn-active"]}
+                      class={[
+                        "btn btn-xs join-item tooltip",
+                        CalendarDisplay.loading_class(),
+                        @calendar_mode == :tasks && "btn-active"
+                      ]}
                       data-tip={gettext("Every task on the days it is scheduled to run")}
                       phx-click="set_calendar_mode"
                       phx-value-mode="tasks"
@@ -1015,6 +1025,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       type="button"
                       class={[
                         "btn btn-xs join-item tooltip tooltip-left",
+                        CalendarDisplay.loading_class(),
                         @calendar_mode == :projects && "btn-active"
                       ]}
                       data-tip={gettext("One line per project, with the overdue marker")}
@@ -1067,8 +1078,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                          red disc on hover. --%>
                     <button
                       type="button"
-                      phx-click="remove_assignee_person"
-                      phx-value-uuid={p.uuid}
+                      phx-click={
+                        Phoenix.LiveView.JS.hide(
+                          to: {:closest, "span.badge"},
+                          transition: {"transition-opacity duration-100", "opacity-100", "opacity-0"}
+                        )
+                        |> Phoenix.LiveView.JS.push("remove_assignee_person", value: %{uuid: p.uuid})
+                      }
                       class="shrink-0 cursor-pointer rounded-full p-0.5 -m-0.5 transition-colors hover:bg-error hover:text-error-content tooltip"
                       data-tip={gettext("Remove %{name}", name: p.name)}
                       aria-label={gettext("Remove %{name}", name: p.name)}
@@ -1086,7 +1102,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   >
                     <input
                       type="checkbox"
-                      class="checkbox checkbox-xs"
+                      class={["checkbox checkbox-xs", CalendarDisplay.loading_class()]}
                       checked={@assignee_direct_only?}
                       phx-click="toggle_assignee_direct"
                     />
@@ -1100,6 +1116,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   data-dialog="overview-day-modal"
                   data-trigger=".cal-day-cell, .cal-more-link"
                 >
+                  <%!-- In-flight pulse for the LIB-rendered clickables (chips/
+                       bars/cells/more-links) — their classes aren't ours to
+                       extend, so a tiny static style covers them. --%>
+                  {Phoenix.HTML.raw(CalendarDisplay.loading_style())}
                   <%!-- Tasks mode (default): capped day cells — at most 4 bars +
                        3 chips per day, the rest behind "+N more". --%>
                   <div class={if(@calendar_mode != :tasks, do: "hidden")}>
@@ -1207,7 +1227,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                           type="button"
                           phx-click="day_popup_open_project"
                           phx-value-uuid={row.project_uuid}
-                          class="flex items-center gap-2.5 w-full p-2 rounded-lg hover:bg-base-200 text-left transition"
+                          class={[
+                            "flex items-center gap-2.5 w-full p-2 rounded-lg hover:bg-base-200 text-left transition",
+                            CalendarDisplay.loading_class()
+                          ]}
                         >
                           <span class={["w-2.5 h-2.5 rounded-full shrink-0", row.color]}></span>
                           <span class="flex-1 min-w-0">
