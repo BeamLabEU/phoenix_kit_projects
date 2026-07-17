@@ -321,6 +321,42 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     dt |> PhoenixKit.Utils.Date.shift_to_offset(offset) |> DateTime.to_date()
   end
 
+  # The Tasks/Projects mode toggle, rendered into BOTH calendar grids'
+  # toolbar_end slots (each grid shows its own copy; only one grid is visible
+  # at a time). tooltip-left on the edge button so it doesn't clip.
+  defp mode_toggle(assigns) do
+    ~H"""
+    <div class="join">
+      <button
+        type="button"
+        class={[
+          "btn btn-xs join-item tooltip",
+          CalendarDisplay.loading_class(),
+          @calendar_mode == :tasks && "btn-active"
+        ]}
+        data-tip={gettext("Every task on the days it is scheduled to run")}
+        phx-click="set_calendar_mode"
+        phx-value-mode="tasks"
+      >
+        {gettext("Tasks")}
+      </button>
+      <button
+        type="button"
+        class={[
+          "btn btn-xs join-item tooltip tooltip-left",
+          CalendarDisplay.loading_class(),
+          @calendar_mode == :projects && "btn-active"
+        ]}
+        data-tip={gettext("One line per project, with the overdue marker")}
+        phx-click="set_calendar_mode"
+        phx-value-mode="projects"
+      >
+        {gettext("Projects")}
+      </button>
+    </div>
+    """
+  end
+
   # The calendar info-popover sentence describing the overdue indicator, worded
   # to match the configured animation mode (set on /admin/settings/projects).
   defp overdue_legend("solid") do
@@ -774,56 +810,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                  don't match the trigger — they navigate instead. --%>
             <div class={["mt-2", if(@overview_tab != :calendar, do: "hidden")]}>
               <%= if @calendar_seen? do %>
-                <%!-- Uncrowded header: ONE funnel button (badged with the
-                     active-filter count) + the view-mode toggle. Every filter
-                     control lives in the popup panel below the funnel. The
-                     panel opens/closes entirely CLIENT-SIDE (JS.toggle — LV JS
-                     commands stick across patches, so toggling a checkbox
-                     inside doesn't close it) with phx-click-away on the shared
-                     wrapper for outside-click dismiss (clicks on the funnel
-                     itself are inside the wrapper, so they only toggle). --%>
-                <div class="flex flex-wrap items-center gap-2 mb-2">
-                  <.assignee_filter_panel
-                    :if={@calendar_mode == :tasks}
-                    id="overview-filter"
-                    assignee_selected={@assignee_selected}
-                    include_unassigned?={@include_unassigned?}
-                    unassigned_count={@unassigned_count}
-                    assignee_direct_only?={@assignee_direct_only?}
-                    overdue_only?={@overdue_only?}
-                    me_scope={@me_scope}
-                  />
-
-                  <div class="join ml-auto">
-                    <button
-                      type="button"
-                      class={[
-                        "btn btn-xs join-item tooltip",
-                        CalendarDisplay.loading_class(),
-                        @calendar_mode == :tasks && "btn-active"
-                      ]}
-                      data-tip={gettext("Every task on the days it is scheduled to run")}
-                      phx-click="set_calendar_mode"
-                      phx-value-mode="tasks"
-                    >
-                      {gettext("Tasks")}
-                    </button>
-                    <button
-                      type="button"
-                      class={[
-                        "btn btn-xs join-item tooltip tooltip-left",
-                        CalendarDisplay.loading_class(),
-                        @calendar_mode == :projects && "btn-active"
-                      ]}
-                      data-tip={gettext("One line per project, with the overdue marker")}
-                      phx-click="set_calendar_mode"
-                      phx-value-mode="projects"
-                    >
-                      {gettext("Projects")}
-                    </button>
-                  </div>
-                </div>
-
+                <%!-- No header row at all: the Filters funnel lives in the
+                     tasks-calendar's OWN toolbar (lib 0.3.0 toolbar_start slot)
+                     and the Tasks/Projects mode toggle rides toolbar_end of
+                     BOTH grids — the calendar chrome is the chrome. --%>
                 <div
                   id="overview-calendar-day-trigger"
                   phx-hook="PkDialogTrigger"
@@ -853,6 +843,21 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       on_date_select={fn date -> send(self(), {:calendar_day_click, date}) end}
                       on_more_click={fn date -> send(self(), {:calendar_day_more, date}) end}
                     >
+                      <:toolbar_start>
+                        <.assignee_filter_panel
+                          id="overview-filter"
+                          assignee_selected={@assignee_selected}
+                          include_unassigned?={@include_unassigned?}
+                          unassigned_count={@unassigned_count}
+                          assignee_direct_only?={@assignee_direct_only?}
+                          overdue_only?={@overdue_only?}
+                          me_scope={@me_scope}
+                          picker_target="#overview-calendar-day-trigger"
+                        />
+                      </:toolbar_start>
+                      <:toolbar_end>
+                        {mode_toggle(%{calendar_mode: @calendar_mode})}
+                      </:toolbar_end>
                       <:info>
                         <p class="mb-1 text-sm font-semibold text-base-content">
                           {gettext("Reading the calendar")}
@@ -894,6 +899,9 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                         on_date_select={fn date -> send(self(), {:calendar_day_click, date}) end}
                         on_more_click={fn date -> send(self(), {:calendar_day_more, date}) end}
                       >
+                        <:toolbar_end>
+                          {mode_toggle(%{calendar_mode: @calendar_mode})}
+                        </:toolbar_end>
                         <:info>
                           <p class="mb-1 text-sm font-semibold text-base-content">
                             {gettext("Reading the calendar")}

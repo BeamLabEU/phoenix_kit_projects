@@ -516,22 +516,6 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             </:cta>
           </.empty_state>
         <% else %>
-          <%!-- Same shared Filters popup as the Overview calendar (person
-               chips with descendant-aware sub-project matching, Unassigned,
-               Personal/Overdue-only). Filtering can empty the month — the
-               panel stays reachable, its badge showing why. --%>
-          <div class="flex items-center gap-2 mb-2">
-            <.assignee_filter_panel
-              id={"project-cal-filter-#{@project.uuid}"}
-              assignee_selected={@assignee_selected}
-              include_unassigned?={@include_unassigned?}
-              unassigned_count={@unassigned_count}
-              assignee_direct_only?={@assignee_direct_only?}
-              overdue_only?={@overdue_only?}
-              me_scope={@me_scope}
-            />
-          </div>
-
           <%!-- PkDialogTrigger makes a day-cell / "+N more" click open the
                whole-day popup in the same frame; event chips have their own
                phx-click and correctly don't match — they navigate instead. --%>
@@ -561,6 +545,25 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
               on_date_select={fn date -> send(self(), {:calendar_date_click, date}) end}
               on_more_click={fn date -> send(self(), {:calendar_more_click, date}) end}
             >
+              <%!-- Same shared Filters popup as the Overview calendar (person
+                   chips with descendant-aware sub-project matching, Unassigned,
+                   Personal/Overdue-only), riding the calendar's own toolbar
+                   (lib 0.3.0 toolbar_start slot). Filtering can empty the
+                   month — the panel stays reachable, its badge showing why.
+                   picker_target routes the SearchPicker hook's events past the
+                   enclosing CalendarComponent back to this LiveView. --%>
+              <:toolbar_start>
+                <.assignee_filter_panel
+                  id={"project-cal-filter-#{@project.uuid}"}
+                  assignee_selected={@assignee_selected}
+                  include_unassigned?={@include_unassigned?}
+                  unassigned_count={@unassigned_count}
+                  assignee_direct_only?={@assignee_direct_only?}
+                  overdue_only?={@overdue_only?}
+                  me_scope={@me_scope}
+                  picker_target={"#project-calendar-day-trigger-#{@project.uuid}"}
+                />
+              </:toolbar_start>
               <:info>
                 <p class="mb-1 text-sm font-semibold text-base-content">
                   {gettext("Reading the calendar")}

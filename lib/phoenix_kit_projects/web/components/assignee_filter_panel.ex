@@ -25,6 +25,19 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
   alias PhoenixKitProjects.Web.AssigneeFilter
 
   attr(:id, :string, required: true, doc: "unique prefix for the panel/picker DOM ids")
+
+  attr(:picker_target, :string,
+    default: nil,
+    doc: """
+    CSS selector of a PARENT-LV-owned element the person picker's events
+    should route to. Required when the panel renders INSIDE another
+    LiveComponent's DOM (e.g. the calendar's toolbar slot): the SearchPicker
+    hook auto-targets its enclosing component, which would swallow the
+    search/pick events. Plain phx-click events are unaffected — they always
+    reach the LV.
+    """
+  )
+
   attr(:assignee_selected, :list, required: true)
   attr(:include_unassigned?, :boolean, required: true)
   attr(:unassigned_count, :integer, required: true)
@@ -76,6 +89,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
           <.search_picker
             id={"#{@id}-search"}
             dropdown_id={"#{@id}-dropdown"}
+            target={@picker_target}
             search_event="assignee_search"
             results_event="assignee_results"
             pick_event="assignee_pick"
