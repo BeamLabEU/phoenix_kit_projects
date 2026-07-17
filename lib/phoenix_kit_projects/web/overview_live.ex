@@ -97,8 +97,9 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         # AI-panel consensus, Linear-style): person chips picked via the core
         # search_picker (Me = one-tap toggle for the viewer's own chip) plus an
         # Unassigned toggle, all filtering as a UNION ("Me + Alice +
-        # Unassigned" works). No chips + no unassigned = Everyone (the resting
-        # state; the Everyone button is the clear-all). Inherited semantics by
+        # Unassigned" works). No chips + no unassigned = everything (the
+        # resting state; a Clear button renders only while filtering, and
+        # resets Overdue/Personal-only too). Inherited semantics by
         # default (a person's chip covers them, their teams, their departments
         # — resolved by PhoenixKitProjects.Assignees); `assignee_direct_only?`
         # narrows person matches to personal assignments (never affects the
@@ -522,12 +523,19 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     end
   end
 
-  # "Everyone" — the clear-all: drop every chip and the Unassigned toggle,
-  # back to the unfiltered resting state.
+  # "Clear" — the full filter reset (chips, Unassigned, Overdue, Personal
+  # only), back to the unfiltered resting state. The button itself only
+  # renders while something is filtered.
   def handle_event("clear_assignee_filter", _params, socket) do
     {:noreply,
      socket
-     |> assign(assignee_selected: [], assignee_scopes: %{}, include_unassigned?: false)
+     |> assign(
+       assignee_selected: [],
+       assignee_scopes: %{},
+       include_unassigned?: false,
+       overdue_only?: false,
+       assignee_direct_only?: false
+     )
      |> apply_task_filter()}
   end
 
@@ -939,89 +947,21 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                  don't match the trigger — they navigate instead. --%>
             <div class={["mt-2", if(@overview_tab != :calendar, do: "hidden")]}>
               <%= if @calendar_seen? do %>
-                <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-2">
-                  <%!-- Assignee + overdue filters (Tasks mode only). Inherited
-                       semantics by default: Me / a person includes their teams
-                       and departments; "Personal only" narrows to personal
-                       assignments. Unassigned is a triage view with a live
-                       count over ALL tasks. --%>
-                  <div class={["flex flex-wrap items-center gap-2", @calendar_mode != :tasks && "hidden"]}>
-                    <%!-- Everyone = the RESET (a different kind of control from
-                         the chip-adders, so it stands alone): clears the person
-                         filters and reads as the state label when nothing is
-                         filtered (lit). The chip-adders (Me / Unassigned) live
-                         on the person row below, next to the chips they create
-                         — every active filter is visible as a removable chip. --%>
-                    <button
-                      type="button"
-                      class={[
-                        "btn btn-xs tooltip",
-                        CalendarDisplay.loading_class(),
-                        @assignee_selected == [] and not @include_unassigned? && "btn-active"
-                      ]}
-                      data-tip={gettext("Show every task — clears the person filters")}
-                      phx-click="clear_assignee_filter"
-                    >
-                      {gettext("Everyone")}
-                    </button>
-
-                    <label
-                      class="label cursor-pointer gap-1.5 text-xs tooltip"
-                      data-tip={gettext("Only late tasks — not done and past their scheduled days")}
-                    >
-                      <input
-                        type="checkbox"
-                        class={["checkbox checkbox-xs checkbox-error", CalendarDisplay.loading_class()]}
-                        checked={@overdue_only?}
-                        phx-click="toggle_overdue_only"
-                      />
-                      {gettext("Overdue only")}
-                    </label>
-                  </div>
-
-                  <div class="join ml-auto">
-                    <button
-                      type="button"
-                      class={[
-                        "btn btn-xs join-item tooltip",
-                        CalendarDisplay.loading_class(),
-                        @calendar_mode == :tasks && "btn-active"
-                      ]}
-                      data-tip={gettext("Every task on the days it is scheduled to run")}
-                      phx-click="set_calendar_mode"
-                      phx-value-mode="tasks"
-                    >
-                      {gettext("Tasks")}
-                    </button>
-                    <button
-                      type="button"
-                      class={[
-                        "btn btn-xs join-item tooltip tooltip-left",
-                        CalendarDisplay.loading_class(),
-                        @calendar_mode == :projects && "btn-active"
-                      ]}
-                      data-tip={gettext("One line per project, with the overdue marker")}
-                      phx-click="set_calendar_mode"
-                      phx-value-mode="projects"
-                    >
-                      {gettext("Projects")}
-                    </button>
-                  </div>
-                </div>
-
-                <%!-- Person row (Tasks mode only): the instant typeahead gets its
-                     own full-width row — the dropdown inherits the input's width,
-                     so a cramped inline slot crushed the names. The core
-                     search_picker renders the dropdown client-side; the server
+                <%!-- ONE filter row: the person typeahead (wide enough that the
+                     dropdown, which inherits its width, shows full names), the
+                     Me / Unassigned quick-adders, the active-filter chips, the
+                     refinement checkboxes, and a Clear that only exists while
+                     something is filtered — with the view-mode toggle on the
+                     right edge. Everything wraps on narrow screens. The
+                     search_picker renders its dropdown client-side; the server
                      answers "assignee_search" with limit+1-probed pages (Load
-                     more built in) — nothing preloads the people table. Picked
-                     people become removable chips; several chips filter as a
-                     union. --%>
-                <div class={[
-                  "flex flex-wrap items-center gap-2 mb-2",
-                  @calendar_mode != :tasks && "hidden"
-                ]}>
-                  <div class="w-full max-w-xs">
+                     more built in) — nothing preloads the people table. --%>
+                <div class="flex flex-wrap items-center gap-2 mb-2">
+                  <%!-- display:contents so the children lay out in the row
+                       itself; a plain display:none swap hides the whole filter
+                       cluster in Projects mode. --%>
+                  <div class={if(@calendar_mode == :tasks, do: "contents", else: "hidden")}>
+                  <div class="w-80 max-w-full">
                     <.search_picker
                       id="overview-assignee-search"
                       dropdown_id="overview-assignee-dropdown"
@@ -1127,6 +1067,61 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                     />
                     {gettext("Personal only")}
                   </label>
+
+                  <label
+                    class="label cursor-pointer gap-1.5 text-xs tooltip"
+                    data-tip={gettext("Only late tasks — not done and past their scheduled days")}
+                  >
+                    <input
+                      type="checkbox"
+                      class={["checkbox checkbox-xs checkbox-error", CalendarDisplay.loading_class()]}
+                      checked={@overdue_only?}
+                      phx-click="toggle_overdue_only"
+                    />
+                    {gettext("Overdue only")}
+                  </label>
+
+                  <%!-- Appears only while something is filtered — one tap back
+                       to the unfiltered everything-view. --%>
+                  <button
+                    :if={@assignee_selected != [] or @include_unassigned? or @overdue_only?}
+                    type="button"
+                    class={["btn btn-xs btn-ghost tooltip", CalendarDisplay.loading_class()]}
+                    data-tip={gettext("Clear all filters — show every task")}
+                    phx-click="clear_assignee_filter"
+                  >
+                    <.icon name="hero-x-mark" class="w-3 h-3" /> {gettext("Clear")}
+                  </button>
+                  </div>
+
+                  <div class="join ml-auto">
+                    <button
+                      type="button"
+                      class={[
+                        "btn btn-xs join-item tooltip",
+                        CalendarDisplay.loading_class(),
+                        @calendar_mode == :tasks && "btn-active"
+                      ]}
+                      data-tip={gettext("Every task on the days it is scheduled to run")}
+                      phx-click="set_calendar_mode"
+                      phx-value-mode="tasks"
+                    >
+                      {gettext("Tasks")}
+                    </button>
+                    <button
+                      type="button"
+                      class={[
+                        "btn btn-xs join-item tooltip tooltip-left",
+                        CalendarDisplay.loading_class(),
+                        @calendar_mode == :projects && "btn-active"
+                      ]}
+                      data-tip={gettext("One line per project, with the overdue marker")}
+                      phx-click="set_calendar_mode"
+                      phx-value-mode="projects"
+                    >
+                      {gettext("Projects")}
+                    </button>
+                  </div>
                 </div>
 
                 <div
