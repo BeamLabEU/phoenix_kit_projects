@@ -161,5 +161,33 @@ defmodule PhoenixKitProjects.AssigneesTest do
       {rows, _} = Assignees.search_people("_", 10)
       assert rows == []
     end
+
+    test "a backslash in the query is escaped, not an escape prefix" do
+      _ = staff_fixture()
+
+      # Unescaped, `\%` would turn the following into a literal-% match (or
+      # error); escaped, it's just a character no name contains.
+      {rows, _} = Assignees.search_people("\\", 10)
+      assert rows == []
+
+      {rows, _} = Assignees.search_people("\\%", 10)
+      assert rows == []
+    end
+
+    test "free-text edge inputs neither crash nor over-match" do
+      %{person: person} = staff_fixture()
+
+      # Unicode (CJK + emoji) — parameterized ILIKE, no encoding crash.
+      {rows, _} = Assignees.search_people("检索🙂", 10)
+      assert rows == []
+
+      # Very long query.
+      {rows, _} = Assignees.search_people(String.duplicate("x", 300), 10)
+      assert rows == []
+
+      # nil coerces to browse mode ("" via to_string) rather than raising.
+      {rows, _} = Assignees.search_people(nil, 10)
+      assert Enum.any?(rows, &(&1.uuid == person.uuid))
+    end
   end
 end

@@ -326,6 +326,17 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       assert html =~ project.name
       assert html =~ "day_popup_open_project"
     end
+
+    test "a Projects-mode bar click opens the project", %{conn: conn} do
+      {project, _} = calendar_fixture(1)
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      open_calendar_tab(view)
+      render_click(view, "set_calendar_mode", %{"mode" => "projects"})
+
+      send(view.pid, {:calendar_open_project, project.uuid})
+      assert_redirect(view, Paths.project(project.uuid))
+    end
   end
 
   describe "calendar assignee filter + overdue" do

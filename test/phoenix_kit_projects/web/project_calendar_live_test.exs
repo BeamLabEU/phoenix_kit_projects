@@ -442,4 +442,31 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
 
     assert render(view) =~ "Late-added chore"
   end
+
+  test "a project_deleted broadcast flashes and leaves the page", %{conn: conn} do
+    {project, _a1, _a2} = started_project_with_tasks()
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+    render(view)
+
+    send(view.pid, {:projects, :project_deleted, %{uuid: project.uuid}})
+    assert_redirect(view, Paths.projects())
+  end
+
+  test "picking an unknown person uuid is a no-op (no chip, view alive)", %{conn: conn} do
+    {project, _a1, _a2} = started_project_with_tasks()
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+    render(view)
+
+    # scope_for_person/2 can't resolve the uuid → AssigneeFilter returns
+    # :noop — no chip appears and nothing crashes.
+    html = render_click(view, "assignee_pick", %{"uuid" => Ecto.UUID.generate()})
+    refute html =~ "remove_assignee_person"
+    assert Process.alive?(view.pid)
+  end
 end

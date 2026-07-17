@@ -144,4 +144,23 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
       assert log =~ "[ProjectGanttLive] unexpected handle_info"
     end
   end
+
+  describe "ProjectCalendarLive" do
+    test "logs unexpected handle_info at debug", %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectCalendarLive,
+          session: %{"id" => project.uuid}
+        )
+
+      log =
+        capture_log([level: :debug], fn ->
+          send(view.pid, :unexpected_message_for_test)
+          _ = render(view)
+        end)
+
+      assert log =~ "[ProjectCalendarLive] unexpected handle_info"
+    end
+  end
 end
