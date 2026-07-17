@@ -325,6 +325,15 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   defp me_chip_active?(_me_scope, _selected), do: false
 
+  # How many filters are active — badges the funnel button so the state stays
+  # visible while the controls live in the popup.
+  defp active_filter_count(assigns) do
+    length(assigns.assignee_selected) +
+      if(assigns.include_unassigned?, do: 1, else: 0) +
+      if(assigns.overdue_only?, do: 1, else: 0) +
+      if(assigns.assignee_direct_only? and assigns.assignee_selected != [], do: 1, else: 0)
+  end
+
   defp add_person_chip(socket, uuid, name, scope) do
     socket
     |> assign(
@@ -947,22 +956,58 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                  don't match the trigger — they navigate instead. --%>
             <div class={["mt-2", if(@overview_tab != :calendar, do: "hidden")]}>
               <%= if @calendar_seen? do %>
-                <%!-- ONE filter row: the person typeahead (wide enough that the
-                     dropdown, which inherits its width, shows full names), the
-                     Me / Unassigned quick-adders, the active-filter chips, the
-                     refinement checkboxes, and a Clear that only exists while
-                     something is filtered — with the view-mode toggle on the
-                     right edge. Everything wraps on narrow screens. The
-                     search_picker renders its dropdown client-side; the server
-                     answers "assignee_search" with limit+1-probed pages (Load
-                     more built in) — nothing preloads the people table. --%>
+                <%!-- Uncrowded header: ONE funnel button (badged with the
+                     active-filter count) + the view-mode toggle. Every filter
+                     control lives in the popup panel below the funnel. The
+                     panel opens/closes entirely CLIENT-SIDE (JS.toggle — LV JS
+                     commands stick across patches, so toggling a checkbox
+                     inside doesn't close it) with phx-click-away on the shared
+                     wrapper for outside-click dismiss (clicks on the funnel
+                     itself are inside the wrapper, so they only toggle). --%>
                 <div class="flex flex-wrap items-center gap-2 mb-2">
-                  <%!-- display:contents so the children lay out in the row
-                       itself; a plain display:none swap hides the whole filter
-                       cluster in Projects mode. --%>
-                  <div class={if(@calendar_mode == :tasks, do: "contents", else: "hidden")}>
-                  <div class="w-80 max-w-full">
-                    <.search_picker
+                  <div
+                    :if={@calendar_mode == :tasks}
+                    class="relative"
+                    phx-click-away={Phoenix.LiveView.JS.hide(to: "#overview-filter-panel")}
+                  >
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-ghost border-base-300 gap-1.5 tooltip"
+                      data-tip={gettext("Filters")}
+                      aria-label={gettext("Filters")}
+                      phx-click={Phoenix.LiveView.JS.toggle(to: "#overview-filter-panel")}
+                    >
+                      <.icon name="hero-funnel" class="w-4 h-4" />
+                      {gettext("Filters")}
+                      <span :if={active_filter_count(assigns) > 0} class="badge badge-xs badge-primary">
+                        {active_filter_count(assigns)}
+                      </span>
+                    </button>
+
+                    <div
+                      id="overview-filter-panel"
+                      class="hidden absolute left-0 top-full mt-2 z-30 w-80 max-w-[90vw] card bg-base-100 border border-base-200 shadow-lg"
+                    >
+                      <div class="card-body p-4 gap-3">
+                        <div class="flex items-center justify-between">
+                          <span class="text-sm font-semibold">{gettext("Filters")}</span>
+                          <%!-- One tap back to the unfiltered everything-view;
+                               only exists while something is filtered. --%>
+                          <button
+                            :if={active_filter_count(assigns) > 0}
+                            type="button"
+                            class={["btn btn-xs btn-ghost", CalendarDisplay.loading_class()]}
+                            phx-click="clear_assignee_filter"
+                          >
+                            <.icon name="hero-x-mark" class="w-3 h-3" /> {gettext("Clear")}
+                          </button>
+                        </div>
+
+                        <%!-- The instant person typeahead: dropdown renders
+                             client-side; the server answers "assignee_search"
+                             with limit+1-probed pages (Load more built in) —
+                             nothing preloads the people table. --%>
+                        <.search_picker
                       id="overview-assignee-search"
                       dropdown_id="overview-assignee-dropdown"
                       search_event="assignee_search"
@@ -974,124 +1019,118 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       searching_label={gettext("Searching…")}
                       more_label={gettext("Load more")}
                       loading_more_label={gettext("Loading…")}
-                      no_matches_label={gettext("No matches")}
-                      data-search-on-focus
-                    />
-                  </div>
+                          no_matches_label={gettext("No matches")}
+                          data-search-on-focus
+                        />
 
-                  <%!-- Quick-adders: one tap inserts the corresponding chip and
-                       the button steps aside — the chip IS the visible state,
-                       removable like any other. --%>
-                  <button
-                    :if={match?(%{}, @me_scope) and not me_chip_active?(@me_scope, @assignee_selected)}
-                    type="button"
-                    class={["btn btn-xs btn-ghost border-base-300 tooltip", CalendarDisplay.loading_class()]}
-                    data-tip={gettext("Your work — assigned to you, your teams, or your departments")}
-                    phx-click="toggle_me_chip"
-                  >
-                    <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Me")}
-                  </button>
+                        <%!-- Quick-adders + active chips, one wrapping rail: a
+                             tap inserts the corresponding chip and the button
+                             steps aside — the chip IS the visible state,
+                             removable like any other. --%>
+                        <div class="flex flex-wrap items-center gap-2">
+                          <button
+                            :if={match?(%{}, @me_scope) and not me_chip_active?(@me_scope, @assignee_selected)}
+                            type="button"
+                            class={["btn btn-xs btn-ghost border-base-300 tooltip", CalendarDisplay.loading_class()]}
+                            data-tip={gettext("Your work — assigned to you, your teams, or your departments")}
+                            phx-click="toggle_me_chip"
+                          >
+                            <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Me")}
+                          </button>
 
-                  <button
-                    :if={not @include_unassigned?}
-                    type="button"
-                    class={["btn btn-xs btn-ghost border-base-300 tooltip", CalendarDisplay.loading_class()]}
-                    data-tip={gettext("Tasks nobody is assigned to yet — combines with picked people")}
-                    phx-click="toggle_unassigned"
-                  >
-                    <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Unassigned")}
-                    <span class="badge badge-xs badge-ghost">{@unassigned_count}</span>
-                  </button>
+                          <button
+                            :if={not @include_unassigned?}
+                            type="button"
+                            class={["btn btn-xs btn-ghost border-base-300 tooltip", CalendarDisplay.loading_class()]}
+                            data-tip={gettext("Tasks nobody is assigned to yet — combines with picked people")}
+                            phx-click="toggle_unassigned"
+                          >
+                            <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Unassigned")}
+                            <span class="badge badge-xs badge-ghost">{@unassigned_count}</span>
+                          </button>
 
-                  <%!-- The Unassigned lens as a first-class, visibly-toggled chip
-                       — dashed to say "no person", removable like the rest. --%>
-                  <span :if={@include_unassigned?} class="badge badge-dash gap-1.5">
-                    <.icon name="hero-user-minus" class="w-3 h-3" />
-                    {gettext("Unassigned")}
-                    <span class="badge badge-xs badge-ghost">{@unassigned_count}</span>
-                    <button
-                      type="button"
-                      phx-click={
-                        Phoenix.LiveView.JS.hide(
-                          to: {:closest, "span.badge"},
-                          transition: {"transition-opacity duration-100", "opacity-100", "opacity-0"}
-                        )
-                        |> Phoenix.LiveView.JS.push("toggle_unassigned")
-                      }
-                      class="shrink-0 cursor-pointer rounded-full p-0.5 -m-0.5 transition-colors hover:bg-error hover:text-error-content tooltip"
-                      data-tip={gettext("Remove %{name}", name: gettext("Unassigned"))}
-                      aria-label={gettext("Remove %{name}", name: gettext("Unassigned"))}
-                    >
-                      <.icon name="hero-x-mark" class="w-3 h-3 block" />
-                    </button>
-                  </span>
+                          <%!-- The Unassigned lens as a first-class, visibly-
+                               toggled chip — dashed to say "no person". --%>
+                          <span :if={@include_unassigned?} class="badge badge-dash gap-1.5">
+                            <.icon name="hero-user-minus" class="w-3 h-3" />
+                            {gettext("Unassigned")}
+                            <span class="badge badge-xs badge-ghost">{@unassigned_count}</span>
+                            <button
+                              type="button"
+                              phx-click={
+                                Phoenix.LiveView.JS.hide(
+                                  to: {:closest, "span.badge"},
+                                  transition:
+                                    {"transition-opacity duration-100", "opacity-100", "opacity-0"}
+                                )
+                                |> Phoenix.LiveView.JS.push("toggle_unassigned")
+                              }
+                              class="shrink-0 cursor-pointer rounded-full p-0.5 -m-0.5 transition-colors hover:bg-error hover:text-error-content tooltip"
+                              data-tip={gettext("Remove %{name}", name: gettext("Unassigned"))}
+                              aria-label={gettext("Remove %{name}", name: gettext("Unassigned"))}
+                            >
+                              <.icon name="hero-x-mark" class="w-3 h-3 block" />
+                            </button>
+                          </span>
 
-                  <span
-                    :for={p <- @assignee_selected}
-                    class="badge badge-outline gap-1.5 max-w-56"
-                  >
-                    <span class="truncate">{p.name}</span>
-                    <%!-- Bare buttons get no pointer cursor from Tailwind v4's
-                         preflight and a 12px hover target is easy to miss —
-                         make removal unmistakable: pointer, padded hit area,
-                         red disc on hover. --%>
-                    <button
-                      type="button"
-                      phx-click={
-                        Phoenix.LiveView.JS.hide(
-                          to: {:closest, "span.badge"},
-                          transition: {"transition-opacity duration-100", "opacity-100", "opacity-0"}
-                        )
-                        |> Phoenix.LiveView.JS.push("remove_assignee_person", value: %{uuid: p.uuid})
-                      }
-                      class="shrink-0 cursor-pointer rounded-full p-0.5 -m-0.5 transition-colors hover:bg-error hover:text-error-content tooltip"
-                      data-tip={gettext("Remove %{name}", name: p.name)}
-                      aria-label={gettext("Remove %{name}", name: p.name)}
-                    >
-                      <.icon name="hero-x-mark" class="w-3 h-3 block" />
-                    </button>
-                  </span>
+                          <span :for={p <- @assignee_selected} class="badge badge-outline gap-1.5 max-w-56">
+                            <span class="truncate">{p.name}</span>
+                            <%!-- Bare buttons get no pointer cursor from Tailwind
+                                 v4's preflight and a 12px hover target is easy
+                                 to miss — pointer, padded hit area, red disc. --%>
+                            <button
+                              type="button"
+                              phx-click={
+                                Phoenix.LiveView.JS.hide(
+                                  to: {:closest, "span.badge"},
+                                  transition:
+                                    {"transition-opacity duration-100", "opacity-100", "opacity-0"}
+                                )
+                                |> Phoenix.LiveView.JS.push("remove_assignee_person",
+                                  value: %{uuid: p.uuid}
+                                )
+                              }
+                              class="shrink-0 cursor-pointer rounded-full p-0.5 -m-0.5 transition-colors hover:bg-error hover:text-error-content tooltip"
+                              data-tip={gettext("Remove %{name}", name: p.name)}
+                              aria-label={gettext("Remove %{name}", name: p.name)}
+                            >
+                              <.icon name="hero-x-mark" class="w-3 h-3 block" />
+                            </button>
+                          </span>
+                        </div>
 
-                  <%!-- Sits next to the chips it refines: narrows PERSON matches
-                       to direct assignments (never the Unassigned lens). --%>
-                  <label
-                    :if={@assignee_selected != []}
-                    class="label cursor-pointer gap-1.5 text-xs tooltip"
-                    data-tip={gettext("Only tasks assigned to these people personally — hides work they inherit from teams and departments")}
-                  >
-                    <input
-                      type="checkbox"
-                      class={["checkbox checkbox-xs", CalendarDisplay.loading_class()]}
-                      checked={@assignee_direct_only?}
-                      phx-click="toggle_assignee_direct"
-                    />
-                    {gettext("Personal only")}
-                  </label>
+                        <div class="divider my-0"></div>
 
-                  <label
-                    class="label cursor-pointer gap-1.5 text-xs tooltip"
-                    data-tip={gettext("Only late tasks — not done and past their scheduled days")}
-                  >
-                    <input
-                      type="checkbox"
-                      class={["checkbox checkbox-xs checkbox-error", CalendarDisplay.loading_class()]}
-                      checked={@overdue_only?}
-                      phx-click="toggle_overdue_only"
-                    />
-                    {gettext("Overdue only")}
-                  </label>
+                        <%!-- Refinements. "Personal only" sits with the chips it
+                             refines and never affects the Unassigned lens. --%>
+                        <label
+                          :if={@assignee_selected != []}
+                          class="label cursor-pointer justify-start gap-2 text-xs tooltip"
+                          data-tip={gettext("Only tasks assigned to these people personally — hides work they inherit from teams and departments")}
+                        >
+                          <input
+                            type="checkbox"
+                            class={["checkbox checkbox-xs", CalendarDisplay.loading_class()]}
+                            checked={@assignee_direct_only?}
+                            phx-click="toggle_assignee_direct"
+                          />
+                          {gettext("Personal only")}
+                        </label>
 
-                  <%!-- Appears only while something is filtered — one tap back
-                       to the unfiltered everything-view. --%>
-                  <button
-                    :if={@assignee_selected != [] or @include_unassigned? or @overdue_only?}
-                    type="button"
-                    class={["btn btn-xs btn-ghost tooltip", CalendarDisplay.loading_class()]}
-                    data-tip={gettext("Clear all filters — show every task")}
-                    phx-click="clear_assignee_filter"
-                  >
-                    <.icon name="hero-x-mark" class="w-3 h-3" /> {gettext("Clear")}
-                  </button>
+                        <label
+                          class="label cursor-pointer justify-start gap-2 text-xs tooltip"
+                          data-tip={gettext("Only late tasks — not done and past their scheduled days")}
+                        >
+                          <input
+                            type="checkbox"
+                            class={["checkbox checkbox-xs checkbox-error", CalendarDisplay.loading_class()]}
+                            checked={@overdue_only?}
+                            phx-click="toggle_overdue_only"
+                          />
+                          {gettext("Overdue only")}
+                        </label>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="join ml-auto">
