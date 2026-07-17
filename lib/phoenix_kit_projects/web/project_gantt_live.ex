@@ -44,6 +44,10 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
       socket
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
+      # Without this, the emit-mode "Back to project" / "Add a task"
+      # smart_links render open_embed buttons no clause handles — a click
+      # crashes the embedded LV.
+      |> WebHelpers.attach_open_embed_hook()
 
     case Projects.get_project_with_assignee(id) do
       nil ->

@@ -54,6 +54,21 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       socket
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
+      # Without this, the emit-mode "Back to project" / "Add a task"
+      # smart_links render open_embed buttons no clause handles — a click
+      # crashes the embedded LV.
+      |> WebHelpers.attach_open_embed_hook()
+
+    # Subscribe BEFORE the project read: `load_calendar` reuses the struct
+    # fetched below (it never re-reads the project), so a project_updated /
+    # project_started broadcast landing between an after-read subscribe and
+    # the deferred load would leave a stale header AND a stale schedule
+    # anchor. Subscribed-first, any such broadcast queues in the mailbox and
+    # the handle_info reload picks it up right after mount.
+    if connected?(socket) do
+      ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
+      ProjectsPubSub.subscribe(ProjectsPubSub.topic_project(id))
+    end
 
     case Projects.get_project_with_assignee(id) do
       nil ->
@@ -64,12 +79,6 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
          |> WebHelpers.close_or_navigate(Paths.projects())}
 
       project ->
-        # `topic_tasks` (global task-template edits) is constant; the per-project
-        # topics for the whole tree are subscribed in `load_calendar`.
-        if connected?(socket) do
-          ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
-        end
-
         socket =
           socket
           |> assign(default_assigns(session))
@@ -78,6 +87,12 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             project: project,
             is_template: project.is_template
           )
+          # The root topic is already subscribed (pre-read, above) — seed the
+          # seen-set so `subscribe_tree` doesn't double-subscribe it (double
+          # subscription = duplicate PubSub delivery).
+          |> then(fn s ->
+            if connected?(s), do: assign(s, subscribed_projects: MapSet.new([id])), else: s
+          end)
 
         # On the live (connected) mount, defer the per-project build off the
         # first paint so the Calendar tab shows a skeleton immediately. The

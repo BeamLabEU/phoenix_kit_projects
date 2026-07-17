@@ -117,9 +117,12 @@ exist, the per-LV fix shapes, the test convention, and the pre-flight
 checklist for new LVs. Read it before adding a new LV.
 
 **All 11 LVs are embeddable.** The regression gate is
-`test/phoenix_kit_projects/web/embedding_test.exs` — 43
-`live_isolated/3` + `render_hook` tests pinning the embed contract
-(including the `current_user_uuid` identity contract). Coverage:
+`test/phoenix_kit_projects/web/embedding_test.exs` (navigate-mode
+contract, including the `current_user_uuid` identity contract) plus
+`embedding_emit_test.exs` (emit-mode contract — every LV that renders a
+`<.smart_link emit>` needs a block there, or a missing
+`attach_open_embed_hook/1` ships as a click-crash). Coverage, one
+describe block per LV in each file:
 `OverviewLive`, `ProjectsLive`, `TemplatesLive`, `TasksLive`,
 `ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`,
 `ProjectFormLive`, `TaskFormLive`, `TemplateFormLive`, `AssignmentFormLive`.

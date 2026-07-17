@@ -404,6 +404,73 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     end
   end
 
+  describe "ProjectCalendarLive embed" do
+    # The Calendar tab mirrors the Timeline's embed contract exactly:
+    # off-router mount, session["id"], current_user_uuid / locale /
+    # wrapper_class / headless. This block exists because the LV shipped
+    # without one — absent from this gate, its embed-user branch and
+    # whitelist registration went unpinned.
+    setup %{actor_uuid: actor_uuid} do
+      {:ok, project} =
+        Projects.create_project(%{
+          "name" => "Embed calendar test #{System.unique_integer([:positive])}",
+          "start_mode" => "immediate",
+          "started_at" => DateTime.utc_now() |> DateTime.truncate(:second)
+        })
+
+      {:ok, project: project, actor_uuid: actor_uuid}
+    end
+
+    test "mounts off-router via live_isolated with session id", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectCalendarLive,
+          session: %{"id" => project.uuid}
+        )
+
+      assert html =~ "Calendar"
+    end
+
+    test "wrapper_class override replaces the default", %{conn: conn, project: project} do
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectCalendarLive,
+          session: %{"id" => project.uuid, "wrapper_class" => "host-calendar-class"}
+        )
+
+      assert html =~ "host-calendar-class"
+    end
+
+    test "current_user_uuid reconstructs the viewer for the Me filter scope", %{
+      conn: conn,
+      project: project,
+      actor_uuid: actor_uuid
+    } do
+      {:ok, view, _html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectCalendarLive,
+          session: %{"id" => project.uuid, "current_user_uuid" => actor_uuid}
+        )
+
+      # The embed-user branch of assign_embed_user/2 rebuilt the viewer:
+      # the LV survives a Me-scope resolution round-trip (the actual scope
+      # value depends on staff linkage; the pin is "no crash, view alive").
+      assert render(view) =~ "Calendar"
+    end
+
+    test "is registered in the embeddable-LV whitelist so hosts can insert it" do
+      assert WebHelpers.embeddable_lv?(PhoenixKitProjects.Web.ProjectCalendarLive)
+
+      assert {:ok, PhoenixKitProjects.Web.ProjectCalendarLive} =
+               WebHelpers.decode_embeddable_lv(
+                 "Elixir.PhoenixKitProjects.Web.ProjectCalendarLive"
+               )
+
+      assert {:ok, PhoenixKitProjects.Web.ProjectCalendarLive} =
+               WebHelpers.decode_embeddable_lv("PhoenixKitProjects.Web.ProjectCalendarLive")
+    end
+  end
+
   describe "ProjectsLive embed" do
     test "mounts via live_isolated", %{conn: conn} do
       {:ok, _view, html} =

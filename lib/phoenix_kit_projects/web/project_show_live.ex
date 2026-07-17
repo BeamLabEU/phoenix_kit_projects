@@ -2306,7 +2306,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # an off-router mount missing the assign degrades to nil rather
               # than raising — matches the module's no-bang-form convention.
               "current_user_uuid" =>
-                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
+                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid,
+              # Forward the emit contract too: when the show page is itself
+              # emit-embedded, its tabs must emit to the same host popup, not
+              # fall back to top-level push_navigate (which would yank the
+              # host page).
+              "mode" => @embed_mode,
+              "pubsub_topic" => @embed_pubsub_topic,
+              "frame_ref" => @embed_frame_ref
             })}
         <% end %>
       </div>
@@ -2327,7 +2334,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # Forward the viewer so the nested calendar reconstructs the same
               # user/scope across this second `live_render` hop.
               "current_user_uuid" =>
-                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
+                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid,
+              # Forward the emit contract too (see the gantt tab above).
+              "mode" => @embed_mode,
+              "pubsub_topic" => @embed_pubsub_topic,
+              "frame_ref" => @embed_frame_ref
             })}
         <% end %>
       </div>
