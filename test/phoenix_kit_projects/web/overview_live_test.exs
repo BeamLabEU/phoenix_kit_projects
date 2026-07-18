@@ -593,6 +593,43 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       refute html =~ "toggle_unassigned"
     end
 
+    test "the Overdue-only toggle hides while nothing is late", %{conn: conn} do
+      user = reg_user()
+
+      # Future-only work: a 3-week task started just now is not late.
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Prj.start_project(project)
+
+      task =
+        fixture_task(%{
+          "title" => "Future-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 3,
+          "estimated_duration_unit" => "weeks"
+        })
+
+      {:ok, _} =
+        Prj.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => task.uuid})
+
+      view = mount_with_user(conn, user)
+      refute render(view) =~ "toggle_overdue_only"
+
+      # A late task appears -> so does the toggle.
+      {late_p, late_a} = late_project_fixture(30)
+      send(view.pid, {:projects, :project_started, %{}})
+      assert render(view) =~ "toggle_overdue_only"
+
+      # An ACTIVE lens survives the late count dropping to 0...
+      render_click(view, "toggle_overdue_only", %{})
+      {:ok, _} = Prj.update_assignment_status(late_a, %{"status" => "done"})
+      {:completed, _} = Prj.recompute_project_completion(late_p.uuid)
+      send(view.pid, {:projects, :project_completed, %{}})
+      assert render(view) =~ "toggle_overdue_only"
+
+      # ...and unchecking it then removes the control.
+      html = render_click(view, "toggle_overdue_only", %{})
+      refute html =~ "toggle_overdue_only"
+    end
+
     test "Me filter (inherited) keeps direct + team tasks, drops unassigned", %{conn: conn} do
       user = reg_user()
       fx = filter_fixture(user)

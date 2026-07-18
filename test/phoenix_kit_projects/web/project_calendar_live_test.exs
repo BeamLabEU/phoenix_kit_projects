@@ -426,6 +426,31 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       refute html =~ "SubMatch-"
     end
 
+    test "the Overdue-only toggle hides while no bar is late", %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Projects.start_project(project)
+      project = Projects.get_project!(project.uuid)
+
+      future =
+        fixture_task(%{
+          "title" => "FutureBar-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 3,
+          "estimated_duration_unit" => "weeks"
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => future.uuid})
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+      html = render(view)
+      # The panel renders (there IS work to filter by person)...
+      assert html =~ "assignee_search"
+      # ...but the Overdue-only lens has nothing it could show.
+      refute html =~ "toggle_overdue_only"
+    end
+
     test "overdue only keeps late bars", %{conn: conn} do
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
       {:ok, _} = Projects.start_project(project, DateTime.add(DateTime.utc_now(), -5 * 24 * 3600))

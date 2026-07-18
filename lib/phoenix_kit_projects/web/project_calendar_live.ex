@@ -301,6 +301,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     # project in the rendered tree, same as the Timeline tab.
     project_uuids = items |> Enum.map(& &1.project.uuid) |> Enum.uniq()
 
+    now = DateTime.utc_now() |> DateTime.to_naive()
+
     socket
     |> AssigneeFilter.resolve_me()
     |> subscribe_tree(project_uuids)
@@ -318,6 +320,11 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       unassigned_count:
         Enum.count(top_items, fn it ->
           Enum.all?(assignment_refs(it, items), &Assignees.unassigned?/1)
+        end),
+      # Late bars in the RAW tree — the Overdue-only toggle hides at 0.
+      overdue_count:
+        Enum.count(top_items, fn it ->
+          CalendarDisplay.task_late?(it.assignment, Map.fetch!(layout, it.uuid), now)
         end)
     )
     |> apply_calendar_filter()
@@ -584,6 +591,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                   unassigned_count={@unassigned_count}
                   assignee_direct_only?={@assignee_direct_only?}
                   overdue_only?={@overdue_only?}
+                  overdue_count={@overdue_count}
                   me_scope={@me_scope}
                   picker_target={"#project-calendar-day-trigger-#{@project.uuid}"}
                 />

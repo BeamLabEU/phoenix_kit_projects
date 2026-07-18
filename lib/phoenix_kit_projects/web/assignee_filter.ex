@@ -55,6 +55,9 @@ defmodule PhoenixKitProjects.Web.AssigneeFilter do
       overdue_only?: false,
       me_scope: :unresolved,
       unassigned_count: 0,
+      # Late items in the RAW (unfiltered) walk — drives the Overdue-only
+      # toggle's visibility: at 0 there is nothing the lens could show.
+      overdue_count: 0,
       # Optional list of project uuids narrowing the person picker to people
       # RELEVANT to those projects' assignments (the per-project Calendar tab
       # sets its rendered tree); nil = relevant to any real project.

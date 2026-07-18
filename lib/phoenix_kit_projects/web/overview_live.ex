@@ -245,6 +245,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
       end)
 
+    now = DateTime.utc_now() |> DateTime.to_naive()
+
     socket
     |> AssigneeFilter.resolve_me()
     |> assign(
@@ -252,7 +254,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       task_calendar_loaded?: true,
       tz_offset: offset,
       unassigned_count:
-        Enum.count(items_with_spans, fn {it, _} -> Assignees.unassigned?(it.assignment) end)
+        Enum.count(items_with_spans, fn {it, _} -> Assignees.unassigned?(it.assignment) end),
+      overdue_count:
+        Enum.count(items_with_spans, fn {it, span} ->
+          CalendarDisplay.task_late?(it.assignment, span, now)
+        end)
     )
     |> apply_task_filter()
   end
@@ -905,6 +911,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                           unassigned_count={@unassigned_count}
                           assignee_direct_only?={@assignee_direct_only?}
                           overdue_only?={@overdue_only?}
+                          overdue_count={@overdue_count}
                           me_scope={@me_scope}
                           picker_target={"#overview-calendar-day-trigger-#{@sfx}"}
                         />

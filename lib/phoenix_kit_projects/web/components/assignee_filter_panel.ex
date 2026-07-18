@@ -43,6 +43,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
   attr(:unassigned_count, :integer, required: true)
   attr(:assignee_direct_only?, :boolean, required: true)
   attr(:overdue_only?, :boolean, required: true)
+  attr(:overdue_count, :integer, required: true)
   attr(:me_scope, :any, required: true)
 
   def assignee_filter_panel(assigns) do
@@ -178,7 +179,10 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
             {gettext("Personal only")}
           </label>
 
+          <%!-- Hidden while nothing is late (nothing the lens could show);
+               an active lens stays visible even at 0 so it can be unchecked. --%>
           <label
+            :if={@overdue_only? or @overdue_count > 0}
             class="label cursor-pointer justify-start gap-2 text-xs tooltip"
             data-tip={gettext("Only late tasks — not done and past their scheduled days")}
           >
