@@ -84,9 +84,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         today: Date.utc_today(),
         tz_offset: "0",
         calendar_events: [],
-        # The overdue-animation/late-marker config map (read_animation/0) —
-        # reload/1 refreshes it; the Tasks-mode late marker derives from it.
-        overdue_anim: nil,
+        # The calendar-display config (CalendarDisplay.read/0) — reload/1
+        # refreshes it; pure defaults here so no render can ever dot-access
+        # a nil config.
+        overdue_anim: CalendarDisplay.defaults(),
         # Projects-mode "Late only" filter: the raw event list is cached and
         # the visible `calendar_events` derive from it in memory (same shape
         # as the Tasks-mode filters — a toggle never re-queries).

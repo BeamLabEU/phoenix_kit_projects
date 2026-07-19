@@ -138,9 +138,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       # Per-project PubSub topics already subscribed (the whole rendered tree;
       # grows as sub-projects appear). Avoids double-subscribing on reload.
       subscribed_projects: MapSet.new(),
-      # The overdue-animation/late-marker config (read_animation/0), read on
-      # every load_calendar so the marker follows the settings page.
-      overdue_anim: nil,
+      # The calendar-display config (CalendarDisplay.read/0), read on every
+      # load_calendar so it follows the settings page; pure defaults here so
+      # no render can ever dot-access a nil config.
+      overdue_anim: CalendarDisplay.defaults(),
       # True between the connected mount and the `:load_calendar` message —
       # drives the loading skeleton so the first paint isn't blocked on the
       # per-project queries (and doesn't flash the empty state).

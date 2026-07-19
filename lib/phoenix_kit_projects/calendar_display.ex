@@ -184,7 +184,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       and its meta entry `late: true`. Without `:now` nothing is flagged
       (pure date math only).
     * `:late_class` — the marker class for late chips/bars (defaults to the
-      red inset ring; pass `late_marker_class(read_animation())` to honor
+      red inset ring; pass `late_marker_class(read())` to honor
       the configured marker).
   """
   @spec task_events(
@@ -432,7 +432,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   def late_class, do: @late_class
 
   @doc """
-  The late-task marker class for a `read_animation/0` config: `"pattern"`
+  The late-task marker class for a `read/0` config: `"pattern"`
   (the default) — the `pk-overdue` overlay, i.e. the same configured
   stripes/solid look the Projects-mode overdue stretch uses, so every
   calendar marks lateness identically — or `"ring"`, the red inset ring
@@ -491,6 +491,31 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   def anim_range("opacity"), do: @opacity_range
   def anim_range("max_events"), do: @max_events_range
   def anim_range("max_multiday"), do: @max_multiday_range
+
+  @doc """
+  The pure compile-time defaults of `read/0` (no settings read; core's
+  `week_start_day` falls back to Monday). Mount-time placeholder so a render
+  can never dot-access a nil config — `read/0` overwrites it immediately.
+  """
+  @spec defaults() :: map()
+  def defaults do
+    %{
+      pattern: @default_pattern,
+      mode: @default_mode,
+      speed: @default_speed,
+      brightness_min: @default_bright_min,
+      brightness_max: @default_bright_max,
+      wave_step: @default_wave_step,
+      opacity: @default_opacity,
+      late_marker: @default_late_marker,
+      week_start: 1,
+      show_weekends: @default_show_weekends,
+      show_week_numbers: @default_show_week_numbers,
+      fixed_weeks: @default_fixed_weeks,
+      max_events: max_events(),
+      max_multiday: max_multiday()
+    }
+  end
 
   @doc """
   The full calendar-display config (validated, with safe defaults): the grid
@@ -646,7 +671,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   end
 
   @doc """
-  The `<style>` block for the overdue animation, from an already-`read_animation/0`
+  The `<style>` block for the overdue animation, from an already-`read/0`
   config map (callers thread the map so one read serves style + legend). Safe to
   inject with `Phoenix.HTML.raw/1`: every interpolated value is a validated enum
   or clamped number, never free text.
@@ -671,7 +696,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
 
   @doc """
   CSS body (no surrounding `<style>` tag) for an overdue-animation config map of
-  the shape `read_animation/0` returns. Public so tests and a settings preview
+  the shape `read/0` returns. Public so tests and a settings preview
   can render a given config without touching the settings store.
   """
   @spec animation_css(map()) :: String.t()
