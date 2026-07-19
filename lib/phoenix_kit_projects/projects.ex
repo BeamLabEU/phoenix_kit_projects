@@ -1195,19 +1195,31 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
-  Lists projects that are templates, in `position`-then-date-added
-  order. Date-added (not name) is the secondary sort so renaming a
-  template doesn't shuffle it in the list. After a manual drag,
-  templates with explicit positions land at the top in the user's
-  order; un-touched templates fall to the bottom by date-added.
-  `uuid` tiebreaks within the same `inserted_at` second.
+  Lists projects that are templates.
+
+  Options (same semantics as `list_projects/1`):
+    * `:sort_by` — `:position` (default, the manual order), `:name`,
+      `:inserted_at`, `:updated_at`.
+    * `:sort_dir` — `:asc` (default) or `:desc`. Ignored for `:position`.
+    * `:limit` — cap the result set (load-more pagination).
+
+  The default `:position` sort keeps date-added (not name) as the
+  secondary key so renaming a template doesn't shuffle it in the list.
+  After a manual drag, templates with explicit positions land at the
+  top in the user's order; un-touched templates fall to the bottom by
+  date-added. `uuid` tiebreaks within the same `inserted_at` second.
   """
-  @spec list_templates() :: [Project.t()]
-  def list_templates do
+  @spec list_templates(keyword()) :: [Project.t()]
+  def list_templates(opts \\ []) do
+    sort_by = Keyword.get(opts, :sort_by, :position)
+    sort_dir = Keyword.get(opts, :sort_dir, :asc)
+    limit_n = Keyword.get(opts, :limit)
+
     Project
     |> where([p], p.is_template == true)
     |> exclude_subprojects()
-    |> order_by([p], asc: p.position, asc: p.inserted_at, asc: p.uuid)
+    |> project_order_by(sort_by, sort_dir)
+    |> maybe_limit(limit_n)
     |> repo().all()
   end
 
