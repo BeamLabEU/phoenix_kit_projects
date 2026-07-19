@@ -28,7 +28,7 @@ msgstr[1] "%{count} dni"
 msgstr[2] "%{count} dni"
 
 #: lib/phoenix_kit_projects/web/components/running_card.ex:165
-#: lib/phoenix_kit_projects/web/overview_live.ex:727
+#: lib/phoenix_kit_projects/web/overview_live.ex:735
 #, elixir-autogen, elixir-format
 msgid "%{count} day ago"
 msgid_plural "%{count} days ago"
@@ -135,7 +135,7 @@ msgid "%{n} weeks"
 msgstr "%{n} tygodni"
 
 #: lib/phoenix_kit_projects/web/components/running_card.ex:168
-#: lib/phoenix_kit_projects/web/overview_live.ex:728
+#: lib/phoenix_kit_projects/web/overview_live.ex:736
 #, elixir-autogen, elixir-format
 msgid "%{n} weeks ago"
 msgstr "%{n} tygodni temu"
@@ -160,7 +160,7 @@ msgstr "(rodzic odznaczony)"
 msgid "(this task)"
 msgstr "(to zadanie)"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1083
+#: lib/phoenix_kit_projects/web/overview_live.ex:1096
 #, elixir-autogen, elixir-format
 msgid "+%{count} more"
 msgstr "+%{count} więcej"
@@ -264,7 +264,7 @@ msgstr "Nie znaleziono przypisania."
 msgid "Assignment updated."
 msgstr "Przypisanie zaktualizowane."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1221
+#: lib/phoenix_kit_projects/web/overview_live.ex:1234
 #, elixir-autogen, elixir-format
 msgid "Blueprint from scratch"
 msgstr "Szablon od zera"
@@ -440,7 +440,7 @@ msgstr "Utwórz"
 msgid "Create new"
 msgstr "Utwórz nowe"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:841
+#: lib/phoenix_kit_projects/web/overview_live.ex:849
 #, elixir-autogen, elixir-format
 msgid "Create one to get started."
 msgstr "Utwórz jeden, aby zacząć."
@@ -656,7 +656,7 @@ msgstr "Natychmiast (najpierw skonfiguruj zadania)"
 msgid "In progress"
 msgstr "W toku"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1128
+#: lib/phoenix_kit_projects/web/overview_live.ex:1141
 #, elixir-autogen, elixir-format
 msgid "In setup"
 msgstr "W konfiguracji"
@@ -667,7 +667,7 @@ msgstr "W konfiguracji"
 msgid "Invalid date — please pick a valid date and time."
 msgstr "Nieprawidłowa data — wybierz prawidłową datę i godzinę."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:810
+#: lib/phoenix_kit_projects/web/overview_live.ex:818
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2017
 #: lib/phoenix_kit_projects/web/tasks_live.ex:402
 #, elixir-autogen, elixir-format
@@ -688,7 +688,7 @@ msgstr "Minuty"
 msgid "Months"
 msgstr "Miesiące"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1058
+#: lib/phoenix_kit_projects/web/overview_live.ex:1071
 #: lib/phoenix_kit_projects/web/widgets/my_tasks_widget.ex:69
 #: lib/phoenix_kit_projects/web/widgets/my_tasks_widget.ex:77
 #, elixir-autogen, elixir-format
@@ -704,22 +704,22 @@ msgstr "Moje zadania"
 msgid "Name"
 msgstr "Nazwa"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:747
-#: lib/phoenix_kit_projects/web/overview_live.ex:851
+#: lib/phoenix_kit_projects/web/overview_live.ex:755
+#: lib/phoenix_kit_projects/web/overview_live.ex:859
 #: lib/phoenix_kit_projects/web/project_form_live.ex:78
 #: lib/phoenix_kit_projects/web/projects_live.ex:391
 #, elixir-autogen, elixir-format
 msgid "New project"
 msgstr "Nowy projekt"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:755
+#: lib/phoenix_kit_projects/web/overview_live.ex:763
 #: lib/phoenix_kit_projects/web/task_form_live.ex:67
 #: lib/phoenix_kit_projects/web/tasks_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "New task"
 msgstr "Nowe zadanie"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1219
+#: lib/phoenix_kit_projects/web/overview_live.ex:1232
 #: lib/phoenix_kit_projects/web/template_form_live.ex:88
 #: lib/phoenix_kit_projects/web/templates_live.ex:133
 #, elixir-autogen, elixir-format
@@ -742,7 +742,7 @@ msgstr "Brak innych zadań w tym projekcie do uzależnienia."
 msgid "No projects match."
 msgstr "Brak pasujących projektów."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:840
+#: lib/phoenix_kit_projects/web/overview_live.ex:848
 #: lib/phoenix_kit_projects/web/widgets/projects_board_widget.ex:81
 #, elixir-autogen, elixir-format
 msgid "No projects yet."
@@ -782,18 +782,18 @@ msgstr "Jeszcze nie rozpoczęte"
 msgid "Not started — set up tasks, then start"
 msgstr "Nie rozpoczęte — skonfiguruj zadania, potem rozpocznij"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1063
+#: lib/phoenix_kit_projects/web/overview_live.ex:1076
 #: lib/phoenix_kit_projects/web/widgets/my_tasks_widget.ex:81
 #, elixir-autogen, elixir-format
 msgid "Nothing assigned to you right now."
 msgstr "Nic do Ciebie aktualnie nie przypisano."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:822
+#: lib/phoenix_kit_projects/web/overview_live.ex:830
 #, elixir-autogen, elixir-format
 msgid "Nothing running right now."
 msgstr "Nic teraz nie jest uruchomione."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:823
+#: lib/phoenix_kit_projects/web/overview_live.ex:831
 #, elixir-autogen, elixir-format
 msgid "Open a project and click Start to begin."
 msgstr "Otwórz projekt i kliknij Rozpocznij, aby zacząć."
@@ -808,7 +808,7 @@ msgstr "Otwórz komentarze"
 msgid "Open project comments"
 msgstr "Otwórz komentarze projektu"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:738
+#: lib/phoenix_kit_projects/web/overview_live.ex:746
 #, elixir-autogen, elixir-format
 msgid "Overview of active work, upcoming projects, and your assignments."
 msgstr "Przegląd bieżącej pracy, nadchodzących projektów i Twoich przypisań."
@@ -900,9 +900,9 @@ msgstr "Projekt zaktualizowany."
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:32
 #: lib/phoenix_kit_projects/web/overview_live.ex:70
-#: lib/phoenix_kit_projects/web/overview_live.ex:426
-#: lib/phoenix_kit_projects/web/overview_live.ex:737
-#: lib/phoenix_kit_projects/web/overview_live.ex:1177
+#: lib/phoenix_kit_projects/web/overview_live.ex:428
+#: lib/phoenix_kit_projects/web/overview_live.ex:745
+#: lib/phoenix_kit_projects/web/overview_live.ex:1190
 #: lib/phoenix_kit_projects/web/project_form_live.ex:566
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1739
 #: lib/phoenix_kit_projects/web/projects_live.ex:44
@@ -912,7 +912,7 @@ msgstr "Projekt zaktualizowany."
 msgid "Projects"
 msgstr "Projekty"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1096
+#: lib/phoenix_kit_projects/web/overview_live.ex:1109
 #, elixir-autogen, elixir-format
 msgid "Recently completed"
 msgstr "Niedawno ukończone"
@@ -958,8 +958,8 @@ msgstr "Ponowne otwieranie…"
 msgid "Reusable task templates."
 msgstr "Wielokrotnego użytku szablony zadań."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:762
-#: lib/phoenix_kit_projects/web/overview_live.ex:784
+#: lib/phoenix_kit_projects/web/overview_live.ex:770
+#: lib/phoenix_kit_projects/web/overview_live.ex:792
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:64
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:81
 #, elixir-autogen, elixir-format
@@ -993,7 +993,7 @@ msgstr "Zapisz jako szablon wielokrotnego użytku w bibliotece zadań"
 msgid "Saving…"
 msgstr "Zapisywanie…"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1142
+#: lib/phoenix_kit_projects/web/overview_live.ex:1155
 #, elixir-autogen, elixir-format
 msgid "Scheduled"
 msgstr "Zaplanowane"
@@ -1050,7 +1050,7 @@ msgstr "Wybory zostaną zastosowane po zapisaniu tego zadania."
 msgid "Set duration"
 msgstr "Ustaw czas trwania"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:713
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:719
 #, elixir-autogen, elixir-format
 msgid "Show"
 msgstr "Pokaż"
@@ -1105,7 +1105,7 @@ msgstr "Rozpocznij projekt"
 msgid "Started %{when}"
 msgstr "Rozpoczęto %{when}"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:787
+#: lib/phoenix_kit_projects/web/overview_live.ex:795
 #, elixir-autogen, elixir-format
 msgid "Started and not yet completed."
 msgstr "Rozpoczęte, jeszcze niezakończone."
@@ -1128,7 +1128,7 @@ msgstr "Status"
 msgid "Task"
 msgstr "Zadanie"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1191
+#: lib/phoenix_kit_projects/web/overview_live.ex:1204
 #: lib/phoenix_kit_projects/web/task_form_live.ex:424
 #: lib/phoenix_kit_projects/web/tasks_live.ex:47
 #: lib/phoenix_kit_projects/web/tasks_live.ex:372
@@ -1204,7 +1204,7 @@ msgstr "Tytuł zadania jest wymagany."
 msgid "Task updated."
 msgstr "Zadanie zaktualizowane."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:770
+#: lib/phoenix_kit_projects/web/overview_live.ex:778
 #, elixir-autogen, elixir-format
 msgid "Tasks done"
 msgstr "Zadania ukończone"
@@ -1214,7 +1214,7 @@ msgstr "Zadania ukończone"
 msgid "Tasks have changed; please try again."
 msgstr "Zadania uległy zmianie; spróbuj ponownie."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:764
+#: lib/phoenix_kit_projects/web/overview_live.ex:772
 #, elixir-autogen, elixir-format
 msgid "Tasks in progress"
 msgstr "Zadania w toku"
@@ -1224,7 +1224,7 @@ msgstr "Zadania w toku"
 msgid "Tasks in this project that must finish before this one can start."
 msgstr "Zadania w tym projekcie, które muszą się zakończyć, zanim to się rozpocznie."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:768
+#: lib/phoenix_kit_projects/web/overview_live.ex:776
 #, elixir-autogen, elixir-format
 msgid "Tasks todo"
 msgstr "Zadania do zrobienia"
@@ -1286,7 +1286,7 @@ msgid "Template updated."
 msgstr "Szablon zaktualizowany."
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:34
-#: lib/phoenix_kit_projects/web/overview_live.ex:1205
+#: lib/phoenix_kit_projects/web/overview_live.ex:1218
 #: lib/phoenix_kit_projects/web/project_show_live.ex:1739
 #: lib/phoenix_kit_projects/web/template_form_live.ex:294
 #, elixir-autogen, elixir-format
@@ -1298,7 +1298,7 @@ msgstr "Szablony"
 msgid "This is a template — set up tasks, then create projects from it."
 msgstr "To jest szablon — skonfiguruj zadania, a następnie utwórz z niego projekty."
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:197
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:198
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:162
 #: lib/phoenix_kit_projects/web/project_show_live.ex:341
 #, elixir-autogen, elixir-format
@@ -1369,22 +1369,22 @@ msgstr "Jednostka"
 msgid "Untick any you don't want for this project. Tasks already in this project (✓) won't be re-added."
 msgstr "Odznacz te, których nie chcesz w tym projekcie. Zadania już obecne (✓) nie zostaną dodane ponownie."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1124
+#: lib/phoenix_kit_projects/web/overview_live.ex:1137
 #, elixir-autogen, elixir-format
 msgid "Upcoming"
 msgstr "Nadchodzące"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:797
+#: lib/phoenix_kit_projects/web/overview_live.ex:805
 #, elixir-autogen, elixir-format
 msgid "View all (%{count}) →"
 msgstr "Zobacz wszystkie (%{count}) →"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:799
+#: lib/phoenix_kit_projects/web/overview_live.ex:807
 #, elixir-autogen, elixir-format
 msgid "View all →"
 msgstr "Zobacz wszystkie →"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:833
+#: lib/phoenix_kit_projects/web/overview_live.ex:841
 #, elixir-autogen, elixir-format
 msgid "View projects"
 msgstr "Zobacz projekty"
@@ -1460,7 +1460,7 @@ msgstr "zależy od:"
 
 #: lib/phoenix_kit_projects/web/components/assignment_status_badge.ex:64
 #: lib/phoenix_kit_projects/web/components/running_card.ex:133
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:637
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:638
 #, elixir-autogen, elixir-format
 msgid "done"
 msgstr "gotowe"
@@ -1476,7 +1476,7 @@ msgid "hours"
 msgstr "godzin"
 
 #: lib/phoenix_kit_projects/web/components/running_card.ex:159
-#: lib/phoenix_kit_projects/web/overview_live.ex:725
+#: lib/phoenix_kit_projects/web/overview_live.ex:733
 #, elixir-autogen, elixir-format
 msgid "in %{count} day"
 msgid_plural "in %{count} days"
@@ -1485,14 +1485,14 @@ msgstr[1] "za %{count} dni"
 msgstr[2] "za %{count} dni"
 
 #: lib/phoenix_kit_projects/web/components/running_card.ex:162
-#: lib/phoenix_kit_projects/web/overview_live.ex:726
+#: lib/phoenix_kit_projects/web/overview_live.ex:734
 #, elixir-autogen, elixir-format
 msgid "in %{n} weeks"
 msgstr "za %{n} tygodni"
 
 #: lib/phoenix_kit_projects/web/components/assignment_status_badge.ex:63
 #: lib/phoenix_kit_projects/web/components/running_card.ex:134
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:633
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:634
 #, elixir-autogen, elixir-format
 msgid "in progress"
 msgstr "w toku"
@@ -1582,7 +1582,7 @@ msgid "template"
 msgstr "szablon"
 
 #: lib/phoenix_kit_projects/web/components/running_card.ex:154
-#: lib/phoenix_kit_projects/web/overview_live.ex:722
+#: lib/phoenix_kit_projects/web/overview_live.ex:730
 #, elixir-autogen, elixir-format
 msgid "today"
 msgstr "dziś"
@@ -1590,13 +1590,13 @@ msgstr "dziś"
 #: lib/phoenix_kit_projects/web/components/assignment_status_badge.ex:62
 #: lib/phoenix_kit_projects/web/components/assignment_status_badge.ex:66
 #: lib/phoenix_kit_projects/web/components/running_card.ex:135
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:629
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:630
 #, elixir-autogen, elixir-format
 msgid "todo"
 msgstr "do zrobienia"
 
 #: lib/phoenix_kit_projects/web/components/running_card.ex:155
-#: lib/phoenix_kit_projects/web/overview_live.ex:723
+#: lib/phoenix_kit_projects/web/overview_live.ex:731
 #, elixir-autogen, elixir-format
 msgid "tomorrow"
 msgstr "jutro"
@@ -1627,7 +1627,7 @@ msgid "yes"
 msgstr "tak"
 
 #: lib/phoenix_kit_projects/web/components/running_card.ex:156
-#: lib/phoenix_kit_projects/web/overview_live.ex:724
+#: lib/phoenix_kit_projects/web/overview_live.ex:732
 #, elixir-autogen, elixir-format
 msgid "yesterday"
 msgstr "wczoraj"
@@ -1693,7 +1693,7 @@ msgid "Overview"
 msgstr "Przegląd"
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:35
-#: lib/phoenix_kit_projects/web/overview_live.ex:412
+#: lib/phoenix_kit_projects/web/overview_live.ex:414
 #: lib/phoenix_kit_projects/web/widgets/project_schedule_widget.ex:109
 #: lib/phoenix_kit_projects/web/widgets/project_status_widget.ex:110
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:105
@@ -1727,8 +1727,8 @@ msgstr[2] ""
 msgid "(No title)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/calendar_display.ex:211
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:457
+#: lib/phoenix_kit_projects/calendar_display.ex:230
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:458
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:405
 #, elixir-autogen, elixir-format
 msgid "(untitled task)"
@@ -1769,9 +1769,9 @@ msgstr ""
 msgid "A → Z by title"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:923
-#: lib/phoenix_kit_projects/web/overview_live.ex:993
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:594
+#: lib/phoenix_kit_projects/web/overview_live.ex:931
+#: lib/phoenix_kit_projects/web/overview_live.ex:1001
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:595
 #, elixir-autogen, elixir-format
 msgid "About this calendar"
 msgstr "O tym kalendarzu"
@@ -1781,7 +1781,7 @@ msgstr "O tym kalendarzu"
 msgid "Active"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:551
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:552
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:629
 #, elixir-autogen, elixir-format
 msgid "Add a task"
@@ -1808,22 +1808,22 @@ msgstr ""
 msgid "All statuses"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:882
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:888
 #, elixir-autogen, elixir-format
 msgid "Animation"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:750
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:756
 #, elixir-autogen, elixir-format
 msgid "Arrow attachment"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:449
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:455
 #, elixir-autogen, elixir-format
 msgid "Auto"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:518
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:519
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:596
 #, elixir-autogen, elixir-format
 msgid "Back to project"
@@ -1834,12 +1834,12 @@ msgstr ""
 msgid "Backend"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:677
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:683
 #, elixir-autogen, elixir-format
 msgid "Bars"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:441
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:447
 #, elixir-autogen, elixir-format
 msgid "Beside the bar"
 msgstr ""
@@ -1849,15 +1849,15 @@ msgstr ""
 msgid "Build phase"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:811
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:522
+#: lib/phoenix_kit_projects/web/overview_live.ex:819
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:523
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2019
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:799
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:805
 #, elixir-autogen, elixir-format
 msgid "Calendar"
 msgstr "Kalendarz"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:475
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:481
 #, elixir-autogen, elixir-format
 msgid "Centered"
 msgstr ""
@@ -1867,12 +1867,12 @@ msgstr ""
 msgid "Change the defaults here"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:641
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:642
 #, elixir-autogen, elixir-format
 msgid "Click a task to edit it; a sub-project opens the child project."
 msgstr "Kliknij zadanie, aby je edytować; podprojekt otwiera projekt podrzędny."
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:458
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:464
 #, elixir-autogen, elixir-format
 msgid "Clip"
 msgstr ""
@@ -1882,12 +1882,12 @@ msgstr ""
 msgid "Collapse sub-project"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:467
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:473
 #, elixir-autogen, elixir-format
 msgid "Comfortable"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:465
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:471
 #, elixir-autogen, elixir-format
 msgid "Compact"
 msgstr ""
@@ -1946,7 +1946,7 @@ msgstr ""
 msgid "Deadlines"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:553
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:559
 #, elixir-autogen, elixir-format
 msgid "Default status list"
 msgstr ""
@@ -1968,7 +1968,7 @@ msgstr ""
 msgid "Default statuses entity created."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:533
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:539
 #, elixir-autogen, elixir-format
 msgid "Defaults for the projects module."
 msgstr ""
@@ -1980,8 +1980,8 @@ msgstr ""
 msgid "Delete"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:722
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:740
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:728
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:746
 #, elixir-autogen, elixir-format
 msgid "Dependency arrows"
 msgstr ""
@@ -1996,7 +1996,7 @@ msgstr ""
 msgid "Detaching…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:942
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:948
 #, elixir-autogen, elixir-format
 msgid "Dim (min brightness)"
 msgstr ""
@@ -2012,12 +2012,12 @@ msgstr ""
 msgid "ETA"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1031
+#: lib/phoenix_kit_projects/web/overview_live.ex:1039
 #, elixir-autogen, elixir-format
 msgid "Each project is an ongoing line across the month."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:624
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:625
 #, elixir-autogen, elixir-format
 msgid "Each task spans the days it is scheduled to run, in the project's task order — the same schedule as the Timeline tab."
 msgstr "Każde zadanie obejmuje dni, na które jest zaplanowane, w kolejności zadań projektu — ten sam harmonogram co karta „Oś czasu”."
@@ -2048,17 +2048,17 @@ msgstr ""
 msgid "Fit the project's tasks"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:644
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:650
 #, elixir-autogen, elixir-format
 msgid "Fit threshold"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:489
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:495
 #, elixir-autogen, elixir-format
 msgid "Flash — all pulse together"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:704
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:710
 #, elixir-autogen, elixir-format
 msgid "Floor short bars so they stay visible (0 = true duration)."
 msgstr ""
@@ -2074,13 +2074,13 @@ msgid "Frozen at start — a running project's status list can't be changed."
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/components/workflow_status_fields.ex:67
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:565
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:571
 #, elixir-autogen, elixir-format
 msgid "Generate default"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/components/workflow_status_fields.ex:63
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:561
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:567
 #, elixir-autogen, elixir-format
 msgid "Generating…"
 msgstr ""
@@ -2097,17 +2097,17 @@ msgstr ""
 msgid "Hour"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:608
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:614
 #, elixir-autogen, elixir-format
 msgid "How the Gantt/Timeline view looks across every project. The preview below updates as you change these."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:440
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:446
 #, elixir-autogen, elixir-format
 msgid "Inside the bar"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:442
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:448
 #, elixir-autogen, elixir-format
 msgid "Inside, only where it fits"
 msgstr ""
@@ -2117,12 +2117,12 @@ msgstr ""
 msgid "Items in this project that must finish before this sub-project can start."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:624
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:630
 #, elixir-autogen, elixir-format
 msgid "Label style"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:616
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:622
 #, elixir-autogen, elixir-format
 msgid "Labels"
 msgstr ""
@@ -2132,7 +2132,7 @@ msgstr ""
 msgid "Last updated"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1034
+#: lib/phoenix_kit_projects/web/overview_live.ex:1047
 #, elixir-autogen, elixir-format
 msgid "Late projects are grouped at the top."
 msgstr ""
@@ -2142,17 +2142,17 @@ msgstr ""
 msgid "Launch"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:450
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:456
 #, elixir-autogen, elixir-format
 msgid "Left / start"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:459
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:465
 #, elixir-autogen, elixir-format
 msgid "Let it overflow"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:531
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:532
 #, elixir-autogen, elixir-format
 msgid "Loading the calendar…"
 msgstr "Ładowanie kalendarza…"
@@ -2178,12 +2178,12 @@ msgstr ""
 msgid "Manual"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:876
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:882
 #, elixir-autogen, elixir-format
 msgid "Marker"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:691
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:697
 #, elixir-autogen, elixir-format
 msgid "Minimum bar width"
 msgstr ""
@@ -2268,27 +2268,27 @@ msgstr ""
 msgid "No tasks to chart yet."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:542
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:543
 #, elixir-autogen, elixir-format
 msgid "No tasks to place on the calendar yet."
 msgstr "Nie ma jeszcze zadań do umieszczenia w kalendarzu."
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:556
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:562
 #, elixir-autogen, elixir-format
 msgid "None"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:439
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:445
 #, elixir-autogen, elixir-format
 msgid "None — clean bars"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:466
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:472
 #, elixir-autogen, elixir-format
 msgid "Normal"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:490
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:496
 #, elixir-autogen, elixir-format
 msgid "Off — static, no motion"
 msgstr ""
@@ -2310,7 +2310,7 @@ msgstr ""
 msgid "Ongoing — %{name}"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:659
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:665
 #, elixir-autogen, elixir-format
 msgid "Opacity"
 msgstr ""
@@ -2332,12 +2332,12 @@ msgstr ""
 msgid "Overdue"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:638
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:644
 #, elixir-autogen, elixir-format
 msgid "Overflow"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:957
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:963
 #, elixir-autogen, elixir-format
 msgid "Peak brightness"
 msgstr ""
@@ -2369,13 +2369,13 @@ msgstr ""
 msgid "Progress"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:717
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:723
 #, elixir-autogen, elixir-format
 msgid "Progress fill"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:46
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:532
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:538
 #, elixir-autogen, elixir-format
 msgid "Project settings"
 msgstr ""
@@ -2413,9 +2413,9 @@ msgstr ""
 msgid "Projects workload"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:951
-#: lib/phoenix_kit_projects/web/overview_live.ex:1029
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:621
+#: lib/phoenix_kit_projects/web/overview_live.ex:959
+#: lib/phoenix_kit_projects/web/overview_live.ex:1037
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:622
 #, elixir-autogen, elixir-format
 msgid "Reading the calendar"
 msgstr "Jak czytać kalendarz"
@@ -2431,24 +2431,24 @@ msgstr ""
 msgid "Remove sub-project \"%{name}\" and everything inside it?"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:602
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:608
 #, elixir-autogen, elixir-format
 msgid "Reset all Timeline chart settings to their defaults?"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:805
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:811
 #, elixir-autogen, elixir-format
 msgid "Reset the calendar overdue animation to its defaults?"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:604
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:807
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:610
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:813
 #, elixir-autogen, elixir-format
 msgid "Reset to defaults"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:601
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:804
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:607
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:810
 #, elixir-autogen, elixir-format
 msgid "Resetting…"
 msgstr ""
@@ -2464,17 +2464,17 @@ msgstr ""
 msgid "Review"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:451
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:457
 #, elixir-autogen, elixir-format
 msgid "Right / end"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:744
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:750
 #, elixir-autogen, elixir-format
 msgid "Route around bars"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:685
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:691
 #, elixir-autogen, elixir-format
 msgid "Row height"
 msgstr ""
@@ -2537,32 +2537,32 @@ msgstr ""
 msgid "Show translated"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:578
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:584
 #, elixir-autogen, elixir-format
 msgid "Show translated status titles by default"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:631
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:637
 #, elixir-autogen, elixir-format
 msgid "Side / alignment"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:473
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "Smart"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:482
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:488
 #, elixir-autogen, elixir-format
 msgid "Solid — fill with the inverse colour"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:888
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:894
 #, elixir-autogen, elixir-format
 msgid "Speed (cycle)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:474
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:480
 #, elixir-autogen, elixir-format
 msgid "Split (in / out)"
 msgstr ""
@@ -2577,7 +2577,7 @@ msgstr ""
 msgid "Statuses from this list:"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:481
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:487
 #, elixir-autogen, elixir-format
 msgid "Stripes — diagonal inverse-colour stripes"
 msgstr ""
@@ -2638,7 +2638,7 @@ msgstr ""
 msgid "That project no longer exists."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:541
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:547
 #, elixir-autogen, elixir-format
 msgid "The entities module is not enabled, so workflow statuses are currently unavailable."
 msgstr ""
@@ -2649,7 +2649,7 @@ msgstr ""
 msgid "Timeline"
 msgstr "Oś czasu"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:596
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:602
 #, elixir-autogen, elixir-format
 msgid "Timeline chart"
 msgstr ""
@@ -2659,7 +2659,7 @@ msgstr ""
 msgid "Today"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:727
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:733
 #, elixir-autogen, elixir-format
 msgid "Today line"
 msgstr ""
@@ -2669,7 +2669,7 @@ msgstr ""
 msgid "Todo"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:732
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:738
 #, elixir-autogen, elixir-format
 msgid "Too-small-task markers"
 msgstr ""
@@ -2679,7 +2679,7 @@ msgstr ""
 msgid "Translated status titles"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:457
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:463
 #, elixir-autogen, elixir-format
 msgid "Truncate (…)"
 msgstr ""
@@ -2701,12 +2701,12 @@ msgstr ""
 msgid "Use global default"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:443
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:449
 #, elixir-autogen, elixir-format
 msgid "Watermark (big italic beside)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:906
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:912
 #, elixir-autogen, elixir-format
 msgid "Wave spread (per day)"
 msgstr "Przesunięcie fali (na dzień)"
@@ -2716,17 +2716,17 @@ msgstr "Przesunięcie fali (na dzień)"
 msgid "Week"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:435
+#: lib/phoenix_kit_projects/web/overview_live.ex:443
 #, elixir-autogen, elixir-format
 msgid "When a project runs past its planned end, that overdue stretch is filled with the inverse of its colour — the longer it is, the more overdue the project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:441
+#: lib/phoenix_kit_projects/web/overview_live.ex:449
 #, elixir-autogen, elixir-format
 msgid "When a project runs past its planned end, that overdue stretch is marked with diagonal stripes — the longer the striped part, the more overdue the project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:581
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:587
 #, elixir-autogen, elixir-format
 msgid "When on, status titles display in the viewer's language where a translation exists. Each project can override this on its form. Translations are always saved regardless."
 msgstr ""
@@ -2736,7 +2736,7 @@ msgstr ""
 msgid "Workflow status"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:538
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:544
 #, elixir-autogen, elixir-format
 msgid "Workflow statuses"
 msgstr ""
@@ -2803,12 +2803,12 @@ msgstr ""
 msgid "tasks"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:967
+#: lib/phoenix_kit_projects/web/overview_live.ex:975
 #, elixir-autogen, elixir-format
 msgid "Busy days cap the list — click the day or its +N more link to see everything scheduled that day."
 msgstr "W zapełnione dni lista jest przycinana — kliknij dzień lub jego link +N więcej, aby zobaczyć wszystko zaplanowane tego dnia."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:954
+#: lib/phoenix_kit_projects/web/overview_live.ex:962
 #, elixir-autogen, elixir-format
 msgid "Every task from every project, shown on the days it is scheduled to run."
 msgstr "Każde zadanie z każdego projektu, pokazane w dniach, na które jest zaplanowane."
@@ -2818,12 +2818,12 @@ msgstr "Każde zadanie z każdego projektu, pokazane w dniach, na które jest za
 msgid "Nothing scheduled this day."
 msgstr "Nic nie zaplanowano na ten dzień."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:957
+#: lib/phoenix_kit_projects/web/overview_live.ex:965
 #, elixir-autogen, elixir-format
 msgid "Tasks share their project's color. Click a task to open its project."
 msgstr "Zadania mają kolor swojego projektu. Kliknij zadanie, aby otworzyć jego projekt."
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:963
+#: lib/phoenix_kit_projects/web/overview_live.ex:971
 #, elixir-autogen, elixir-format
 msgid "A red ring marks a late task — not done, but past its scheduled days."
 msgstr "Czerwona obwódka oznacza spóźnione zadanie — nieukończone, ale po zaplanowanych dniach."
@@ -2838,7 +2838,7 @@ msgstr "Ja"
 msgid "Overdue only"
 msgstr "Tylko zaległe"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:970
+#: lib/phoenix_kit_projects/web/overview_live.ex:978
 #, elixir-autogen, elixir-format
 msgid "Placement is computed from each project's task order and durations — it moves as tasks are edited, reordered, or completed."
 msgstr "Rozmieszczenie jest obliczane na podstawie kolejności i czasów trwania zadań każdego projektu — przesuwa się, gdy zadania są edytowane, przestawiane lub kończone."
@@ -2850,8 +2850,8 @@ msgstr "Rozmieszczenie jest obliczane na podstawie kolejności i czasów trwania
 msgid "Unassigned"
 msgstr "Nieprzypisane"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:696
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:276
+#: lib/phoenix_kit_projects/web/overview_live.ex:704
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:277
 #, elixir-autogen, elixir-format
 msgid "via %{name}"
 msgstr "przez %{name}"
@@ -2887,12 +2887,12 @@ msgstr "Usuń %{name}"
 msgid "Searching…"
 msgstr "Wyszukiwanie…"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:407
+#: lib/phoenix_kit_projects/web/overview_live.ex:409
 #, elixir-autogen, elixir-format
 msgid "Every task on the days it is scheduled to run"
 msgstr "Każde zadanie w dniach, na które jest zaplanowane"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:421
+#: lib/phoenix_kit_projects/web/overview_live.ex:423
 #, elixir-autogen, elixir-format
 msgid "One line per project, with the overdue marker"
 msgstr "Jedna linia na projekt, ze znacznikiem zaległości"
@@ -2935,7 +2935,7 @@ msgstr "Wyczyść"
 msgid "Filters"
 msgstr "Filtry"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1018
+#: lib/phoenix_kit_projects/web/overview_live.ex:1026
 #, elixir-autogen, elixir-format
 msgid "Late only"
 msgstr "Tylko spóźnione"
@@ -2945,42 +2945,27 @@ msgstr "Tylko spóźnione"
 msgid "Not started"
 msgstr "Nierozpoczęte"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:1013
+#: lib/phoenix_kit_projects/web/overview_live.ex:1021
 #, elixir-autogen, elixir-format
 msgid "Only projects running past their planned end"
 msgstr "Tylko projekty po planowanym zakończeniu"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:921
-#, elixir-autogen, elixir-format
-msgid "Late task marker"
-msgstr "Oznaczenie spóźnionych zadań"
-
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:496
-#, elixir-autogen, elixir-format
-msgid "Overdue pattern — same look as late projects"
-msgstr "Wzór zaległości — jak przy spóźnionych projektach"
-
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:497
-#, elixir-autogen, elixir-format
-msgid "Red ring around the task"
-msgstr "Czerwona obwódka wokół zadania"
-
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:927
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:933
 #, elixir-autogen, elixir-format
 msgid "Stripe opacity"
 msgstr "Krycie pasków"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:488
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:494
 #, elixir-autogen, elixir-format
 msgid "Wave — stripes slide across the bar (solid: a band travels)"
 msgstr "Fala — paski przesuwają się po pasku (jednolity: wędruje pasmo)"
 
-#: lib/phoenix_kit_projects/web/overview_live.ex:961
+#: lib/phoenix_kit_projects/web/overview_live.ex:969
 #, elixir-autogen, elixir-format
 msgid "The overdue pattern marks a late task — not done, but past its scheduled days."
 msgstr "Wzór zaległości oznacza spóźnione zadanie — nieukończone, ale po zaplanowanych dniach."
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:832
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:838
 #, elixir-autogen, elixir-format
 msgid "Always six weeks (fixed height)"
 msgstr "Zawsze sześć tygodni (stała wysokość)"
@@ -2990,37 +2975,37 @@ msgstr "Zawsze sześć tygodni (stała wysokość)"
 msgid "Brand refresh"
 msgstr "Odświeżenie marki"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:811
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:817
 #, elixir-autogen, elixir-format
 msgid "How the project calendars look across the module — the month grid itself, and how overdue projects and late tasks are marked. The live preview below updates as you change these. The first day of the week follows the site-wide setting."
 msgstr "Jak wyglądają kalendarze projektów w całym module — sama siatka miesiąca oraz oznaczanie spóźnionych projektów i zadań. Podgląd na żywo poniżej aktualizuje się na bieżąco. Pierwszy dzień tygodnia wynika z ustawienia całej witryny."
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:417
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:423
 #, elixir-autogen, elixir-format
 msgid "Late task"
 msgstr "Spóźnione zadanie"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:860
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:866
 #, elixir-autogen, elixir-format
 msgid "Multi-day bars per day"
 msgstr "Paski wielodniowe na dzień"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:981
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:987
 #, elixir-autogen, elixir-format
 msgid "Preview"
 msgstr "Podgląd"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:820
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:826
 #, elixir-autogen, elixir-format
 msgid "Show weekends"
 msgstr "Pokaż weekendy"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:845
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:851
 #, elixir-autogen, elixir-format
 msgid "Single-day tasks per day"
 msgstr "Zadania jednodniowe na dzień"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:426
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:432
 #, elixir-autogen, elixir-format
 msgid "Task %{n}"
 msgstr "Zadanie %{n}"
@@ -3030,7 +3015,27 @@ msgstr "Zadanie %{n}"
 msgid "Website relaunch"
 msgstr "Relaunch strony"
 
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:826
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:832
 #, elixir-autogen, elixir-format
 msgid "Week numbers"
 msgstr "Numery tygodni"
+
+#: lib/phoenix_kit_projects/web/overview_live.ex:437
+#, elixir-autogen, elixir-format
+msgid "A project running past its planned end wears a red ring — the same marker late tasks get."
+msgstr "Projekt po planowanym zakończeniu nosi czerwoną obwódkę — to samo oznaczenie co spóźnione zadania."
+
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:927
+#, elixir-autogen, elixir-format
+msgid "Late marker"
+msgstr "Oznaczenie spóźnienia"
+
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:502
+#, elixir-autogen, elixir-format
+msgid "Overdue pattern — stripes or solid fill"
+msgstr "Wzór zaległości — paski lub jednolite wypełnienie"
+
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:503
+#, elixir-autogen, elixir-format
+msgid "Red ring"
+msgstr "Czerwona obwódka"

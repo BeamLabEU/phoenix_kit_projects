@@ -408,10 +408,16 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
         all_day: true,
         color: "bg-emerald-600",
         text_color: "text-white",
-        extra: %{
-          slot_priority: 0,
-          highlight: %{from: Date.add(today, -4), to: Date.add(today, 1), class: "pk-overdue"}
-        }
+        class: if(cfg.late_marker == "ring", do: marker),
+        extra:
+          if cfg.late_marker == "ring" do
+            %{slot_priority: 0}
+          else
+            %{
+              slot_priority: 0,
+              highlight: %{from: Date.add(today, -4), to: Date.add(today, 1), class: "pk-overdue"}
+            }
+          end
       ),
       PhoenixLiveCalendar.event("demo-late-task", Date.add(today, -1),
         title: gettext("Late task"),
@@ -493,8 +499,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
   defp late_marker_options do
     [
-      {gettext("Overdue pattern — same look as late projects"), "pattern"},
-      {gettext("Red ring around the task"), "ring"}
+      {gettext("Overdue pattern — stripes or solid fill"), "pattern"},
+      {gettext("Red ring"), "ring"}
     ]
   end
 
@@ -918,7 +924,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             </label>
             <.select
               name="late_marker"
-              label={gettext("Late task marker")}
+              label={gettext("Late marker")}
               value={@calendar_anim.late_marker}
               options={late_marker_options()}
             />

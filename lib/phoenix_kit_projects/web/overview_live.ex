@@ -172,7 +172,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         upcoming_projects,
         L10n.current_content_lang(),
         today,
-        offset
+        offset,
+        late_marker: overdue_anim.late_marker
       )
 
     # Tasks-mode events are only worth their per-project schedule walks once
@@ -431,7 +432,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   end
 
   # The calendar info-popover sentence describing the overdue indicator, worded
-  # to match the configured animation mode (set on /admin/settings/projects).
+  # to match the configured marker + pattern (set on /admin/settings/projects).
+  defp overdue_legend("ring") do
+    gettext(
+      "A project running past its planned end wears a red ring — the same marker late tasks get."
+    )
+  end
+
   defp overdue_legend("solid") do
     gettext(
       "When a project runs past its planned end, that overdue stretch is filled with the inverse of its colour — the longer it is, the more overdue the project."
@@ -1030,7 +1037,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                             {gettext("Reading the calendar")}
                           </p>
                           <p>{gettext("Each project is an ongoing line across the month.")}</p>
-                          <p class="mt-1.5">{overdue_legend(@overdue_pattern)}</p>
+                          <p class="mt-1.5">{overdue_legend(
+                              if(@overdue_anim.late_marker == "ring",
+                                do: "ring",
+                                else: @overdue_pattern
+                              )
+                            )}</p>
                           <p class="mt-1.5 text-base-content/50">
                             {gettext("Late projects are grouped at the top.")}
                           </p>

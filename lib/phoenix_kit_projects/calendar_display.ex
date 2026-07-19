@@ -139,8 +139,25 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     * `today` — anchor so a running project's bar always reaches at least today
     * `offset` — viewer timezone offset (e.g. "+3"); UTC datetimes are converted
       to local calendar dates with it, so bars land on the same day the viewer sees
+
+  Options:
+
+    * `:late_marker` — how a LATE running project is marked (`"pattern"`
+      default): `"pattern"` highlights the overdue stretch
+      (planned_end+1 .. today) with the configured overdue pattern, so the
+      marked length shows HOW late; `"ring"` rings the whole bar instead —
+      the same marker late task chips wear, so one setting dresses
+      everything late the same way.
   """
-  @spec events([map()], [Project.t()], [Project.t()], String.t() | nil, Date.t(), String.t()) ::
+  @spec events(
+          [map()],
+          [Project.t()],
+          [Project.t()],
+          String.t() | nil,
+          Date.t(),
+          String.t(),
+          keyword()
+        ) ::
           [Event.t()]
   def events(
         active_summaries,
@@ -148,9 +165,11 @@ defmodule PhoenixKitProjects.CalendarDisplay do
         upcoming,
         lang,
         today \\ Date.utc_today(),
-        offset \\ "0"
+        offset \\ "0",
+        opts \\ []
       ) do
-    running = Enum.map(active_summaries, &running_event(&1, lang, today, offset))
+    marker = Keyword.get(opts, :late_marker, "pattern")
+    running = Enum.map(active_summaries, &running_event(&1, lang, today, offset, marker))
     done = Enum.map(completed, &completed_event(&1, lang, offset))
     scheduled = Enum.map(upcoming, &scheduled_event(&1, lang, offset))
 
@@ -309,27 +328,37 @@ defmodule PhoenixKitProjects.CalendarDisplay do
          %{project: %Project{started_at: %DateTime{} = started} = project} = summary,
          lang,
          today,
-         offset
+         offset,
+         marker
        ) do
     start_d = to_date(started, offset)
     planned_end_d = to_date(summary[:planned_end], offset)
     # An in-progress project should always read as ongoing, so its bar reaches
-    # at least today; a later planned end extends it further. When it's late, the
-    # stretch past planned_end is highlighted so the red length shows how late.
+    # at least today; a later planned end extends it further. When it's late,
+    # the marker applies: the overdue stretch is highlighted (pattern) or the
+    # whole bar wears the ring — same dress as late task chips.
     last_day = latest([start_d, today, planned_end_d])
-    late? = summary[:late]
+    # Normalize: callers tag :late as true/false, but untagged summaries
+    # (tests, direct calls) leave it nil.
+    late? = summary[:late] == true
 
     # Late projects get slot_priority 0 so the lib packs them into the top slots
     # — grouping them (and their overdue waves) together; everything else is 1.
     extra =
-      late?
-      |> overdue_highlight(planned_end_d, today)
-      |> Map.put(:slot_priority, if(late?, do: 0, else: 1))
+      if late? and marker == "ring" do
+        %{slot_priority: 0}
+      else
+        late?
+        |> overdue_highlight(planned_end_d, today)
+        |> Map.put(:slot_priority, if(late?, do: 0, else: 1))
+      end
 
-    event(project, start_d, last_day, lang, extra)
+    class = if late? and marker == "ring", do: @late_class
+
+    event(project, start_d, last_day, lang, extra, class)
   end
 
-  defp running_event(_, _, _, _), do: nil
+  defp running_event(_, _, _, _, _), do: nil
 
   # Highlight only the overdue stretch (planned_end+1 .. today) of a late
   # project. Requires a planned end in the past; without one there's no
@@ -377,7 +406,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
 
   defp scheduled_event(_, _, _), do: nil
 
-  defp event(%Project{} = project, start_d, last_day_inclusive, lang, extra) do
+  defp event(%Project{} = project, start_d, last_day_inclusive, lang, extra, class \\ nil) do
     {bg, text} = color_for(project.uuid)
 
     PhoenixLiveCalendar.event(project.uuid, start_d,
@@ -386,6 +415,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       all_day: true,
       color: bg,
       text_color: text,
+      class: class,
       extra: extra
     )
   end

@@ -267,6 +267,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
 
       assert CalendarDisplay.read().late_marker == "ring"
       assert has_element?(view, "#calendar-settings-demo .ring-error")
+      # The ring governs EVERYTHING late: the late project bar wears it too
+      # and its striped tail is gone.
+      assert has_element?(view, "#calendar-settings-demo .cal-multiday-bar.ring-error")
+      refute has_element?(view, "#calendar-settings-demo .pk-overdue")
 
       # An unknown marker value is ignored, not persisted.
       render_change(view, "set_calendar_anim", %{

@@ -169,6 +169,30 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       assert e.extra.highlight == %{from: ~D[2026-06-06], to: ~D[2026-06-16], class: "pk-overdue"}
     end
 
+    test "with the ring marker a late project wears the ring instead of the tail" do
+      p = project(%{uuid: "late", name: "Late", started_at: ~U[2026-06-01 09:00:00Z]})
+      summary = %{project: p, planned_end: ~U[2026-06-05 17:00:00Z], progress_pct: 30, late: true}
+
+      [e] =
+        CalendarDisplay.events([summary], [], [], nil, @today, "0", late_marker: "ring")
+
+      assert e.class =~ "ring-error"
+      refute Map.has_key?(e.extra, :highlight)
+      # Late bars keep the top-slot grouping either way.
+      assert e.extra.slot_priority == 0
+
+      # On-time bars stay unmarked under the ring marker.
+      ok = %{
+        project: project(%{uuid: "ok", name: "OK", started_at: ~U[2026-06-01 09:00:00Z]}),
+        planned_end: ~U[2026-06-25 17:00:00Z],
+        progress_pct: 30,
+        late: false
+      }
+
+      [oe] = CalendarDisplay.events([ok], [], [], nil, @today, "0", late_marker: "ring")
+      refute oe.class
+    end
+
     test "a late summary whose planned end is still in the future has no highlight" do
       p = project(%{uuid: "fut", name: "Fut", started_at: ~U[2026-06-10 09:00:00Z]})
       summary = %{project: p, planned_end: ~U[2026-06-25 17:00:00Z], progress_pct: 30, late: true}
