@@ -93,9 +93,9 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   @anim_modes ~w(wave flash off)
 
   # How a late TASK (chip/bar on the Tasks-mode Overview + the project
-  # Calendar tab) is marked: ring = the red inset ring; pattern = the same
-  # configured overdue pattern the Projects-mode bars use, so the two "late"
-  # visuals can match.
+  # Calendar tab) is marked: pattern (default) = the same configured overdue
+  # pattern the Projects-mode bars use, so every calendar shows lateness the
+  # same way out of the box; ring = the red inset ring alternative.
   @late_markers ~w(ring pattern)
 
   @default_pattern "stripes"
@@ -107,7 +107,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   @default_bright_max 1.18
   @default_wave_step 0.16
   @default_opacity 1.0
-  @default_late_marker "ring"
+  @default_late_marker "pattern"
 
   # {lo, hi} clamp ranges for each numeric setting (also bound the form inputs).
   @speed_range {1.0, 20.0}
@@ -420,15 +420,17 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   def late_class, do: @late_class
 
   @doc """
-  The late-task marker class for a `read_animation/0` config: `"ring"` (the
-  default red inset ring) or `"pattern"` — the `pk-overdue` overlay, i.e. the
-  same configured stripes/solid look the Projects-mode overdue stretch uses,
-  so the two "late" visuals can match. Consumers using `"pattern"` must also
-  inject `animation_style/1` (and ideally wrap the grid in `SyncAnimations`).
+  The late-task marker class for a `read_animation/0` config: `"pattern"`
+  (the default) — the `pk-overdue` overlay, i.e. the same configured
+  stripes/solid look the Projects-mode overdue stretch uses, so every
+  calendar marks lateness identically — or `"ring"`, the red inset ring
+  alternative. Anything else (including maps missing the key) follows the
+  default. Consumers using the pattern must also inject `animation_style/1`
+  (and ideally wrap the grid in `SyncAnimations`).
   """
   @spec late_marker_class(map()) :: String.t()
-  def late_marker_class(%{late_marker: "pattern"}), do: @overdue_class
-  def late_marker_class(_cfg), do: @late_class
+  def late_marker_class(%{late_marker: "ring"}), do: @late_class
+  def late_marker_class(_cfg), do: @overdue_class
 
   @doc """
   A `<style>` block giving the calendar LIBRARY's clickable nodes (event

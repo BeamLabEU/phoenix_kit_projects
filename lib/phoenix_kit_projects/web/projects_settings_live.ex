@@ -424,8 +424,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
   defp late_marker_options do
     [
-      {gettext("Red ring around the task"), "ring"},
-      {gettext("Overdue pattern — same look as late projects"), "pattern"}
+      {gettext("Overdue pattern — same look as late projects"), "pattern"},
+      {gettext("Red ring around the task"), "ring"}
     ]
   end
 

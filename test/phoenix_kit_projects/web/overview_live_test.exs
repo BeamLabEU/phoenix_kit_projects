@@ -237,13 +237,8 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       assert html =~ "overview-tasks-calendar"
     end
 
-    test "the pattern late-marker replaces the ring on late task chips", %{conn: conn} do
-      PhoenixKitProjects.CalendarDisplay.put_animation("late_marker", "pattern")
-
-      on_exit(fn ->
-        PhoenixKitProjects.CalendarDisplay.put_animation("late_marker", "ring")
-      end)
-
+    test "late chips default to the overdue pattern; the ring is the opt-in alternative",
+         %{conn: conn} do
       # A late chip that lands on TODAY's cell (a month-old span wouldn't be
       # in the rendered month): 10-minute task anchored at 00:05 UTC today —
       # same convention as calendar_fixture, late whenever now > 00:15.
@@ -252,8 +247,16 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)
 
+      # Default: synced with the Projects-mode overdue look.
       assert has_element?(view, "[id^=overview-tasks-calendar] .pk-overdue")
       refute has_element?(view, "[id^=overview-tasks-calendar] .ring-error")
+
+      # Opting into the ring swaps the marker.
+      PhoenixKitProjects.CalendarDisplay.put_animation("late_marker", "ring")
+      send(view.pid, {:projects, :assignment_updated, %{}})
+      render(view)
+      assert has_element?(view, "[id^=overview-tasks-calendar] .ring-error")
+      refute has_element?(view, "[id^=overview-tasks-calendar] .cal-event.pk-overdue")
     end
 
     # A started project whose 1-hour task began `days_ago` days ago — its
@@ -849,8 +852,9 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       refute html =~ "DoneOne-#{n}"
       refute html =~ ok_task.title
 
-      # The late chip carries the red ring marker.
-      assert html =~ "ring-error"
+      # The late chip carries the default overdue-pattern marker (scoped
+      # element check — the injected <style> text also contains the class).
+      assert has_element?(view, "[id^=overview-tasks-calendar] .cal-event.pk-overdue")
     end
   end
 end

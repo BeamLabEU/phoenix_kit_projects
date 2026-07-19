@@ -308,10 +308,11 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       assert flash =~ "opacity: 0.59;"
     end
 
-    test "late_marker_class/1 maps ring/pattern (ring on anything else)" do
+    test "late_marker_class/1 maps ring/pattern (pattern is the default)" do
       assert CalendarDisplay.late_marker_class(%{late_marker: "ring"}) =~ "ring-error"
       assert CalendarDisplay.late_marker_class(%{late_marker: "pattern"}) == "pk-overdue"
-      assert CalendarDisplay.late_marker_class(%{}) =~ "ring-error"
+      # Missing/unknown follows the default: synced with the projects look.
+      assert CalendarDisplay.late_marker_class(%{}) == "pk-overdue"
     end
 
     test "solid pattern fills with the inverse colour (filter: invert), no stripes" do

@@ -426,10 +426,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       refute html =~ "SubMatch-"
     end
 
-    test "the pattern late-marker replaces the ring on late bars", %{conn: conn} do
-      PhoenixKitProjects.CalendarDisplay.put_animation("late_marker", "pattern")
-      on_exit(fn -> PhoenixKitProjects.CalendarDisplay.put_animation("late_marker", "ring") end)
-
+    test "late bars default to the overdue pattern; ring is the opt-in alternative",
+         %{conn: conn} do
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
       {:ok, _} = Projects.start_project(project, DateTime.add(DateTime.utc_now(), -5 * 24 * 3600))
       project = Projects.get_project!(project.uuid)
@@ -450,6 +448,13 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       render(view)
       assert has_element?(view, "[id^=project-calendar-sync] .pk-overdue")
       refute has_element?(view, "[id^=project-calendar-sync] .ring-error")
+
+      # Opting into the ring swaps the marker.
+      PhoenixKitProjects.CalendarDisplay.put_animation("late_marker", "ring")
+      send(view.pid, {:projects, :assignment_updated, %{}})
+      render(view)
+      assert has_element?(view, "[id^=project-calendar-sync] .ring-error")
+      refute has_element?(view, "[id^=project-calendar-sync] .cal-multiday-bar.pk-overdue")
     end
 
     test "the Overdue-only toggle hides while no bar is late", %{conn: conn} do
@@ -509,7 +514,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       html = render_click(view, "toggle_overdue_only", %{})
       assert html =~ late.title
       refute html =~ ontime.title
-      assert html =~ "ring-error"
+      # Default marker: the overdue pattern (scoped — the injected <style>
+      # text also contains the class name).
+      assert has_element?(view, "[id^=project-calendar-sync] .pk-overdue")
     end
   end
 
