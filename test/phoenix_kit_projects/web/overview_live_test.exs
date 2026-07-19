@@ -195,46 +195,41 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     end
 
     defp open_calendar_tab(view) do
-      render_click(view, "switch_overview_tab", %{"tab" => "calendar"})
+      render_click(view, "switch_overview_tab", %{"tab" => "tasks_calendar"})
     end
 
-    test "opens in Tasks mode: per-task events + the mode toggle", %{conn: conn} do
+    test "the Tasks-calendar tab opens the tasks grid", %{conn: conn} do
       {_project, [a | _]} = calendar_fixture(2)
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       html = open_calendar_tab(view)
 
-      # Both mode buttons render, Tasks active by default.
-      assert html =~ "set_calendar_mode"
-      assert html =~ ~s(phx-value-mode="tasks")
-      assert html =~ ~s(phx-value-mode="projects")
-
-      # The tasks grid renders the task titles as events.
+      # All three view tabs render; the tasks grid shows the task titles.
+      assert html =~ "tasks_calendar"
+      assert html =~ "projects_calendar"
       assert html =~ "overview-tasks-calendar"
       assert html =~ a.task.title
     end
 
-    test "the mode toggle flips to the Projects view (both grids stay mounted)", %{conn: conn} do
+    test "the Projects-calendar tab flips the mode (both grids stay mounted)", %{conn: conn} do
       {_project, _} = calendar_fixture(1)
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)
 
-      html = render_click(view, "set_calendar_mode", %{"mode" => "projects"})
+      html = render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
       # Both component instances stay in the DOM (CSS-hidden) so month
       # navigation survives switching.
       assert html =~ "projects-overview-calendar"
       assert html =~ "overview-tasks-calendar"
 
-      # The toggle indicates the ACTIVE mode (tab-active moves with it; boxed
-      # tabs so the mode group reads differently from the view switcher).
-      assert has_element?(view, ~s(button[phx-value-mode="projects"].tab-active))
-      refute has_element?(view, ~s(button[phx-value-mode="tasks"].tab-active))
-      render_click(view, "set_calendar_mode", %{"mode" => "tasks"})
-      assert has_element?(view, ~s(button[phx-value-mode="tasks"].tab-active))
+      # The active tab follows the mode.
+      assert has_element?(view, ~s([role="tab"].tab-active), "Projects calendar")
+      render_click(view, "switch_overview_tab", %{"tab" => "tasks_calendar"})
+      assert has_element?(view, ~s([role="tab"].tab-active), "Tasks calendar")
 
-      # An unknown mode is ignored.
-      html = render_click(view, "set_calendar_mode", %{"mode" => "evil"})
+      # An unknown tab falls back to the list view.
+      html = render_click(view, "switch_overview_tab", %{"tab" => "evil"})
       assert html =~ "overview-tasks-calendar"
     end
 
@@ -312,7 +307,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)
-      html = render_click(view, "set_calendar_mode", %{"mode" => "projects"})
+      html = render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
 
       # Nothing late — no lens (the graceful-empty rule).
       refute html =~ "toggle_projects_late_only"
@@ -440,7 +435,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)
-      render_click(view, "set_calendar_mode", %{"mode" => "projects"})
+      render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
 
       send(view.pid, {:calendar_day_click, Date.utc_today()})
       html = render(view)
@@ -453,7 +448,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)
-      render_click(view, "set_calendar_mode", %{"mode" => "projects"})
+      render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
 
       send(view.pid, {:calendar_open_project, project.uuid})
       assert_redirect(view, Paths.project(project.uuid))
@@ -528,7 +523,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       scope = fake_scope(user_uuid: user.uuid)
       conn = put_test_scope(conn, scope)
       {:ok, view, _html} = live(conn, "/en/admin/projects")
-      render_click(view, "switch_overview_tab", %{"tab" => "calendar"})
+      render_click(view, "switch_overview_tab", %{"tab" => "tasks_calendar"})
       view
     end
 

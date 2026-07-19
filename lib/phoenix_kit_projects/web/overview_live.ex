@@ -355,6 +355,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     |> then(fn {kept, prov} -> {Enum.reverse(kept), prov} end)
   end
 
+  # Which nav tab is lit: the two calendar tabs are (overview_tab :calendar)
+  # split by mode.
+  defp active_overview_tab(:list, _mode), do: "list"
+  defp active_overview_tab(:calendar, :projects), do: "projects_calendar"
+  defp active_overview_tab(:calendar, _tasks), do: "tasks_calendar"
+
   # First-open build (reload/1 skips the walk until the tab has been seen).
   defp ensure_task_calendar(%{assigns: %{task_calendar_loaded?: true}} = socket), do: socket
 
@@ -393,52 +399,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   # notices the difference — at 00:30 in UTC+3 it's already tomorrow locally.
   defp to_local_date(%DateTime{} = dt, offset) do
     dt |> PhoenixKit.Utils.Date.shift_to_offset(offset) |> DateTime.to_date()
-  end
-
-  # The Tasks/Projects mode toggle, rendered into BOTH calendar grids'
-  # toolbar_end slots (each grid shows its own copy; only one grid is visible
-  # at a time). tooltip-left on the edge button so it doesn't clip.
-  defp mode_toggle(assigns) do
-    ~H"""
-    <%!-- Boxed segmented control (same look as the List/Calendar nav_tabs) so
-         the DATA-mode choice reads differently from the lib's Month/Agenda
-         VIEW switcher sitting beside it — as plain buttons the two groups
-         blended into one row of pills. --%>
-    <div
-      class="tabs tabs-boxed tabs-sm bg-base-200 p-0.5 flex-nowrap shrink-0"
-      role="group"
-      aria-label={gettext("Calendar mode")}
-    >
-      <button
-        type="button"
-        class={[
-          "tab tooltip",
-          CalendarDisplay.loading_class(),
-          @calendar_mode == :tasks && "tab-active"
-        ]}
-        data-tip={gettext("Every task on the days it is scheduled to run")}
-        aria-pressed={to_string(@calendar_mode == :tasks)}
-        phx-click="set_calendar_mode"
-        phx-value-mode="tasks"
-      >
-        {gettext("Tasks")}
-      </button>
-      <button
-        type="button"
-        class={[
-          "tab tooltip",
-          CalendarDisplay.loading_class(),
-          @calendar_mode == :projects && "tab-active"
-        ]}
-        data-tip={gettext("One line per project, with the overdue marker")}
-        aria-pressed={to_string(@calendar_mode == :projects)}
-        phx-click="set_calendar_mode"
-        phx-value-mode="projects"
-      >
-        {gettext("Projects")}
-      </button>
-    </div>
-    """
   end
 
   # The calendar info-popover sentence describing the overdue indicator, worded
@@ -562,29 +522,25 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   defp overdue_seconds(_, _now), do: 0
 
-  # Running card tabs. The calendar is lazy-mounted on first open (then kept
-  # hidden when inactive, so its paged month survives toggling back and forth);
-  # the first open also builds the Tasks-mode events (per-project walks that
-  # reload/1 skips until the tab has been seen).
+  # Running card tabs: List plus the two calendars (Tasks / Projects), the
+  # modes promoted to first-class tabs. The calendar is lazy-mounted on first
+  # open (then kept hidden when inactive, so its paged month survives
+  # toggling back and forth); the first open also builds the Tasks-mode
+  # events (per-project walks that reload/1 skips until the tab has been
+  # seen). Whitelisted tab strings — anything else falls to :list.
   @impl true
-  def handle_event("switch_overview_tab", %{"tab" => "calendar"}, socket) do
+  def handle_event("switch_overview_tab", %{"tab" => tab}, socket)
+      when tab in ["tasks_calendar", "projects_calendar"] do
+    mode = if tab == "projects_calendar", do: :projects, else: :tasks
+
     {:noreply,
      socket
-     |> assign(overview_tab: :calendar, calendar_seen?: true)
+     |> assign(overview_tab: :calendar, calendar_mode: mode, calendar_seen?: true)
      |> ensure_task_calendar()}
   end
 
   def handle_event("switch_overview_tab", _params, socket) do
     {:noreply, assign(socket, overview_tab: :list)}
-  end
-
-  # Calendar mode toggle: :tasks (default) | :projects. Hardcoded map — never
-  # String.to_existing_atom on a client param.
-  def handle_event("set_calendar_mode", %{"mode" => mode}, socket) do
-    case %{"tasks" => :tasks, "projects" => :projects} do
-      %{^mode => new_mode} -> {:noreply, assign(socket, calendar_mode: new_mode)}
-      _ -> {:noreply, socket}
-    end
   end
 
   # Projects-mode "Late only" lens — in-memory re-derivation, no re-query.
@@ -800,11 +756,20 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
             <%!-- Same running projects, two views to choose from: a vertical list
                  (default) and the month calendar. --%>
             <.nav_tabs
-              active_tab={to_string(@overview_tab)}
+              active_tab={active_overview_tab(@overview_tab, @calendar_mode)}
               on_change="switch_overview_tab"
               tabs={[
                 %{id: "list", label: gettext("List"), icon: "hero-list-bullet"},
-                %{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}
+                %{
+                  id: "tasks_calendar",
+                  label: gettext("Tasks calendar"),
+                  icon: "hero-calendar-days"
+                },
+                %{
+                  id: "projects_calendar",
+                  label: gettext("Projects calendar"),
+                  icon: "hero-calendar"
+                }
               ]}
               class="mt-3"
             />
@@ -925,12 +890,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                            at all (fresh install / everything deleted) — with
                            zero raw items every filter yields the same empty
                            month. Keyed on the UNFILTERED walk, so a filter
-                           that empties the month keeps the panel reachable. --%>
-                      <%!-- The DATA-mode choice outranks the view switcher, so
-                           it leads the LEFT wing — on narrow containers the
-                           right wing wraps, not this. --%>
+                           that empties the month keeps the panel reachable.
+                           (The Tasks/Projects choice lives in the nav tabs
+                           above the card, not in this toolbar.) --%>
                       <:toolbar_start>
-                        {mode_toggle(%{calendar_mode: @calendar_mode})}
                         <.assignee_filter_panel
                           :if={@task_calendar_items != []}
                           id={"overview-filter-#{@sfx}"}
@@ -1001,7 +964,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                              kept while ACTIVE even at 0, so the lens can
                              always be toggled back off. --%>
                         <:toolbar_start>
-                          {mode_toggle(%{calendar_mode: @calendar_mode})}
                           <button
                             :if={MapSet.size(@late_project_uuids) > 0 or @projects_late_only?}
                             type="button"
