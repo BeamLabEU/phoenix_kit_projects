@@ -9,12 +9,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.ListUi
 
   require Logger
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
-  @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
+  # Tight vertical rhythm for short client screens (matches OverviewLive).
+  @default_wrapper_class "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
 
   # How many rows the list loads at first, and how many more "Load more"
   # appends per click. Hardcoded for now (matches Activity Feed's 50);
@@ -29,6 +31,17 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # a one-shot render).
   @default_pagination "load_more"
 
+  # At or below this many projects the WHOLE (status-filtered) list is
+  # loaded and the TableLocalSearch hook narrows rows client-side; the
+  # SQL search only engages past the threshold. See TemplatesLive.
+  @local_search_threshold 100
+
+  # Optional table columns (Name and Actions always render), toggleable
+  # from the Columns dropdown; persisted site-wide via ListUi.
+  @optional_columns ~w(status tasks created updated created_by external_id)
+  @default_columns ~w(status)
+  @columns_key "projects_list_columns"
+
   @impl true
   def mount(_params, session, socket) do
     WebHelpers.maybe_put_locale(session)
@@ -42,10 +55,19 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       socket
       |> assign(
         page_title: gettext("Projects"),
+        # The create action lives in the admin breadcrumb (+ the
+        # add-row under the list) — no in-content header row.
+        page_action: %{
+          icon: "hero-plus",
+          label: gettext("New project"),
+          navigate: Paths.new_project()
+        },
         wrapper_class: wrapper_class,
         pagination: pagination,
-        sort_by: :position,
-        sort_dir: :asc,
+        # Recency default — most recently edited projects first; manual
+        # position order (and DnD) is one selector switch away.
+        sort_by: :updated_at,
+        sort_dir: :desc,
         # Load-more pagination state. `loaded_count` is the current
         # cap on visible rows, bumped by @per_batch on each "Load
         # more" click. `total_count` is the DB total matching the
@@ -54,7 +76,17 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         # user away from what they just dragged). Both ignored when
         # `pagination == "off"`.
         loaded_count: @per_batch,
+        # `total_count` = ALL non-archived projects (reorder modal's
+        # honest "Reorder all N" + the local-search threshold);
+        # `filtered_count` = status+search-aware total for load-more.
         total_count: 0,
+        filtered_count: 0,
+        local_search?: true,
+        search: "",
+        visible_columns:
+          ListUi.read_visible_columns(@columns_key, @optional_columns, @default_columns),
+        task_counts: %{},
+        creators: %{},
         projects: [],
         bulk_enabled?: true,
         # `captured_uuids` is the snapshot taken from the DOM at the
@@ -89,6 +121,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   defp load_projects(socket) do
     status_slug = socket.assigns[:status_filter]
+    search = socket.assigns.search
+    total = Projects.count_projects(archived: false)
+    local_search? = total <= @local_search_threshold
 
     base_opts = [
       archived: false,
@@ -97,18 +132,51 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       sort_dir: socket.assigns.sort_dir
     ]
 
+    # Local mode: the full (status-filtered) set stays rendered and the
+    # client hook does the search narrowing — no SQL search, no limit.
+    # Server mode: SQL search + load-more pagination.
     list_opts =
-      case socket.assigns.pagination do
-        "load_more" -> Keyword.put(base_opts, :limit, socket.assigns.loaded_count)
-        _ -> base_opts
+      if local_search? do
+        base_opts
+      else
+        base_opts
+        |> Keyword.put(:search, search)
+        |> then(fn opts ->
+          if socket.assigns.pagination == "load_more",
+            do: Keyword.put(opts, :limit, socket.assigns.loaded_count),
+            else: opts
+        end)
       end
 
     projects = Projects.list_projects(list_opts)
+    uuids = Enum.map(projects, & &1.uuid)
+    visible = socket.assigns.visible_columns
 
     assign(socket,
       projects: projects,
-      total_count:
-        Projects.count_projects(archived: false, current_status_slug: status_slug || :all),
+      total_count: total,
+      local_search?: local_search?,
+      filtered_count:
+        if(local_search?,
+          do: total,
+          else:
+            Projects.count_projects(
+              archived: false,
+              current_status_slug: status_slug || :all,
+              search: search
+            )
+        ),
+      task_counts:
+        if("tasks" in visible, do: Projects.assignment_counts_for_projects(uuids), else: %{}),
+      creators:
+        if("created_by" in visible,
+          do:
+            Projects.creation_actors(uuids, [
+              "projects.project_created",
+              "projects.project_created_from_template"
+            ]),
+          else: %{}
+        ),
       # Per-row current status for the list badge, batched to avoid N+1.
       workflow_status_by_project:
         if(socket.assigns.statuses_available,
@@ -154,7 +222,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       {:position, gettext("Manual")},
       {:name, gettext("Name")},
       {:inserted_at, gettext("Date created")},
-      {:updated_at, gettext("Last updated")}
+      {:updated_at, gettext("Last edited")}
     ]
   end
 
@@ -214,6 +282,32 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
      |> assign(loaded_count: socket.assigns.loaded_count + @per_batch)
      |> load_projects()}
   end
+
+  # The search box (core `<.search_toolbar>`, 300ms debounce). A new
+  # query resets the load-more cap; ListUi.coerce_search guards forged
+  # map-shaped payloads.
+  def handle_event("search", params, socket) do
+    {:noreply,
+     socket
+     |> assign(search: ListUi.coerce_search(params), loaded_count: @per_batch)
+     |> load_projects()}
+  end
+
+  def handle_event("toggle_column", %{"col" => col}, socket) when col in @optional_columns do
+    new_visible =
+      ListUi.toggle_visible_column(
+        @columns_key,
+        @optional_columns,
+        socket.assigns.visible_columns,
+        col
+      )
+
+    # Reload so a newly-shown tasks / created_by column gets its
+    # batched lookup map (hidden columns skip those queries).
+    {:noreply, socket |> assign(visible_columns: new_visible) |> load_projects()}
+  end
+
+  def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
 
   # The bulk toolbar's Reorder button pushes this event with the
   # currently-selected UUIDs (gathered from the DOM by the
@@ -380,21 +474,21 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={gettext("Projects")} description={gettext("All projects.")}>
-        <:actions>
-          <.smart_link
-            navigate={Paths.new_project()}
-            emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
-            embed_mode={@embed_mode}
-            class="btn btn-primary btn-sm"
-          >
-            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
-          </.smart_link>
-        </:actions>
-      </.page_header>
-
-      <%= if @projects == [] do %>
-        <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects match.")} />
+      <%!-- True-empty install only — a no-match SEARCH/FILTER must keep
+           the toolbar on screen so the query can be cleared. --%>
+      <%= if @total_count == 0 do %>
+        <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects yet.")}>
+          <:cta>
+            <.smart_link
+              navigate={Paths.new_project()}
+              emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+              embed_mode={@embed_mode}
+              class="link link-primary text-sm"
+            >
+              {gettext("Create your first")}
+            </.smart_link>
+          </:cta>
+        </.empty_state>
       <% else %>
         <%!-- DnD applies only in "manual" sort (sort_by=:position).
              Sorting by name / date is a *view* — it doesn't rewrite
@@ -407,14 +501,20 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
              the hidden rows' slots (same gate as TemplatesLive's
              search). --%>
         <% lang = L10n.current_content_lang() %>
-        <% draggable? = @sort_by == :position and is_nil(@status_filter) %>
+        <% draggable? =
+          @sort_by == :position and is_nil(@status_filter) and String.trim(@search) == "" %>
 
         <.bulk_select_scope
           :if={@bulk_enabled?}
           id="projects-bulk-scope"
           total_count={length(@projects)}
-          class="flex flex-col gap-2"
         >
+          <div
+            id="projects-local-search"
+            phx-hook="TableLocalSearch"
+            data-local-search-enabled={to_string(@local_search?)}
+            class="flex flex-col gap-2"
+          >
           <%!-- Sort selector lives in the toolbar's leading slot so
                the two read as one control row. Reorder-button gating:
                manual sort → always shown ("Reorder all" / "Reorder N
@@ -437,10 +537,43 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 manual_field={:position}
               />
               {status_filter_control(assigns)}
+              {columns_control(assigns)}
+              <.search_toolbar
+                value={@search}
+                on_submit="search"
+                loading_indicator={not @local_search?}
+                placeholder={gettext("Search projects...")}
+                class="w-48"
+              />
             </:leading>
           </.bulk_actions_toolbar>
 
           {render_projects_table(assigns, draggable?, lang)}
+
+          <%!-- Server-truth when the SERVER filter empties the list; the
+               TableLocalSearch hook toggles the same node during the
+               debounce gap. --%>
+          <p
+            data-local-search-empty
+            class={[
+              "text-sm text-base-content/50 text-center py-2",
+              @projects != [] && "hidden"
+            ]}
+          >
+            {gettext("No projects match.")}
+          </p>
+
+          <%!-- The create action, at the foot of the list (the header
+               row is gone — its "+" lives in the admin breadcrumb). --%>
+          <.smart_link
+            navigate={Paths.new_project()}
+            emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+            embed_mode={@embed_mode}
+            class="btn btn-ghost btn-sm w-full justify-start border border-dashed border-base-300 text-base-content/60 hover:text-base-content hover:border-base-content/40"
+          >
+            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
+          </.smart_link>
+          </div>
         </.bulk_select_scope>
 
         <%!-- When bulk-select is disabled, render just the sort
@@ -479,6 +612,46 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     """
   end
 
+  defp column_options do
+    [
+      {"status", gettext("Status")},
+      {"tasks", gettext("Tasks")},
+      {"created", gettext("Created")},
+      {"updated", gettext("Last edited")},
+      {"created_by", gettext("Created by")},
+      {"external_id", gettext("External ID")}
+    ]
+  end
+
+  # The Columns dropdown: focus-based daisyUI dropdown (closes when
+  # focus leaves) with one checkbox per optional column.
+  defp columns_control(assigns) do
+    ~H"""
+    <div class="dropdown">
+      <div tabindex="0" role="button" class="btn btn-sm">
+        <.icon name="hero-view-columns" class="w-4 h-4" /> {gettext("Columns")}
+      </div>
+      <ul
+        tabindex="0"
+        class="dropdown-content menu bg-base-100 rounded-box z-20 w-44 p-2 shadow-md border border-base-200"
+      >
+        <li :for={{col, label} <- column_options()}>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              checked={col in @visible_columns}
+              phx-click="toggle_column"
+              phx-value-col={col}
+            />
+            {label}
+          </label>
+        </li>
+      </ul>
+    </div>
+    """
+  end
+
   # Extracted because the table is rendered both inside the
   # bulk-select scope and (when bulk is disabled) bare.
   defp render_projects_table(assigns, draggable?, lang) do
@@ -497,7 +670,32 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}}>
             {gettext("Name")}
           </.sort_header_cell>
-          <.table_default_header_cell>{gettext("Status")}</.table_default_header_cell>
+          <.table_default_header_cell :if={"status" in @visible_columns}>
+            {gettext("Status")}
+          </.table_default_header_cell>
+          <.table_default_header_cell :if={"tasks" in @visible_columns} class="text-right">
+            {gettext("Tasks")}
+          </.table_default_header_cell>
+          <.sort_header_cell
+            :if={"created" in @visible_columns}
+            field={:inserted_at}
+            sort={%{by: @sort_by, dir: @sort_dir}}
+          >
+            {gettext("Created")}
+          </.sort_header_cell>
+          <.sort_header_cell
+            :if={"updated" in @visible_columns}
+            field={:updated_at}
+            sort={%{by: @sort_by, dir: @sort_dir}}
+          >
+            {gettext("Last edited")}
+          </.sort_header_cell>
+          <.table_default_header_cell :if={"created_by" in @visible_columns}>
+            {gettext("Created by")}
+          </.table_default_header_cell>
+          <.table_default_header_cell :if={"external_id" in @visible_columns}>
+            {gettext("External ID")}
+          </.table_default_header_cell>
           <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
         </.table_default_row>
       </.table_default_header>
@@ -506,7 +704,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         enabled={@draggable?}
         event="reorder_projects"
       >
-        <.sortable_row :for={p <- @projects} item_id={p.uuid}>
+        <.sortable_row
+          :for={p <- @projects}
+          item_id={p.uuid}
+          data-search={ListUi.search_haystack(p, ["name", "description"])}
+        >
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={p.uuid} />
           <.table_default_cell class="font-medium">
@@ -521,7 +723,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             <% desc = Project.localized_description(p, @lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
           </.table_default_cell>
-          <.table_default_cell>
+          <.table_default_cell :if={"status" in @visible_columns}>
             <div class="flex flex-wrap items-center gap-1">
               <.project_status_badge project={p} />
               <.workflow_status_badge
@@ -529,6 +731,36 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 status={Map.get(@workflow_status_by_project, p.uuid)}
               />
             </div>
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"tasks" in @visible_columns}
+            class="text-right tabular-nums text-base-content/70"
+          >
+            {Map.get(@task_counts, p.uuid, 0)}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"created" in @visible_columns}
+            class="whitespace-nowrap text-base-content/70"
+          >
+            {L10n.format_date(p.inserted_at)}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"updated" in @visible_columns}
+            class="whitespace-nowrap text-base-content/70"
+          >
+            {L10n.format_date(p.updated_at)}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"created_by" in @visible_columns}
+            class="whitespace-nowrap text-base-content/70"
+          >
+            {Map.get(@creators, p.uuid) || "—"}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"external_id" in @visible_columns}
+            class="font-mono text-xs text-base-content/70"
+          >
+            {p.external_id || "—"}
           </.table_default_cell>
           <.table_default_cell class="text-right whitespace-nowrap">
             <.table_row_menu id={"project-menu-#{p.uuid}"}>
@@ -555,10 +787,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       </.sortable_tbody>
     </.table_default>
 
+    <%!-- Hidden in local mode: everything is on screen. --%>
     <.load_more
-      :if={@pagination == "load_more"}
+      :if={@pagination == "load_more" and not @local_search?}
       loaded={length(@projects)}
-      total={@total_count}
+      total={@filtered_count}
       noun_plural={gettext("projects")}
     />
     """

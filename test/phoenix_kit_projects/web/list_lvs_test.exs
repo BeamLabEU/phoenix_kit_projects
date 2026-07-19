@@ -21,10 +21,10 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
 
   describe "ProjectsLive" do
     test "mount renders the projects list page", %{conn: conn} do
-      _ = fixture_project(%{"name" => "Listed-#{System.unique_integer([:positive])}"})
+      p = fixture_project(%{"name" => "Listed-#{System.unique_integer([:positive])}"})
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list")
-      assert html =~ "Projects"
+      assert html =~ p.name
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do
@@ -56,7 +56,7 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
   describe "TasksLive" do
     test "mount renders the tasks list page", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/tasks")
-      assert html =~ "Task Library"
+      assert html =~ "No tasks yet."
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do

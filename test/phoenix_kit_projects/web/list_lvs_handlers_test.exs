@@ -108,7 +108,8 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
         |> PhoenixKit.RepoHelper.repo().update!()
       end
 
-      {:ok, view, html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      html = render_change(view, "sort_form", %{"sort_by" => "position"})
       assert html =~ ~s(data-sortable="true")
 
       # Rows still render (both match the filter) but the filtered view
@@ -121,14 +122,26 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
   describe "ProjectsLive — load_more" do
     test "load_more increases loaded cap and shows the new row", %{conn: conn} do
-      # 51 rows: only the first 50 render initially.
-      for n <- 1..51, do: fixture_project(%{"name" => "P#{String.pad_leading("#{n}", 3, "0")}"})
+      import Ecto.Query, only: [from: 2]
+      repo = PhoenixKit.RepoHelper.repo()
 
+      # Pagination only engages past the local-search threshold (100).
+      # Pin distinct edit times so the recency order is deterministic.
+      for n <- 1..151 do
+        p = fixture_project(%{"name" => "P#{String.pad_leading("#{n}", 3, "0")}"})
+        dt = DateTime.add(~U[2026-01-01 00:00:00Z], n * 60, :second)
+
+        from(pr in PhoenixKitProjects.Schemas.Project, where: pr.uuid == ^p.uuid)
+        |> repo.update_all(set: [updated_at: dt])
+      end
+
+      # Last-edited desc → P151..P102 visible; P101 is rank 51.
       {:ok, view, html} = live(conn, "/en/admin/projects/list")
-      refute html =~ "P051"
+      assert html =~ "P151"
+      refute html =~ "P101"
 
       html_after = render_click(view, "load_more", %{})
-      assert html_after =~ "P051"
+      assert html_after =~ "P101"
     end
   end
 
@@ -270,18 +283,31 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       fixture_task(%{"title" => "Aye"})
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/tasks")
-      html = render_change(view, "sort_form", %{"sort_by" => "title"})
+      # A field switch inherits the current direction (desc, from the
+      # recency default) — flip to asc explicitly.
+      html = render_change(view, "sort_form", %{"sort_by" => "title", "sort_dir" => "asc"})
       assert html =~ ~r/Aye[\s\S]*?Zee/
     end
 
     test "load_more bumps the loaded cap", %{conn: conn} do
-      for n <- 1..51, do: fixture_task(%{"title" => "T#{String.pad_leading("#{n}", 3, "0")}"})
+      import Ecto.Query, only: [from: 2]
+      repo = PhoenixKit.RepoHelper.repo()
+
+      # Pagination only engages past the local-search threshold (100).
+      for n <- 1..151 do
+        t = fixture_task(%{"title" => "T#{String.pad_leading("#{n}", 3, "0")}"})
+        dt = DateTime.add(~U[2026-01-01 00:00:00Z], n * 60, :second)
+
+        from(tk in PhoenixKitProjects.Schemas.Task, where: tk.uuid == ^t.uuid)
+        |> repo.update_all(set: [updated_at: dt])
+      end
 
       {:ok, view, html} = live(conn, "/en/admin/projects/tasks")
-      refute html =~ "T051"
+      assert html =~ "T151"
+      refute html =~ "T101"
 
       html_after = render_click(view, "load_more", %{})
-      assert html_after =~ "T051"
+      assert html_after =~ "T101"
     end
   end
 

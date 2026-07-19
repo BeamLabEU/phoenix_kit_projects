@@ -136,11 +136,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
         )
 
-      assert html =~ "Task Library"
+      assert html =~ "No tasks yet."
       assert html =~ ~s(phx-click="open_embed")
     end
 
     test "clicking 'New task' emits :opened for TaskFormLive", %{conn: conn} do
+      # The create action is the add-row at the list's foot — it only
+      # renders when the list is non-empty.
+      fixture_task()
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
@@ -200,6 +203,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
     end
 
     test "clicking 'New project' emits :opened for ProjectFormLive", %{conn: conn} do
+      fixture_project()
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
