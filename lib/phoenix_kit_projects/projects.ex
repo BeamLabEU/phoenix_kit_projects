@@ -1202,6 +1202,8 @@ defmodule PhoenixKitProjects.Projects do
       `:inserted_at`, `:updated_at`.
     * `:sort_dir` — `:asc` (default) or `:desc`. Ignored for `:position`.
     * `:limit` — cap the result set (load-more pagination).
+    * `:search` — case-insensitive substring match on name/description,
+      including translated values (see `maybe_search_name_description/2`).
 
   The default `:position` sort keeps date-added (not name) as the
   secondary key so renaming a template doesn't shuffle it in the list.
@@ -1214,23 +1216,66 @@ defmodule PhoenixKitProjects.Projects do
     sort_by = Keyword.get(opts, :sort_by, :position)
     sort_dir = Keyword.get(opts, :sort_dir, :asc)
     limit_n = Keyword.get(opts, :limit)
+    search = Keyword.get(opts, :search)
 
     Project
     |> where([p], p.is_template == true)
     |> exclude_subprojects()
+    |> maybe_search_name_description(search)
     |> project_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
     |> repo().all()
   end
 
-  @doc "Total number of template projects."
-  @spec count_templates() :: non_neg_integer()
-  def count_templates do
+  @doc """
+  Total number of template projects. Accepts the same `:search` opt as
+  `list_templates/1` so load-more totals stay coherent with the list.
+  """
+  @spec count_templates(keyword()) :: non_neg_integer()
+  def count_templates(opts \\ []) do
     Project
     |> where([p], p.is_template == true)
     |> exclude_subprojects()
+    |> maybe_search_name_description(Keyword.get(opts, :search))
     |> repo().aggregate(:count, :uuid)
   end
+
+  # Case-insensitive substring filter over a project's primary
+  # name/description AND every language's translated name/description
+  # (a template renamed in the viewer's content language must stay
+  # findable). ilike wildcards in the user's input are escaped so `%`
+  # and `_` match literally. The jsonb_each subquery walks only the
+  # name/description VALUES per language — never JSON keys, so
+  # searching "name" doesn't match every row.
+  defp maybe_search_name_description(query, search) when is_binary(search) do
+    case String.trim(search) do
+      "" ->
+        query
+
+      q ->
+        escaped =
+          q
+          |> String.replace("\\", "\\\\")
+          |> String.replace("%", "\\%")
+          |> String.replace("_", "\\_")
+
+        pattern = "%#{escaped}%"
+
+        where(
+          query,
+          [p],
+          ilike(p.name, ^pattern) or ilike(p.description, ^pattern) or
+            fragment(
+              "EXISTS (SELECT 1 FROM jsonb_each(?) AS t WHERE t.value->>'name' ILIKE ? OR t.value->>'description' ILIKE ?)",
+              p.translations,
+              ^pattern,
+              ^pattern
+            )
+        )
+    end
+  end
+
+  defp maybe_search_name_description(query, _), do: query
 
   @doc "Running projects (started, not archived, not yet completed)."
   @spec list_active_projects() :: [Project.t()]

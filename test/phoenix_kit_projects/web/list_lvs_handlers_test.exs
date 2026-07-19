@@ -537,4 +537,59 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       assert render_click(view, "toggle_column", %{"col" => "evil"})
     end
   end
+
+  describe "TemplatesLive — search" do
+    test "filters by name, clears back to the full list", %{conn: conn} do
+      fixture_template(%{"name" => "Alpha kit"})
+      fixture_template(%{"name" => "Beta kit"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      html = render_change(view, "search", %{"search" => "alpha"})
+      assert html =~ "Alpha kit"
+      refute html =~ "Beta kit"
+
+      html = render_change(view, "search", %{"search" => ""})
+      assert html =~ "Alpha kit"
+      assert html =~ "Beta kit"
+    end
+
+    test "no-match search keeps the toolbar (not the empty state)", %{conn: conn} do
+      fixture_template(%{"name" => "Alpha kit"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      html = render_change(view, "search", %{"search" => "zzz-nothing"})
+
+      # The search input must stay on screen so the query can be cleared.
+      assert has_element?(view, "input[name=search]")
+      assert html =~ "No templates match."
+      refute html =~ "No templates yet."
+    end
+
+    test "ilike wildcards in the query match literally", %{conn: conn} do
+      fixture_template(%{"name" => "100% done"})
+      fixture_template(%{"name" => "Plain"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      html = render_change(view, "search", %{"search" => "%"})
+
+      assert html =~ "100% done"
+      refute html =~ "Plain"
+    end
+
+    test "matches translated names", %{conn: conn} do
+      t = fixture_template(%{"name" => "Launch plan"})
+      fixture_template(%{"name" => "Other"})
+
+      t
+      |> Ecto.Changeset.change(translations: %{"et" => %{"name" => "Stardiplaan"}})
+      |> PhoenixKit.RepoHelper.repo().update!()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      html = render_change(view, "search", %{"search" => "stardi"})
+
+      assert html =~ "Launch plan"
+      refute html =~ "Other"
+    end
+  end
 end

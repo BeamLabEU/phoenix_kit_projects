@@ -65,7 +65,13 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         # `loaded_count` caps visible rows, `total_count` is the DB
         # total. Reset to @per_batch on sort change, NOT on DnD drop.
         loaded_count: @per_batch,
+        # `total_count` = ALL templates (drives the reorder modal's
+        # honest "Reorder all N" — strategies apply to the full set,
+        # search or not). `filtered_count` = search-aware total for
+        # the load-more footer.
         total_count: 0,
+        filtered_count: 0,
+        search: "",
         templates: [],
         # Snapshot of the client-side bulk selection, captured when an
         # action button is clicked (BulkSelectScope hook).
@@ -84,7 +90,13 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   end
 
   defp load_templates(socket) do
-    base_opts = [sort_by: socket.assigns.sort_by, sort_dir: socket.assigns.sort_dir]
+    search = socket.assigns.search
+
+    base_opts = [
+      sort_by: socket.assigns.sort_by,
+      sort_dir: socket.assigns.sort_dir,
+      search: search
+    ]
 
     list_opts =
       case socket.assigns.pagination do
@@ -94,7 +106,8 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
     assign(socket,
       templates: Projects.list_templates(list_opts),
-      total_count: Projects.count_templates()
+      total_count: Projects.count_templates(),
+      filtered_count: Projects.count_templates(search: search)
     )
   end
 
@@ -185,6 +198,15 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
     {:noreply,
      socket
      |> assign(loaded_count: socket.assigns.loaded_count + @per_batch)
+     |> load_templates()}
+  end
+
+  # The search box (core `<.search_toolbar>`, 300ms debounce). A new
+  # query resets the load-more cap so results start at the first batch.
+  def handle_event("search", params, socket) do
+    {:noreply,
+     socket
+     |> assign(search: params["search"] || "", loaded_count: @per_batch)
      |> load_templates()}
   end
 
@@ -359,7 +381,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         </:actions>
       </.page_header>
 
-      <%= if @templates == [] do %>
+      <%!-- True-empty install only — a no-match SEARCH must keep the
+           toolbar on screen or the user can't clear their query. --%>
+      <%= if @total_count == 0 do %>
         <.empty_state icon="hero-document-duplicate" title={gettext("No templates yet.")}>
           <:cta>
             <.smart_link
@@ -400,10 +424,25 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
                 manual_field={:position}
               />
               {columns_control(assigns)}
+              <%!-- on_submit is required, not optional: it selects the
+                   component's <form> branch. The formless branch's
+                   phx-change dies in LV's pushInput ("form events
+                   require the input to be inside a form"). Enter just
+                   re-fires the same debounced search event. --%>
+              <.search_toolbar
+                value={@search}
+                on_submit="search"
+                placeholder={gettext("Search templates...")}
+                class="w-48"
+              />
             </:leading>
           </.bulk_actions_toolbar>
 
           {render_templates_table(assigns, draggable?, lang)}
+
+          <p :if={@templates == []} class="text-sm text-base-content/50 text-center py-2">
+            {gettext("No templates match.")}
+          </p>
         </.bulk_select_scope>
       <% end %>
 
@@ -557,7 +596,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
     <.load_more
       :if={@pagination == "load_more"}
       loaded={length(@templates)}
-      total={@total_count}
+      total={@filtered_count}
       noun_plural={gettext("templates")}
     />
     """
