@@ -733,7 +733,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           <%!-- One compact header row: title, the view tabs, View-all — the
                old title-block + subtitle + separate tab row cost ~110px of
                chrome before any content (short client screens). --%>
-          <div class="card-body p-4 max-sm:p-3">
+          <div class="card-body p-3">
             <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
               <h2 class="card-title text-lg shrink-0">
                 <.icon name="hero-play" class="w-5 h-5 text-success" /> {gettext("Running")}
@@ -1038,7 +1038,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         <div class="grid gap-4 md:grid-cols-3 2xl:grid-cols-1 2xl:content-start">
           <%!-- My assignments --%>
           <div class="card bg-base-100 shadow">
-            <div class="card-body">
+            <div class="card-body p-4">
               <h2 class="card-title text-lg">
                 <.icon name="hero-user" class="w-5 h-5" /> {gettext("My tasks")}
               </h2>
@@ -1076,7 +1076,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           <%!-- Recently completed --%>
           <%= if @completed_projects != [] do %>
             <div class="card bg-base-100 shadow">
-              <div class="card-body">
+              <div class="card-body p-4">
                 <h2 class="card-title text-lg">
                   <.icon name="hero-trophy" class="w-5 h-5 text-success" /> {gettext("Recently completed")}
                 </h2>
@@ -1104,7 +1104,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           <%!-- Upcoming & Setup --%>
           <%= if @upcoming_projects != [] or @setup_projects != [] do %>
             <div class="card bg-base-100 shadow">
-              <div class="card-body">
+              <div class="card-body p-4">
                 <h2 class="card-title text-lg">
                   <.icon name="hero-calendar" class="w-5 h-5 text-info" /> {gettext("Upcoming")}
                 </h2>
@@ -1157,7 +1157,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           embed_mode={@embed_mode}
           class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
         >
-          <div class="card-body p-4">
+          <div class="card-body p-3">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-clipboard-document-list" class="w-5 h-5" />
               <span class="text-sm font-medium">{gettext("Projects")}</span>
@@ -1171,7 +1171,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           embed_mode={@embed_mode}
           class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
         >
-          <div class="card-body p-4">
+          <div class="card-body p-3">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-rectangle-stack" class="w-5 h-5" />
               <span class="text-sm font-medium">{gettext("Task Library")}</span>
@@ -1185,7 +1185,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           embed_mode={@embed_mode}
           class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
         >
-          <div class="card-body p-4">
+          <div class="card-body p-3">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-document-duplicate" class="w-5 h-5" />
               <span class="text-sm font-medium">{gettext("Templates")}</span>
