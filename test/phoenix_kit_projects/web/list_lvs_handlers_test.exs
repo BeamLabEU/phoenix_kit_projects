@@ -96,6 +96,28 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     end
   end
 
+  describe "ProjectsLive — status filter disables DnD" do
+    test "an active status filter hides the drag wiring", %{conn: conn} do
+      p1 = fixture_project(%{"name" => "F1"})
+      p2 = fixture_project(%{"name" => "F2"})
+
+      for p <- [p1, p2] do
+        p
+        |> Ecto.Changeset.change(current_status_slug: "in-review")
+        |> PhoenixKit.RepoHelper.repo().update!()
+      end
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/list")
+      assert html =~ ~s(data-sortable="true")
+
+      # Rows still render (both match the filter) but the filtered view
+      # is a sparse subset of the global manual order — DnD must be off.
+      html = render_change(view, "filter_status", %{"status_slug" => "in-review"})
+      assert html =~ "F1"
+      refute html =~ ~s(data-sortable="true")
+    end
+  end
+
   describe "ProjectsLive — load_more" do
     test "load_more increases loaded cap and shows the new row", %{conn: conn} do
       # 51 rows: only the first 50 render initially.
@@ -575,6 +597,29 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
       assert html =~ "100% done"
       refute html =~ "Plain"
+    end
+
+    test "an active search disables DnD (sparse-subset position rewrite guard)", %{conn: conn} do
+      fixture_template(%{"name" => "Alpha kit"})
+      fixture_template(%{"name" => "Alpha kit two"})
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/templates")
+      assert html =~ ~s(data-sortable="true")
+
+      # Dragging a filtered subset would renumber it 1..N and collide
+      # with the hidden rows' positions — the handle must go away.
+      html = render_change(view, "search", %{"search" => "alpha"})
+      refute html =~ ~s(data-sortable="true")
+    end
+
+    test "map-shaped search payload is coerced to empty, not crashed", %{conn: conn} do
+      fixture_template(%{"name" => "Alpha kit"})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      # A forged `search[x]=y` body arrives as a map; rendering it back
+      # into the input's value would raise Phoenix.HTML.Safe otherwise.
+      html = render_change(view, "search", %{"search" => %{"x" => "y"}})
+      assert html =~ "Alpha kit"
     end
 
     test "matches translated names", %{conn: conn} do

@@ -401,8 +401,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
              positions, so dragging would be lossy and the handle is
              hidden. Switching back to manual restores the drag handle
              and the position-driven order. --%>
+        <%!-- Manual sort only, AND no active status filter: a filtered
+             view is a sparse subset, and the DnD handler renumbers the
+             dropped list to 1..N absolute positions — colliding with
+             the hidden rows' slots (same gate as TemplatesLive's
+             search). --%>
         <% lang = L10n.current_content_lang() %>
-        <% draggable? = @sort_by == :position %>
+        <% draggable? = @sort_by == :position and is_nil(@status_filter) %>
 
         <.bulk_select_scope
           :if={@bulk_enabled?}
@@ -450,7 +455,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             />
             {status_filter_control(assigns)}
           </div>
-          {render_projects_table(assigns, @sort_by == :position, lang)}
+          {render_projects_table(assigns, draggable?, lang)}
         <% end %>
       <% end %>
 

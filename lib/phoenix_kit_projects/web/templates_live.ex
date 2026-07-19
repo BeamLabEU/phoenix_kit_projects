@@ -203,10 +203,19 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
   # The search box (core `<.search_toolbar>`, 300ms debounce). A new
   # query resets the load-more cap so results start at the first batch.
+  # Non-binary payloads (a forged `search[x]=y` arrives as a map) are
+  # coerced to "" — the query side would shrug them off, but rendering
+  # a map back into the input's `value` would crash the LV.
   def handle_event("search", params, socket) do
+    search =
+      case params["search"] do
+        s when is_binary(s) -> s
+        _ -> ""
+      end
+
     {:noreply,
      socket
-     |> assign(search: params["search"] || "", loaded_count: @per_batch)
+     |> assign(search: search, loaded_count: @per_batch)
      |> load_templates()}
   end
 
@@ -397,11 +406,14 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
           </:cta>
         </.empty_state>
       <% else %>
-        <%!-- DnD applies only in "manual" sort (sort_by=:position) —
-             sorting by name / date is a *view*, dragging in it would be
-             lossy, so the handle is hidden (same as ProjectsLive). --%>
+        <%!-- DnD applies only in "manual" sort (sort_by=:position) AND
+             with no active search: sorting by name / date is a *view*
+             (dragging would be lossy), and a search shows a sparse
+             subset — the DnD handler renumbers the dropped list to
+             1..N absolute positions, which would collide with the
+             hidden rows' slots and scramble the global manual order. --%>
         <% lang = L10n.current_content_lang() %>
-        <% draggable? = @sort_by == :position %>
+        <% draggable? = @sort_by == :position and String.trim(@search) == "" %>
 
         <.bulk_select_scope
           id="templates-bulk-scope"
