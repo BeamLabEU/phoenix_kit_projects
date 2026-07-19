@@ -506,7 +506,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplatesLive, session: %{})
 
-      assert html =~ "Templates"
+      assert html =~ "No templates yet."
     end
 
     test "wrapper_class defaults to full-width", %{conn: conn} do

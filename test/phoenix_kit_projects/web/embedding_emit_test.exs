@@ -231,11 +231,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
         )
 
-      assert html =~ "Templates"
+      assert html =~ "No templates yet."
       assert html =~ ~s(phx-click="open_embed")
     end
 
     test "clicking 'New template' emits :opened for TemplateFormLive", %{conn: conn} do
+      # The create action is now the add-row at the list's foot — it only
+      # renders when the list is non-empty.
+      fixture_template()
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 

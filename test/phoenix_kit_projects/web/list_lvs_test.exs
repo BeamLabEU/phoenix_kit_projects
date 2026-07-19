@@ -85,8 +85,10 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
 
   describe "TemplatesLive" do
     test "mount renders the templates list page", %{conn: conn} do
+      # No in-content header row anymore (the create action lives in the
+      # admin breadcrumb + the list's add-row) — pin the empty state.
       {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
-      assert html =~ "Project Templates"
+      assert html =~ "No templates yet."
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do

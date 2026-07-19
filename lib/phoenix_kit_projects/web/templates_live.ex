@@ -67,6 +67,15 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
       socket
       |> assign(
         page_title: gettext("Project Templates"),
+        # The primary create action lives in the admin header's
+        # breadcrumb row (core `page_action`) + a dashed add-row under
+        # the list — no in-content header row at all (short screens).
+        # Ignored in embed mode (no admin layout); the add-row covers it.
+        page_action: %{
+          icon: "hero-plus",
+          label: gettext("New template"),
+          navigate: Paths.new_template()
+        },
         wrapper_class: wrapper_class,
         pagination: pagination,
         # Default to recency ("Last edited", newest first) so the most
@@ -449,19 +458,6 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header compact title={gettext("Project Templates")}>
-        <:actions>
-          <.smart_link
-            navigate={Paths.new_template()}
-            emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
-            embed_mode={@embed_mode}
-            class="btn btn-primary btn-sm"
-          >
-            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New template")}
-          </.smart_link>
-        </:actions>
-      </.page_header>
-
       <%!-- True-empty install only — a no-match SEARCH must keep the
            toolbar on screen or the user can't clear their query. --%>
       <%= if @total_count == 0 do %>
@@ -538,6 +534,17 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             >
               {gettext("No templates match.")}
             </p>
+
+            <%!-- The create action, at the foot of the list (the header
+                 row is gone — its "+" lives in the admin breadcrumb). --%>
+            <.smart_link
+              navigate={Paths.new_template()}
+              emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
+              embed_mode={@embed_mode}
+              class="btn btn-ghost btn-sm w-full justify-start border border-dashed border-base-300 text-base-content/60 hover:text-base-content hover:border-base-content/40"
+            >
+              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New template")}
+            </.smart_link>
           </div>
         </.bulk_select_scope>
       <% end %>
