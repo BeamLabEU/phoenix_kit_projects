@@ -410,13 +410,13 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
         text_color: "text-white",
         class: if(cfg.late_marker == "ring", do: marker),
         extra:
-          if cfg.late_marker == "ring" do
-            %{slot_priority: 0}
-          else
+          if cfg.late_marker == "pattern" do
             %{
               slot_priority: 0,
               highlight: %{from: Date.add(today, -4), to: Date.add(today, 1), class: "pk-overdue"}
             }
+          else
+            %{slot_priority: 0}
           end
       ),
       PhoenixLiveCalendar.event("demo-late-task", Date.add(today, -1),
@@ -500,7 +500,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   defp late_marker_options do
     [
       {gettext("Overdue pattern — stripes or solid fill"), "pattern"},
-      {gettext("Red ring"), "ring"}
+      {gettext("Red ring"), "ring"},
+      {gettext("Off — no late marking"), "none"}
     ]
   end
 

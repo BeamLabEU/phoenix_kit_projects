@@ -193,6 +193,33 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       refute oe.class
     end
 
+    test "with the marker off a late project draws nothing but keeps its slot grouping" do
+      p = project(%{uuid: "late", name: "Late", started_at: ~U[2026-06-01 09:00:00Z]})
+      summary = %{project: p, planned_end: ~U[2026-06-05 17:00:00Z], progress_pct: 30, late: true}
+
+      [e] = CalendarDisplay.events([summary], [], [], nil, @today, "0", late_marker: "none")
+
+      refute e.class
+      refute Map.has_key?(e.extra, :highlight)
+      assert e.extra.slot_priority == 0
+    end
+
+    test "with the marker off a late task keeps late meta but no class" do
+      pr = project(%{name: "P"})
+      todo = task_item(pr, %{status: "todo"})
+      s = span(~N[2026-06-10 08:00:00], ~N[2026-06-10 10:00:00])
+      now = ~N[2026-06-12 09:00:00]
+
+      {[e], meta} =
+        CalendarDisplay.task_events([{todo, s}], nil, "0",
+          now: now,
+          late_class: CalendarDisplay.late_marker_class(%{late_marker: "none"})
+        )
+
+      refute e.class
+      assert meta[e.id].late
+    end
+
     test "a late summary whose planned end is still in the future has no highlight" do
       p = project(%{uuid: "fut", name: "Fut", started_at: ~U[2026-06-10 09:00:00Z]})
       summary = %{project: p, planned_end: ~U[2026-06-25 17:00:00Z], progress_pct: 30, late: true}
@@ -338,9 +365,11 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       assert flash =~ "opacity: 0.59;"
     end
 
-    test "late_marker_class/1 maps ring/pattern (pattern is the default)" do
+    test "late_marker_class/1 maps ring/pattern/none (pattern is the default)" do
       assert CalendarDisplay.late_marker_class(%{late_marker: "ring"}) =~ "ring-error"
       assert CalendarDisplay.late_marker_class(%{late_marker: "pattern"}) == "pk-overdue"
+      # Off: no class at all — the late DATA (meta, filters) is unaffected.
+      assert CalendarDisplay.late_marker_class(%{late_marker: "none"}) == nil
       # Missing/unknown follows the default: synced with the projects look.
       assert CalendarDisplay.late_marker_class(%{}) == "pk-overdue"
     end

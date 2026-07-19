@@ -272,6 +272,21 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       assert has_element?(view, "#calendar-settings-demo .cal-multiday-bar.ring-error")
       refute has_element?(view, "#calendar-settings-demo .pk-overdue")
 
+      # Off: nothing late is visually marked at all.
+      render_change(view, "set_calendar_anim", %{
+        "_target" => ["late_marker"],
+        "late_marker" => "none"
+      })
+
+      assert CalendarDisplay.read().late_marker == "none"
+      refute has_element?(view, "#calendar-settings-demo .ring-error")
+      refute has_element?(view, "#calendar-settings-demo .pk-overdue")
+
+      render_change(view, "set_calendar_anim", %{
+        "_target" => ["late_marker"],
+        "late_marker" => "ring"
+      })
+
       # An unknown marker value is ignored, not persisted.
       render_change(view, "set_calendar_anim", %{
         "_target" => ["late_marker"],

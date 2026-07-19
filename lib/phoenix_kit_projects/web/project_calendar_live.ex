@@ -367,7 +367,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             if socket.assigns.overdue_only? and not late? do
               []
             else
-              [to_event(it, span.start, span.end, lang, late? && late_class, via)]
+              [to_event(it, span.start, span.end, lang, late?, late_class, via)]
             end
         end
       end)
@@ -445,9 +445,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   # hour-precise detail lives one tab over. `phoenix_live_calendar` ends are
   # exclusive (`[start, end)`). Late bars get the shared red inset ring;
   # `via` carries the filter provenance for the day popup.
-  # `late_or_class` is falsy for an on-time bar, else the marker class to
-  # apply (ring or pk-overdue, per the settings).
-  defp to_event(it, %NaiveDateTime{} = s, %NaiveDateTime{} = e, lang, late_or_class, via) do
+  # Lateness (data — drives the popup badge + Overdue-only) is independent
+  # of the marker class (dress — nil when the marker is off).
+  defp to_event(it, %NaiveDateTime{} = s, %NaiveDateTime{} = e, lang, late?, late_class, via) do
     a = it.assignment
     start_d = NaiveDateTime.to_date(s)
     # UTC frame (nil offset) — Timeline-tab parity, unlike the Overview's
@@ -459,8 +459,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       end: end_d,
       all_day: true,
       color: status_color(a.status),
-      class: if(late_or_class, do: late_or_class),
-      extra: %{status: a.status, late: !!late_or_class, via: via}
+      class: if(late?, do: late_class),
+      extra: %{status: a.status, late: late?, via: via}
     )
   end
 

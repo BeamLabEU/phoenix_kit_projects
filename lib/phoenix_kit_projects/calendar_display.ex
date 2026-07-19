@@ -99,11 +99,12 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   # sweeps); flash = pulses in place; off = static, no motion.
   @anim_modes ~w(wave flash off)
 
-  # How a late TASK (chip/bar on the Tasks-mode Overview + the project
-  # Calendar tab) is marked: pattern (default) = the same configured overdue
-  # pattern the Projects-mode bars use, so every calendar shows lateness the
-  # same way out of the box; ring = the red inset ring alternative.
-  @late_markers ~w(ring pattern)
+  # How anything LATE (task chips/bars + late project bars) is marked:
+  # pattern (default) = the configured overdue pattern, so every calendar
+  # shows lateness the same way out of the box; ring = the red inset ring
+  # alternative; none = no visual marking at all (the late DATA stays — the
+  # Overdue-only lens, popup badges and card tiers keep working).
+  @late_markers ~w(ring pattern none)
 
   @default_pattern "stripes"
   # Static by default — the stripes already read as "overdue" without motion;
@@ -342,15 +343,17 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     # (tests, direct calls) leave it nil.
     late? = summary[:late] == true
 
-    # Late projects get slot_priority 0 so the lib packs them into the top slots
-    # — grouping them (and their overdue waves) together; everything else is 1.
+    # Late projects get slot_priority 0 so the lib packs them into the top
+    # slots — grouping stays even with the marker off (ordering isn't
+    # marking). Only the "pattern" marker draws the overdue-tail highlight;
+    # "ring" dresses the whole bar; "none" draws nothing.
     extra =
-      if late? and marker == "ring" do
-        %{slot_priority: 0}
-      else
+      if late? and marker == "pattern" do
         late?
         |> overdue_highlight(planned_end_d, today)
-        |> Map.put(:slot_priority, if(late?, do: 0, else: 1))
+        |> Map.put(:slot_priority, 0)
+      else
+        %{slot_priority: if(late?, do: 0, else: 1)}
       end
 
     class = if late? and marker == "ring", do: @late_class
@@ -470,8 +473,9 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   default. Consumers using the pattern must also inject `animation_style/1`
   (and ideally wrap the grid in `SyncAnimations`).
   """
-  @spec late_marker_class(map()) :: String.t()
+  @spec late_marker_class(map()) :: String.t() | nil
   def late_marker_class(%{late_marker: "ring"}), do: @late_class
+  def late_marker_class(%{late_marker: "none"}), do: nil
   def late_marker_class(_cfg), do: @overdue_class
 
   @doc """

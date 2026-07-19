@@ -439,6 +439,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     )
   end
 
+  defp overdue_legend("none") do
+    gettext(
+      "Late projects are not visually marked (changeable in the project settings); the cards and the Late-only lens still know them."
+    )
+  end
+
   defp overdue_legend("solid") do
     gettext(
       "When a project runs past its planned end, that overdue stretch is filled with the inverse of its colour — the longer it is, the more overdue the project."
@@ -969,10 +975,13 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                           {gettext("Tasks share their project's color. Click a task to open its project.")}
                         </p>
                         <p class="mt-1.5">
-                          <%= if @overdue_anim && @overdue_anim.late_marker == "pattern" do %>
-                            {gettext("The overdue pattern marks a late task — not done, but past its scheduled days.")}
-                          <% else %>
-                            {gettext("A red ring marks a late task — not done, but past its scheduled days.")}
+                          <%= case @overdue_anim.late_marker do %>
+                            <% "ring" -> %>
+                              {gettext("A red ring marks a late task — not done, but past its scheduled days.")}
+                            <% "none" -> %>
+                              {gettext("Late tasks are not visually marked (changeable in the project settings); the Overdue-only filter and day popups still know them.")}
+                            <% _ -> %>
+                              {gettext("The overdue pattern marks a late task — not done, but past its scheduled days.")}
                           <% end %>
                         </p>
                         <p class="mt-1.5 text-base-content/50">
@@ -1042,8 +1051,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                           </p>
                           <p>{gettext("Each project is an ongoing line across the month.")}</p>
                           <p class="mt-1.5">{overdue_legend(
-                              if(@overdue_anim.late_marker == "ring",
-                                do: "ring",
+                              if(@overdue_anim.late_marker in ["ring", "none"],
+                                do: @overdue_anim.late_marker,
                                 else: @overdue_pattern
                               )
                             )}</p>
