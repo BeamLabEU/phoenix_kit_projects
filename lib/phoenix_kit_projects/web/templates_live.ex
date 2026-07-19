@@ -14,7 +14,8 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
-  @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
+  # Tight vertical rhythm for short client screens (matches OverviewLive).
+  @default_wrapper_class "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
 
   @impl true
   def mount(_params, session, socket) do
@@ -119,10 +120,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header
-        title={gettext("Project Templates")}
-        description={gettext("Blueprint projects that can be cloned.")}
-      >
+      <.page_header compact title={gettext("Project Templates")}>
         <:actions>
           <.smart_link
             navigate={Paths.new_template()}

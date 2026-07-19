@@ -513,7 +513,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplatesLive, session: %{})
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
+      assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
@@ -523,7 +523,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
         )
 
       assert html =~ "host-specific-class"
-      refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
+      refute html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
   end
 
