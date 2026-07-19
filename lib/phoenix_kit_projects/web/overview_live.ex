@@ -756,11 +756,14 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   phx-click="switch_overview_tab"
                   phx-value-tab={id}
                   class={[
-                    "pb-0.5 border-b-2 transition-colors cursor-pointer",
+                    # border-y + transparent top mirrors the underline so the
+                    # box is vertically symmetric — items-center then truly
+                    # centers the text against the title beside it.
+                    "py-0.5 border-y-2 border-t-transparent transition-colors cursor-pointer",
                     CalendarDisplay.loading_class(),
                     if(active_overview_tab(@overview_tab, @calendar_mode) == id,
-                      do: "border-primary font-semibold text-base-content",
-                      else: "border-transparent text-base-content/60 hover:text-base-content"
+                      do: "border-b-primary font-semibold text-base-content",
+                      else: "border-b-transparent text-base-content/60 hover:text-base-content"
                     )
                   ]}
                 >
