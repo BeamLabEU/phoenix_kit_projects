@@ -842,55 +842,69 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             />
           </div>
 
-          <form
-            id="calendar-anim-form"
-            phx-change="set_calendar_anim"
-            class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
-          >
-            <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">
-                {gettext("Single-day tasks per day")}: {@calendar_anim.max_events}
-              </span>
-              <input
-                type="range"
-                name="max_events"
-                min={anim_min("max_events")}
-                max={anim_max("max_events")}
-                step="1"
-                value={@calendar_anim.max_events}
-                phx-debounce="150"
-                class="range range-sm"
-              />
-            </label>
-            <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">
-                {gettext("Multi-day bars per day")}: {@calendar_anim.max_multiday}
-              </span>
-              <input
-                type="range"
-                name="max_multiday"
-                min={anim_min("max_multiday")}
-                max={anim_max("max_multiday")}
-                step="1"
-                value={@calendar_anim.max_multiday}
-                phx-debounce="150"
-                class="range range-sm"
-              />
-            </label>
-            <div class="hidden lg:block"></div>
+          <form id="calendar-anim-form" phx-change="set_calendar_anim" class="flex flex-col gap-3">
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">
+                  {gettext("Single-day tasks per day")}: {@calendar_anim.max_events}
+                </span>
+                <input
+                  type="range"
+                  name="max_events"
+                  min={anim_min("max_events")}
+                  max={anim_max("max_events")}
+                  step="1"
+                  value={@calendar_anim.max_events}
+                  phx-debounce="150"
+                  class="range range-sm"
+                />
+              </label>
+              <label class="flex flex-col gap-1">
+                <span class="text-sm font-medium">
+                  {gettext("Multi-day bars per day")}: {@calendar_anim.max_multiday}
+                </span>
+                <input
+                  type="range"
+                  name="max_multiday"
+                  min={anim_min("max_multiday")}
+                  max={anim_max("max_multiday")}
+                  step="1"
+                  value={@calendar_anim.max_multiday}
+                  phx-debounce="150"
+                  class="range range-sm"
+                />
+              </label>
+            </div>
+
+            <%!-- The late-marking cascade: the marker TYPE leads, and only the
+                 controls relevant to the chosen type follow — the whole
+                 pattern/animation group applies solely to the "pattern"
+                 marker (ring and off have nothing to tune). --%>
+            <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <.select
+              name="late_marker"
+              label={gettext("Late marker")}
+              value={@calendar_anim.late_marker}
+              options={late_marker_options()}
+            />
+            <.select
+              :if={@calendar_anim.late_marker == "pattern"}
               name="pattern"
               label={gettext("Marker")}
               value={@calendar_anim.pattern}
               options={calendar_pattern_options()}
             />
             <.select
+              :if={@calendar_anim.late_marker == "pattern"}
               name="mode"
               label={gettext("Animation")}
               value={@calendar_anim.mode}
               options={calendar_mode_options()}
             />
-            <label :if={@calendar_anim.mode != "off"} class="flex flex-col gap-1">
+            <label
+              :if={@calendar_anim.late_marker == "pattern" and @calendar_anim.mode != "off"}
+              class="flex flex-col gap-1"
+            >
               <span class="text-sm font-medium">
                 {gettext("Speed (cycle)")}: {@calendar_anim.speed}s
               </span>
@@ -906,7 +920,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               />
             </label>
             <label
-              :if={@calendar_anim.pattern == "solid" and @calendar_anim.mode == "wave"}
+              :if={
+                @calendar_anim.late_marker == "pattern" and @calendar_anim.pattern == "solid" and
+                  @calendar_anim.mode == "wave"
+              }
               class="flex flex-col gap-1"
             >
               <span class="text-sm font-medium">
@@ -923,13 +940,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
                 class="range range-sm"
               />
             </label>
-            <.select
-              name="late_marker"
-              label={gettext("Late marker")}
-              value={@calendar_anim.late_marker}
-              options={late_marker_options()}
-            />
-            <label :if={@calendar_anim.pattern == "stripes"} class="flex flex-col gap-1">
+            <label
+              :if={@calendar_anim.late_marker == "pattern" and @calendar_anim.pattern == "stripes"}
+              class="flex flex-col gap-1"
+            >
               <span class="text-sm font-medium">
                 {gettext("Stripe opacity")}: {@calendar_anim.opacity}
               </span>
@@ -944,7 +958,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
                 class="range range-sm"
               />
             </label>
-            <label class="flex flex-col gap-1">
+            <label :if={@calendar_anim.late_marker == "pattern"} class="flex flex-col gap-1">
               <span class="text-sm font-medium">
                 {gettext("Dim (min brightness)")}: {@calendar_anim.brightness_min}
               </span>
@@ -959,7 +973,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
                 class="range range-sm"
               />
             </label>
-            <label :if={@calendar_anim.mode != "off"} class="flex flex-col gap-1">
+            <label
+              :if={@calendar_anim.late_marker == "pattern" and @calendar_anim.mode != "off"}
+              class="flex flex-col gap-1"
+            >
               <span class="text-sm font-medium">
                 {gettext("Peak brightness")}: {@calendar_anim.brightness_max}
               </span>
@@ -974,6 +991,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
                 class="range range-sm"
               />
             </label>
+            </div>
           </form>
 
           <%!-- Live preview: a REAL month grid (the same component the

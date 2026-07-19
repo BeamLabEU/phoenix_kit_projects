@@ -329,6 +329,45 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       assert CalendarDisplay.read().max_multiday == 1
     end
 
+    test "the late-marking controls cascade from the marker type", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/settings/projects")
+
+      # Default (pattern): the whole pattern group renders.
+      assert has_element?(view, ~s(select[name="late_marker"]))
+      assert has_element?(view, ~s(select[name="pattern"]))
+      assert has_element?(view, ~s(select[name="mode"]))
+      assert has_element?(view, ~s(input[name="brightness_min"]))
+
+      # Ring: nothing to tune — only the marker select remains.
+      render_change(view, "set_calendar_anim", %{
+        "_target" => ["late_marker"],
+        "late_marker" => "ring"
+      })
+
+      assert has_element?(view, ~s(select[name="late_marker"]))
+      refute has_element?(view, ~s(select[name="pattern"]))
+      refute has_element?(view, ~s(select[name="mode"]))
+      refute has_element?(view, ~s(input[name="brightness_min"]))
+      refute has_element?(view, ~s(input[name="opacity"]))
+
+      # Off: same — no pattern knobs.
+      render_change(view, "set_calendar_anim", %{
+        "_target" => ["late_marker"],
+        "late_marker" => "none"
+      })
+
+      refute has_element?(view, ~s(select[name="pattern"]))
+
+      # Back to pattern: the group returns.
+      render_change(view, "set_calendar_anim", %{
+        "_target" => ["late_marker"],
+        "late_marker" => "pattern"
+      })
+
+      assert has_element?(view, ~s(select[name="pattern"]))
+      assert has_element?(view, ~s(input[name="opacity"]))
+    end
+
     test "the calendars honor core's site-wide week_start_day", %{conn: conn} do
       PhoenixKit.Settings.update_setting("week_start_day", "7")
       assert CalendarDisplay.read().week_start == 7
