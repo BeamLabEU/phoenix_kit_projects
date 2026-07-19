@@ -36,7 +36,9 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
-  @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-6"
+  # py-4/gap-4 (not 6): the client screens are short — tighter vertical
+  # rhythm buys another two rows of real content.
+  @default_wrapper_class "flex flex-col w-full px-4 py-4 gap-4"
 
   # The shared filter's events, forwarded to Web.AssigneeFilter.update/3.
   @assignee_filter_events AssigneeFilter.events()
