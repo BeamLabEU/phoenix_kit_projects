@@ -729,21 +729,36 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         <%!-- Left: Active projects (span 2) --%>
         <div class="2xl:col-span-2 card bg-base-100 shadow">
           <%!-- Tighter body padding on phones so the 7-column calendar isn't squeezed. --%>
-          <div class="card-body max-sm:p-3">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <h2 class="card-title text-lg">
-                  <.icon name="hero-play" class="w-5 h-5 text-success" /> {gettext("Running")}
-                </h2>
-                <p class="text-xs text-base-content/50 mt-0.5">
-                  {gettext("Started and not yet completed.")}
-                </p>
-              </div>
+          <%!-- One compact header row: title, the view tabs, View-all — the
+               old title-block + subtitle + separate tab row cost ~110px of
+               chrome before any content (short client screens). --%>
+          <div class="card-body p-4 max-sm:p-3">
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <h2 class="card-title text-lg shrink-0">
+                <.icon name="hero-play" class="w-5 h-5 text-success" /> {gettext("Running")}
+              </h2>
+              <.nav_tabs
+                active_tab={active_overview_tab(@overview_tab, @calendar_mode)}
+                on_change="switch_overview_tab"
+                tabs={[
+                  %{id: "list", label: gettext("List"), icon: "hero-list-bullet"},
+                  %{
+                    id: "tasks_calendar",
+                    label: gettext("Tasks calendar"),
+                    icon: "hero-calendar-days"
+                  },
+                  %{
+                    id: "projects_calendar",
+                    label: gettext("Projects calendar"),
+                    icon: "hero-calendar"
+                  }
+                ]}
+              />
               <.smart_link
                 navigate={Paths.projects()}
                 emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
                 embed_mode={@embed_mode}
-                class="link link-hover text-sm shrink-0 mt-1"
+                class="link link-hover text-sm shrink-0 ml-auto"
               >
                 <%= if @active_count > @running_display_limit do %>
                   {gettext("View all (%{count}) →", count: @active_count)}
@@ -752,27 +767,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                 <% end %>
               </.smart_link>
             </div>
-
-            <%!-- Same running projects, two views to choose from: a vertical list
-                 (default) and the month calendar. --%>
-            <.nav_tabs
-              active_tab={active_overview_tab(@overview_tab, @calendar_mode)}
-              on_change="switch_overview_tab"
-              tabs={[
-                %{id: "list", label: gettext("List"), icon: "hero-list-bullet"},
-                %{
-                  id: "tasks_calendar",
-                  label: gettext("Tasks calendar"),
-                  icon: "hero-calendar-days"
-                },
-                %{
-                  id: "projects_calendar",
-                  label: gettext("Projects calendar"),
-                  icon: "hero-calendar"
-                }
-              ]}
-              class="mt-3"
-            />
 
             <%!-- List view --%>
             <div class={["mt-2", if(@overview_tab != :list, do: "hidden")]}>
