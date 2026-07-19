@@ -52,7 +52,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.OverviewLive, session: %{})
 
-      assert html =~ "flex flex-col w-full px-4 py-4 gap-4"
+      assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
     test "wrapper_class override from session replaces the default", %{conn: conn} do
@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
         )
 
       assert html =~ "host-specific-class"
-      refute html =~ "flex flex-col w-full px-4 py-4 gap-4"
+      refute html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
     test "locale from session is applied to embedded mount", %{conn: conn} do
