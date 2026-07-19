@@ -7,6 +7,8 @@ defmodule PhoenixKitProjects.Projects do
 
   require Logger
 
+  alias PhoenixKit.Activity.Entry, as: ActivityEntry
+  alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, TaskDependency}
@@ -1238,6 +1240,70 @@ defmodule PhoenixKitProjects.Projects do
     |> exclude_subprojects()
     |> maybe_search_name_description(Keyword.get(opts, :search))
     |> repo().aggregate(:count, :uuid)
+  end
+
+  @doc """
+  Batched per-project assignment (task) counts — one group-by query.
+  Projects with no assignments are absent from the map.
+  """
+  @spec assignment_counts_for_projects([uuid()]) :: %{uuid() => non_neg_integer()}
+  def assignment_counts_for_projects([]), do: %{}
+
+  def assignment_counts_for_projects(project_uuids) when is_list(project_uuids) do
+    from(a in Assignment,
+      where: a.project_uuid in ^project_uuids,
+      group_by: a.project_uuid,
+      select: {a.project_uuid, count(a.uuid)}
+    )
+    |> repo().all()
+    |> Map.new()
+  end
+
+  @doc """
+  Creator display names for templates, resolved from the activity log's
+  `projects.template_created` entries (earliest entry per template wins;
+  full name, email fallback). Best-effort by design: templates created
+  outside the admin form, or whose creation entry has been pruned past
+  the activity retention window, are simply absent from the map — the
+  column renders a dash for them. One entries query + one users query.
+  """
+  @spec template_creators([uuid()]) :: %{uuid() => String.t()}
+  def template_creators([]), do: %{}
+
+  def template_creators(template_uuids) when is_list(template_uuids) do
+    earliest_actor_by_template =
+      from(e in ActivityEntry,
+        where: e.action == "projects.template_created" and e.resource_uuid in ^template_uuids,
+        where: not is_nil(e.actor_uuid),
+        select: {e.resource_uuid, e.actor_uuid, e.inserted_at}
+      )
+      |> repo().all()
+      |> Enum.group_by(&elem(&1, 0))
+      |> Map.new(fn {template_uuid, entries} ->
+        {_t, actor_uuid, _at} = Enum.min_by(entries, &elem(&1, 2), DateTime)
+        {template_uuid, actor_uuid}
+      end)
+
+    names_by_user =
+      earliest_actor_by_template
+      |> Map.values()
+      |> Enum.uniq()
+      |> UsersAuth.get_users_by_uuids()
+      |> Map.new(&{&1.uuid, creator_display_name(&1)})
+
+    for {template_uuid, actor_uuid} <- earliest_actor_by_template,
+        name = Map.get(names_by_user, actor_uuid),
+        is_binary(name),
+        into: %{} do
+      {template_uuid, name}
+    end
+  end
+
+  defp creator_display_name(user) do
+    case UsersAuth.User.full_name(user) do
+      name when is_binary(name) and name != "" -> name
+      _ -> user.email
+    end
   end
 
   # Case-insensitive substring filter over a project's primary

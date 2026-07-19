@@ -25,6 +25,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKitProjects.Projects
 
   setup %{conn: conn} do
@@ -557,6 +558,49 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       fixture_template()
       {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
       assert render_click(view, "toggle_column", %{"col" => "evil"})
+    end
+
+    test "tasks / created_by / external_id columns render batched data", %{conn: conn} do
+      t = fixture_template(%{"name" => "Columned"})
+      task = fixture_task(%{"title" => "Step one"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => t.uuid, "task_uuid" => task.uuid})
+
+      # The creator must be a REAL user row — template_creators resolves
+      # actor uuids through the users table (fake_scope's user is not
+      # persisted, so its uuid would render as the dash fallback).
+      {:ok, creator} =
+        UsersAuth.register_user(%{
+          email: "creator#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      PhoenixKitProjects.Activity.log("projects.template_created",
+        actor_uuid: creator.uuid,
+        resource_type: "project_template",
+        resource_uuid: t.uuid
+      )
+
+      t
+      |> Ecto.Changeset.change(external_id: "EXT-42")
+      |> PhoenixKit.RepoHelper.repo().update!()
+
+      expected_creator = UsersAuth.User.full_name(creator) || creator.email
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      for col <- ["tasks", "created_by", "external_id"] do
+        render_click(view, "toggle_column", %{"col" => col})
+      end
+
+      html = render(view)
+      assert has_element?(view, "th", "Tasks")
+      assert has_element?(view, "th", "Created by")
+      assert has_element?(view, "th", "External ID")
+      assert has_element?(view, "td.tabular-nums", "1")
+      assert html =~ expected_creator
+      assert html =~ "EXT-42"
     end
   end
 

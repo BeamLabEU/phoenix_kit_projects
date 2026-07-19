@@ -39,7 +39,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   # Optional table columns, toggleable from the Columns dropdown (Name
   # and Actions always render). Visibility persists site-wide in
   # settings — same custody as the calendar/gantt display config.
-  @optional_columns ~w(weekends created updated)
+  # `tasks` and `created_by` need batched lookup maps; load_templates
+  # only runs those queries while the column is visible.
+  @optional_columns ~w(weekends tasks created updated created_by external_id)
   @default_columns ~w(weekends)
   @columns_key "projects_templates_columns"
   @settings_module "projects"
@@ -77,7 +79,11 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         # action button is clicked (BulkSelectScope hook).
         captured_uuids: [],
         show_reorder_modal: false,
-        visible_columns: read_visible_columns()
+        visible_columns: read_visible_columns(),
+        # Batched per-row lookup maps for the tasks / created_by
+        # columns — filled by load_templates only while visible.
+        task_counts: %{},
+        creators: %{}
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
@@ -104,10 +110,17 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         _ -> base_opts
       end
 
+    templates = Projects.list_templates(list_opts)
+    uuids = Enum.map(templates, & &1.uuid)
+    visible = socket.assigns.visible_columns
+
     assign(socket,
-      templates: Projects.list_templates(list_opts),
+      templates: templates,
       total_count: Projects.count_templates(),
-      filtered_count: Projects.count_templates(search: search)
+      filtered_count: Projects.count_templates(search: search),
+      task_counts:
+        if("tasks" in visible, do: Projects.assignment_counts_for_projects(uuids), else: %{}),
+      creators: if("created_by" in visible, do: Projects.template_creators(uuids), else: %{})
     )
   end
 
@@ -138,8 +151,11 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   defp column_options do
     [
       {"weekends", gettext("Weekends")},
+      {"tasks", gettext("Tasks")},
       {"created", gettext("Created")},
-      {"updated", gettext("Updated")}
+      {"updated", gettext("Last edited")},
+      {"created_by", gettext("Created by")},
+      {"external_id", gettext("External ID")}
     ]
   end
 
@@ -233,7 +249,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
       @settings_module
     )
 
-    {:noreply, assign(socket, visible_columns: new_visible)}
+    # Reload so a newly-shown tasks / created_by column gets its
+    # batched lookup map (hidden columns skip those queries).
+    {:noreply, socket |> assign(visible_columns: new_visible) |> load_templates()}
   end
 
   def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
@@ -528,6 +546,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
           <.table_default_header_cell :if={"weekends" in @visible_columns}>
             {gettext("Weekends")}
           </.table_default_header_cell>
+          <.table_default_header_cell :if={"tasks" in @visible_columns} class="text-right">
+            {gettext("Tasks")}
+          </.table_default_header_cell>
           <.sort_header_cell
             :if={"created" in @visible_columns}
             field={:inserted_at}
@@ -540,8 +561,14 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             field={:updated_at}
             sort={%{by: @sort_by, dir: @sort_dir}}
           >
-            {gettext("Updated")}
+            {gettext("Last edited")}
           </.sort_header_cell>
+          <.table_default_header_cell :if={"created_by" in @visible_columns}>
+            {gettext("Created by")}
+          </.table_default_header_cell>
+          <.table_default_header_cell :if={"external_id" in @visible_columns}>
+            {gettext("External ID")}
+          </.table_default_header_cell>
           <.table_default_header_cell class="text-right whitespace-nowrap">
             {gettext("Actions")}
           </.table_default_header_cell>
@@ -569,6 +596,12 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             </span>
           </.table_default_cell>
           <.table_default_cell
+            :if={"tasks" in @visible_columns}
+            class="text-right tabular-nums text-base-content/70"
+          >
+            {Map.get(@task_counts, t.uuid, 0)}
+          </.table_default_cell>
+          <.table_default_cell
             :if={"created" in @visible_columns}
             class="whitespace-nowrap text-base-content/70"
           >
@@ -579,6 +612,18 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             class="whitespace-nowrap text-base-content/70"
           >
             {L10n.format_date(t.updated_at)}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"created_by" in @visible_columns}
+            class="whitespace-nowrap text-base-content/70"
+          >
+            {Map.get(@creators, t.uuid) || "—"}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"external_id" in @visible_columns}
+            class="font-mono text-xs text-base-content/70"
+          >
+            {t.external_id || "—"}
           </.table_default_cell>
           <.table_default_cell class="text-right whitespace-nowrap">
             <.table_row_menu id={"template-menu-#{t.uuid}"}>
