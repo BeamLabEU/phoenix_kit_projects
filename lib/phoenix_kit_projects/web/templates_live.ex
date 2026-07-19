@@ -23,6 +23,14 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   @per_batch 50
   @default_pagination "load_more"
 
+  # At or below this many templates the WHOLE list is loaded and the
+  # TableLocalSearch hook narrows rows client-side (instant, no
+  # round-trip wait) while the debounced server search stays the
+  # authority. Above it, pagination + pure server search take over —
+  # client narrowing over a partial row set would falsely report
+  # "no matches" for rows beyond the loaded page.
+  @local_search_threshold 100
+
   @sort_fields ~w(position name inserted_at updated_at)a
   @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
 
@@ -76,6 +84,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         # the load-more footer.
         total_count: 0,
         filtered_count: 0,
+        local_search?: true,
         search: "",
         templates: [],
         # Snapshot of the client-side bulk selection, captured when an
@@ -101,6 +110,8 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
   defp load_templates(socket) do
     search = socket.assigns.search
+    total = Projects.count_templates()
+    local_search? = total <= @local_search_threshold
 
     base_opts = [
       sort_by: socket.assigns.sort_by,
@@ -109,10 +120,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
     ]
 
     list_opts =
-      case socket.assigns.pagination do
-        "load_more" -> Keyword.put(base_opts, :limit, socket.assigns.loaded_count)
-        _ -> base_opts
-      end
+      if not local_search? and socket.assigns.pagination == "load_more",
+        do: Keyword.put(base_opts, :limit, socket.assigns.loaded_count),
+        else: base_opts
 
     templates = Projects.list_templates(list_opts)
     uuids = Enum.map(templates, & &1.uuid)
@@ -120,7 +130,8 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
     assign(socket,
       templates: templates,
-      total_count: Projects.count_templates(),
+      total_count: total,
+      local_search?: local_search?,
       filtered_count: Projects.count_templates(search: search),
       task_counts:
         if("tasks" in visible, do: Projects.assignment_counts_for_projects(uuids), else: %{}),
@@ -402,6 +413,25 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
   defp sanitize_uuids(_), do: []
 
+  # Lowercased match target for the TableLocalSearch hook — the same
+  # fields the server-side `maybe_search_name_description/2` covers
+  # (primary name/description + every language's translated values), so
+  # the instant client filter and the authoritative server result agree.
+  defp search_haystack(t) do
+    translated =
+      for {_lang, fields} <- t.translations || %{},
+          is_map(fields),
+          key <- ["name", "description"],
+          val = fields[key],
+          is_binary(val),
+          do: val
+
+    [t.name, t.description | translated]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.join(" ")
+    |> String.downcase()
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -444,11 +474,13 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         <% lang = L10n.current_content_lang() %>
         <% draggable? = @sort_by == :position and String.trim(@search) == "" %>
 
-        <.bulk_select_scope
-          id="templates-bulk-scope"
-          total_count={length(@templates)}
-          class="flex flex-col gap-2"
-        >
+        <.bulk_select_scope id="templates-bulk-scope" total_count={length(@templates)}>
+          <div
+            id="templates-local-search"
+            phx-hook="TableLocalSearch"
+            data-local-search-enabled={to_string(@local_search?)}
+            class="flex flex-col gap-2"
+          >
           <.bulk_actions_toolbar
             on_open_reorder="open_reorder_modal"
             reorder_dialog_id="reorder-modal"
@@ -479,11 +511,21 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             </:leading>
           </.bulk_actions_toolbar>
 
-          {render_templates_table(assigns, draggable?, lang)}
+            {render_templates_table(assigns, draggable?, lang)}
 
-          <p :if={@templates == []} class="text-sm text-base-content/50 text-center py-2">
-            {gettext("No templates match.")}
-          </p>
+            <%!-- Server-truth when the SERVER filter empties the list;
+                 the TableLocalSearch hook toggles the same node during
+                 the debounce gap. --%>
+            <p
+              data-local-search-empty
+              class={[
+                "text-sm text-base-content/50 text-center py-2",
+                @templates != [] && "hidden"
+              ]}
+            >
+              {gettext("No templates match.")}
+            </p>
+          </div>
         </.bulk_select_scope>
       <% end %>
 
@@ -592,7 +634,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         </.table_default_row>
       </.table_default_header>
       <.sortable_tbody id="templates-list-body" enabled={@draggable?} event="reorder_templates">
-        <.sortable_row :for={t <- @templates} item_id={t.uuid}>
+        <.sortable_row :for={t <- @templates} item_id={t.uuid} data-search={search_haystack(t)}>
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell value={t.uuid} />
           <.table_default_cell class="font-medium">

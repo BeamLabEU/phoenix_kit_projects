@@ -510,10 +510,11 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       import Ecto.Query, only: [from: 2]
       repo = PhoenixKit.RepoHelper.repo()
 
-      # Pin distinct edit times (update_all skips the auto re-stamp) —
-      # same-second inserts would otherwise make the recency order
-      # depend on whether creation straddled a clock second.
-      for n <- 1..51 do
+      # Pagination only engages past the local-search threshold (100),
+      # so this needs 151 rows. Pin distinct edit times (update_all
+      # skips the auto re-stamp) — same-second inserts would otherwise
+      # make the recency order depend on clock-second boundaries.
+      for n <- 1..151 do
         t = fixture_template(%{"name" => "T#{String.pad_leading("#{n}", 3, "0")}"})
         dt = DateTime.add(~U[2026-01-01 00:00:00Z], n * 60, :second)
 
@@ -521,13 +522,13 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
         |> repo.update_all(set: [updated_at: dt])
       end
 
-      # Last-edited desc → T051..T002 visible, T001 beyond the cap.
+      # Last-edited desc → T151..T102 visible; T101 is rank 51.
       {:ok, view, html} = live(conn, "/en/admin/projects/templates")
-      assert html =~ "T051"
-      refute html =~ "T001"
+      assert html =~ "T151"
+      refute html =~ "T101"
 
       html_after = render_click(view, "load_more", %{})
-      assert html_after =~ "T001"
+      assert html_after =~ "T101"
     end
   end
 
@@ -717,6 +718,34 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       # into the input's value would raise Phoenix.HTML.Safe otherwise.
       html = render_change(view, "search", %{"search" => %{"x" => "y"}})
       assert html =~ "Alpha kit"
+    end
+
+    test "local mode under the threshold: full list + hook enabled + haystacks", %{conn: conn} do
+      t = fixture_template(%{"name" => "Local One"})
+
+      t
+      |> Ecto.Changeset.change(translations: %{"et" => %{"name" => "Kohalik"}})
+      |> PhoenixKit.RepoHelper.repo().update!()
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
+
+      assert html =~ ~s(phx-hook="TableLocalSearch")
+      assert html =~ ~s(data-local-search-enabled="true")
+      # The row haystack merges primary + translated values, lowercased —
+      # same coverage as the server-side ilike, so client and server agree.
+      assert html =~ ~s(data-search="local one kohalik")
+    end
+
+    test "over the threshold: pagination returns, local narrowing off", %{conn: conn} do
+      for n <- 1..101, do: fixture_template(%{"name" => "V#{String.pad_leading("#{n}", 3, "0")}"})
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
+
+      assert html =~ ~s(data-local-search-enabled="false")
+      # The load-more cap applies again: 50 of 101 rendered.
+      assert html =~ "50"
+      assert html =~ "101"
+      assert length(String.split(html, "data-search=")) - 1 == 50
     end
 
     test "matches translated names", %{conn: conn} do
