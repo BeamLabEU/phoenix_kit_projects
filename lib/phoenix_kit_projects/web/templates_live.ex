@@ -151,27 +151,15 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         <.table_default id="templates-list" size="sm">
           <.table_default_header>
             <.table_default_row>
-              <.table_default_header_cell class="w-8" />
+              <.drag_handle_header_cell />
               <.table_default_header_cell>{gettext("Name")}</.table_default_header_cell>
               <.table_default_header_cell>{gettext("Weekends")}</.table_default_header_cell>
               <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
             </.table_default_row>
           </.table_default_header>
-          <tbody
-            id="templates-list-body"
-            phx-hook="SortableGrid"
-            data-sortable="true"
-            data-sortable-event="reorder_templates"
-            data-sortable-items=".sortable-item"
-            data-sortable-handle=".pk-drag-handle"
-          >
-            <.table_default_row :for={t <- @templates} class="sortable-item" data-id={t.uuid}>
-              <.table_default_cell
-                class="pk-drag-handle cursor-grab active:cursor-grabbing text-base-content/40"
-                title={gettext("Drag to reorder")}
-              >
-                <.icon name="hero-bars-3" class="w-4 h-4" />
-              </.table_default_cell>
+          <.sortable_tbody id="templates-list-body" event="reorder_templates">
+            <.sortable_row :for={t <- @templates} item_id={t.uuid}>
+              <.drag_handle_cell />
               <.table_default_cell class="font-medium">
                 <.smart_link
                   navigate={Paths.template(t.uuid)}
@@ -210,8 +198,8 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
                   />
                 </.table_row_menu>
               </.table_default_cell>
-            </.table_default_row>
-          </tbody>
+            </.sortable_row>
+          </.sortable_tbody>
         </.table_default>
       <% end %>
     </div>
