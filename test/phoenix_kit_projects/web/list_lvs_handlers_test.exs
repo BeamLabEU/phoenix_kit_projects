@@ -273,6 +273,34 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       # by absence.
       assert_activity_logged("project.reordered", actor_uuid: actor_uuid)
     end
+
+    test "manual sort with a load-more-truncated page stays non-draggable until fully loaded",
+         %{conn: conn} do
+      # Past the local-search threshold (100) so pagination engages —
+      # only @per_batch (50) of the 151 rows load initially.
+      for n <- 1..151, do: fixture_project(%{"name" => "P#{n}"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      html = render_change(view, "sort_form", %{"sort_by" => "position"})
+
+      # A load-more-truncated page is a sparse subset of positions —
+      # dragging within it would renumber only the visible rows to
+      # 1..N, corrupting the untouched rows' relative order. DnD must
+      # stay off until @loaded_count reaches @total_count.
+      refute html =~ ~s(data-sortable="true")
+      refute html =~ "pk-drag-handle"
+
+      html = render_click(view, "load_more", %{})
+      refute html =~ ~s(data-sortable="true")
+
+      html = render_click(view, "load_more", %{})
+      refute html =~ ~s(data-sortable="true")
+
+      # Third load_more brings loaded_count (50 -> 100 -> 150 -> 200) to >= total (151).
+      html = render_click(view, "load_more", %{})
+      assert html =~ ~s(data-sortable="true")
+      assert html =~ "pk-drag-handle"
+    end
   end
 
   # ─── TasksLive ───────────────────────────────────────────────────
@@ -431,7 +459,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       assert has_element?(view, "th", "Created by")
       # task_usage: 1 assignment references the task; a real date renders.
       assert has_element?(view, "td.tabular-nums", "1")
-      refute html =~ ">—</td>" and false
+      refute html =~ ">—</td>"
       assert html =~ creator.email
     end
   end

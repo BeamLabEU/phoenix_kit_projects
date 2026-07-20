@@ -435,9 +435,14 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
              (dragging would be lossy), and a search shows a sparse
              subset — the DnD handler renumbers the dropped list to
              1..N absolute positions, which would collide with the
-             hidden rows' slots and scramble the global manual order. --%>
+             hidden rows' slots and scramble the global manual order.
+             Same hazard for a load-more-truncated page, so DnD also
+             waits for the full set to be loaded (local-search mode
+             always loads it all). --%>
         <% lang = L10n.current_content_lang() %>
-        <% draggable? = @sort_by == :position and String.trim(@search) == "" %>
+        <% draggable? =
+          @sort_by == :position and String.trim(@search) == "" and
+            (@local_search? or @loaded_count >= @total_count) %>
 
         <.bulk_select_scope id="templates-bulk-scope" total_count={length(@templates)}>
           <div

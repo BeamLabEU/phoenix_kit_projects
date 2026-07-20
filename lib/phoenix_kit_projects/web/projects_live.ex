@@ -499,10 +499,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
              view is a sparse subset, and the DnD handler renumbers the
              dropped list to 1..N absolute positions — colliding with
              the hidden rows' slots (same gate as TemplatesLive's
-             search). --%>
+             search). Same hazard applies to a load-more-truncated page:
+             with @loaded_count < @total_count the visible rows are also
+             a sparse subset, so DnD stays off until the full set is
+             loaded (local-search mode always loads the full set). --%>
         <% lang = L10n.current_content_lang() %>
         <% draggable? =
-          @sort_by == :position and is_nil(@status_filter) and String.trim(@search) == "" %>
+          @sort_by == :position and is_nil(@status_filter) and String.trim(@search) == "" and
+            (@local_search? or @loaded_count >= @total_count) %>
 
         <.bulk_select_scope
           :if={@bulk_enabled?}

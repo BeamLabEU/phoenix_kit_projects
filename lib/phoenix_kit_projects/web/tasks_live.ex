@@ -745,14 +745,21 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   defp render_tasks_table(assigns, lang) do
-    draggable? = assigns.sort_by == :position and String.trim(assigns.search) == ""
+    draggable? =
+      assigns.sort_by == :position and String.trim(assigns.search) == "" and
+        (assigns.local_search? or assigns.loaded_count >= assigns.total_count)
+
     assigns = assign(assigns, lang: lang, draggable?: draggable?)
 
     ~H"""
     <%!-- DnD reorder is gated on `sort_by=:position` (the "manual"
          sort mode). When the list is sorted by title/date/duration
          the rendered order doesn't reflect the position field, so
-         dragging would be lossy — the handle column is hidden too. --%>
+         dragging would be lossy — the handle column is hidden too.
+         Also gated on the full set being loaded (local-search mode,
+         or a fully-loaded server page): a load-more-truncated page is
+         a sparse subset, and the reorder handler renumbers only the
+         dropped rows to 1..N, corrupting the hidden rows' order. --%>
     <.table_default id="tasks-list" size="sm">
       <.table_default_header>
         <.table_default_row>

@@ -52,10 +52,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
 
     [prompt | options]
   rescue
-    # Catalog building must never crash widget discovery, but a silent
-    # swallow would mask a real bug as an eternally-empty select — log
-    # like every widget-level resilience rescue does.
-    e ->
+    # Catalog building must never crash widget discovery on a DB hiccup,
+    # but a silent swallow would mask a real bug as an eternally-empty
+    # select — log like every other DB-read resilience rescue in this
+    # module. Scoped to DB errors only, not a bare rescue: a genuine
+    # programming error here should surface, not degrade-and-log.
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       require Logger
       Logger.warning("[DashboardWidgets] project_options failed: #{Exception.message(e)}")
       [{"First running project", ""}]
