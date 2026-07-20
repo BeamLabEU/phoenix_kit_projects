@@ -454,7 +454,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       <%= if @view == "groups" do %>
         <% lang = L10n.current_content_lang() %>
 
-        <div class="self-start">{view_switcher(assigns)}</div>
+        <div class="self-end">{view_switcher(assigns)}</div>
 
         <%= if @groups == [] and @standalone == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
@@ -600,7 +600,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                 reorder_gate={if @sort_by == :position, do: :always, else: :multi}
               >
                 <:leading>
-                  {view_switcher(assigns)}
                   <.sort_selector
                     sort_by={@sort_by}
                     sort_dir={@sort_dir}
@@ -616,6 +615,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                     class="w-48"
                   />
                 </:leading>
+                <%!-- Far right, apart from the filter/sort controls —
+                     it changes the VIEW, not the data. --%>
+                <:trailing>
+                  {view_switcher(assigns)}
+                </:trailing>
               </.bulk_actions_toolbar>
 
               {render_tasks_table(assigns, lang)}
