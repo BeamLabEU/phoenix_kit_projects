@@ -6,7 +6,7 @@ Guidance for AI agents working on the `phoenix_kit_projects` plugin module.
 
 A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) with subtabs:
 
-- **Overview** — active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions) plus quick-adders for **Me** and **Unassigned** (a dashed chip with live count) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows). The raw walk is cached in assigns; filter flips are in-memory
+- **Overview** — active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker, plus a **"Late only" lens** in its toolbar — bars of late running projects only, same `summary.late` tier as the cards; count-badged, hidden at 0, kept while active). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions; **only RELEVANT people are offered** — someone at least one non-template assignment points at directly / via a team / via a department in their scope, and the per-project Calendar tab narrows that to its own rendered tree via `assignee_search_scope`) plus quick-adders for **Me** (hidden without a staff person) and **Unassigned** (a dashed chip with live count; hidden while the count is 0) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count; the whole funnel hides while the UNFILTERED walk has zero items — a fresh install has nothing to filter) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows; hidden while the raw walk has no late items, kept while active). The raw walk is cached in assigns; filter flips are in-memory
 - **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee)
 - **Projects** — list of projects (filterable by status)
 - **Templates** — reusable project templates cloned into real projects
@@ -438,6 +438,8 @@ Guarded with `Code.ensure_loaded?/1` + rescue — logging never crashes mutation
 ## Settings keys
 
 - `projects_enabled` — boolean, read by `PhoenixKitProjects.enabled?/0`, toggled via **Admin > Modules**. `enabled?` rescues all errors and returns `false` so missing settings tables don't crash module discovery.
+- `projects_cal_*` — the calendar customizer (`/admin/settings/projects`, all through `CalendarDisplay.read/0` + `put/2` + `put_flag/2`, validated/clamped on both ends): grid appearance (`show_weekends`, `show_week_numbers`, `fixed_weeks`, `max_events` 1–6, `max_multiday` 1–8) and the overdue/late markers (`overdue_pattern` stripes|solid, `overdue_mode` wave|flash|off, `overdue_speed`, `overdue_bright_min`/`_max`, `overdue_wave_step`, `overdue_opacity`, `late_marker` pattern|ring — pattern is the default so late tasks match late projects). The first weekday is NOT here — the calendars honor core's site-wide `week_start_day`.
+- `projects_gantt_*` — the Timeline-chart customizer (`GanttDisplay`), same page.
 
 ## File layout
 
@@ -466,15 +468,19 @@ lib/phoenix_kit_projects/
     ├── components.ex                         # `use` aggregator — imports every web/components/*.ex
     ├── components/
     │   ├── assignee_filter_panel.ex         # `<.assignee_filter_panel>` — the Filters funnel + popup (chips/picker/toggles)
+    │   ├── assignment_status_badge.ex       # `<.assignment_status_badge>` — literal size map (Tailwind-scanner safe)
     │   ├── day_popup_modal.ex               # `<.day_popup_modal>` — the whole-day popup both calendars share
     │   ├── derived_status_badge.ex          # `<.derived_status_badge>` + `<.project_status_badge>`
-    │   ├── empty_state.ex                   # `<.empty_state>` — icon + heading + sub + CTA slot
-    │   ├── page_header.ex                   # `<.page_header>` — title + description + actions + back_link slots
+    │   ├── page_header.ex                   # `<.page_header>` — title + description + actions + back_link slots (form pages; list pages have no header row — see "List pages")
+    │   ├── popup_host.ex                    # `<.popup_host>` — emit-mode dialog-stack host frame
     │   ├── running_card.ex                  # `<.running_card>` — dashboard project summary tile
-    │   ├── sortable_table.ex                # `<.sortable_table>` — drag-to-reorder table with `:col` slots
+    │   ├── smart_link.ex                    # `<.smart_link>` — navigate-vs-emit-aware link
+    │   ├── smart_menu_link.ex               # `<.smart_menu_link>` — row-menu variant of the above
     │   ├── stat_tile.ex                     # `<.stat_tile>` — compact "label + big number" card
     │   ├── tabs_strip.ex                    # `<.tabs_strip>` — daisyUI tabs-boxed switcher
-    │   └── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
+    │   ├── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
+    │   └── workflow_status_fields.ex        # `<.workflow_status_fields>` — status source + pick (locks at start)
+    ├── list_ui.ex                            # Shared list-page plumbing: column-visibility persistence, search coercion, client-search haystacks
     ├── overview_live.ex
     ├── project_calendar_live.ex             # Calendar tab — month grid over the ScheduleLayout walk
     ├── project_form_live.ex
@@ -526,6 +532,62 @@ A crafted payload otherwise either raises or leaks the BEAM atom slot.
 0–1-element selection lists to `:all` (single-row "reorder" is a no-op,
 and the toolbar label reads "Reorder all" in those states). Apply the
 same rule in any new bulk-action handler.
+
+## List pages (Projects / Tasks / Templates) — shared architecture
+
+All three list LVs follow one shape (2026-07-19/20 overhaul; TemplatesLive
+is the most complete reference):
+
+- **No in-content header row.** The create action is a "+" in the admin
+  breadcrumb (core `page_action` assign: `%{icon, label, navigate}`) plus a
+  dashed full-width add-row at the list's foot. The show page likewise sets
+  `page_section`/`page_section_path` ("Admin Panel / Templates / ‹name›")
+  instead of a back-link + h1 row — **embeds keep the full header**
+  (`router_mounted?` gates it; embeds have no admin breadcrumb).
+- **Recency default sort** — `updated_at desc` ("Last edited"); Manual
+  (`:position`) one selector switch away. **DnD is gated off under ANY
+  filtered view** (non-position sort, active search, Projects' status
+  filter): the DnD handlers renumber the dropped list to absolute `1..N`,
+  so a sparse subset would collide with hidden rows' positions.
+- **Column visibility** — a Columns dropdown of optional columns, persisted
+  site-wide (one comma-joined settings row per page:
+  `projects_list_columns` / `projects_tasks_columns` /
+  `projects_templates_columns`) via `ListUi.read_visible_columns/3` +
+  `toggle_visible_column/4`. Batched lookup maps (`assignment_counts_for_projects/1`,
+  `template_usage/1`, `task_usage/1`, `creation_actors/2`) only query while
+  their column is visible; `toggle_column` reloads so a newly-shown column
+  gets its map. "Created by" resolves from the activity log's creation
+  entries (best-effort — pruned/off-form rows render a dash). Template
+  "Uses" counts the durable `settings["created_from_template_uuid"]`
+  back-link every clone stamps (activity rows get pruned; the back-link
+  doesn't).
+- **Hybrid search** (core `<.search_toolbar>` + core `TableLocalSearch`
+  hook): at ≤100 rows (`@local_search_threshold`) the FULL set is loaded,
+  SQL search is deliberately NOT applied, and the client hook narrows rows
+  instantly via each row's lowercase `data-search` haystack
+  (`ListUi.search_haystack/2` — primary fields + every translated value,
+  matching the SQL coverage exactly). Above the threshold: SQL search
+  (`:search` opt — escaped ilike over name/description/title + a
+  values-only `jsonb_each` on translations) + load-more pagination + the
+  toolbar spinner (`loading_indicator={not @local_search?}`). `search`
+  payloads are coerced via `ListUi.coerce_search/1` (a forged `search[x]=y`
+  map would crash the re-render otherwise). The load-more footer hides in
+  local mode; `filtered_count` (footer) is search-aware while `total_count`
+  stays the full-set count (reorder modal's honest "Reorder all N").
+- **Titles are links** — every title anywhere in the module navigates
+  (list titles → edit/show, assignment rows → assignment edit, sub-project
+  names → child project) via `<.smart_link>` with `link link-hover`, so
+  emit-mode embeds get events instead of dead text.
+- TasksLive's List/Groups switcher is an icon-only join in the toolbar's
+  `:trailing` slot (far right, apart from the data controls); the Groups
+  view repeats it and lays group cards in a responsive grid with a
+  columnar Standalone list.
+
+Cross-repo note: this architecture consumes several **unreleased core
+additions** (`search_toolbar` form fix + spinner, `TableLocalSearch`,
+`page_action`/`page_section` forwarding, the toolbar `:trailing` slot) —
+until the next core release, run this module's checks with
+`PHOENIX_KIT_PATH=../phoenix_kit`, and bump the core floor at release.
 
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 

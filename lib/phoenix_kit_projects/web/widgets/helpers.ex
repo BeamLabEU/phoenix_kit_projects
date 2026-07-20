@@ -151,7 +151,9 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
       <div class="flex h-full flex-col p-3">
         <div class="mb-2 flex items-center gap-2">
           <.icon name={@icon} class="h-4 w-4 shrink-0 text-base-content/50" />
-          <h3 class="truncate text-sm font-semibold">
+          <%!-- min-w-0 so a long title ellipsizes instead of refusing to
+               shrink and pushing the actions/link under the card's clip. --%>
+          <h3 class="truncate min-w-0 text-sm font-semibold">
             {@title}
           </h3>
           <div class="ml-auto flex items-center gap-1">

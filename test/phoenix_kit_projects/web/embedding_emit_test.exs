@@ -83,7 +83,11 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       refute html =~ ~s(phx-click="open_embed")
     end
 
-    test "clicking 'New project' emits :opened for ProjectFormLive", %{conn: conn} do
+    # The page header (and its New project / New task buttons) was removed in
+    # the small-screen condensing pass — the empty-state "New project" CTA is
+    # now the creation entry point, and "View all" is the plain-nav emit.
+    test "clicking the empty-state 'New project' CTA emits :opened for ProjectFormLive",
+         %{conn: conn} do
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
@@ -92,35 +96,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
         )
 
-      # The header's "New project" button — `btn-sm` distinguishes it
-      # from the empty-state CTA's `btn-xs` variant.
       view
-      |> element("button.btn-sm[phx-click=open_embed]", "New project")
+      |> element("button[phx-click=open_embed]", "New project")
       |> render_click()
 
       assert_receive {:projects, :opened, payload}, 500
       assert payload.lv == PhoenixKitProjects.Web.ProjectFormLive
       assert payload.session == %{"live_action" => "new"}
       assert payload.frame_ref == 0
-    end
-
-    test "clicking 'New task' emits :opened for TaskFormLive", %{conn: conn} do
-      topic = unique_topic()
-      ProjectsPubSub.subscribe(topic)
-
-      {:ok, view, _} =
-        live_isolated(conn, PhoenixKitProjects.Web.OverviewLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 7}
-        )
-
-      view
-      |> element("button[phx-click=open_embed]", "New task")
-      |> render_click()
-
-      assert_receive {:projects, :opened, payload}, 500
-      assert payload.lv == PhoenixKitProjects.Web.TaskFormLive
-      assert payload.session == %{"live_action" => "new"}
-      assert payload.frame_ref == 7
     end
 
     test "frame_ref from session is stamped into every emit", %{conn: conn} do
@@ -133,7 +116,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
         )
 
       view
-      |> element("button.btn-sm[phx-click=open_embed]", "New project")
+      |> element("button[phx-click=open_embed]", "View all")
       |> render_click()
 
       assert_receive {:projects, :opened, %{frame_ref: 42}}, 500
@@ -153,11 +136,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
         )
 
-      assert html =~ "Task Library"
+      assert html =~ "No tasks yet."
       assert html =~ ~s(phx-click="open_embed")
     end
 
     test "clicking 'New task' emits :opened for TaskFormLive", %{conn: conn} do
+      # The create action is the add-row at the list's foot — it only
+      # renders when the list is non-empty.
+      fixture_task()
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
@@ -175,6 +161,28 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert payload.session == %{"live_action" => "new"}
     end
 
+    test "clicking a task TITLE emits :opened for TaskFormLive edit", %{conn: conn} do
+      # Titles became links (commit 99dd90d) — in emit mode they must
+      # broadcast the edit intent, not dead-navigate.
+      task = fixture_task(%{"title" => "Clickable title"})
+      topic = unique_topic()
+      ProjectsPubSub.subscribe(topic)
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
+          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+        )
+
+      view
+      |> element("button.link-hover[phx-click=open_embed]", "Clickable title")
+      |> render_click()
+
+      assert_receive {:projects, :opened, payload}, 500
+      assert payload.lv == PhoenixKitProjects.Web.TaskFormLive
+      assert payload.session["live_action"] == "edit"
+      assert payload.session["id"] == task.uuid
+    end
+
     test "clicking an Edit pencil emits :opened with the task uuid", %{conn: conn} do
       task = fixture_task(%{"title" => "Reusable"})
       topic = unique_topic()
@@ -189,7 +197,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       # Match by phx-value-lv to disambiguate from the "New task" action.
       view
       |> element(
-        ~s(button[phx-click=open_embed][phx-value-lv="Elixir.PhoenixKitProjects.Web.TaskFormLive"][phx-value-session*="#{task.uuid}"])
+        ~s(button[role=menuitem][phx-click=open_embed][phx-value-lv="Elixir.PhoenixKitProjects.Web.TaskFormLive"][phx-value-session*="#{task.uuid}"])
       )
       |> render_click()
 
@@ -217,6 +225,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
     end
 
     test "clicking 'New project' emits :opened for ProjectFormLive", %{conn: conn} do
+      fixture_project()
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
@@ -248,11 +257,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
         )
 
-      assert html =~ "Templates"
+      assert html =~ "No templates yet."
       assert html =~ ~s(phx-click="open_embed")
     end
 
     test "clicking 'New template' emits :opened for TemplateFormLive", %{conn: conn} do
+      # The create action is now the add-row at the list's foot — it only
+      # renders when the list is non-empty.
+      fixture_template()
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 

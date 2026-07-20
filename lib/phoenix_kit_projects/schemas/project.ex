@@ -156,7 +156,14 @@ defmodule PhoenixKitProjects.Schemas.Project do
   # mass-assign arbitrary keys/values. We whitelist instead of free-form
   # validating: unknown keys are dropped, so the column only ever holds keys
   # the module actually reads. ADD NEW SETTINGS KEYS HERE.
-  @settings_keys %{"use_status_translations" => &is_boolean/1}
+  # `created_from_template_uuid` is the durable back-link a clone keeps
+  # to its source template (stamped by `Projects.clone_template/2`) —
+  # it drives the template list's Uses / Last used columns, unlike the
+  # activity log which gets pruned past the retention window.
+  @settings_keys %{
+    "use_status_translations" => &is_boolean/1,
+    "created_from_template_uuid" => &is_binary/1
+  }
 
   # At most one of team/department/person (mirrors the DB CHECK + the
   # assignments table's validator) so changesets fail fast with a friendly

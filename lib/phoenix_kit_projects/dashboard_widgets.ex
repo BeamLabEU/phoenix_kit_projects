@@ -52,7 +52,13 @@ defmodule PhoenixKitProjects.DashboardWidgets do
 
     [prompt | options]
   rescue
-    _ -> [{"First running project", ""}]
+    # Catalog building must never crash widget discovery, but a silent
+    # swallow would mask a real bug as an eternally-empty select — log
+    # like every widget-level resilience rescue does.
+    e ->
+      require Logger
+      Logger.warning("[DashboardWidgets] project_options failed: #{Exception.message(e)}")
+      [{"First running project", ""}]
   end
 
   defp project_field do

@@ -284,6 +284,46 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       %{person: person, team: team}
     end
 
+    test "the person picker offers only this project tree's people", %{conn: conn} do
+      %{person: person} = person_fixture()
+      %{person: outsider} = person_fixture()
+
+      project = fixture_project(%{"start_mode" => "immediate"})
+      {:ok, _} = Projects.start_project(project)
+      project = Projects.get_project!(project.uuid)
+
+      other_project = fixture_project(%{"start_mode" => "immediate"})
+      {:ok, _} = Projects.start_project(other_project)
+
+      mine = fixture_task(%{"title" => "ScopedTask-#{System.unique_integer([:positive])}"})
+      theirs = fixture_task(%{"title" => "OutsideTask-#{System.unique_integer([:positive])}"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => mine.uuid,
+          "assigned_person_uuid" => person.uuid
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{
+          "project_uuid" => other_project.uuid,
+          "task_uuid" => theirs.uuid,
+          "assigned_person_uuid" => outsider.uuid
+        })
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+      render(view)
+      render_click(view, "assignee_search", %{"q" => ""})
+
+      assert_push_event(view, "assignee_results", %{results: rows})
+      offered = Enum.map(rows, & &1.uuid)
+      assert person.uuid in offered
+      refute outsider.uuid in offered
+    end
+
     test "filters bars by picked person; the panel renders", %{conn: conn} do
       %{person: person} = person_fixture()
 
@@ -386,6 +426,62 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       refute html =~ "SubMatch-"
     end
 
+    test "late bars default to the overdue pattern; ring is the opt-in alternative",
+         %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Projects.start_project(project, DateTime.add(DateTime.utc_now(), -5 * 24 * 3600))
+      project = Projects.get_project!(project.uuid)
+
+      late =
+        fixture_task(%{
+          "title" => "PatternLate-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 1,
+          "estimated_duration_unit" => "days"
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => late.uuid})
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+      render(view)
+      assert has_element?(view, "[id^=project-calendar-sync] .pk-overdue")
+      refute has_element?(view, "[id^=project-calendar-sync] .ring-error")
+
+      # Opting into the ring swaps the marker.
+      PhoenixKitProjects.CalendarDisplay.put("late_marker", "ring")
+      send(view.pid, {:projects, :assignment_updated, %{}})
+      render(view)
+      assert has_element?(view, "[id^=project-calendar-sync] .ring-error")
+      refute has_element?(view, "[id^=project-calendar-sync] .cal-multiday-bar.pk-overdue")
+    end
+
+    test "the Overdue-only toggle hides while no bar is late", %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Projects.start_project(project)
+      project = Projects.get_project!(project.uuid)
+
+      future =
+        fixture_task(%{
+          "title" => "FutureBar-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 3,
+          "estimated_duration_unit" => "weeks"
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => future.uuid})
+
+      {:ok, view, _html} =
+        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+
+      html = render(view)
+      # The panel renders (there IS work to filter by person)...
+      assert html =~ "assignee_search"
+      # ...but the Overdue-only lens has nothing it could show.
+      refute html =~ "toggle_overdue_only"
+    end
+
     test "overdue only keeps late bars", %{conn: conn} do
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
       {:ok, _} = Projects.start_project(project, DateTime.add(DateTime.utc_now(), -5 * 24 * 3600))
@@ -418,7 +514,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       html = render_click(view, "toggle_overdue_only", %{})
       assert html =~ late.title
       refute html =~ ontime.title
-      assert html =~ "ring-error"
+      # Default marker: the overdue pattern (scoped — the injected <style>
+      # text also contains the class name).
+      assert has_element?(view, "[id^=project-calendar-sync] .pk-overdue")
     end
   end
 

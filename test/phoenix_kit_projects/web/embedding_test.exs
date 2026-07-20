@@ -52,7 +52,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.OverviewLive, session: %{})
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-6"
+      assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
     test "wrapper_class override from session replaces the default", %{conn: conn} do
@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
         )
 
       assert html =~ "host-specific-class"
-      refute html =~ "flex flex-col w-full px-4 py-6 gap-6"
+      refute html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
     test "locale from session is applied to embedded mount", %{conn: conn} do
@@ -476,14 +476,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive, session: %{})
 
-      assert html =~ "Projects"
+      assert html =~ "No projects yet."
     end
 
     test "wrapper_class defaults to full-width", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive, session: %{})
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
+      assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
@@ -506,14 +506,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplatesLive, session: %{})
 
-      assert html =~ "Templates"
+      assert html =~ "No templates yet."
     end
 
     test "wrapper_class defaults to full-width", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplatesLive, session: %{})
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
+      assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
@@ -523,7 +523,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
         )
 
       assert html =~ "host-specific-class"
-      refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
+      refute html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
   end
 
@@ -532,14 +532,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive, session: %{})
 
-      assert html =~ "Task Library"
+      assert html =~ "No tasks yet."
     end
 
     test "wrapper_class defaults to full-width", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive, session: %{})
 
-      assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
+      assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
@@ -560,8 +560,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       # order in rendered HTML is not stable (`phx-click` / `phx-value-*`
       # / `role` / `class` interleave by Phoenix.Component iteration
       # order); scope each assertion to a unique sibling marker.
-      assert html =~ ~r/phx-value-view="groups"[^>]*tab-active/s
-      refute html =~ ~r/phx-value-view="list"[^>]*tab-active/s
+      # Icon-only join buttons now: active state = btn-active +
+      # aria-selected on the button carrying the phx-value-view.
+      assert html =~ ~r/phx-value-view="groups"[^>]*aria-selected="true"/s
+      refute html =~ ~r/phx-value-view="list"[^>]*aria-selected="true"/s
     end
   end
 

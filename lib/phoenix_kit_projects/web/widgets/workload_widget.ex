@@ -129,7 +129,10 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
       <span class={["font-bold leading-none tabular-nums", @tone]} style={fit_text(14, "45cqh", 22)}>
         {@value}
       </span>
-      <span class="truncate leading-tight text-base-content/50" style={fit_text(9, "20cqh", 11)}>
+      <%!-- max-w-full so truncate can engage: an items-center flex-col child
+           shrink-wraps to its content and would clip mid-glyph at the tile's
+           overflow-hidden instead of ellipsizing. --%>
+      <span class="truncate max-w-full px-1 leading-tight text-base-content/50" style={fit_text(9, "20cqh", 11)}>
         {@label}
       </span>
     </div>

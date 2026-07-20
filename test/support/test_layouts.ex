@@ -28,6 +28,26 @@ defmodule PhoenixKitProjects.Test.Layouts do
 
   def app(assigns) do
     ~H"""
+    <%!-- Breadcrumb-consumer fixture (quality-sweep playbook "Test
+         pattern"): the real consumer is core's admin layout, which
+         forwards page_title/page_section(+_path)/page_action into the
+         header breadcrumb. Rendering them here lets module tests pin
+         the PRODUCER half of that chain — an LV that stops setting one
+         of these assigns fails a rendered-output assertion instead of
+         silently losing its breadcrumb in the real admin. --%>
+    <div id="test-breadcrumb" data-page-title={assigns[:page_title]}>
+      <span :if={assigns[:page_section]} data-crumb-section={assigns[:page_section]}>
+        {assigns[:page_section]}
+      </span>
+      <a
+        :if={assigns[:page_action]}
+        data-crumb-action
+        href={assigns[:page_action][:navigate]}
+        title={assigns[:page_action][:label]}
+      >
+        {assigns[:page_action][:label]}
+      </a>
+    </div>
     <div id="test-flashes">
       <div :if={msg = Phoenix.Flash.get(@flash, :info)} id="flash-info" data-flash-kind="info">
         {msg}

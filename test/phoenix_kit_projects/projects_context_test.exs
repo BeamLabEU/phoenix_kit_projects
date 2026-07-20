@@ -112,6 +112,102 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
     end
   end
 
+  describe "list_templates/1 :search" do
+    test "matches primary name and description, case-insensitively" do
+      fixture_template(%{"name" => "Alpha kit", "description" => "Yearly audit pack"})
+      fixture_template(%{"name" => "Beta kit"})
+
+      assert ["Alpha kit"] = names(Projects.list_templates(search: "ALPHA"))
+      assert ["Alpha kit"] = names(Projects.list_templates(search: "audit pack"))
+      assert length(Projects.list_templates(search: "kit")) == 2
+    end
+
+    test "matches translated values, never JSON keys" do
+      t = fixture_template(%{"name" => "Launch plan"})
+      fixture_template(%{"name" => "Other"})
+
+      t
+      |> Ecto.Changeset.change(translations: %{"et" => %{"name" => "Stardiplaan"}})
+      |> PhoenixKit.RepoHelper.repo().update!()
+
+      assert ["Launch plan"] = names(Projects.list_templates(search: "stardi"))
+      # A query matching only the JSON key "name" must not match every row.
+      assert Projects.list_templates(search: "name") == []
+    end
+
+    test "ilike wildcards in the query match literally" do
+      fixture_template(%{"name" => "100% done"})
+      fixture_template(%{"name" => "Plain"})
+
+      assert ["100% done"] = names(Projects.list_templates(search: "%"))
+      # Unescaped `_` would wildcard-match the space in "% d"; escaped it
+      # must be literal and match nothing.
+      assert Projects.list_templates(search: "0%_d") == []
+    end
+
+    test "blank or non-binary search is a no-op filter" do
+      fixture_template(%{"name" => "Solo"})
+
+      assert length(Projects.list_templates(search: "   ")) == 1
+      assert length(Projects.list_templates(search: nil)) == 1
+      assert Projects.count_templates(search: "solo") == 1
+      assert Projects.count_templates(search: "zzz") == 0
+    end
+
+    defp names(templates), do: Enum.map(templates, & &1.name)
+  end
+
+  describe "project/task :search (server-mode SQL path)" do
+    test "list_projects/count_projects filter by name and description, escaped" do
+      fixture_project(%{"name" => "Alpha rocket", "description" => "Orbit insertion"})
+      fixture_project(%{"name" => "Beta boat"})
+
+      assert [%{name: "Alpha rocket"}] = Projects.list_projects(search: "ALPHA")
+      assert [%{name: "Alpha rocket"}] = Projects.list_projects(search: "orbit ins")
+      assert Projects.count_projects(search: "rocket") == 1
+      assert Projects.count_projects(search: "zzz") == 0
+      # blank/nil are no-op filters; wildcards match literally
+      assert Projects.count_projects(search: "   ") == 2
+      assert Projects.count_projects(search: nil) == 2
+      assert Projects.list_projects(search: "%") == []
+    end
+
+    test "list_tasks_with_deps/count_tasks filter by title and description" do
+      fixture_task(%{"title" => "Weld hull", "description" => "Follow the jig"})
+      fixture_task(%{"title" => "Paint hull"})
+
+      %{tasks: tasks} = Projects.list_tasks_with_deps(search: "weld")
+      assert [%{title: "Weld hull"}] = tasks
+      %{tasks: by_desc} = Projects.list_tasks_with_deps(search: "the jig")
+      assert [%{title: "Weld hull"}] = by_desc
+      assert Projects.count_tasks(search: "hull") == 2
+      assert Projects.count_tasks(search: "zzz") == 0
+      assert Projects.count_tasks(search: "_") == 0
+    end
+  end
+
+  describe "task_usage/1" do
+    test "counts assignments per task with last-used timestamps" do
+      task = fixture_task(%{"title" => "Reused step"})
+      other = fixture_task(%{"title" => "Unused step"})
+      p1 = fixture_project(%{"name" => "U1"})
+      p2 = fixture_project(%{"name" => "U2"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => p1.uuid, "task_uuid" => task.uuid})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => p2.uuid, "task_uuid" => task.uuid})
+
+      usage = Projects.task_usage([task.uuid, other.uuid])
+      assert usage[task.uuid].count == 2
+      assert %DateTime{} = usage[task.uuid].last_used
+      # never-used tasks are absent; empty input short-circuits
+      refute Map.has_key?(usage, other.uuid)
+      assert Projects.task_usage([]) == %{}
+    end
+  end
+
   describe "project_summary + project_summaries" do
     test "project_summaries/1 returns [] for an empty input" do
       assert Projects.project_summaries([]) == []

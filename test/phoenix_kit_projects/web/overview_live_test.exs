@@ -195,40 +195,156 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     end
 
     defp open_calendar_tab(view) do
-      render_click(view, "switch_overview_tab", %{"tab" => "calendar"})
+      render_click(view, "switch_overview_tab", %{"tab" => "tasks_calendar"})
     end
 
-    test "opens in Tasks mode: per-task events + the mode toggle", %{conn: conn} do
+    test "the Tasks-calendar tab opens the tasks grid", %{conn: conn} do
       {_project, [a | _]} = calendar_fixture(2)
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       html = open_calendar_tab(view)
 
-      # Both mode buttons render, Tasks active by default.
-      assert html =~ "set_calendar_mode"
-      assert html =~ ~s(phx-value-mode="tasks")
-      assert html =~ ~s(phx-value-mode="projects")
-
-      # The tasks grid renders the task titles as events.
+      # All three view tabs render; the tasks grid shows the task titles.
+      assert html =~ "tasks_calendar"
+      assert html =~ "projects_calendar"
       assert html =~ "overview-tasks-calendar"
       assert html =~ a.task.title
     end
 
-    test "the mode toggle flips to the Projects view (both grids stay mounted)", %{conn: conn} do
+    test "the Projects-calendar tab flips the mode (both grids stay mounted)", %{conn: conn} do
       {_project, _} = calendar_fixture(1)
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)
 
-      html = render_click(view, "set_calendar_mode", %{"mode" => "projects"})
+      html = render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
       # Both component instances stay in the DOM (CSS-hidden) so month
       # navigation survives switching.
       assert html =~ "projects-overview-calendar"
       assert html =~ "overview-tasks-calendar"
 
-      # An unknown mode is ignored.
-      html = render_click(view, "set_calendar_mode", %{"mode" => "evil"})
+      # The active tab follows the mode.
+      assert has_element?(view, ~s([role="tab"][aria-selected="true"]), "Projects calendar")
+      render_click(view, "switch_overview_tab", %{"tab" => "tasks_calendar"})
+      assert has_element?(view, ~s([role="tab"][aria-selected="true"]), "Tasks calendar")
+
+      # An unknown tab falls back to the list view.
+      html = render_click(view, "switch_overview_tab", %{"tab" => "evil"})
       assert html =~ "overview-tasks-calendar"
+    end
+
+    test "late chips default to the overdue pattern; the ring is the opt-in alternative",
+         %{conn: conn} do
+      # A late chip that lands on TODAY's cell (a month-old span wouldn't be
+      # in the rendered month): 10-minute task anchored at 00:05 UTC today —
+      # same convention as calendar_fixture, late whenever now > 00:15.
+      {_project, _} = calendar_fixture(1)
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      open_calendar_tab(view)
+
+      # Default: synced with the Projects-mode overdue look.
+      assert has_element?(view, "[id^=overview-tasks-calendar] .pk-overdue")
+      refute has_element?(view, "[id^=overview-tasks-calendar] .ring-error")
+
+      # Opting into the ring swaps the marker.
+      PhoenixKitProjects.CalendarDisplay.put("late_marker", "ring")
+      send(view.pid, {:projects, :assignment_updated, %{}})
+      render(view)
+      assert has_element?(view, "[id^=overview-tasks-calendar] .ring-error")
+      refute has_element?(view, "[id^=overview-tasks-calendar] .cal-event.pk-overdue")
+    end
+
+    # A started project whose 1-hour task began `days_ago` days ago — its
+    # planned end is long past, so the running tier is :late. `counts_weekends`
+    # keeps the ETA math day-of-week independent.
+    defp late_project_fixture(days_ago) do
+      project =
+        fixture_project(%{
+          "name" => "LateProj-#{System.unique_integer([:positive])}",
+          "start_mode" => "immediate",
+          "counts_weekends" => true
+        })
+
+      started = DateTime.add(DateTime.utc_now(), -days_ago * 86_400, :second)
+      {:ok, _} = Projects.start_project(project, started)
+      project = Projects.get_project!(project.uuid)
+
+      task =
+        fixture_task(%{
+          "title" => "LateTask-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 1,
+          "estimated_duration_unit" => "hours"
+        })
+
+      {:ok, a} =
+        Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => task.uuid})
+
+      {project, a}
+    end
+
+    test "Projects mode: the Late-only lens filters bars; hidden while nothing is late",
+         %{conn: conn} do
+      # An on-track project (10-day task started just now).
+      ontrack =
+        fixture_project(%{
+          "name" => "OnTrackProj-#{System.unique_integer([:positive])}",
+          "start_mode" => "immediate",
+          "counts_weekends" => true
+        })
+
+      {:ok, _} = Projects.start_project(ontrack)
+
+      task =
+        fixture_task(%{
+          "title" => "LongTask-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 10,
+          "estimated_duration_unit" => "days"
+        })
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => ontrack.uuid, "task_uuid" => task.uuid})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      open_calendar_tab(view)
+      html = render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
+
+      # Nothing late — no lens (the graceful-empty rule).
+      refute html =~ "toggle_projects_late_only"
+
+      {late_p, late_a} = late_project_fixture(30)
+      send(view.pid, {:projects, :project_started, %{}})
+      html = render(view)
+      assert html =~ "toggle_projects_late_only"
+
+      grid = "[id^=projects-overview-calendar]"
+      assert has_element?(view, grid, late_p.name)
+      assert has_element?(view, grid, ontrack.name)
+
+      # Lens ON: only the late project's bar remains.
+      render_click(view, "toggle_projects_late_only", %{})
+      assert has_element?(view, grid, late_p.name)
+      refute has_element?(view, grid, ontrack.name)
+
+      # The whole-day popup follows the lens (rows come from the derived
+      # events): today is covered by BOTH bars, but only the late one lists.
+      send(view.pid, {:calendar_day_click, Date.utc_today()})
+      modal = "[id^=overview-day-modal]"
+      assert has_element?(view, modal, late_p.name)
+      refute has_element?(view, modal, ontrack.name)
+
+      # An ACTIVE lens stays reachable when the late count drops to 0
+      # (completing the late project removes it from the running set)...
+      {:ok, _} = Projects.update_assignment_status(late_a, %{"status" => "done"})
+      {:completed, _} = Projects.recompute_project_completion(late_p.uuid)
+      send(view.pid, {:projects, :project_completed, %{}})
+      html = render(view)
+      assert html =~ "toggle_projects_late_only"
+
+      # ...and toggling it off then removes the lens entirely.
+      html = render_click(view, "toggle_projects_late_only", %{})
+      refute html =~ "toggle_projects_late_only"
+      assert has_element?(view, grid, ontrack.name)
     end
 
     test "a day with more tasks than the cap shows the +N more link", %{conn: conn} do
@@ -319,7 +435,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)
-      render_click(view, "set_calendar_mode", %{"mode" => "projects"})
+      render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
 
       send(view.pid, {:calendar_day_click, Date.utc_today()})
       html = render(view)
@@ -332,7 +448,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)
-      render_click(view, "set_calendar_mode", %{"mode" => "projects"})
+      render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
 
       send(view.pid, {:calendar_open_project, project.uuid})
       assert_redirect(view, Paths.project(project.uuid))
@@ -407,8 +523,135 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       scope = fake_scope(user_uuid: user.uuid)
       conn = put_test_scope(conn, scope)
       {:ok, view, _html} = live(conn, "/en/admin/projects")
-      render_click(view, "switch_overview_tab", %{"tab" => "calendar"})
+      render_click(view, "switch_overview_tab", %{"tab" => "tasks_calendar"})
       view
+    end
+
+    test "the Filters funnel is absent while no scheduled work exists", %{conn: conn} do
+      view = mount_with_user(conn, reg_user())
+
+      # Fresh install: no projects/tasks — nothing any filter could narrow,
+      # so the funnel (and its panel) doesn't render at all.
+      refute render(view) =~ "hero-funnel"
+
+      # The moment real work exists, a reload brings the funnel back.
+      _fx = filter_fixture(reg_user())
+      send(view.pid, {:projects, :assignment_created, %{}})
+      assert render(view) =~ "hero-funnel"
+
+      # A FILTER that empties the month must NOT hide the funnel — the guard
+      # is keyed on the raw walk, and the panel is the only way back out.
+      # (Picking is scope-based, not relevance-gated, so a task-less person
+      # can be picked and matches nothing.)
+      {:ok, bare_user} =
+        Auth.register_user(%{
+          "email" => "bare-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ActorPass123!"
+        })
+
+      {:ok, bare} =
+        Staff.create_person(%{
+          "user_uuid" => bare_user.uuid,
+          "name" => "No Tasks Person",
+          "employment_type" => "full_time"
+        })
+
+      html = render_click(view, "assignee_pick", %{"uuid" => bare.uuid})
+      assert html =~ "hero-funnel"
+      assert html =~ "clear_assignee_filter"
+    end
+
+    test "the Unassigned quick-adder hides while nothing is unassigned", %{conn: conn} do
+      user = reg_user()
+      n = System.unique_integer([:positive])
+
+      {:ok, person} =
+        Staff.create_person(%{
+          "user_uuid" => user.uuid,
+          "name" => "OnlyAssigned #{n}",
+          "employment_type" => "full_time"
+        })
+
+      project = fixture_project(%{"start_mode" => "immediate"})
+      {:ok, _} = Prj.start_project(project)
+      task = fixture_task(%{"title" => "Held-#{n}"})
+
+      {:ok, _} =
+        Prj.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "assigned_person_uuid" => person.uuid
+        })
+
+      view = mount_with_user(conn, user)
+
+      # Everything is assigned: "Unassigned 0" would only filter to an empty
+      # month, so the quick-adder doesn't render (same as Me without a
+      # staff person).
+      refute render(view) =~ "toggle_unassigned"
+
+      loose = fixture_task(%{"title" => "Loose-#{n}"})
+
+      {:ok, loose_a} =
+        Prj.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => loose.uuid})
+
+      send(view.pid, {:projects, :assignment_created, %{}})
+      assert render(view) =~ "toggle_unassigned"
+
+      # An ACTIVE lens must keep its removable chip even when the count later
+      # drops to 0 — otherwise the lens would be stranded invisibly ON (the
+      # quick-adder is hidden while active AND while the count is 0).
+      html = render_click(view, "toggle_unassigned", %{})
+      assert html =~ "hero-user-minus"
+
+      {:ok, _} = Prj.update_assignment_form(loose_a, %{"assigned_person_uuid" => person.uuid})
+      send(view.pid, {:projects, :assignment_updated, %{}})
+      html = render(view)
+      assert html =~ "hero-user-minus"
+      assert html =~ "toggle_unassigned"
+
+      # ...and toggling it off from the chip removes the lens entirely: with
+      # the count at 0, no Unassigned control remains.
+      html = render_click(view, "toggle_unassigned", %{})
+      refute html =~ "hero-user-minus"
+      refute html =~ "toggle_unassigned"
+    end
+
+    test "the Overdue-only toggle hides while nothing is late", %{conn: conn} do
+      user = reg_user()
+
+      # Future-only work: a 3-week task started just now is not late.
+      project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
+      {:ok, _} = Prj.start_project(project)
+
+      task =
+        fixture_task(%{
+          "title" => "Future-#{System.unique_integer([:positive])}",
+          "estimated_duration" => 3,
+          "estimated_duration_unit" => "weeks"
+        })
+
+      {:ok, _} =
+        Prj.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => task.uuid})
+
+      view = mount_with_user(conn, user)
+      refute render(view) =~ "toggle_overdue_only"
+
+      # A late task appears -> so does the toggle.
+      {late_p, late_a} = late_project_fixture(30)
+      send(view.pid, {:projects, :project_started, %{}})
+      assert render(view) =~ "toggle_overdue_only"
+
+      # An ACTIVE lens survives the late count dropping to 0...
+      render_click(view, "toggle_overdue_only", %{})
+      {:ok, _} = Prj.update_assignment_status(late_a, %{"status" => "done"})
+      {:completed, _} = Prj.recompute_project_completion(late_p.uuid)
+      send(view.pid, {:projects, :project_completed, %{}})
+      assert render(view) =~ "toggle_overdue_only"
+
+      # ...and unchecking it then removes the control.
+      html = render_click(view, "toggle_overdue_only", %{})
+      refute html =~ "toggle_overdue_only"
     end
 
     test "Me filter (inherited) keeps direct + team tasks, drops unassigned", %{conn: conn} do
@@ -605,8 +848,9 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       refute html =~ "DoneOne-#{n}"
       refute html =~ ok_task.title
 
-      # The late chip carries the red ring marker.
-      assert html =~ "ring-error"
+      # The late chip carries the default overdue-pattern marker (scoped
+      # element check — the injected <style> text also contains the class).
+      assert has_element?(view, "[id^=overview-tasks-calendar] .cal-event.pk-overdue")
     end
   end
 end

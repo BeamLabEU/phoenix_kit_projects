@@ -25,6 +25,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKitProjects.Projects
 
   setup %{conn: conn} do
@@ -96,16 +97,51 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     end
   end
 
+  describe "ProjectsLive — status filter disables DnD" do
+    test "an active status filter hides the drag wiring", %{conn: conn} do
+      p1 = fixture_project(%{"name" => "F1"})
+      p2 = fixture_project(%{"name" => "F2"})
+
+      for p <- [p1, p2] do
+        p
+        |> Ecto.Changeset.change(current_status_slug: "in-review")
+        |> PhoenixKit.RepoHelper.repo().update!()
+      end
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      html = render_change(view, "sort_form", %{"sort_by" => "position"})
+      assert html =~ ~s(data-sortable="true")
+
+      # Rows still render (both match the filter) but the filtered view
+      # is a sparse subset of the global manual order — DnD must be off.
+      html = render_change(view, "filter_status", %{"status_slug" => "in-review"})
+      assert html =~ "F1"
+      refute html =~ ~s(data-sortable="true")
+    end
+  end
+
   describe "ProjectsLive — load_more" do
     test "load_more increases loaded cap and shows the new row", %{conn: conn} do
-      # 51 rows: only the first 50 render initially.
-      for n <- 1..51, do: fixture_project(%{"name" => "P#{String.pad_leading("#{n}", 3, "0")}"})
+      import Ecto.Query, only: [from: 2]
+      repo = PhoenixKit.RepoHelper.repo()
 
+      # Pagination only engages past the local-search threshold (100).
+      # Pin distinct edit times so the recency order is deterministic.
+      for n <- 1..151 do
+        p = fixture_project(%{"name" => "P#{String.pad_leading("#{n}", 3, "0")}"})
+        dt = DateTime.add(~U[2026-01-01 00:00:00Z], n * 60, :second)
+
+        from(pr in PhoenixKitProjects.Schemas.Project, where: pr.uuid == ^p.uuid)
+        |> repo.update_all(set: [updated_at: dt])
+      end
+
+      # Last-edited desc → P151..P102 visible; P101 is rank 51.
       {:ok, view, html} = live(conn, "/en/admin/projects/list")
-      refute html =~ "P051"
+      assert html =~ "P151"
+      refute html =~ "P101"
 
       html_after = render_click(view, "load_more", %{})
-      assert html_after =~ "P051"
+      assert html_after =~ "P101"
     end
   end
 
@@ -247,18 +283,31 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       fixture_task(%{"title" => "Aye"})
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/tasks")
-      html = render_change(view, "sort_form", %{"sort_by" => "title"})
+      # A field switch inherits the current direction (desc, from the
+      # recency default) — flip to asc explicitly.
+      html = render_change(view, "sort_form", %{"sort_by" => "title", "sort_dir" => "asc"})
       assert html =~ ~r/Aye[\s\S]*?Zee/
     end
 
     test "load_more bumps the loaded cap", %{conn: conn} do
-      for n <- 1..51, do: fixture_task(%{"title" => "T#{String.pad_leading("#{n}", 3, "0")}"})
+      import Ecto.Query, only: [from: 2]
+      repo = PhoenixKit.RepoHelper.repo()
+
+      # Pagination only engages past the local-search threshold (100).
+      for n <- 1..151 do
+        t = fixture_task(%{"title" => "T#{String.pad_leading("#{n}", 3, "0")}"})
+        dt = DateTime.add(~U[2026-01-01 00:00:00Z], n * 60, :second)
+
+        from(tk in PhoenixKitProjects.Schemas.Task, where: tk.uuid == ^t.uuid)
+        |> repo.update_all(set: [updated_at: dt])
+      end
 
       {:ok, view, html} = live(conn, "/en/admin/projects/tasks")
-      refute html =~ "T051"
+      assert html =~ "T151"
+      refute html =~ "T101"
 
       html_after = render_click(view, "load_more", %{})
-      assert html_after =~ "T051"
+      assert html_after =~ "T101"
     end
   end
 
@@ -338,6 +387,55 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     end
   end
 
+  describe "TasksLive — search + usage columns (delta pins)" do
+    test "local mode keeps every row during a search", %{conn: conn} do
+      fixture_task(%{"title" => "Weld hull"})
+      fixture_task(%{"title" => "Paint hull"})
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/tasks")
+      assert html =~ ~s(data-local-search-enabled="true")
+
+      html = render_change(view, "search", %{"search" => "weld"})
+      assert html =~ "Weld hull"
+      assert html =~ "Paint hull"
+    end
+
+    test "uses / last_used / created_by columns render their batched lookups", %{conn: conn} do
+      task = fixture_task(%{"title" => "Reused everywhere"})
+      p = fixture_project(%{"name" => "Consumer"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => p.uuid, "task_uuid" => task.uuid})
+
+      {:ok, creator} =
+        UsersAuth.register_user(%{
+          email: "tcreator#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      PhoenixKitProjects.Activity.log("projects.task_created",
+        actor_uuid: creator.uuid,
+        resource_type: "task",
+        resource_uuid: task.uuid
+      )
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/tasks")
+
+      for col <- ["uses", "last_used", "created_by"] do
+        render_click(view, "toggle_column", %{"col" => col})
+      end
+
+      html = render(view)
+      assert has_element?(view, "th", "Uses")
+      assert has_element?(view, "th", "Last used")
+      assert has_element?(view, "th", "Created by")
+      # task_usage: 1 assignment references the task; a real date renders.
+      assert has_element?(view, "td.tabular-nums", "1")
+      refute html =~ ">—</td>" and false
+      assert html =~ creator.email
+    end
+  end
+
   describe "TasksLive — Groups tab" do
     test "renders each group with the root task as the card title", %{conn: conn} do
       root = fixture_task(%{"title" => "Deploy"})
@@ -393,6 +491,53 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     end
   end
 
+  describe "ProjectsLive — search + columns (delta pins)" do
+    test "local mode keeps every row during a search; server tracks the string", %{conn: conn} do
+      fixture_project(%{"name" => "Alpha rocket"})
+      fixture_project(%{"name" => "Beta boat"})
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/list")
+      assert html =~ ~s(phx-hook="TableLocalSearch")
+      assert html =~ ~s(data-local-search-enabled="true")
+
+      html = render_change(view, "search", %{"search" => "alpha"})
+      assert html =~ "Alpha rocket"
+      assert html =~ "Beta boat"
+      assert has_element?(view, "input[name=search][value=alpha]")
+    end
+
+    test "tasks + created_by columns render their batched lookups", %{conn: conn} do
+      p = fixture_project(%{"name" => "Columned project"})
+      task = fixture_task(%{"title" => "One step"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => p.uuid, "task_uuid" => task.uuid})
+
+      {:ok, creator} =
+        UsersAuth.register_user(%{
+          email: "pcreator#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      # ProjectsLive resolves creators from BOTH creation actions —
+      # exercise the from-template one.
+      PhoenixKitProjects.Activity.log("projects.project_created_from_template",
+        actor_uuid: creator.uuid,
+        resource_type: "project",
+        resource_uuid: p.uuid
+      )
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      render_click(view, "toggle_column", %{"col" => "tasks"})
+      html = render_click(view, "toggle_column", %{"col" => "created_by"})
+
+      assert has_element?(view, "th", "Tasks")
+      assert has_element?(view, "th", "Created by")
+      assert has_element?(view, "td.tabular-nums", "1")
+      assert html =~ creator.email
+    end
+  end
+
   # ─── TemplatesLive ───────────────────────────────────────────────
 
   describe "TemplatesLive — DnD reorder" do
@@ -411,6 +556,319 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       assert Enum.map(reloaded, & &1.uuid) == [b.uuid, a.uuid]
 
       assert_activity_logged("template.reordered", actor_uuid: actor_uuid)
+    end
+  end
+
+  describe "TemplatesLive — sort + load_more" do
+    test "default sort is last-edited, newest first; DnD off until Manual", %{conn: conn} do
+      import Ecto.Query, only: [from: 2]
+      repo = PhoenixKit.RepoHelper.repo()
+
+      older = fixture_template(%{"name" => "TOlder"})
+      newer = fixture_template(%{"name" => "TNewer"})
+
+      # Same-second inserts tie on updated_at — pin distinct edit times
+      # via update_all (plain update would re-stamp the timestamp).
+      set_edited = fn t, dt ->
+        from(p in PhoenixKitProjects.Schemas.Project, where: p.uuid == ^t.uuid)
+        |> repo.update_all(set: [updated_at: dt])
+      end
+
+      set_edited.(older, ~U[2026-01-01 10:00:00Z])
+      set_edited.(newer, ~U[2026-01-02 10:00:00Z])
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
+      # Recency default: the most recently edited template leads, and
+      # dragging is off (the rendered order isn't the position order).
+      assert html =~ ~r/TNewer[\s\S]*?TOlder/
+      refute html =~ ~s(data-sortable="true")
+
+      # Editing the older one bumps it to the top.
+      set_edited.(older, ~U[2026-01-03 10:00:00Z])
+      {:ok, _view2, html2} = live(conn, "/en/admin/projects/templates")
+      assert html2 =~ ~r/TOlder[\s\S]*?TNewer/
+    end
+
+    test "sort_form switches to Manual for DnD, other fields disable it", %{conn: conn} do
+      fixture_template(%{"name" => "TB"})
+      fixture_template(%{"name" => "TA"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      # Manual (position) sort: the tbody becomes a SortableGrid target.
+      html = render_change(view, "sort_form", %{"sort_by" => "position"})
+      assert html =~ ~s(data-sortable="true")
+
+      # A field switch inherits the current direction (desc, from the
+      # recency default) — TB leads until the direction is flipped.
+      html = render_change(view, "sort_form", %{"sort_by" => "name"})
+      assert html =~ ~r/TB[\s\S]*?TA/
+      # Name sort is a *view* — dragging would be lossy, so DnD is off.
+      refute html =~ ~s(data-sortable="true")
+
+      html = render_change(view, "sort_form", %{"sort_dir" => "asc"})
+      assert html =~ ~r/TA[\s\S]*?TB/
+    end
+
+    test "toggle_sort on the active field flips direction", %{conn: conn} do
+      fixture_template(%{"name" => "TB"})
+      fixture_template(%{"name" => "TA"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      # Field switch inherits desc (recency default); header click flips
+      # the active column back to asc.
+      render_change(view, "sort_form", %{"sort_by" => "name"})
+      html = render_click(view, "toggle_sort", %{"by" => "name"})
+      assert html =~ ~r/TA[\s\S]*?TB/
+    end
+
+    test "toggle_sort ignores unknown field strings", %{conn: conn} do
+      fixture_template()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      assert render_click(view, "toggle_sort", %{"by" => "drop_table"})
+    end
+
+    test "load_more increases the loaded cap and shows the new row", %{conn: conn} do
+      import Ecto.Query, only: [from: 2]
+      repo = PhoenixKit.RepoHelper.repo()
+
+      # Pagination only engages past the local-search threshold (100),
+      # so this needs 151 rows. Pin distinct edit times (update_all
+      # skips the auto re-stamp) — same-second inserts would otherwise
+      # make the recency order depend on clock-second boundaries.
+      for n <- 1..151 do
+        t = fixture_template(%{"name" => "T#{String.pad_leading("#{n}", 3, "0")}"})
+        dt = DateTime.add(~U[2026-01-01 00:00:00Z], n * 60, :second)
+
+        from(p in PhoenixKitProjects.Schemas.Project, where: p.uuid == ^t.uuid)
+        |> repo.update_all(set: [updated_at: dt])
+      end
+
+      # Last-edited desc → T151..T102 visible; T101 is rank 51.
+      {:ok, view, html} = live(conn, "/en/admin/projects/templates")
+      assert html =~ "T151"
+      refute html =~ "T101"
+
+      html_after = render_click(view, "load_more", %{})
+      assert html_after =~ "T101"
+    end
+  end
+
+  describe "TemplatesLive — reorder modal lifecycle" do
+    test "open with 0 or 1 uuids collapses to :all", %{conn: conn} do
+      t = fixture_template()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      html = render_click(view, "open_reorder_modal", %{})
+      assert html =~ "Reorder all"
+
+      render_click(view, "close_reorder_modal", %{})
+      html = render_click(view, "open_reorder_modal", %{"uuids" => [t.uuid]})
+      assert html =~ "Reorder all"
+    end
+
+    test "open with 2 uuids keeps the selection", %{conn: conn} do
+      a = fixture_template(%{"name" => "TA"})
+      b = fixture_template(%{"name" => "TB"})
+      fixture_template(%{"name" => "TC"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      html = render_click(view, "open_reorder_modal", %{"uuids" => [a.uuid, b.uuid]})
+      # The modal's scope line reads "the 2 selected", not "all 3".
+      assert html =~ "2 selected"
+      refute html =~ "Reorder all 3"
+    end
+  end
+
+  describe "TemplatesLive — apply_reorder" do
+    test "applies a valid strategy on the full set", %{conn: conn, actor_uuid: actor_uuid} do
+      _b = fixture_template(%{"name" => "TB"})
+      _a = fixture_template(%{"name" => "TA"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      render_click(view, "open_reorder_modal", %{})
+
+      html = render_click(view, "apply_reorder", %{"strategy" => "name_asc"})
+
+      assert html =~ "Templates reordered"
+      listed = Projects.list_templates() |> Enum.sort_by(& &1.position)
+      assert Enum.map(listed, & &1.name) == ["TA", "TB"]
+
+      assert_activity_logged("template.reordered", actor_uuid: actor_uuid)
+    end
+
+    test "rejects an unknown strategy string with a fallback flash", %{conn: conn} do
+      fixture_template()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      render_click(view, "open_reorder_modal", %{})
+      html = render_click(view, "apply_reorder", %{"strategy" => "delete_all"})
+      assert html =~ "Pick a strategy"
+    end
+  end
+
+  describe "TemplatesLive — column visibility" do
+    test "toggle_column hides/shows columns and persists across mounts", %{conn: conn} do
+      fixture_template(%{"name" => "TA"})
+
+      # Scope assertions to `<th>` — the Columns dropdown always lists
+      # every label, so a bare `html =~` can't distinguish visibility.
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      # Defaults: Weekends on, Created/Updated off.
+      assert has_element?(view, "th", "Weekends")
+      refute has_element?(view, "th", "Created")
+
+      render_click(view, "toggle_column", %{"col" => "weekends"})
+      refute has_element?(view, "th", "Weekends")
+
+      render_click(view, "toggle_column", %{"col" => "created"})
+      assert has_element?(view, "th", "Created")
+
+      # Persisted in settings — a fresh mount sees the same set.
+      {:ok, view2, _html2} = live(conn, "/en/admin/projects/templates")
+      refute has_element?(view2, "th", "Weekends")
+      assert has_element?(view2, "th", "Created")
+    end
+
+    test "toggle_column ignores unknown column names", %{conn: conn} do
+      fixture_template()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      assert render_click(view, "toggle_column", %{"col" => "evil"})
+    end
+
+    test "tasks / created_by / external_id columns render batched data", %{conn: conn} do
+      t = fixture_template(%{"name" => "Columned"})
+      task = fixture_task(%{"title" => "Step one"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => t.uuid, "task_uuid" => task.uuid})
+
+      # The creator must be a REAL user row — template_creators resolves
+      # actor uuids through the users table (fake_scope's user is not
+      # persisted, so its uuid would render as the dash fallback).
+      {:ok, creator} =
+        UsersAuth.register_user(%{
+          email: "creator#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      PhoenixKitProjects.Activity.log("projects.template_created",
+        actor_uuid: creator.uuid,
+        resource_type: "project_template",
+        resource_uuid: t.uuid
+      )
+
+      t
+      |> Ecto.Changeset.change(external_id: "EXT-42")
+      |> PhoenixKit.RepoHelper.repo().update!()
+
+      expected_creator = UsersAuth.User.full_name(creator) || creator.email
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      for col <- ["tasks", "created_by", "external_id"] do
+        render_click(view, "toggle_column", %{"col" => col})
+      end
+
+      html = render(view)
+      assert has_element?(view, "th", "Tasks")
+      assert has_element?(view, "th", "Created by")
+      assert has_element?(view, "th", "External ID")
+      assert has_element?(view, "td.tabular-nums", "1")
+      assert html =~ expected_creator
+      assert html =~ "EXT-42"
+    end
+  end
+
+  describe "TemplatesLive — search" do
+    test "local mode: the server keeps EVERY row during a search", %{conn: conn} do
+      fixture_template(%{"name" => "Alpha kit"})
+      fixture_template(%{"name" => "Beta kit"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      # Under the threshold filtering is the client hook's job — the
+      # server must NOT drop non-matching rows from the payload, or the
+      # client couldn't re-show them instantly when the query changes.
+      html = render_change(view, "search", %{"search" => "alpha"})
+      assert html =~ "Alpha kit"
+      assert html =~ "Beta kit"
+
+      # The search string still updates server state (DnD gate etc.).
+      assert has_element?(view, "input[name=search][value=alpha]")
+    end
+
+    test "no-match search keeps the toolbar (not the empty state)", %{conn: conn} do
+      fixture_template(%{"name" => "Alpha kit"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      html = render_change(view, "search", %{"search" => "zzz-nothing"})
+
+      # The search input must stay on screen so the query can be cleared.
+      assert has_element?(view, "input[name=search]")
+      assert html =~ "No templates match."
+      refute html =~ "No templates yet."
+    end
+
+    test "server mode past the threshold: search filters in SQL", %{conn: conn} do
+      for n <- 1..101, do: fixture_template(%{"name" => "V#{String.pad_leading("#{n}", 3, "0")}"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      html = render_change(view, "search", %{"search" => "v101"})
+      assert html =~ "V101"
+      refute html =~ "V050"
+    end
+
+    test "an active search disables DnD (sparse-subset position rewrite guard)", %{conn: conn} do
+      fixture_template(%{"name" => "Alpha kit"})
+      fixture_template(%{"name" => "Alpha kit two"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      html = render_change(view, "sort_form", %{"sort_by" => "position"})
+      assert html =~ ~s(data-sortable="true")
+
+      # Dragging a filtered subset would renumber it 1..N and collide
+      # with the hidden rows' positions — the handle must go away.
+      html = render_change(view, "search", %{"search" => "alpha"})
+      refute html =~ ~s(data-sortable="true")
+    end
+
+    test "map-shaped search payload is coerced to empty, not crashed", %{conn: conn} do
+      fixture_template(%{"name" => "Alpha kit"})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      # A forged `search[x]=y` body arrives as a map; rendering it back
+      # into the input's value would raise Phoenix.HTML.Safe otherwise.
+      html = render_change(view, "search", %{"search" => %{"x" => "y"}})
+      assert html =~ "Alpha kit"
+    end
+
+    test "local mode under the threshold: full list + hook enabled + haystacks", %{conn: conn} do
+      t = fixture_template(%{"name" => "Local One"})
+
+      t
+      |> Ecto.Changeset.change(translations: %{"et" => %{"name" => "Kohalik"}})
+      |> PhoenixKit.RepoHelper.repo().update!()
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
+
+      assert html =~ ~s(phx-hook="TableLocalSearch")
+      assert html =~ ~s(data-local-search-enabled="true")
+      # The row haystack merges primary + translated values, lowercased —
+      # same coverage as the server-side ilike, so client and server agree.
+      assert html =~ ~s(data-search="local one kohalik")
+    end
+
+    test "over the threshold: pagination returns, local narrowing off", %{conn: conn} do
+      for n <- 1..101, do: fixture_template(%{"name" => "V#{String.pad_leading("#{n}", 3, "0")}"})
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
+
+      assert html =~ ~s(data-local-search-enabled="false")
+      # The load-more cap applies again: 50 of 101 rendered.
+      assert html =~ "50"
+      assert html =~ "101"
+      assert length(String.split(html, "data-search=")) - 1 == 50
     end
   end
 end

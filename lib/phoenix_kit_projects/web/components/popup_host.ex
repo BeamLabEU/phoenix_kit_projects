@@ -34,9 +34,12 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
 
   ## Z-index layering
 
-  Each frame's `<dialog>` gets `z-[N]` where N starts at 50 (matches the
-  start-project modal precedent) and increments by 10 per stack depth.
-  Stack cap at 5 frames matches `PopupHostLive`'s `@max_stack_depth`.
+  Each frame's `<dialog>` gets `z-[N]` where N starts at 60 and increments
+  by 10 per stack depth. The dialogs open via the `open` attribute (not
+  `showModal()`), so they are NOT in the browser top layer and must outrank
+  the admin shell's fixed header (`z-50`) explicitly — same reasoning as
+  the project drawer's `z-[60]`/`z-[70]`. Stack cap at 5 frames matches
+  `PopupHostLive`'s `@max_stack_depth`.
 
   ## Example
 
@@ -115,7 +118,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
         :for={{frame, depth} <- Enum.with_index(@modal_stack)}
         open
         class="modal modal-open"
-        style={"z-index: #{50 + depth * 10}"}
+        style={"z-index: #{60 + depth * 10}"}
         phx-window-keydown={frame.frame_ref == @top_frame_ref && @on_close}
         phx-key={frame.frame_ref == @top_frame_ref && "Escape"}
         phx-value-frame-ref={frame.frame_ref}

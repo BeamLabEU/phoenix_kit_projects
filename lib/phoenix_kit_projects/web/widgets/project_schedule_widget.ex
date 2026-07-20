@@ -120,7 +120,10 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectScheduleWidget do
 
   defp line(assigns) do
     ~H"""
-    <div class="flex items-baseline justify-between gap-2">
+    <%!-- flex-wrap + min-w-0: in a narrow widget slot the 2-col grid track
+         can't fit "label  2026-07-18" on one line — the value wraps under
+         the label instead of being clipped at the card edge. --%>
+    <div class="flex flex-wrap items-baseline justify-between gap-x-2 min-w-0">
       <span class="text-base-content/50">{@label}</span>
       <span class="font-medium tabular-nums">{@value}</span>
     </div>

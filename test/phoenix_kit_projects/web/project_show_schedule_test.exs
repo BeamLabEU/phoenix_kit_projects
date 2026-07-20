@@ -115,7 +115,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      assert html =~ project.name
+      # No schedule yet — the pre-start banner offers Start now instead.
+      assert html =~ "Start now"
+      refute html =~ "incl. weekends"
     end
 
     test "renders schedule + assignee_type/label for team-assigned task",

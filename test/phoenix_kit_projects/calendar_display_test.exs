@@ -169,6 +169,57 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       assert e.extra.highlight == %{from: ~D[2026-06-06], to: ~D[2026-06-16], class: "pk-overdue"}
     end
 
+    test "with the ring marker a late project wears the ring instead of the tail" do
+      p = project(%{uuid: "late", name: "Late", started_at: ~U[2026-06-01 09:00:00Z]})
+      summary = %{project: p, planned_end: ~U[2026-06-05 17:00:00Z], progress_pct: 30, late: true}
+
+      [e] =
+        CalendarDisplay.events([summary], [], [], nil, @today, "0", late_marker: "ring")
+
+      assert e.class =~ "ring-error"
+      refute Map.has_key?(e.extra, :highlight)
+      # Late bars keep the top-slot grouping either way.
+      assert e.extra.slot_priority == 0
+
+      # On-time bars stay unmarked under the ring marker.
+      ok = %{
+        project: project(%{uuid: "ok", name: "OK", started_at: ~U[2026-06-01 09:00:00Z]}),
+        planned_end: ~U[2026-06-25 17:00:00Z],
+        progress_pct: 30,
+        late: false
+      }
+
+      [oe] = CalendarDisplay.events([ok], [], [], nil, @today, "0", late_marker: "ring")
+      refute oe.class
+    end
+
+    test "with the marker off a late project draws nothing but keeps its slot grouping" do
+      p = project(%{uuid: "late", name: "Late", started_at: ~U[2026-06-01 09:00:00Z]})
+      summary = %{project: p, planned_end: ~U[2026-06-05 17:00:00Z], progress_pct: 30, late: true}
+
+      [e] = CalendarDisplay.events([summary], [], [], nil, @today, "0", late_marker: "none")
+
+      refute e.class
+      refute Map.has_key?(e.extra, :highlight)
+      assert e.extra.slot_priority == 0
+    end
+
+    test "with the marker off a late task keeps late meta but no class" do
+      pr = project(%{name: "P"})
+      todo = task_item(pr, %{status: "todo"})
+      s = span(~N[2026-06-10 08:00:00], ~N[2026-06-10 10:00:00])
+      now = ~N[2026-06-12 09:00:00]
+
+      {[e], meta} =
+        CalendarDisplay.task_events([{todo, s}], nil, "0",
+          now: now,
+          late_class: CalendarDisplay.late_marker_class(%{late_marker: "none"})
+        )
+
+      refute e.class
+      assert meta[e.id].late
+    end
+
     test "a late summary whose planned end is still in the future has no highlight" do
       p = project(%{uuid: "fut", name: "Fut", started_at: ~U[2026-06-10 09:00:00Z]})
       summary = %{project: p, planned_end: ~U[2026-06-25 17:00:00Z], progress_pct: 30, late: true}
@@ -262,12 +313,18 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       end
     end
 
-    test "wave mode slides the stripes" do
+    test "wave mode slides the stripes horizontally — visibly, with valid fallbacks" do
       css = CalendarDisplay.animation_css(@wave)
 
       assert css =~ "@keyframes pk-overdue-stripe-slide"
       assert css =~ "animation: pk-overdue-stripe-slide 7s linear infinite"
-      assert css =~ "calc(var(--pk-bg-x, 0) + 56.57px)"
+      # Four whole 56.57px periods per cycle — one period per cycle crawled
+      # imperceptibly at the default speed.
+      assert css =~ "calc(var(--pk-bg-x, 0px) + 226.28px)"
+      # Unitless 0 inside calc() is invalid CSS and killed the keyframe
+      # wherever the alignment hook hadn't set the vars.
+      refute css =~ "var(--pk-bg-x, 0)"
+      refute css =~ "var(--pk-bg-y, 0)"
     end
 
     test "flash mode pulses the striped overlay" do
@@ -292,6 +349,29 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
       css = CalendarDisplay.animation_css(%{@wave | speed: 10.0})
       assert css =~ "pk-overdue-stripe-slide 10s"
       refute css =~ "10.0s"
+    end
+
+    test "the configured stripe opacity drives the overlay (default 1)" do
+      # Maps without :opacity (older configs) fall back to fully opaque.
+      assert CalendarDisplay.animation_css(@wave) =~ "opacity: 1;"
+
+      css = CalendarDisplay.animation_css(Map.put(@wave, :opacity, 0.4))
+      assert css =~ "opacity: 0.4;"
+
+      # Flash scales its brightness pulse around the configured opacity —
+      # low = 0.5 × 0.78, peak = 0.5 × 1.18 — rounded to valid CSS floats.
+      flash = CalendarDisplay.animation_css(%{@wave | mode: "flash"} |> Map.put(:opacity, 0.5))
+      assert flash =~ "opacity: 0.39;"
+      assert flash =~ "opacity: 0.59;"
+    end
+
+    test "late_marker_class/1 maps ring/pattern/none (pattern is the default)" do
+      assert CalendarDisplay.late_marker_class(%{late_marker: "ring"}) =~ "ring-error"
+      assert CalendarDisplay.late_marker_class(%{late_marker: "pattern"}) == "pk-overdue"
+      # Off: no class at all — the late DATA (meta, filters) is unaffected.
+      assert CalendarDisplay.late_marker_class(%{late_marker: "none"}) == nil
+      # Missing/unknown follows the default: synced with the projects look.
+      assert CalendarDisplay.late_marker_class(%{}) == "pk-overdue"
     end
 
     test "solid pattern fills with the inverse colour (filter: invert), no stripes" do
@@ -455,6 +535,18 @@ defmodule PhoenixKitProjects.CalendarDisplayTest do
 
       refute done_e.class
       refute meta[done_e.id].late
+    end
+
+    test "the :late_class opt swaps the late marker (settings-driven pattern)" do
+      p = project(%{name: "P"})
+      todo = task_item(p, %{status: "todo"})
+      s = span(~N[2026-06-10 08:00:00], ~N[2026-06-10 10:00:00])
+      now = ~N[2026-06-12 09:00:00]
+
+      {[e], _meta} =
+        CalendarDisplay.task_events([{todo, s}], nil, "0", now: now, late_class: "pk-overdue")
+
+      assert e.class == "pk-overdue"
     end
 
     test "a task still inside its span is not late" do

@@ -36,7 +36,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
-  @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-6"
+  # Tight vertical rhythm for short client screens: pt-2 hugs the site
+  # header (the card's own padding provides the visual inset), pb-4/gap-4
+  # keep the sections breathing.
+  @default_wrapper_class "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
 
   # The shared filter's events, forwarded to Web.AssigneeFilter.update/3.
   @assignee_filter_events AssigneeFilter.events()
@@ -84,6 +87,16 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         today: Date.utc_today(),
         tz_offset: "0",
         calendar_events: [],
+        # The calendar-display config (CalendarDisplay.read/0) — reload/1
+        # refreshes it; pure defaults here so no render can ever dot-access
+        # a nil config.
+        overdue_anim: CalendarDisplay.defaults(),
+        # Projects-mode "Late only" filter: the raw event list is cached and
+        # the visible `calendar_events` derive from it in memory (same shape
+        # as the Tasks-mode filters — a toggle never re-queries).
+        all_project_events: [],
+        late_project_uuids: MapSet.new(),
+        projects_late_only?: false,
         # Which VIEW of the running projects is shown: :list (vertical list,
         # default) or :calendar (the month view), toggled by tabs. The calendar is
         # lazy-mounted on first switch, then kept (hidden) so its paged month
@@ -150,7 +163,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
     {top_summaries, total_active} = prioritize_running(all_summaries, today, now)
 
-    overdue_anim = CalendarDisplay.read_animation()
+    # Read + assign the animation/marker config BEFORE the Tasks-mode build
+    # below — apply_task_filter derives the late-marker class from it.
+    overdue_anim = CalendarDisplay.read()
+    socket = assign(socket, overdue_anim: overdue_anim)
 
     calendar_events =
       CalendarDisplay.events(
@@ -159,7 +175,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         upcoming_projects,
         L10n.current_content_lang(),
         today,
-        offset
+        offset,
+        late_marker: overdue_anim.late_marker
       )
 
     # Tasks-mode events are only worth their per-project schedule walks once
@@ -193,7 +210,11 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         status_counts: Projects.assignment_status_counts(),
         today: today,
         tz_offset: offset,
-        calendar_events: calendar_events,
+        all_project_events: calendar_events,
+        late_project_uuids:
+          all_summaries
+          |> Enum.filter(& &1.late)
+          |> MapSet.new(& &1.project.uuid),
         # The overdue-animation <style>, generated from the settings on
         # /admin/settings/projects (mode/speed/brightness), plus the pattern so
         # the calendar's info popover can describe it accurately. Read once here
@@ -201,6 +222,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         overdue_style: CalendarDisplay.animation_style(overdue_anim),
         overdue_pattern: overdue_anim.pattern
       )
+
+    # Derive the visible Projects-mode events BEFORE the popup refresh below —
+    # its rows read `calendar_events`.
+    socket = apply_projects_filter(socket)
 
     # An open whole-day popup caches its rows at open time; a broadcast-driven
     # reload just rebuilt the events/meta those rows come from, so refresh it
@@ -231,6 +256,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
       end)
 
+    now = DateTime.utc_now() |> DateTime.to_naive()
+
     socket
     |> AssigneeFilter.resolve_me()
     |> assign(
@@ -238,9 +265,28 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       task_calendar_loaded?: true,
       tz_offset: offset,
       unassigned_count:
-        Enum.count(items_with_spans, fn {it, _} -> Assignees.unassigned?(it.assignment) end)
+        Enum.count(items_with_spans, fn {it, _} -> Assignees.unassigned?(it.assignment) end),
+      overdue_count:
+        Enum.count(items_with_spans, fn {it, span} ->
+          CalendarDisplay.task_late?(it.assignment, span, now)
+        end)
     )
     |> apply_task_filter()
+  end
+
+  # Projects mode: the visible bars from the cached raw list + the "Late
+  # only" flag. Late = the tier the Running cards show (`summary.late`), so
+  # the calendar and the cards can't disagree; completed/scheduled markers
+  # are never late, so the lens drops them too.
+  defp apply_projects_filter(socket) do
+    %{
+      all_project_events: all,
+      late_project_uuids: late,
+      projects_late_only?: late_only?
+    } = socket.assigns
+
+    events = if late_only?, do: Enum.filter(all, &MapSet.member?(late, &1.id)), else: all
+    assign(socket, calendar_events: events)
   end
 
   # Derives the visible events/meta from the cached walk + the current
@@ -259,8 +305,14 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
     {kept, provenance} = filter_items(items, scopes, include_unassigned?, direct_only?)
 
+    late_class =
+      CalendarDisplay.late_marker_class(socket.assigns[:overdue_anim] || CalendarDisplay.read())
+
     {events, meta} =
-      CalendarDisplay.task_events(kept, L10n.current_content_lang(), offset, now: now)
+      CalendarDisplay.task_events(kept, L10n.current_content_lang(), offset,
+        now: now,
+        late_class: late_class
+      )
 
     # Provenance ("via <team>") rides the meta so popup rows can show WHY a
     # task is in a person's view without implying personal ownership.
@@ -304,6 +356,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     |> then(fn {kept, prov} -> {Enum.reverse(kept), prov} end)
   end
 
+  # Which nav tab is lit: the two calendar tabs are (overview_tab :calendar)
+  # split by mode.
+  defp active_overview_tab(:list, _mode), do: "list"
+  defp active_overview_tab(:calendar, :projects), do: "projects_calendar"
+  defp active_overview_tab(:calendar, _tasks), do: "tasks_calendar"
+
   # First-open build (reload/1 skips the walk until the tab has been seen).
   defp ensure_task_calendar(%{assigns: %{task_calendar_loaded?: true}} = socket), do: socket
 
@@ -344,44 +402,20 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     dt |> PhoenixKit.Utils.Date.shift_to_offset(offset) |> DateTime.to_date()
   end
 
-  # The Tasks/Projects mode toggle, rendered into BOTH calendar grids'
-  # toolbar_end slots (each grid shows its own copy; only one grid is visible
-  # at a time). tooltip-left on the edge button so it doesn't clip.
-  defp mode_toggle(assigns) do
-    ~H"""
-    <div class="join">
-      <button
-        type="button"
-        class={[
-          "btn btn-xs join-item tooltip",
-          CalendarDisplay.loading_class(),
-          @calendar_mode == :tasks && "btn-active"
-        ]}
-        data-tip={gettext("Every task on the days it is scheduled to run")}
-        phx-click="set_calendar_mode"
-        phx-value-mode="tasks"
-      >
-        {gettext("Tasks")}
-      </button>
-      <button
-        type="button"
-        class={[
-          "btn btn-xs join-item tooltip tooltip-left",
-          CalendarDisplay.loading_class(),
-          @calendar_mode == :projects && "btn-active"
-        ]}
-        data-tip={gettext("One line per project, with the overdue marker")}
-        phx-click="set_calendar_mode"
-        phx-value-mode="projects"
-      >
-        {gettext("Projects")}
-      </button>
-    </div>
-    """
+  # The calendar info-popover sentence describing the overdue indicator, worded
+  # to match the configured marker + pattern (set on /admin/settings/projects).
+  defp overdue_legend("ring") do
+    gettext(
+      "A project running past its planned end wears a red ring — the same marker late tasks get."
+    )
   end
 
-  # The calendar info-popover sentence describing the overdue indicator, worded
-  # to match the configured animation mode (set on /admin/settings/projects).
+  defp overdue_legend("none") do
+    gettext(
+      "Late projects are not visually marked (changeable in the project settings); the cards and the Late-only lens still know them."
+    )
+  end
+
   defp overdue_legend("solid") do
     gettext(
       "When a project runs past its planned end, that overdue stretch is filled with the inverse of its colour — the longer it is, the more overdue the project."
@@ -489,15 +523,20 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
   defp overdue_seconds(_, _now), do: 0
 
-  # Running card tabs. The calendar is lazy-mounted on first open (then kept
-  # hidden when inactive, so its paged month survives toggling back and forth);
-  # the first open also builds the Tasks-mode events (per-project walks that
-  # reload/1 skips until the tab has been seen).
+  # Running card tabs: List plus the two calendars (Tasks / Projects), the
+  # modes promoted to first-class tabs. The calendar is lazy-mounted on first
+  # open (then kept hidden when inactive, so its paged month survives
+  # toggling back and forth); the first open also builds the Tasks-mode
+  # events (per-project walks that reload/1 skips until the tab has been
+  # seen). Whitelisted tab strings — anything else falls to :list.
   @impl true
-  def handle_event("switch_overview_tab", %{"tab" => "calendar"}, socket) do
+  def handle_event("switch_overview_tab", %{"tab" => tab}, socket)
+      when tab in ["tasks_calendar", "projects_calendar"] do
+    mode = if tab == "projects_calendar", do: :projects, else: :tasks
+
     {:noreply,
      socket
-     |> assign(overview_tab: :calendar, calendar_seen?: true)
+     |> assign(overview_tab: :calendar, calendar_mode: mode, calendar_seen?: true)
      |> ensure_task_calendar()}
   end
 
@@ -505,13 +544,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     {:noreply, assign(socket, overview_tab: :list)}
   end
 
-  # Calendar mode toggle: :tasks (default) | :projects. Hardcoded map — never
-  # String.to_existing_atom on a client param.
-  def handle_event("set_calendar_mode", %{"mode" => mode}, socket) do
-    case %{"tasks" => :tasks, "projects" => :projects} do
-      %{^mode => new_mode} -> {:noreply, assign(socket, calendar_mode: new_mode)}
-      _ -> {:noreply, socket}
-    end
+  # Projects-mode "Late only" lens — in-memory re-derivation, no re-query.
+  def handle_event("toggle_projects_late_only", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(projects_late_only?: not socket.assigns.projects_late_only?)
+     |> apply_projects_filter()}
   end
 
   # Every assignee/overdue-filter event routes through the shared glue; a
@@ -617,6 +655,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   end
 
   defp day_rows(socket, date) do
+    late = socket.assigns.late_project_uuids
+
     socket.assigns.calendar_events
     |> CalendarDisplay.events_on(date)
     |> Enum.map(fn e ->
@@ -626,7 +666,9 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         color: e.color,
         subtitle: project_span_label(e),
         status: nil,
-        late: false
+        # Same tier the cards/lens/marker use — the popup row of a late
+        # project carries the late badge too.
+        late: MapSet.member?(late, e.id)
       }
     end)
   end
@@ -676,65 +718,70 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header
-        title={gettext("Projects")}
-        description={gettext("Overview of active work, upcoming projects, and your assignments.")}
-      >
-        <:actions>
-          <.smart_link
-            navigate={Paths.new_project()}
-            emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
-            embed_mode={@embed_mode}
-            class="btn btn-primary btn-sm"
-          >
-            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
-          </.smart_link>
-          <.smart_link
-            navigate={Paths.new_task()}
-            emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
-            embed_mode={@embed_mode}
-            class="btn btn-ghost btn-sm"
-          >
-            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
-          </.smart_link>
-        </:actions>
-      </.page_header>
-
-      <%!-- Stats row --%>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <.stat_tile label={gettext("Running")} value={@active_count} />
-        <.stat_tile
-          label={gettext("Tasks in progress")}
-          value={Map.get(@status_counts, "in_progress", 0)}
-          value_class="text-warning"
-        />
-        <.stat_tile label={gettext("Tasks todo")} value={Map.get(@status_counts, "todo", 0)} />
-        <.stat_tile
-          label={gettext("Tasks done")}
-          value={Map.get(@status_counts, "done", 0)}
-          value_class="text-success"
-        />
-      </div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <%!-- No page header: the client screens are short, the sidebar already
+           says where you are, and creation lives on the list pages + the
+           empty-state CTAs — the dashboard starts with the data. The stat
+           tiles moved into the bottom row for the same reason. --%>
+      <%!-- The Running list/calendar IS the page: it keeps the full width
+           except on genuinely wide screens (2xl+), where the side panels
+           return to a third column. Below that the panels flow as a compact
+           row underneath — they're secondary. --%>
+      <div class="grid grid-cols-1 2xl:grid-cols-3 gap-4">
         <%!-- Left: Active projects (span 2) --%>
-        <div class="lg:col-span-2 card bg-base-100 shadow">
+        <div class="2xl:col-span-2 card bg-base-100 shadow">
           <%!-- Tighter body padding on phones so the 7-column calendar isn't squeezed. --%>
-          <div class="card-body max-sm:p-3">
-            <div class="flex items-start justify-between gap-3">
-              <div>
-                <h2 class="card-title text-lg">
-                  <.icon name="hero-play" class="w-5 h-5 text-success" /> {gettext("Running")}
-                </h2>
-                <p class="text-xs text-base-content/50 mt-0.5">
-                  {gettext("Started and not yet completed.")}
-                </p>
+          <%!-- One compact header row: title, the view tabs, View-all — the
+               old title-block + subtitle + separate tab row cost ~110px of
+               chrome before any content (short client screens). --%>
+          <div class="card-body p-3">
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <h2 class="card-title text-lg shrink-0">
+                <.icon name="hero-play" class="w-5 h-5 text-success" /> {gettext("Running")}
+              </h2>
+              <%!-- Compact text tabs (not the boxed nav_tabs): inline with the
+                   title they must cost no extra height — no icons, no pill
+                   chrome, the active view marked by a primary underline +
+                   weight instead of a filled tab. --%>
+              <%!-- On phones the tab row takes its own full-width second line
+                   (order-last) so the title and View-all share the first —
+                   free wrapping scattered the three into three rows. --%>
+              <div
+                role="tablist"
+                class="flex items-center gap-4 text-sm max-sm:order-last max-sm:w-full"
+              >
+                <button
+                  :for={
+                    {id, label} <- [
+                      {"list", gettext("List")},
+                      {"tasks_calendar", gettext("Tasks calendar")},
+                      {"projects_calendar", gettext("Projects calendar")}
+                    ]
+                  }
+                  type="button"
+                  role="tab"
+                  aria-selected={to_string(active_overview_tab(@overview_tab, @calendar_mode) == id)}
+                  phx-click="switch_overview_tab"
+                  phx-value-tab={id}
+                  class={[
+                    # border-y + transparent top mirrors the underline so the
+                    # box is vertically symmetric — items-center then truly
+                    # centers the text against the title beside it.
+                    "py-0.5 border-y-2 border-t-transparent transition-colors cursor-pointer",
+                    CalendarDisplay.loading_class(),
+                    if(active_overview_tab(@overview_tab, @calendar_mode) == id,
+                      do: "border-b-primary font-semibold text-base-content",
+                      else: "border-b-transparent text-base-content/60 hover:text-base-content"
+                    )
+                  ]}
+                >
+                  {label}
+                </button>
               </div>
               <.smart_link
                 navigate={Paths.projects()}
                 emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
                 embed_mode={@embed_mode}
-                class="link link-hover text-sm shrink-0 mt-1"
+                class="link link-hover text-sm shrink-0 ml-auto"
               >
                 <%= if @active_count > @running_display_limit do %>
                   {gettext("View all (%{count}) →", count: @active_count)}
@@ -743,18 +790,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                 <% end %>
               </.smart_link>
             </div>
-
-            <%!-- Same running projects, two views to choose from: a vertical list
-                 (default) and the month calendar. --%>
-            <.nav_tabs
-              active_tab={to_string(@overview_tab)}
-              on_change="switch_overview_tab"
-              tabs={[
-                %{id: "list", label: gettext("List"), icon: "hero-list-bullet"},
-                %{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}
-              ]}
-              class="mt-3"
-            />
 
             <%!-- List view --%>
             <div class={["mt-2", if(@overview_tab != :list, do: "hidden")]}>
@@ -836,9 +871,19 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                        bars/cells/more-links) — their classes aren't ours to
                        extend, so a tiny static style covers them. --%>
                   {Phoenix.HTML.raw(CalendarDisplay.loading_style())}
+                  <%!-- The overdue/late-marker <style> serves BOTH grids: the
+                       Projects-mode overdue stretch always, and Tasks-mode
+                       late chips when the marker is set to the pattern. The
+                       SyncAnimations wrapper keeps stripes aligned + in phase
+                       across cells. --%>
+                  {Phoenix.HTML.raw(@overdue_style)}
                   <%!-- Tasks mode (default): capped day cells — at most 4 bars +
                        3 chips per day, the rest behind "+N more". --%>
-                  <div class={if(@calendar_mode != :tasks, do: "hidden")}>
+                  <div
+                    id={"overview-tasks-sync-#{@sfx}"}
+                    phx-hook="SyncAnimations"
+                    class={if(@calendar_mode != :tasks, do: "hidden")}
+                  >
                     <.live_component
                       module={PhoenixLiveCalendar.CalendarComponent}
                       id={"overview-tasks-calendar-#{@sfx}"}
@@ -846,30 +891,39 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                       views={[:month, :agenda]}
                       date={@today}
                       today={@today}
-                      fixed_weeks={false}
+                      week_start={@overdue_anim.week_start}
+                      show_weekends={@overdue_anim.show_weekends}
+                      show_week_numbers={@overdue_anim.show_week_numbers}
+                      fixed_weeks={@overdue_anim.fixed_weeks}
                       expand_cells={true}
-                      max_events={CalendarDisplay.max_events()}
-                      max_multiday={CalendarDisplay.max_multiday()}
+                      max_events={@overdue_anim.max_events}
+                      max_multiday={@overdue_anim.max_multiday}
                       info_label={gettext("About this calendar")}
                       on_event_click={fn id -> send(self(), {:calendar_open_task, id}) end}
                       on_date_select={fn date -> send(self(), {:calendar_day_click, date}) end}
                       on_more_click={fn date -> send(self(), {:calendar_day_more, date}) end}
                     >
+                      <%!-- No Filters funnel while there is no scheduled work
+                           at all (fresh install / everything deleted) — with
+                           zero raw items every filter yields the same empty
+                           month. Keyed on the UNFILTERED walk, so a filter
+                           that empties the month keeps the panel reachable.
+                           (The Tasks/Projects choice lives in the nav tabs
+                           above the card, not in this toolbar.) --%>
                       <:toolbar_start>
                         <.assignee_filter_panel
+                          :if={@task_calendar_items != []}
                           id={"overview-filter-#{@sfx}"}
                           assignee_selected={@assignee_selected}
                           include_unassigned?={@include_unassigned?}
                           unassigned_count={@unassigned_count}
                           assignee_direct_only?={@assignee_direct_only?}
                           overdue_only?={@overdue_only?}
+                          overdue_count={@overdue_count}
                           me_scope={@me_scope}
                           picker_target={"#overview-calendar-day-trigger-#{@sfx}"}
                         />
                       </:toolbar_start>
-                      <:toolbar_end>
-                        {mode_toggle(%{calendar_mode: @calendar_mode})}
-                      </:toolbar_end>
                       <:info>
                         <p class="mb-1 text-sm font-semibold text-base-content">
                           {gettext("Reading the calendar")}
@@ -881,7 +935,14 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                           {gettext("Tasks share their project's color. Click a task to open its project.")}
                         </p>
                         <p class="mt-1.5">
-                          {gettext("A red ring marks a late task — not done, but past its scheduled days.")}
+                          <%= case @overdue_anim.late_marker do %>
+                            <% "ring" -> %>
+                              {gettext("A red ring marks a late task — not done, but past its scheduled days.")}
+                            <% "none" -> %>
+                              {gettext("Late tasks are not visually marked (changeable in the project settings); the Overdue-only filter and day popups still know them.")}
+                            <% _ -> %>
+                              {gettext("The overdue pattern marks a late task — not done, but past its scheduled days.")}
+                          <% end %>
                         </p>
                         <p class="mt-1.5 text-base-content/50">
                           {gettext("Busy days cap the list — click the day or its +N more link to see everything scheduled that day.")}
@@ -895,7 +956,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
 
                   <%!-- Projects mode: the original ongoing-line view. --%>
                   <div class={if(@calendar_mode != :projects, do: "hidden")}>
-                    {Phoenix.HTML.raw(@overdue_style)}
                     <div id={"overview-calendar-sync-#{@sfx}"} phx-hook="SyncAnimations">
                       <.live_component
                         module={PhoenixLiveCalendar.CalendarComponent}
@@ -904,22 +964,56 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                         views={[:month]}
                         date={@today}
                         today={@today}
-                        fixed_weeks={false}
+                        week_start={@overdue_anim.week_start}
+                        show_weekends={@overdue_anim.show_weekends}
+                        show_week_numbers={@overdue_anim.show_week_numbers}
+                        fixed_weeks={@overdue_anim.fixed_weeks}
                         expand_cells={true}
+                        max_events={@overdue_anim.max_events}
+                        max_multiday={@overdue_anim.max_multiday}
                         info_label={gettext("About this calendar")}
                         on_event_click={fn id -> send(self(), {:calendar_open_project, id}) end}
                         on_date_select={fn date -> send(self(), {:calendar_day_click, date}) end}
                         on_more_click={fn date -> send(self(), {:calendar_day_more, date}) end}
                       >
-                        <:toolbar_end>
-                          {mode_toggle(%{calendar_mode: @calendar_mode})}
-                        </:toolbar_end>
+                        <%!-- "Late only" lens. Hidden while no project is late
+                             (nothing to filter — fresh installs included) but
+                             kept while ACTIVE even at 0, so the lens can
+                             always be toggled back off. --%>
+                        <:toolbar_start>
+                          <button
+                            :if={MapSet.size(@late_project_uuids) > 0 or @projects_late_only?}
+                            type="button"
+                            class={[
+                              "btn btn-xs gap-1.5 tooltip",
+                              CalendarDisplay.loading_class(),
+                              if(@projects_late_only?,
+                                do: "btn-error",
+                                else: "btn-ghost border-base-300"
+                              )
+                            ]}
+                            data-tip={gettext("Only projects running past their planned end")}
+                            aria-pressed={to_string(@projects_late_only?)}
+                            phx-click="toggle_projects_late_only"
+                          >
+                            <.icon name="hero-exclamation-triangle" class="w-3.5 h-3.5" />
+                            {gettext("Late only")}
+                            <span class="badge badge-xs badge-ghost">
+                              {MapSet.size(@late_project_uuids)}
+                            </span>
+                          </button>
+                        </:toolbar_start>
                         <:info>
                           <p class="mb-1 text-sm font-semibold text-base-content">
                             {gettext("Reading the calendar")}
                           </p>
                           <p>{gettext("Each project is an ongoing line across the month.")}</p>
-                          <p class="mt-1.5">{overdue_legend(@overdue_pattern)}</p>
+                          <p class="mt-1.5">{overdue_legend(
+                              if(@overdue_anim.late_marker in ["ring", "none"],
+                                do: @overdue_anim.late_marker,
+                                else: @overdue_pattern
+                              )
+                            )}</p>
                           <p class="mt-1.5 text-base-content/50">
                             {gettext("Late projects are grouped at the top.")}
                           </p>
@@ -939,11 +1033,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           </div>
         </div>
 
-        <%!-- Right: My tasks + upcoming + recently completed --%>
-        <div class="flex flex-col gap-4">
+        <%!-- My tasks + recently completed + upcoming: a side column on wide
+             screens, a three-across row under the main card otherwise. --%>
+        <div class="grid gap-4 md:grid-cols-3 2xl:grid-cols-1 2xl:content-start">
           <%!-- My assignments --%>
           <div class="card bg-base-100 shadow">
-            <div class="card-body">
+            <div class="card-body p-4">
               <h2 class="card-title text-lg">
                 <.icon name="hero-user" class="w-5 h-5" /> {gettext("My tasks")}
               </h2>
@@ -981,7 +1076,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           <%!-- Recently completed --%>
           <%= if @completed_projects != [] do %>
             <div class="card bg-base-100 shadow">
-              <div class="card-body">
+              <div class="card-body p-4">
                 <h2 class="card-title text-lg">
                   <.icon name="hero-trophy" class="w-5 h-5 text-success" /> {gettext("Recently completed")}
                 </h2>
@@ -1009,7 +1104,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           <%!-- Upcoming & Setup --%>
           <%= if @upcoming_projects != [] or @setup_projects != [] do %>
             <div class="card bg-base-100 shadow">
-              <div class="card-body">
+              <div class="card-body p-4">
                 <h2 class="card-title text-lg">
                   <.icon name="hero-calendar" class="w-5 h-5 text-info" /> {gettext("Upcoming")}
                 </h2>
@@ -1053,15 +1148,16 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         </div>
       </div>
 
-      <%!-- Bottom navigation row --%>
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <%!-- Bottom row: the three nav cards + the stat tiles, one compact
+           strip under the content that matters (short client screens). --%>
+      <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
         <.smart_link
           navigate={Paths.projects()}
           emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
           embed_mode={@embed_mode}
           class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
         >
-          <div class="card-body p-4">
+          <div class="card-body p-3">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-clipboard-document-list" class="w-5 h-5" />
               <span class="text-sm font-medium">{gettext("Projects")}</span>
@@ -1075,7 +1171,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           embed_mode={@embed_mode}
           class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
         >
-          <div class="card-body p-4">
+          <div class="card-body p-3">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-rectangle-stack" class="w-5 h-5" />
               <span class="text-sm font-medium">{gettext("Task Library")}</span>
@@ -1089,7 +1185,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           embed_mode={@embed_mode}
           class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
         >
-          <div class="card-body p-4">
+          <div class="card-body p-3">
             <div class="flex items-center gap-2 text-base-content/70">
               <.icon name="hero-document-duplicate" class="w-5 h-5" />
               <span class="text-sm font-medium">{gettext("Templates")}</span>
@@ -1097,20 +1193,18 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
             <div class="text-xl font-bold">{@template_count}</div>
           </div>
         </.smart_link>
-        <.smart_link
-          navigate={Paths.new_template()}
-          emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
-          embed_mode={@embed_mode}
-          class="card bg-base-100 shadow-sm hover:shadow-md transition border border-base-200"
-        >
-          <div class="card-body p-4">
-            <div class="flex items-center gap-2 text-base-content/70">
-              <.icon name="hero-plus" class="w-5 h-5" />
-              <span class="text-sm font-medium">{gettext("New template")}</span>
-            </div>
-            <div class="text-xs text-base-content/50">{gettext("Blueprint from scratch")}</div>
-          </div>
-        </.smart_link>
+        <.stat_tile label={gettext("Running")} value={@active_count} />
+        <.stat_tile
+          label={gettext("Tasks in progress")}
+          value={Map.get(@status_counts, "in_progress", 0)}
+          value_class="text-warning"
+        />
+        <.stat_tile label={gettext("Tasks todo")} value={Map.get(@status_counts, "todo", 0)} />
+        <.stat_tile
+          label={gettext("Tasks done")}
+          value={Map.get(@status_counts, "done", 0)}
+          value_class="text-success"
+        />
       </div>
     </div>
     """

@@ -7,6 +7,8 @@ defmodule PhoenixKitProjects.Projects do
 
   require Logger
 
+  alias PhoenixKit.Activity.Entry, as: ActivityEntry
+  alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, TaskDependency}
@@ -85,10 +87,44 @@ defmodule PhoenixKitProjects.Projects do
     limit_n = Keyword.get(opts, :limit)
 
     Task
+    |> maybe_search_task(Keyword.get(opts, :search))
     |> task_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
     |> preload(^@task_preloads)
     |> repo().all()
+  end
+
+  # Task-flavored twin of `maybe_search_name_description/2`: title +
+  # description + every language's translated values, escaped ilike.
+  defp maybe_search_task(query, search) when is_binary(search) do
+    case String.trim(search) do
+      "" ->
+        query
+
+      q ->
+        pattern = "%" <> escape_like(q) <> "%"
+
+        where(
+          query,
+          [t],
+          ilike(t.title, ^pattern) or ilike(t.description, ^pattern) or
+            fragment(
+              "EXISTS (SELECT 1 FROM jsonb_each(?) AS tr WHERE tr.value->>'title' ILIKE ? OR tr.value->>'description' ILIKE ?)",
+              t.translations,
+              ^pattern,
+              ^pattern
+            )
+        )
+    end
+  end
+
+  defp maybe_search_task(query, _), do: query
+
+  defp escape_like(q) do
+    q
+    |> String.replace("\\", "\\\\")
+    |> String.replace("%", "\\%")
+    |> String.replace("_", "\\_")
   end
 
   # Defensive: only positive integers actually narrow the query.
@@ -114,6 +150,12 @@ defmodule PhoenixKitProjects.Projects do
 
   defp task_order_by(query, :inserted_at, _asc),
     do: order_by(query, [t], asc: t.inserted_at, asc: t.uuid)
+
+  defp task_order_by(query, :updated_at, :desc),
+    do: order_by(query, [t], desc: t.updated_at, asc: t.uuid)
+
+  defp task_order_by(query, :updated_at, _asc),
+    do: order_by(query, [t], asc: t.updated_at, asc: t.uuid)
 
   defp task_order_by(query, :estimated_duration, :desc),
     do: order_by(query, [t], desc: t.estimated_duration, asc: t.title, asc: t.uuid)
@@ -208,8 +250,12 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc "Total number of tasks in the library."
-  @spec count_tasks() :: non_neg_integer()
-  def count_tasks, do: repo().aggregate(Task, :count, :uuid)
+  @spec count_tasks(keyword()) :: non_neg_integer()
+  def count_tasks(opts \\ []) do
+    Task
+    |> maybe_search_task(Keyword.get(opts, :search))
+    |> repo().aggregate(:count, :uuid)
+  end
 
   @doc """
   Returns `%{assignment_uuid => published_comment_count}` for the
@@ -773,6 +819,7 @@ defmodule PhoenixKitProjects.Projects do
     |> exclude_subprojects()
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
+    |> maybe_search_name_description(Keyword.get(opts, :search))
     |> project_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
     |> repo().all()
@@ -1191,34 +1238,208 @@ defmodule PhoenixKitProjects.Projects do
     |> exclude_subprojects()
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
+    |> maybe_search_name_description(Keyword.get(opts, :search))
     |> repo().aggregate(:count, :uuid)
   end
 
   @doc """
-  Lists projects that are templates, in `position`-then-date-added
-  order. Date-added (not name) is the secondary sort so renaming a
-  template doesn't shuffle it in the list. After a manual drag,
-  templates with explicit positions land at the top in the user's
-  order; un-touched templates fall to the bottom by date-added.
-  `uuid` tiebreaks within the same `inserted_at` second.
+  Lists projects that are templates.
+
+  Options (same semantics as `list_projects/1`):
+    * `:sort_by` — `:position` (default, the manual order), `:name`,
+      `:inserted_at`, `:updated_at`.
+    * `:sort_dir` — `:asc` (default) or `:desc`. Ignored for `:position`.
+    * `:limit` — cap the result set (load-more pagination).
+    * `:search` — case-insensitive substring match on name/description,
+      including translated values (see `maybe_search_name_description/2`).
+
+  The default `:position` sort keeps date-added (not name) as the
+  secondary key so renaming a template doesn't shuffle it in the list.
+  After a manual drag, templates with explicit positions land at the
+  top in the user's order; un-touched templates fall to the bottom by
+  date-added. `uuid` tiebreaks within the same `inserted_at` second.
   """
-  @spec list_templates() :: [Project.t()]
-  def list_templates do
+  @spec list_templates(keyword()) :: [Project.t()]
+  def list_templates(opts \\ []) do
+    sort_by = Keyword.get(opts, :sort_by, :position)
+    sort_dir = Keyword.get(opts, :sort_dir, :asc)
+    limit_n = Keyword.get(opts, :limit)
+    search = Keyword.get(opts, :search)
+
     Project
     |> where([p], p.is_template == true)
     |> exclude_subprojects()
-    |> order_by([p], asc: p.position, asc: p.inserted_at, asc: p.uuid)
+    |> maybe_search_name_description(search)
+    |> project_order_by(sort_by, sort_dir)
+    |> maybe_limit(limit_n)
     |> repo().all()
   end
 
-  @doc "Total number of template projects."
-  @spec count_templates() :: non_neg_integer()
-  def count_templates do
+  @doc """
+  Total number of template projects. Accepts the same `:search` opt as
+  `list_templates/1` so load-more totals stay coherent with the list.
+  """
+  @spec count_templates(keyword()) :: non_neg_integer()
+  def count_templates(opts \\ []) do
     Project
     |> where([p], p.is_template == true)
     |> exclude_subprojects()
+    |> maybe_search_name_description(Keyword.get(opts, :search))
     |> repo().aggregate(:count, :uuid)
   end
+
+  @doc """
+  Batched per-project assignment (task) counts — one group-by query.
+  Projects with no assignments are absent from the map.
+  """
+  @spec assignment_counts_for_projects([uuid()]) :: %{uuid() => non_neg_integer()}
+  def assignment_counts_for_projects([]), do: %{}
+
+  def assignment_counts_for_projects(project_uuids) when is_list(project_uuids) do
+    from(a in Assignment,
+      where: a.project_uuid in ^project_uuids,
+      group_by: a.project_uuid,
+      select: {a.project_uuid, count(a.uuid)}
+    )
+    |> repo().all()
+    |> Map.new()
+  end
+
+  @doc """
+  Creator display names for templates — see `creation_actors/2`.
+  """
+  @spec template_creators([uuid()]) :: %{uuid() => String.t()}
+  def template_creators(template_uuids),
+    do: creation_actors(template_uuids, ["projects.template_created"])
+
+  @doc """
+  Creator display names for arbitrary resources, resolved from the
+  activity log's creation entries for the given `actions` (earliest
+  entry per resource wins; full name, email fallback). Best-effort by
+  design: rows created outside the admin forms, or whose creation entry
+  has been pruned past the activity retention window, are simply absent
+  from the map — the column renders a dash for them. One entries query
+  + one users query.
+  """
+  @spec creation_actors([uuid()], [String.t()]) :: %{uuid() => String.t()}
+  def creation_actors([], _actions), do: %{}
+
+  def creation_actors(resource_uuids, actions)
+      when is_list(resource_uuids) and is_list(actions) do
+    earliest_actor_by_resource =
+      from(e in ActivityEntry,
+        where: e.action in ^actions and e.resource_uuid in ^resource_uuids,
+        where: not is_nil(e.actor_uuid),
+        select: {e.resource_uuid, e.actor_uuid, e.inserted_at}
+      )
+      |> repo().all()
+      |> Enum.group_by(&elem(&1, 0))
+      |> Map.new(fn {resource_uuid, entries} ->
+        {_r, actor_uuid, _at} = Enum.min_by(entries, &elem(&1, 2), DateTime)
+        {resource_uuid, actor_uuid}
+      end)
+
+    names_by_user =
+      earliest_actor_by_resource
+      |> Map.values()
+      |> Enum.uniq()
+      |> UsersAuth.get_users_by_uuids()
+      |> Map.new(&{&1.uuid, creator_display_name(&1)})
+
+    for {resource_uuid, actor_uuid} <- earliest_actor_by_resource,
+        name = Map.get(names_by_user, actor_uuid),
+        is_binary(name),
+        into: %{} do
+      {resource_uuid, name}
+    end
+  end
+
+  @doc """
+  Batched usage stats for library tasks — how many assignments
+  reference each task and when the most recent one was created.
+  Tasks never used are absent from the map.
+  """
+  @spec task_usage([uuid()]) :: %{uuid() => %{count: non_neg_integer(), last_used: DateTime.t()}}
+  def task_usage([]), do: %{}
+
+  def task_usage(task_uuids) when is_list(task_uuids) do
+    from(a in Assignment,
+      where: a.task_uuid in ^task_uuids,
+      group_by: a.task_uuid,
+      select: {a.task_uuid, count(a.uuid), max(a.inserted_at)}
+    )
+    |> repo().all()
+    |> Map.new(fn {task_uuid, count, last_used} ->
+      {task_uuid, %{count: count, last_used: last_used}}
+    end)
+  end
+
+  defp creator_display_name(user) do
+    case UsersAuth.User.full_name(user) do
+      name when is_binary(name) and name != "" -> name
+      _ -> user.email
+    end
+  end
+
+  @doc """
+  Batched usage stats for templates — how many projects were cloned
+  from each and when the most recent clone happened. Counts rows in
+  the projects table via the `created_from_template_uuid` back-link
+  each clone carries in `settings` (durable, unlike the activity log),
+  so deleting a cloned project does remove it from the count, and
+  clones made before the back-link existed are invisible. Templates
+  never used are absent from the map.
+  """
+  @spec template_usage([uuid()]) :: %{
+          uuid() => %{count: non_neg_integer(), last_used: DateTime.t()}
+        }
+  def template_usage([]), do: %{}
+
+  def template_usage(template_uuids) when is_list(template_uuids) do
+    from(p in Project,
+      where: p.is_template == false,
+      where: fragment("? ->> 'created_from_template_uuid'", p.settings) in ^template_uuids,
+      group_by: fragment("? ->> 'created_from_template_uuid'", p.settings),
+      select:
+        {fragment("? ->> 'created_from_template_uuid'", p.settings), count(p.uuid),
+         max(p.inserted_at)}
+    )
+    |> repo().all()
+    |> Map.new(fn {template_uuid, count, last_used} ->
+      {template_uuid, %{count: count, last_used: last_used}}
+    end)
+  end
+
+  # Case-insensitive substring filter over a project's primary
+  # name/description AND every language's translated name/description
+  # (a template renamed in the viewer's content language must stay
+  # findable). ilike wildcards in the user's input are escaped so `%`
+  # and `_` match literally. The jsonb_each subquery walks only the
+  # name/description VALUES per language — never JSON keys, so
+  # searching "name" doesn't match every row.
+  defp maybe_search_name_description(query, search) when is_binary(search) do
+    case String.trim(search) do
+      "" ->
+        query
+
+      q ->
+        pattern = "%" <> escape_like(q) <> "%"
+
+        where(
+          query,
+          [p],
+          ilike(p.name, ^pattern) or ilike(p.description, ^pattern) or
+            fragment(
+              "EXISTS (SELECT 1 FROM jsonb_each(?) AS t WHERE t.value->>'name' ILIKE ? OR t.value->>'description' ILIKE ?)",
+              p.translations,
+              ^pattern,
+              ^pattern
+            )
+        )
+    end
+  end
+
+  defp maybe_search_name_description(query, _), do: query
 
   @doc "Running projects (started, not archived, not yet completed)."
   @spec list_active_projects() :: [Project.t()]
@@ -1621,10 +1842,19 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   defp clone_template(template, project_attrs) do
+    # The caller's settings (if any) are preserved; the back-link key is
+    # forced. It makes the clone countable by `template_usage/1` long
+    # after the activity log's retention window has pruned the event.
+    settings =
+      project_attrs
+      |> Map.get("settings", %{})
+      |> Map.put("created_from_template_uuid", template.uuid)
+
     attrs =
       Map.merge(project_attrs, %{
         "is_template" => "false",
         "counts_weekends" => to_string(template.counts_weekends),
+        "settings" => settings,
         # Inherit the template's chosen status catalog (nil = shared). The
         # cloned project reads it live until it starts, then cements.
         "status_entity_uuid" => template.status_entity_uuid

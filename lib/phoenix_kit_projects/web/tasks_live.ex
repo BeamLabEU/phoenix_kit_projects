@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.ListUi
 
   require Logger
 
@@ -16,11 +17,22 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
-  @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
+  # Tight vertical rhythm for short client screens (matches OverviewLive).
+  @default_wrapper_class "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
 
   # See projects_live for the same load-more pagination semantics.
   @per_batch 50
   @default_pagination "load_more"
+
+  # Local/server search split — see TemplatesLive.
+  @local_search_threshold 100
+
+  # Optional table columns (Title and Actions always render), toggleable
+  # from the Columns dropdown; persisted site-wide via ListUi. `uses` /
+  # `last_used` count the assignments referencing each library task.
+  @optional_columns ~w(duration uses last_used created updated created_by)
+  @default_columns ~w(duration)
+  @columns_key "projects_tasks_columns"
 
   @impl true
   def mount(_params, session, socket) do
@@ -45,13 +57,29 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       socket
       |> assign(
         page_title: gettext("Task Library"),
+        # The create action lives in the admin breadcrumb (+ the
+        # add-row under the list) — no in-content header row.
+        page_action: %{
+          icon: "hero-plus",
+          label: gettext("New task"),
+          navigate: Paths.new_task()
+        },
         wrapper_class: wrapper_class,
         view: initial_view,
         pagination: pagination,
-        sort_by: :position,
-        sort_dir: :asc,
+        # Recency default — most recently edited tasks first; manual
+        # position order (and DnD) is one selector switch away.
+        sort_by: :updated_at,
+        sort_dir: :desc,
         loaded_count: @per_batch,
         total_count: 0,
+        filtered_count: 0,
+        local_search?: true,
+        search: "",
+        visible_columns:
+          ListUi.read_visible_columns(@columns_key, @optional_columns, @default_columns),
+        usage: %{},
+        creators: %{},
         tasks: [],
         deps_by_task: %{},
         groups: [],
@@ -95,30 +123,62 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         )
 
       _ ->
-        base_opts = [
-          sort_by: socket.assigns.sort_by,
-          sort_dir: socket.assigns.sort_dir
-        ]
-
-        list_opts =
-          case socket.assigns.pagination do
-            "load_more" -> Keyword.put(base_opts, :limit, socket.assigns.loaded_count)
-            _ -> base_opts
-          end
-
-        %{tasks: tasks, deps_by_task: deps_by_task} = Projects.list_tasks_with_deps(list_opts)
-
-        assign(socket,
-          tasks: tasks,
-          deps_by_task: deps_by_task,
-          groups: [],
-          standalone: [],
-          total_count: Projects.count_tasks()
-        )
+        load_list_tasks(socket)
     end
   end
 
-  @sort_fields ~w(position title inserted_at estimated_duration)a
+  defp load_list_tasks(socket) do
+    search = socket.assigns.search
+    total = Projects.count_tasks()
+    local_search? = total <= @local_search_threshold
+
+    base_opts = [
+      sort_by: socket.assigns.sort_by,
+      sort_dir: socket.assigns.sort_dir
+    ]
+
+    # Local mode: full set rendered, search narrowing is the client
+    # hook's job. Server mode: SQL search + load-more pagination.
+    # See TemplatesLive.
+    list_opts =
+      if local_search? do
+        base_opts
+      else
+        base_opts
+        |> Keyword.put(:search, search)
+        |> then(fn opts ->
+          if socket.assigns.pagination == "load_more",
+            do: Keyword.put(opts, :limit, socket.assigns.loaded_count),
+            else: opts
+        end)
+      end
+
+    %{tasks: tasks, deps_by_task: deps_by_task} = Projects.list_tasks_with_deps(list_opts)
+    uuids = Enum.map(tasks, & &1.uuid)
+    visible = socket.assigns.visible_columns
+
+    assign(socket,
+      tasks: tasks,
+      deps_by_task: deps_by_task,
+      groups: [],
+      standalone: [],
+      total_count: total,
+      local_search?: local_search?,
+      filtered_count: if(local_search?, do: total, else: Projects.count_tasks(search: search)),
+      usage:
+        if("uses" in visible or "last_used" in visible,
+          do: Projects.task_usage(uuids),
+          else: %{}
+        ),
+      creators:
+        if("created_by" in visible,
+          do: Projects.creation_actors(uuids, ["projects.task_created"]),
+          else: %{}
+        )
+    )
+  end
+
+  @sort_fields ~w(position title inserted_at updated_at estimated_duration)a
   @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
 
   defp sort_options do
@@ -126,6 +186,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       {:position, gettext("Manual")},
       {:title, gettext("Title")},
       {:inserted_at, gettext("Date created")},
+      {:updated_at, gettext("Last edited")},
       {:estimated_duration, gettext("Duration")}
     ]
   end
@@ -206,6 +267,28 @@ defmodule PhoenixKitProjects.Web.TasksLive do
      |> assign(loaded_count: socket.assigns.loaded_count + @per_batch)
      |> load_tasks()}
   end
+
+  # See TemplatesLive for the search / toggle_column contracts.
+  def handle_event("search", params, socket) do
+    {:noreply,
+     socket
+     |> assign(search: ListUi.coerce_search(params), loaded_count: @per_batch)
+     |> load_tasks()}
+  end
+
+  def handle_event("toggle_column", %{"col" => col}, socket) when col in @optional_columns do
+    new_visible =
+      ListUi.toggle_visible_column(
+        @columns_key,
+        @optional_columns,
+        socket.assigns.visible_columns,
+        col
+      )
+
+    {:noreply, socket |> assign(visible_columns: new_visible) |> load_tasks()}
+  end
+
+  def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
 
   # Map gates atom coercion — see projects_live for the same shape.
   @reorder_strategies %{
@@ -368,52 +451,22 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header
-        title={gettext("Task Library")}
-        description={gettext("Reusable task templates.")}
-      >
-        <:actions>
-          <.smart_link
-            navigate={Paths.new_task()}
-            emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
-            embed_mode={@embed_mode}
-            class="btn btn-primary btn-sm"
-          >
-            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
-          </.smart_link>
-        </:actions>
-      </.page_header>
-
-      <%!-- View toggle. UI state (not URL-driven) so the LV stays
-           embeddable via `live_render`. The "list" view is the source
-           of truth — flat, alphabetical, with per-row dep badges. The
-           "groups" view re-renders the same tasks as rooted dep trees;
-           tasks shared across multiple roots show in EACH group
-           (intentional duplication, not a bug — that's how the view
-           answers "where is this task reused?"). --%>
-      <div role="tablist" class="tabs tabs-boxed self-start">
-        <button
-          type="button"
-          phx-click="set_view"
-          phx-value-view="list"
-          role="tab"
-          class={["tab gap-2", @view == "list" && "tab-active"]}
-        >
-          <.icon name="hero-list-bullet" class="w-4 h-4" /> {gettext("List")}
-        </button>
-        <button
-          type="button"
-          phx-click="set_view"
-          phx-value-view="groups"
-          role="tab"
-          class={["tab gap-2", @view == "groups" && "tab-active"]}
-        >
-          <.icon name="hero-rectangle-group" class="w-4 h-4" /> {gettext("Groups")}
-        </button>
-      </div>
-
       <%= if @view == "groups" do %>
         <% lang = L10n.current_content_lang() %>
+
+
+        <%!-- One header row: explainer left, view switcher right (the
+             switcher must render in this view too or there's no way
+             back to the list). --%>
+        <div class="flex items-start justify-between gap-4">
+          <p
+            :if={@groups != [] or @standalone != []}
+            class="text-xs text-base-content/60 flex-1 min-w-0"
+          >
+            {gettext("Each group is rooted at a task that nothing else depends on. Tasks reused across multiple groups appear in every one that pulls them in — they're independent task templates, the relationship is just a dependency.")}
+          </p>
+          <div class="ml-auto shrink-0">{view_switcher(assigns)}</div>
+        </div>
 
         <%= if @groups == [] and @standalone == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
@@ -429,14 +482,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             </:cta>
           </.empty_state>
         <% else %>
-          <p class="text-xs text-base-content/60">
-            {gettext("Each group is rooted at a task that nothing else depends on. Tasks reused across multiple groups appear in every one that pulls them in — they're independent task templates, the relationship is just a dependency.")}
-          </p>
-
-          <div class="flex flex-col gap-4">
+          <%!-- Grid: short group cards share rows instead of each
+               spending a full-width band (small/short screens). --%>
+          <div class="grid gap-4 md:grid-cols-2 2xl:grid-cols-3 items-start">
             <%= for group <- @groups do %>
               <div class="card bg-base-100 shadow">
-                <div class="card-body">
+                <div class="card-body p-4">
                   <%!-- Card title is the root task's name — the thing
                        this group is rooted at. Without a title, several
                        group cards stack visually as one undifferentiated
@@ -488,20 +539,24 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                 </div>
               </div>
             <% end %>
-          </div>
 
-          <%= if @standalone != [] do %>
-            <div class="card bg-base-100 shadow">
-              <div class="card-body">
-                <h2 class="card-title text-base flex items-center gap-2">
-                  <.icon name="hero-rectangle-stack" class="w-4 h-4 text-base-content/60" />
-                  {gettext("Standalone")}
-                </h2>
-                <p class="text-xs text-base-content/60 -mt-1">
-                  {gettext("Tasks with no dependency relationships yet.")}
-                </p>
-                <ul class="mt-2 space-y-1">
-                  <li :for={task <- @standalone} class="flex items-center gap-2">
+            <%= if @standalone != [] do %>
+              <%!-- Full grid width; the (often long) flat list flows
+                   into columns instead of one tall single-file strip. --%>
+              <div class="card bg-base-100 shadow md:col-span-full">
+                <div class="card-body p-4">
+                  <h2 class="card-title text-base flex items-center gap-2">
+                    <.icon name="hero-rectangle-stack" class="w-4 h-4 text-base-content/60" />
+                    {gettext("Standalone")}
+                  </h2>
+                  <p class="text-xs text-base-content/60 -mt-1">
+                    {gettext("Tasks with no dependency relationships yet.")}
+                  </p>
+                  <ul class="mt-2 sm:columns-2 xl:columns-3 gap-x-8">
+                    <li
+                      :for={task <- @standalone}
+                      class="flex items-center gap-2 py-0.5 break-inside-avoid"
+                    >
                     <.smart_link
                       navigate={Paths.edit_task(task.uuid)}
                       emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
@@ -510,20 +565,23 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                     >
                       {TaskSchema.localized_title(task, lang)}
                     </.smart_link>
-                    <span class="badge badge-ghost badge-xs shrink-0">
-                      {format_duration(task)}
-                    </span>
-                  </li>
-                </ul>
+                      <span class="badge badge-ghost badge-xs shrink-0">
+                        {format_duration(task)}
+                      </span>
+                    </li>
+                  </ul>
+                </div>
               </div>
-            </div>
-          <% end %>
+            <% end %>
+          </div>
         <% end %>
       <% else %>
         <%!-- Default flat list view. --%>
         <% lang = L10n.current_content_lang() %>
 
-        <%= if @tasks == [] do %>
+        <%!-- True-empty install only — a no-match SEARCH must keep the
+             toolbar on screen so the query can be cleared. --%>
+        <%= if @total_count == 0 do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
               <.smart_link
@@ -541,27 +599,69 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             :if={@bulk_enabled?}
             id="tasks-bulk-scope"
             total_count={length(@tasks)}
-            class="flex flex-col gap-2"
           >
-            <.bulk_actions_toolbar
-              on_open_reorder="open_reorder_modal"
-              reorder_dialog_id="reorder-modal"
-              noun_singular={gettext("task")}
-              noun_plural={gettext("tasks")}
-              allow_delete={false}
-              reorder_gate={if @sort_by == :position, do: :always, else: :multi}
+            <div
+              id="tasks-local-search"
+              phx-hook="TableLocalSearch"
+              data-local-search-enabled={to_string(@local_search?)}
+              class="flex flex-col gap-2"
             >
-              <:leading>
-                <.sort_selector
-                  sort_by={@sort_by}
-                  sort_dir={@sort_dir}
-                  options={sort_options()}
-                  manual_field={:position}
-                />
-              </:leading>
-            </.bulk_actions_toolbar>
+              <.bulk_actions_toolbar
+                on_open_reorder="open_reorder_modal"
+                reorder_dialog_id="reorder-modal"
+                noun_singular={gettext("task")}
+                noun_plural={gettext("tasks")}
+                allow_delete={false}
+                reorder_gate={if @sort_by == :position, do: :always, else: :multi}
+              >
+                <:leading>
+                  <.sort_selector
+                    sort_by={@sort_by}
+                    sort_dir={@sort_dir}
+                    options={sort_options()}
+                    manual_field={:position}
+                  />
+                  <ListUi.columns_control options={column_options()} visible={@visible_columns} />
+                  <.search_toolbar
+                    value={@search}
+                    on_submit="search"
+                    loading_indicator={not @local_search?}
+                    placeholder={gettext("Search tasks...")}
+                    class="w-48"
+                  />
+                </:leading>
+                <%!-- Far right, apart from the filter/sort controls —
+                     it changes the VIEW, not the data. --%>
+                <:trailing>
+                  {view_switcher(assigns)}
+                </:trailing>
+              </.bulk_actions_toolbar>
 
-            {render_tasks_table(assigns, lang)}
+              {render_tasks_table(assigns, lang)}
+
+              <%!-- Server-truth when the SERVER filter empties the list;
+                   the hook toggles the same node during the debounce gap. --%>
+              <p
+                data-local-search-empty
+                class={[
+                  "text-sm text-base-content/50 text-center py-2",
+                  @tasks != [] && "hidden"
+                ]}
+              >
+                {gettext("No tasks match.")}
+              </p>
+
+              <%!-- The create action, at the foot of the list (the header
+                   row is gone — its "+" lives in the admin breadcrumb). --%>
+              <.smart_link
+                navigate={Paths.new_task()}
+                emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
+                embed_mode={@embed_mode}
+                class="btn btn-ghost btn-sm w-full justify-start border border-dashed border-base-300 text-base-content/60 hover:text-base-content hover:border-base-content/40"
+              >
+                <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
+              </.smart_link>
+            </div>
           </.bulk_select_scope>
 
           <%= if not @bulk_enabled? do %>
@@ -596,8 +696,56 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     """
   end
 
+  # List/Groups switcher — icon-only join buttons, same visual language
+  # as core table_default's card/table view toggle. Lives in the list
+  # toolbar (leading slot) and atop the Groups view. The "list" view is
+  # the source of truth — flat, with per-row dep badges; "groups"
+  # re-renders the same tasks as rooted dep trees (tasks shared across
+  # roots intentionally appear in each group).
+  defp view_switcher(assigns) do
+    ~H"""
+    <div class="join" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        phx-click="set_view"
+        phx-value-view="list"
+        title={gettext("List")}
+        aria-label={gettext("List")}
+        aria-selected={to_string(@view == "list")}
+        class={["btn btn-sm join-item", @view == "list" && "btn-active"]}
+      >
+        <.icon name="hero-list-bullet" class="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        role="tab"
+        phx-click="set_view"
+        phx-value-view="groups"
+        title={gettext("Groups")}
+        aria-label={gettext("Groups")}
+        aria-selected={to_string(@view == "groups")}
+        class={["btn btn-sm join-item", @view == "groups" && "btn-active"]}
+      >
+        <.icon name="hero-rectangle-group" class="w-4 h-4" />
+      </button>
+    </div>
+    """
+  end
+
+  defp column_options do
+    [
+      {"duration", gettext("Duration")},
+      {"uses", gettext("Uses")},
+      {"last_used", gettext("Last used")},
+      {"created", gettext("Created")},
+      {"updated", gettext("Last edited")},
+      {"created_by", gettext("Created by")}
+    ]
+  end
+
   defp render_tasks_table(assigns, lang) do
-    draggable? = assigns.sort_by == :position
+    draggable? = assigns.sort_by == :position and String.trim(assigns.search) == ""
     assigns = assign(assigns, lang: lang, draggable?: draggable?)
 
     ~H"""
@@ -617,9 +765,36 @@ defmodule PhoenixKitProjects.Web.TasksLive do
           <.sort_header_cell field={:title} sort={%{by: @sort_by, dir: @sort_dir}}>
             {gettext("Title")}
           </.sort_header_cell>
-          <.sort_header_cell field={:estimated_duration} sort={%{by: @sort_by, dir: @sort_dir}}>
+          <.sort_header_cell
+            :if={"duration" in @visible_columns}
+            field={:estimated_duration}
+            sort={%{by: @sort_by, dir: @sort_dir}}
+          >
             {gettext("Duration")}
           </.sort_header_cell>
+          <.table_default_header_cell :if={"uses" in @visible_columns} class="text-right">
+            {gettext("Uses")}
+          </.table_default_header_cell>
+          <.table_default_header_cell :if={"last_used" in @visible_columns}>
+            {gettext("Last used")}
+          </.table_default_header_cell>
+          <.sort_header_cell
+            :if={"created" in @visible_columns}
+            field={:inserted_at}
+            sort={%{by: @sort_by, dir: @sort_dir}}
+          >
+            {gettext("Created")}
+          </.sort_header_cell>
+          <.sort_header_cell
+            :if={"updated" in @visible_columns}
+            field={:updated_at}
+            sort={%{by: @sort_by, dir: @sort_dir}}
+          >
+            {gettext("Last edited")}
+          </.sort_header_cell>
+          <.table_default_header_cell :if={"created_by" in @visible_columns}>
+            {gettext("Created by")}
+          </.table_default_header_cell>
           <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
         </.table_default_row>
       </.table_default_header>
@@ -628,11 +803,22 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         enabled={@draggable?}
         event="reorder_tasks"
       >
-        <.sortable_row :for={task <- @tasks} item_id={task.uuid}>
+        <.sortable_row
+          :for={task <- @tasks}
+          item_id={task.uuid}
+          data-search={ListUi.search_haystack(task, ["title", "description"])}
+        >
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={task.uuid} />
           <.table_default_cell class="font-medium">
-            {TaskSchema.localized_title(task, @lang)}
+            <.smart_link
+              navigate={Paths.edit_task(task.uuid)}
+              emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
+              embed_mode={@embed_mode}
+              class="link link-hover"
+            >
+              {TaskSchema.localized_title(task, @lang)}
+            </.smart_link>
             <% desc = TaskSchema.localized_description(task, @lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md font-normal">{desc}</div>
             <% deps = Map.get(@deps_by_task, task.uuid, []) %>
@@ -643,7 +829,42 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               </span>
             </div>
           </.table_default_cell>
-          <.table_default_cell>{format_duration(task)}</.table_default_cell>
+          <.table_default_cell :if={"duration" in @visible_columns}>
+            {format_duration(task)}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"uses" in @visible_columns}
+            class="text-right tabular-nums text-base-content/70"
+          >
+            {get_in(@usage, [task.uuid, :count]) || 0}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"last_used" in @visible_columns}
+            class="whitespace-nowrap text-base-content/70"
+          >
+            {case get_in(@usage, [task.uuid, :last_used]) do
+              nil -> "—"
+              at -> L10n.format_date(at)
+            end}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"created" in @visible_columns}
+            class="whitespace-nowrap text-base-content/70"
+          >
+            {L10n.format_date(task.inserted_at)}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"updated" in @visible_columns}
+            class="whitespace-nowrap text-base-content/70"
+          >
+            {L10n.format_date(task.updated_at)}
+          </.table_default_cell>
+          <.table_default_cell
+            :if={"created_by" in @visible_columns}
+            class="whitespace-nowrap text-base-content/70"
+          >
+            {Map.get(@creators, task.uuid) || "—"}
+          </.table_default_cell>
           <.table_default_cell class="text-right whitespace-nowrap">
             <.table_row_menu id={"task-menu-#{task.uuid}"}>
               <.smart_menu_link
@@ -669,10 +890,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       </.sortable_tbody>
     </.table_default>
 
+    <%!-- Hidden in local mode: everything is on screen. --%>
     <.load_more
-      :if={@pagination == "load_more"}
+      :if={@pagination == "load_more" and not @local_search?}
       loaded={length(@tasks)}
-      total={@total_count}
+      total={@filtered_count}
       noun_plural={gettext("tasks")}
     />
     """

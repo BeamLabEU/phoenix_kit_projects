@@ -25,8 +25,10 @@ defmodule PhoenixKitProjects.Assignees do
   crash the dashboard.
   """
 
-  alias PhoenixKitProjects.Schemas.Assignment
-  alias PhoenixKitStaff.Schemas.{Department, Person, Team}
+  import Ecto.Query
+
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitStaff.Schemas.{Department, Person, Team, TeamMembership}
   alias PhoenixKitStaff.Staff
 
   require Logger
@@ -126,8 +128,18 @@ defmodule PhoenixKitProjects.Assignees do
   Searches people for the assignee picker (core `<.search_picker>` contract):
   name/email typeahead, LIMITed at the database (limit+1 probes `has_more` for
   the picker's Load more), trashed people excluded. An empty query is browse
-  mode — the first page of everyone, name-sorted — per the workspace picker
-  rule that a picker must offer options before any typing.
+  mode — the first page, name-sorted — per the workspace picker rule that a
+  picker must offer options before any typing.
+
+  **Only relevant people are offered**: someone at least one non-template
+  assignment points at — directly, via a team they belong to, or via a
+  department in their one-level scope (their teams' departments + their
+  primary department). A person no task has ever touched would only ever
+  filter the calendar to an empty month, so the picker doesn't suggest them
+  (and on a fresh install with no projects it correctly offers nobody).
+  `opts[:project_uuids]` narrows relevance to assignments of the given
+  projects — the per-project Calendar tab passes its rendered tree so the
+  picker offers only that project's people.
 
   Returns `{rows, has_more}` where each row is the picker's
   `%{kind:, uuid:, label:, sublabel:, icon:}` shape. `{[], false}` on a
@@ -141,16 +153,17 @@ defmodule PhoenixKitProjects.Assignees do
   """
   @spec search_people(String.t() | nil, pos_integer(), keyword()) :: {[map()], boolean()}
   def search_people(query, limit \\ 8, opts \\ []) do
-    import Ecto.Query
-
     limit = limit |> max(1) |> min(50)
     q = query |> to_string() |> String.trim()
     exclude = Keyword.get(opts, :exclude, [])
+    project_uuids = Keyword.get(opts, :project_uuids)
 
     base =
       from(p in Person,
+        as: :person,
         left_join: u in assoc(p, :user),
         where: p.status != "trashed" and p.uuid not in ^exclude,
+        where: ^relevance_condition(project_uuids),
         order_by: [asc: fragment("coalesce(?, ?)", p.name, u.email), asc: p.uuid],
         limit: ^(limit + 1),
         select: %{uuid: p.uuid, name: p.name, email: u.email}
@@ -191,6 +204,69 @@ defmodule PhoenixKitProjects.Assignees do
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Assignees] people search failed: #{Exception.message(e)}")
       {[], false}
+  end
+
+  # The four ways an assignment can point at `:person` — each an EXISTS the
+  # planner can short-circuit, OR'd into one condition for the picker query.
+  # Mirrors `match/2`'s one-level inheritance: direct, a team the person
+  # belongs to, or a department in their scope (primary + their teams').
+  defp relevance_condition(project_uuids) do
+    assignments = relevant_assignments(project_uuids)
+
+    direct = where(assignments, [a], a.assigned_person_uuid == parent_as(:person).uuid)
+
+    # Named bindings throughout: `assignments` may already carry a joined
+    # Project, so positional `[a, m]` would silently bind m to it.
+    via_team =
+      assignments
+      |> join(:inner, [a], m in TeamMembership,
+        as: :membership,
+        on: m.team_uuid == a.assigned_team_uuid
+      )
+      |> where([membership: m], m.staff_person_uuid == parent_as(:person).uuid)
+
+    via_primary_department =
+      where(
+        assignments,
+        [a],
+        a.assigned_department_uuid == parent_as(:person).primary_department_uuid
+      )
+
+    via_team_department =
+      assignments
+      |> join(:inner, [a], t in Team,
+        as: :team,
+        on: t.department_uuid == a.assigned_department_uuid
+      )
+      |> join(:inner, [team: t], m in TeamMembership,
+        as: :membership,
+        on: m.team_uuid == t.uuid
+      )
+      |> where([membership: m], m.staff_person_uuid == parent_as(:person).uuid)
+
+    dynamic(
+      exists(subquery(direct)) or exists(subquery(via_team)) or
+        exists(subquery(via_primary_department)) or exists(subquery(via_team_department))
+    )
+  end
+
+  # Scoped: the given projects' assignments count VERBATIM — no template
+  # exclusion, deliberately: the per-project Calendar tab passes exactly its
+  # rendered tree (sub-projects included), and when that tree IS a template
+  # (direct `/calendar` URL or a host embed) its default assignees are
+  # precisely the people on screen. Unscoped: any non-template project's —
+  # template defaults alone don't make a person globally filterable on the
+  # Overview.
+  defp relevant_assignments(nil) do
+    from(a in Assignment,
+      join: pr in Project,
+      on: pr.uuid == a.project_uuid,
+      where: not pr.is_template
+    )
+  end
+
+  defp relevant_assignments(uuids) when is_list(uuids) do
+    from(a in Assignment, where: a.project_uuid in ^uuids)
   end
 
   defp build_scope(person, lang) do

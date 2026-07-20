@@ -117,17 +117,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
       assert html =~ "Completed" or html =~ "completed"
     end
 
-    test "template project renders the 'Template' badge", %{conn: conn} do
+    test "template project renders the 'Template' badge (embeds only)", %{conn: conn} do
       template = fixture_template()
 
-      # The test router scopes `/templates/:id` to TemplatesLive but in
-      # production the same route uses ProjectShowLive in `show_template`
-      # mode. Test router doesn't have the show route — use the
-      # production-shape `/list/:id` which always renders ProjectShowLive
-      # and the LV detects `is_template = project.is_template`.
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{template.uuid}")
-      assert html =~ template.name
-      assert html =~ "Template" or html =~ "template"
+      # Router-mounted admin pages push name + section into the site
+      # breadcrumb and render no h1/badge row; EMBEDS have no breadcrumb
+      # so they keep the full header. Pin both contracts.
+      {:ok, _view, router_html} = live(conn, "/en/admin/projects/list/#{template.uuid}")
+      refute router_html =~ "<h1"
+
+      {:ok, _view, embed_html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: %{"id" => template.uuid}
+        )
+
+      assert embed_html =~ template.name
+      assert embed_html =~ ~s(badge badge-info badge-sm">Template)
     end
   end
 

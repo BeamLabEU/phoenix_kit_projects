@@ -77,6 +77,36 @@ defmodule PhoenixKitProjects.Integration.TemplateCloneTest do
     end
   end
 
+  describe "usage back-link" do
+    test "clones carry created_from_template_uuid; template_usage counts them" do
+      %{template: template} = build_template()
+
+      {:ok, p1} =
+        Projects.create_project_from_template(template.uuid, %{
+          "name" => "Use one",
+          "start_mode" => "immediate"
+        })
+
+      {:ok, _p2} =
+        Projects.create_project_from_template(template.uuid, %{
+          "name" => "Use two",
+          "start_mode" => "immediate"
+        })
+
+      # The durable settings back-link survives the changeset's
+      # settings-key allowlist.
+      assert p1.settings["created_from_template_uuid"] == template.uuid
+
+      usage = Projects.template_usage([template.uuid])
+      assert usage[template.uuid].count == 2
+      assert %DateTime{} = usage[template.uuid].last_used
+
+      # Never-used templates are absent; empty input short-circuits.
+      assert Projects.template_usage([Ecto.UUID.generate()]) == %{}
+      assert Projects.template_usage([]) == %{}
+    end
+  end
+
   describe "name uniqueness — none" do
     # V105 added two partial unique indexes (template vs project) and
     # V112 dropped both: name uniqueness is policy, not structure, and

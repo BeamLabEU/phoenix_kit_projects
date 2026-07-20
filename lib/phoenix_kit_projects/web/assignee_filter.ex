@@ -54,7 +54,14 @@ defmodule PhoenixKitProjects.Web.AssigneeFilter do
       assignee_direct_only?: false,
       overdue_only?: false,
       me_scope: :unresolved,
-      unassigned_count: 0
+      unassigned_count: 0,
+      # Late items in the RAW (unfiltered) walk — drives the Overdue-only
+      # toggle's visibility: at 0 there is nothing the lens could show.
+      overdue_count: 0,
+      # Optional list of project uuids narrowing the person picker to people
+      # RELEVANT to those projects' assignments (the per-project Calendar tab
+      # sets its rendered tree); nil = relevant to any real project.
+      assignee_search_scope: nil
     ]
   end
 
@@ -133,7 +140,12 @@ defmodule PhoenixKitProjects.Web.AssigneeFilter do
 
     # Already-picked people don't reappear as suggestions.
     exclude = Enum.map(socket.assigns.assignee_selected, & &1.uuid)
-    {rows, has_more} = Assignees.search_people(q, limit, exclude: exclude)
+
+    {rows, has_more} =
+      Assignees.search_people(q, limit,
+        exclude: exclude,
+        project_uuids: socket.assigns.assignee_search_scope
+      )
 
     {push_event(socket, "assignee_results", %{q: q, results: rows, has_more: has_more}), :noop}
   end

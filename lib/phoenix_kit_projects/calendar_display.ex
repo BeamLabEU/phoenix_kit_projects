@@ -80,15 +80,31 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   @anim_bright_min_key "projects_cal_overdue_bright_min"
   @anim_bright_max_key "projects_cal_overdue_bright_max"
   @anim_wave_step_key "projects_cal_overdue_wave_step"
+  @anim_opacity_key "projects_cal_overdue_opacity"
+  @late_marker_key "projects_cal_late_marker"
+
+  # ── Grid appearance (the calendar customizer's non-overdue half) ──
+  @show_weekends_key "projects_cal_show_weekends"
+  @show_week_numbers_key "projects_cal_show_week_numbers"
+  @fixed_weeks_key "projects_cal_fixed_weeks"
+  @max_events_key "projects_cal_max_events"
+  @max_multiday_key "projects_cal_max_multiday"
 
   # stripes = diagonal inverse-colour hazard stripes over the identity colour
   # (keeps the project's colour readable); solid = the whole overdue stretch
   # flips to the inverse colour.
   @anim_patterns ~w(stripes solid)
 
-  # wave = motion travels (stripes slide / a band sweeps); flash = pulses in
-  # place; off = static, no motion.
+  # wave = motion travels (stripes slide horizontally across the bar / a band
+  # sweeps); flash = pulses in place; off = static, no motion.
   @anim_modes ~w(wave flash off)
+
+  # How anything LATE (task chips/bars + late project bars) is marked:
+  # pattern (default) = the configured overdue pattern, so every calendar
+  # shows lateness the same way out of the box; ring = the red inset ring
+  # alternative; none = no visual marking at all (the late DATA stays — the
+  # Overdue-only lens, popup badges and card tiers keep working).
+  @late_markers ~w(ring pattern none)
 
   @default_pattern "stripes"
   # Static by default — the stripes already read as "overdue" without motion;
@@ -98,12 +114,20 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   @default_bright_min 0.78
   @default_bright_max 1.18
   @default_wave_step 0.16
+  @default_opacity 1.0
+  @default_late_marker "pattern"
+  @default_show_weekends true
+  @default_show_week_numbers false
+  @default_fixed_weeks false
 
   # {lo, hi} clamp ranges for each numeric setting (also bound the form inputs).
   @speed_range {1.0, 20.0}
   @bright_min_range {0.2, 1.0}
   @bright_max_range {1.0, 2.5}
   @wave_step_range {0.02, 1.0}
+  @opacity_range {0.05, 1.0}
+  @max_events_range {1, 6}
+  @max_multiday_range {1, 8}
 
   @doc """
   Builds the calendar event list from the dashboard's already-loaded data.
@@ -116,8 +140,25 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     * `today` — anchor so a running project's bar always reaches at least today
     * `offset` — viewer timezone offset (e.g. "+3"); UTC datetimes are converted
       to local calendar dates with it, so bars land on the same day the viewer sees
+
+  Options:
+
+    * `:late_marker` — how a LATE running project is marked (`"pattern"`
+      default): `"pattern"` highlights the overdue stretch
+      (planned_end+1 .. today) with the configured overdue pattern, so the
+      marked length shows HOW late; `"ring"` rings the whole bar instead —
+      the same marker late task chips wear, so one setting dresses
+      everything late the same way.
   """
-  @spec events([map()], [Project.t()], [Project.t()], String.t() | nil, Date.t(), String.t()) ::
+  @spec events(
+          [map()],
+          [Project.t()],
+          [Project.t()],
+          String.t() | nil,
+          Date.t(),
+          String.t(),
+          keyword()
+        ) ::
           [Event.t()]
   def events(
         active_summaries,
@@ -125,9 +166,11 @@ defmodule PhoenixKitProjects.CalendarDisplay do
         upcoming,
         lang,
         today \\ Date.utc_today(),
-        offset \\ "0"
+        offset \\ "0",
+        opts \\ []
       ) do
-    running = Enum.map(active_summaries, &running_event(&1, lang, today, offset))
+    marker = Keyword.get(opts, :late_marker, "pattern")
+    running = Enum.map(active_summaries, &running_event(&1, lang, today, offset, marker))
     done = Enum.map(completed, &completed_event(&1, lang, offset))
     scheduled = Enum.map(upcoming, &scheduled_event(&1, lang, offset))
 
@@ -157,9 +200,12 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   Options:
 
     * `:now` — a UTC `NaiveDateTime`; when given, a not-done task whose span
-      ended before it is **late**: its chip/bar gets a red inset ring
-      (`@late_class`) and its meta entry `late: true`. Without `:now` nothing
-      is flagged (pure date math only).
+      ended before it is **late**: its chip/bar gets the late marker class
+      and its meta entry `late: true`. Without `:now` nothing is flagged
+      (pure date math only).
+    * `:late_class` — the marker class for late chips/bars (defaults to the
+      red inset ring; pass `late_marker_class(read())` to honor
+      the configured marker).
   """
   @spec task_events(
           [{map(), %{start: NaiveDateTime.t(), end: NaiveDateTime.t()}}],
@@ -170,6 +216,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
           {[Event.t()], %{optional(String.t()) => map()}}
   def task_events(items_with_spans, lang, offset \\ "0", opts \\ []) do
     now = Keyword.get(opts, :now)
+    late_class = Keyword.get(opts, :late_class, @late_class)
 
     Enum.map_reduce(items_with_spans, %{}, fn {item, span}, meta ->
       %{assignment: a, project: project} = item
@@ -186,7 +233,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
           all_day: true,
           color: bg,
           text_color: text,
-          class: if(late?, do: @late_class)
+          class: if(late?, do: late_class)
         )
 
       entry = %{
@@ -282,27 +329,39 @@ defmodule PhoenixKitProjects.CalendarDisplay do
          %{project: %Project{started_at: %DateTime{} = started} = project} = summary,
          lang,
          today,
-         offset
+         offset,
+         marker
        ) do
     start_d = to_date(started, offset)
     planned_end_d = to_date(summary[:planned_end], offset)
     # An in-progress project should always read as ongoing, so its bar reaches
-    # at least today; a later planned end extends it further. When it's late, the
-    # stretch past planned_end is highlighted so the red length shows how late.
+    # at least today; a later planned end extends it further. When it's late,
+    # the marker applies: the overdue stretch is highlighted (pattern) or the
+    # whole bar wears the ring — same dress as late task chips.
     last_day = latest([start_d, today, planned_end_d])
-    late? = summary[:late]
+    # Normalize: callers tag :late as true/false, but untagged summaries
+    # (tests, direct calls) leave it nil.
+    late? = summary[:late] == true
 
-    # Late projects get slot_priority 0 so the lib packs them into the top slots
-    # — grouping them (and their overdue waves) together; everything else is 1.
+    # Late projects get slot_priority 0 so the lib packs them into the top
+    # slots — grouping stays even with the marker off (ordering isn't
+    # marking). Only the "pattern" marker draws the overdue-tail highlight;
+    # "ring" dresses the whole bar; "none" draws nothing.
     extra =
-      late?
-      |> overdue_highlight(planned_end_d, today)
-      |> Map.put(:slot_priority, if(late?, do: 0, else: 1))
+      if late? and marker == "pattern" do
+        late?
+        |> overdue_highlight(planned_end_d, today)
+        |> Map.put(:slot_priority, 0)
+      else
+        %{slot_priority: if(late?, do: 0, else: 1)}
+      end
 
-    event(project, start_d, last_day, lang, extra)
+    class = if late? and marker == "ring", do: @late_class
+
+    event(project, start_d, last_day, lang, extra, class)
   end
 
-  defp running_event(_, _, _, _), do: nil
+  defp running_event(_, _, _, _, _), do: nil
 
   # Highlight only the overdue stretch (planned_end+1 .. today) of a late
   # project. Requires a planned end in the past; without one there's no
@@ -350,7 +409,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
 
   defp scheduled_event(_, _, _), do: nil
 
-  defp event(%Project{} = project, start_d, last_day_inclusive, lang, extra) do
+  defp event(%Project{} = project, start_d, last_day_inclusive, lang, extra, class \\ nil) do
     {bg, text} = color_for(project.uuid)
 
     PhoenixLiveCalendar.event(project.uuid, start_d,
@@ -359,6 +418,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       all_day: true,
       color: bg,
       text_color: text,
+      class: class,
       extra: extra
     )
   end
@@ -397,12 +457,18 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   end
 
   @doc """
-  Tasks-mode late marker: a red inset ring on the chip/bar. Returned from a
-  function (not duplicated as a literal per call site) so the Overview
-  calendar and the project Calendar tab can't drift apart.
+  The late-task marker class for a `read/0` config: `"pattern"`
+  (the default) — the `pk-overdue` overlay, i.e. the same configured
+  stripes/solid look the Projects-mode overdue stretch uses, so every
+  calendar marks lateness identically — or `"ring"`, the red inset ring
+  alternative. Anything else (including maps missing the key) follows the
+  default. Consumers using the pattern must also inject `animation_style/1`
+  (and ideally wrap the grid in `SyncAnimations`).
   """
-  @spec late_class() :: String.t()
-  def late_class, do: @late_class
+  @spec late_marker_class(map()) :: String.t() | nil
+  def late_marker_class(%{late_marker: "ring"}), do: @late_class
+  def late_marker_class(%{late_marker: "none"}), do: nil
+  def late_marker_class(_cfg), do: @overdue_class
 
   @doc """
   A `<style>` block giving the calendar LIBRARY's clickable nodes (event
@@ -438,26 +504,70 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   @spec anim_patterns() :: [String.t()]
   def anim_patterns, do: @anim_patterns
 
-  @doc "Clamp range {lo, hi} for a numeric overdue field (bounds the form input)."
-  @spec anim_range(String.t()) :: {float(), float()}
+  @doc "Allowed late-task marker styles (for the settings form)."
+  @spec late_markers() :: [String.t()]
+  def late_markers, do: @late_markers
+
+  @doc "Clamp range {lo, hi} for a numeric display field (bounds the form input)."
+  @spec anim_range(String.t()) :: {number(), number()}
   def anim_range("speed"), do: @speed_range
   def anim_range("brightness_min"), do: @bright_min_range
   def anim_range("brightness_max"), do: @bright_max_range
   def anim_range("wave_step"), do: @wave_step_range
+  def anim_range("opacity"), do: @opacity_range
+  def anim_range("max_events"), do: @max_events_range
+  def anim_range("max_multiday"), do: @max_multiday_range
 
-  @doc "Current overdue-animation settings (validated, with safe defaults)."
-  @spec read_animation() :: %{
+  @doc """
+  The pure compile-time defaults of `read/0` (no settings read; core's
+  `week_start_day` falls back to Monday). Mount-time placeholder so a render
+  can never dot-access a nil config — `read/0` overwrites it immediately.
+  """
+  @spec defaults() :: map()
+  def defaults do
+    %{
+      pattern: @default_pattern,
+      mode: @default_mode,
+      speed: @default_speed,
+      brightness_min: @default_bright_min,
+      brightness_max: @default_bright_max,
+      wave_step: @default_wave_step,
+      opacity: @default_opacity,
+      late_marker: @default_late_marker,
+      week_start: 1,
+      show_weekends: @default_show_weekends,
+      show_week_numbers: @default_show_week_numbers,
+      fixed_weeks: @default_fixed_weeks,
+      max_events: max_events(),
+      max_multiday: max_multiday()
+    }
+  end
+
+  @doc """
+  The full calendar-display config (validated, with safe defaults): the grid
+  appearance half (weekends / week numbers / fixed weeks / per-day caps, plus
+  the site-wide `week_start_day` core setting the grids must honor) and the
+  overdue/late-marker half. One batched, uncached query — this runs on every
+  Overview reload (each `{:projects, …}` broadcast), not just mount, and
+  direct reads keep the settings page's live demo fresh.
+  """
+  @spec read() :: %{
           pattern: String.t(),
           mode: String.t(),
           speed: float(),
           brightness_min: float(),
           brightness_max: float(),
-          wave_step: float()
+          wave_step: float(),
+          opacity: float(),
+          late_marker: String.t(),
+          week_start: 1..7,
+          show_weekends: boolean(),
+          show_week_numbers: boolean(),
+          fixed_weeks: boolean(),
+          max_events: pos_integer(),
+          max_multiday: pos_integer()
         }
-  def read_animation do
-    # One batched, uncached query for all six keys instead of a SELECT per key —
-    # this runs on every Overview reload (each `{:projects, …}` broadcast), not
-    # just mount. Direct reads keep the settings page's live demo fresh.
+  def read do
     values =
       PhoenixKit.Settings.get_settings_direct([
         @anim_pattern_key,
@@ -465,7 +575,15 @@ defmodule PhoenixKitProjects.CalendarDisplay do
         @anim_speed_key,
         @anim_bright_min_key,
         @anim_bright_max_key,
-        @anim_wave_step_key
+        @anim_wave_step_key,
+        @anim_opacity_key,
+        @late_marker_key,
+        @show_weekends_key,
+        @show_week_numbers_key,
+        @fixed_weeks_key,
+        @max_events_key,
+        @max_multiday_key,
+        "week_start_day"
       ])
 
     %{
@@ -476,53 +594,110 @@ defmodule PhoenixKitProjects.CalendarDisplay do
         anim_float(values, @anim_bright_min_key, @default_bright_min, @bright_min_range),
       brightness_max:
         anim_float(values, @anim_bright_max_key, @default_bright_max, @bright_max_range),
-      wave_step: anim_float(values, @anim_wave_step_key, @default_wave_step, @wave_step_range)
+      wave_step: anim_float(values, @anim_wave_step_key, @default_wave_step, @wave_step_range),
+      opacity: anim_float(values, @anim_opacity_key, @default_opacity, @opacity_range),
+      late_marker: anim_enum(values, @late_marker_key, @late_markers, @default_late_marker),
+      week_start: week_start(values),
+      show_weekends: anim_bool(values, @show_weekends_key, @default_show_weekends),
+      show_week_numbers: anim_bool(values, @show_week_numbers_key, @default_show_week_numbers),
+      fixed_weeks: anim_bool(values, @fixed_weeks_key, @default_fixed_weeks),
+      max_events: anim_int(values, @max_events_key, max_events(), @max_events_range),
+      max_multiday: anim_int(values, @max_multiday_key, max_multiday(), @max_multiday_range)
     }
   end
 
+  # Core's site-wide "week_start_day" ("1".."7"); the calendars honor it
+  # rather than duplicating a projects-local copy.
+  defp week_start(values) do
+    case Integer.parse(Map.get(values, "week_start_day") || "1") do
+      {d, _} when d in 1..7 -> d
+      _ -> 1
+    end
+  end
+
   @doc """
-  Persist one overdue-animation field (`"pattern"`, `"mode"`, `"speed"`,
-  `"brightness_min"`, `"brightness_max"`, `"wave_step"`). An invalid field or
-  value is ignored.
+  Persist one calendar-display field. An invalid field or value is ignored.
+  Booleans go through `put_flag/2`; `week_start_day` is core's setting and is
+  NOT writable from here.
   """
-  @spec put_animation(String.t(), term()) :: term()
-  def put_animation("pattern", v) do
+  @spec put(String.t(), term()) :: term()
+  def put("pattern", v) do
     if v in @anim_patterns,
       do: PhoenixKit.Settings.update_setting_with_module(@anim_pattern_key, v, @module),
       else: :ignore
   end
 
-  def put_animation("mode", v) do
+  def put("mode", v) do
     if v in @anim_modes,
       do: PhoenixKit.Settings.update_setting_with_module(@anim_mode_key, v, @module),
       else: :ignore
   end
 
-  def put_animation("speed", v), do: put_anim_float(@anim_speed_key, v, @speed_range)
+  def put("speed", v), do: put_anim_float(@anim_speed_key, v, @speed_range)
 
-  def put_animation("brightness_min", v),
+  def put("brightness_min", v),
     do: put_anim_float(@anim_bright_min_key, v, @bright_min_range)
 
-  def put_animation("brightness_max", v),
+  def put("brightness_max", v),
     do: put_anim_float(@anim_bright_max_key, v, @bright_max_range)
 
-  def put_animation("wave_step", v), do: put_anim_float(@anim_wave_step_key, v, @wave_step_range)
-  def put_animation(_field, _value), do: :ignore
+  def put("wave_step", v), do: put_anim_float(@anim_wave_step_key, v, @wave_step_range)
+  def put("opacity", v), do: put_anim_float(@anim_opacity_key, v, @opacity_range)
 
-  @doc "Restore every overdue-animation setting to its default."
-  @spec reset_animation() :: :ok
-  def reset_animation do
+  def put("late_marker", v) do
+    if v in @late_markers,
+      do: PhoenixKit.Settings.update_setting_with_module(@late_marker_key, v, @module),
+      else: :ignore
+  end
+
+  def put("max_events", v), do: put_anim_int(@max_events_key, v, @max_events_range)
+  def put("max_multiday", v), do: put_anim_int(@max_multiday_key, v, @max_multiday_range)
+  def put(_field, _value), do: :ignore
+
+  @doc """
+  Flip one boolean display flag (`"show_weekends"`, `"show_week_numbers"`,
+  `"fixed_weeks"`). Unknown fields are ignored.
+  """
+  @spec put_flag(String.t(), boolean()) :: term()
+  def put_flag(field, on?) when is_boolean(on?) do
+    case field do
+      "show_weekends" -> put_bool(@show_weekends_key, on?)
+      "show_week_numbers" -> put_bool(@show_week_numbers_key, on?)
+      "fixed_weeks" -> put_bool(@fixed_weeks_key, on?)
+      _ -> :ignore
+    end
+  end
+
+  defp put_bool(key, on?),
+    do: PhoenixKit.Settings.update_setting_with_module(key, to_string(on?), @module)
+
+  @doc "Restore every calendar-display setting to its default."
+  @spec reset() :: :ok
+  def reset do
     PhoenixKit.Settings.update_setting_with_module(@anim_pattern_key, @default_pattern, @module)
     PhoenixKit.Settings.update_setting_with_module(@anim_mode_key, @default_mode, @module)
+
+    PhoenixKit.Settings.update_setting_with_module(
+      @late_marker_key,
+      @default_late_marker,
+      @module
+    )
+
     put_anim_float(@anim_speed_key, @default_speed, @speed_range)
     put_anim_float(@anim_bright_min_key, @default_bright_min, @bright_min_range)
     put_anim_float(@anim_bright_max_key, @default_bright_max, @bright_max_range)
     put_anim_float(@anim_wave_step_key, @default_wave_step, @wave_step_range)
+    put_anim_float(@anim_opacity_key, @default_opacity, @opacity_range)
+    put_bool(@show_weekends_key, @default_show_weekends)
+    put_bool(@show_week_numbers_key, @default_show_week_numbers)
+    put_bool(@fixed_weeks_key, @default_fixed_weeks)
+    put_anim_int(@max_events_key, max_events(), @max_events_range)
+    put_anim_int(@max_multiday_key, max_multiday(), @max_multiday_range)
     :ok
   end
 
   @doc """
-  The `<style>` block for the overdue animation, from an already-`read_animation/0`
+  The `<style>` block for the overdue animation, from an already-`read/0`
   config map (callers thread the map so one read serves style + legend). Safe to
   inject with `Phoenix.HTML.raw/1`: every interpolated value is a validated enum
   or clamped number, never free text.
@@ -547,7 +722,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
 
   @doc """
   CSS body (no surrounding `<style>` tag) for an overdue-animation config map of
-  the shape `read_animation/0` returns. Public so tests and a settings preview
+  the shape `read/0` returns. Public so tests and a settings preview
   can render a given config without touching the settings store.
   """
   @spec animation_css(map()) :: String.t()
@@ -566,31 +741,39 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       "\n@media (prefers-reduced-motion: reduce) { .pk-overdue::after { animation: none; } }"
   end
 
-  # flash → the whole striped overlay pulses (opacity) in time.
+  # flash → the whole striped overlay pulses (opacity) in time. The brightness
+  # pair scales around the configured stripe opacity (peak = opacity ×
+  # brightness_max, capped at fully opaque).
   defp stripes_css(%{mode: "flash"} = cfg) do
+    o = stripe_opacity(cfg)
+
     base_stripes(cfg) <>
       """
 
       @keyframes pk-overdue-stripe-flash {
-        0%, 100% { opacity: #{num(opacity(cfg.brightness_min))}; }
-        50% { opacity: #{num(opacity(cfg.brightness_max))}; }
+        0%, 100% { opacity: #{num(opacity(o * cfg.brightness_min))}; }
+        50% { opacity: #{num(opacity(o * cfg.brightness_max))}; }
       }
       .pk-overdue::after { animation: pk-overdue-stripe-flash #{num(cfg.speed)}s ease-in-out infinite; }
       @media (prefers-reduced-motion: reduce) { .pk-overdue::after { animation: none; } }\
       """
   end
 
-  # wave → the stripes slide diagonally (a flowing barber-pole). 56.57px = one
-  # 40px gradient period along x (40 / cos 45°), so the slide loops seamlessly.
+  # wave → the stripes slide horizontally (a flowing barber-pole). 56.57px =
+  # one 40px gradient period along x (40 / cos 45°); the cycle travels FOUR
+  # whole periods (226.28px) so the motion is clearly visible at the shared
+  # default speed (one period per cycle crawled at ~8px/s — read as static).
   # Both endpoints carry the alignment offset (--pk-bg-x) so the slide stays
-  # aligned across segments.
+  # aligned across segments; fallbacks are 0px, NOT unitless 0 — a unitless
+  # zero inside calc() is invalid CSS, which silently killed the keyframe
+  # wherever the SyncAnimations hook hadn't set the vars.
   defp stripes_css(cfg) do
     base_stripes(cfg) <>
       """
 
       @keyframes pk-overdue-stripe-slide {
-        from { background-position: var(--pk-bg-x, 0) var(--pk-bg-y, 0); }
-        to { background-position: calc(var(--pk-bg-x, 0) + 56.57px) var(--pk-bg-y, 0); }
+        from { background-position: var(--pk-bg-x, 0px) var(--pk-bg-y, 0px); }
+        to { background-position: calc(var(--pk-bg-x, 0px) + 226.28px) var(--pk-bg-y, 0px); }
       }
       .pk-overdue::after { animation: pk-overdue-stripe-slide #{num(cfg.speed)}s linear infinite; }
       @media (prefers-reduced-motion: reduce) { .pk-overdue::after { animation: none; } }\
@@ -606,7 +789,10 @@ defmodule PhoenixKitProjects.CalendarDisplay do
 
   # wave → each overdue day is phase-shifted by its absolute date (--pk-hl-day),
   # so one band travels across every project in sync. flash → same keyframe with
-  # no delay, so all overdue days pulse together.
+  # no delay, so all overdue days pulse together. Late TASK chips carrying
+  # pk-overdue (marker = pattern) have no per-day slices, so under solid+wave
+  # they fall back to delay 0 and pulse in unison — deliberate: a chip is one
+  # atomic unit, only day-sliced highlight stretches phase per day.
   defp solid_css(cfg) do
     delay =
       if cfg.mode == "wave",
@@ -642,27 +828,62 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   defp base_stripes(cfg) do
     """
     .pk-overdue { position: relative; }
-    .pk-overdue > span { position: relative; z-index: 1; }
+    .pk-overdue > span, .pk-overdue > .cal-event-content { position: relative; z-index: 1; }
     .pk-overdue::after {
       content: "";
       position: absolute;
       inset: 0;
       pointer-events: none;
-      opacity: #{num(opacity(cfg.brightness_max))};
+      opacity: #{num(stripe_opacity(cfg))};
       background-image: repeating-linear-gradient(45deg, #fff 0 8px, transparent 8px 40px);
-      background-position: var(--pk-bg-x, 0) var(--pk-bg-y, 0);
+      background-position: var(--pk-bg-x, 0px) var(--pk-bg-y, 0px);
       background-size: 56.57px 56.57px;
       mix-blend-mode: difference;
     }\
     """
   end
 
-  defp opacity(v), do: v |> max(0.0) |> min(1.0)
+  # The striped overlay's base opacity. Falls back to the default for maps
+  # that predate the setting (tests, cached assigns from an older node).
+  defp stripe_opacity(cfg), do: cfg |> Map.get(:opacity, @default_opacity) |> opacity()
+
+  defp opacity(v), do: v |> max(0.0) |> min(1.0) |> Float.round(3)
 
   defp anim_enum(values, key, allowed, default) do
     value = Map.get(values, key, default)
     if value in allowed, do: value, else: default
   end
+
+  defp anim_bool(values, key, default) do
+    case Map.get(values, key) do
+      "true" -> true
+      "false" -> false
+      _ -> default
+    end
+  end
+
+  defp anim_int(values, key, default, range) do
+    case Integer.parse(Map.get(values, key) || to_string(default)) do
+      {i, _} -> clamp_int(i, range)
+      :error -> default
+    end
+  end
+
+  defp put_anim_int(key, value, range) do
+    case Integer.parse(to_string(value)) do
+      {i, _} ->
+        PhoenixKit.Settings.update_setting_with_module(
+          key,
+          Integer.to_string(clamp_int(i, range)),
+          @module
+        )
+
+      :error ->
+        :ignore
+    end
+  end
+
+  defp clamp_int(i, {lo, hi}), do: i |> max(lo) |> min(hi)
 
   defp anim_float(values, key, default, range) do
     case Float.parse(Map.get(values, key) || to_string(default)) do

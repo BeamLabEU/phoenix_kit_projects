@@ -59,7 +59,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`
   # to drop `mx-auto max-w-4xl` and fill a wider host layout.
-  @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
+  # Tight vertical rhythm for short client screens (matches the list pages).
+  @default_wrapper_class "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
 
   # Embedded entry: when nested via `live_render`, params arrives as
   # `:not_mounted_at_router` and `session` carries the project id (plus
@@ -241,6 +242,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           socket
           |> assign(
             page_title: Project.localized_name(project, lang),
+            # Breadcrumb section ("Admin Panel / Templates / <name>") —
+            # the in-content back-link + h1 row is gone; the site header
+            # carries both the name and the way back to the list.
+            page_section: if(is_template, do: gettext("Templates"), else: gettext("Projects")),
+            page_section_path: if(is_template, do: Paths.templates(), else: Paths.projects()),
             statuses_available: statuses_available,
             status_options: status_options,
             current_status: current_status,
@@ -617,7 +623,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name="hero-bars-3" class="w-4 h-4" />
               </span>
               <.assignment_status_badge :if={not @is_template} status={@a.status} />
-              <span class="font-medium truncate">{TaskSchema.localized_title(@a.task, L10n.current_content_lang())}</span>
+              <%!-- Title links to the same edit form as the row menu's
+                   Edit — clicking a name anywhere should go somewhere. --%>
+              <.smart_link
+                navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid)}
+                emit={
+                  {PhoenixKitProjects.Web.AssignmentFormLive,
+                   %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid}}
+                }
+                embed_mode={@embed_mode}
+                class="font-medium truncate min-w-0 link link-hover"
+              >
+                {TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
+              </.smart_link>
             </div>
 
             <div class="flex items-center gap-1 shrink-0">
@@ -1046,6 +1064,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              |> load_assignments()}
 
           {:error, _} ->
+            Activity.log_failed("projects.subproject_detached",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "project",
+              resource_uuid: child_uuid,
+              metadata: %{"parent_project_uuid" => socket.assigns.project.uuid}
+            )
+
             {:noreply, put_flash(socket, :error, gettext("Could not detach the sub-project."))}
         end
 
@@ -1723,9 +1748,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <%!-- Header --%>
+      <%!-- Header. The standalone admin page drops the back-link + h1 row —
+           the site breadcrumb carries "Templates|Projects / <name>" (and the
+           way back). Embedded mounts have no admin breadcrumb, so they keep
+           the full original header. --%>
       <div>
         <.smart_link
+          :if={not @router_mounted?}
           navigate={if @is_template, do: Paths.templates(), else: Paths.projects()}
           emit={
             if @is_template,
@@ -1738,14 +1767,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <.icon name="hero-arrow-left" class="w-4 h-4 inline" />
           {if @is_template, do: gettext("Templates"), else: gettext("Projects")}
         </.smart_link>
-        <div class="flex flex-col gap-2 mt-1">
-          <%!-- Title + status badges. Min-width: 0 lets the h1 truncate
-               instead of pushing siblings around. Long project names
-               wrap rather than overflowing the column. --%>
+        <div class={["flex flex-col gap-2", not @router_mounted? && "mt-1"]}>
+          <%!-- Title (embeds only) + lifecycle/status badges. Min-width: 0
+               lets the h1 truncate instead of pushing siblings around. --%>
           <div class="flex flex-wrap items-center gap-2 min-w-0">
-            <h1 class="text-2xl font-bold break-words">{Project.localized_name(@project, L10n.current_content_lang())}</h1>
-            <%= if @is_template do %>
-              <span class="badge badge-info badge-sm">{gettext("Template")}</span>
+            <%= if not @router_mounted? do %>
+              <h1 class="text-2xl font-bold break-words">
+                {Project.localized_name(@project, L10n.current_content_lang())}
+              </h1>
+              <span :if={@is_template} class="badge badge-info badge-sm">{gettext("Template")}</span>
             <% end %>
             <%= if @project.completed_at do %>
               <span class="badge badge-success gap-1">
@@ -2099,7 +2129,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             <.icon name="hero-folder" class="w-3 h-3" /> {gettext("Sub-project")}
                           </span>
                           <.assignment_status_badge :if={not @is_template} status={a.status} />
-                          <span class="font-medium truncate">{Project.localized_name(child, sp_lang)}</span>
+                          <%!-- Name opens the child project, same as the
+                               row's Open action. --%>
+                          <.smart_link
+                            navigate={Paths.project(child.uuid)}
+                            emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child.uuid}}}
+                            embed_mode={@embed_mode}
+                            class="font-medium truncate min-w-0 link link-hover"
+                          >
+                            {Project.localized_name(child, sp_lang)}
+                          </.smart_link>
                         </div>
 
                         <div class="flex items-center gap-1 shrink-0">

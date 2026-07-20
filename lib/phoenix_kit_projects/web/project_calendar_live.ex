@@ -138,6 +138,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       # Per-project PubSub topics already subscribed (the whole rendered tree;
       # grows as sub-projects appear). Avoids double-subscribing on reload.
       subscribed_projects: MapSet.new(),
+      # The calendar-display config (CalendarDisplay.read/0), read on every
+      # load_calendar so it follows the settings page; pure defaults here so
+      # no render can ever dot-access a nil config.
+      overdue_anim: CalendarDisplay.defaults(),
       # True between the connected mount and the `:load_calendar` message —
       # drives the loading skeleton so the first paint isn't blocked on the
       # per-project queries (and doesn't flash the empty state).
@@ -301,19 +305,31 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     # project in the rendered tree, same as the Timeline tab.
     project_uuids = items |> Enum.map(& &1.project.uuid) |> Enum.uniq()
 
+    now = DateTime.utc_now() |> DateTime.to_naive()
+
     socket
     |> AssigneeFilter.resolve_me()
     |> subscribe_tree(project_uuids)
+    |> assign(overdue_anim: CalendarDisplay.read())
     |> assign(
       calendar_items: {items, layout},
       click_targets: click_targets,
       today: Date.utc_today(),
       calendar_loading: false,
+      # The person picker offers only people relevant to THIS project tree's
+      # assignments (sub-projects included) — anyone else would only ever
+      # filter this calendar to an empty month.
+      assignee_search_scope: project_uuids,
       # "Nobody holds this" — a bar counts as unassigned only when its own
       # assignment AND (for a sub-project) every descendant is unassigned.
       unassigned_count:
         Enum.count(top_items, fn it ->
           Enum.all?(assignment_refs(it, items), &Assignees.unassigned?/1)
+        end),
+      # Late bars in the RAW tree — the Overdue-only toggle hides at 0.
+      overdue_count:
+        Enum.count(top_items, fn it ->
+          CalendarDisplay.task_late?(it.assignment, Map.fetch!(layout, it.uuid), now)
         end)
     )
     |> apply_calendar_filter()
@@ -332,6 +348,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     direct_only? = socket.assigns.assignee_direct_only?
     now = DateTime.utc_now() |> DateTime.to_naive()
 
+    late_class =
+      CalendarDisplay.late_marker_class(socket.assigns[:overdue_anim] || CalendarDisplay.read())
+
     top_items = Enum.filter(items, &is_nil(&1.parent_uuid))
 
     events =
@@ -348,7 +367,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
             if socket.assigns.overdue_only? and not late? do
               []
             else
-              [to_event(it, span.start, span.end, lang, late?, via)]
+              [to_event(it, span.start, span.end, lang, late?, late_class, via)]
             end
         end
       end)
@@ -426,7 +445,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   # hour-precise detail lives one tab over. `phoenix_live_calendar` ends are
   # exclusive (`[start, end)`). Late bars get the shared red inset ring;
   # `via` carries the filter provenance for the day popup.
-  defp to_event(it, %NaiveDateTime{} = s, %NaiveDateTime{} = e, lang, late?, via) do
+  # Lateness (data — drives the popup badge + Overdue-only) is independent
+  # of the marker class (dress — nil when the marker is off).
+  defp to_event(it, %NaiveDateTime{} = s, %NaiveDateTime{} = e, lang, late?, late_class, via) do
     a = it.assignment
     start_d = NaiveDateTime.to_date(s)
     # UTC frame (nil offset) — Timeline-tab parity, unlike the Overview's
@@ -438,7 +459,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       end: end_d,
       all_day: true,
       color: status_color(a.status),
-      class: if(late?, do: CalendarDisplay.late_class()),
+      class: if(late?, do: late_class),
       extra: %{status: a.status, late: late?, via: via}
     )
   end
@@ -536,16 +557,27 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
           <%!-- PkDialogTrigger makes a day-cell / "+N more" click open the
                whole-day popup in the same frame; event chips have their own
                phx-click and correctly don't match — they navigate instead. --%>
+          <%!-- No overflow clip here: the toolbar's tooltip bubbles (the
+               Filters button in toolbar_start) must escape the calendar's
+               top edge; the calendar clips its own grid. --%>
           <div
             id={"project-calendar-day-trigger-#{@project.uuid}"}
             phx-hook="PkDialogTrigger"
             data-dialog={"project-day-modal-#{@project.uuid}"}
             data-trigger=".cal-day-cell, .cal-more-link"
-            class="border border-base-200 rounded-lg overflow-hidden"
+            class="border border-base-200 rounded-lg"
           >
             <%!-- In-flight pulse for the lib-rendered clickables (chips/bars/
                  cells/more-links) — their classes aren't ours to extend. --%>
             {Phoenix.HTML.raw(CalendarDisplay.loading_style())}
+            <%!-- The overdue/late-marker <style> + stripe alignment, for when
+                 the late marker is set to the pattern. Inert with the ring.
+                 (@overdue_anim is always set once load_calendar has run, and
+                 this branch only renders after it has.) --%>
+            {Phoenix.HTML.raw(
+              if(@overdue_anim, do: CalendarDisplay.animation_style(@overdue_anim), else: "")
+            )}
+            <div id={"project-calendar-sync-#{@project.uuid}"} phx-hook="SyncAnimations">
             <.live_component
               module={PhoenixLiveCalendar.CalendarComponent}
               id={"project-calendar-#{@project.uuid}"}
@@ -553,10 +585,13 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
               views={[:month]}
               date={@anchor_date}
               today={@today}
-              fixed_weeks={false}
+              week_start={@overdue_anim.week_start}
+              show_weekends={@overdue_anim.show_weekends}
+              show_week_numbers={@overdue_anim.show_week_numbers}
+              fixed_weeks={@overdue_anim.fixed_weeks}
               expand_cells={true}
-              max_events={CalendarDisplay.max_events()}
-              max_multiday={CalendarDisplay.max_multiday()}
+              max_events={@overdue_anim.max_events}
+              max_multiday={@overdue_anim.max_multiday}
               info_label={gettext("About this calendar")}
               on_event_click={fn id -> send(self(), {:calendar_event_click, id}) end}
               on_date_select={fn date -> send(self(), {:calendar_date_click, date}) end}
@@ -577,6 +612,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                   unassigned_count={@unassigned_count}
                   assignee_direct_only?={@assignee_direct_only?}
                   overdue_only?={@overdue_only?}
+                  overdue_count={@overdue_count}
                   me_scope={@me_scope}
                   picker_target={"#project-calendar-day-trigger-#{@project.uuid}"}
                 />
@@ -607,6 +643,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                 </p>
               </:info>
             </.live_component>
+            </div>
           </div>
 
           <.day_popup_modal

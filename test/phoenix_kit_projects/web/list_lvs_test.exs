@@ -21,10 +21,10 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
 
   describe "ProjectsLive" do
     test "mount renders the projects list page", %{conn: conn} do
-      _ = fixture_project(%{"name" => "Listed-#{System.unique_integer([:positive])}"})
+      p = fixture_project(%{"name" => "Listed-#{System.unique_integer([:positive])}"})
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list")
-      assert html =~ "Projects"
+      assert html =~ p.name
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do
@@ -56,7 +56,7 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
   describe "TasksLive" do
     test "mount renders the tasks list page", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/tasks")
-      assert html =~ "Task Library"
+      assert html =~ "No tasks yet."
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do
@@ -85,8 +85,22 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
 
   describe "TemplatesLive" do
     test "mount renders the templates list page", %{conn: conn} do
+      # No in-content header row anymore (the create action lives in the
+      # admin breadcrumb + the list's add-row) — pin the empty state.
       {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
-      assert html =~ "Project Templates"
+      assert html =~ "No templates yet."
+    end
+
+    test "breadcrumb producer contract: page_title + page_action reach the layout", %{
+      conn: conn
+    } do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
+
+      # The test layout renders these fixture consumers — see
+      # test/support/test_layouts.ex. Core's admin layout is the real
+      # consumer (breadcrumb "+" button); this pins the producer half.
+      assert html =~ ~s(data-page-title="Project Templates")
+      assert html =~ ~r{data-crumb-action[^>]*href="[^"]*templates/new"}
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do

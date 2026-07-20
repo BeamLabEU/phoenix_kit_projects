@@ -71,9 +71,17 @@ defmodule PhoenixKitProjects.Web.Components.AssignmentStatusBadge do
 
   def assignment_status_badge(assigns) do
     ~H"""
-    <span class={["badge", "badge-#{@size}", badge_class(@status), @class]}>
+    <span class={["badge", size_class(@size), badge_class(@status), @class]}>
       {label(@status)}
     </span>
     """
   end
+
+  # Literal per size — an interpolated "badge-#{size}" is invisible to the
+  # Tailwind scanner, so the class only exists if some other file happens to
+  # spell it out.
+  defp size_class("xs"), do: "badge-xs"
+  defp size_class("md"), do: "badge-md"
+  defp size_class("lg"), do: "badge-lg"
+  defp size_class(_), do: "badge-sm"
 end
