@@ -454,7 +454,19 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       <%= if @view == "groups" do %>
         <% lang = L10n.current_content_lang() %>
 
-        <div class="self-end">{view_switcher(assigns)}</div>
+
+        <%!-- One header row: explainer left, view switcher right (the
+             switcher must render in this view too or there's no way
+             back to the list). --%>
+        <div class="flex items-start justify-between gap-4">
+          <p
+            :if={@groups != [] or @standalone != []}
+            class="text-xs text-base-content/60 flex-1 min-w-0"
+          >
+            {gettext("Each group is rooted at a task that nothing else depends on. Tasks reused across multiple groups appear in every one that pulls them in — they're independent task templates, the relationship is just a dependency.")}
+          </p>
+          <div class="ml-auto shrink-0">{view_switcher(assigns)}</div>
+        </div>
 
         <%= if @groups == [] and @standalone == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
@@ -470,14 +482,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             </:cta>
           </.empty_state>
         <% else %>
-          <p class="text-xs text-base-content/60">
-            {gettext("Each group is rooted at a task that nothing else depends on. Tasks reused across multiple groups appear in every one that pulls them in — they're independent task templates, the relationship is just a dependency.")}
-          </p>
-
-          <div class="flex flex-col gap-4">
+          <%!-- Grid: short group cards share rows instead of each
+               spending a full-width band (small/short screens). --%>
+          <div class="grid gap-4 md:grid-cols-2 2xl:grid-cols-3 items-start">
             <%= for group <- @groups do %>
               <div class="card bg-base-100 shadow">
-                <div class="card-body">
+                <div class="card-body p-4">
                   <%!-- Card title is the root task's name — the thing
                        this group is rooted at. Without a title, several
                        group cards stack visually as one undifferentiated
@@ -529,20 +539,24 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                 </div>
               </div>
             <% end %>
-          </div>
 
-          <%= if @standalone != [] do %>
-            <div class="card bg-base-100 shadow">
-              <div class="card-body">
-                <h2 class="card-title text-base flex items-center gap-2">
-                  <.icon name="hero-rectangle-stack" class="w-4 h-4 text-base-content/60" />
-                  {gettext("Standalone")}
-                </h2>
-                <p class="text-xs text-base-content/60 -mt-1">
-                  {gettext("Tasks with no dependency relationships yet.")}
-                </p>
-                <ul class="mt-2 space-y-1">
-                  <li :for={task <- @standalone} class="flex items-center gap-2">
+            <%= if @standalone != [] do %>
+              <%!-- Full grid width; the (often long) flat list flows
+                   into columns instead of one tall single-file strip. --%>
+              <div class="card bg-base-100 shadow md:col-span-full">
+                <div class="card-body p-4">
+                  <h2 class="card-title text-base flex items-center gap-2">
+                    <.icon name="hero-rectangle-stack" class="w-4 h-4 text-base-content/60" />
+                    {gettext("Standalone")}
+                  </h2>
+                  <p class="text-xs text-base-content/60 -mt-1">
+                    {gettext("Tasks with no dependency relationships yet.")}
+                  </p>
+                  <ul class="mt-2 sm:columns-2 xl:columns-3 gap-x-8">
+                    <li
+                      :for={task <- @standalone}
+                      class="flex items-center gap-2 py-0.5 break-inside-avoid"
+                    >
                     <.smart_link
                       navigate={Paths.edit_task(task.uuid)}
                       emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
@@ -551,14 +565,15 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                     >
                       {TaskSchema.localized_title(task, lang)}
                     </.smart_link>
-                    <span class="badge badge-ghost badge-xs shrink-0">
-                      {format_duration(task)}
-                    </span>
-                  </li>
-                </ul>
+                      <span class="badge badge-ghost badge-xs shrink-0">
+                        {format_duration(task)}
+                      </span>
+                    </li>
+                  </ul>
+                </div>
               </div>
-            </div>
-          <% end %>
+            <% end %>
+          </div>
         <% end %>
       <% else %>
         <%!-- Default flat list view. --%>
