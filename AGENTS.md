@@ -468,15 +468,19 @@ lib/phoenix_kit_projects/
     ├── components.ex                         # `use` aggregator — imports every web/components/*.ex
     ├── components/
     │   ├── assignee_filter_panel.ex         # `<.assignee_filter_panel>` — the Filters funnel + popup (chips/picker/toggles)
+    │   ├── assignment_status_badge.ex       # `<.assignment_status_badge>` — literal size map (Tailwind-scanner safe)
     │   ├── day_popup_modal.ex               # `<.day_popup_modal>` — the whole-day popup both calendars share
     │   ├── derived_status_badge.ex          # `<.derived_status_badge>` + `<.project_status_badge>`
-    │   ├── empty_state.ex                   # `<.empty_state>` — icon + heading + sub + CTA slot
-    │   ├── page_header.ex                   # `<.page_header>` — title + description + actions + back_link slots
+    │   ├── page_header.ex                   # `<.page_header>` — title + description + actions + back_link slots (form pages; list pages have no header row — see "List pages")
+    │   ├── popup_host.ex                    # `<.popup_host>` — emit-mode dialog-stack host frame
     │   ├── running_card.ex                  # `<.running_card>` — dashboard project summary tile
-    │   ├── sortable_table.ex                # `<.sortable_table>` — drag-to-reorder table with `:col` slots
+    │   ├── smart_link.ex                    # `<.smart_link>` — navigate-vs-emit-aware link
+    │   ├── smart_menu_link.ex               # `<.smart_menu_link>` — row-menu variant of the above
     │   ├── stat_tile.ex                     # `<.stat_tile>` — compact "label + big number" card
     │   ├── tabs_strip.ex                    # `<.tabs_strip>` — daisyUI tabs-boxed switcher
-    │   └── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
+    │   ├── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
+    │   └── workflow_status_fields.ex        # `<.workflow_status_fields>` — status source + pick (locks at start)
+    ├── list_ui.ex                            # Shared list-page plumbing: column-visibility persistence, search coercion, client-search haystacks
     ├── overview_live.ex
     ├── project_calendar_live.ex             # Calendar tab — month grid over the ScheduleLayout walk
     ├── project_form_live.ex
@@ -528,6 +532,62 @@ A crafted payload otherwise either raises or leaks the BEAM atom slot.
 0–1-element selection lists to `:all` (single-row "reorder" is a no-op,
 and the toolbar label reads "Reorder all" in those states). Apply the
 same rule in any new bulk-action handler.
+
+## List pages (Projects / Tasks / Templates) — shared architecture
+
+All three list LVs follow one shape (2026-07-19/20 overhaul; TemplatesLive
+is the most complete reference):
+
+- **No in-content header row.** The create action is a "+" in the admin
+  breadcrumb (core `page_action` assign: `%{icon, label, navigate}`) plus a
+  dashed full-width add-row at the list's foot. The show page likewise sets
+  `page_section`/`page_section_path` ("Admin Panel / Templates / ‹name›")
+  instead of a back-link + h1 row — **embeds keep the full header**
+  (`router_mounted?` gates it; embeds have no admin breadcrumb).
+- **Recency default sort** — `updated_at desc` ("Last edited"); Manual
+  (`:position`) one selector switch away. **DnD is gated off under ANY
+  filtered view** (non-position sort, active search, Projects' status
+  filter): the DnD handlers renumber the dropped list to absolute `1..N`,
+  so a sparse subset would collide with hidden rows' positions.
+- **Column visibility** — a Columns dropdown of optional columns, persisted
+  site-wide (one comma-joined settings row per page:
+  `projects_list_columns` / `projects_tasks_columns` /
+  `projects_templates_columns`) via `ListUi.read_visible_columns/3` +
+  `toggle_visible_column/4`. Batched lookup maps (`assignment_counts_for_projects/1`,
+  `template_usage/1`, `task_usage/1`, `creation_actors/2`) only query while
+  their column is visible; `toggle_column` reloads so a newly-shown column
+  gets its map. "Created by" resolves from the activity log's creation
+  entries (best-effort — pruned/off-form rows render a dash). Template
+  "Uses" counts the durable `settings["created_from_template_uuid"]`
+  back-link every clone stamps (activity rows get pruned; the back-link
+  doesn't).
+- **Hybrid search** (core `<.search_toolbar>` + core `TableLocalSearch`
+  hook): at ≤100 rows (`@local_search_threshold`) the FULL set is loaded,
+  SQL search is deliberately NOT applied, and the client hook narrows rows
+  instantly via each row's lowercase `data-search` haystack
+  (`ListUi.search_haystack/2` — primary fields + every translated value,
+  matching the SQL coverage exactly). Above the threshold: SQL search
+  (`:search` opt — escaped ilike over name/description/title + a
+  values-only `jsonb_each` on translations) + load-more pagination + the
+  toolbar spinner (`loading_indicator={not @local_search?}`). `search`
+  payloads are coerced via `ListUi.coerce_search/1` (a forged `search[x]=y`
+  map would crash the re-render otherwise). The load-more footer hides in
+  local mode; `filtered_count` (footer) is search-aware while `total_count`
+  stays the full-set count (reorder modal's honest "Reorder all N").
+- **Titles are links** — every title anywhere in the module navigates
+  (list titles → edit/show, assignment rows → assignment edit, sub-project
+  names → child project) via `<.smart_link>` with `link link-hover`, so
+  emit-mode embeds get events instead of dead text.
+- TasksLive's List/Groups switcher is an icon-only join in the toolbar's
+  `:trailing` slot (far right, apart from the data controls); the Groups
+  view repeats it and lays group cards in a responsive grid with a
+  columnar Standalone list.
+
+Cross-repo note: this architecture consumes several **unreleased core
+additions** (`search_toolbar` form fix + spinner, `TableLocalSearch`,
+`page_action`/`page_section` forwarding, the toolbar `:trailing` slot) —
+until the next core release, run this module's checks with
+`PHOENIX_KIT_PATH=../phoenix_kit`, and bump the core floor at release.
 
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 

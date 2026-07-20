@@ -457,14 +457,6 @@ defmodule PhoenixKitProjects.CalendarDisplay do
   end
 
   @doc """
-  Tasks-mode late marker: a red inset ring on the chip/bar. Returned from a
-  function (not duplicated as a literal per call site) so the Overview
-  calendar and the project Calendar tab can't drift apart.
-  """
-  @spec late_class() :: String.t()
-  def late_class, do: @late_class
-
-  @doc """
   The late-task marker class for a `read/0` config: `"pattern"`
   (the default) — the `pk-overdue` overlay, i.e. the same configured
   stripes/solid look the Projects-mode overdue stretch uses, so every

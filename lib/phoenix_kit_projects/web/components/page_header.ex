@@ -50,27 +50,16 @@ defmodule PhoenixKitProjects.Web.Components.PageHeader do
   attr(:title, :string, required: true)
   attr(:description, :string, default: nil)
 
-  # Slim single-row variant for short client screens: smaller title on
-  # the action row's baseline, description suppressed.
-  attr(:compact, :boolean, default: false)
-
   slot(:actions)
   slot(:back_link)
 
   def page_header(assigns) do
     ~H"""
-    <div class={["flex justify-between gap-4", if(@compact, do: "items-center", else: "items-start")]}>
+    <div class="flex items-start justify-between gap-4">
       <div>
         <div :if={@back_link != []}>{render_slot(@back_link)}</div>
-        <h1 class={[
-          if(@compact, do: "text-lg font-semibold", else: "text-2xl font-bold"),
-          @back_link != [] && "mt-1"
-        ]}>
-          {@title}
-        </h1>
-        <p :if={@description && not @compact} class="text-sm text-base-content/60 mt-1">
-          {@description}
-        </p>
+        <h1 class={["text-2xl font-bold", @back_link != [] && "mt-1"]}>{@title}</h1>
+        <p :if={@description} class="text-sm text-base-content/60 mt-1">{@description}</p>
       </div>
       <div :if={@actions != []} class="flex flex-wrap gap-2">
         {render_slot(@actions)}
