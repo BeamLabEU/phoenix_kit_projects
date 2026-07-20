@@ -91,6 +91,18 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
       assert html =~ "No templates yet."
     end
 
+    test "breadcrumb producer contract: page_title + page_action reach the layout", %{
+      conn: conn
+    } do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
+
+      # The test layout renders these fixture consumers — see
+      # test/support/test_layouts.ex. Core's admin layout is the real
+      # consumer (breadcrumb "+" button); this pins the producer half.
+      assert html =~ ~s(data-page-title="Project Templates")
+      assert html =~ ~r{data-crumb-action[^>]*href="[^"]*templates/new"}
+    end
+
     test "delete on missing uuid surfaces a flash", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
       html = render_click(view, "delete", %{"uuid" => Ecto.UUID.generate()})

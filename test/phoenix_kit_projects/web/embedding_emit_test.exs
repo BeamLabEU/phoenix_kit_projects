@@ -161,6 +161,28 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert payload.session == %{"live_action" => "new"}
     end
 
+    test "clicking a task TITLE emits :opened for TaskFormLive edit", %{conn: conn} do
+      # Titles became links (commit 99dd90d) — in emit mode they must
+      # broadcast the edit intent, not dead-navigate.
+      task = fixture_task(%{"title" => "Clickable title"})
+      topic = unique_topic()
+      ProjectsPubSub.subscribe(topic)
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
+          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+        )
+
+      view
+      |> element("button.link-hover[phx-click=open_embed]", "Clickable title")
+      |> render_click()
+
+      assert_receive {:projects, :opened, payload}, 500
+      assert payload.lv == PhoenixKitProjects.Web.TaskFormLive
+      assert payload.session["live_action"] == "edit"
+      assert payload.session["id"] == task.uuid
+    end
+
     test "clicking an Edit pencil emits :opened with the task uuid", %{conn: conn} do
       task = fixture_task(%{"title" => "Reusable"})
       topic = unique_topic()

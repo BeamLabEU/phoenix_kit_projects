@@ -22,6 +22,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   alias PhoenixKitProjects.Statuses
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
+  require Logger
+
   @default_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
 
   @impl true
@@ -274,6 +276,14 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       _stale_or_gone ->
         {:noreply, socket}
     end
+  end
+
+  # Catch-all: this LV subscribes to nothing, but stray messages (a
+  # misdirected send, a future subscription) must not crash it — same
+  # debug-logged contract as every other LV in the module.
+  def handle_info(msg, socket) do
+    Logger.debug("[ProjectsSettingsLive] unexpected handle_info: #{inspect(msg)}")
+    {:noreply, socket}
   end
 
   # Best effort: don't lose the settled value when the admin navigates away

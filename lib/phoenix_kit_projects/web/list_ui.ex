@@ -1,12 +1,17 @@
 defmodule PhoenixKitProjects.Web.ListUi do
   @moduledoc """
   Shared plumbing for the admin list pages (Projects / Tasks /
-  Templates): column-visibility persistence, search-param coercion, and
-  the client-search haystack builder.
+  Templates): column-visibility persistence, search-param coercion, the
+  client-search haystack builder, and the Columns dropdown component.
 
   Each list page keeps its own column roster and settings key; these
   helpers only own the mechanics so the three pages can't drift apart.
   """
+
+  use Phoenix.Component
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
+  import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
 
   # Same settings custody as the calendar/gantt display config.
   @settings_module "projects"
@@ -87,5 +92,41 @@ defmodule PhoenixKitProjects.Web.ListUi do
     |> Enum.filter(&is_binary/1)
     |> Enum.join(" ")
     |> String.downcase()
+  end
+
+  @doc """
+  The Columns dropdown: a focus-based daisyUI dropdown (closes when
+  focus leaves) with one checkbox per optional column, each pushing
+  `toggle_column` with its column key. `options` is the page's
+  `{key, translated_label}` roster; `visible` its current visible set.
+  """
+  attr(:options, :list, required: true)
+  attr(:visible, :list, required: true)
+
+  def columns_control(assigns) do
+    ~H"""
+    <div class="dropdown">
+      <div tabindex="0" role="button" class="btn btn-sm">
+        <.icon name="hero-view-columns" class="w-4 h-4" /> {gettext("Columns")}
+      </div>
+      <ul
+        tabindex="0"
+        class="dropdown-content menu bg-base-100 rounded-box z-20 w-44 p-2 shadow-md border border-base-200"
+      >
+        <li :for={{col, label} <- @options}>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              checked={col in @visible}
+              phx-click="toggle_column"
+              phx-value-col={col}
+            />
+            {label}
+          </label>
+        </li>
+      </ul>
+    </div>
+    """
   end
 end

@@ -621,7 +621,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                     options={sort_options()}
                     manual_field={:position}
                   />
-                  {columns_control(assigns)}
+                  <ListUi.columns_control options={column_options()} visible={@visible_columns} />
                   <.search_toolbar
                     value={@search}
                     on_submit="search"
@@ -742,34 +742,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       {"updated", gettext("Last edited")},
       {"created_by", gettext("Created by")}
     ]
-  end
-
-  # The Columns dropdown — same focus-based pattern as TemplatesLive.
-  defp columns_control(assigns) do
-    ~H"""
-    <div class="dropdown">
-      <div tabindex="0" role="button" class="btn btn-sm">
-        <.icon name="hero-view-columns" class="w-4 h-4" /> {gettext("Columns")}
-      </div>
-      <ul
-        tabindex="0"
-        class="dropdown-content menu bg-base-100 rounded-box z-20 w-44 p-2 shadow-md border border-base-200"
-      >
-        <li :for={{col, label} <- column_options()}>
-          <label class="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              class="checkbox checkbox-sm"
-              checked={col in @visible_columns}
-              phx-click="toggle_column"
-              phx-value-col={col}
-            />
-            {label}
-          </label>
-        </li>
-      </ul>
-    </div>
-    """
   end
 
   defp render_tasks_table(assigns, lang) do

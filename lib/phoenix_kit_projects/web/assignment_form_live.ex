@@ -673,6 +673,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          |> put_flash(:info, gettext("Default statuses entity created."))}
 
       {:error, _reason} ->
+        Activity.log_failed("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "entity",
+          metadata: %{"scope" => "subproject"}
+        )
+
         {:noreply,
          put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
     end
@@ -724,6 +730,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          )}
 
       {:error, reason} ->
+        Activity.log_failed("projects.subproject_linked",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: child_uuid,
+          metadata: %{"parent_project_uuid" => parent.uuid, "reason" => to_string(reason)}
+        )
+
         {:noreply, put_flash(socket, :error, link_error_message(reason))}
     end
   end
@@ -768,11 +781,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          )}
 
       {:error, %Ecto.Changeset{} = cs} ->
+        log_subproject_save_failed(socket, "projects.subproject_created")
         {:noreply, assign(socket, sp_form: to_form(cs, as: :subproject))}
 
       {:error, _other} ->
+        log_subproject_save_failed(socket, "projects.subproject_created")
         {:noreply, put_flash(socket, :error, gettext("Could not add sub-project."))}
     end
+  end
+
+  # Error-branch audit row for the sub-project save paths — the module
+  # convention is that even a validation failure leaves a trace of the
+  # attempted action (see project_form_live's save handlers).
+  defp log_subproject_save_failed(socket, action) do
+    Activity.log_failed(action,
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "project",
+      metadata: %{"parent_project_uuid" => socket.assigns.project.uuid}
+    )
   end
 
   defp save_edit_subproject(socket, attrs) do
@@ -802,6 +828,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          )}
 
       {:error, %Ecto.Changeset{} = cs} ->
+        log_subproject_save_failed(socket, "projects.project_updated")
         {:noreply, assign(socket, sp_form: to_form(cs, as: :subproject))}
     end
   end
@@ -833,6 +860,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         create_assignment_for_new_task(socket, attrs, task, title)
 
       {:error, _cs} ->
+        Activity.log_failed("projects.task_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          metadata: %{"project_uuid" => socket.assigns.project.uuid}
+        )
+
         {:noreply,
          put_flash(socket, :error, gettext("Could not create task. Title may already exist."))}
     end

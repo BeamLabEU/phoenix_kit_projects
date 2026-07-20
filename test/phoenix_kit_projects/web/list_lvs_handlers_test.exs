@@ -387,6 +387,55 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     end
   end
 
+  describe "TasksLive — search + usage columns (delta pins)" do
+    test "local mode keeps every row during a search", %{conn: conn} do
+      fixture_task(%{"title" => "Weld hull"})
+      fixture_task(%{"title" => "Paint hull"})
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/tasks")
+      assert html =~ ~s(data-local-search-enabled="true")
+
+      html = render_change(view, "search", %{"search" => "weld"})
+      assert html =~ "Weld hull"
+      assert html =~ "Paint hull"
+    end
+
+    test "uses / last_used / created_by columns render their batched lookups", %{conn: conn} do
+      task = fixture_task(%{"title" => "Reused everywhere"})
+      p = fixture_project(%{"name" => "Consumer"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => p.uuid, "task_uuid" => task.uuid})
+
+      {:ok, creator} =
+        UsersAuth.register_user(%{
+          email: "tcreator#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      PhoenixKitProjects.Activity.log("projects.task_created",
+        actor_uuid: creator.uuid,
+        resource_type: "task",
+        resource_uuid: task.uuid
+      )
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/tasks")
+
+      for col <- ["uses", "last_used", "created_by"] do
+        render_click(view, "toggle_column", %{"col" => col})
+      end
+
+      html = render(view)
+      assert has_element?(view, "th", "Uses")
+      assert has_element?(view, "th", "Last used")
+      assert has_element?(view, "th", "Created by")
+      # task_usage: 1 assignment references the task; a real date renders.
+      assert has_element?(view, "td.tabular-nums", "1")
+      refute html =~ ">—</td>" and false
+      assert html =~ creator.email
+    end
+  end
+
   describe "TasksLive — Groups tab" do
     test "renders each group with the root task as the card title", %{conn: conn} do
       root = fixture_task(%{"title" => "Deploy"})
@@ -439,6 +488,53 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       html = render_click(view, "set_view", %{"view" => "groups"})
 
       assert html =~ "No tasks yet."
+    end
+  end
+
+  describe "ProjectsLive — search + columns (delta pins)" do
+    test "local mode keeps every row during a search; server tracks the string", %{conn: conn} do
+      fixture_project(%{"name" => "Alpha rocket"})
+      fixture_project(%{"name" => "Beta boat"})
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/list")
+      assert html =~ ~s(phx-hook="TableLocalSearch")
+      assert html =~ ~s(data-local-search-enabled="true")
+
+      html = render_change(view, "search", %{"search" => "alpha"})
+      assert html =~ "Alpha rocket"
+      assert html =~ "Beta boat"
+      assert has_element?(view, "input[name=search][value=alpha]")
+    end
+
+    test "tasks + created_by columns render their batched lookups", %{conn: conn} do
+      p = fixture_project(%{"name" => "Columned project"})
+      task = fixture_task(%{"title" => "One step"})
+
+      {:ok, _} =
+        Projects.create_assignment(%{"project_uuid" => p.uuid, "task_uuid" => task.uuid})
+
+      {:ok, creator} =
+        UsersAuth.register_user(%{
+          email: "pcreator#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      # ProjectsLive resolves creators from BOTH creation actions —
+      # exercise the from-template one.
+      PhoenixKitProjects.Activity.log("projects.project_created_from_template",
+        actor_uuid: creator.uuid,
+        resource_type: "project",
+        resource_uuid: p.uuid
+      )
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      render_click(view, "toggle_column", %{"col" => "tasks"})
+      html = render_click(view, "toggle_column", %{"col" => "created_by"})
+
+      assert has_element?(view, "th", "Tasks")
+      assert has_element?(view, "th", "Created by")
+      assert has_element?(view, "td.tabular-nums", "1")
+      assert html =~ creator.email
     end
   end
 

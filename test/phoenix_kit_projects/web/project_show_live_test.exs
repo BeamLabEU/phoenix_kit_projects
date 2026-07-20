@@ -44,8 +44,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
       # The standalone admin page pushes the name into the site
-      # breadcrumb (page_title) — the body renders no h1/name row.
+      # breadcrumb (page_title + a linked "Projects" section) — the body
+      # renders no h1/name row. The test layout renders the fixture
+      # breadcrumb consumers this asserts against.
       refute html =~ "<h1"
+      assert html =~ ~s(data-page-title="#{project.name}")
+      assert html =~ ~s(data-crumb-section="Projects")
       assert html =~ "No tasks in this project yet."
     end
 

@@ -1064,6 +1064,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              |> load_assignments()}
 
           {:error, _} ->
+            Activity.log_failed("projects.subproject_detached",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "project",
+              resource_uuid: child_uuid,
+              metadata: %{"parent_project_uuid" => socket.assigns.project.uuid}
+            )
+
             {:noreply, put_flash(socket, :error, gettext("Could not detach the sub-project."))}
         end
 
