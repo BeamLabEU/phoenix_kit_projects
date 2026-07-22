@@ -429,18 +429,14 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       <.form for={@form} id="task-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
         <%!-- Translatable card: title + description with language tabs. --%>
         <div class="card bg-base-100 shadow">
-          <.multilang_tabs
+          <%!-- Bundled tabs + AI row (phoenix_kit_ai's canonical placement;
+            the border-b separator converges away — see the PR note). --%>
+          <.ai_multilang_tabs
             multilang_enabled={@multilang_enabled}
             language_tabs={@language_tabs}
             current_lang={@current_lang}
+            ai_translate={FormGlue.ai_translate_config(assigns)}
           />
-
-          <%!-- See `project_form_live.ex` for the spacing rationale. --%>
-          <div class="flex items-center gap-3 px-6 -mt-2 py-1 border-b border-base-200">
-            <.ai_translate_button ai_translate={FormGlue.ai_translate_config(assigns)} />
-            <.ai_translate_progress ai_translate={FormGlue.ai_translate_config(assigns)} />
-            <.ai_translate_hint ai_translate={FormGlue.ai_translate_config(assigns)} />
-          </div>
 
           <.multilang_fields_wrapper
             multilang_enabled={@multilang_enabled}

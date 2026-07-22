@@ -574,22 +574,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
              inputs when the user switches languages — that's what swaps
              primary-column inputs for `lang_*` JSONB inputs. --%>
         <div class="card bg-base-100 shadow">
-          <.multilang_tabs
+          <%!-- Bundled tabs + AI row (phoenix_kit_ai's canonical placement;
+            the border-b separator converges away — see the PR note). --%>
+          <.ai_multilang_tabs
             multilang_enabled={@multilang_enabled}
             language_tabs={@language_tabs}
             current_lang={@current_lang}
+            ai_translate={FormGlue.ai_translate_config(assigns)}
           />
-
-          <%!-- `px-6` matches daisyUI's default `.card-body` inline
-               padding so the row aligns with the input fields below.
-               `-mt-2 py-1` pulls the row tight against the language
-               tab strip above — boss wanted the AI button closer to
-               the list of languages. --%>
-          <div class="flex items-center gap-3 px-6 -mt-2 py-1 border-b border-base-200">
-            <.ai_translate_button ai_translate={FormGlue.ai_translate_config(assigns)} />
-            <.ai_translate_progress ai_translate={FormGlue.ai_translate_config(assigns)} />
-            <.ai_translate_hint ai_translate={FormGlue.ai_translate_config(assigns)} />
-          </div>
 
           <.multilang_fields_wrapper
             multilang_enabled={@multilang_enabled}

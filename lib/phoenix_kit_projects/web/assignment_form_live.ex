@@ -1595,24 +1595,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                  sit above it and the field goes INSIDE the wrapper so a language
                  switch shows the skeleton + cleanly re-mounts. The non-translatable
                  fields below stay outside the wrapper (and keep their values). --%>
-            <.multilang_tabs
+            <%!-- Bundled tabs + AI row. No px on the row — it already sits
+              inside a padded card-body (the wrapper's px-6 default pairs with
+              the tabs' own card-body class, which this call keeps). --%>
+            <.ai_multilang_tabs
               :if={@multilang_enabled}
               multilang_enabled={@multilang_enabled}
               language_tabs={@language_tabs}
               current_lang={@current_lang}
+              ai_row_class="flex items-center gap-3 -mt-3"
+              ai_translate={FormGlue.ai_translate_config(assigns)}
             />
-
-            <%!-- AI-translate row, tucked under the tabs with a separator above
-                 the field — matches the project/task/template forms (no px-6
-                 here since this row already sits inside a padded card-body). --%>
-            <div
-              :if={@multilang_enabled}
-              class="flex items-center gap-3 -mt-1 py-1 border-b border-base-200"
-            >
-              <.ai_translate_button ai_translate={FormGlue.ai_translate_config(assigns)} />
-              <.ai_translate_progress ai_translate={FormGlue.ai_translate_config(assigns)} />
-              <.ai_translate_hint ai_translate={FormGlue.ai_translate_config(assigns)} />
-            </div>
 
             <.multilang_fields_wrapper
               multilang_enabled={@multilang_enabled}
