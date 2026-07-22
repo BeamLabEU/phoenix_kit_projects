@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.19.1 - 2026-07-22
+
+**Migrate the four multilang forms onto `phoenix_kit_ai`'s bundled `ai_multilang_tabs`.** `AssignmentFormLive`, `ProjectFormLive`, `TaskFormLive`, and `TemplateFormLive` each replace a hand-rolled `<.multilang_tabs>` + sibling AI-translate button/progress/hint row with the single `<.ai_multilang_tabs>` component, dropping ~25 lines of duplicated markup. No behavior change; reviewed post-merge with no issues found (`dev_docs/pull_requests/2026/32-ai-multilang-tabs-migration/CLAUDE_REVIEW.md`).
+
+### Changed
+
+- **Multilang form tabs** now render via `phoenix_kit_ai`'s `<.ai_multilang_tabs>` instead of a hand-built tabs + AI-row pair, in `AssignmentFormLive`, `ProjectFormLive`, `TaskFormLive`, `TemplateFormLive`.
+
 ## 0.19.0 - 2026-07-20
 
 **Admin UI overhaul: shared list architecture, breadcrumb chrome, hybrid search.** Every list page (Projects / Tasks / Templates) now runs on one shared architecture (`Web.ListUi`): no in-content header row (create actions live in the admin breadcrumb + a list-foot add-row), optional-column dropdowns with batched lookups (Created by / Uses / Last used), recency-default sort, and a hybrid client/server search — the full set loads and filters client-side up to 100 rows, SQL `ilike` + pagination past that. The show page moved its identity into the site breadcrumb ("Admin Panel / Templates / ‹name›"), every title in the module is now a link, and the Tasks Groups view gained a responsive card grid with an icon-only List/Groups switcher in the toolbar. Rides several core additions not yet released to Hex (`BeamLabEU/phoenix_kit#650`) — the search-loading spinner and the Groups/List toggle silently no-op until that core version ships; see the review doc for detail. Closed out with a quality sweep (activity-logging error branches, dead-code removal, doc sync) and this release's own review (`dev_docs/pull_requests/2026/31-admin-ui-overhaul-list-architecture/CLAUDE_REVIEW.md`), which found and fixed three more issues on top.
