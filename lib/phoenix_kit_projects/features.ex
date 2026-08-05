@@ -222,29 +222,50 @@ defmodule PhoenixKitProjects.Features do
     if accepted == %{} do
       {:ok, project}
     else
-      current = project.settings || %{}
-      merged_features = Map.merge(Map.get(current, @settings_key, %{}), accepted)
-      new_settings = Map.put(current, @settings_key, merged_features)
+      # ATOMIC targeted merge, not a whole-map read-merge-write: `settings`
+      # is a SHARED column — the authz "who can X" floors live beside the
+      # features key, so writing a map merged from a possibly-stale struct
+      # silently clobbered concurrent writes to sibling keys, a
+      # security-relevant lost update (final panel, ZAI). jsonb_set touches
+      # ONLY settings["features"], merging over whatever is in the row NOW.
+      query =
+        from(p in Project,
+          where: p.uuid == ^project.uuid,
+          update: [
+            set: [
+              settings:
+                fragment(
+                  """
+                  jsonb_set(
+                    COALESCE(settings, '{}'::jsonb),
+                    '{features}',
+                    COALESCE(settings->'features', '{}'::jsonb) || ?::jsonb
+                  )
+                  """,
+                  ^accepted
+                ),
+              updated_at: fragment("NOW()")
+            ]
+          ],
+          select: p
+        )
 
-      project
-      |> Ecto.Changeset.change(settings: new_settings)
-      |> RepoHelper.repo().update()
-      |> case do
-        {:ok, updated} ->
-          Activity.log("projects.feature_toggled",
-            actor_uuid: Keyword.get(opts, :actor_uuid),
-            resource_type: "project",
-            resource_uuid: project.uuid,
-            metadata: %{"changed" => accepted}
-          )
+      {1, [updated]} = RepoHelper.repo().update_all(query, [])
 
-          PubSub.broadcast_project(:project_features_changed, %{uuid: project.uuid})
-          {:ok, updated}
+      Activity.log("projects.feature_toggled",
+        actor_uuid: Keyword.get(opts, :actor_uuid),
+        resource_type: "project",
+        resource_uuid: project.uuid,
+        metadata: %{"changed" => accepted}
+      )
 
-        {:error, _} = error ->
-          error
-      end
+      PubSub.broadcast_project(:project_features_changed, %{uuid: project.uuid})
+      {:ok, updated}
     end
+  rescue
+    e in [MatchError, Postgrex.Error] ->
+      Logger.warning("[Projects.Features] set_flags failed: #{Exception.message(e)}")
+      {:error, :not_found}
   end
 
   # ── Presets ─────────────────────────────────────────────────────────

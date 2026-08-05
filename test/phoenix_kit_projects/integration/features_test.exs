@@ -6,6 +6,7 @@ defmodule PhoenixKitProjects.Integration.FeaturesTest do
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Extensions.Registry
   alias PhoenixKitProjects.Features
+  alias PhoenixKitProjects.Projects
 
   defmodule FlagProvider do
     def phoenix_kit_project_extensions do
@@ -156,6 +157,31 @@ defmodule PhoenixKitProjects.Integration.FeaturesTest do
 
     test "default preset key falls back to standard" do
       assert Features.default_preset_key() in ["standard", "simple", "full"]
+    end
+  end
+
+  describe "set_flags/3 concurrency (final panel, ZAI)" do
+    # settings is a shared JSONB: the authz "who can X" floors live in the
+    # same column. A whole-map read-merge-write from a STALE struct used to
+    # clobber a concurrent authz tightening — security-relevant lost write.
+    test "a stale-struct flag write does not clobber a concurrent authz write" do
+      project = fixture_project()
+      stale = project
+
+      # Another session tightens an authz floor AFTER `stale` was loaded.
+      {:ok, _} =
+        project
+        |> Ecto.Changeset.change(
+          settings: Map.put(project.settings || %{}, "authz", %{"update_status" => "managers"})
+        )
+        |> PhoenixKit.RepoHelper.repo().update()
+
+      # The stale session toggles a flag.
+      {:ok, _} = Features.set_flags(stale, %{"statuses" => false})
+
+      reloaded = Projects.get_project(project.uuid)
+      assert reloaded.settings["authz"] == %{"update_status" => "managers"}
+      assert reloaded.settings["features"]["statuses"] == false
     end
   end
 end
