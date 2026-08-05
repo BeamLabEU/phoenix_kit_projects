@@ -398,8 +398,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # hub configuration — rebuild the gate map and re-gate the active tab
     # (a live view_timeline/view_calendar turn-off must not leave the user
     # parked on a tab that no longer exists).
-    fx = Features.gates(socket.assigns.project)
-    ext_tabs = ext_tabs_for(socket.assigns.project, socket.assigns.is_template)
+    # RELOAD the project first: flags live in settings["features"], and
+    # resolving them from the in-memory struct reads the PRE-toggle map —
+    # the dispatcher would keep accepting gated mutations on every open
+    # page forever (panel R3-1, Grok). Extension enablement re-queries by
+    # uuid either way; the flags need the fresh row.
+    project =
+      Projects.get_project_with_assignee(socket.assigns.project.uuid) ||
+        socket.assigns.project
+
+    fx = Features.gates(project)
+    ext_tabs = ext_tabs_for(project, socket.assigns.is_template)
 
     # Re-gate the active tab: a gated-off view falls to :list; an extension
     # tab whose extension was just disabled falls to :list too.
@@ -411,8 +420,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     {:noreply,
      assign(socket,
+       project: project,
        fx: fx,
-       fx_files: Extensions.enabled?(socket.assigns.project, "files"),
+       fx_files: Extensions.enabled?(project, "files"),
        ext_tabs: ext_tabs,
        active_tab: active
      )}
@@ -950,18 +960,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   defp gated_handle_event("switch_tab", %{"tab" => tab} = params, socket) do
-    active =
-      case tab do
-        # The view tabs are feature-gated: a client event naming a gated-off
-        # tab (stale DOM, forged payload) falls back to the list. Extension
-        # tab ids are validated against the CURRENT ext_tabs set — an id for
-        # a since-disabled extension falls back too.
-        "board" when :erlang.map_get(:view_board, socket.assigns.fx) -> :board
-        "gantt" when :erlang.map_get(:view_timeline, socket.assigns.fx) -> :gantt
-        "calendar" when :erlang.map_get(:view_calendar, socket.assigns.fx) -> :calendar
-        "ext:" <> _ -> if valid_ext_tab?(socket, tab), do: tab, else: :list
-        _ -> :list
-      end
+    active = resolve_switch_target(tab, socket)
 
     socket =
       if is_binary(active),
@@ -1645,6 +1644,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp ext_initial_mounted(_), do: MapSet.new()
 
   defp valid_ext_tab?(socket, id), do: Enum.any?(socket.assigns.ext_tabs, &(&1.id == id))
+
+  # The view tabs are feature-gated: a client event naming a gated-off tab
+  # (stale DOM, forged payload) falls back to the list. Extension tab ids
+  # are validated against the CURRENT ext_tabs set — an id for a
+  # since-disabled extension falls back too.
+  defp resolve_switch_target(tab, socket) do
+    case tab do
+      "board" when :erlang.map_get(:view_board, socket.assigns.fx) -> :board
+      "gantt" when :erlang.map_get(:view_timeline, socket.assigns.fx) -> :gantt
+      "calendar" when :erlang.map_get(:view_calendar, socket.assigns.fx) -> :calendar
+      "ext:" <> _ -> if valid_ext_tab?(socket, tab), do: tab, else: :list
+      _ -> :list
+    end
+  end
 
   defp tab_for_action(_socket, true), do: :list
 

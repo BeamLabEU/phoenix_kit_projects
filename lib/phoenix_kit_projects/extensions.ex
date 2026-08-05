@@ -164,29 +164,37 @@ defmodule PhoenixKitProjects.Extensions do
 
     with {:ok, ext} <- fetch_type(ext_key),
          :ok <- ensure_available(ext) do
-      config = whitelist_config(Keyword.get(opts, :config, %{}), ext)
-
-      attrs = %{
-        project_uuid: project_uuid,
-        ext_key: ext.key,
-        instance_key: instance_key,
-        name: Keyword.get(opts, :name),
-        enabled: true,
-        config: config,
-        enabled_by_uuid: actor_uuid
-      }
-
       result =
         case get_row(project_uuid, ext_key, instance_key) do
           nil ->
-            %ProjectModule{} |> ProjectModule.changeset(attrs) |> RepoHelper.repo().insert()
+            # Upsert on the identity index (panel R2-1): a concurrent
+            # enable that lost the race converges on the winner's row
+            # instead of surfacing a unique-violation changeset.
+            %ProjectModule{}
+            |> ProjectModule.changeset(%{
+              project_uuid: project_uuid,
+              ext_key: ext.key,
+              instance_key: instance_key,
+              name: Keyword.get(opts, :name),
+              enabled: true,
+              config: whitelist_config(Keyword.get(opts, :config, %{}), ext),
+              enabled_by_uuid: actor_uuid
+            })
+            |> RepoHelper.repo().insert(
+              on_conflict: {:replace, [:enabled, :enabled_by_uuid, :updated_at]},
+              conflict_target: [:project_uuid, :ext_key, :instance_key],
+              returning: true
+            )
 
           row ->
-            # Re-enable preserves stored config unless the caller passes one.
+            # Re-enable preserves what the caller didn't pass (panel
+            # R2-5/R2-6): stored name and config survive a plain toggle;
+            # a passed config MERGES over the stored map (mirroring
+            # update_config) rather than replacing it.
             attrs =
-              if Keyword.has_key?(opts, :config),
-                do: attrs,
-                else: Map.delete(attrs, :config)
+              %{enabled: true, enabled_by_uuid: actor_uuid}
+              |> maybe_put_name(opts)
+              |> maybe_merge_config(row, opts, ext)
 
             row |> ProjectModule.changeset(attrs) |> RepoHelper.repo().update()
         end
@@ -290,6 +298,23 @@ defmodule PhoenixKitProjects.Extensions do
   end
 
   # ── Internals ───────────────────────────────────────────────────────
+
+  defp maybe_put_name(attrs, opts) do
+    case Keyword.fetch(opts, :name) do
+      {:ok, name} -> Map.put(attrs, :name, name)
+      :error -> attrs
+    end
+  end
+
+  defp maybe_merge_config(attrs, row, opts, ext) do
+    case Keyword.fetch(opts, :config) do
+      {:ok, config} ->
+        Map.put(attrs, :config, Map.merge(row.config || %{}, whitelist_config(config, ext)))
+
+      :error ->
+        attrs
+    end
+  end
 
   defp fetch_type(ext_key) do
     case Registry.get(ext_key) do

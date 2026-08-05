@@ -491,12 +491,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # row exists. Uses a list (not a MapSet) so the rendered order
   # mirrors the user's add order; the `if dep_uuid in current` guard
   # below skips dupes when the same uuid is added twice.
+  # Pending deps are flushed into REAL dependency rows on save — they get
+  # the same dependencies gate as the live add/remove pair, or a forged
+  # pending-add on a dependencies-off project persists rows (panel R3-3).
   def handle_event("add_pending_dep", %{"depends_on_uuid" => dep_uuid}, socket)
       when dep_uuid != "" do
-    {:noreply,
-     update(socket, :pending_dep_uuids, fn current ->
-       if dep_uuid in current, do: current, else: current ++ [dep_uuid]
-     end)}
+    if socket.assigns.fx.dependencies do
+      {:noreply,
+       update(socket, :pending_dep_uuids, fn current ->
+         if dep_uuid in current, do: current, else: current ++ [dep_uuid]
+       end)}
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+    end
   end
 
   def handle_event("add_pending_dep", _params, socket), do: {:noreply, socket}
@@ -591,10 +599,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     assign_type = Map.get(params, "assign_type", "")
     task_mode = Map.get(params, "task_mode", "existing")
 
+    # Save-time gate re-resolution (panel R3-4): the submit binds to the
+    # CURRENT flags, not the mount-time snapshot a mid-edit toggle staled.
+    fx = Features.gates(socket.assigns.project)
+    socket = assign(socket, fx: fx)
+
     attrs =
       attrs
       |> clear_other_assignees(assign_type)
-      |> strip_gated_attrs(socket.assigns.fx)
+      |> strip_gated_attrs(fx)
       |> merge_attrs(socket)
 
     case {socket.assigns.live_action, task_mode} do
@@ -643,55 +656,57 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def handle_event("validate_subproject", _params, socket), do: {:noreply, socket}
 
   # A sub-project is a project, so it gets the same "Generate default" action
-  # ProjectFormLive has (V125). Operates on `@sp_form`.
+  # ProjectFormLive has (V125). Operates on `@sp_form`. Feature-gated on
+  # `statuses` (panel R3-5): with the flag off this provisions nothing.
   def handle_event("generate_default_statuses", _params, socket) do
-    case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
-      {:ok, entity} ->
-        Activity.log("projects.status_entity_provisioned",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "entity",
-          resource_uuid: entity.uuid,
-          metadata: %{"scope" => "subproject"}
-        )
-
-        cs =
-          socket.assigns.sp_form.source
-          |> Ecto.Changeset.put_change(:status_entity_uuid, entity.uuid)
-
-        {:noreply,
-         socket
-         |> assign(status_entities: WSF.entity_options(), sp_form: to_form(cs, as: :subproject))
-         |> refresh_status_preview()
-         |> put_flash(:info, gettext("Default statuses entity created."))}
-
-      {:error, _reason} ->
-        Activity.log_failed("projects.status_entity_provisioned",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "entity",
-          metadata: %{"scope" => "subproject"}
-        )
-
-        {:noreply,
-         put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
+    if Features.gates(socket.assigns.project).statuses do
+      do_generate_default_statuses(socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
 
   # "Link existing" mode: no `subproject[...]` inputs, just the picked child.
+  # The whole sub-project branch is feature-gated (panel R3-2): kind
+  # resolution already forces the task form when the flag is off, but a
+  # forged save_subproject would still create/link a child — refuse it, and
+  # strip gated attrs the same way the task save does.
   def handle_event("save_subproject", %{"link_child_uuid" => child_uuid}, socket) do
-    link_existing_subproject(socket, child_uuid)
+    fx = Features.gates(socket.assigns.project)
+
+    if fx.subprojects do
+      link_existing_subproject(socket, child_uuid)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+    end
   end
 
   def handle_event("save_subproject", %{"subproject" => attrs} = params, socket) do
-    assign_type = Map.get(params, "assign_type", "")
+    # Re-resolve at save time (panel R3-4): a mid-edit toggle in another
+    # session must bind the SUBMIT, not the stale mount-time map.
+    fx = Features.gates(socket.assigns.project)
 
-    attrs =
-      attrs
-      |> clear_other_assignees(assign_type)
-      |> WSF.apply_mode(params, sp_source(socket))
+    if fx.subprojects do
+      assign_type = Map.get(params, "assign_type", "")
 
-    case socket.assigns.live_action do
-      :new -> save_new_subproject(socket, attrs)
-      :edit -> save_edit_subproject(socket, attrs)
+      attrs =
+        attrs
+        |> clear_other_assignees(assign_type)
+        |> strip_gated_attrs(fx)
+        |> then(fn a ->
+          if fx.statuses, do: a, else: Map.drop(a, ~w(status_entity_uuid))
+        end)
+        |> WSF.apply_mode(params, sp_source(socket))
+
+      case socket.assigns.live_action do
+        :new -> save_new_subproject(socket, attrs)
+        :edit -> save_edit_subproject(socket, attrs)
+      end
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
 
@@ -1237,6 +1252,38 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp humanize(field) do
     field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
+  end
+
+  defp do_generate_default_statuses(socket) do
+    case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
+      {:ok, entity} ->
+        Activity.log("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "entity",
+          resource_uuid: entity.uuid,
+          metadata: %{"scope" => "subproject"}
+        )
+
+        cs =
+          socket.assigns.sp_form.source
+          |> Ecto.Changeset.put_change(:status_entity_uuid, entity.uuid)
+
+        {:noreply,
+         socket
+         |> assign(status_entities: WSF.entity_options(), sp_form: to_form(cs, as: :subproject))
+         |> refresh_status_preview()
+         |> put_flash(:info, gettext("Default statuses entity created."))}
+
+      {:error, _reason} ->
+        Activity.log_failed("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "entity",
+          metadata: %{"scope" => "subproject"}
+        )
+
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
+    end
   end
 
   defp do_add_assignment_dep(dep_uuid, socket) do

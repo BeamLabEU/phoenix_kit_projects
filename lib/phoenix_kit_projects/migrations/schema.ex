@@ -41,6 +41,8 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   use Ecto.Migration
 
+  alias PhoenixKit.Migrations.Postgres.Helpers
+
   @current_version 3
   @marker_prefix "pkp_schema:"
 
@@ -58,11 +60,15 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   def migrated_version_runtime(opts \\ []) do
     prefix = normalize_prefix(opts)
 
+    # classoid anchors the description join to pg_class — without it a
+    # comment-bearing object in another catalog sharing the OID number
+    # yields two rows and neither pattern matches (ZAI panel find R1-4).
     query = """
     SELECT d.description
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    LEFT JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = 0
+    LEFT JOIN pg_description d
+      ON d.objoid = c.oid AND d.objsubid = 0 AND d.classoid = 'pg_class'::regclass
     WHERE n.nspname = $1 AND c.relname = 'phoenix_kit_projects' AND c.relkind = 'r'
     """
 
@@ -88,7 +94,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   the marker. Accepts `:prefix` as keyword list or map.
   """
   def up(opts \\ []) do
-    prefix = normalize_prefix(opts)
+    prefix = validated_prefix(opts)
     p = prefix_str(prefix)
 
     v1_baseline(p, prefix)
@@ -99,20 +105,54 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   end
 
   @doc """
-  Drops every projects-chain table. Scratch-schema use only — see moduledoc.
+  Rolls back TO `:version` (the semantics `mix phoenix_kit.update`'s
+  generated host migration passes): each chain version above the target
+  drops ITS OWN tables and the marker restamps at the target. A missing/0
+  target is the full teardown — scratch-schema use only.
+
+  The version-aware shape is load-bearing (panel find R1-1): the generated
+  host migration wires `down` to `Schema.down(prefix: …, version: N)`, so
+  a plain `mix ecto.rollback` after an update must undo ONLY that update —
+  the earlier unconditional full drop destroyed every projects table on
+  the first rollback while core's own marker still claimed them.
   """
   def down(opts \\ []) do
-    prefix = normalize_prefix(opts)
+    prefix = validated_prefix(opts)
     p = prefix_str(prefix)
+    target = down_target(opts)
 
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_members")
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_modules")
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_statuses")
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_dependencies")
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_dependencies")
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_assignments")
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_projects")
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_tasks")
+    if target < 3, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_members")
+    if target < 2, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_modules")
+
+    if target < 1 do
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_statuses")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_dependencies")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_dependencies")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_assignments")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_projects")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_tasks")
+    else
+      execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{target}'")
+    end
+  end
+
+  defp down_target(opts) when is_list(opts) do
+    case Keyword.get(opts, :version, 0) do
+      v when is_integer(v) and v >= 0 -> v
+      _ -> 0
+    end
+  end
+
+  defp down_target(%{version: v}) when is_integer(v) and v >= 0, do: v
+  defp down_target(_), do: 0
+
+  # Raw string interpolation into DDL demands a validated prefix (core's
+  # prefix rules; panel find R1-3). The update task validates upstream —
+  # this covers direct/console callers.
+  defp validated_prefix(opts) do
+    prefix = normalize_prefix(opts)
+    Helpers.validate_prefix!(prefix)
+    prefix
   end
 
   # ---------------------------------------------------------------------------

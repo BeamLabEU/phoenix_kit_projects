@@ -317,11 +317,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_uuid = Map.get(params, "template_uuid", nil) |> Values.blank_to_nil()
       assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
 
+      # Save-time gate re-resolution (panel R3-4): a mid-edit toggle in
+      # another session binds THIS submit, not the mount-time snapshot.
+      # (:new has no project row yet — catalog defaults, unchanged.)
+      fx = save_time_fx(socket)
+      socket = assign(socket, fx: fx)
+
       attrs =
         merge_attrs(attrs, socket)
         |> clear_other_assignees(assign_type)
-        |> apply_status_mode_to_attrs(params, socket.assigns.project)
-        |> strip_gated_project_attrs(socket.assigns.fx)
+        |> maybe_apply_status_mode(params, socket.assigns.project, fx)
+        |> strip_gated_project_attrs(fx)
 
       socket =
         assign(socket, preset_key: Map.get(params, "project_preset", socket.assigns[:preset_key]))
@@ -348,6 +354,29 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # user who has edited a previous generated list gets a clean one for the
   # next project. Reloads the selector options.
   def handle_event("generate_default_statuses", _params, socket) do
+    if save_time_fx(socket).statuses do
+      do_generate_default_statuses(socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+    end
+  end
+
+  def handle_event("cancel", _params, socket) do
+    {:noreply, WebHelpers.close_or_navigate(socket, Paths.projects())}
+  end
+
+  # {:ai_translation, ...} events folded into the form by `use ...AITranslate.Embed`.
+
+  defp merge_attrs(attrs, socket) do
+    in_flight = WebHelpers.in_flight_record(socket, :form, :project)
+
+    attrs
+    |> WebHelpers.normalize_datetime_local_attrs(["scheduled_start_date"])
+    |> WebHelpers.merge_translations_attrs(in_flight, Project.translatable_fields())
+  end
+
+  defp do_generate_default_statuses(socket) do
     case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
       {:ok, entity} ->
         Activity.log("projects.status_entity_provisioned",
@@ -373,18 +402,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end
   end
 
-  def handle_event("cancel", _params, socket) do
-    {:noreply, WebHelpers.close_or_navigate(socket, Paths.projects())}
+  defp save_time_fx(socket) do
+    case socket.assigns[:project] do
+      %Project{uuid: uuid} when is_binary(uuid) -> Features.gates(socket.assigns.project.uuid)
+      _ -> Features.default_gates()
+    end
   end
 
-  # {:ai_translation, ...} events folded into the form by `use ...AITranslate.Embed`.
-
-  defp merge_attrs(attrs, socket) do
-    in_flight = WebHelpers.in_flight_record(socket, :form, :project)
-
-    attrs
-    |> WebHelpers.normalize_datetime_local_attrs(["scheduled_start_date"])
-    |> WebHelpers.merge_translations_attrs(in_flight, Project.translatable_fields())
+  # The status translation-mode fold also writes into settings — it rides
+  # the same statuses gate as the source field (panel R3-5).
+  defp maybe_apply_status_mode(attrs, params, project, fx) do
+    if fx.statuses, do: apply_status_mode_to_attrs(attrs, params, project), else: attrs
   end
 
   # Server-side mate of the render gates: with `statuses` off a crafted

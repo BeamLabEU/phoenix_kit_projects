@@ -105,6 +105,11 @@ defmodule PhoenixKitProjects.Authz do
       # membership/visibility terms land, public resolution is a hard no.
       :public ->
         false
+
+      # Any unrecognized context is a hard no — fail-closed means FALSE,
+      # never a CaseClauseError crashing the caller (panel R2-3).
+      _other ->
+        false
     end
   end
 
