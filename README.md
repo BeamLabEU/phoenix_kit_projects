@@ -25,19 +25,20 @@ A [PhoenixKit](https://github.com/BeamLabEU/phoenix_kit) plugin for **project + 
 Add to your parent PhoenixKit app's `mix.exs`:
 
 ```elixir
-{:phoenix_kit_staff, "~> 0.1"},
-{:phoenix_kit_projects, "~> 0.5"}
+{:phoenix_kit_projects, "~> 0.5"},
+# Optional — the people admin UI (assignee data works without it):
+{:phoenix_kit_staff, "~> 0.1"}
 ```
 
 (For local development inside the PhoenixKit workspace, use the path-dep form instead: `{:phoenix_kit_projects, path: "../phoenix_kit_projects"}`.)
 
-`phoenix_kit_staff` is a **hard dependency** — assignment and task schemas reference staff tables for the polymorphic assignee.
+`phoenix_kit_staff` is **optional** — the staff tables are created by core's migrations, and this module maps its own read-only shadow schemas over them for the polymorphic assignee; install staff for the people admin UI.
 
-Also add both apps to `extra_applications` so `PhoenixKit.ModuleDiscovery` finds them:
+Also add the apps to `extra_applications` so `PhoenixKit.ModuleDiscovery` finds them (include `:phoenix_kit_staff` only if you installed it):
 
 ```elixir
 def application do
-  [extra_applications: [:logger, :phoenix_kit, :phoenix_kit_staff, :phoenix_kit_projects]]
+  [extra_applications: [:logger, :phoenix_kit, :phoenix_kit_projects]]
 end
 ```
 

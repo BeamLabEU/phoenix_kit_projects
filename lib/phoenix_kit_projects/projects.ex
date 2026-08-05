@@ -1547,7 +1547,7 @@ defmodule PhoenixKitProjects.Projects do
   """
   @spec list_assignments_for_user(uuid()) :: [Assignment.t()]
   def list_assignments_for_user(user_uuid) do
-    case PhoenixKitStaff.Staff.get_person_by_user_uuid(user_uuid, preload: []) do
+    case PhoenixKitProjects.People.get_person_by_user_uuid(user_uuid, preload: []) do
       nil ->
         []
 

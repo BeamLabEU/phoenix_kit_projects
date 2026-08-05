@@ -17,7 +17,7 @@ defmodule PhoenixKitProjects.MixProject do
         "Projects module for PhoenixKit — projects, reusable tasks, assignments, and dependencies.",
       package: package(),
       dialyzer: [
-        plt_add_apps: [:phoenix_kit, :phoenix_kit_staff],
+        plt_add_apps: [:phoenix_kit],
         ignore_warnings: ".dialyzer_ignore.exs"
       ],
       name: "PhoenixKitProjects",
@@ -35,7 +35,7 @@ defmodule PhoenixKitProjects.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger, :phoenix_kit, :phoenix_kit_staff]]
+    [extra_applications: [:logger, :phoenix_kit]]
   end
 
   def cli do
@@ -84,60 +84,71 @@ defmodule PhoenixKitProjects.MixProject do
   end
 
   defp deps do
-    [
-      # 1.7.184 is the core floor. It still satisfies the earlier floors:
-      # V127 `child_project_uuid` +
-      # V128 project-assignee columns shipped in 1.7.128, V125 for the
-      # workflow-status schema `PhoenixKitProjects.Statuses` requires. 1.7.184
-      # is required for `PhoenixKitWeb.Components.Core.Checkbox`'s
-      # `disabled`/`wrapper_class`/`title`/`:description` support, used by
-      # the module's own hand-rolled-checkbox migration.
-      pk_dep(:phoenix_kit, ">= 1.7.189"),
-      # PhoenixKitAI owns the generic AI-translation pipeline this module's
-      # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
-      # floor — that's the release that actually ships the AI-translation move
-      # (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`);
-      # 0.3.0 predates it and won't compile against this module.
-      pk_dep(:phoenix_kit_ai, "~> 0.4"),
-      pk_dep(:phoenix_kit_staff, "~> 0.1"),
-      pk_dep(:phoenix_kit_comments, "~> 0.2"),
+    # Optional (staff-optional seam): the staff DB tables are created by
+    # CORE (V100), so projects' shadow schemas + FKs work without this
+    # package — it is the people ADMIN surface, not the data's owner. Kept
+    # as a dev/test dep so fixtures using the staff contexts run;
+    # `WITHOUT_STAFF=1 mix compile` drops it entirely — the seam's compile
+    # gate proving no stray hard reference sneaks back in.
+    staff =
+      if System.get_env("WITHOUT_STAFF"),
+        do: [],
+        else: [pk_dep(:phoenix_kit_staff, "~> 0.1", optional: true)]
 
-      # Optional: the entities module is the source/catalog for project
-      # workflow statuses. `optional: true` keeps it out of host closures
-      # (PhoenixKitProjects.Statuses degrades gracefully when it's absent —
-      # mirrors the AI-translation pattern) while making it loadable in this
-      # package's own compile + test build.
-      pk_dep(:phoenix_kit_entities, "~> 0.2", optional: true),
+    staff ++
+      [
+        # 1.7.184 is the core floor. It still satisfies the earlier floors:
+        # V127 `child_project_uuid` +
+        # V128 project-assignee columns shipped in 1.7.128, V125 for the
+        # workflow-status schema `PhoenixKitProjects.Statuses` requires. 1.7.184
+        # is required for `PhoenixKitWeb.Components.Core.Checkbox`'s
+        # `disabled`/`wrapper_class`/`title`/`:description` support, used by
+        # the module's own hand-rolled-checkbox migration.
+        pk_dep(:phoenix_kit, ">= 1.7.189"),
+        # PhoenixKitAI owns the generic AI-translation pipeline this module's
+        # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
+        # floor — that's the release that actually ships the AI-translation move
+        # (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`);
+        # 0.3.0 predates it and won't compile against this module.
+        pk_dep(:phoenix_kit_ai, "~> 0.4"),
+        pk_dep(:phoenix_kit_comments, "~> 0.2"),
 
-      # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
-      # for polymorphic assignee FKs (team / department / person).
-      {:phoenix_live_view, "~> 1.1"},
-      {:ecto_sql, "~> 3.13"},
-      # Gantt/waterfall chart for the project timeline view. 0.4 is the floor —
-      # the timeline + the /admin/settings/projects Timeline config use its
-      # bar-label API (`label_position` :none/:inside/:outside/:fit/:watermark,
-      # `label_side`/`label_overflow`/`label_fit_ratio`/`label_watermark_opacity`),
-      # `row_height`/`min_bar_px`, and the arrow-aware label placement added in
-      # 0.4.0. Hex by default (publish-safe); export
-      # PHOENIX_LIVE_GANTT_PATH=../phoenix_live_gantt to build against a local checkout.
-      pk_dep(:phoenix_live_gantt, "~> 0.4"),
-      # Calendar/scheduling component used by the Overview dashboard to show all
-      # projects as ongoing multi-day bars on a month grid. Hex by default
-      # (publish-safe); export PHOENIX_LIVE_CALENDAR_PATH=../phoenix_live_calendar
-      # to build against a local checkout.
-      pk_dep(:phoenix_live_calendar, "~> 0.3"),
-      # Already transitive via :phoenix_kit, but pinned explicitly here so
-      # `mix gettext.extract` / `mix gettext.merge` run against this app's
-      # own `PhoenixKitProjects.Gettext` backend (call sites for project-
-      # domain strings; common strings still resolve via core's backend).
-      {:gettext, "~> 0.26 or ~> 1.0"},
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
-      # `Phoenix.LiveViewTest` parses HTML via `lazy_html` for `element/2`,
-      # `render(view) =~ "..."`, etc. Test-only.
-      {:lazy_html, ">= 0.1.0", only: :test}
-    ]
+        # Optional: the entities module is the source/catalog for project
+        # workflow statuses. `optional: true` keeps it out of host closures
+        # (PhoenixKitProjects.Statuses degrades gracefully when it's absent —
+        # mirrors the AI-translation pattern) while making it loadable in this
+        # package's own compile + test build.
+        pk_dep(:phoenix_kit_entities, "~> 0.2", optional: true),
+
+        # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
+        # for polymorphic assignee FKs (team / department / person).
+        {:phoenix_live_view, "~> 1.1"},
+        {:ecto_sql, "~> 3.13"},
+        # Gantt/waterfall chart for the project timeline view. 0.4 is the floor —
+        # the timeline + the /admin/settings/projects Timeline config use its
+        # bar-label API (`label_position` :none/:inside/:outside/:fit/:watermark,
+        # `label_side`/`label_overflow`/`label_fit_ratio`/`label_watermark_opacity`),
+        # `row_height`/`min_bar_px`, and the arrow-aware label placement added in
+        # 0.4.0. Hex by default (publish-safe); export
+        # PHOENIX_LIVE_GANTT_PATH=../phoenix_live_gantt to build against a local checkout.
+        pk_dep(:phoenix_live_gantt, "~> 0.4"),
+        # Calendar/scheduling component used by the Overview dashboard to show all
+        # projects as ongoing multi-day bars on a month grid. Hex by default
+        # (publish-safe); export PHOENIX_LIVE_CALENDAR_PATH=../phoenix_live_calendar
+        # to build against a local checkout.
+        pk_dep(:phoenix_live_calendar, "~> 0.3"),
+        # Already transitive via :phoenix_kit, but pinned explicitly here so
+        # `mix gettext.extract` / `mix gettext.merge` run against this app's
+        # own `PhoenixKitProjects.Gettext` backend (call sites for project-
+        # domain strings; common strings still resolve via core's backend).
+        {:gettext, "~> 0.26 or ~> 1.0"},
+        {:ex_doc, "~> 0.34", only: :dev, runtime: false},
+        {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+        {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+        # `Phoenix.LiveViewTest` parses HTML via `lazy_html` for `element/2`,
+        # `render(view) =~ "..."`, etc. Test-only.
+        {:lazy_html, ">= 0.1.0", only: :test}
+      ]
   end
 
   defp package do

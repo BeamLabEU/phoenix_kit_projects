@@ -431,7 +431,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp load_teams do
-    PhoenixKitStaff.Teams.list() |> Enum.map(&{"#{&1.name} (#{&1.department.name})", &1.uuid})
+    PhoenixKitProjects.People.list_teams()
+    |> Enum.map(&{"#{&1.name} (#{&1.department.name})", &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Projects] load_teams failed: #{Exception.message(e)}")
@@ -439,7 +440,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp load_departments do
-    PhoenixKitStaff.Departments.list() |> Enum.map(&{&1.name, &1.uuid})
+    PhoenixKitProjects.People.list_departments() |> Enum.map(&{&1.name, &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Projects] load_departments failed: #{Exception.message(e)}")
@@ -447,7 +448,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp load_people do
-    PhoenixKitStaff.Staff.list_people()
+    PhoenixKitProjects.People.list_people()
     |> Enum.map(&{(&1.user && &1.user.email) || "—", &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->

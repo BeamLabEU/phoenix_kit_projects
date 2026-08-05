@@ -15,7 +15,7 @@ config :phoenix_kit_projects, PhoenixKitProjects.Test.Repo,
 # Wire repo for PhoenixKit.RepoHelper — without this, context-layer DB calls crash.
 config :phoenix_kit, repo: PhoenixKitProjects.Test.Repo
 
-# Wire staff repo too — Projects has a hard dep on staff and goes through
+# Wire staff repo too — Projects has a dev/test dep on staff (optional at runtime — the seam) and goes through
 # `PhoenixKitStaff.Staff.get_person_by_user_uuid/2` etc.
 config :phoenix_kit_staff, repo: PhoenixKitProjects.Test.Repo
 

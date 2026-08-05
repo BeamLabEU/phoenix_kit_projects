@@ -15,7 +15,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.Schemas.{Dependency, Project, Task}
-  alias PhoenixKitStaff.Schemas.{Department, Person, Team}
+  # SHADOW schemas (staff-optional seam): projects' own read-only
+  # mappings over the core-owned staff tables — see PhoenixKitProjects.People.
+  alias PhoenixKitProjects.People.{Department, Person, Team}
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
   @foreign_key_type UUIDv7

@@ -21,7 +21,9 @@ defmodule PhoenixKitProjects.Schemas.Project do
   import Ecto.Changeset
 
   alias PhoenixKitProjects.{L10n, Schemas.Assignment}
-  alias PhoenixKitStaff.Schemas.{Department, Person, Team}
+  # SHADOW schemas (staff-optional seam): projects' own read-only
+  # mappings over the core-owned staff tables — see PhoenixKitProjects.People.
+  alias PhoenixKitProjects.People.{Department, Person, Team}
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
   @foreign_key_type UUIDv7

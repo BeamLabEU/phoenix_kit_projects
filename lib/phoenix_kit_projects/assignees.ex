@@ -28,8 +28,11 @@ defmodule PhoenixKitProjects.Assignees do
   import Ecto.Query
 
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
-  alias PhoenixKitStaff.Schemas.{Department, Person, Team, TeamMembership}
-  alias PhoenixKitStaff.Staff
+  # SHADOW schemas + the People doorway (staff-optional seam) — the
+  # direct Ecto queries below run over projects' own read-only mappings
+  # of the core-owned staff tables; the staff PACKAGE is not required.
+  alias PhoenixKitProjects.People
+  alias PhoenixKitProjects.People.{Person, Team, TeamMembership}
 
   require Logger
 
@@ -53,7 +56,7 @@ defmodule PhoenixKitProjects.Assignees do
   """
   @spec scope_for_person(String.t(), String.t() | nil) :: scope() | nil
   def scope_for_person(person_uuid, lang \\ nil) when is_binary(person_uuid) do
-    case Staff.get_person(person_uuid, preload: [:user, :primary_department]) do
+    case People.get_person(person_uuid, preload: [:user, :primary_department]) do
       nil -> nil
       person -> build_scope(person, lang)
     end
@@ -74,7 +77,7 @@ defmodule PhoenixKitProjects.Assignees do
   def scope_for_user(nil, _lang), do: nil
 
   def scope_for_user(user_uuid, lang) when is_binary(user_uuid) do
-    case Staff.get_person_by_user_uuid(user_uuid, preload: []) do
+    case People.get_person_by_user_uuid(user_uuid, preload: []) do
       nil -> nil
       person -> scope_for_person(person.uuid, lang)
     end
@@ -272,7 +275,7 @@ defmodule PhoenixKitProjects.Assignees do
   defp build_scope(person, lang) do
     memberships =
       try do
-        Staff.list_memberships_for_person(person.uuid)
+        People.list_memberships_for_person(person.uuid)
       rescue
         e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
           Logger.warning(
@@ -285,7 +288,7 @@ defmodule PhoenixKitProjects.Assignees do
     teams = memberships |> Enum.map(& &1.team) |> Enum.reject(&is_nil/1)
 
     team_names =
-      Map.new(teams, fn t -> {t.uuid, Team.localized_name(t, lang)} end)
+      Map.new(teams, fn t -> {t.uuid, People.localized_name(t, lang)} end)
 
     departments =
       teams
@@ -300,12 +303,12 @@ defmodule PhoenixKitProjects.Assignees do
 
     department_names =
       Map.new(departments, fn d ->
-        {d.uuid, Department.localized_name(d, lang)}
+        {d.uuid, People.localized_name(d, lang)}
       end)
 
     %{
       person_uuid: person.uuid,
-      person_name: Person.display_name(person),
+      person_name: People.display_name(person),
       team_names: team_names,
       department_names: department_names
     }

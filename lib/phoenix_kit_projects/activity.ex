@@ -78,7 +78,7 @@ defmodule PhoenixKitProjects.Activity do
 
   def assignee_target_uuid(%{assigned_person_uuid: person_uuid})
       when is_binary(person_uuid) do
-    case PhoenixKitStaff.Staff.get_person(person_uuid) do
+    case PhoenixKitProjects.People.get_person(person_uuid, preload: []) do
       %{user_uuid: user_uuid} when is_binary(user_uuid) -> user_uuid
       _ -> nil
     end
