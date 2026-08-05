@@ -75,12 +75,18 @@ defmodule PhoenixKitProjects.People do
     _ -> nil
   end
 
-  @doc "The person linked to a core user, or nil."
+  @doc """
+  The person linked to a core user, or nil. STAFF-PARITY: resolves
+  trashed people too (soft-delete keeps assignments/memberships live so
+  restore is clean — filtering here blanked My Tasks and the Me chip for
+  the whole trash→restore window; panel round). Only LISTINGS exclude
+  trashed.
+  """
   @spec get_person_by_user_uuid(binary(), keyword()) :: Person.t() | nil
   def get_person_by_user_uuid(user_uuid, opts \\ []) do
     preload = Keyword.get(opts, :preload, [])
 
-    from(p in Person, where: p.user_uuid == ^user_uuid and p.status != @trashed)
+    from(p in Person, where: p.user_uuid == ^user_uuid)
     |> preload(^preload)
     |> RepoHelper.repo().one()
   rescue

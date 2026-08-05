@@ -190,4 +190,30 @@ defmodule PhoenixKitProjects.Integration.PeopleSeamTest do
     # user → person reverse lookup (the "Me" chip / my-tasks path).
     assert People.get_person_by_user_uuid(user.uuid).uuid == named
   end
+
+  # Panel round on the seam implementation (Grok MEDIUM + ZAI): the
+  # doorway had quietly ADDED a trashed filter to the reverse lookup that
+  # staff never had — a soft-deleted person lost My Tasks / the Me chip
+  # for the whole trash→restore window. Staff-parity: by-uuid and
+  # by-user-uuid lookups RESOLVE trashed people; only LISTINGS exclude.
+  test "PARITY: trashed people still resolve by uuid and by user uuid" do
+    user = user_fixture()
+    person = raw_person(%{name: "Benched", status: "trashed", user_uuid: user.uuid})
+
+    assert People.get_person(person).uuid == person
+    assert People.get_person_by_user_uuid(user.uuid).uuid == person
+    refute Enum.any?(People.list_people(), &(&1.uuid == person))
+  end
+
+  test "PARITY: display_name prefers the user's first/last over email" do
+    user = user_fixture()
+
+    {:ok, _} =
+      user
+      |> Ecto.Changeset.change(first_name: "Ada", last_name: "Lovelace")
+      |> RepoHelper.repo().update()
+
+    nameless = raw_person(%{user_uuid: user.uuid})
+    assert People.display_name(People.get_person(nameless)) == "Ada Lovelace"
+  end
 end
