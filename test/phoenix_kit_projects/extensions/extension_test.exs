@@ -114,22 +114,17 @@ defmodule PhoenixKitProjects.Extensions.ExtensionTest do
     end
 
     test "unknown string keys never mint atoms" do
-      before = :erlang.system_info(:atom_count)
+      # Assert the property DIRECTLY: after from_map processes an unknown
+      # string key, that key must still not exist as an atom. (A previous
+      # version measured the GLOBAL atom-count delta, which is order-fragile
+      # — any module lazily loaded elsewhere during the window mints its
+      # atoms and fails the test under unlucky suite compositions.)
+      novel = "totally_novel_key_#{System.unique_integer([:positive])}"
 
       assert {:ok, _} =
-               Extension.from_map(
-                 %{
-                   "key" => "t",
-                   "name" => "T",
-                   "totally_novel_key_#{System.unique_integer([:positive])}" => 1
-                 },
-                 __MODULE__
-               )
+               Extension.from_map(%{"key" => "t", "name" => "T", novel => 1}, __MODULE__)
 
-      # to_atom_key uses String.to_existing_atom with a fallback sentinel —
-      # the delta accounts only for atoms the test string itself interned via
-      # this assertion's setup, so allow a tiny slack rather than exact zero.
-      assert :erlang.system_info(:atom_count) - before <= 2
+      assert_raise ArgumentError, fn -> String.to_existing_atom(novel) end
     end
   end
 

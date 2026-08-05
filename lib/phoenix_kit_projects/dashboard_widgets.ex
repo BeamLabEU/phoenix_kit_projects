@@ -57,7 +57,12 @@ defmodule PhoenixKitProjects.DashboardWidgets do
     # select — log like every other DB-read resilience rescue in this
     # module. Scoped to DB errors only, not a bare rescue: a genuine
     # programming error here should surface, not degrade-and-log.
-    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+    e in [
+      Postgrex.Error,
+      DBConnection.ConnectionError,
+      DBConnection.OwnershipError,
+      Ecto.QueryError
+    ] ->
       require Logger
       Logger.warning("[DashboardWidgets] project_options failed: #{Exception.message(e)}")
       [{"First running project", ""}]
