@@ -63,6 +63,12 @@ defmodule PhoenixKitProjects.Paths do
   @doc "Per-project Members page."
   @spec members(String.t()) :: String.t()
   def members(id), do: Routes.path("#{@base}/list/#{id}/members")
+  @doc "Per-project Files page."
+  @spec files(String.t()) :: String.t()
+  def files(id), do: Routes.path("#{@base}/list/#{id}/files")
+  @doc "Per-project Activity page."
+  @spec activity(String.t()) :: String.t()
+  def activity(id), do: Routes.path("#{@base}/list/#{id}/activity")
 
   # Assignments (within a project)
   @doc "New-assignment form nested under a project."

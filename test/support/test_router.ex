@@ -42,6 +42,8 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/list/:id/edit", ProjectFormLive, :edit)
       live("/list/:id/modules", ProjectModulesLive, :edit)
       live("/list/:id/members", ProjectMembersLive, :edit)
+      live("/list/:id/files", ProjectFilesLive, :edit)
+      live("/list/:id/activity", ProjectActivityLive, :index)
 
       live("/list/:project_id/assignments/new", AssignmentFormLive, :new)
       live("/list/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)

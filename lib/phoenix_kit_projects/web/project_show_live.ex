@@ -42,7 +42,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # "Post Comment" silently submits empty content. comments is a hard dep here.
   use PhoenixKitComments.Embed
 
-  alias PhoenixKitProjects.{Activity, Features, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{
+    Activity,
+    Authz,
+    Extensions,
+    Features,
+    Health,
+    L10n,
+    Paths,
+    Projects,
+    Statuses
+  }
+
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
@@ -111,6 +122,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        page_title: "",
        project: %Project{},
        fx: Features.default_gates(),
+       fx_files: true,
+       health: nil,
+       health_modal_open: false,
        is_template: false,
        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
        router_mounted?: false,
@@ -172,6 +186,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            page_title: "",
            project: %Project{},
            fx: Features.default_gates(),
+           fx_files: true,
+           health: nil,
+           health_modal_open: false,
            is_template: false,
            wrapper_class: @default_wrapper_class,
            router_mounted?: false,
@@ -231,7 +248,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         # The hub gate map (@fx): tasks extension + per-project feature
         # flags, one resolved lookup for every render/event guard below.
         # Rebuilt on :project_features_changed / :project_modules_changed.
+        # @fx_files is the second built-in extension's gate (its surface is
+        # its own page — only the menu link renders here).
         fx = Features.gates(project)
+        fx_files = Extensions.enabled?(project, "files")
 
         active_tab = tab_for_action(socket, is_template) |> gate_tab(fx)
 
@@ -259,6 +279,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             current_status: current_status,
             project: project,
             fx: fx,
+            fx_files: fx_files,
+            health: Health.get(project),
+            health_modal_open: false,
             is_template: is_template,
             wrapper_class: wrapper_class,
             # Tab state. The tab bar renders in every context now (only
@@ -345,7 +368,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         {:noreply, socket}
 
       p ->
-        {:noreply, socket |> assign(project: p) |> refresh_status_state() |> load_assignments()}
+        {:noreply,
+         socket
+         |> assign(project: p, health: Health.get(p))
+         |> refresh_status_state()
+         |> load_assignments()}
     end
   end
 
@@ -357,7 +384,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # parked on a tab that no longer exists).
     fx = Features.gates(socket.assigns.project)
 
-    {:noreply, assign(socket, fx: fx, active_tab: gate_tab(socket.assigns.active_tab, fx))}
+    {:noreply,
+     assign(socket,
+       fx: fx,
+       fx_files: Extensions.enabled?(socket.assigns.project, "files"),
+       active_tab: gate_tab(socket.assigns.active_tab, fx)
+     )}
   end
 
   def handle_info({:projects, :project_deleted, _payload}, socket) do
@@ -1234,6 +1266,41 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Falls through to a no-op for projects already started — defensive
   # against double-clicks racing the LV's render of the now-hidden
   # button.
+  # ── Health (P2b — the hub's manual "Needle") ─────────────────────
+
+  defp gated_handle_event("open_health_modal", _params, socket) do
+    {:noreply, assign(socket, health_modal_open: true)}
+  end
+
+  defp gated_handle_event("close_health_modal", _params, socket) do
+    {:noreply, assign(socket, health_modal_open: false)}
+  end
+
+  defp gated_handle_event("save_health", %{"status" => status} = params, socket) do
+    if Authz.can?(socket.assigns[:phoenix_kit_current_scope], socket.assigns.project, :set_health) do
+      case Health.set(socket.assigns.project, status, Map.get(params, "note"),
+             actor_uuid: Activity.actor_uuid(socket)
+           ) do
+        {:ok, project} ->
+          {:noreply,
+           assign(socket,
+             project: project,
+             health: Health.get(project),
+             health_modal_open: false
+           )}
+
+        {:error, :invalid_status} ->
+          {:noreply, put_flash(socket, :error, gettext("Pick a health status."))}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, gettext("Could not update the health."))}
+      end
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("You don't have permission to set the health."))}
+    end
+  end
+
   defp gated_handle_event("open_start_modal", _params, socket) do
     if socket.assigns.project.started_at do
       {:noreply, socket}
@@ -1485,6 +1552,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # embedded (nil live_action) mount all default to the list. Templates never
   # expose the alternate views, so they pin to `:list` even on the `/gantt` /
   # `/calendar` routes (the tab bar + both nested LVs are `not @is_template`).
+  # Health labels through gettext (Health.label/1 returns the msgid — the
+  # translation happens at the caller under this module's backend).
+  defp health_label("on_track"), do: gettext("On track")
+  defp health_label("some_risk"), do: gettext("Some risk")
+  defp health_label("concerned"), do: gettext("Concerned")
+  defp health_label(other), do: other
+
   # A tab whose view flag is off resolves to :list — applied to the mount's
   # route-derived tab (a bookmarked /gantt URL on a timeline-off project) and
   # on live gate changes.
@@ -1974,6 +2048,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 icon="hero-users"
                 label={gettext("Members")}
               />
+              <.smart_menu_link
+                :if={not @is_template and @fx_files}
+                navigate={Paths.files(@project.uuid)}
+                emit={{PhoenixKitProjects.Web.ProjectFilesLive, %{"id" => @project.uuid}}}
+                embed_mode={@embed_mode}
+                icon="hero-paper-clip"
+                label={gettext("Files")}
+              />
+              <.smart_menu_link
+                :if={not @is_template}
+                navigate={Paths.activity(@project.uuid)}
+                emit={{PhoenixKitProjects.Web.ProjectActivityLive, %{"id" => @project.uuid}}}
+                embed_mode={@embed_mode}
+                icon="hero-clock"
+                label={gettext("Activity")}
+              />
+              <.table_row_menu_button
+                :if={not @is_template}
+                phx-click="open_health_modal"
+                icon="hero-heart"
+                label={gettext("Set health")}
+              />
               <%= if not @is_template do %>
                 <.table_row_menu_divider />
                 <%= if @project.archived_at do %>
@@ -2075,6 +2171,71 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </button>
         <% end %>
       </div>
+
+      <%!-- Health strip — the hub's manual "Needle" (P2b): a human judgment
+           with a note, never auto-computed. Click-through opens the modal. --%>
+      <div
+        :if={not @is_template and @health}
+        class={["alert py-2 px-4", Health.color_class(@health["status"])]}
+      >
+        <.icon name="hero-heart" class="w-4 h-4" />
+        <div class="flex flex-wrap items-baseline gap-2 min-w-0">
+          <span class="font-medium text-sm">{health_label(@health["status"])}</span>
+          <span :if={@health["note"]} class="text-sm opacity-80 truncate">{@health["note"]}</span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-xs ml-auto" phx-click="open_health_modal">
+          {gettext("Update")}
+        </button>
+      </div>
+
+      <%!-- Health modal --%>
+      <%= if @health_modal_open do %>
+        <dialog open class="modal modal-open" phx-window-keydown="close_health_modal" phx-key="Escape">
+          <div class="modal-box max-w-md">
+            <h3 class="font-bold text-lg">{gettext("Project health")}</h3>
+            <p class="text-sm text-base-content/70 mt-1">
+              {gettext("Your judgment, not a computed number — how does this project feel right now?")}
+            </p>
+            <form phx-submit="save_health" class="flex flex-col gap-3 mt-4">
+              <div class="flex flex-col gap-2">
+                <label
+                  :for={status <- Health.statuses()}
+                  class="flex items-center gap-3 cursor-pointer rounded-lg border border-base-200 px-3 py-2 hover:bg-base-200"
+                >
+                  <input
+                    type="radio"
+                    name="status"
+                    value={status}
+                    checked={@health && @health["status"] == status}
+                    class="radio radio-sm"
+                    required
+                  />
+                  <span class="text-sm font-medium">{health_label(status)}</span>
+                </label>
+              </div>
+              <label class="form-control">
+                <span class="label-text text-xs opacity-70 mb-1">{gettext("Note (optional)")}</span>
+                <textarea
+                  name="note"
+                  rows="2"
+                  class="textarea textarea-bordered textarea-sm"
+                  placeholder={gettext("What's behind this call?")}
+                >{@health && @health["note"]}</textarea>
+              </label>
+              <div class="modal-action">
+                <button type="button" phx-click="close_health_modal" class="btn btn-ghost btn-sm">
+                  {gettext("Cancel")}
+                </button>
+                <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
+                  {gettext("Save")}
+                </button>
+              </div>
+            </form>
+          </div>
+          <button type="button" phx-click="close_health_modal" class="modal-backdrop" aria-label={gettext("Close")}>
+          </button>
+        </dialog>
+      <% end %>
 
       <%!-- Schedule summary + progress as ONE card: the progress bar is the
            card's bottom edge (a thin flush strip), so the two read as a unit. --%>

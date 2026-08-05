@@ -269,6 +269,30 @@ defmodule PhoenixKitProjects do
 
     hidden_subtabs = [
       %Tab{
+        id: :admin_projects_files,
+        label: "Project Files",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/:id/files",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectFilesLive, :edit}
+      },
+      %Tab{
+        id: :admin_projects_activity,
+        label: "Project Activity",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/:id/activity",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectActivityLive, :index}
+      },
+      %Tab{
         id: :admin_projects_members,
         label: "Project Members",
         gettext_backend: PhoenixKitProjects.Gettext,
