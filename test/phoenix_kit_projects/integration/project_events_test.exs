@@ -65,6 +65,18 @@ defmodule PhoenixKitProjects.Integration.ProjectEventsTest do
     assert %{title: _} = errors_on(changeset)
   end
 
+  # Panel round (Gemini): update_change(:title, &String.trim/1) raised a
+  # FunctionClauseError when a caller nil'd the title — cast records the
+  # nil change, then trim(nil) crashes instead of the required-validation
+  # answering.
+  test "nil'ing the title errors instead of crashing", %{project: project} do
+    {:ok, event} =
+      ProjectEvents.create(project, %{title: "Solid", starts_at: dt("2026-08-10T00:00:00Z")})
+
+    assert {:error, changeset} = ProjectEvents.update(event, %{title: nil})
+    assert %{title: _} = errors_on(changeset)
+  end
+
   test "list bounds and ordering", %{project: project} do
     {:ok, _a} =
       ProjectEvents.create(project, %{title: "A", starts_at: dt("2026-08-01T00:00:00Z")})

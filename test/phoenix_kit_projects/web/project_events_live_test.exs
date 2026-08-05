@@ -113,6 +113,61 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLiveTest do
     assert ProjectEvents.list_for_project(project.uuid) == []
   end
 
+  # Panel round (Grok): three real defects pinned below.
+
+  test "an all-day event TODAY stays in Upcoming all day", %{conn: conn, project: project} do
+    {:ok, _} =
+      ProjectEvents.create(project, %{
+        title: "Company picnic",
+        starts_at: DateTime.new!(Date.utc_today(), ~T[00:00:00], "Etc/UTC"),
+        all_day: true
+      })
+
+    {:ok, _view, html} = mount_tab(conn, project)
+
+    # It's the only event: if the midnight comparison dropped it, the
+    # Upcoming section would fall back to the empty state.
+    refute html =~ "Nothing scheduled."
+    assert html =~ "Company picnic"
+  end
+
+  test "a timed end WITHOUT an end date persists on the start date",
+       %{conn: conn, project: project} do
+    {:ok, view, _} = mount_tab(conn, project)
+
+    render_submit(view, "create_event", %{
+      "title" => "Standup",
+      "date" => "2026-08-21",
+      "end_date" => "",
+      "all_day" => "false",
+      "start_time" => "09:00",
+      "end_time" => "10:00",
+      "location" => "",
+      "description" => ""
+    })
+
+    assert [event] = ProjectEvents.list_for_project(project.uuid)
+    assert event.ends_at == elem(DateTime.from_iso8601("2026-08-21T10:00:00Z"), 1)
+  end
+
+  test "a PubSub delete clears a stale open detail panel", %{conn: conn, project: project} do
+    {:ok, event} =
+      ProjectEvents.create(project, %{
+        title: "Doomed",
+        starts_at: DateTime.add(DateTime.utc_now(), 3600, :second)
+      })
+
+    {:ok, view, _} = mount_tab(conn, project)
+    html = render_click(view, "select_event", %{"uuid" => event.uuid})
+    assert html =~ "modal-open"
+
+    # Another session deletes it; the broadcast must close the panel.
+    :ok = ProjectEvents.delete(event)
+    send(view.pid, {:projects, :project_event_deleted, %{uuid: project.uuid}})
+
+    refute render(view) =~ "modal-open"
+  end
+
   test "detail panel opens from the upcoming list and delete removes the event",
        %{conn: conn, project: project} do
     {:ok, event} =

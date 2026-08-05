@@ -52,7 +52,16 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   @impl true
   def handle_info({:projects, event, _payload}, socket)
       when event in [:project_event_created, :project_event_updated, :project_event_deleted] do
-    {:noreply, load_events(socket)}
+    # Re-resolve the open detail panel too: another session may have
+    # updated or DELETED the selected event — a stale struct kept a dead
+    # modal open (panel round, Grok).
+    selected =
+      case {socket.assigns.project, socket.assigns.selected} do
+        {%{} = project, %{uuid: uuid}} -> ProjectEvents.get(project.uuid, uuid)
+        _ -> nil
+      end
+
+    {:noreply, socket |> load_events() |> assign(selected: selected)}
   end
 
   # The calendar component's callbacks arrive as messages.
@@ -147,19 +156,31 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
       project ->
         events = ProjectEvents.list_for_project(project.uuid)
         now = DateTime.utc_now()
+        today = Date.utc_today()
 
         assign(socket,
           events: events,
           calendar_events: Enum.map(events, &to_calendar_event/1),
           upcoming:
             events
-            |> Enum.filter(&(DateTime.compare(latest_moment(&1), now) != :lt))
+            |> Enum.filter(&still_upcoming?(&1, now, today))
             |> Enum.take(10)
         )
     end
   end
 
-  defp latest_moment(%ProjectEvent{} = e), do: e.ends_at || e.starts_at
+  # All-day moments are stored as midnights, so a raw DateTime compare
+  # dropped an all-day event from Upcoming for its ENTIRE active day
+  # (panel round, Grok) — compare by date instead; timed events keep the
+  # instant comparison.
+  defp still_upcoming?(%ProjectEvent{all_day: true} = e, _now, today) do
+    last_day = DateTime.to_date(e.ends_at || e.starts_at)
+    Date.compare(last_day, today) != :lt
+  end
+
+  defp still_upcoming?(%ProjectEvent{} = e, now, _today) do
+    DateTime.compare(e.ends_at || e.starts_at, now) != :lt
+  end
 
   # Month-grid mapping: all-day events span their date range as bars
   # (exclusive end, per the calendar lib); timed events are chips with an
@@ -200,11 +221,19 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
     all_day = params["all_day"] in ["true", "on"]
     starts_at = parse_moment(params["date"], params["start_time"], all_day)
 
-    ends_at =
-      case parse_moment(params["end_date"], params["end_time"], all_day) do
-        nil -> nil
-        dt -> dt
+    # A timed end WITHOUT an end date means "same day": the form labels
+    # End date optional, so 09:00–10:00 on one day silently persisted as
+    # open-ended before (panel round, Grok).
+    end_date =
+      case blank_to_nil(params["end_date"]) do
+        nil ->
+          if not all_day and blank_to_nil(params["end_time"]), do: params["date"]
+
+        d ->
+          d
       end
+
+    ends_at = parse_moment(end_date, params["end_time"], all_day)
 
     %{
       title: params["title"],

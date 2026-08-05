@@ -172,7 +172,9 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
       before_count = user_file_count(user)
 
       assert {:error, _} = Whiteboards.create(project, "   ", actor_uuid: user.uuid)
-      assert {:error, _} = Whiteboards.create(project, String.duplicate("x", 200), actor_uuid: user.uuid)
+
+      assert {:error, _} =
+               Whiteboards.create(project, String.duplicate("x", 200), actor_uuid: user.uuid)
 
       assert Whiteboards.list_for_project(project.uuid) == []
       assert user_file_count(user) == before_count
@@ -198,6 +200,15 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
       assert {:ok, renamed} = Whiteboards.rename(board, "New name", actor_uuid: user.uuid)
       assert renamed.name == "New name"
       assert_activity_logged("projects.whiteboard_renamed", resource_uuid: project.uuid)
+    end
+
+    test "nil'ing the name errors instead of crashing (same trim trap)",
+         %{project: project, user: user} do
+      file = fixture_file(user)
+      {:ok, board} = Whiteboards.create_board_for_file(project, file.uuid, %{name: "Solid"})
+
+      assert {:error, changeset} = Whiteboards.rename(board, nil)
+      assert %{name: _} = errors_on(changeset)
     end
 
     test "delete removes the ROW and keeps the file", %{project: project, user: user} do
