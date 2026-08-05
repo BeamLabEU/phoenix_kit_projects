@@ -42,7 +42,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # "Post Comment" silently submits empty content. comments is a hard dep here.
   use PhoenixKitComments.Embed
 
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Features, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
@@ -110,6 +110,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
      |> assign(
        page_title: "",
        project: %Project{},
+       fx: Features.default_gates(),
        is_template: false,
        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
        router_mounted?: false,
@@ -170,6 +171,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          |> assign(
            page_title: "",
            project: %Project{},
+           fx: Features.default_gates(),
            is_template: false,
            wrapper_class: @default_wrapper_class,
            router_mounted?: false,
@@ -226,7 +228,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         # Templates have no tabs/gantt (both are `not @is_template`), so a template
         # uuid reached via the `/list/:id/gantt` route falls back to the list —
         # otherwise both the list and the gantt would render hidden (blank page).
-        active_tab = tab_for_action(socket, is_template)
+        # The hub gate map (@fx): tasks extension + per-project feature
+        # flags, one resolved lookup for every render/event guard below.
+        # Rebuilt on :project_features_changed / :project_modules_changed.
+        fx = Features.gates(project)
+
+        active_tab = tab_for_action(socket, is_template) |> gate_tab(fx)
 
         # Resolve the workflow-status list once (read-only — nothing is
         # provisioned or seeded here; an unset shared default simply yields
@@ -251,6 +258,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             status_options: status_options,
             current_status: current_status,
             project: project,
+            fx: fx,
             is_template: is_template,
             wrapper_class: wrapper_class,
             # Tab state. The tab bar renders in every context now (only
@@ -339,6 +347,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       p ->
         {:noreply, socket |> assign(project: p) |> refresh_status_state() |> load_assignments()}
     end
+  end
+
+  def handle_info({:projects, event, _payload}, socket)
+      when event in [:project_features_changed, :project_modules_changed] do
+    # The Modules & Features panel (this session or any other) changed the
+    # hub configuration — rebuild the gate map and re-gate the active tab
+    # (a live view_timeline/view_calendar turn-off must not leave the user
+    # parked on a tab that no longer exists).
+    fx = Features.gates(socket.assigns.project)
+
+    {:noreply, assign(socket, fx: fx, active_tab: gate_tab(socket.assigns.active_tab, fx))}
   end
 
   def handle_info({:projects, :project_deleted, _payload}, socket) do
@@ -603,6 +622,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:draggable, :boolean, default: true)
   attr(:is_template, :boolean, required: true)
   attr(:project, :map, required: true)
+  # The hub gate map (@fx) — chips inside the card are feature-gated.
+  attr(:fx, :map, required: true)
   attr(:embed_mode, :atom, required: true)
   attr(:editing_duration_uuid, :string, default: nil)
   attr(:comments_enabled, :boolean, default: false)
@@ -697,9 +718,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <% shown_desc = Assignment.localized_description(@a, lang) || TaskSchema.localized_description(@a.task, lang) %>
           <div :if={shown_desc} class="text-xs text-base-content/60">{shown_desc}</div>
 
-          <%!-- Meta row: duration, assignee, completed by --%>
+          <%!-- Meta row: duration, assignee, completed by. Each chip is
+               feature-gated via @fx (Step 4 enforcement threading). --%>
           <div class="flex flex-wrap items-center gap-2 text-xs">
-            <%= if @editing_duration_uuid == @a.uuid do %>
+            <%= if @fx.estimates and @editing_duration_uuid == @a.uuid do %>
               <% prefill_dur = @a.estimated_duration || @a.task.estimated_duration %>
               <% prefill_unit = @a.estimated_duration_unit || @a.task.estimated_duration_unit || "hours" %>
               <form phx-submit="save_duration" class="flex items-center gap-1">
@@ -716,6 +738,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% else %>
               <% dur = format_duration(@a) %>
               <button
+                :if={@fx.estimates}
                 phx-click="edit_duration"
                 phx-value-uuid={@a.uuid}
                 class={[
@@ -730,12 +753,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% end %>
 
             <% atype = assignee_type(@a) %>
-            <span :if={atype} class="badge badge-outline badge-sm gap-1">
+            <span :if={@fx.assignees and atype} class="badge badge-outline badge-sm gap-1">
               <.icon name="hero-user" class="w-3 h-3" /> {atype}: {assignee_label(@a)}
             </span>
 
             <% weekends? = task_counts_weekends?(@a, @project) %>
-            <span class={"badge badge-sm gap-1 #{if weekends?, do: "badge-info badge-outline", else: "badge-ghost"}"}>
+            <span
+              :if={@fx.scheduling}
+              class={"badge badge-sm gap-1 #{if weekends?, do: "badge-info badge-outline", else: "badge-ghost"}"}
+            >
               <%= if weekends? do %>
                 <.icon name="hero-calendar" class="w-3 h-3" /> {gettext("incl. weekends")}
               <% else %>
@@ -743,7 +769,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <% end %>
             </span>
 
-            <%= if not @is_template do %>
+            <%= if @fx.progress and not @is_template do %>
               <%= if @a.track_progress do %>
                 <.form for={%{}} phx-change="update_progress" class="flex items-center gap-1">
                   <input type="hidden" name="uuid" value={@a.uuid} />
@@ -770,7 +796,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
           <%!-- Dependencies --%>
           <% deps = Map.get(@deps_by_assignment, @a.uuid, []) %>
-          <div :if={deps != []} class="flex flex-wrap gap-1 mt-1">
+          <div :if={@fx.dependencies and deps != []} class="flex flex-wrap gap-1 mt-1">
             <%= for dep <- deps do %>
               <span class="badge badge-outline badge-xs gap-1">
                 <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
@@ -823,12 +849,52 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # anyway; gating it server-side keeps the intent explicit. The hook receives
   # the VALIDATED tab name (never the raw param), so it can't be steered into
   # writing an arbitrary URL suffix.
+  # ── Hub feature gating (Step 4 enforcement threading) ─────────────
+  #
+  # Every mutating event that belongs to a per-project-toggleable feature
+  # routes through ONE fail-closed interceptor: event → owning gate in
+  # @gated_events, checked against the resolved @fx map, refused with a
+  # flash when off. The real handlers are `gated_handle_event/3` — a
+  # forged client event can't reach them around the gate. UI hiding is
+  # the courtesy; THIS is the enforcement.
+  @gated_events %{
+    "complete" => :tasks,
+    "start_task" => :tasks,
+    "reopen" => :tasks,
+    "remove_assignment" => :tasks,
+    "reorder_assignments" => :tasks,
+    "edit_duration" => :estimates,
+    "save_duration" => :estimates,
+    "update_progress" => :progress,
+    "toggle_tracking" => :progress,
+    "remove_dependency" => :dependencies,
+    "change_workflow_status" => :statuses,
+    "detach_subproject" => :subprojects
+  }
+
   @impl true
-  def handle_event("switch_tab", %{"tab" => tab} = params, socket) do
+  def handle_event(event, params, socket) do
+    case Map.get(@gated_events, event) do
+      nil ->
+        gated_handle_event(event, params, socket)
+
+      gate ->
+        if socket.assigns.fx[gate] do
+          gated_handle_event(event, params, socket)
+        else
+          {:noreply,
+           put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+        end
+    end
+  end
+
+  defp gated_handle_event("switch_tab", %{"tab" => tab} = params, socket) do
     active =
       case tab do
-        "gantt" -> :gantt
-        "calendar" -> :calendar
+        # The view tabs are feature-gated: a client event naming a gated-off
+        # tab (stale DOM, forged payload) falls back to the list.
+        "gantt" when :erlang.map_get(:view_timeline, socket.assigns.fx) -> :gantt
+        "calendar" when :erlang.map_get(:view_calendar, socket.assigns.fx) -> :calendar
         _ -> :list
       end
 
@@ -846,7 +912,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply, socket}
   end
 
-  def handle_event("complete", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("complete", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
@@ -867,7 +933,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("start_task", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("start_task", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
@@ -884,7 +950,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("reopen", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("reopen", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
@@ -905,7 +971,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("edit_duration", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("edit_duration", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
@@ -918,15 +984,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("cancel_edit_duration", _params, socket) do
+  defp gated_handle_event("cancel_edit_duration", _params, socket) do
     {:noreply, assign(socket, editing_duration_uuid: nil)}
   end
 
-  def handle_event(
-        "save_duration",
-        %{"estimated_duration" => dur, "estimated_duration_unit" => unit},
-        socket
-      ) do
+  defp gated_handle_event(
+         "save_duration",
+         %{"estimated_duration" => dur, "estimated_duration_unit" => unit},
+         socket
+       ) do
     uuid = socket.assigns.editing_duration_uuid
 
     case scoped_assignment(socket, uuid) do
@@ -977,7 +1043,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("remove_assignment", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("remove_assignment", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
@@ -1016,7 +1082,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # ── Sub-projects (V127) ──────────────────────────────────────────
 
-  def handle_event("toggle_subproject", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("toggle_subproject", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       %Assignment{child_project_uuid: child_uuid} when is_binary(child_uuid) ->
         expanded = socket.assigns.expanded_subprojects
@@ -1045,7 +1111,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("detach_subproject", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("detach_subproject", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       %Assignment{child_project_uuid: child_uuid} = a when is_binary(child_uuid) ->
         case Projects.detach_subproject(a) do
@@ -1079,14 +1145,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("update_progress", %{"uuid" => uuid, "progress_pct" => pct_str}, socket) do
+  defp gated_handle_event("update_progress", %{"uuid" => uuid, "progress_pct" => pct_str}, socket) do
     case scoped_assignment(socket, uuid) do
       nil -> {:noreply, socket}
       a -> do_update_progress(socket, a, parse_pct(pct_str))
     end
   end
 
-  def handle_event("toggle_tracking", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("toggle_tracking", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
@@ -1119,7 +1185,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("remove_dependency", %{"assignment" => a_uuid, "depends_on" => d_uuid}, socket) do
+  defp gated_handle_event(
+         "remove_dependency",
+         %{"assignment" => a_uuid, "depends_on" => d_uuid},
+         socket
+       ) do
     # Both assignments must belong to the currently-viewed project —
     # prevents an admin on project A from unlinking deps in project B.
     # Cross-project mismatches are silent noops (UI never offers them).
@@ -1164,7 +1234,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Falls through to a no-op for projects already started — defensive
   # against double-clicks racing the LV's render of the now-hidden
   # button.
-  def handle_event("open_start_modal", _params, socket) do
+  defp gated_handle_event("open_start_modal", _params, socket) do
     if socket.assigns.project.started_at do
       {:noreply, socket}
     else
@@ -1176,11 +1246,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("close_start_modal", _params, socket) do
+  defp gated_handle_event("close_start_modal", _params, socket) do
     {:noreply, assign(socket, start_modal_open: false)}
   end
 
-  def handle_event("confirm_start_project", %{"start_at" => datetime_str}, socket) do
+  defp gated_handle_event("confirm_start_project", %{"start_at" => datetime_str}, socket) do
     case parse_start_at(datetime_str) do
       {:ok, started_at} ->
         do_start_project(socket, started_at)
@@ -1190,7 +1260,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("change_workflow_status", %{"status_slug" => slug}, socket) do
+  defp gated_handle_event("change_workflow_status", %{"status_slug" => slug}, socket) do
     slug = if slug in [nil, ""], do: nil, else: slug
     project = socket.assigns.project
     previous = project.current_status_slug
@@ -1222,7 +1292,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("archive_project", _params, socket) do
+  defp gated_handle_event("archive_project", _params, socket) do
     case Projects.archive_project(socket.assigns.project) do
       {:ok, project} ->
         Activity.log("projects.project_archived",
@@ -1253,14 +1323,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # uniquely per resource. Closing clears the assign — the
   # component unmounts and any in-flight reply state is dropped
   # (intended: drawer-close is a "step away" affordance).
-  def handle_event("open_comments", %{"type" => type, "uuid" => uuid} = params, socket)
-      when type in ["project", "assignment"] do
+  defp gated_handle_event("open_comments", %{"type" => type, "uuid" => uuid} = params, socket)
+       when type in ["project", "assignment"] do
     title = Map.get(params, "title", "")
 
     {:noreply, assign(socket, comments_resource: %{type: type, uuid: uuid, title: title})}
   end
 
-  def handle_event("close_comments", _params, socket) do
+  defp gated_handle_event("close_comments", _params, socket) do
     {:noreply, assign(socket, comments_resource: nil)}
   end
 
@@ -1269,8 +1339,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # `sortable:flash` back so the dragged card flashes green/red. This
   # session reloads explicitly (immediate feedback); OTHER open views
   # (and gantt charts) reload off the `:assignment_reordered` broadcast.
-  def handle_event("reorder_assignments", %{"ordered_ids" => ordered_ids} = params, socket)
-      when is_list(ordered_ids) do
+  defp gated_handle_event("reorder_assignments", %{"ordered_ids" => ordered_ids} = params, socket)
+       when is_list(ordered_ids) do
     moved_id = params["moved_id"]
     project_uuid = socket.assigns.project.uuid
 
@@ -1308,7 +1378,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  def handle_event("unarchive_project", _params, socket) do
+  defp gated_handle_event("unarchive_project", _params, socket) do
     case Projects.unarchive_project(socket.assigns.project) do
       {:ok, project} ->
         Activity.log("projects.project_unarchived",
@@ -1415,6 +1485,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # embedded (nil live_action) mount all default to the list. Templates never
   # expose the alternate views, so they pin to `:list` even on the `/gantt` /
   # `/calendar` routes (the tab bar + both nested LVs are `not @is_template`).
+  # A tab whose view flag is off resolves to :list — applied to the mount's
+  # route-derived tab (a bookmarked /gantt URL on a timeline-off project) and
+  # on live gate changes.
+  defp gate_tab(:gantt, fx), do: if(fx.view_timeline, do: :gantt, else: :list)
+  defp gate_tab(:calendar, fx), do: if(fx.view_calendar, do: :calendar, else: :list)
+  defp gate_tab(tab, _fx), do: tab
+
   defp tab_for_action(_socket, true), do: :list
 
   defp tab_for_action(socket, _is_template) do
@@ -1799,7 +1876,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <%!-- Assignee (V128) — who the project is assigned to. Reuses the same
                assignee helpers the task rows use; a Project carries the same
                polymorphic assignee fields. --%>
-          <div :if={assignee_type(@project)} class="mt-0.5">
+          <div :if={@fx.assignees and assignee_type(@project)} class="mt-0.5">
             <span class="badge badge-outline badge-sm gap-1">
               <.icon name="hero-user" class="w-3 h-3" />
               {assignee_type(@project)}: {assignee_label(@project)}
@@ -1809,6 +1886,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                them out; `flex-wrap` keeps the row tidy on narrow viewports. --%>
           <div class="flex flex-wrap gap-2">
             <.smart_link
+              :if={@fx.tasks}
               navigate={Paths.new_assignment(@project.uuid)}
               emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
               embed_mode={@embed_mode}
@@ -1821,6 +1899,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                  assignee + dependencies. Template sub-projects deep-clone on
                  instantiation. --%>
             <.smart_link
+              :if={@fx.tasks and @fx.subprojects}
               navigate={Paths.new_assignment(@project.uuid) <> "?kind=subproject"}
               emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid, "kind" => "subproject"}}}
               embed_mode={@embed_mode}
@@ -1835,7 +1914,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                  global default in Settings), not here. Hidden when no
                  statuses exist for the project's list. --%>
             <form
-              :if={@statuses_available and @status_options != []}
+              :if={@fx.statuses and @statuses_available and @status_options != []}
               phx-change="change_workflow_status"
               class="flex items-center"
             >
@@ -1991,8 +2070,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       <%!-- Schedule summary + progress as ONE card: the progress bar is the
            card's bottom edge (a thin flush strip), so the two read as a unit. --%>
-      <% show_schedule = @project.started_at != nil and @schedule != nil %>
-      <% show_progress = @total_tasks > 0 and not @is_template %>
+      <% show_schedule = @fx.scheduling and @project.started_at != nil and @schedule != nil %>
+      <% show_progress = @fx.tasks and @total_tasks > 0 and not @is_template %>
       <%= if show_schedule or show_progress do %>
         <div class="bg-base-200/50 rounded-t-lg overflow-hidden">
           <%= if show_schedule do %>
@@ -2040,22 +2119,41 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            `@tab_url_sync?` (the standalone admin page; off by default for
            embeds so they never touch the host's URL). The tabs switch
            instantly with or without the hook. --%>
+      <% view_tabs =
+        [%{id: "list", label: gettext("List"), icon: "hero-list-bullet"}] ++
+          if(@fx.view_timeline,
+            do: [%{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"}],
+            else: []
+          ) ++
+          if(@fx.view_calendar,
+            do: [%{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}],
+            else: []
+          ) %>
       <div
-        :if={not @is_template}
+        :if={not @is_template and @fx.tasks and length(view_tabs) > 1}
         id={"project-tabs-#{@project.uuid}"}
         phx-hook={if @tab_url_sync?, do: "ProjectTabsUrl"}
       >
-        <.nav_tabs
-          active_tab={to_string(@active_tab)}
-          on_change="switch_tab"
-          tabs={[
-            %{id: "list", label: gettext("List"), icon: "hero-list-bullet"},
-            %{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"},
-            %{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}
-          ]}
-        />
+        <.nav_tabs active_tab={to_string(@active_tab)} on_change="switch_tab" tabs={view_tabs} />
       </div>
 
+      <%!-- Tasks turned off for this project: the hub empty state replaces
+           the whole task surface (timeline, tabs, schedule are all gated).
+           Data is preserved — flipping the module back on restores it. --%>
+      <%= if not @fx.tasks do %>
+        <.empty_state icon="hero-squares-plus" title={gettext("Tasks are turned off for this project.")}>
+          <:cta>
+            <.smart_link
+              navigate={Paths.modules(@project.uuid)}
+              emit={{PhoenixKitProjects.Web.ProjectModulesLive, %{"id" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="link link-primary text-sm"
+            >
+              {gettext("Manage this project's modules & features")}
+            </.smart_link>
+          </:cta>
+        </.empty_state>
+      <% else %>
       <%!-- List tab --%>
       <div class={if(@active_tab != :list, do: "hidden")}>
       <%!-- Timeline --%>
@@ -2175,6 +2273,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             <%!-- Pop the sub-project back out as a standalone
                                  project — keeps it + its tasks (V127). --%>
                             <.table_row_menu_button
+                              :if={@fx.subprojects}
                               phx-click="detach_subproject"
                               phx-value-uuid={a.uuid}
                               phx-disable-with={gettext("Detaching…")}
@@ -2291,6 +2390,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       draggable={false}
                                       is_template={@is_template}
                                       project={child}
+                                      fx={@fx}
                                       embed_mode={@embed_mode}
                                       editing_duration_uuid={@editing_duration_uuid}
                                       comments_enabled={@comments_enabled}
@@ -2311,6 +2411,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       draggable={true}
                       is_template={@is_template}
                       project={@project}
+                      fx={@fx}
                       embed_mode={@embed_mode}
                       editing_duration_uuid={@editing_duration_uuid}
                       comments_enabled={@comments_enabled}
@@ -2386,6 +2487,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             })}
         <% end %>
       </div>
+      <% end %>
 
       <%!-- Start-project modal — date editable so the user can backdate
            an already-running project or queue a future start. The

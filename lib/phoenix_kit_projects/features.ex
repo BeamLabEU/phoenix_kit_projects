@@ -137,6 +137,54 @@ defmodule PhoenixKitProjects.Features do
     end
   end
 
+  # ── Gate maps (the render layer's one-stop lookup) ──────────────────
+
+  @task_gate_keys ~w(assignees estimates progress dependencies statuses scheduling subprojects view_timeline view_calendar)
+
+  @doc """
+  The resolved gate map LiveViews assign as `@fx`: the `tasks` extension
+  plus every built-in task flag, resolved for one project in one call.
+  Rebuild it on `:project_features_changed` / `:project_modules_changed`.
+  """
+  @spec gates(Project.t() | map() | binary()) :: %{atom() => boolean()}
+  def gates(project_or_uuid) do
+    base = %{tasks: Extensions.enabled?(project_or_uuid, "tasks")}
+
+    Enum.reduce(@task_gate_keys, base, fn key, acc ->
+      Map.put(acc, String.to_existing_atom(key), on?(project_or_uuid, key))
+    end)
+  end
+
+  @doc """
+  Gate map for surfaces with NO project yet (the :new forms): the catalog
+  defaults — i.e. what a fresh project would resolve. All pre-hub flags
+  default true, so this is all-true today and stays correct if a default
+  ever changes.
+  """
+  @spec default_gates() :: %{atom() => boolean()}
+  def default_gates do
+    cat = catalog()
+
+    base = %{tasks: true}
+
+    Enum.reduce(@task_gate_keys, base, fn key, acc ->
+      default =
+        case Map.get(cat, key) do
+          nil -> false
+          flag -> flag.default and Enum.all?(flag.requires, &default_of(cat, &1))
+        end
+
+      Map.put(acc, String.to_existing_atom(key), default)
+    end)
+  end
+
+  defp default_of(cat, key) do
+    case Map.get(cat, key) do
+      nil -> false
+      flag -> flag.default
+    end
+  end
+
   # ── Writes ──────────────────────────────────────────────────────────
 
   @doc """

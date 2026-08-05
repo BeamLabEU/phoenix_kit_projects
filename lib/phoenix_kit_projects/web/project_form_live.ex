@@ -10,7 +10,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, Errors, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Errors, Features, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -49,12 +49,30 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
+      |> assign_fx_and_presets()
       |> assign_assignee_state()
       |> assign_status_preview()
       |> assign_status_mode()
       |> assign_ai_translate()
 
     {:ok, socket}
+  end
+
+  # Hub gate map + creation presets. :edit resolves the real project's
+  # gates; :new uses catalog defaults (what a fresh project would get) and
+  # offers the preset picker, defaulted from the site-wide setting.
+  defp assign_fx_and_presets(socket) do
+    case socket.assigns[:project] do
+      %Project{uuid: uuid} = project when is_binary(uuid) ->
+        assign(socket, fx: Features.gates(project), presets: [], preset_key: nil)
+
+      _ ->
+        assign(socket,
+          fx: Features.default_gates(),
+          presets: Features.presets(),
+          preset_key: Features.default_preset_key()
+        )
+    end
   end
 
   defp assign_ai_translate(socket) do
@@ -303,6 +321,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         merge_attrs(attrs, socket)
         |> clear_other_assignees(assign_type)
         |> apply_status_mode_to_attrs(params, socket.assigns.project)
+        |> strip_gated_project_attrs(socket.assigns.fx)
+
+      socket =
+        assign(socket, preset_key: Map.get(params, "project_preset", socket.assigns[:preset_key]))
 
       save(socket, socket.assigns.live_action, attrs, template_uuid)
     else
@@ -365,9 +387,40 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> WebHelpers.merge_translations_attrs(in_flight, Project.translatable_fields())
   end
 
+  # Server-side mate of the render gates: with `statuses` off a crafted
+  # submit can't pick a status source; with `assignees` off it can't smuggle
+  # project-assignee fields past the hidden picker.
+  defp strip_gated_project_attrs(attrs, fx) do
+    attrs
+    |> then(fn a -> if fx.statuses, do: a, else: Map.drop(a, ~w(status_entity_uuid)) end)
+    |> then(fn a ->
+      if fx.assignees,
+        do: a,
+        else: Map.drop(a, ~w(assigned_team_uuid assigned_department_uuid assigned_person_uuid))
+    end)
+  end
+
+  # Applies the chosen creation preset (explicit flag writes) — best-effort:
+  # a failure here must not undo the successful create.
+  defp apply_creation_preset(socket, project) do
+    case socket.assigns[:preset_key] do
+      key when is_binary(key) and key != "" ->
+        Features.apply_preset(project, key, actor_uuid: Activity.actor_uuid(socket))
+
+      _ ->
+        :ok
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects] preset apply failed: #{Exception.message(e)}")
+      :ok
+  end
+
   defp save(socket, :new, attrs, nil) do
     case Projects.create_project(attrs) do
       {:ok, project} ->
+        apply_creation_preset(socket, project)
+
         Activity.log("projects.project_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
@@ -672,26 +725,29 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             <%!-- Assignee (V128) — same polymorphic team/department/person
                  picker tasks use. Non-translatable, so it lives outside the
                  multilang wrapper. `assign_type` chooses which staff select
-                 shows; `clear_other_assignees/2` nulls the rest on change. --%>
-            <.select
-              name="assign_type"
-              label={gettext("Assign to")}
-              value={@assign_type}
-              options={[
-                {gettext("Nobody"), ""},
-                {gettext("Department"), "department"},
-                {gettext("Team"), "team"},
-                {gettext("Person"), "person"}
-              ]}
-            />
-            <%= if @assign_type == "department" do %>
-              <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
-            <% end %>
-            <%= if @assign_type == "team" do %>
-              <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
-            <% end %>
-            <%= if @assign_type == "person" do %>
-              <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+                 shows; `clear_other_assignees/2` nulls the rest on change.
+                 Feature-gated (Step 4): hidden when `assignees` is off. --%>
+            <%= if @fx.assignees do %>
+              <.select
+                name="assign_type"
+                label={gettext("Assign to")}
+                value={@assign_type}
+                options={[
+                  {gettext("Nobody"), ""},
+                  {gettext("Department"), "department"},
+                  {gettext("Team"), "team"},
+                  {gettext("Person"), "person"}
+                ]}
+              />
+              <%= if @assign_type == "department" do %>
+                <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
+              <% end %>
+              <%= if @assign_type == "team" do %>
+                <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
+              <% end %>
+              <%= if @assign_type == "person" do %>
+                <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+              <% end %>
             <% end %>
 
             <%!-- Workflow-status list selection (entities-backed), via the
@@ -699,13 +755,28 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                  sub-projects render an identical section. The source is a
                  pre-start choice — `locked` once the project has started,
                  since its statuses were cemented at `started_at`. --%>
+            <%!-- Feature-gated (Step 4): with `statuses` off for this project
+                 the whole workflow-status section disappears; the save path
+                 strips the field so a crafted submit can't set a source. --%>
             <.workflow_status_fields
+              :if={@fx.statuses}
               statuses_available={@statuses_available}
               field={@form[:status_entity_uuid]}
               status_entities={@status_entities}
               status_preview={@status_preview}
               status_translation_mode={@status_translation_mode}
               locked={Statuses.started?(@project)}
+            />
+
+            <%!-- Creation preset — which feature bundle the new project
+                 starts with (Simple / Standard / Full). Applied after
+                 create; the Modules & Features panel adjusts any time. --%>
+            <.select
+              :if={@live_action == :new and @presets != []}
+              name="project_preset"
+              label={gettext("Feature preset")}
+              value={@preset_key}
+              options={Enum.map(@presets, &{&1.name, &1.key})}
             />
             <div class="flex justify-end gap-2 mt-2">
               <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">

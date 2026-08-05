@@ -15,7 +15,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   require Logger
 
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Features, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -49,9 +49,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
+      |> assign_fx()
       |> assign_ai_translate()
 
     {:ok, socket}
+  end
+
+  # The hub gate map for this form's project. Placeholder projects (the
+  # not-found render window) fall back to catalog defaults.
+  defp assign_fx(socket) do
+    case socket.assigns[:project] do
+      %Project{uuid: uuid} = project when is_binary(uuid) ->
+        assign(socket, fx: Features.gates(project))
+
+      _ ->
+        assign(socket, fx: Features.default_gates())
+    end
   end
 
   # Wires the AI-translate modal/buttons for the assignment's `description`.
@@ -191,11 +204,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp apply_action(socket, :new, %{"project_id" => project_id} = params) do
-    # `kind: "subproject"` (V127) routes the same add page into sub-project
-    # mode: the render shows a child-project form (name + assignee) + the
-    # standard dependency section, instead of the task picker.
-    kind = if Map.get(params, "kind") == "subproject", do: "subproject", else: "task"
-
     case Projects.get_project(project_id) do
       nil ->
         # In navigate mode, `close_or_navigate` push-navigates and the LV is
@@ -209,6 +217,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         |> WebHelpers.close_or_navigate(Paths.projects())
 
       project ->
+        # `kind: "subproject"` (V127) routes the same add page into
+        # sub-project mode — feature-gated per project: with the
+        # `subprojects` flag off, a crafted `?kind=subproject` URL falls
+        # back to the plain task form (Step 4 enforcement).
+        kind =
+          if Map.get(params, "kind") == "subproject" and Features.on?(project, "subprojects"),
+            do: "subproject",
+            else: "task"
+
         assignment = %Assignment{project_uuid: project.uuid}
         existing_assignments = Projects.list_assignments(project.uuid)
 
@@ -549,52 +566,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   def handle_event("add_assignment_dep", %{"depends_on_uuid" => dep_uuid}, socket)
       when dep_uuid != "" do
-    case Projects.add_dependency(socket.assigns.assignment.uuid, dep_uuid) do
-      {:ok, _} ->
-        Activity.log("projects.dependency_added",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          metadata: %{"depends_on_uuid" => dep_uuid}
-        )
-
-        reload_deps(socket)
-
-      {:error, _} ->
-        Activity.log_failed("projects.dependency_added",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          metadata: %{"depends_on_uuid" => dep_uuid}
-        )
-
-        {:noreply, put_flash(socket, :error, gettext("Could not add dependency."))}
+    if socket.assigns.fx.dependencies do
+      do_add_assignment_dep(dep_uuid, socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
 
   def handle_event("add_assignment_dep", _params, socket), do: {:noreply, socket}
 
   def handle_event("remove_assignment_dep", %{"uuid" => dep_uuid}, socket) do
-    case Projects.remove_dependency(socket.assigns.assignment.uuid, dep_uuid) do
-      {:ok, _} ->
-        Activity.log("projects.dependency_removed",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          metadata: %{"depends_on_uuid" => dep_uuid}
-        )
-
-        reload_deps(socket)
-
-      {:error, _} ->
-        Activity.log_failed("projects.dependency_removed",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          metadata: %{"depends_on_uuid" => dep_uuid}
-        )
-
-        {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
+    if socket.assigns.fx.dependencies do
+      do_remove_assignment_dep(dep_uuid, socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
 
@@ -607,6 +594,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     attrs =
       attrs
       |> clear_other_assignees(assign_type)
+      |> strip_gated_attrs(socket.assigns.fx)
       |> merge_attrs(socket)
 
     case {socket.assigns.live_action, task_mode} do
@@ -621,9 +609,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # (name + assignee) and the dependency section uses the same handlers.
 
   # Toggle between "create new child" and "nest existing project" (V127).
+  # Feature-gated: sub-project mode is unreachable when the flag is off
+  # (kind resolution already forces "task"), but a stale client could still
+  # emit the event — refuse it the same way.
   def handle_event("set_sp_mode", %{"value" => mode}, socket)
       when mode in ~w(new existing) do
-    {:noreply, assign(socket, sp_mode: mode)}
+    if socket.assigns.fx.subprojects do
+      do_set_sp_mode(mode, socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+    end
   end
 
   def handle_event("validate_subproject", %{"subproject" => attrs} = params, socket) do
@@ -1240,6 +1236,75 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
   end
 
+  defp do_add_assignment_dep(dep_uuid, socket) do
+    case Projects.add_dependency(socket.assigns.assignment.uuid, dep_uuid) do
+      {:ok, _} ->
+        Activity.log("projects.dependency_added",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"depends_on_uuid" => dep_uuid}
+        )
+
+        reload_deps(socket)
+
+      {:error, _} ->
+        Activity.log_failed("projects.dependency_added",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"depends_on_uuid" => dep_uuid}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not add dependency."))}
+    end
+  end
+
+  defp do_remove_assignment_dep(dep_uuid, socket) do
+    case Projects.remove_dependency(socket.assigns.assignment.uuid, dep_uuid) do
+      {:ok, _} ->
+        Activity.log("projects.dependency_removed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"depends_on_uuid" => dep_uuid}
+        )
+
+        reload_deps(socket)
+
+      {:error, _} ->
+        Activity.log_failed("projects.dependency_removed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"depends_on_uuid" => dep_uuid}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
+    end
+  end
+
+  defp do_set_sp_mode(mode, socket) do
+    {:noreply, assign(socket, sp_mode: mode)}
+  end
+
+  # Server-side mate of the render gates (Step 4): a submit crafted past a
+  # hidden section can't smuggle gated fields in. Assignee attrs drop when
+  # `assignees` is off; duration attrs when `estimates` is off;
+  # counts_weekends when `scheduling` is off.
+  defp strip_gated_attrs(attrs, fx) do
+    attrs
+    |> then(fn a ->
+      if fx.assignees,
+        do: a,
+        else: Map.drop(a, ~w(assigned_team_uuid assigned_department_uuid assigned_person_uuid))
+    end)
+    |> then(fn a ->
+      if fx.estimates, do: a, else: Map.drop(a, ~w(estimated_duration estimated_duration_unit))
+    end)
+    |> then(fn a -> if fx.scheduling, do: a, else: Map.drop(a, ~w(counts_weekends)) end)
+  end
+
   defp clear_other_assignees(attrs, "team") do
     Map.merge(attrs, %{"assigned_department_uuid" => nil, "assigned_person_uuid" => nil})
   end
@@ -1422,7 +1487,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <%!-- Dependencies — identical to a task's (this sub-project is a row in
                the parent's timeline). Edit mode adds/removes live; new mode
                collects pending selections applied on save. --%>
-          <div class="card bg-base-100 shadow">
+          <div :if={@fx.dependencies} class="card bg-base-100 shadow">
             <div class="card-body">
               <h2 class="card-title text-lg">{gettext("Dependencies")}</h2>
               <p class="text-xs text-base-content/60">
@@ -1639,7 +1704,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
             <%!-- Bigger gap separating the translatable Description (governed by
                  the language tabs) from the non-translatable fields below. --%>
-            <div class="flex gap-2 mt-4">
+            <div :if={@fx.estimates} class="flex gap-2 mt-4">
               <div class="flex-1">
                 <.input field={@form[:estimated_duration]} label={gettext("Duration")} type="number" />
               </div>
@@ -1673,7 +1738,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                  every unchecked submit into an explicit "never count
                  weekends" override and permanently lose the inherit-from-
                  project state through this form. --%>
-            <label class="flex items-center gap-2 cursor-pointer">
+            <label :if={@fx.scheduling} class="flex items-center gap-2 cursor-pointer">
               <input type="hidden" name={@form[:counts_weekends].name} value="" />
               <input
                 type="checkbox"
@@ -1685,23 +1750,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <span class="text-sm">{gettext("Counts weekends (e.g. deliveries, external processes)")}</span>
             </label>
 
-            <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
+            <%= if @fx.assignees do %>
+              <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
 
-            <.select
-              name="assign_type"
-              label={gettext("Assign to")}
-              value={@assign_type}
-              options={[{gettext("Nobody"), ""}, {gettext("Department"), "department"}, {gettext("Team"), "team"}, {gettext("Person"), "person"}]}
-            />
+              <.select
+                name="assign_type"
+                label={gettext("Assign to")}
+                value={@assign_type}
+                options={[{gettext("Nobody"), ""}, {gettext("Department"), "department"}, {gettext("Team"), "team"}, {gettext("Person"), "person"}]}
+              />
 
-            <%= if @assign_type == "department" do %>
-              <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
-            <% end %>
-            <%= if @assign_type == "team" do %>
-              <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
-            <% end %>
-            <%= if @assign_type == "person" do %>
-              <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+              <%= if @assign_type == "department" do %>
+                <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
+              <% end %>
+              <%= if @assign_type == "team" do %>
+                <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
+              <% end %>
+              <%= if @assign_type == "person" do %>
+                <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+              <% end %>
             <% end %>
 
             <%= if @live_action == :new and @task_mode == "new" do %>
@@ -1733,7 +1800,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                `create_assignment_for_new_task` after insert.
              --%>
         <% lang = L10n.current_content_lang() %>
-        <div class="card bg-base-100 shadow">
+        <div :if={@fx.dependencies} class="card bg-base-100 shadow">
           <div class="card-body">
             <h2 class="card-title text-lg">{gettext("Dependencies")}</h2>
             <p class="text-xs text-base-content/60">
