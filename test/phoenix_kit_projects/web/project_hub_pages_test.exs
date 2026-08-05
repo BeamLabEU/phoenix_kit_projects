@@ -162,6 +162,110 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
     end
   end
 
+  describe "the discussions bridge (comments as a per-project toggle)" do
+    test "disabling it hides the comments drawer trigger", %{conn: conn, project: project} do
+      {:ok, _view, html_on} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      {:ok, _} = Extensions.disable(project, "discussions")
+      {:ok, _view, html_off} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # With comments installed in the test env the trigger flips with the
+      # toggle; without it both renders lack the trigger (still a valid pin
+      # of "off means off").
+      refute html_off =~ "open_comments\" phx-value-type=\"project\""
+
+      if html_on =~ "open_comments" do
+        assert html_on != html_off
+      end
+    end
+  end
+
+  defmodule FakeTabLive do
+    use Phoenix.LiveView
+
+    @impl true
+    def mount(_params, session, socket) do
+      {:ok,
+       assign(socket,
+         project_uuid: session["project_uuid"],
+         greeting: get_in(session, ["config", "greeting"]) || "none"
+       )}
+    end
+
+    @impl true
+    def render(assigns) do
+      ~H"""
+      <div id="fake-ext-tab">ext-tab-content greeting={@greeting} project={@project_uuid}</div>
+      """
+    end
+  end
+
+  defmodule TabProvider do
+    def phoenix_kit_project_extensions do
+      [
+        %{
+          key: "tab_ext",
+          name: "Tab Ext",
+          default_enabled: false,
+          tabs: [
+            %{
+              key: "main",
+              label: "Tab Ext",
+              lv: PhoenixKitProjects.Web.ProjectHubPagesTest.FakeTabLive
+            }
+          ],
+          config_schema: [%{key: "greeting", type: :string, label: "Greeting"}]
+        }
+      ]
+    end
+  end
+
+  describe "contributed extension tabs on the show page" do
+    setup %{project: project} do
+      Application.put_env(:phoenix_kit_projects, :extension_providers, [TabProvider])
+      PhoenixKitProjects.Extensions.Registry.refresh()
+
+      on_exit(fn ->
+        Application.delete_env(:phoenix_kit_projects, :extension_providers)
+        PhoenixKitProjects.Extensions.Registry.refresh()
+      end)
+
+      {:ok, _} =
+        Extensions.enable(project, "tab_ext", config: %{"greeting" => "howdy"})
+
+      :ok
+    end
+
+    test "the tab appears in the strip and mounts its LV with the config",
+         %{conn: conn, project: project} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert html =~ "Tab Ext"
+
+      html = render_click(view, "switch_tab", %{"tab" => "ext:tab_ext:main"})
+      assert html =~ "ext-tab-content"
+      assert html =~ "greeting=howdy"
+      assert html =~ "project=#{project.uuid}"
+    end
+
+    test "a forged ext tab id falls back to list", %{conn: conn, project: project} do
+      {:ok, view, _} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      html = render_click(view, "switch_tab", %{"tab" => "ext:evil:main"})
+      refute html =~ "ext-tab-content"
+    end
+
+    test "tasks OFF lands directly on the extension tab, not the empty state",
+         %{conn: conn, project: project} do
+      {:ok, _} = Extensions.disable(project, "tasks")
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert html =~ "ext-tab-content"
+      refute html =~ "Tasks are turned off for this project."
+    end
+  end
+
   defp listed_folder(file, folder_uuid) do
     file_uuid = file.uuid
 

@@ -236,6 +236,19 @@ defmodule PhoenixKitProjects do
         module_key: nil,
         default_enabled: true,
         permission_actions: [:upload_files]
+      },
+      # Hub-side BRIDGE descriptor for a module that doesn't self-declare
+      # (phoenix_kit_comments is BeamLab-maintained): the show page's
+      # comments drawer, re-fronted as a per-project toggle. The drawer's
+      # own availability check still applies — this gate composes with it.
+      %{
+        key: "discussions",
+        name: "Discussions",
+        description: "Comment threads on the project and its tasks",
+        icon: "hero-chat-bubble-left-right",
+        module_key: "comments",
+        default_enabled: true,
+        permission_actions: [:comment]
       }
     ]
   end

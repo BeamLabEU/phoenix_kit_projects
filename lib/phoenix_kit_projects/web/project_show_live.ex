@@ -123,6 +123,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        project: %Project{},
        fx: Features.default_gates(),
        fx_files: true,
+       ext_tabs: [],
+       ext_mounted: MapSet.new(),
        health: nil,
        health_modal_open: false,
        is_template: false,
@@ -187,6 +189,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            project: %Project{},
            fx: Features.default_gates(),
            fx_files: true,
+           ext_tabs: [],
+           ext_mounted: MapSet.new(),
            health: nil,
            health_modal_open: false,
            is_template: false,
@@ -253,7 +257,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         fx = Features.gates(project)
         fx_files = Extensions.enabled?(project, "files")
 
-        active_tab = tab_for_action(socket, is_template) |> gate_tab(fx)
+        # Contributed extension tabs (the hub contract's `tabs`): rendered
+        # as first-class view tabs via live_render with the embed-session
+        # contract. Resolved once; recomputed on :project_modules_changed.
+        ext_tabs = ext_tabs_for(project, is_template)
+
+        active_tab =
+          tab_for_action(socket, is_template)
+          |> gate_tab(fx)
+          |> resolve_landing_tab(fx, ext_tabs)
 
         # Resolve the workflow-status list once (read-only — nothing is
         # provisioned or seeded here; an unset shared default simply yields
@@ -280,6 +292,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             project: project,
             fx: fx,
             fx_files: fx_files,
+            ext_tabs: ext_tabs,
+            ext_mounted: ext_initial_mounted(active_tab),
             health: Health.get(project),
             health_modal_open: false,
             is_template: is_template,
@@ -305,7 +319,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             # `CommentsComponent` is keyed on `{type, uuid}` so opening
             # different resources doesn't reuse stale state.
             comments_resource: nil,
-            comments_enabled: comments_available?(),
+            # Availability ∧ the per-project "discussions" bridge toggle.
+            comments_enabled:
+              comments_available?() and Extensions.enabled?(project, "discussions"),
             project_comment_count: 0,
             assignment_comment_counts: %{},
             # Skeleton defaults overwritten by the load_* helpers below;
@@ -383,12 +399,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # (a live view_timeline/view_calendar turn-off must not leave the user
     # parked on a tab that no longer exists).
     fx = Features.gates(socket.assigns.project)
+    ext_tabs = ext_tabs_for(socket.assigns.project, socket.assigns.is_template)
+
+    # Re-gate the active tab: a gated-off view falls to :list; an extension
+    # tab whose extension was just disabled falls to :list too.
+    active =
+      case gate_tab(socket.assigns.active_tab, fx) do
+        "ext:" <> _ = id -> if Enum.any?(ext_tabs, &(&1.id == id)), do: id, else: :list
+        tab -> tab
+      end
 
     {:noreply,
      assign(socket,
        fx: fx,
        fx_files: Extensions.enabled?(socket.assigns.project, "files"),
-       active_tab: gate_tab(socket.assigns.active_tab, fx)
+       ext_tabs: ext_tabs,
+       active_tab: active
      )}
   end
 
@@ -927,11 +953,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     active =
       case tab do
         # The view tabs are feature-gated: a client event naming a gated-off
-        # tab (stale DOM, forged payload) falls back to the list.
+        # tab (stale DOM, forged payload) falls back to the list. Extension
+        # tab ids are validated against the CURRENT ext_tabs set — an id for
+        # a since-disabled extension falls back too.
         "gantt" when :erlang.map_get(:view_timeline, socket.assigns.fx) -> :gantt
         "calendar" when :erlang.map_get(:view_calendar, socket.assigns.fx) -> :calendar
+        "ext:" <> _ -> if valid_ext_tab?(socket, tab), do: tab, else: :list
         _ -> :list
       end
+
+    socket =
+      if is_binary(active),
+        do: assign(socket, ext_mounted: MapSet.put(socket.assigns.ext_mounted, active)),
+        else: socket
 
     socket =
       socket
@@ -939,10 +973,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
       |> assign(calendar_mounted?: socket.assigns.calendar_mounted? or active == :calendar)
 
+    # Extension tabs have no URL suffix (no routes back them) — never
+    # let the sync hook rewrite the address bar for one.
     socket =
-      if not socket.assigns.tab_url_sync? or params["source"] == "history",
-        do: socket,
-        else: push_event(socket, "project_tab_url", %{tab: to_string(active)})
+      if not socket.assigns.tab_url_sync? or params["source"] == "history" or
+           is_binary(active),
+         do: socket,
+         else: push_event(socket, "project_tab_url", %{tab: to_string(active)})
 
     {:noreply, socket}
   end
@@ -1568,6 +1605,43 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gate_tab(:gantt, fx), do: if(fx.view_timeline, do: :gantt, else: :list)
   defp gate_tab(:calendar, fx), do: if(fx.view_calendar, do: :calendar, else: :list)
   defp gate_tab(tab, _fx), do: tab
+
+  # With tasks OFF the :list landing has no task surface — land on the first
+  # contributed extension tab instead (the empty state shows only when there
+  # is truly nothing to show).
+  defp resolve_landing_tab(:list, %{tasks: false}, [%{id: first} | _]), do: first
+  defp resolve_landing_tab(tab, _fx, _ext_tabs), do: tab
+
+  # Contributed tabs from every effectively-enabled extension, flattened to
+  # renderable entries. String ids are namespaced ("ext:<ext>:<tab>") so
+  # they can never collide with the :list/:gantt/:calendar atoms.
+  defp ext_tabs_for(_project, true), do: []
+
+  defp ext_tabs_for(project, _is_template) do
+    project.uuid
+    |> Extensions.enabled_for_project()
+    |> Enum.flat_map(fn {ext, row} ->
+      Enum.map(ext.tabs, fn tab ->
+        %{
+          id: "ext:#{ext.key}:#{tab.key}",
+          label: tab.label,
+          icon: tab.icon || ext.icon,
+          lv: tab.lv,
+          ext_key: ext.key,
+          config: (row && row.config) || %{}
+        }
+      end)
+    end)
+  rescue
+    e ->
+      Logger.warning("[Projects] ext_tabs_for failed: #{Exception.message(e)}")
+      []
+  end
+
+  defp ext_initial_mounted(active_tab) when is_binary(active_tab), do: MapSet.new([active_tab])
+  defp ext_initial_mounted(_), do: MapSet.new()
+
+  defp valid_ext_tab?(socket, id), do: Enum.any?(socket.assigns.ext_tabs, &(&1.id == id))
 
   defp tab_for_action(_socket, true), do: :list
 
@@ -2291,18 +2365,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            `@tab_url_sync?` (the standalone admin page; off by default for
            embeds so they never touch the host's URL). The tabs switch
            instantly with or without the hook. --%>
-      <% view_tabs =
-        [%{id: "list", label: gettext("List"), icon: "hero-list-bullet"}] ++
-          if(@fx.view_timeline,
-            do: [%{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"}],
-            else: []
-          ) ++
-          if(@fx.view_calendar,
-            do: [%{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}],
-            else: []
-          ) %>
+      <% task_tabs =
+        if @fx.tasks do
+          [%{id: "list", label: gettext("List"), icon: "hero-list-bullet"}] ++
+            if(@fx.view_timeline,
+              do: [%{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"}],
+              else: []
+            ) ++
+            if(@fx.view_calendar,
+              do: [%{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}],
+              else: []
+            )
+        else
+          []
+        end %>
+      <% ext_tab_entries = Enum.map(@ext_tabs, &%{id: &1.id, label: &1.label, icon: &1.icon}) %>
+      <% view_tabs = task_tabs ++ ext_tab_entries %>
       <div
-        :if={not @is_template and @fx.tasks and length(view_tabs) > 1}
+        :if={not @is_template and length(view_tabs) > 1}
         id={"project-tabs-#{@project.uuid}"}
         phx-hook={if @tab_url_sync?, do: "ProjectTabsUrl"}
       >
@@ -2310,9 +2390,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       </div>
 
       <%!-- Tasks turned off for this project: the hub empty state replaces
-           the whole task surface (timeline, tabs, schedule are all gated).
-           Data is preserved — flipping the module back on restores it. --%>
-      <%= if not @fx.tasks do %>
+           the TASK surface (timeline, task tabs, schedule). Contributed
+           extension tabs still render below — the empty state shows only
+           when the :list landing is actually selected (i.e. nothing else
+           took over). Data is preserved — flipping tasks back on restores
+           everything. --%>
+      <%= if not @fx.tasks and @active_tab == :list do %>
         <.empty_state icon="hero-squares-plus" title={gettext("Tasks are turned off for this project.")}>
           <:cta>
             <.smart_link
@@ -2326,6 +2409,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           </:cta>
         </.empty_state>
       <% else %>
+      <%= if @fx.tasks do %>
       <%!-- List tab --%>
       <div class={if(@active_tab != :list, do: "hidden")}>
       <%!-- Timeline --%>
@@ -2659,6 +2743,32 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             })}
         <% end %>
       </div>
+      <% end %>
+      <% end %>
+
+      <%!-- Contributed extension tab panes — live_render with the hub's
+           embed-session contract, lazy-mounted on first open and kept
+           mounted (the gantt/calendar pattern) so tab state survives
+           switching. Rendered OUTSIDE the tasks gate: a tasks-off project
+           still shows its Client/Sites/… tabs. --%>
+      <%= for tab <- @ext_tabs do %>
+        <div :if={MapSet.member?(@ext_mounted, tab.id)} class={if(@active_tab != tab.id, do: "hidden")}>
+          {live_render(@socket, tab.lv,
+            id: "ext-tab-#{tab.id}-#{@project.uuid}",
+            session: %{
+              "project_uuid" => @project.uuid,
+              "ext_key" => tab.ext_key,
+              "instance_key" => "default",
+              "config" => tab.config,
+              "locale" => L10n.current_content_lang(),
+              "wrapper_class" => "",
+              "current_user_uuid" =>
+                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid,
+              "mode" => @embed_mode,
+              "pubsub_topic" => @embed_pubsub_topic,
+              "frame_ref" => @embed_frame_ref
+            })}
+        </div>
       <% end %>
 
       <%!-- Start-project modal — date editable so the user can backdate
