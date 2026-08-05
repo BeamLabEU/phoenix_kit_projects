@@ -151,6 +151,8 @@ defmodule PhoenixKitProjects.Features do
     :statuses,
     :scheduling,
     :subprojects,
+    :priorities,
+    :labels,
     :ledger,
     :view_board,
     :view_timeline,
@@ -283,6 +285,8 @@ defmodule PhoenixKitProjects.Features do
         description: "Just a task list — no assignees, estimates, statuses, or scheduling.",
         flags: %{
           "assignees" => false,
+          "priorities" => false,
+          "labels" => false,
           "estimates" => false,
           "progress" => false,
           "dependencies" => false,
@@ -305,6 +309,8 @@ defmodule PhoenixKitProjects.Features do
         description: "Every task feature explicitly on.",
         flags: %{
           "assignees" => true,
+          "priorities" => true,
+          "labels" => true,
           "estimates" => true,
           "progress" => true,
           "dependencies" => true,

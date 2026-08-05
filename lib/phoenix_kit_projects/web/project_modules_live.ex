@@ -23,8 +23,9 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.Activity
-  alias PhoenixKitProjects.{Authz, Extensions, Features, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Authz, Extensions, Features, L10n, Labels, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Schemas.Label
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -148,7 +149,10 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
     assign(socket,
       extensions: extensions,
       flag_groups: flag_groups,
-      presets: Features.presets()
+      presets: Features.presets(),
+      labels: Labels.list_for_project(project.uuid),
+      labels_on: Features.on?(project, "labels"),
+      label_colors: Label.colors()
     )
   end
 
@@ -236,6 +240,50 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           {:noreply, put_flash(socket, :error, gettext("Could not save the settings."))}
       end
     end)
+  end
+
+  # ── Labels registry (Phase C) — the project-config home manages the
+  # label catalog; assignment forms only PICK from it. Gated on the
+  # labels flag (the section hides AND the events refuse when off).
+
+  def handle_event("add_label", %{"name" => name} = params, socket) do
+    if socket.assigns.labels_on do
+      case Labels.create(
+             socket.assigns.project,
+             %{name: name, color: params["color"] || "badge-neutral"},
+             actor_uuid: Activity.actor_uuid(socket)
+           ) do
+        {:ok, _} ->
+          {:noreply, socket |> reload() |> put_flash(:info, gettext("Label added."))}
+
+        {:error, %Ecto.Changeset{} = changeset} ->
+          msg =
+            case changeset.errors[:name] do
+              {m, _} -> gettext("Label name %{problem}.", problem: m)
+              _ -> gettext("Could not add the label.")
+            end
+
+          {:noreply, put_flash(socket, :error, msg)}
+      end
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+    end
+  end
+
+  def handle_event("delete_label", %{"uuid" => uuid}, socket) do
+    with true <- socket.assigns.labels_on,
+         %{} = label <- Enum.find(socket.assigns.labels, &(&1.uuid == uuid)),
+         :ok <- Labels.delete(label, actor_uuid: Activity.actor_uuid(socket)) do
+      {:noreply, socket |> reload() |> put_flash(:info, gettext("Label removed."))}
+    else
+      false ->
+        {:noreply,
+         put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   # Events re-check authorization — this page writes configuration.
@@ -405,6 +453,61 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           </div>
         </section>
       <% end %>
+
+      <%!-- Labels registry (Phase C): the config home for the project's
+           label catalog. Renders only while the labels flag is on. --%>
+      <section :if={@labels_on} class="card bg-base-100 border border-base-200">
+        <div class="card-body gap-3">
+          <h2 class="card-title text-base">{gettext("Labels")}</h2>
+          <p class="text-xs text-base-content/60">
+            {gettext("Tags tasks can wear — pick them on the task form.")}
+          </p>
+
+          <div :if={@labels != []} class="flex flex-wrap gap-2">
+            <span
+              :for={label <- @labels}
+              class={["badge gap-1", label.color]}
+            >
+              {label.name}
+              <button
+                type="button"
+                phx-click="delete_label"
+                phx-value-uuid={label.uuid}
+                data-confirm={gettext("Remove the \"%{name}\" label from this project?", name: label.name)}
+                aria-label={gettext("Remove %{name}", name: label.name)}
+                class="cursor-pointer opacity-60 hover:opacity-100"
+              >
+                <.icon name="hero-x-mark" class="w-3 h-3" />
+              </button>
+            </span>
+          </div>
+
+          <form phx-submit="add_label" class="flex items-end gap-2">
+            <label class="form-control flex-1 max-w-52">
+              <span class="label-text text-xs opacity-70 mb-1">{gettext("New label")}</span>
+              <input
+                type="text"
+                name="name"
+                required
+                maxlength="60"
+                class="input input-bordered input-sm"
+                placeholder={gettext("e.g. frontend")}
+              />
+            </label>
+            <label class="form-control w-40">
+              <span class="label-text text-xs opacity-70 mb-1">{gettext("Color")}</span>
+              <select name="color" class="select select-bordered select-sm">
+                <option :for={color <- @label_colors} value={color}>
+                  {String.replace_prefix(color, "badge-", "")}
+                </option>
+              </select>
+            </label>
+            <button type="submit" phx-disable-with={gettext("Adding…")} class="btn btn-primary btn-sm">
+              {gettext("Add")}
+            </button>
+          </form>
+        </div>
+      </section>
     </div>
     """
   end

@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 6
+  @current_version 7
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -103,6 +103,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v4_work_entries(p, prefix)
     v5_whiteboards(p, prefix)
     v6_events(p, prefix)
+    v7_priorities_labels(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -123,6 +124,12 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     prefix = validated_prefix(opts)
     p = prefix_str(prefix)
     target = down_target(opts)
+
+    if target < 7 do
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_assignment_labels")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_labels")
+      execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS priority")
+    end
 
     if target < 6, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_events")
     if target < 5, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_whiteboards")
@@ -570,6 +577,60 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     CREATE INDEX IF NOT EXISTS phoenix_kit_project_events_project_starts_index
     ON #{p}phoenix_kit_project_events (project_uuid, starts_at)
+    """)
+  end
+
+  # V7 — priorities + labels (Phase C of the campaign): an assignment
+  # priority (closed vocabulary, normal default so existing rows are
+  # unchanged) and a per-project LABEL registry with a join table —
+  # arrays of FKs aren't enforceable, a join table is.
+  defp v7_priorities_labels(p, prefix) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD COLUMN IF NOT EXISTS priority VARCHAR(10) NOT NULL DEFAULT 'normal'
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_priority_check
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD CONSTRAINT phoenix_kit_project_assignments_priority_check
+    CHECK (priority IN ('urgent', 'high', 'normal', 'low'))
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_labels (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      name VARCHAR(60) NOT NULL,
+      color VARCHAR(30) NOT NULL DEFAULT 'badge-neutral',
+      position INTEGER NOT NULL DEFAULT 0,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_labels_name_index
+    ON #{p}phoenix_kit_project_labels (project_uuid, name)
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_assignment_labels (
+      assignment_uuid UUID NOT NULL
+        REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE CASCADE,
+      label_uuid UUID NOT NULL
+        REFERENCES #{p}phoenix_kit_project_labels(uuid) ON DELETE CASCADE,
+      PRIMARY KEY (assignment_uuid, label_uuid)
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_labels_label_index
+    ON #{p}phoenix_kit_project_assignment_labels (label_uuid)
     """)
   end
 

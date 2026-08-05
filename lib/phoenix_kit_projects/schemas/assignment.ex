@@ -65,6 +65,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
 
   schema "phoenix_kit_project_assignments" do
     field(:status, :string, default: "todo")
+    field(:priority, :string, default: "normal")
     field(:position, :integer, default: 0)
     field(:description, :string)
     field(:estimated_duration, :integer)
@@ -108,7 +109,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   # `validate_task_xor_child/1` + the DB check constraint.
   @required ~w(project_uuid status)a
   @optional ~w(task_uuid child_project_uuid position description estimated_duration
-               estimated_duration_unit counts_weekends progress_pct track_progress
+               estimated_duration_unit counts_weekends progress_pct track_progress priority
                translations assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
   # Server-only fields: set by trusted server code (completion tracking),
@@ -141,6 +142,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   defp validate(changeset) do
     changeset
     |> validate_required(@required)
+    |> validate_inclusion(:priority, ~w(urgent high normal low))
     |> validate_task_xor_child()
     |> validate_inclusion(:status, @statuses)
     |> validate_number(:estimated_duration, greater_than: 0)

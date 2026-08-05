@@ -15,7 +15,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   require Logger
 
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, Features, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Features, L10n, Labels, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -426,8 +426,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       task_options: Projects.list_tasks() |> Enum.map(&{Task.localized_title(&1, lang), &1.uuid}),
       team_options: load_teams(),
       department_options: load_departments(),
-      person_options: load_people()
+      person_options: load_people(),
+      project_labels: load_project_labels(socket),
+      selected_labels: current_label_uuids(socket)
     )
+  end
+
+  defp load_project_labels(socket) do
+    case socket.assigns[:project] do
+      %{uuid: uuid} -> Labels.list_for_project(uuid)
+      _ -> []
+    end
+  end
+
+  defp current_label_uuids(socket) do
+    case socket.assigns[:assignment] do
+      %{uuid: uuid} ->
+        [uuid]
+        |> Labels.labels_for_assignments()
+        |> Map.get(uuid, [])
+        |> Enum.map(& &1.uuid)
+
+      _ ->
+        []
+    end
   end
 
   defp load_teams do
@@ -604,6 +626,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     # CURRENT flags, not the mount-time snapshot a mid-edit toggle staled.
     fx = Features.gates(socket.assigns.project)
     socket = assign(socket, fx: fx)
+
+    # Labels ride a separate param (checkbox list) — captured only when
+    # the flag is on at SAVE time, applied after the record write.
+    socket =
+      assign(
+        socket,
+        :pending_labels,
+        if(fx.labels, do: Enum.uniq(List.wrap(params["labels"] || [])))
+      )
 
     attrs =
       attrs
@@ -1022,6 +1053,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
            excluded_task_uuids: effective_excluded
          ) do
       {:ok, %{root: root, extras: extras}} ->
+        apply_pending_labels(socket, root)
+
         Activity.log("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
@@ -1103,6 +1136,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp save_new_simple(socket, attrs) do
     case Projects.create_assignment(attrs) do
       {:ok, assignment} ->
+        apply_pending_labels(socket, assignment)
+
         {flash_kind, flash_msg} =
           flash_for_template_deps(
             assignment,
@@ -1205,6 +1240,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp save_edit(socket, attrs) do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
+        apply_pending_labels(socket, updated)
+
         Activity.log("projects.assignment_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
@@ -1354,6 +1391,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       if fx.estimates, do: a, else: Map.drop(a, ~w(estimated_duration estimated_duration_unit))
     end)
     |> then(fn a -> if fx.scheduling, do: a, else: Map.drop(a, ~w(counts_weekends)) end)
+    |> then(fn a -> if fx.priorities, do: a, else: Map.drop(a, ~w(priority)) end)
+  end
+
+  defp priority_options do
+    [
+      {gettext("Urgent"), "urgent"},
+      {gettext("High"), "high"},
+      {gettext("Normal"), "normal"},
+      {gettext("Low"), "low"}
+    ]
+  end
+
+  # Replace the saved assignment's labels with the submit's checkbox set
+  # (nil = the flag was off at save time — leave the joins untouched).
+  defp apply_pending_labels(socket, assignment) do
+    case socket.assigns[:pending_labels] do
+      nil -> :ok
+      uuids -> Labels.set_assignment_labels(assignment, uuids)
+    end
   end
 
   defp clear_other_assignees(attrs, "team") do
@@ -1774,6 +1830,36 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               label={gettext("Status")}
               options={[{gettext("To do"), "todo"}, {gettext("In progress"), "in_progress"}, {gettext("Done"), "done"}]}
             />
+
+            <div :if={@fx.priorities} class="w-48">
+              <.select
+                field={@form[:priority]}
+                label={gettext("Priority")}
+                options={priority_options()}
+              />
+            </div>
+
+            <%!-- Labels: plain checkboxes over the PROJECT's registry (managed
+                 in the Modules panel); selection replaces the join rows on
+                 save. Renders only when the flag is on AND labels exist. --%>
+            <div :if={@fx.labels and @project_labels != []} class="form-control">
+              <span class="label-text text-sm font-medium mb-1">{gettext("Labels")}</span>
+              <div class="flex flex-wrap gap-2">
+                <label
+                  :for={label <- @project_labels}
+                  class="flex items-center gap-1.5 cursor-pointer rounded-lg border border-base-200 px-2 py-1"
+                >
+                  <input
+                    type="checkbox"
+                    name="labels[]"
+                    value={label.uuid}
+                    checked={label.uuid in @selected_labels}
+                    class="checkbox checkbox-xs"
+                  />
+                  <span class={["badge badge-sm", label.color]}>{label.name}</span>
+                </label>
+              </div>
+            </div>
 
             <%!-- NOT migrated to `<.checkbox>`: unlike Project/Template,
                  `Assignment.counts_weekends` has no schema default — `nil`

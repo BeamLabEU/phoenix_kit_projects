@@ -9,7 +9,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Extensions, Features, Ledger, Members, Projects}
+  alias PhoenixKitProjects.{Extensions, Features, Labels, Ledger, Members, Projects}
 
   setup %{conn: conn} do
     PhoenixKitProjects.Extensions.Registry.refresh()
@@ -371,6 +371,70 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       assert html =~ "Enter a positive amount of time."
       assert Ledger.list_entries(project.uuid) == []
+    end
+  end
+
+  describe "priorities + labels flags (Phase C)" do
+    test "priorities off strips a crafted priority on save; on persists it",
+         %{conn: conn, project: project, assignment: assignment} do
+      # ON (default): the form save persists priority.
+      {:ok, view, _} =
+        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit")
+
+      render_submit(view, "save", %{"assignment" => %{"priority" => "urgent"}})
+      assert Projects.get_assignment(assignment.uuid).priority == "urgent"
+
+      # OFF: a crafted priority param is stripped server-side.
+      {:ok, project} = Features.set_flags(project, %{"priorities" => false})
+
+      {:ok, view, html} =
+        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit")
+
+      refute html =~ "assignment[priority]"
+      render_submit(view, "save", %{"assignment" => %{"priority" => "low"}})
+      assert Projects.get_assignment(assignment.uuid).priority == "urgent"
+    end
+
+    test "labels off refuses the panel events and skips join writes",
+         %{conn: conn, project: project, assignment: assignment} do
+      {:ok, label} = Labels.create(project, %{name: "keepme"})
+      :ok = Labels.set_assignment_labels(assignment, [label.uuid])
+
+      {:ok, project} = Features.set_flags(project, %{"labels" => false})
+
+      # Panel events refuse.
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+      refute html =~ "add_label"
+      html = render_submit(view, "add_label", %{"name" => "sneak", "color" => "badge-info"})
+      assert html =~ "This feature is turned off for this project."
+      assert length(Labels.list_for_project(project.uuid)) == 1
+
+      # A form save with the flag off leaves existing joins untouched.
+      {:ok, form_view, form_html} =
+        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit")
+
+      refute form_html =~ ~s(name="labels[]")
+      render_submit(form_view, "save", %{"assignment" => %{"status" => "todo"}, "labels" => []})
+
+      assert [%{name: "keepme"}] =
+               Labels.labels_for_assignments([assignment.uuid])[assignment.uuid]
+    end
+
+    test "labels on: the edit form pre-checks and the save replaces the set",
+         %{conn: conn, project: project, assignment: assignment} do
+      {:ok, a} = Labels.create(project, %{name: "alpha"})
+      {:ok, b} = Labels.create(project, %{name: "beta"})
+      :ok = Labels.set_assignment_labels(assignment, [a.uuid])
+
+      {:ok, view, html} =
+        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit")
+
+      assert html =~ ~s(value="#{a.uuid}" checked)
+
+      render_submit(view, "save", %{"assignment" => %{"status" => "todo"}, "labels" => [b.uuid]})
+
+      assert [%{name: "beta"}] =
+               Labels.labels_for_assignments([assignment.uuid])[assignment.uuid]
     end
   end
 

@@ -214,6 +214,8 @@ defmodule PhoenixKitProjects do
           %{key: "statuses", label: "Workflow statuses", default: true},
           %{key: "scheduling", label: "Scheduling & ETA", default: true, requires: ["estimates"]},
           %{key: "subprojects", label: "Sub-projects", default: true},
+          %{key: "priorities", label: "Priorities", default: true},
+          %{key: "labels", label: "Labels", default: true},
           %{key: "ledger", label: "Work ledger", default: true},
           %{key: "view_board", label: "Board view", default: true},
           %{

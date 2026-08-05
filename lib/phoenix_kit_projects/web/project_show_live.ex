@@ -49,6 +49,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Features,
     Health,
     L10n,
+    Labels,
     Ledger,
     Paths,
     Projects,
@@ -158,7 +159,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        ledger_totals: nil,
        ledger_minutes: %{},
        log_time_open: false,
-       log_time_uuid: nil
+       log_time_uuid: nil,
+       assignment_labels: %{}
      )
      |> put_flash(:error, gettext("Project not found."))
      |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -233,7 +235,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            ledger_totals: nil,
            ledger_minutes: %{},
            log_time_open: false,
-           log_time_uuid: nil
+           log_time_uuid: nil,
+           assignment_labels: %{}
          )
          |> put_flash(:error, gettext("Project not found."))
          |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -357,11 +360,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             ledger_totals: nil,
             ledger_minutes: %{},
             log_time_open: false,
-            log_time_uuid: nil
+            log_time_uuid: nil,
+            assignment_labels: %{}
           )
           |> WebHelpers.attach_open_embed_hook()
 
-        {:ok, socket |> load_assignments() |> load_comment_counts() |> load_ledger()}
+        {:ok,
+         socket |> load_assignments() |> load_comment_counts() |> load_ledger() |> load_labels()}
     end
   end
 
@@ -381,7 +386,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              :task_updated,
              :task_deleted
            ] do
-    {:noreply, load_assignments(socket)}
+    {:noreply, socket |> load_assignments() |> load_labels()}
   end
 
   def handle_info({:projects, event, _payload}, socket)
@@ -477,6 +482,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # records through the same context) — refresh the effort totals.
   def handle_info({:projects, :work_logged, _payload}, socket) do
     {:noreply, load_ledger(socket)}
+  end
+
+  def handle_info({:projects, :project_labels_changed, _payload}, socket) do
+    {:noreply, load_labels(socket)}
   end
 
   def handle_info(msg, socket) do
@@ -735,6 +744,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:assignment_comment_counts, :map, default: %{})
   attr(:deps_by_assignment, :map, default: %{})
   attr(:ledger_minutes, :map, default: %{})
+  attr(:assignment_labels, :map, default: %{})
 
   defp task_body(assigns) do
     ~H"""
@@ -878,6 +888,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% atype = assignee_type(@a) %>
             <span :if={@fx.assignees and atype} class="badge badge-outline badge-sm gap-1">
               <.icon name="hero-user" class="w-3 h-3" /> {atype}: {assignee_label(@a)}
+            </span>
+
+            <%!-- Priority: only non-normal wears a badge (calm cards). --%>
+            <span
+              :if={@fx.priorities and @a.priority != "normal"}
+              class={["badge badge-sm gap-1", priority_class(@a.priority)]}
+            >
+              <.icon name="hero-flag" class="w-3 h-3" /> {priority_label(@a.priority)}
+            </span>
+
+            <span
+              :for={label <- Map.get(@assignment_labels, @a.uuid, [])}
+              :if={@fx.labels}
+              class={["badge badge-sm", label.color]}
+            >
+              {label.name}
             </span>
 
             <% weekends? = task_counts_weekends?(@a, @project) %>
@@ -1676,6 +1702,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # Label chips per displayed assignment (Phase C). Loaded only when the
+  # labels flag resolves on; keyed by assignment uuid over the displayed
+  # set (parent rows + expanded children), like the ledger chips.
+  defp load_labels(socket) do
+    %{project: project, is_template: is_template, fx: fx} = socket.assigns
+
+    if (not is_template and fx[:labels]) && project.uuid do
+      displayed =
+        Enum.map(socket.assigns.assignments, & &1.uuid) ++
+          (socket.assigns.subproject_child_tasks
+           |> Map.values()
+           |> List.flatten()
+           |> Enum.map(& &1.uuid))
+
+      assign(socket, assignment_labels: Labels.labels_for_assignments(displayed))
+    else
+      assign(socket, assignment_labels: %{})
+    end
+  end
+
   # Effort totals + per-task logged-time map (Step 10). Loaded only when
   # the `ledger` flag resolves on for a real project — nil/empty otherwise
   # so the render gates have one thing to check.
@@ -2118,6 +2164,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp humanize_hours(h) when h < 24 * 7, do: {Float.round(h / 24, 1), gettext("days")}
   defp humanize_hours(h) when h < 24 * 30, do: {Float.round(h / (24 * 7), 1), gettext("weeks")}
   defp humanize_hours(h), do: {Float.round(h / (24 * 30), 1), gettext("months")}
+
+  # ── Priority display (Phase C) ───────────────────────────────────
+
+  defp priority_class("urgent"), do: "badge-error"
+  defp priority_class("high"), do: "badge-warning"
+  defp priority_class("low"), do: "badge-ghost"
+  defp priority_class(_), do: "badge-ghost"
+
+  defp priority_label("urgent"), do: gettext("Urgent")
+  defp priority_label("high"), do: gettext("High")
+  defp priority_label("low"), do: gettext("Low")
+  defp priority_label(other), do: other
 
   # ── Work-ledger helpers (Step 10) ────────────────────────────────
 
@@ -3050,6 +3108,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       comments_enabled={@comments_enabled}
                                       assignment_comment_counts={@assignment_comment_counts}
                                       ledger_minutes={@ledger_minutes}
+                                      assignment_labels={@assignment_labels}
                                       deps_by_assignment={@deps_by_assignment}
                                     />
                                   </div>
@@ -3072,6 +3131,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       comments_enabled={@comments_enabled}
                       assignment_comment_counts={@assignment_comment_counts}
                       ledger_minutes={@ledger_minutes}
+                      assignment_labels={@assignment_labels}
                       deps_by_assignment={@deps_by_assignment}
                     />
                   <% end %>
@@ -3119,6 +3179,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   {Assignment.label(a, L10n.current_content_lang())}
                 </.smart_link>
                 <div class="flex flex-wrap items-center gap-1">
+                  <span
+                    :if={@fx.priorities and a.priority != "normal"}
+                    class={["badge badge-xs gap-1", priority_class(a.priority)]}
+                  >
+                    <.icon name="hero-flag" class="w-3 h-3" /> {priority_label(a.priority)}
+                  </span>
+                  <span
+                    :for={label <- Map.get(@assignment_labels, a.uuid, [])}
+                    :if={@fx.labels}
+                    class={["badge badge-xs", label.color]}
+                  >
+                    {label.name}
+                  </span>
                   <% b_atype = assignee_type(a) %>
                   <span :if={@fx.assignees and b_atype} class="badge badge-outline badge-xs gap-1">
                     <.icon name="hero-user" class="w-3 h-3" /> {assignee_label(a)}
