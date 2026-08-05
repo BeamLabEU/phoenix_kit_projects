@@ -59,9 +59,15 @@ defmodule PhoenixKitProjects.Ledger do
 
   @doc """
   Records AI usage attributed to a project/task: a `tokens` entry plus a
-  `cost` entry when `cost_cents` is present, both `actor_kind: "ai_agent"`
+  `cost` entry when `cost_cents` is POSITIVE, both `actor_kind: "ai_agent"`
   with shared metadata (`model`, `endpoint`, anything else passed).
   Returns `{:ok, [entries]}`.
+
+  Zero/absent quantities are SKIPPED, not errors — `cost_cents: 0` is the
+  normal shape for free/cached/local calls (panel round: `0` is truthy in
+  Elixir, so a naive `&&` built a zero-amount entry that failed the
+  amount>0 validation AFTER the tokens row committed). Both inserts run in
+  one transaction; activity/broadcast fire only after it commits.
   """
   @spec record_ai(map() | binary(), map(), keyword()) ::
           {:ok, [WorkEntry.t()]} | {:error, term()}
@@ -83,21 +89,52 @@ defmodule PhoenixKitProjects.Ledger do
     }
 
     entries =
-      [
-        tokens && Map.merge(base, %{kind: "tokens", amount: tokens}),
-        cost_cents && Map.merge(base, %{kind: "cost", amount: cost_cents})
-      ]
-      |> Enum.reject(&is_nil/1)
+      []
+      |> maybe_entry(base, "tokens", tokens)
+      |> maybe_entry(base, "cost", cost_cents)
 
     if entries == [] do
       {:error, :nothing_to_record}
     else
-      results = Enum.map(entries, &insert_entry(project_or_uuid, &1))
+      insert_all_or_nothing(project_or_uuid, entries)
+    end
+  end
 
-      case Enum.find(results, &match?({:error, _}, &1)) do
-        nil -> {:ok, Enum.map(results, fn {:ok, e} -> e end)}
-        error -> error
-      end
+  defp maybe_entry(entries, base, kind, amount) do
+    if positive_amount?(amount) do
+      entries ++ [Map.merge(base, %{kind: kind, amount: amount})]
+    else
+      entries
+    end
+  end
+
+  defp positive_amount?(%Decimal{} = amount), do: Decimal.compare(amount, 0) == :gt
+  defp positive_amount?(amount) when is_number(amount), do: amount > 0
+  defp positive_amount?(_), do: false
+
+  # All-or-nothing multi-entry write: either every entry lands or none
+  # does (an unwrapped loop left the tokens row committed when the cost
+  # row failed). Side effects (activity + broadcast) run after commit so
+  # a rollback can't leak phantom events.
+  defp insert_all_or_nothing(project_or_uuid, entries) do
+    repo = RepoHelper.repo()
+    project_uuid = project_uuid(project_or_uuid)
+
+    repo.transaction(fn ->
+      Enum.map(entries, fn attrs ->
+        case repo.insert(entry_changeset(project_uuid, attrs)) do
+          {:ok, entry} -> entry
+          {:error, changeset} -> repo.rollback(changeset)
+        end
+      end)
+    end)
+    |> case do
+      {:ok, inserted} ->
+        Enum.each(inserted, &publish_entry/1)
+        {:ok, inserted}
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -175,31 +212,38 @@ defmodule PhoenixKitProjects.Ledger do
     do: %{time_minutes: 0.0, tokens: 0.0, cost_cents: 0.0, billable_minutes: 0.0}
 
   defp insert_entry(project_or_uuid, attrs) do
-    project_uuid = project_uuid(project_or_uuid)
-
-    %WorkEntry{}
-    |> WorkEntry.changeset(Map.put(attrs, :project_uuid, project_uuid))
+    project_or_uuid
+    |> project_uuid()
+    |> entry_changeset(attrs)
     |> RepoHelper.repo().insert()
     |> case do
       {:ok, entry} ->
-        Activity.log("projects.work_logged",
-          actor_uuid: if(entry.actor_kind == "user", do: entry.actor_uuid),
-          resource_type: "project",
-          resource_uuid: project_uuid,
-          metadata: %{
-            "kind" => entry.kind,
-            "amount" => Decimal.to_string(entry.amount),
-            "actor_kind" => entry.actor_kind,
-            "assignment_uuid" => entry.assignment_uuid
-          }
-        )
-
-        PubSub.broadcast_project(:work_logged, %{uuid: project_uuid})
+        publish_entry(entry)
         {:ok, entry}
 
       {:error, _} = error ->
         error
     end
+  end
+
+  defp entry_changeset(project_uuid, attrs) do
+    WorkEntry.changeset(%WorkEntry{}, Map.put(attrs, :project_uuid, project_uuid))
+  end
+
+  defp publish_entry(entry) do
+    Activity.log("projects.work_logged",
+      actor_uuid: if(entry.actor_kind == "user", do: entry.actor_uuid),
+      resource_type: "project",
+      resource_uuid: entry.project_uuid,
+      metadata: %{
+        "kind" => entry.kind,
+        "amount" => Decimal.to_string(entry.amount),
+        "actor_kind" => entry.actor_kind,
+        "assignment_uuid" => entry.assignment_uuid
+      }
+    )
+
+    PubSub.broadcast_project(:work_logged, %{uuid: entry.project_uuid})
   end
 
   defp project_uuid(%{uuid: uuid}), do: uuid

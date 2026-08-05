@@ -98,6 +98,20 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
       assert {:error, :nothing_to_record} = Ledger.record_ai(project, %{model: "x"})
       assert Ledger.list_entries(project.uuid) == []
     end
+
+    # Panel round (Gemini): 0 is TRUTHY in Elixir — a free/cached call
+    # (`cost_cents: 0`) must skip the cost entry, not build a zero-amount
+    # one that fails validation after the tokens row already committed.
+    test "zero cost is skipped, not an error", %{project: project} do
+      assert {:ok, [entry]} = Ledger.record_ai(project, %{tokens: 1_000, cost_cents: 0})
+      assert entry.kind == "tokens"
+      assert [_only] = Ledger.list_entries(project.uuid)
+    end
+
+    test "all-zero usage is refused with nothing written", %{project: project} do
+      assert {:error, :nothing_to_record} = Ledger.record_ai(project, %{tokens: 0, cost_cents: 0})
+      assert Ledger.list_entries(project.uuid) == []
+    end
   end
 
   describe "totals" do
