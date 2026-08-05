@@ -270,15 +270,34 @@ defmodule PhoenixKitProjects.Whiteboards do
   @spec blank_png(pos_integer(), pos_integer(), String.t()) :: binary()
   def blank_png(width, height, salt) do
     ihdr = <<width::32, height::32, 8, 2, 0, 0, 0>>
-    row = <<0>> <> :binary.copy(<<255, 255, 255>>, width)
-    idat = :zlib.compress(:binary.copy(row, height))
     text = "Software" <> <<0>> <> "phoenix_kit_projects whiteboard #{salt}"
 
     <<137, 80, 78, 71, 13, 10, 26, 10>> <>
       png_chunk("IHDR", ihdr) <>
       png_chunk("tEXt", text) <>
-      png_chunk("IDAT", idat) <>
+      png_chunk("IDAT", deflate_rows(width, height)) <>
       png_chunk("IEND", "")
+  end
+
+  # STREAMED deflate: one filter-0 white row fed `height` times through a
+  # zlib stream. The naive `:zlib.compress(:binary.copy(row, height))`
+  # materialized the whole raw raster first — ~192 MB at the 8000×8000
+  # API cap (panel round, Grok); this keeps memory at one row + the tiny
+  # compressed output.
+  defp deflate_rows(width, height) do
+    row = <<0>> <> :binary.copy(<<255, 255, 255>>, width)
+    z = :zlib.open()
+    :ok = :zlib.deflateInit(z)
+
+    try do
+      1..height
+      |> Enum.flat_map(fn i ->
+        :zlib.deflate(z, row, if(i == height, do: :finish, else: :none))
+      end)
+      |> IO.iodata_to_binary()
+    after
+      :zlib.close(z)
+    end
   end
 
   defp png_chunk(type, data) do

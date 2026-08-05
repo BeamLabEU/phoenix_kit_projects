@@ -63,6 +63,21 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
       assert {w, h} == {320, 200}
     end
 
+    # Pins the streamed-deflate refactor (panel round, Grok: the naive
+    # compress materialized the full raster — ~192 MB at the 8000 cap).
+    test "the streamed IDAT inflates back to the exact raw raster" do
+      png = Whiteboards.blank_png(50, 40, "s")
+
+      # Walk the chunks to the IDAT payload.
+      <<_sig::binary-size(8), rest::binary>> = png
+      idat = find_chunk(rest, "IDAT")
+
+      raw = :zlib.uncompress(idat)
+      # height × (1 filter byte + width × 3 channels), all white.
+      assert byte_size(raw) == 40 * (1 + 50 * 3)
+      assert raw == :binary.copy(<<0>> <> :binary.copy(<<255, 255, 255>>, 50), 40)
+    end
+
     test "distinct salts produce distinct bytes (the Storage dedup trap)" do
       a = Whiteboards.blank_png(320, 200, "salt-a")
       b = Whiteboards.blank_png(320, 200, "salt-b")
@@ -196,6 +211,11 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
       assert Enum.any?(Attachments.list_files(project.uuid), &(&1.uuid == file.uuid))
       assert_activity_logged("projects.whiteboard_deleted", resource_uuid: project.uuid)
     end
+  end
+
+  defp find_chunk(<<len::32, type::binary-size(4), rest::binary>>, wanted) do
+    <<data::binary-size(len), _crc::32, tail::binary>> = rest
+    if type == wanted, do: data, else: find_chunk(tail, wanted)
   end
 
   defp user_file_count(user) do
