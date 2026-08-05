@@ -967,6 +967,16 @@ defmodule PhoenixKitProjects.Projects do
     attrs = put_default_position(attrs, fn -> next_project_position(is_template?) end)
 
     with {:ok, project} <- %Project{} |> Project.changeset(attrs) |> repo().insert() do
+      # Hub membership (P2a): the creator holds the first owner seat. Only
+      # real (non-template) projects get members; best-effort so a members
+      # hiccup never fails the create. `:actor_uuid` is the LV-layer opt.
+      if not is_template? do
+        PhoenixKitProjects.Members.ensure_creator_owner(
+          project.uuid,
+          Keyword.get(opts, :actor_uuid)
+        )
+      end
+
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
       end
@@ -1834,14 +1844,14 @@ defmodule PhoenixKitProjects.Projects do
   @spec create_project_from_template(uuid(), map()) ::
           {:ok, Project.t()}
           | {:error, :template_not_found | Ecto.Changeset.t() | term()}
-  def create_project_from_template(template_uuid, project_attrs) do
+  def create_project_from_template(template_uuid, project_attrs, opts \\ []) do
     case get_project(template_uuid) do
       nil -> {:error, :template_not_found}
-      template -> clone_template(template, project_attrs)
+      template -> clone_template(template, project_attrs, opts)
     end
   end
 
-  defp clone_template(template, project_attrs) do
+  defp clone_template(template, project_attrs, opts) do
     # The caller's settings (if any) are preserved; the back-link key is
     # forced. It makes the clone countable by `template_usage/1` long
     # after the activity log's retention window has pruned the event.
@@ -1874,7 +1884,7 @@ defmodule PhoenixKitProjects.Projects do
     # Template clones are short and rare; the isolation cost is negligible.
     repo().transaction(
       fn ->
-        project = attrs |> create_project_in_tx() |> inherit_status_slug_in_tx(template)
+        project = attrs |> create_project_in_tx(opts) |> inherit_status_slug_in_tx(template)
         uuid_map = clone_assignments_in_tx(template_assignments, project)
         clone_dependencies_in_tx(template_deps, uuid_map)
         project
@@ -1910,10 +1920,11 @@ defmodule PhoenixKitProjects.Projects do
 
   defp inherit_status_slug_in_tx(project, _template), do: project
 
-  defp create_project_in_tx(attrs) do
+  defp create_project_in_tx(attrs, opts \\ []) do
     # `broadcast: false`: the project is created inside the clone transaction;
-    # `clone_template/2` emits a single `:project_created` after commit.
-    case create_project(attrs, broadcast: false) do
+    # `clone_template/3` emits a single `:project_created` after commit.
+    # `actor_uuid` rides through so the creator gets the owner seat (P2a).
+    case create_project(attrs, broadcast: false, actor_uuid: Keyword.get(opts, :actor_uuid)) do
       {:ok, project} -> project
       {:error, cs} -> repo().rollback(cs)
     end

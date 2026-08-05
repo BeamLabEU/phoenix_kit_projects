@@ -41,7 +41,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   use Ecto.Migration
 
-  @current_version 2
+  @current_version 3
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -93,6 +93,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
     v1_baseline(p, prefix)
     v2_extension_enablement(p, prefix)
+    v3_members(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -104,6 +105,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     prefix = normalize_prefix(opts)
     p = prefix_str(prefix)
 
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_members")
     execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_modules")
     execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_statuses")
     execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_dependencies")
@@ -368,6 +370,47 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     CREATE INDEX IF NOT EXISTS phoenix_kit_project_modules_project_index
     ON #{p}phoenix_kit_project_modules (project_uuid)
+    """)
+  end
+
+  # ---------------------------------------------------------------------------
+  # V3 — per-project members (the hub's native people layer, P2a).
+  #
+  # Members are CORE USERS (user_uuid), not staff people — "natively only
+  # core stuff"; staff/CRM enrich via seams. `role` is the frozen enum
+  # owner/manager/member/viewer (PhoenixKitProjects.Authz.roles/0).
+  # `invited_by_uuid` is FK-less best-effort provenance (the activity log
+  # is the audit trail — same convention as project_modules.enabled_by).
+  # ---------------------------------------------------------------------------
+
+  defp v3_members(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_members (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      user_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_users(uuid) ON DELETE CASCADE,
+      role VARCHAR(20) NOT NULL DEFAULT 'member',
+      invited_by_uuid UUID,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT phoenix_kit_project_members_role_check
+        CHECK (role IN ('owner', 'manager', 'member', 'viewer'))
+    )
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_members_identity_index
+    ON #{p}phoenix_kit_project_members (project_uuid, user_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_members_project_index
+    ON #{p}phoenix_kit_project_members (project_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_members_user_index
+    ON #{p}phoenix_kit_project_members (user_uuid)
     """)
   end
 

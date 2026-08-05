@@ -174,6 +174,15 @@ defmodule PhoenixKitProjects do
             requires: ["scheduling"]
           }
         ]
+      },
+      %{
+        key: "files",
+        name: "Files",
+        description: "Attach files to the project (core media library)",
+        icon: "hero-paper-clip",
+        module_key: nil,
+        default_enabled: true,
+        permission_actions: [:upload_files]
       }
     ]
   end
@@ -259,6 +268,18 @@ defmodule PhoenixKitProjects do
     ]
 
     hidden_subtabs = [
+      %Tab{
+        id: :admin_projects_members,
+        label: "Project Members",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/:id/members",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectMembersLive, :edit}
+      },
       %Tab{
         id: :admin_projects_modules,
         label: "Project Modules",

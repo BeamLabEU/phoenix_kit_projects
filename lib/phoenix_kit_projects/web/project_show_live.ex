@@ -1966,6 +1966,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 icon="hero-squares-plus"
                 label={gettext("Modules & features")}
               />
+              <.smart_menu_link
+                :if={not @is_template}
+                navigate={Paths.members(@project.uuid)}
+                emit={{PhoenixKitProjects.Web.ProjectMembersLive, %{"id" => @project.uuid}}}
+                embed_mode={@embed_mode}
+                icon="hero-users"
+                label={gettext("Members")}
+              />
               <%= if not @is_template do %>
                 <.table_row_menu_divider />
                 <%= if @project.archived_at do %>

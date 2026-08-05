@@ -398,6 +398,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         do: a,
         else: Map.drop(a, ~w(assigned_team_uuid assigned_department_uuid assigned_person_uuid))
     end)
+    |> then(fn a -> if fx.scheduling, do: a, else: Map.drop(a, ~w(counts_weekends)) end)
   end
 
   # Applies the chosen creation preset (explicit flag writes) — best-effort:
@@ -417,7 +418,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp save(socket, :new, attrs, nil) do
-    case Projects.create_project(attrs) do
+    case Projects.create_project(attrs, actor_uuid: Activity.actor_uuid(socket)) do
       {:ok, project} ->
         apply_creation_preset(socket, project)
 
@@ -453,7 +454,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp save(socket, :new, attrs, template_uuid) do
-    case Projects.create_project_from_template(template_uuid, attrs) do
+    case Projects.create_project_from_template(template_uuid, attrs,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
       {:ok, project} ->
         Activity.log("projects.project_created_from_template",
           actor_uuid: Activity.actor_uuid(socket),
@@ -708,7 +711,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 prompt={gettext("Start from scratch")}
               />
             <% end %>
+            <%!-- Schedule math config — gated on `scheduling` (start mode /
+                 date below stay: they're lifecycle, not schedule math). --%>
             <.checkbox
+              :if={@fx.scheduling}
               field={@form[:counts_weekends]}
               label={gettext("Count weekends in schedule")}
               class="checkbox-sm"
