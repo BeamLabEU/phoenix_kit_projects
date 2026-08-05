@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 4
+  @current_version 5
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -101,6 +101,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v2_extension_enablement(p, prefix)
     v3_members(p, prefix)
     v4_work_entries(p, prefix)
+    v5_whiteboards(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -122,6 +123,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     p = prefix_str(prefix)
     target = down_target(opts)
 
+    if target < 5, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_whiteboards")
     if target < 4, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_work_entries")
     if target < 3, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_members")
     if target < 2, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_modules")
@@ -505,6 +507,38 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     CREATE INDEX IF NOT EXISTS phoenix_kit_project_work_entries_actor_index
     ON #{p}phoenix_kit_project_work_entries (actor_kind, actor_uuid)
+    """)
+  end
+
+  # V5 — whiteboards (Step 11 of the hub rework): a named drawing board =
+  # one core Storage file (the blank-background bridge) + core annotation
+  # rows anchored to it. The board row is the projects-side name/order
+  # wrapper; deleting the FILE cascades the board (and core cascades the
+  # annotations), so nothing dangles.
+  defp v5_whiteboards(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_whiteboards (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      file_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_files(uuid) ON DELETE CASCADE,
+      name VARCHAR(160) NOT NULL,
+      width INTEGER NOT NULL DEFAULT 1920,
+      height INTEGER NOT NULL DEFAULT 1080,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_by_uuid UUID,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_whiteboards_project_index
+    ON #{p}phoenix_kit_project_whiteboards (project_uuid)
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_whiteboards_file_index
+    ON #{p}phoenix_kit_project_whiteboards (file_uuid)
     """)
   end
 

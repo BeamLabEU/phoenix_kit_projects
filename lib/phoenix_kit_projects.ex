@@ -239,6 +239,27 @@ defmodule PhoenixKitProjects do
         default_enabled: true,
         permission_actions: [:upload_files]
       },
+      # Whiteboards (Step 11): built-in extension whose surface is a
+      # contributed tab through the SAME pipeline external providers use —
+      # dogfooding the tab contract. Off by default: drawing boards are an
+      # opt-in capability, not part of the pre-hub surface.
+      %{
+        key: "whiteboards",
+        name: "Whiteboards",
+        description: "Freeform drawing boards on the core annotation canvas",
+        icon: "hero-paint-brush",
+        module_key: nil,
+        default_enabled: false,
+        permission_actions: [:upload_files],
+        tabs: [
+          %{
+            key: "boards",
+            label: "Whiteboards",
+            icon: "hero-paint-brush",
+            lv: PhoenixKitProjects.Web.ProjectWhiteboardsLive
+          }
+        ]
+      },
       # Hub-side BRIDGE descriptor for a module that doesn't self-declare
       # (phoenix_kit_comments is BeamLab-maintained): the show page's
       # comments drawer, re-fronted as a per-project toggle. The drawer's
