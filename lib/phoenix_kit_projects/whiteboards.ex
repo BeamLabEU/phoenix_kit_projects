@@ -80,20 +80,55 @@ defmodule PhoenixKitProjects.Whiteboards do
         {:error, :actor_required}
 
       actor_uuid ->
-        with {:ok, file} <- create_background_file(name, width, height, actor_uuid) do
+        # Validate the name BEFORE touching Storage: the background file
+        # used to be created first, so a whitespace name returned an
+        # error changeset AND left an orphaned file row + blob behind
+        # (panel round, Gemini).
+        with :ok <- validate_name(name),
+             {:ok, file} <- create_background_file(name, width, height, actor_uuid) do
           # Dimensions drive the canvas extent; store_file/2 never
           # populates them (that's ProcessFileJob's job on the upload
           # path, which store_file doesn't enqueue).
           _ = Storage.update_file(file, %{width: width, height: height})
 
-          create_board_for_file(project, file.uuid, %{
+          project
+          |> create_board_for_file(file.uuid, %{
             name: name,
             width: width,
             height: height,
             created_by_uuid: actor_uuid
           })
+          |> case do
+            {:ok, board} ->
+              {:ok, board}
+
+            {:error, _} = error ->
+              # Residual failures (project deleted mid-flight, unique
+              # race): don't leave the just-created background behind.
+              cleanup_background_file(file)
+              error
+          end
         end
     end
+  end
+
+  defp validate_name(name) do
+    trimmed = String.trim(to_string(name))
+
+    if trimmed == "" or String.length(trimmed) > 160 do
+      {:error, :invalid_name}
+    else
+      :ok
+    end
+  end
+
+  defp cleanup_background_file(file) do
+    Storage.delete_file(file)
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
   end
 
   @doc """

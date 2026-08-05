@@ -150,6 +150,19 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
       assert Whiteboards.viewer_file(file.uuid).urls["original"]
     end
 
+    # Panel round (Gemini HIGH): the background file was created BEFORE the
+    # name was validated — a whitespace name returned {:error, changeset}
+    # and left an orphaned file row + stored blob behind.
+    test "a bad name creates NO orphan background file", %{project: project, user: user} do
+      before_count = user_file_count(user)
+
+      assert {:error, _} = Whiteboards.create(project, "   ", actor_uuid: user.uuid)
+      assert {:error, _} = Whiteboards.create(project, String.duplicate("x", 200), actor_uuid: user.uuid)
+
+      assert Whiteboards.list_for_project(project.uuid) == []
+      assert user_file_count(user) == before_count
+    end
+
     test "two same-size boards get DISTINCT background files (salt beats dedup)",
          %{project: project, user: user} do
       # Storage dedups per-user by content checksum: identical unsalted
@@ -183,6 +196,14 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
       assert Enum.any?(Attachments.list_files(project.uuid), &(&1.uuid == file.uuid))
       assert_activity_logged("projects.whiteboard_deleted", resource_uuid: project.uuid)
     end
+  end
+
+  defp user_file_count(user) do
+    import Ecto.Query
+
+    PhoenixKit.RepoHelper.repo().one(
+      from(f in Storage.File, where: f.user_uuid == ^user.uuid, select: count())
+    )
   end
 
   test "viewer_file/1 builds the MediaCanvasViewer contract map", %{user: user} do
