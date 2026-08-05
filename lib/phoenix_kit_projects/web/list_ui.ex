@@ -54,6 +54,57 @@ defmodule PhoenixKitProjects.Web.ListUi do
     new_visible
   end
 
+  @views_cap 20
+
+  @doc """
+  SHARED saved views for a list page (the columns-persistence precedent:
+  site-wide Settings, team presets rather than per-user — per-user views
+  can layer on when member surfaces land). Stored as a JSON list under
+  one settings key; malformed/legacy payloads read as no views.
+  """
+  @spec read_views(String.t()) :: [map()]
+  def read_views(key) do
+    with stored when is_binary(stored) <- PhoenixKit.Settings.get_settings_direct([key])[key],
+         {:ok, views} when is_list(views) <- Phoenix.json_library().decode(stored) do
+      Enum.filter(views, &(is_map(&1) and is_binary(&1["name"])))
+    else
+      _ -> []
+    end
+  end
+
+  @doc """
+  Upserts a named view (same name replaces; the cap drops the oldest).
+  `state` must be a JSON-safe map. Returns the new list.
+  """
+  @spec save_view(String.t(), String.t(), map()) :: [map()]
+  def save_view(key, name, state) when is_binary(name) and is_map(state) do
+    views =
+      key
+      |> read_views()
+      |> Enum.reject(&(&1["name"] == name))
+      |> Kernel.++([Map.put(state, "name", name)])
+      |> Enum.take(-@views_cap)
+
+    persist_views(key, views)
+    views
+  end
+
+  @doc "Deletes a named view. Returns the new list."
+  @spec delete_view(String.t(), String.t()) :: [map()]
+  def delete_view(key, name) do
+    views = key |> read_views() |> Enum.reject(&(&1["name"] == name))
+    persist_views(key, views)
+    views
+  end
+
+  defp persist_views(key, views) do
+    PhoenixKit.Settings.update_setting_with_module(
+      key,
+      Phoenix.json_library().encode!(views),
+      @settings_module
+    )
+  end
+
   @doc """
   Coerces the search event payload to a binary. A forged `search[x]=y`
   body arrives as a map — the query side would shrug it off, but
