@@ -257,6 +257,66 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
     end
   end
 
+  describe "ledger flag off" do
+    setup %{project: project} do
+      {:ok, project} = Features.set_flags(project, %{"ledger" => false})
+      {:ok, project: project}
+    end
+
+    test "no Log time surface and forged ledger events are refused",
+         %{conn: conn, project: project, assignment: assignment} do
+      {:ok, view, html} = live(conn, show_path(project))
+
+      refute html =~ "open_log_time"
+
+      html = render_click(view, "open_log_time", %{"uuid" => assignment.uuid})
+      assert html =~ "This feature is turned off for this project."
+
+      render_submit(view, "save_work_entry", %{"hours" => "1", "minutes" => "0"})
+      assert PhoenixKitProjects.Ledger.list_entries(project.uuid) == []
+    end
+  end
+
+  describe "ledger flag on (default)" do
+    test "logging time through the modal writes an entry and refreshes the strip",
+         %{conn: conn, project: project, assignment: assignment} do
+      {:ok, view, html} = live(conn, show_path(project))
+
+      # Entry points render: the effort strip and the per-task chip.
+      assert html =~ "Log time"
+
+      render_click(view, "open_log_time", %{"uuid" => assignment.uuid})
+
+      html =
+        render_submit(view, "save_work_entry", %{
+          "hours" => "1",
+          "minutes" => "30",
+          "note" => "Night shift",
+          "billable" => "true"
+        })
+
+      assert [entry] = PhoenixKitProjects.Ledger.list_entries(project.uuid)
+      assert Decimal.equal?(entry.amount, Decimal.new(90))
+      assert entry.assignment_uuid == assignment.uuid
+      assert entry.billable
+      assert entry.note == "Night shift"
+
+      # Strip totals and the task chip show the logged time.
+      assert html =~ "1h 30m"
+    end
+
+    test "garbage duration is refused with a flash, nothing written",
+         %{conn: conn, project: project} do
+      {:ok, view, _} = live(conn, show_path(project))
+
+      render_click(view, "open_log_time", %{})
+      html = render_submit(view, "save_work_entry", %{"hours" => "0", "minutes" => "0"})
+
+      assert html =~ "Enter a positive amount of time."
+      assert PhoenixKitProjects.Ledger.list_entries(project.uuid) == []
+    end
+  end
+
   describe "project form" do
     test "statuses off hides the workflow section and strips a crafted source",
          %{conn: conn, project: project} do

@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 3
+  @current_version 4
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -100,6 +100,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v1_baseline(p, prefix)
     v2_extension_enablement(p, prefix)
     v3_members(p, prefix)
+    v4_work_entries(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -121,6 +122,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     p = prefix_str(prefix)
     target = down_target(opts)
 
+    if target < 4, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_work_entries")
     if target < 3, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_members")
     if target < 2, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_modules")
 
@@ -451,6 +453,58 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     CREATE INDEX IF NOT EXISTS phoenix_kit_project_members_user_index
     ON #{p}phoenix_kit_project_members (user_uuid)
+    """)
+  end
+
+  # ---------------------------------------------------------------------------
+  # V4 — the work ledger (Step 10): unified effort per task/project where
+  # the ACTOR can be a human or an AI agent and the QUANTITY minutes,
+  # tokens, or cost — "assign a task to an AI agent and watch its token
+  # spend next to your team's hours". Append-only; actor_uuid is FK-less
+  # (ai agents aren't users; activity is the audit trail). Amount unit is
+  # fixed per kind: time=minutes, tokens=count, cost=cents.
+  # ---------------------------------------------------------------------------
+
+  defp v4_work_entries(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_work_entries (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      assignment_uuid UUID REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE SET NULL,
+      actor_kind VARCHAR(20) NOT NULL DEFAULT 'user',
+      actor_uuid UUID,
+      kind VARCHAR(10) NOT NULL,
+      amount NUMERIC(14,4) NOT NULL,
+      started_at TIMESTAMPTZ,
+      ended_at TIMESTAMPTZ,
+      note TEXT,
+      source VARCHAR(30) NOT NULL DEFAULT 'manual',
+      billable BOOLEAN NOT NULL DEFAULT false,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT phoenix_kit_project_work_entries_actor_kind_check
+        CHECK (actor_kind IN ('user', 'staff_person', 'ai_agent')),
+      CONSTRAINT phoenix_kit_project_work_entries_kind_check
+        CHECK (kind IN ('time', 'tokens', 'cost')),
+      CONSTRAINT phoenix_kit_project_work_entries_amount_check
+        CHECK (amount > 0)
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_work_entries_project_index
+    ON #{p}phoenix_kit_project_work_entries (project_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_work_entries_assignment_index
+    ON #{p}phoenix_kit_project_work_entries (assignment_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_work_entries_actor_index
+    ON #{p}phoenix_kit_project_work_entries (actor_kind, actor_uuid)
     """)
   end
 

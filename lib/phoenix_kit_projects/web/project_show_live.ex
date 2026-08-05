@@ -49,6 +49,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Features,
     Health,
     L10n,
+    Ledger,
     Paths,
     Projects,
     Statuses
@@ -152,7 +153,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        status_options: [],
        expanded_subprojects: MapSet.new(),
        subproject_summaries: %{},
-       subproject_child_tasks: %{}
+       subproject_child_tasks: %{},
+       ledger_totals: nil,
+       ledger_minutes: %{},
+       log_time_open: false,
+       log_time_uuid: nil
      )
      |> put_flash(:error, gettext("Project not found."))
      |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -223,7 +228,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            status_options: [],
            expanded_subprojects: MapSet.new(),
            subproject_summaries: %{},
-           subproject_child_tasks: %{}
+           subproject_child_tasks: %{},
+           ledger_totals: nil,
+           ledger_minutes: %{},
+           log_time_open: false,
+           log_time_uuid: nil
          )
          |> put_flash(:error, gettext("Project not found."))
          |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -339,11 +348,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             # first expand).
             expanded_subprojects: MapSet.new(),
             subproject_summaries: %{},
-            subproject_child_tasks: %{}
+            subproject_child_tasks: %{},
+            # Work-ledger state (Step 10): totals strip + per-task logged
+            # chips, filled by load_ledger/1 below (nil/empty when the
+            # `ledger` flag is off). `log_time_uuid` scopes the modal to a
+            # task; nil logs against the project overall.
+            ledger_totals: nil,
+            ledger_minutes: %{},
+            log_time_open: false,
+            log_time_uuid: nil
           )
           |> WebHelpers.attach_open_embed_hook()
 
-        {:ok, socket |> load_assignments() |> load_comment_counts()}
+        {:ok, socket |> load_assignments() |> load_comment_counts() |> load_ledger()}
     end
   end
 
@@ -418,14 +435,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         tab -> tab
       end
 
-    {:noreply,
-     assign(socket,
-       project: project,
-       fx: fx,
-       fx_files: Extensions.enabled?(project, "files"),
-       ext_tabs: ext_tabs,
-       active_tab: active
-     )}
+    socket =
+      assign(socket,
+        project: project,
+        fx: fx,
+        fx_files: Extensions.enabled?(project, "files"),
+        ext_tabs: ext_tabs,
+        active_tab: active
+      )
+
+    # Ledger visibility follows the flag: flipping it on mid-session must
+    # populate the totals; flipping it off clears them.
+    {:noreply, load_ledger(socket)}
   end
 
   def handle_info({:projects, :project_deleted, _payload}, socket) do
@@ -443,6 +464,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # :deleted`) that we don't need to discriminate on here.
   def handle_info({:comments_updated, _payload}, socket) do
     {:noreply, load_comment_counts(socket)}
+  end
+
+  # Ledger writes — this session's or anyone's (the AI attribution seam
+  # records through the same context) — refresh the effort totals.
+  def handle_info({:projects, :work_logged, _payload}, socket) do
+    {:noreply, load_ledger(socket)}
   end
 
   def handle_info(msg, socket) do
@@ -700,6 +727,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:comments_enabled, :boolean, default: false)
   attr(:assignment_comment_counts, :map, default: %{})
   attr(:deps_by_assignment, :map, default: %{})
+  attr(:ledger_minutes, :map, default: %{})
 
   defp task_body(assigns) do
     ~H"""
@@ -823,6 +851,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               </button>
             <% end %>
 
+            <% logged = Map.get(@ledger_minutes, @a.uuid, 0) %>
+            <button
+              :if={@fx.ledger and not @is_template}
+              phx-click="open_log_time"
+              phx-value-uuid={@a.uuid}
+              title={gettext("Log time on this task")}
+              class={[
+                "badge badge-sm gap-1 cursor-pointer transition-colors",
+                logged > 0 &&
+                  "badge-outline hover:bg-primary hover:text-primary-content hover:border-primary",
+                logged == 0 && "badge-ghost hover:bg-base-300"
+              ]}
+            >
+              <.icon name="hero-play-circle" class="w-3 h-3" />
+              {if logged > 0, do: format_minutes(logged), else: gettext("Log time")}
+            </button>
+
             <% atype = assignee_type(@a) %>
             <span :if={@fx.assignees and atype} class="badge badge-outline badge-sm gap-1">
               <.icon name="hero-user" class="w-3 h-3" /> {atype}: {assignee_label(@a)}
@@ -940,7 +985,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "toggle_tracking" => :progress,
     "remove_dependency" => :dependencies,
     "change_workflow_status" => :statuses,
-    "detach_subproject" => :subprojects
+    "detach_subproject" => :subprojects,
+    "open_log_time" => :ledger,
+    "close_log_time" => :ledger,
+    "save_work_entry" => :ledger
   }
 
   @impl true
@@ -1342,6 +1390,48 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # ── Work ledger (Step 10) ────────────────────────────────────────
+  #
+  # Modal open/close is flag-gated (@gated_events); the WRITE also runs
+  # the authz resolver — `:log_time` floors at manager, with the
+  # assignee relationship grant when the entry targets a task.
+
+  defp gated_handle_event("open_log_time", params, socket) do
+    {:noreply, assign(socket, log_time_open: true, log_time_uuid: Map.get(params, "uuid"))}
+  end
+
+  defp gated_handle_event("close_log_time", _params, socket) do
+    {:noreply, assign(socket, log_time_open: false, log_time_uuid: nil)}
+  end
+
+  defp gated_handle_event("save_work_entry", params, socket) do
+    record =
+      case socket.assigns.log_time_uuid do
+        nil -> nil
+        uuid -> scoped_assignment(socket, uuid)
+      end
+
+    cond do
+      socket.assigns.log_time_uuid != nil and is_nil(record) ->
+        {:noreply,
+         socket
+         |> assign(log_time_open: false, log_time_uuid: nil)
+         |> put_flash(:error, gettext("That task is no longer in this project."))}
+
+      not Authz.can?(
+        socket.assigns[:phoenix_kit_current_scope],
+        socket.assigns.project,
+        :log_time,
+        record
+      ) ->
+        {:noreply,
+         put_flash(socket, :error, gettext("You don't have permission to log time here."))}
+
+      true ->
+        do_save_work_entry(socket, params, record)
+    end
+  end
+
   defp gated_handle_event("open_start_modal", _params, socket) do
     if socket.assigns.project.started_at do
       {:noreply, socket}
@@ -1572,6 +1662,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       )
     else
       socket
+    end
+  end
+
+  # Effort totals + per-task logged-time map (Step 10). Loaded only when
+  # the `ledger` flag resolves on for a real project — nil/empty otherwise
+  # so the render gates have one thing to check.
+  defp load_ledger(socket) do
+    %{project: project, is_template: is_template, fx: fx} = socket.assigns
+
+    if (not is_template and fx[:ledger]) && project.uuid do
+      assign(socket,
+        ledger_totals: Ledger.totals_for_project(project.uuid),
+        ledger_minutes: Ledger.time_by_assignment(project.uuid)
+      )
+    else
+      assign(socket, ledger_totals: nil, ledger_minutes: %{})
     end
   end
 
@@ -1961,6 +2067,110 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp humanize_hours(h) when h < 24 * 30, do: {Float.round(h / (24 * 7), 1), gettext("weeks")}
   defp humanize_hours(h), do: {Float.round(h / (24 * 30), 1), gettext("months")}
 
+  # ── Work-ledger helpers (Step 10) ────────────────────────────────
+
+  defp do_save_work_entry(socket, params, record) do
+    case parse_total_minutes(params) do
+      {:ok, minutes} ->
+        socket.assigns.project
+        |> Ledger.log_time(minutes,
+          assignment_uuid: record && record.uuid,
+          note: blank_to_nil(params["note"]),
+          billable: params["billable"] in ["true", "on"],
+          actor_uuid: Activity.actor_uuid(socket)
+        )
+        |> case do
+          {:ok, _entry} ->
+            {:noreply,
+             socket
+             |> assign(log_time_open: false, log_time_uuid: nil)
+             |> load_ledger()
+             |> put_flash(:info, gettext("Time logged."))}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, gettext("Could not log the time."))}
+        end
+
+      :error ->
+        {:noreply, put_flash(socket, :error, gettext("Enter a positive amount of time."))}
+    end
+  end
+
+  # Hours + minutes inputs -> total minutes; whole non-negatives only,
+  # and the total must be positive.
+  defp parse_total_minutes(params) do
+    h = parse_whole(params["hours"])
+    m = parse_whole(params["minutes"])
+
+    cond do
+      is_nil(h) or is_nil(m) -> :error
+      h * 60 + m <= 0 -> :error
+      true -> {:ok, h * 60 + m}
+    end
+  end
+
+  defp parse_whole(nil), do: 0
+  defp parse_whole(""), do: 0
+
+  defp parse_whole(v) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, ""} when n >= 0 -> n
+      _ -> nil
+    end
+  end
+
+  defp parse_whole(_), do: nil
+
+  defp blank_to_nil(v) when is_binary(v) do
+    case String.trim(v) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp blank_to_nil(_), do: nil
+
+  # "45m" / "2h" / "2h 05m" — totals stay scannable at any size.
+  defp format_minutes(m) do
+    m = round(m)
+    h = div(m, 60)
+    rest = rem(m, 60)
+
+    cond do
+      h == 0 -> gettext("%{m}m", m: rest)
+      rest == 0 -> gettext("%{h}h", h: h)
+      true -> gettext("%{h}h %{m}m", h: h, m: rest)
+    end
+  end
+
+  defp format_tokens(t) when t >= 1_000_000,
+    do: gettext("%{n}M tokens", n: Float.round(t / 1_000_000, 1))
+
+  defp format_tokens(t) when t >= 1_000, do: gettext("%{n}k tokens", n: Float.round(t / 1_000, 1))
+  defp format_tokens(t), do: gettext("%{n} tokens", n: round(t))
+
+  # Cents -> a dollar string. The ledger stores cents unit-agnostically;
+  # the display currency is a deliberate v1 simplification (morning list).
+  defp format_cents(cents), do: "$" <> :erlang.float_to_binary(cents / 100, decimals: 2)
+
+  # Modal subtitle: the targeted task's title, or nil for a project-level
+  # entry. Searches the same displayed set `scoped_assignment/2` accepts.
+  defp log_time_task_label(assigns) do
+    case assigns.log_time_uuid do
+      nil ->
+        nil
+
+      uuid ->
+        (assigns.assignments ++
+           (assigns.subproject_child_tasks |> Map.values() |> List.flatten()))
+        |> Enum.find(&(&1.uuid == uuid))
+        |> case do
+          nil -> nil
+          a -> TaskSchema.localized_title(a.task, L10n.current_content_lang())
+        end
+    end
+  end
+
   defp format_duration(a) do
     dur = a.estimated_duration
     unit = a.estimated_duration_unit
@@ -2330,11 +2540,88 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </dialog>
       <% end %>
 
+      <%!-- Log-time modal (Step 10). Render-gated on the same flag the
+           events check; @log_time_uuid scopes the entry to a task. --%>
+      <%= if @log_time_open and @fx.ledger do %>
+        <dialog open class="modal modal-open" phx-window-keydown="close_log_time" phx-key="Escape">
+          <div class="modal-box max-w-sm">
+            <h3 class="font-bold text-lg">{gettext("Log time")}</h3>
+            <p class="text-sm text-base-content/70 mt-1">
+              <%= if label = log_time_task_label(assigns) do %>
+                {gettext("On task: %{task}", task: label)}
+              <% else %>
+                {gettext("On the project overall")}
+              <% end %>
+            </p>
+            <form phx-submit="save_work_entry" class="flex flex-col gap-3 mt-4">
+              <div class="flex items-center gap-2">
+                <label class="form-control flex-1">
+                  <span class="label-text text-xs opacity-70 mb-1">{gettext("Hours")}</span>
+                  <input
+                    type="number"
+                    name="hours"
+                    min="0"
+                    step="1"
+                    value="0"
+                    class="input input-bordered input-sm"
+                  />
+                </label>
+                <label class="form-control flex-1">
+                  <span class="label-text text-xs opacity-70 mb-1">{gettext("Minutes")}</span>
+                  <input
+                    type="number"
+                    name="minutes"
+                    min="0"
+                    max="59"
+                    step="1"
+                    value="30"
+                    class="input input-bordered input-sm"
+                  />
+                </label>
+              </div>
+              <label class="form-control">
+                <span class="label-text text-xs opacity-70 mb-1">{gettext("Note (optional)")}</span>
+                <input
+                  type="text"
+                  name="note"
+                  class="input input-bordered input-sm"
+                  placeholder={gettext("What was the time spent on?")}
+                />
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" name="billable" value="true" class="checkbox checkbox-sm" />
+                <span class="text-sm">{gettext("Billable")}</span>
+              </label>
+              <div class="modal-action">
+                <button type="button" phx-click="close_log_time" class="btn btn-ghost btn-sm">
+                  {gettext("Cancel")}
+                </button>
+                <button
+                  type="submit"
+                  phx-disable-with={gettext("Logging…")}
+                  class="btn btn-primary btn-sm"
+                >
+                  {gettext("Log time")}
+                </button>
+              </div>
+            </form>
+          </div>
+          <button
+            type="button"
+            phx-click="close_log_time"
+            class="modal-backdrop"
+            aria-label={gettext("Close")}
+          >
+          </button>
+        </dialog>
+      <% end %>
+
       <%!-- Schedule summary + progress as ONE card: the progress bar is the
            card's bottom edge (a thin flush strip), so the two read as a unit. --%>
       <% show_schedule = @fx.scheduling and @project.started_at != nil and @schedule != nil %>
       <% show_progress = @fx.tasks and @total_tasks > 0 and not @is_template %>
-      <%= if show_schedule or show_progress do %>
+      <% show_effort = @fx.ledger and @ledger_totals != nil %>
+      <%= if show_schedule or show_progress or show_effort do %>
         <div class="bg-base-200/50 rounded-t-lg overflow-hidden">
           <%= if show_schedule do %>
             <% {rem_v, rem_u} = humanize_hours(@schedule.remaining_hours) %>
@@ -2365,6 +2652,39 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   <span class="text-base-content/40">{gettext("at planned pace")}</span>
                 </div>
               <% end %>
+            </div>
+          <% end %>
+          <%!-- Effort row (Step 10 work ledger): human time + AI usage
+               totals, and the project-level Log-time entry point. --%>
+          <%= if show_effort do %>
+            <div class={[
+              "flex flex-wrap items-center gap-3 px-4 py-2 text-xs",
+              show_schedule && "border-t border-base-300/50"
+            ]}>
+              <div class="flex items-center gap-2">
+                <.icon name="hero-play-circle" class="w-4 h-4 text-base-content/60" />
+                <span class="text-base-content/60">{gettext("Logged:")}</span>
+                <span class="font-medium">{format_minutes(@ledger_totals.time_minutes)}</span>
+                <span :if={@ledger_totals.billable_minutes > 0} class="text-base-content/50">
+                  {gettext("(%{amount} billable)",
+                    amount: format_minutes(@ledger_totals.billable_minutes)
+                  )}
+                </span>
+              </div>
+              <%= if @ledger_totals.tokens > 0 or @ledger_totals.cost_cents > 0 do %>
+                <span class="text-base-content/40">·</span>
+                <div class="flex items-center gap-2">
+                  <.icon name="hero-cpu-chip" class="w-4 h-4 text-base-content/60" />
+                  <span class="text-base-content/60">{gettext("AI:")}</span>
+                  <span class="font-medium">{format_tokens(@ledger_totals.tokens)}</span>
+                  <span :if={@ledger_totals.cost_cents > 0} class="text-base-content/50">
+                    ({format_cents(@ledger_totals.cost_cents)})
+                  </span>
+                </div>
+              <% end %>
+              <button type="button" class="btn btn-ghost btn-xs ml-auto" phx-click="open_log_time">
+                <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Log time")}
+              </button>
             </div>
           <% end %>
           <%!-- Progress bar — the card's bottom border (not for templates). --%>
@@ -2671,6 +2991,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       editing_duration_uuid={@editing_duration_uuid}
                                       comments_enabled={@comments_enabled}
                                       assignment_comment_counts={@assignment_comment_counts}
+                                      ledger_minutes={@ledger_minutes}
                                       deps_by_assignment={@deps_by_assignment}
                                     />
                                   </div>
@@ -2692,6 +3013,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       editing_duration_uuid={@editing_duration_uuid}
                       comments_enabled={@comments_enabled}
                       assignment_comment_counts={@assignment_comment_counts}
+                      ledger_minutes={@ledger_minutes}
                       deps_by_assignment={@deps_by_assignment}
                     />
                   <% end %>

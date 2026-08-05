@@ -151,6 +151,7 @@ defmodule PhoenixKitProjects.Features do
     :statuses,
     :scheduling,
     :subprojects,
+    :ledger,
     :view_board,
     :view_timeline,
     :view_calendar
