@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 7
+  @current_version 8
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -104,6 +104,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v5_whiteboards(p, prefix)
     v6_events(p, prefix)
     v7_priorities_labels(p, prefix)
+    v8_invoiced_entries(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -124,6 +125,10 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     prefix = validated_prefix(opts)
     p = prefix_str(prefix)
     target = down_target(opts)
+
+    if target < 8 do
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_invoiced_entries")
+    end
 
     if target < 7 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_assignment_labels")
@@ -631,6 +636,36 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignment_labels_label_index
     ON #{p}phoenix_kit_project_assignment_labels (label_uuid)
+    """)
+  end
+
+  # V8 — invoiced-entry refs (Phase E, the ledger→invoice bridge): the
+  # PROJECTS-side authority for "which ledger entries are billed"
+  # (panel-settled boundary: billing stays project-agnostic; the
+  # append-only ledger is never mutated — billed-ness derives from this
+  # ref table). entry_uuid is the PK = idempotency: an entry can be on
+  # exactly one invoice. invoice_uuid is deliberately FK-less (billing's
+  # table is the other module's business).
+  defp v8_invoiced_entries(p) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_invoiced_entries (
+      entry_uuid UUID PRIMARY KEY
+        REFERENCES #{p}phoenix_kit_project_work_entries(uuid) ON DELETE CASCADE,
+      project_uuid UUID NOT NULL
+        REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      invoice_uuid UUID NOT NULL,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_invoiced_entries_project_index
+    ON #{p}phoenix_kit_project_invoiced_entries (project_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_invoiced_entries_invoice_index
+    ON #{p}phoenix_kit_project_invoiced_entries (invoice_uuid)
     """)
   end
 

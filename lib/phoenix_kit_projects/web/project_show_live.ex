@@ -48,6 +48,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Extensions,
     Features,
     Health,
+    Invoicing,
     L10n,
     Labels,
     Ledger,
@@ -160,7 +161,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        ledger_minutes: %{},
        log_time_open: false,
        log_time_uuid: nil,
-       assignment_labels: %{}
+       assignment_labels: %{},
+       invoice_ready?: false
      )
      |> put_flash(:error, gettext("Project not found."))
      |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -236,7 +238,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            ledger_minutes: %{},
            log_time_open: false,
            log_time_uuid: nil,
-           assignment_labels: %{}
+           assignment_labels: %{},
+           invoice_ready?: false
          )
          |> put_flash(:error, gettext("Project not found."))
          |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -361,7 +364,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             ledger_minutes: %{},
             log_time_open: false,
             log_time_uuid: nil,
-            assignment_labels: %{}
+            assignment_labels: %{},
+            invoice_ready?: false
           )
           |> WebHelpers.attach_open_embed_hook()
 
@@ -1021,7 +1025,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "detach_subproject" => :subprojects,
     "open_log_time" => :ledger,
     "close_log_time" => :ledger,
-    "save_work_entry" => :ledger
+    "save_work_entry" => :ledger,
+    "generate_invoice" => :ledger
   }
 
   @impl true
@@ -1469,6 +1474,50 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # The ledger→invoice bridge (Phase E): owner-level money action; the
+  # heavy lifting + all guards live in Invoicing.
+  defp gated_handle_event("generate_invoice", _params, socket) do
+    authorized? =
+      Authz.can?(
+        socket.assigns[:phoenix_kit_current_scope],
+        socket.assigns.project,
+        :edit_settings
+      )
+
+    if authorized? do
+      case Invoicing.generate_draft(socket.assigns.project,
+             actor_uuid: Activity.actor_uuid(socket)
+           ) do
+        {:ok, %{line_count: count, total_cents: cents}} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :info,
+             gettext("Draft invoice created: %{count} line(s), %{total}. Review it in Billing.",
+               count: count,
+               total: format_cents(cents)
+             )
+           )}
+
+        {:error, :refs_failed, _invoice_uuid} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext(
+               "The draft was created but marking the entries failed — reconcile in Billing before regenerating."
+             )
+           )}
+
+        {:error, reason} ->
+          {:noreply, put_flash(socket, :error, invoice_error(reason))}
+      end
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("You don't have permission to invoice this project."))}
+    end
+  end
+
   defp gated_handle_event("open_start_modal", _params, socket) do
     if socket.assigns.project.started_at do
       {:noreply, socket}
@@ -1742,10 +1791,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       assign(socket,
         ledger_totals: Ledger.totals_for_project(project.uuid),
-        ledger_minutes: Ledger.time_for_assignments(displayed)
+        ledger_minutes: Ledger.time_for_assignments(displayed),
+        # Cheap availability probe for the Invoice-effort button — the
+        # click re-runs the FULL guard chain (authz + profile + rate).
+        invoice_ready?:
+          Extensions.enabled?(project, "billing_customer") and
+            Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :edit_settings)
       )
     else
-      assign(socket, ledger_totals: nil, ledger_minutes: %{})
+      assign(socket, ledger_totals: nil, ledger_minutes: %{}, invoice_ready?: false)
     end
   end
 
@@ -2176,6 +2230,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp priority_label("high"), do: gettext("High")
   defp priority_label("low"), do: gettext("Low")
   defp priority_label(other), do: other
+
+  defp invoice_error(:billing_unavailable),
+    do: gettext("The Billing module isn't available on this site.")
+
+  defp invoice_error(:extension_disabled),
+    do: gettext("Enable the Customer billing extension for this project first.")
+
+  defp invoice_error(:no_rate),
+    do: gettext("Set the hourly rate in the Customer billing extension's settings.")
+
+  defp invoice_error(:no_profile),
+    do: gettext("Link a billing profile in the Customer billing extension's settings.")
+
+  defp invoice_error(:profile_not_found),
+    do: gettext("The linked billing profile no longer exists.")
+
+  defp invoice_error(:nothing_to_bill),
+    do: gettext("No uninvoiced billable time to bill.")
+
+  defp invoice_error(_), do: gettext("Could not create the draft invoice.")
 
   # ── Work-ledger helpers (Step 10) ────────────────────────────────
 
@@ -2798,9 +2872,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   </span>
                 </div>
               <% end %>
-              <button type="button" class="btn btn-ghost btn-xs ml-auto" phx-click="open_log_time">
-                <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Log time")}
-              </button>
+              <div class="flex items-center gap-1 ml-auto">
+                <button
+                  :if={@invoice_ready?}
+                  type="button"
+                  class="btn btn-ghost btn-xs"
+                  phx-click="generate_invoice"
+                  data-confirm={gettext("Create a draft invoice from all uninvoiced billable time?")}
+                >
+                  <.icon name="hero-banknotes" class="w-3 h-3" /> {gettext("Invoice effort")}
+                </button>
+                <button type="button" class="btn btn-ghost btn-xs" phx-click="open_log_time">
+                  <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Log time")}
+                </button>
+              </div>
             </div>
           <% end %>
           <%!-- Progress bar — the card's bottom border (not for templates). --%>
