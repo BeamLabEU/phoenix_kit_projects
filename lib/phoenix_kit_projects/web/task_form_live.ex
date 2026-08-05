@@ -221,8 +221,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
           resource_uuid: socket.assigns.task.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{"task" => socket.assigns.task.title}
+          metadata: %{"task" => socket.assigns.task.title, "depends_on_task_uuid" => dep_uuid}
         )
 
       _ ->
@@ -230,8 +229,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
           resource_uuid: socket.assigns.task.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{"task" => socket.assigns.task.title}
+          metadata: %{"task" => socket.assigns.task.title, "depends_on_task_uuid" => dep_uuid}
         )
     end
 
@@ -251,8 +249,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
           resource_uuid: socket.assigns.task.uuid,
-          target_uuid: dep_task_uuid,
-          metadata: %{"task" => socket.assigns.task.title}
+          metadata: %{
+            "task" => socket.assigns.task.title,
+            "depends_on_task_uuid" => dep_task_uuid
+          }
         )
 
       _ ->
@@ -260,8 +260,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
           resource_uuid: socket.assigns.task.uuid,
-          target_uuid: dep_task_uuid,
-          metadata: %{"task" => socket.assigns.task.title}
+          metadata: %{
+            "task" => socket.assigns.task.title,
+            "depends_on_task_uuid" => dep_task_uuid
+          }
         )
     end
 

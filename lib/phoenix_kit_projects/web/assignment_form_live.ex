@@ -555,8 +555,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: socket.assigns.assignment.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{}
+          metadata: %{"depends_on_uuid" => dep_uuid}
         )
 
         reload_deps(socket)
@@ -566,8 +565,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: socket.assigns.assignment.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{}
+          metadata: %{"depends_on_uuid" => dep_uuid}
         )
 
         {:noreply, put_flash(socket, :error, gettext("Could not add dependency."))}
@@ -583,8 +581,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: socket.assigns.assignment.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{}
+          metadata: %{"depends_on_uuid" => dep_uuid}
         )
 
         reload_deps(socket)
@@ -594,8 +591,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: socket.assigns.assignment.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{}
+          metadata: %{"depends_on_uuid" => dep_uuid}
         )
 
         {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
@@ -1056,8 +1052,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         Activity.log_failed("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
-          target_uuid: socket.assigns.project.uuid,
-          metadata: %{"project" => socket.assigns.project.name, "via_closure_of" => task_uuid}
+          metadata: %{
+            "project" => socket.assigns.project.name,
+            "project_uuid" => socket.assigns.project.uuid,
+            "via_closure_of" => task_uuid
+          }
         )
 
         {:noreply, on_save_error(socket, cs)}
@@ -1070,9 +1069,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         Activity.log_failed("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
-          target_uuid: socket.assigns.project.uuid,
           metadata: %{
             "project" => socket.assigns.project.name,
+            "project_uuid" => socket.assigns.project.uuid,
             "via_closure_of" => task_uuid,
             "reason" => inspect(reason)
           }
@@ -1118,8 +1117,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         Activity.log_failed("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
-          target_uuid: socket.assigns.project.uuid,
-          metadata: %{"project" => socket.assigns.project.name}
+          metadata: %{
+            "project" => socket.assigns.project.name,
+            "project_uuid" => socket.assigns.project.uuid
+          }
         )
 
         {:noreply, on_save_error(socket, cs)}
@@ -1141,8 +1142,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             actor_uuid: Activity.actor_uuid(socket),
             resource_type: "assignment",
             resource_uuid: assignment.uuid,
-            target_uuid: dep_uuid,
-            metadata: %{"source" => "assignment_form_pending"}
+            metadata: %{"source" => "assignment_form_pending", "depends_on_uuid" => dep_uuid}
           )
 
         {:error, reason} ->
@@ -1155,8 +1155,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             actor_uuid: Activity.actor_uuid(socket),
             resource_type: "assignment",
             resource_uuid: assignment.uuid,
-            target_uuid: dep_uuid,
-            metadata: %{"source" => "assignment_form_pending"}
+            metadata: %{"source" => "assignment_form_pending", "depends_on_uuid" => dep_uuid}
           )
       end
     end)

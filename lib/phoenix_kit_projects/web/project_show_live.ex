@@ -1136,8 +1136,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               actor_uuid: Activity.actor_uuid(socket),
               resource_type: "assignment",
               resource_uuid: a_uuid,
-              target_uuid: d_uuid,
-              metadata: %{}
+              metadata: %{"depends_on_uuid" => d_uuid}
             )
 
             {:noreply, load_assignments(socket)}
@@ -1147,8 +1146,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               actor_uuid: Activity.actor_uuid(socket),
               resource_type: "assignment",
               resource_uuid: a_uuid,
-              target_uuid: d_uuid,
-              metadata: %{}
+              metadata: %{"depends_on_uuid" => d_uuid}
             )
 
             {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
