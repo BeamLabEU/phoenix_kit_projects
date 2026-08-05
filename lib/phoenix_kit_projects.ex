@@ -104,6 +104,17 @@ defmodule PhoenixKitProjects do
             description: "Health judgments on your projects",
             actions: ["projects.health_updated"],
             default: true
+          },
+          %{
+            key: "events",
+            label: "Project events",
+            description: "Meetings, milestones, and reviews added to your projects",
+            actions: [
+              "projects.event_created",
+              "projects.event_updated",
+              "projects.event_deleted"
+            ],
+            default: true
           }
         ]
       }

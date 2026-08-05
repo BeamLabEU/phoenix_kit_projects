@@ -14,6 +14,13 @@ defmodule PhoenixKitProjects.Labels do
 
   @join_table "phoenix_kit_project_assignment_labels"
 
+  # Schemaless queries do NOT inherit @schema_prefix (that's a schema
+  # attribute) — resolve the SAME prefix source PhoenixKit.SchemaPrefix
+  # compiles into every schema, or a prefixed install would hit an
+  # unprefixed join table while the Label registry lives under the
+  # prefix (panel round, Grok — the house --prefix bug family).
+  @prefix Application.compile_env(:phoenix_kit, :prefix)
+
   @doc "A project's labels, position-then-name ordered."
   @spec list_for_project(binary()) :: [Label.t()]
   def list_for_project(project_uuid) do
@@ -71,6 +78,7 @@ defmodule PhoenixKitProjects.Labels do
         from(j in @join_table,
           where: j.assignment_uuid == type(^assignment.uuid, Ecto.UUID)
         )
+        |> with_prefix()
       )
 
       rows =
@@ -81,7 +89,7 @@ defmodule PhoenixKitProjects.Labels do
           }
         end)
 
-      if rows != [], do: repo.insert_all(@join_table, rows)
+      if rows != [], do: repo.insert_all(@join_table, rows, prefix: @prefix)
       :ok
     end)
 
@@ -106,10 +114,15 @@ defmodule PhoenixKitProjects.Labels do
         order_by: [asc: l.position, asc: l.name],
         select: {type(j.assignment_uuid, Ecto.UUID), l}
       )
+      |> with_prefix()
     )
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
   rescue
     _ -> %{}
+  end
+
+  defp with_prefix(query) do
+    if is_binary(@prefix), do: Ecto.Query.put_query_prefix(query, @prefix), else: query
   end
 
   defp tap_label({:ok, label} = result, action, project_uuid, opts) do

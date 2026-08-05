@@ -247,6 +247,29 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   # labels flag (the section hides AND the events refuse when off).
 
   def handle_event("add_label", %{"name" => name} = params, socket) do
+    with_authz(socket, fn -> do_add_label(name, params, socket) end)
+  end
+
+  def handle_event("delete_label", %{"uuid" => uuid}, socket) do
+    with_authz(socket, fn -> do_delete_label(uuid, socket) end)
+  end
+
+  defp do_delete_label(uuid, socket) do
+    with true <- socket.assigns.labels_on,
+         %{} = label <- Enum.find(socket.assigns.labels, &(&1.uuid == uuid)),
+         :ok <- Labels.delete(label, actor_uuid: Activity.actor_uuid(socket)) do
+      {:noreply, socket |> reload() |> put_flash(:info, gettext("Label removed."))}
+    else
+      false ->
+        {:noreply,
+         put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  defp do_add_label(name, params, socket) do
     if socket.assigns.labels_on do
       case Labels.create(
              socket.assigns.project,
@@ -271,21 +294,6 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
     end
   end
 
-  def handle_event("delete_label", %{"uuid" => uuid}, socket) do
-    with true <- socket.assigns.labels_on,
-         %{} = label <- Enum.find(socket.assigns.labels, &(&1.uuid == uuid)),
-         :ok <- Labels.delete(label, actor_uuid: Activity.actor_uuid(socket)) do
-      {:noreply, socket |> reload() |> put_flash(:info, gettext("Label removed."))}
-    else
-      false ->
-        {:noreply,
-         put_flash(socket, :error, gettext("This feature is turned off for this project."))}
-
-      _ ->
-        {:noreply, socket}
-    end
-  end
-
   # Events re-check authorization — this page writes configuration.
   defp with_authz(socket, fun) do
     if socket.assigns.project && allowed?(socket, socket.assigns.project) do
@@ -307,6 +315,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   @impl true
   def handle_info({:projects, event, _payload}, socket)
       when event in [:project_modules_changed, :project_features_changed] do
+    {:noreply, reload(socket)}
+  end
+
+  def handle_info({:projects, :project_labels_changed, _payload}, socket) do
+    # Another session edited the label registry — refresh the panel
+    # (ZAI panel round: co-editors saw stale label lists).
     {:noreply, reload(socket)}
   end
 

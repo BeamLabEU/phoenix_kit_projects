@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects.Integration.ProjectEventsTest do
 
   import PhoenixKitProjects.ActivityLogAssertions
 
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.ProjectEvents
 
   setup do
@@ -47,6 +48,51 @@ defmodule PhoenixKitProjects.Integration.ProjectEventsTest do
     assert :ok = ProjectEvents.delete(renamed)
     assert ProjectEvents.list_for_project(project.uuid) == []
     assert_activity_logged("projects.event_deleted", resource_uuid: project.uuid)
+  end
+
+  test "creating an event notifies every member except the actor (Phase H)",
+       %{project: project} do
+    PhoenixKit.Settings.update_boolean_setting("notifications_enabled", true)
+
+    actor = register_user()
+    member = register_user()
+    {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor.uuid, role: "owner")
+    {:ok, _} = PhoenixKitProjects.Members.add_member(project, member.uuid, role: "member")
+
+    {:ok, _event} =
+      ProjectEvents.create(
+        project,
+        %{title: "All hands", starts_at: dt("2026-08-20T00:00:00Z")},
+        actor_uuid: actor.uuid
+      )
+
+    import Ecto.Query
+    repo = PhoenixKit.RepoHelper.repo()
+
+    # Scope to the EVENT action — add_member's own "you were added"
+    # notifications are also in the table.
+    notified =
+      repo.all(
+        from(n in PhoenixKit.Notifications.Notification,
+          join: a in assoc(n, :activity),
+          where: a.action == "projects.event_created",
+          select: n.recipient_uuid
+        )
+      )
+
+    # The member is notified through the fan-out; the actor self-skips.
+    assert member.uuid in notified
+    refute actor.uuid in notified
+  end
+
+  defp register_user do
+    {:ok, user} =
+      Auth.register_user(%{
+        email: "ev-#{System.unique_integer([:positive])}@example.com",
+        password: "ValidPassword123!"
+      })
+
+    user
   end
 
   test "range and title validation", %{project: project} do

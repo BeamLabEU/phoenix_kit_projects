@@ -37,7 +37,8 @@ defmodule PhoenixKitProjects.NotificationWiringTest do
           "lib/phoenix_kit_projects/members.ex",
           "lib/phoenix_kit_projects/health.ex",
           "lib/phoenix_kit_projects/web/project_show_live.ex",
-          "lib/phoenix_kit_projects/web/assignment_form_live.ex"
+          "lib/phoenix_kit_projects/web/assignment_form_live.ex",
+          "lib/phoenix_kit_projects/project_events.ex"
         ]
         |> Enum.map_join("\n", &File.read!/1)
 

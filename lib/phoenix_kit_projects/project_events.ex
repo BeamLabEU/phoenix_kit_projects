@@ -11,6 +11,7 @@ defmodule PhoenixKitProjects.ProjectEvents do
 
   alias PhoenixKit.RepoHelper
   alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.Members
   alias PhoenixKitProjects.PubSub
   alias PhoenixKitProjects.Schemas.ProjectEvent
 
@@ -91,22 +92,53 @@ defmodule PhoenixKitProjects.ProjectEvents do
   end
 
   defp tap_event({:ok, event} = result, action, broadcast, actor_uuid) do
-    Activity.log(action,
-      actor_uuid: actor_uuid,
-      resource_type: "project",
-      resource_uuid: event.project_uuid,
-      metadata: %{
-        "title" => event.title,
-        "event_uuid" => event.uuid,
-        "starts_at" => DateTime.to_iso8601(event.starts_at)
-      }
-    )
+    log_result =
+      Activity.log(action,
+        actor_uuid: actor_uuid,
+        resource_type: "project",
+        resource_uuid: event.project_uuid,
+        metadata: %{
+          "title" => event.title,
+          "event_uuid" => event.uuid,
+          "starts_at" => DateTime.to_iso8601(event.starts_at)
+        }
+      )
 
+    notify_members(log_result, event.project_uuid)
     PubSub.broadcast_project(broadcast, %{uuid: event.project_uuid})
     result
   end
 
   defp tap_event({:error, _} = error, _action, _broadcast, _actor), do: error
+
+  # Fan the ONE feed entry out to every project member's notification
+  # rules (Max's call: events notify all members). Core's
+  # fan_out_from_activity/2 re-routes the committed entry per recipient
+  # (prefs, channels, digests, actor self-skip) without extra feed rows.
+  # `apply/3` + function_exported?: the fan-out ships in an unreleased
+  # core — against the Hex pin this is a clean no-op until the release
+  # (the release-gating convention); the path-dep build runs it live.
+  defp notify_members({:ok, entry}, project_uuid) do
+    if function_exported?(PhoenixKit.Notifications, :fan_out_from_activity, 2) do
+      recipients =
+        project_uuid
+        |> Members.list_members()
+        |> Enum.map(& &1.user_uuid)
+
+      if recipients != [] do
+        # credo:disable-for-next-line Credo.Check.Refactor.Apply
+        apply(PhoenixKit.Notifications, :fan_out_from_activity, [entry, recipients])
+      end
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    :exit, _ -> :ok
+  end
+
+  defp notify_members(_log_result, _project_uuid), do: :ok
 
   defp maybe_bound(query, _key, nil), do: query
   defp maybe_bound(query, :from, dt), do: where(query, [e], e.starts_at >= ^dt)

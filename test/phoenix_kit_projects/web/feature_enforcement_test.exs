@@ -420,6 +420,33 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
                Labels.labels_for_assignments([assignment.uuid])[assignment.uuid]
     end
 
+    # Panel round (Grok HIGH): a FOURTH save path exists — task_mode=new
+    # creates the task AND the assignment; its success path never applied
+    # the pending labels.
+    test "labels apply on the create-NEW-task save path too",
+         %{conn: conn, project: project} do
+      {:ok, label} = Labels.create(project, %{name: "newpath"})
+
+      {:ok, view, _} = live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+
+      render_submit(view, "save", %{
+        "assignment" => %{"status" => "todo"},
+        "task_mode" => "new",
+        "new_task_title" => "Fresh task",
+        "labels" => [label.uuid]
+      })
+
+      created =
+        Enum.find(Projects.list_assignments(project.uuid), fn a ->
+          a.task && a.task.title == "Fresh task"
+        end)
+
+      assert created, "new-task save did not create the assignment"
+
+      assert [%{name: "newpath"}] =
+               Labels.labels_for_assignments([created.uuid])[created.uuid]
+    end
+
     test "labels on: the edit form pre-checks and the save replaces the set",
          %{conn: conn, project: project, assignment: assignment} do
       {:ok, a} = Labels.create(project, %{name: "alpha"})

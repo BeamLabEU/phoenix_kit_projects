@@ -918,6 +918,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     case Projects.create_assignment(assignment_attrs) do
       {:ok, assignment} ->
+        apply_pending_labels(socket, assignment)
+
         {flash_kind, flash_msg} =
           flash_for_template_deps(
             assignment,
