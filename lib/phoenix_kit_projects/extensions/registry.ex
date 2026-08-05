@@ -118,7 +118,11 @@ defmodule PhoenixKitProjects.Extensions.Registry do
 
     ([PhoenixKitProjects | discovered] ++ config_providers())
     |> Enum.uniq()
-    |> Enum.filter(&function_exported?(&1, @provider_callback, 0))
+    # ensure_loaded BEFORE function_exported? — the latter never loads, so a
+    # cold VM (first refresh before anything touched a provider module) would
+    # silently drop every provider, our own included, and cache an empty
+    # catalog. Caught by the panel LV tests running first under one seed.
+    |> Enum.filter(&(Code.ensure_loaded?(&1) and function_exported?(&1, @provider_callback, 0)))
   rescue
     e ->
       Logger.warning("[Projects.Extensions] Provider discovery failed: #{Exception.message(e)}")

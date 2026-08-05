@@ -13,6 +13,12 @@ defmodule PhoenixKitProjects.Schemas.ProjectModule do
   against the extension's declared `config_schema` — writes go through
   `PhoenixKitProjects.Extensions.update_config/4`, which whitelists keys;
   never cast raw params into it.
+
+  `enabled_by_uuid` is best-effort provenance with NO foreign key — the
+  same convention as activity `actor_uuid` throughout this module: a stale
+  or unresolvable actor must never fail the admin's toggle (first caught
+  by the panel LV test — a fake-scope actor FK-crashed the whole toggle).
+  The activity log remains the authoritative audit trail.
   """
 
   use Ecto.Schema

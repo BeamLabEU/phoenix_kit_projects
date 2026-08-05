@@ -354,7 +354,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       name VARCHAR(255),
       enabled BOOLEAN NOT NULL DEFAULT true,
       config JSONB NOT NULL DEFAULT '{}'::jsonb,
-      enabled_by_uuid UUID REFERENCES #{p}phoenix_kit_users(uuid) ON DELETE SET NULL,
+      enabled_by_uuid UUID,
       inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )

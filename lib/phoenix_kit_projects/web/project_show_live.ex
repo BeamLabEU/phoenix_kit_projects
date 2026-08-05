@@ -1880,6 +1880,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 icon="hero-pencil"
                 label={gettext("Edit")}
               />
+              <.smart_menu_link
+                navigate={Paths.modules(@project.uuid)}
+                emit={{PhoenixKitProjects.Web.ProjectModulesLive, %{"id" => @project.uuid}}}
+                embed_mode={@embed_mode}
+                icon="hero-squares-plus"
+                label={gettext("Modules & features")}
+              />
               <%= if not @is_template do %>
                 <.table_row_menu_divider />
                 <%= if @project.archived_at do %>

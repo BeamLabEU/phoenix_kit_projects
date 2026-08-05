@@ -34,7 +34,19 @@ defmodule PhoenixKitProjects do
 
   @impl PhoenixKit.Module
   def enable_system do
-    Settings.update_boolean_setting_with_module("projects_enabled", true, module_key())
+    result = Settings.update_boolean_setting_with_module("projects_enabled", true, module_key())
+
+    # Rebuild the extension catalog on our own enable so providers that
+    # appeared while we were off are discovered without a restart (the
+    # dashboards-Registry precedent; a Grok panel finding caught the
+    # Registry moduledoc promising this before it was wired).
+    try do
+      PhoenixKitProjects.Extensions.Registry.refresh()
+    rescue
+      _ -> :ok
+    end
+
+    result
   end
 
   @impl PhoenixKit.Module
@@ -135,6 +147,32 @@ defmodule PhoenixKitProjects do
           :assign_tasks,
           :update_status,
           :log_time
+        ],
+        # The FROZEN pre-hub flag catalog (2026-08-05 panel amendment #6):
+        # every flag defaults true so existing projects are unchanged with
+        # no backfill; `requires` is the resolution-time dependency rule
+        # (Features.on?/2 — a flag is dead while any requirement is off).
+        # The "simple todo list" preset is these, explicitly false.
+        feature_flags: [
+          %{key: "assignees", label: "Assignees", default: true},
+          %{key: "estimates", label: "Estimates & durations", default: true},
+          %{key: "progress", label: "Progress tracking", default: true, requires: []},
+          %{key: "dependencies", label: "Dependencies", default: true},
+          %{key: "statuses", label: "Workflow statuses", default: true},
+          %{key: "scheduling", label: "Scheduling & ETA", default: true, requires: ["estimates"]},
+          %{key: "subprojects", label: "Sub-projects", default: true},
+          %{
+            key: "view_timeline",
+            label: "Timeline view",
+            default: true,
+            requires: ["scheduling"]
+          },
+          %{
+            key: "view_calendar",
+            label: "Calendar view",
+            default: true,
+            requires: ["scheduling"]
+          }
         ]
       }
     ]
@@ -221,6 +259,18 @@ defmodule PhoenixKitProjects do
     ]
 
     hidden_subtabs = [
+      %Tab{
+        id: :admin_projects_modules,
+        label: "Project Modules",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/:id/modules",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectModulesLive, :edit}
+      },
       %Tab{
         id: :admin_projects_task_new,
         label: "New Task",
