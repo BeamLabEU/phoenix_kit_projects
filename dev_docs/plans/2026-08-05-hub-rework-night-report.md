@@ -198,6 +198,63 @@ chain entries (R1-3).
 - `Features.set_flags/3` read-modify-writes the whole settings map —
   same race shape as R2-1, needs the same treatment.
 
+## FINAL panel — holistic review of the composed system
+
+After the per-step rounds, zai + grok + gemini-3.1-pro reviewed the
+COMPOSITION (commit log + this report), hunting cross-cutting gaps the
+per-diff reviews couldn't see. Convergence was strong; dispositions:
+
+**Fixed tonight (two commits):**
+- All three found the same top hole: contributed tabs re-export SIBLING
+  modules' data, and the Registry's `visible_for_scope?/2` gate —
+  built in Step 2, tested, promised by the descriptor comments — was
+  never wired into the show path, so any projects-permission viewer
+  could read linked CRM/entities/publishing data. Plus (Grok) the two
+  MUTATING built-in tabs sat on the view-only trust model while
+  `permission_actions` enforced nothing. Fixed (`870fdce`): visibility
+  now resolves permission → module_key → "projects" and filters the tab
+  strip on the admin path (embeds keep the documented host-trust); the
+  tab session carries a HOST-resolved `"can_write"` (Authz over the
+  extension's declared write action) that whiteboards + events enforce
+  on every mutation.
+- ZAI: `settings` is a shared JSONB where the authz "who can X" floors
+  live beside the feature flags — the whole-map read-merge-write in
+  `set_flags` could silently REVERT a concurrent authz tightening (the
+  report had only flagged the flag-vs-flag shape). Fixed (`08f7d61`):
+  one atomic `jsonb_set` merge touching only `settings->'features'`,
+  with a stale-struct regression test.
+
+**Refuted:**
+- Gemini's CRITICAL ("malformed config crashes the whole hub page"):
+  every shipped provider wraps its loads in rescue→empty-state (pinned
+  by tests, e.g. `viewer_file(bad-uuid) == nil`); a garbage uuid lands
+  on the unconfigured card. Residual truth: a MISBEHAVING future
+  provider degrades its pane — the contract docs already demand
+  never-crash; kept as contract guidance.
+- Gemini's storage-GC claim assumes a sweeper core doesn't have; the
+  whiteboard background is home-filed in a real folder and FK'd by V5.
+
+**Documented, needs your call (not code tonight):**
+- Admin override makes the member/role matrix inert on admin surfaces
+  (Grok #3) — the DELIBERATE Step-5 transitional design, but the panel
+  is right that it deserves a timeline: floors go live only when
+  member-facing routes land. Same coin: Gemini's "V1 projects have no
+  member rows" lockout can only bite AFTER those routes — **backfill
+  legacy projects' creators as owners before any member surface ships.**
+- Per-provider DATA authorization ("is this project entitled to that
+  entity?") is still config-trust after the permission gate; a hub-side
+  authorize callback in the contract is the next hardening step if you
+  want it.
+- `Ledger.record_ai/3` is an ungated backend seam by design (the ai
+  attribution wave's caller); Authz has no agent subject yet. The
+  project FK already rejects dead projects cleanly.
+- Core-user deletion CASCADEs member rows, so deleting a sole owner
+  silently orphans a project with no audit trail (ZAI #5) — recovery is
+  the admin override; a core deletion hook is the real fix.
+- Operational (ZAI): the REAL `mix phoenix_kit.update` migration path
+  has only been exercised greenfield + psql-seeded — run it against a
+  cloned populated DB before pushing any of this.
+
 ## Defaults I assumed (all reversible)
 
 Instance-ready toggle rows (unique per project+ext+instance, v1 UI =
