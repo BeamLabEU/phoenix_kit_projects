@@ -130,6 +130,23 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       assert Authz.can?(other.uuid, project, :assign_tasks)
     end
 
+    test "log_time floors at manager with the assignee relationship grant",
+         %{project: project, owner: owner, other: other} do
+      # Plain member, no record: below the manager floor.
+      refute Authz.can?(other.uuid, project, :log_time)
+      # Owner clears the floor.
+      assert Authz.can?(owner.uuid, project, :log_time)
+
+      # The member logging on THEIR OWN task: relationship grant.
+      own = %{assigned_person: %{user_uuid: other.uuid}}
+      assert Authz.can?(other.uuid, project, :log_time, own)
+
+      # Someone else's task or an unassigned one: refused.
+      foreign = %{assigned_person: %{user_uuid: Ecto.UUID.generate()}}
+      refute Authz.can?(other.uuid, project, :log_time, foreign)
+      refute Authz.can?(other.uuid, project, :log_time, %{assigned_person: nil})
+    end
+
     test "relationship grant: the assignee may update their task's status",
          %{project: project, other: other} do
       # A member (not manager) with an assignment resolved to their user.

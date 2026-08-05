@@ -305,6 +305,33 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       assert html =~ "1h 30m"
     end
 
+    test "a member below the manager floor is refused at the write",
+         %{project: project, assignment: assignment} do
+      # A real core user who is a plain project MEMBER with no admin
+      # permission: the flag is on, the modal opens, but the WRITE runs
+      # the authz resolver — :log_time floors at manager and the task
+      # isn't assigned to them, so no relationship grant either.
+      {:ok, member_user} =
+        PhoenixKit.Users.Auth.register_user(%{
+          email: "logger-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, member_user.uuid, role: "member")
+
+      conn =
+        Phoenix.ConnTest.build_conn()
+        |> put_test_scope(fake_scope(user_uuid: member_user.uuid, permissions: []))
+
+      {:ok, view, _} = live(conn, show_path(project))
+
+      render_click(view, "open_log_time", %{"uuid" => assignment.uuid})
+      html = render_submit(view, "save_work_entry", %{"hours" => "1", "minutes" => "0"})
+
+      assert html =~ "permission to log time"
+      assert PhoenixKitProjects.Ledger.list_entries(project.uuid) == []
+    end
+
     test "garbage duration is refused with a flash, nothing written",
          %{conn: conn, project: project} do
       {:ok, view, _} = live(conn, show_path(project))
