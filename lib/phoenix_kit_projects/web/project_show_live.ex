@@ -956,6 +956,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         # tab (stale DOM, forged payload) falls back to the list. Extension
         # tab ids are validated against the CURRENT ext_tabs set — an id for
         # a since-disabled extension falls back too.
+        "board" when :erlang.map_get(:view_board, socket.assigns.fx) -> :board
         "gantt" when :erlang.map_get(:view_timeline, socket.assigns.fx) -> :gantt
         "calendar" when :erlang.map_get(:view_calendar, socket.assigns.fx) -> :calendar
         "ext:" <> _ -> if valid_ext_tab?(socket, tab), do: tab, else: :list
@@ -973,11 +974,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
       |> assign(calendar_mounted?: socket.assigns.calendar_mounted? or active == :calendar)
 
-    # Extension tabs have no URL suffix (no routes back them) — never
-    # let the sync hook rewrite the address bar for one.
+    # Only the ROUTED tabs sync to the URL (list/gantt/calendar have
+    # routes; the board and extension tabs don't — a synced suffix would
+    # 404 on reload).
     socket =
       if not socket.assigns.tab_url_sync? or params["source"] == "history" or
-           is_binary(active),
+           active not in [:list, :gantt, :calendar],
          do: socket,
          else: push_event(socket, "project_tab_url", %{tab: to_string(active)})
 
@@ -1602,6 +1604,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # A tab whose view flag is off resolves to :list — applied to the mount's
   # route-derived tab (a bookmarked /gantt URL on a timeline-off project) and
   # on live gate changes.
+  defp gate_tab(:board, fx), do: if(fx.view_board, do: :board, else: :list)
   defp gate_tab(:gantt, fx), do: if(fx.view_timeline, do: :gantt, else: :list)
   defp gate_tab(:calendar, fx), do: if(fx.view_calendar, do: :calendar, else: :list)
   defp gate_tab(tab, _fx), do: tab
@@ -2368,6 +2371,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <% task_tabs =
         if @fx.tasks do
           [%{id: "list", label: gettext("List"), icon: "hero-list-bullet"}] ++
+            if(@fx.view_board,
+              do: [%{id: "board", label: gettext("Board"), icon: "hero-view-columns"}],
+              else: []
+            ) ++
             if(@fx.view_timeline,
               do: [%{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"}],
               else: []
@@ -2684,6 +2691,74 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       </div>
 
       <%!-- Gantt tab — rendered in every context (templates excepted),
+      <%!-- Board tab — the kanban-lite view (Step 9): the SAME assignments
+           grouped by task status. v1 moves cards with the existing
+           server-trusted status buttons (drag lands with a dedicated hook
+           later); every action goes through the same gated dispatcher as
+           the list view. --%>
+      <div :if={not @is_template and @fx.view_board} class={if(@active_tab != :board, do: "hidden")}>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+          <div
+            :for={{status, title, tint} <- [
+              {"todo", gettext("To do"), "border-t-warning"},
+              {"in_progress", gettext("In progress"), "border-t-info"},
+              {"done", gettext("Done"), "border-t-success"}
+            ]}
+            class={["bg-base-200/50 rounded-lg border-t-4 p-3 flex flex-col gap-2 min-h-24", tint]}
+          >
+            <% column = Enum.filter(@assignments, &(&1.status == status)) %>
+            <div class="flex items-center justify-between px-1">
+              <span class="text-sm font-semibold">{title}</span>
+              <span class="badge badge-ghost badge-sm">{length(column)}</span>
+            </div>
+            <p :if={column == []} class="text-xs opacity-40 px-1 py-2">{gettext("Nothing here.")}</p>
+            <div :for={a <- column} class="card bg-base-100 border border-base-200 shadow-sm">
+              <div class="card-body p-3 gap-2">
+                <.smart_link
+                  navigate={Paths.edit_assignment(a.project_uuid, a.uuid)}
+                  emit={
+                    {PhoenixKitProjects.Web.AssignmentFormLive,
+                     %{"live_action" => "edit", "project_id" => a.project_uuid, "id" => a.uuid}}
+                  }
+                  embed_mode={@embed_mode}
+                  class="text-sm font-medium link link-hover leading-snug"
+                >
+                  {Assignment.label(a, L10n.current_content_lang())}
+                </.smart_link>
+                <div class="flex flex-wrap items-center gap-1">
+                  <% b_atype = assignee_type(a) %>
+                  <span :if={@fx.assignees and b_atype} class="badge badge-outline badge-xs gap-1">
+                    <.icon name="hero-user" class="w-3 h-3" /> {assignee_label(a)}
+                  </span>
+                  <% b_deps = Map.get(@deps_by_assignment, a.uuid, []) %>
+                  <span :if={@fx.dependencies and b_deps != []} class="badge badge-ghost badge-xs gap-1">
+                    <.icon name="hero-arrow-right-circle" class="w-3 h-3" /> {length(b_deps)}
+                  </span>
+                  <div class="ml-auto">
+                    <%= cond do %>
+                      <% a.status == "todo" -> %>
+                        <button phx-click="start_task" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-warning btn-xs">
+                          {gettext("Start")}
+                        </button>
+                      <% a.status == "in_progress" -> %>
+                        <button phx-click="complete" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-success btn-xs">
+                          <.icon name="hero-check" class="w-3.5 h-3.5" />
+                        </button>
+                      <% a.status == "done" -> %>
+                        <button phx-click="reopen" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-ghost btn-xs">
+                          {gettext("Reopen")}
+                        </button>
+                      <% true -> %>
+                    <% end %>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+           <%!-- Timeline tab wrapper (below): the gantt is
            lazy-mounted on first activation and then kept (so its own zoom/expand
            survive switching back). It's a nested LiveView with its own
            PubSub/state — when the show page is itself embedded this is a

@@ -139,7 +139,22 @@ defmodule PhoenixKitProjects.Features do
 
   # ── Gate maps (the render layer's one-stop lookup) ──────────────────
 
-  @task_gate_keys ~w(assignees estimates progress dependencies statuses scheduling subprojects view_timeline view_calendar)
+  # ATOM list (not strings): the module-attribute literal interns every gate
+  # atom at compile time — a string list + String.to_existing_atom crashed
+  # under suite orderings where gates/1 ran before anything else mentioned
+  # :view_timeline (caught by the Step 5 full run).
+  @task_gates [
+    :assignees,
+    :estimates,
+    :progress,
+    :dependencies,
+    :statuses,
+    :scheduling,
+    :subprojects,
+    :view_board,
+    :view_timeline,
+    :view_calendar
+  ]
 
   @doc """
   The resolved gate map LiveViews assign as `@fx`: the `tasks` extension
@@ -150,8 +165,8 @@ defmodule PhoenixKitProjects.Features do
   def gates(project_or_uuid) do
     base = %{tasks: Extensions.enabled?(project_or_uuid, "tasks")}
 
-    Enum.reduce(@task_gate_keys, base, fn key, acc ->
-      Map.put(acc, String.to_existing_atom(key), on?(project_or_uuid, key))
+    Enum.reduce(@task_gates, base, fn gate, acc ->
+      Map.put(acc, gate, on?(project_or_uuid, to_string(gate)))
     end)
   end
 
@@ -167,14 +182,14 @@ defmodule PhoenixKitProjects.Features do
 
     base = %{tasks: true}
 
-    Enum.reduce(@task_gate_keys, base, fn key, acc ->
+    Enum.reduce(@task_gates, base, fn gate, acc ->
       default =
-        case Map.get(cat, key) do
+        case Map.get(cat, to_string(gate)) do
           nil -> false
           flag -> flag.default and Enum.all?(flag.requires, &default_of(cat, &1))
         end
 
-      Map.put(acc, String.to_existing_atom(key), default)
+      Map.put(acc, gate, default)
     end)
   end
 

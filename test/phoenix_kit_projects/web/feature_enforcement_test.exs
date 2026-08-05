@@ -119,6 +119,34 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
     end
   end
 
+  describe "board view (Step 9)" do
+    test "renders columns with the project's tasks and flips status via the gated buttons",
+         %{conn: conn, project: project, assignment: a} do
+      {:ok, view, html} = live(conn, show_path(project))
+
+      assert html =~ ~s(phx-value-tab="board")
+
+      html = render_click(view, "switch_tab", %{"tab" => "board"})
+      assert html =~ "To do"
+      assert html =~ "In progress"
+
+      # The card's Start button routes through the same gated dispatcher.
+      render_click(view, "start_task", %{"uuid" => a.uuid})
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
+    end
+
+    test "view_board off drops the tab and forged switches fall back",
+         %{conn: conn, project: project} do
+      {:ok, _} = Features.set_flags(project, %{"view_board" => false})
+      {:ok, view, html} = live(conn, show_path(project))
+
+      refute html =~ ~s(phx-value-tab="board")
+      html = render_click(view, "switch_tab", %{"tab" => "board"})
+      # Falls back to list — the board columns don't render.
+      refute html =~ "In progress</span>"
+    end
+  end
+
   describe "view flags off" do
     test "tab strip drops the gated views and a /gantt URL falls back to list",
          %{conn: conn, project: project} do
@@ -136,9 +164,14 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       refute html =~ "embedded-project-gantt"
     end
 
-    test "with both views off the strip disappears entirely", %{conn: conn, project: project} do
+    test "with every alternate view off the strip disappears entirely",
+         %{conn: conn, project: project} do
       {:ok, _} =
-        Features.set_flags(project, %{"view_timeline" => false, "view_calendar" => false})
+        Features.set_flags(project, %{
+          "view_board" => false,
+          "view_timeline" => false,
+          "view_calendar" => false
+        })
 
       {:ok, _view, html} = live(conn, show_path(project))
       refute html =~ ~s(id="project-tabs-#{project.uuid}")
