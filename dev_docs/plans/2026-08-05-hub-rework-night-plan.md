@@ -7,9 +7,11 @@ extensions. Site : modules :: project : extensions. Tasks stay IN this module
 per-project toggle, ClickUp-ClickApps style.
 
 All work tonight is **local commits only** — no pushes, no PRs, no version or
-CHANGELOG changes, in any repo. Feature-module repos (all Max-maintained) may
-receive local commits; **core `phoenix_kit` gets handoff docs only** (owner-AI
-convention), pending Max's morning answer.
+CHANGELOG changes, in any repo. Max (2026-08-05, before sleep): the whole
+phoenix_kit ecosystem is ours — **commits allowed everywhere, core included**.
+Two repos are hands-off (in-progress unpushed work): `phoenix_kit_open_graph`
+and the bookings/"schedule" module — bookings is consumed read-only via its
+public API, og untouched.
 
 ## Decisions already made (boss)
 
@@ -69,6 +71,41 @@ convention), pending Max's morning answer.
 Cut-line philosophy: every commit is individually green (`mix precommit`
 unpiped + suite, `PHOENIX_KIT_PATH` where needed); whenever the night ends,
 the result is a clean prefix of this list, not a construction site.
+
+## Panel round 1 — plan-review amendments (2026-08-05, pre-implementation)
+
+A 5-of-7 quorum reviewed this plan before Step 2 code existed (raw outputs in
+the session scratchpad; compiled report in the session log). Accepted:
+
+1. **Enablement storage grows `instance_key`** (default `"default"`, in the
+   unique index) + `config JSONB` from the first migration — "instance-ready"
+   must be structural, not aspirational. (3 AIs)
+2. **The extension descriptor carries its full future surface now** —
+   `feature_flags`, `permission_actions`, `notification_types`,
+   `config_schema` + validation, lifecycle callbacks, data-retention
+   semantics — normalized and stored even where hub dispatch lands in later
+   steps, so wave-1 providers never need contract rework. (4 AIs)
+3. **Authz vocabulary precedes enforcement**: the action-atom vocabulary,
+   role enum, and the `can?/4` signature (with a `:context` opt for the
+   future public portal) are defined BEFORE Step 4's threading; call sites
+   bind to one resolver whose internals deepen in Step 5 — never rewritten.
+   (3 AIs)
+4. **Step 8 rescoped** to guards + actor-reference groundwork; member rows
+   are `user_uuid`-based; polymorphic actor columns arrive with the ledger
+   design. No staff-FK schema claims tonight. (3 AIs)
+5. **Wording fix**: the metadata-map in Step 10 was only ever the
+   *ai-side attribution payload*; the ledger itself is a typed table in our
+   chain (the panel's misread flagged genuinely ambiguous wording). ai-repo
+   edits stay minimal/optional tonight.
+6. **Step 7.5 shape stated**: provider-side LVs + config-linkage (no FKs,
+   no projects→crm/locations deps); comments bridge first; CRM/locations
+   are attempt-with-fallback. Cross-repo verification = parent + browser.
+7. **Verified panel bug find (ZAI)**: 15 activity call sites passed entity
+   uuids as `target_uuid` (a user FK, the notification recipient) — fixed
+   pre-Step-2 (moved to metadata keys). Step 7's threading depends on this.
+8. **Morning list**: prefix-schema migration test for the V1 baseline;
+   `seed_shared_status_entity!` deadlock flake mitigation; whiteboard
+   background as SVG data-URI investigation.
 
 ## Review cadence
 
