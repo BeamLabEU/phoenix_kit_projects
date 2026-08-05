@@ -5,6 +5,34 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  # Declared up here because the `use UrlState` below evaluates its options in
+  # the module body, so the whitelist has to exist by then.
+  @sort_fields ~w(position name inserted_at updated_at)a
+  @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
+
+  # Search, status filter and sort live in the query string, so a filtered list
+  # is a real URL: shareable, reload-proof, and Back returns to the previous
+  # query instead of leaving the page.
+  #
+  # `mode: :history` rather than the default — this LiveView is embeddable via
+  # live_render/3 (dev_docs/embedding_audit.md, pinned by the tests in
+  # test/.../embedding_test.exs), and :patch would export handle_params/3,
+  # which is exactly what makes a LiveView un-embeddable. The browser owns the
+  # URL here instead; `<.url_state_sync mode={:history} />` in the template
+  # carries the hook that does it.
+  #
+  # `status_filter` carries no `in:` on purpose: the slugs come from the shared
+  # entities catalog and are open-ended, so a fixed whitelist would reject the
+  # very options the dropdown offers.
+  use PhoenixKitWeb.Live.UrlState,
+    mode: :history,
+    params: [
+      search: [default: "", url_key: "q"],
+      status_filter: [default: nil, url_key: "status"],
+      sort_by: [default: :updated_at, cast: :atom, in: @sort_fields, url_key: "sort"],
+      sort_dir: [default: :desc, cast: :atom, in: [:asc, :desc], url_key: "dir"]
+    ]
+
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
@@ -66,8 +94,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         pagination: pagination,
         # Recency default — most recently edited projects first; manual
         # position order (and DnD) is one selector switch away.
-        sort_by: :updated_at,
-        sort_dir: :desc,
         # Load-more pagination state. `loaded_count` is the current
         # cap on visible rows, bumped by @per_batch on each "Load
         # more" click. `total_count` is the DB total matching the
@@ -82,7 +108,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         total_count: 0,
         filtered_count: 0,
         local_search?: true,
-        search: "",
         visible_columns:
           ListUi.read_visible_columns(@columns_key, @optional_columns, @default_columns),
         task_counts: %{},
@@ -98,7 +123,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         # (without provisioning it); `nil` = no filter. Hidden when
         # entities is unavailable or the shared list has no statuses yet.
         statuses_available: Statuses.available?(),
-        status_filter: nil,
         status_options: status_filter_options()
       )
       |> WebHelpers.assign_embed_state(session)
@@ -109,6 +133,18 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     # real content. `handle_params/3` is intentionally absent — see
     # dev_docs/embedding_audit.md.
     {:ok, load_projects(socket)}
+  end
+
+  # Called by UrlState whenever the query string moves — a search, a status
+  # filter, a sort, or the browser's Back button. The load-more cap resets with
+  # it: otherwise switching sort would still show only the first batch of the
+  # new order, which reads as missing rows.
+  #
+  # Deliberately NOT the first load — :history mode has no handle_params to
+  # hang that on, so mount/3 still does it (see the module's docs).
+  @impl PhoenixKitWeb.Live.UrlState
+  def handle_url_state(_state, socket) do
+    socket |> assign(loaded_count: @per_batch) |> load_projects()
   end
 
   @impl true
@@ -214,9 +250,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     """
   end
 
-  @sort_fields ~w(position name inserted_at updated_at)a
-  @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
-
   defp sort_options do
     [
       {:position, gettext("Manual")},
@@ -255,7 +288,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # first batch rather than keeping a stale deep page.
   def handle_event("filter_status", %{"status_slug" => slug}, socket) do
     slug = if slug in [nil, ""], do: nil, else: slug
-    {:noreply, socket |> assign(status_filter: slug, loaded_count: @per_batch) |> load_projects()}
+    {:noreply, push_url_state(socket, status_filter: slug)}
   end
 
   # Header-click sort: clicking the active column flips direction,
@@ -287,10 +320,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # query resets the load-more cap; ListUi.coerce_search guards forged
   # map-shaped payloads.
   def handle_event("search", params, socket) do
-    {:noreply,
-     socket
-     |> assign(search: ListUi.coerce_search(params), loaded_count: @per_batch)
-     |> load_projects()}
+    {:noreply, push_url_state(socket, [search: ListUi.coerce_search(params)], replace: true)}
   end
 
   def handle_event("toggle_column", %{"col" => col}, socket) when col in @optional_columns do
@@ -442,9 +472,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # Name back to Manual would still show only the first @per_batch
   # rows of the new sort, leaving the user confused).
   defp apply_sort(socket, field, dir) do
-    socket
-    |> assign(sort_by: field, sort_dir: dir, loaded_count: @per_batch)
-    |> load_projects()
+    push_url_state(socket, sort_by: field, sort_dir: dir)
   end
 
   defp sanitize_uuids(%{"uuids" => uuids}) when is_list(uuids) do
@@ -474,6 +502,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
+      <%!-- Carries the hook that keeps the address bar in step with the list.
+           Needed because this LiveView is embeddable and therefore cannot use
+           push_patch — see the `use UrlState` note at the top. --%>
+      <.url_state_sync mode={:history} id="projects-list-url-state" />
       <%!-- True-empty install only — a no-match SEARCH/FILTER must keep
            the toolbar on screen so the query can be cleared. --%>
       <%= if @total_count == 0 do %>
