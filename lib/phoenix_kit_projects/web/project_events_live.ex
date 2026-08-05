@@ -38,6 +38,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
      |> assign(
        project: project,
        current_user_uuid: session["current_user_uuid"],
+       can_write: session["can_write"] == true,
        anchor_date: Date.utc_today(),
        today: Date.utc_today(),
        selected: nil,
@@ -97,11 +98,15 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   end
 
   def handle_event("create_event", params, socket) do
-    case socket.assigns.project do
-      nil ->
+    case {socket.assigns.can_write, socket.assigns.project} do
+      {false, _} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("You don't have permission to change events."))}
+
+      {true, nil} ->
         {:noreply, socket}
 
-      project ->
+      {true, project} ->
         case ProjectEvents.create(project, event_attrs(params),
                actor_uuid: socket.assigns.current_user_uuid
              ) do
@@ -123,7 +128,8 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   end
 
   def handle_event("delete_event", %{"uuid" => uuid}, socket) do
-    with %{} = project <- socket.assigns.project,
+    with true <- socket.assigns.can_write,
+         %{} = project <- socket.assigns.project,
          %ProjectEvent{} = event <- ProjectEvents.get(project.uuid, uuid),
          :ok <- ProjectEvents.delete(event, actor_uuid: socket.assigns.current_user_uuid) do
       {:noreply,
@@ -341,7 +347,12 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               <.icon name="hero-chevron-right" class="w-4 h-4" />
             </button>
           </div>
-          <button type="button" class="btn btn-primary btn-sm" phx-click="open_new_event">
+          <button
+            :if={@can_write}
+            type="button"
+            class="btn btn-primary btn-sm"
+            phx-click="open_new_event"
+          >
             <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New event")}
           </button>
         </div>
@@ -407,6 +418,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               </div>
               <div class="modal-action">
                 <button
+                  :if={@can_write}
                   type="button"
                   phx-click="delete_event"
                   phx-value-uuid={@selected.uuid}

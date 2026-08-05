@@ -2,7 +2,9 @@ defmodule PhoenixKitProjects.Extensions.RegistryTest do
   # persistent_term is global — refresh/0 collides across async files.
   use ExUnit.Case, async: false
 
+  alias PhoenixKitProjects.Extensions.Extension
   alias PhoenixKitProjects.Extensions.Registry
+  alias PhoenixKitProjects.LiveCase
 
   defmodule HostProvider do
     def phoenix_kit_project_extensions do
@@ -70,6 +72,27 @@ defmodule PhoenixKitProjects.Extensions.RegistryTest do
   test "available?/1 — nil module_key is always available" do
     Registry.refresh()
     assert Registry.available?(Registry.get("tasks"))
+  end
+
+  test "visible_for_scope?/2 resolves permission -> module_key -> projects" do
+    {:ok, base} = Extension.from_map(%{key: "vis_test", name: "Vis"}, __MODULE__)
+
+    projects_scope = LiveCase.fake_scope(permissions: ["projects"])
+    both_scope = LiveCase.fake_scope(permissions: ["projects", "crm"])
+
+    # No permission, no module_key: rides the hub's own permission.
+    assert Registry.visible_for_scope?(base, projects_scope)
+
+    refute Registry.visible_for_scope?(
+             base,
+             LiveCase.fake_scope(permissions: [])
+           )
+
+    # Explicit permission wins: a projects-only viewer is refused
+    # (final panel — sibling tabs must not leak on the hub permission).
+    sibling = %{base | permission: "crm"}
+    refute Registry.visible_for_scope?(sibling, projects_scope)
+    assert Registry.visible_for_scope?(sibling, both_scope)
   end
 
   test "visible_for_scope?/2 fails closed on nil scope" do

@@ -16,7 +16,10 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   this LV scopes every query by the session's project and does not re-run
   `Authz` per event (same trust model as every contributed tab).
   Board creation is additionally identity-gated: no `current_user_uuid`
-  in the session, no writes (the files table requires an owning user).
+  in the session, no writes (the files table requires an owning user) —
+  and write-gated on the session's `"can_write"`, which the HOST
+  resolves from its scope against this extension's declared write action
+  (final panel: mutations must not ride the view-only trust model).
 
   Phoenix-first: the board list, create, and delete all work without JS;
   the canvas needs core's Fresco/Etcher hooks (already shipped by
@@ -55,6 +58,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
      assign(socket,
        project: project,
        current_user: load_user(session["current_user_uuid"]),
+       can_write: session["can_write"] == true,
        boards: (project && Whiteboards.list_for_project(project.uuid)) || [],
        selected: nil,
        viewer_file: nil,
@@ -90,6 +94,10 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
     cond do
       is_nil(project) ->
         {:noreply, socket}
+
+      not socket.assigns.can_write ->
+        {:noreply,
+         put_flash(socket, :error, gettext("You don't have permission to change whiteboards."))}
 
       is_nil(user) ->
         {:noreply, put_flash(socket, :error, gettext("Sign in to create a whiteboard."))}
@@ -139,7 +147,8 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   def handle_event("delete_board", %{"uuid" => uuid}, socket) do
     %{project: project, current_user: user} = socket.assigns
 
-    with %{} = board <- project && Whiteboards.get(project.uuid, uuid),
+    with true <- socket.assigns.can_write,
+         %{} = board <- project && Whiteboards.get(project.uuid, uuid),
          :ok <- Whiteboards.delete(board, actor_uuid: user && user.uuid) do
       selected = socket.assigns.selected
 
@@ -257,7 +266,12 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
             <p class="text-sm text-base-content/60">
               {gettext("Freeform boards — draw, mark up, and pin images with the annotation tools.")}
             </p>
-            <button type="button" class="btn btn-primary btn-sm" phx-click="open_new_board">
+            <button
+              :if={@can_write}
+              type="button"
+              class="btn btn-primary btn-sm"
+              phx-click="open_new_board"
+            >
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New whiteboard")}
             </button>
           </div>
@@ -265,7 +279,12 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
           <%= if @boards == [] do %>
             <.empty_state icon="hero-paint-brush" title={gettext("No whiteboards yet.")}>
               <:cta>
-                <button type="button" class="link link-primary text-sm" phx-click="open_new_board">
+                <button
+                  :if={@can_write}
+                  type="button"
+                  class="link link-primary text-sm"
+                  phx-click="open_new_board"
+                >
                   {gettext("Create the first one")}
                 </button>
               </:cta>
@@ -291,6 +310,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
                     <span>·</span>
                     <span>{L10n.format_date(board.inserted_at)}</span>
                     <button
+                      :if={@can_write}
                       type="button"
                       phx-click="delete_board"
                       phx-value-uuid={board.uuid}

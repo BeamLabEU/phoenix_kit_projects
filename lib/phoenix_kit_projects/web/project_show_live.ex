@@ -55,6 +55,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Statuses
   }
 
+  alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
@@ -269,7 +270,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         # Contributed extension tabs (the hub contract's `tabs`): rendered
         # as first-class view tabs via live_render with the embed-session
         # contract. Resolved once; recomputed on :project_modules_changed.
-        ext_tabs = ext_tabs_for(project, is_template)
+        ext_tabs = ext_tabs_for(project, is_template, socket.assigns[:phoenix_kit_current_scope])
 
         active_tab =
           tab_for_action(socket, is_template)
@@ -425,7 +426,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         socket.assigns.project
 
     fx = Features.gates(project)
-    ext_tabs = ext_tabs_for(project, socket.assigns.is_template)
+
+    ext_tabs =
+      ext_tabs_for(
+        project,
+        socket.assigns.is_template,
+        socket.assigns[:phoenix_kit_current_scope]
+      )
 
     # Re-gate the active tab: a gated-off view falls to :list; an extension
     # tab whose extension was just disabled falls to :list too.
@@ -1738,11 +1745,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Contributed tabs from every effectively-enabled extension, flattened to
   # renderable entries. String ids are namespaced ("ext:<ext>:<tab>") so
   # they can never collide with the :list/:gantt/:calendar atoms.
-  defp ext_tabs_for(_project, true), do: []
+  defp ext_tabs_for(_project, true, _scope), do: []
 
-  defp ext_tabs_for(project, _is_template) do
+  defp ext_tabs_for(project, _is_template, scope) do
     project.uuid
     |> Extensions.enabled_for_project()
+    |> Enum.filter(fn {ext, _row} ->
+      # Sibling-module tabs require that module's permission on the
+      # viewer (final panel, Grok — the Registry gate existed unwired).
+      # A nil scope is an EMBED mount: the host authorized the surface
+      # (the documented embed trust model), so keep current behavior
+      # there rather than blanking every tab.
+      is_nil(scope) or ExtRegistry.visible_for_scope?(ext, scope)
+    end)
     |> Enum.flat_map(fn {ext, row} ->
       Enum.map(ext.tabs, fn tab ->
         %{
@@ -1751,7 +1766,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           icon: tab.icon || ext.icon,
           lv: tab.lv,
           ext_key: ext.key,
-          config: (row && row.config) || %{}
+          config: (row && row.config) || %{},
+          write_action: write_action(ext)
         }
       end)
     end)
@@ -1759,6 +1775,27 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     e ->
       Logger.warning("[Projects] ext_tabs_for failed: #{Exception.message(e)}")
       []
+  end
+
+  # The extension's declared mutating action (its first non-:view
+  # permission_action) — resolved by the HOST into the tab session's
+  # "can_write" (the host has the scope; the tab doesn't). nil = the
+  # extension declares no writes; its tab gets can_write false.
+  defp write_action(ext) do
+    Enum.find(ext.permission_actions, &(&1 not in [:view, "view"]))
+  end
+
+  # Host-side write authorization for a contributed tab: the HOST holds
+  # the scope, so it resolves the extension's declared write action and
+  # hands the tab a boolean — mutating tabs (whiteboards, events) honor
+  # it. A nil scope is an embed mount: host-authorized, per the
+  # documented trust model. No declared write action = no writes.
+  defp ext_tab_can_write(assigns, tab) do
+    case {assigns[:phoenix_kit_current_scope], tab.write_action} do
+      {_, nil} -> false
+      {nil, _} -> true
+      {scope, action} -> Authz.can?(scope, assigns.project, action)
+    end
   end
 
   defp ext_initial_mounted(active_tab) when is_binary(active_tab), do: MapSet.new([active_tab])
@@ -3191,6 +3228,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               "ext_key" => tab.ext_key,
               "instance_key" => "default",
               "config" => tab.config,
+              "can_write" => ext_tab_can_write(assigns, tab),
               "locale" => L10n.current_content_lang(),
               "wrapper_class" => "",
               "current_user_uuid" =>

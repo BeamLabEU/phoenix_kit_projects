@@ -24,6 +24,21 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLiveTest do
         "instance_key" => "default",
         "config" => %{},
         "current_user_uuid" => Ecto.UUID.generate(),
+        "can_write" => true,
+        "locale" => "en"
+      }
+    )
+  end
+
+  defp mount_tab_readonly(conn, project) do
+    live_isolated(conn, ProjectEventsLive,
+      session: %{
+        "project_uuid" => project.uuid,
+        "ext_key" => "events",
+        "instance_key" => "default",
+        "config" => %{},
+        "current_user_uuid" => Ecto.UUID.generate(),
+        "can_write" => false,
         "locale" => "en"
       }
     )
@@ -166,6 +181,31 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLiveTest do
     send(view.pid, {:projects, :project_event_deleted, %{uuid: project.uuid}})
 
     refute render(view) =~ "modal-open"
+  end
+
+  test "can_write false hides the buttons and refuses forged writes",
+       %{conn: conn, project: project} do
+    {:ok, event} =
+      ProjectEvents.create(project, %{
+        title: "Kept",
+        starts_at: DateTime.add(DateTime.utc_now(), 3600, :second)
+      })
+
+    {:ok, view, html} = mount_tab_readonly(conn, project)
+
+    refute html =~ "New event"
+
+    html =
+      render_submit(view, "create_event", %{
+        "title" => "Forged",
+        "date" => "2026-08-25",
+        "all_day" => "true"
+      })
+
+    assert html =~ "permission to change events"
+
+    render_click(view, "delete_event", %{"uuid" => event.uuid})
+    assert length(ProjectEvents.list_for_project(project.uuid)) == 1
   end
 
   test "detail panel opens from the upcoming list and delete removes the event",

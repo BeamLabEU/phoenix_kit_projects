@@ -67,16 +67,21 @@ defmodule PhoenixKitProjects.Extensions.Registry do
   def available?(%Extension{module_key: key}), do: module_enabled?(key)
 
   @doc """
-  Whether a scope may SEE this extension's contributed surface. `nil`
-  permission falls back to the hub's own `"projects"` module permission
-  (already required to reach any project page); an explicit `permission`
-  requires that module key on the scope. Fail-closed on a nil scope.
+  Whether a scope may SEE this extension's contributed surface. The
+  required permission resolves `permission` → `module_key` → the hub's
+  own `"projects"` — so a tab re-exporting a SIBLING module's data
+  (CRM/entities/publishing) requires that module's permission, exactly
+  what the descriptor comments promise, while hub-owned built-ins ride
+  the projects permission the viewer already holds (final panel, Grok:
+  the gate existed but nothing consulted module_key, so any projects
+  viewer could read linked sibling data through a tab). Fail-closed on
+  a nil scope.
   """
   @spec visible_for_scope?(Extension.t(), Scope.t() | nil) :: boolean()
   def visible_for_scope?(%Extension{}, nil), do: false
 
   def visible_for_scope?(%Extension{} = ext, scope) do
-    available?(ext) and has_access?(scope, ext.permission || "projects")
+    available?(ext) and has_access?(scope, ext.permission || ext.module_key || "projects")
   end
 
   @doc "Rebuild the catalog from every discovered provider and re-cache it."

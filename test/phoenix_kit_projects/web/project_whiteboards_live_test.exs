@@ -34,6 +34,21 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
         "instance_key" => "default",
         "config" => %{},
         "current_user_uuid" => user && user.uuid,
+        "can_write" => true,
+        "locale" => "en"
+      }
+    )
+  end
+
+  defp mount_tab_readonly(conn, project, user) do
+    live_isolated(conn, ProjectWhiteboardsLive,
+      session: %{
+        "project_uuid" => project.uuid,
+        "ext_key" => "whiteboards",
+        "instance_key" => "default",
+        "config" => %{},
+        "current_user_uuid" => user && user.uuid,
+        "can_write" => false,
         "locale" => "en"
       }
     )
@@ -146,6 +161,23 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
       html = render_submit(view, "create_board", %{"name" => "Board", "size" => "1920x1080"})
       assert html =~ "Sign in to create a whiteboard."
       assert Whiteboards.list_for_project(project.uuid) == []
+    end
+
+    test "can_write false hides the buttons and refuses forged writes",
+         %{conn: conn, project: project, user: user} do
+      file = fixture_file(user)
+      {:ok, board} = Whiteboards.create_board_for_file(project, file.uuid, %{name: "Kept"})
+
+      {:ok, view, html} = mount_tab_readonly(conn, project, user)
+
+      refute html =~ "New whiteboard"
+      refute html =~ "delete_board"
+
+      html = render_submit(view, "create_board", %{"name" => "Forged", "size" => "1920x1080"})
+      assert html =~ "permission to change whiteboards"
+
+      render_click(view, "delete_board", %{"uuid" => board.uuid})
+      assert length(Whiteboards.list_for_project(project.uuid)) == 1
     end
 
     test "delete removes the board row", %{conn: conn, project: project, user: user} do
