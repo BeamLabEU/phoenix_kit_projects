@@ -111,6 +111,35 @@ defmodule PhoenixKitProjects do
   # discovered by its Registry — no dependency on that package, no `@impl`).
   def phoenix_kit_widgets, do: PhoenixKitProjects.DashboardWidgets.all()
 
+  # Project-extension catalog entries (the hub's own duck-typed provider
+  # contract — `PhoenixKitProjects.Extensions.Registry` discovers this same
+  # function on every module, ours included; no `@impl`, mirrors
+  # `phoenix_kit_widgets/0`). The built-in Tasks extension ships
+  # `default_enabled: true` so every pre-hub project keeps its task surface
+  # unchanged — the hub's behavior-preserving default. Its feature flags land
+  # with the Features layer (Step 3 of the 2026-08-05 plan); tabs stay native
+  # on the show page until enforcement threading gates them.
+  def phoenix_kit_project_extensions do
+    [
+      %{
+        key: "tasks",
+        name: "Tasks",
+        description: "Task lists, dependencies, scheduling, Timeline and Calendar views",
+        icon: "hero-clipboard-document-list",
+        module_key: nil,
+        default_enabled: true,
+        permission_actions: [
+          :create_tasks,
+          :edit_tasks,
+          :delete_tasks,
+          :assign_tasks,
+          :update_status,
+          :log_time
+        ]
+      }
+    ]
+  end
+
   @impl PhoenixKit.Module
   def admin_tabs do
     parent = [
