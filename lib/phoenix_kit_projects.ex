@@ -260,6 +260,25 @@ defmodule PhoenixKitProjects do
           }
         ]
       },
+      # Events (Step 12): dated happenings that aren't tasks — meetings,
+      # milestones, reviews — on their own calendar tab. Off by default.
+      %{
+        key: "events",
+        name: "Events",
+        description: "Meetings, milestones, and reviews on a project calendar",
+        icon: "hero-calendar-days",
+        module_key: nil,
+        default_enabled: false,
+        permission_actions: [:create_tasks],
+        tabs: [
+          %{
+            key: "events",
+            label: "Events",
+            icon: "hero-calendar-days",
+            lv: PhoenixKitProjects.Web.ProjectEventsLive
+          }
+        ]
+      },
       # Hub-side BRIDGE descriptor for a module that doesn't self-declare
       # (phoenix_kit_comments is BeamLab-maintained): the show page's
       # comments drawer, re-fronted as a per-project toggle. The drawer's

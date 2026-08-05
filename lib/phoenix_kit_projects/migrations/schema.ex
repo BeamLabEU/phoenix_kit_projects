@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 5
+  @current_version 6
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -102,6 +102,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v3_members(p, prefix)
     v4_work_entries(p, prefix)
     v5_whiteboards(p, prefix)
+    v6_events(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -123,6 +124,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     p = prefix_str(prefix)
     target = down_target(opts)
 
+    if target < 6, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_events")
     if target < 5, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_whiteboards")
     if target < 4, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_work_entries")
     if target < 3, do: execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_members")
@@ -539,6 +541,35 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_whiteboards_file_index
     ON #{p}phoenix_kit_project_whiteboards (file_uuid)
+    """)
+  end
+
+  # V6 — project events (Step 12 of the hub rework): dated happenings that
+  # aren't tasks (meetings, milestones, reviews), rendered on their own
+  # extension tab via phoenix_live_calendar. UTC storage; all_day events
+  # ignore the time-of-day component.
+  defp v6_events(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_events (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      title VARCHAR(200) NOT NULL,
+      description TEXT,
+      starts_at TIMESTAMPTZ NOT NULL,
+      ends_at TIMESTAMPTZ,
+      all_day BOOLEAN NOT NULL DEFAULT true,
+      location VARCHAR(200),
+      created_by_uuid UUID,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT phoenix_kit_project_events_range_check
+        CHECK (ends_at IS NULL OR ends_at >= starts_at)
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_events_project_starts_index
+    ON #{p}phoenix_kit_project_events (project_uuid, starts_at)
     """)
   end
 
