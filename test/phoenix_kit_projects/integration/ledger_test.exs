@@ -134,7 +134,7 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
                %{time_minutes: 0.0, tokens: 0.0, cost_cents: 0.0, billable_minutes: 0.0}
     end
 
-    test "time_by_assignment groups only task-scoped time entries",
+    test "time_for_assignments groups only the requested time entries",
          %{project: project, assignment: a} do
       {:ok, _} = Ledger.log_time(project, 20, assignment_uuid: a.uuid)
       {:ok, _} = Ledger.log_time(project, 15, assignment_uuid: a.uuid)
@@ -142,7 +142,8 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
       {:ok, _} = Ledger.log_time(project, 99)
       {:ok, _} = Ledger.record_ai(project, %{tokens: 500}, assignment_uuid: a.uuid)
 
-      assert Ledger.time_by_assignment(project.uuid) == %{a.uuid => 35.0}
+      assert Ledger.time_for_assignments([a.uuid]) == %{a.uuid => 35.0}
+      assert Ledger.time_for_assignments([]) == %{}
     end
   end
 

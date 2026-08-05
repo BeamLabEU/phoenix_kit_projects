@@ -1218,13 +1218,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           child_deps =
             child_uuid |> Projects.list_all_dependencies() |> Enum.group_by(& &1.assignment_uuid)
 
+          # load_ledger last: the newly revealed child tasks' logged-time
+          # chips read `@ledger_minutes`, which keys off the displayed set.
           {:noreply,
-           assign(socket,
+           socket
+           |> assign(
              expanded_subprojects: MapSet.put(expanded, uuid),
              subproject_child_tasks:
                Map.put(socket.assigns.subproject_child_tasks, uuid, child_tasks),
              deps_by_assignment: Map.merge(socket.assigns.deps_by_assignment, child_deps)
-           )}
+           )
+           |> load_ledger()}
         end
 
       _ ->
@@ -1672,9 +1676,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     %{project: project, is_template: is_template, fx: fx} = socket.assigns
 
     if (not is_template and fx[:ledger]) && project.uuid do
+      # Chips key off the DISPLAYED assignment set (parent rows + expanded
+      # child tasks) rather than the project, because child-task entries
+      # attribute to the CHILD project. The strip totals stay strictly
+      # this project's own effort.
+      displayed =
+        Enum.map(socket.assigns.assignments, & &1.uuid) ++
+          (socket.assigns.subproject_child_tasks
+           |> Map.values()
+           |> List.flatten()
+           |> Enum.map(& &1.uuid))
+
       assign(socket,
         ledger_totals: Ledger.totals_for_project(project.uuid),
-        ledger_minutes: Ledger.time_by_assignment(project.uuid)
+        ledger_minutes: Ledger.time_for_assignments(displayed)
       )
     else
       assign(socket, ledger_totals: nil, ledger_minutes: %{})
@@ -2070,9 +2085,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # ── Work-ledger helpers (Step 10) ────────────────────────────────
 
   defp do_save_work_entry(socket, params, record) do
+    # Attribute to the project that OWNS the assignment: an expanded
+    # sub-project child task belongs to the CHILD project, not the parent
+    # page it was logged from (panel round, Grok). No record = the viewed
+    # project itself.
+    target_project_uuid = if record, do: record.project_uuid, else: socket.assigns.project.uuid
+
     case parse_total_minutes(params) do
       {:ok, minutes} ->
-        socket.assigns.project
+        target_project_uuid
         |> Ledger.log_time(minutes,
           assignment_uuid: record && record.uuid,
           note: blank_to_nil(params["note"]),

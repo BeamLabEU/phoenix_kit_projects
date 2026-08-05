@@ -8,7 +8,8 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
-  alias PhoenixKitProjects.{Extensions, Features, Projects}
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.{Extensions, Features, Ledger, Members, Projects}
 
   setup %{conn: conn} do
     PhoenixKitProjects.Extensions.Registry.refresh()
@@ -273,7 +274,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       assert html =~ "This feature is turned off for this project."
 
       render_submit(view, "save_work_entry", %{"hours" => "1", "minutes" => "0"})
-      assert PhoenixKitProjects.Ledger.list_entries(project.uuid) == []
+      assert Ledger.list_entries(project.uuid) == []
     end
   end
 
@@ -295,7 +296,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
           "billable" => "true"
         })
 
-      assert [entry] = PhoenixKitProjects.Ledger.list_entries(project.uuid)
+      assert [entry] = Ledger.list_entries(project.uuid)
       assert Decimal.equal?(entry.amount, Decimal.new(90))
       assert entry.assignment_uuid == assignment.uuid
       assert entry.billable
@@ -305,6 +306,35 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       assert html =~ "1h 30m"
     end
 
+    # Panel round (Grok MEDIUM): the chip also renders on EXPANDED
+    # sub-project child tasks (same <.task_body>); the entry must attribute
+    # to the project that OWNS the assignment — the child — not the parent
+    # page it was logged from.
+    test "logging on an expanded child task attributes to the child project",
+         %{conn: conn} do
+      parent = fixture_project()
+
+      {:ok, %{child_project: child, assignment: link}} =
+        Projects.create_subproject(parent.uuid, %{"name" => "Buildout"})
+
+      {:ok, child_task} =
+        Projects.create_assignment(%{
+          "project_uuid" => child.uuid,
+          "task_uuid" => fixture_task().uuid,
+          "status" => "todo"
+        })
+
+      {:ok, view, _} = live(conn, show_path(parent))
+
+      render_click(view, "toggle_subproject", %{"uuid" => link.uuid})
+      render_click(view, "open_log_time", %{"uuid" => child_task.uuid})
+      render_submit(view, "save_work_entry", %{"hours" => "0", "minutes" => "25"})
+
+      assert [entry] = Ledger.list_entries(child.uuid)
+      assert entry.assignment_uuid == child_task.uuid
+      assert Ledger.list_entries(parent.uuid) == []
+    end
+
     test "a member below the manager floor is refused at the write",
          %{project: project, assignment: assignment} do
       # A real core user who is a plain project MEMBER with no admin
@@ -312,12 +342,12 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       # the authz resolver — :log_time floors at manager and the task
       # isn't assigned to them, so no relationship grant either.
       {:ok, member_user} =
-        PhoenixKit.Users.Auth.register_user(%{
+        Auth.register_user(%{
           email: "logger-#{System.unique_integer([:positive])}@example.com",
           password: "ValidPassword123!"
         })
 
-      {:ok, _} = PhoenixKitProjects.Members.add_member(project, member_user.uuid, role: "member")
+      {:ok, _} = Members.add_member(project, member_user.uuid, role: "member")
 
       conn =
         Phoenix.ConnTest.build_conn()
@@ -329,7 +359,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       html = render_submit(view, "save_work_entry", %{"hours" => "1", "minutes" => "0"})
 
       assert html =~ "permission to log time"
-      assert PhoenixKitProjects.Ledger.list_entries(project.uuid) == []
+      assert Ledger.list_entries(project.uuid) == []
     end
 
     test "garbage duration is refused with a flash, nothing written",
@@ -340,7 +370,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       html = render_submit(view, "save_work_entry", %{"hours" => "0", "minutes" => "0"})
 
       assert html =~ "Enter a positive amount of time."
-      assert PhoenixKitProjects.Ledger.list_entries(project.uuid) == []
+      assert Ledger.list_entries(project.uuid) == []
     end
   end
 

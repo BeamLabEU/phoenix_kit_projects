@@ -191,14 +191,20 @@ defmodule PhoenixKitProjects.Ledger do
       empty_totals()
   end
 
-  @doc "Per-assignment logged-time minutes map for a project (one query)."
-  @spec time_by_assignment(binary()) :: %{binary() => float()}
-  def time_by_assignment(project_uuid) do
+  @doc """
+  Logged-time minutes per assignment for a DISPLAYED set (one query).
+  Keyed by assignment uuid regardless of owning project, so a show page
+  rendering a parent's tasks plus expanded sub-project child tasks gets
+  every chip from one call (panel round: entries attribute to the project
+  that owns the assignment, which for child rows is not the viewed one).
+  """
+  @spec time_for_assignments([binary()]) :: %{binary() => float()}
+  def time_for_assignments([]), do: %{}
+
+  def time_for_assignments(uuids) when is_list(uuids) do
     RepoHelper.repo().all(
       from(e in WorkEntry,
-        where:
-          e.project_uuid == ^project_uuid and e.kind == "time" and
-            not is_nil(e.assignment_uuid),
+        where: e.assignment_uuid in ^uuids and e.kind == "time",
         group_by: e.assignment_uuid,
         select: {e.assignment_uuid, sum(e.amount)}
       )
