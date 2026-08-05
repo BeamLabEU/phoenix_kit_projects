@@ -22,6 +22,23 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
     {:ok, conn: conn, actor_uuid: scope.user.uuid}
   end
 
+  # Attribute ORDER within a tag belongs to the rendering engine, not to us —
+  # a leaf/phoenix_live_view bump reordered rest-attrs on core's
+  # <.table_row_menu_button> and broke the original ordered regexes
+  # (2026-08-05). Assert the OUTCOME instead: every tag carrying the given
+  # phx-click also carries phx-disable-with, wherever the attrs sit.
+  defp assert_disable_with(html, click_event) do
+    tags = Regex.scan(~r/<[a-z]+\s[^>]*phx-click="#{click_event}"[^>]*>/s, html)
+
+    assert tags != [],
+           "expected at least one element with phx-click=\"#{click_event}\" in the rendered HTML"
+
+    for [tag] <- tags do
+      assert tag =~ "phx-disable-with=",
+             "element with phx-click=\"#{click_event}\" is missing phx-disable-with: #{tag}"
+    end
+  end
+
   describe "project_show_live destructive buttons all carry phx-disable-with" do
     setup do
       project = fixture_project(%{"start_mode" => "immediate"})
@@ -40,18 +57,18 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
 
     test "start_task button (status=todo)", %{conn: conn, project: project} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      assert html =~ ~r/phx-click="start_task"[^>]*phx-disable-with=/s
+      assert_disable_with(html, "start_task")
     end
 
     test "remove_assignment button", %{conn: conn, project: project} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      assert html =~ ~r/phx-click="remove_assignment"[^>]*phx-disable-with=/s
+      assert_disable_with(html, "remove_assignment")
     end
 
     test "toggle_tracking button (track-off branch)", %{conn: conn, project: project} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
       # The off-track form renders even when track_progress is false.
-      assert html =~ ~r/phx-click="toggle_tracking"[^>]*phx-disable-with=/s
+      assert_disable_with(html, "toggle_tracking")
     end
   end
 
@@ -86,7 +103,7 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      assert html =~ ~r/phx-click="complete"[^>]*phx-disable-with=/s
+      assert_disable_with(html, "complete")
     end
 
     test "reopen (status=done) carries phx-disable-with", %{conn: conn} do
@@ -101,7 +118,7 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
         })
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      assert html =~ ~r/phx-click="reopen"[^>]*phx-disable-with=/s
+      assert_disable_with(html, "reopen")
     end
   end
 
