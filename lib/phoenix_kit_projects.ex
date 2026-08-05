@@ -46,6 +46,14 @@ defmodule PhoenixKitProjects do
   def version, do: @version
 
   @impl PhoenixKit.Module
+  # Module-owned migration chain (V1 = baseline of the core-built V101..V128
+  # shape; V2+ = hub-rework tables). Discovered by `mix phoenix_kit.update`,
+  # which compares current_version/0 vs migrated_version_runtime/1 and
+  # generates a host migration delegating to Schema.up/1. See the Schema
+  # moduledoc for the core-chain handover contract.
+  def migration_module, do: PhoenixKitProjects.Migrations.Schema
+
+  @impl PhoenixKit.Module
   def permission_metadata do
     %{
       key: module_key(),
