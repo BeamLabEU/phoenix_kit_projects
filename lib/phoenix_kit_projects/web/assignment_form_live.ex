@@ -881,6 +881,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: assignment.uuid,
+          target_uuid: Activity.assignee_target_uuid(assignment),
           metadata: %{"project" => socket.assigns.project.name, "new_task" => title}
         )
 
@@ -1009,6 +1010,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: root.uuid,
+          target_uuid: Activity.assignee_target_uuid(root),
           metadata: %{
             "project" => socket.assigns.project.name,
             "closure_extras" => length(extras)
@@ -1191,6 +1193,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: updated.uuid,
+          target_uuid: Activity.assignee_target_uuid(updated),
           metadata: %{"project" => socket.assigns.project.name}
         )
 

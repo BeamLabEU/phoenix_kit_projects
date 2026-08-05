@@ -58,6 +58,59 @@ defmodule PhoenixKitProjects do
   def version, do: @version
 
   @impl PhoenixKit.Module
+  @doc """
+  Notification preference types (Step 7 of the hub rework): the actions
+  below fan out through core's activity→notification bridge whenever their
+  entries carry a `target_uuid` (the affected user — assignees on task
+  actions, the member on membership actions). Users tune each sub-type —
+  and its Email/Telegram routing — in their notification preferences.
+  """
+  def notification_types do
+    [
+      %{
+        key: "projects",
+        label: "Projects",
+        description: "Membership, health, and task updates in your projects",
+        actions: [],
+        default: true,
+        sub_types: [
+          %{
+            key: "membership",
+            label: "Membership",
+            description: "Added to a project, role changes, removals",
+            actions: [
+              "projects.member_added",
+              "projects.member_role_changed",
+              "projects.member_removed"
+            ],
+            default: true
+          },
+          %{
+            key: "tasks",
+            label: "Task updates",
+            description: "Tasks assigned to you created, edited, or moved",
+            actions: [
+              "projects.assignment_created",
+              "projects.assignment_updated",
+              "projects.assignment_started",
+              "projects.assignment_completed",
+              "projects.assignment_reopened"
+            ],
+            default: true
+          },
+          %{
+            key: "health",
+            label: "Project health",
+            description: "Health judgments on your projects",
+            actions: ["projects.health_updated"],
+            default: true
+          }
+        ]
+      }
+    ]
+  end
+
+  @impl PhoenixKit.Module
   # Module-owned migration chain (V1 = baseline of the core-built V101..V128
   # shape; V2+ = hub-rework tables). Discovered by `mix phoenix_kit.update`,
   # which compares current_version/0 vs migrated_version_runtime/1 and

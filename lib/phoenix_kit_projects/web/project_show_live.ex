@@ -527,6 +527,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: a.uuid,
+          # The assignee is the affected user — with it, core's bridge
+          # delivers "your task was completed/reopened/…" (Step 7).
+          target_uuid: Activity.assignee_target_uuid(a),
           metadata: Keyword.get(opts, :metadata, %{})
         )
 
