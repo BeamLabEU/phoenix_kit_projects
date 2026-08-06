@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.19.1"
+  @version "0.20.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -87,16 +87,21 @@ defmodule PhoenixKitProjects.MixProject do
     [
       # 1.7.231 is the core floor: that is the release shipping
       # `PhoenixKitWeb.Live.UrlState`, which `ProjectsLive`, `TasksLive` and
-      # `TemplatesLive` all `use`. It supersedes the earlier floors, which it
-      # still satisfies — V125/V127/V128 for the workflow-status schema and the
-      # project-assignee columns, and 1.7.184 for the `disabled` /
-      # `wrapper_class` / `title` / `:description` attrs on
-      # `PhoenixKitWeb.Components.Core.Checkbox`.
+      # `TemplatesLive` all `use` — including the `mode: :history` option they
+      # depend on to stay embeddable, which landed in the same release. It
+      # supersedes the earlier floors, which it still satisfies —
+      # V125/V127/V128 for the workflow-status schema and the project-assignee
+      # columns, 1.7.184 for the `disabled` / `wrapper_class` / `title` /
+      # `:description` attrs on `PhoenixKitWeb.Components.Core.Checkbox`, and
+      # 1.7.189 for `PhoenixKit.SchemaPrefix`, which every table-backed schema
+      # in this module applies.
       #
-      # Bounded with `~>` rather than `>=` on purpose: an unbounded requirement
-      # accepts a future 2.0 that could rename or drop any of the above, and
-      # the failure would surface as a compile error in a consumer's app rather
-      # than as a resolution conflict here.
+      # Bounded with `~>` rather than `>=` on purpose, matching the rest of the
+      # module ecosystem: this admits `>= 1.7.231 and < 1.8.0`. Core minors are
+      # NOT assumed compatible — a core that renames or drops any of the above
+      # should fail resolution here, where the fix is a deliberate re-pin,
+      # rather than as a compile error in a consumer's app. Re-pin explicitly
+      # when core ships 1.8.
       pk_dep(:phoenix_kit, "~> 1.7.231"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
