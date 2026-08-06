@@ -109,8 +109,16 @@ defmodule PhoenixKitProjects.MixProject do
       # (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`);
       # 0.3.0 predates it and won't compile against this module.
       pk_dep(:phoenix_kit_ai, "~> 0.4"),
-      pk_dep(:phoenix_kit_staff, "~> 0.1"),
-      pk_dep(:phoenix_kit_comments, "~> 0.2"),
+      # 0.3 is the floor: `Assignees` calls
+      # `PhoenixKitStaff.Schemas.Person.display_name/1`, which staff first
+      # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
+      # The call is unguarded, so `~> 0.1` admitted releases where building an
+      # assignee list raises `UndefinedFunctionError`.
+      pk_dep(:phoenix_kit_staff, "~> 0.3"),
+      # 0.2.6 is the floor: `ProjectShowLive` does `use
+      # PhoenixKitComments.Embed`, first published in that release. `~> 0.2`
+      # admitted 0.2.0–0.2.5, where that `use` site fails to compile.
+      pk_dep(:phoenix_kit_comments, "~> 0.2.6"),
 
       # Optional: the entities module is the source/catalog for project
       # workflow statuses. `optional: true` keeps it out of host closures
