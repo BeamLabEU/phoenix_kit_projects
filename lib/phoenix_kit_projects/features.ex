@@ -328,6 +328,57 @@ defmodule PhoenixKitProjects.Features do
   @spec get_preset(String.t()) :: map() | nil
   def get_preset(key), do: Enum.find(presets(), &(&1.key == key))
 
+  # ── New-project page layout (site-configurable) ──────────────────
+  #
+  # Which optional creation-page blocks render TOP-LEVEL instead of
+  # inside the "Setup options" accordion (Max's call: the default page
+  # is name + description + kind, everything else folded — but a site
+  # that lives off templates can promote that block in Settings).
+
+  @creation_blocks_setting "projects_new_form_top_blocks"
+
+  @creation_blocks [
+    %{key: "template", label: "From template"},
+    %{key: "start", label: "Start timing"},
+    %{key: "statuses", label: "Workflow statuses"},
+    %{key: "people", label: "People"}
+  ]
+
+  @creation_block_keys Enum.map(@creation_blocks, & &1.key)
+
+  @doc "The promotable creation-page blocks (key + label), for the settings UI."
+  @spec creation_blocks() :: [map()]
+  def creation_blocks, do: @creation_blocks
+
+  @doc """
+  The block keys the site promoted to top level (default: none). A plain
+  list, not a MapSet — dialyzer's opaqueness false positive on literal
+  MapSet construction (the resolve/3 precedent in this module).
+  """
+  @spec creation_top_blocks() :: [String.t()]
+  def creation_top_blocks do
+    PhoenixKit.Settings.get_setting(@creation_blocks_setting, "")
+    |> String.split(",", trim: true)
+    |> Enum.filter(&(&1 in @creation_block_keys))
+    |> Enum.uniq()
+  rescue
+    _ -> []
+  catch
+    :exit, _ -> []
+  end
+
+  @doc "Persist the promoted block set (unknown keys dropped)."
+  @spec set_creation_top_blocks([String.t()]) :: {:ok, term()} | {:error, term()}
+  def set_creation_top_blocks(keys) when is_list(keys) do
+    value =
+      keys
+      |> Enum.filter(&(&1 in @creation_block_keys))
+      |> Enum.uniq()
+      |> Enum.join(",")
+
+    PhoenixKit.Settings.update_setting_with_module(@creation_blocks_setting, value, "projects")
+  end
+
   @doc "The site-default preset key for new projects (`projects_default_preset`)."
   @spec default_preset_key() :: String.t()
   def default_preset_key do

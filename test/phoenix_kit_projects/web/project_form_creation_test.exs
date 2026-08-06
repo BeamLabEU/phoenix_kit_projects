@@ -322,4 +322,46 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
     user
   end
+
+  describe "promotable layout blocks (Settings -> New project page)" do
+    setup do
+      # The template block only renders when templates exist.
+      template = fixture_project(%{"name" => "LayoutTpl #{System.unique_integer([:positive])}"})
+
+      template
+      |> Ecto.Changeset.change(is_template: true)
+      |> PhoenixKit.RepoHelper.repo().update!()
+
+      :ok
+    end
+
+    test "default: template + start live inside the Setup options accordion", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+
+      assert html =~ ~s(id="create-setup")
+      assert html =~ "From template (optional)"
+      refute html =~ ~s(id="create-top-template")
+      refute html =~ ~s(id="create-top-start")
+      # Statuses fold in too (Max: essentials only by default).
+      refute html =~ ~s(id="create-top-statuses")
+    end
+
+    test "a promoted block renders as its own top-level card", %{conn: conn} do
+      {:ok, _} = Features.set_creation_top_blocks(["template", "start"])
+      on_exit(fn -> Features.set_creation_top_blocks([]) end)
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+
+      assert html =~ ~s(id="create-top-template")
+      assert html =~ ~s(id="create-top-start")
+      refute html =~ ~s(id="create-top-people")
+    end
+
+    test "unknown block keys are dropped at write time" do
+      {:ok, _} = Features.set_creation_top_blocks(["template", "evil", "start"])
+      on_exit(fn -> Features.set_creation_top_blocks([]) end)
+
+      assert Enum.sort(Features.creation_top_blocks()) == ["start", "template"]
+    end
+  end
 end

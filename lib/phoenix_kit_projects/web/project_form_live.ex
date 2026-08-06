@@ -87,7 +87,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_preview: nil,
       template_ref: nil,
       customized?: false,
-      open_sections: %{}
+      open_sections: %{},
+      top_blocks: Features.creation_top_blocks()
     )
     |> seed_capability_states()
     |> then(fn s ->
@@ -115,7 +116,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_preview: nil,
       template_ref: nil,
       customized?: false,
-      open_sections: %{}
+      open_sections: %{},
+      top_blocks: []
     )
   end
 
@@ -442,7 +444,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # assign keeps the section OPEN across LiveView re-renders (morphdom
   # otherwise strips the client-added `open` attr on every phx-change).
   def handle_event("toggle_section", %{"key" => key}, socket)
-      when key in ~w(customize people advanced) do
+      when key in ~w(customize people advanced setup) do
     open = socket.assigns.open_sections
 
     {:noreply, assign(socket, open_sections: Map.put(open, key, not Map.get(open, key, false)))}
@@ -1099,6 +1101,182 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> Enum.join(" · ")
   end
 
+  # ── Creation-page blocks (promotable via Settings → Projects) ──────
+
+  attr(:templates, :list, required: true)
+  attr(:selected_template, :any, required: true)
+  attr(:template_preview, :any, required: true)
+  attr(:ext_types, :list, required: true)
+
+  defp template_block(assigns) do
+    ~H"""
+    <.select
+      name="template_uuid"
+      label={gettext("From template (optional)")}
+      value={@selected_template}
+      options={Enum.map(@templates, &{&1.name, &1.uuid})}
+      prompt={gettext("Start from scratch")}
+    />
+
+    <%!-- What the template brings (server-rendered preview). --%>
+    <div :if={@template_preview} class="rounded-lg border border-base-200 bg-base-200/40 p-3 text-xs">
+      <p class="font-semibold">
+        {gettext("%{count} tasks from this template", count: @template_preview.task_count)}
+      </p>
+      <p :if={@template_preview.sample_titles != []} class="mt-1 opacity-70">
+        {Enum.join(@template_preview.sample_titles, " · ")}<span :if={@template_preview.task_count > 5}> …</span>
+      </p>
+      <p :if={@template_preview.extensions != []} class="mt-1 opacity-70">
+        {gettext("Brings extensions:")} {Enum.map_join(@template_preview.extensions, ", ", &ext_name(@ext_types, &1))}
+      </p>
+      <p class="mt-1 opacity-50">
+        {gettext("Template capabilities carry over; your choices below win.")}
+      </p>
+    </div>
+    """
+  end
+
+  attr(:form, :any, required: true)
+
+  defp start_block(assigns) do
+    ~H"""
+    <%!-- The date field reveals via CSS the instant "Scheduled" is
+         picked (group-has on the option) — no round trip. --%>
+    <div class="group/start flex flex-col gap-3">
+      <.select
+        field={@form[:start_mode]}
+        label={gettext("Start")}
+        options={[
+          {gettext("Immediately (set up tasks first)"), "immediate"},
+          {gettext("Scheduled date"), "scheduled"}
+        ]}
+      />
+      <div class="hidden group-has-[option[value=scheduled]:checked]/start:block">
+        <.input
+          field={@form[:scheduled_start_date]}
+          label={gettext("Start date and time")}
+          type="datetime-local"
+        />
+      </div>
+    </div>
+    """
+  end
+
+  attr(:statuses_available, :boolean, required: true)
+  attr(:form, :any, required: true)
+  attr(:status_entities, :list, required: true)
+  attr(:status_preview, :list, required: true)
+  attr(:status_translation_mode, :string, required: true)
+
+  defp statuses_block(assigns) do
+    ~H"""
+    <.workflow_status_fields
+      statuses_available={@statuses_available}
+      field={@form[:status_entity_uuid]}
+      status_entities={@status_entities}
+      status_preview={@status_preview}
+      status_translation_mode={@status_translation_mode}
+      locked={false}
+    />
+    <p class="text-xs opacity-50">
+      {gettext("Statuses lock in when the project starts.")}
+    </p>
+    """
+  end
+
+  attr(:invites, :list, required: true)
+  attr(:invite_email, :string, required: true)
+  attr(:invite_role, :string, required: true)
+  attr(:flag_states, :map, required: true)
+  attr(:assign_type, :string, required: true)
+  attr(:form, :any, required: true)
+  attr(:department_options, :list, required: true)
+  attr(:team_options, :list, required: true)
+  attr(:person_options, :list, required: true)
+
+  defp people_block(assigns) do
+    ~H"""
+    <div class="flex flex-col gap-3">
+      <p class="text-xs opacity-60">
+        <span class="badge badge-ghost badge-sm">{gettext("You — Owner")}</span>
+      </p>
+
+      <div class="flex flex-wrap items-end gap-2">
+        <div class="grow max-w-xs">
+          <.input
+            type="email"
+            name="invite_email"
+            value={@invite_email}
+            label={gettext("Email")}
+            placeholder={gettext("person@example.com")}
+            class="input-sm"
+            phx-debounce="300"
+          />
+        </div>
+        <div class="w-32">
+          <.select
+            name="invite_role"
+            value={@invite_role}
+            label={gettext("Role")}
+            class="select-sm"
+            options={[
+              {gettext("Member"), "member"},
+              {gettext("Manager"), "manager"},
+              {gettext("Viewer"), "viewer"}
+            ]}
+          />
+        </div>
+        <button type="button" phx-click="add_invite" class="btn btn-ghost btn-sm gap-1">
+          <.icon name="hero-user-plus" class="w-4 h-4" /> {gettext("Add")}
+        </button>
+      </div>
+
+      <div :if={@invites != []} class="flex flex-wrap gap-1">
+        <span :for={invite <- @invites} class="badge badge-outline gap-1">
+          {invite.email} · {invite.role}
+          <button
+            type="button"
+            phx-click="remove_invite"
+            phx-value-uuid={invite.uuid}
+            class="ml-1 opacity-60 hover:opacity-100"
+            aria-label={gettext("Remove")}
+          >
+            ✕
+          </button>
+        </span>
+      </div>
+
+      <%= if @flag_states["assignees"] != false do %>
+        <%!-- The matching picker reveals via CSS the instant the
+             type is chosen (group-has on the option); the server
+             still nulls non-matching uuids at save. --%>
+        <div class="group/assign flex flex-col gap-2 border-t border-base-200 pt-2">
+          <.select
+            name="assign_type"
+            label={gettext("Responsible (optional)")}
+            value={@assign_type}
+            options={[
+              {gettext("Nobody"), ""},
+              {gettext("Department"), "department"},
+              {gettext("Team"), "team"},
+              {gettext("Person"), "person"}
+            ]}
+          />
+          <div class="hidden group-has-[option[value=department]:checked]/assign:block">
+            <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
+          </div>
+          <div class="hidden group-has-[option[value=team]:checked]/assign:block">
+            <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
+          </div>
+          <div class="hidden group-has-[option[value=person]:checked]/assign:block">
+            <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+          </div>
+        </div>
+      <% end %>
+    </div>
+    """
+  end
+
   # The multilang name+description card — the house pattern shared by
   # BOTH actions (Max: every create form offers all languages from the
   # start). One definition so the two branches can never drift.
@@ -1216,30 +1394,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             ai_translate={FormGlue.ai_translate_config(assigns)}
           />
 
-          <div class="card bg-base-100 shadow">
-            <div class="card-body flex flex-col gap-3">
-              <%!-- The date field reveals via CSS the instant "Scheduled"
-                   is picked (group-has on the option) — no round trip. --%>
-              <div class="group/start flex flex-col gap-3">
-                <.select
-                  field={@form[:start_mode]}
-                  label={gettext("Start")}
-                  options={[
-                    {gettext("Immediately (set up tasks first)"), "immediate"},
-                    {gettext("Scheduled date"), "scheduled"}
-                  ]}
-                />
-                <div class="hidden group-has-[option[value=scheduled]:checked]/start:block">
-                  <.input
-                    field={@form[:scheduled_start_date]}
-                    label={gettext("Start date and time")}
-                    type="datetime-local"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
           <%!-- Starting point: outcome cards bundling preset + extension
                seeds (the panel's strongest consensus). The radio is real
                and visible — works without JS. --%>
@@ -1280,36 +1434,66 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 </label>
               </div>
 
-              <%= if @templates != [] do %>
-                <.select
-                  name="template_uuid"
-                  label={gettext("From template (optional)")}
-                  value={@selected_template}
-                  options={Enum.map(@templates, &{&1.name, &1.uuid})}
-                  prompt={gettext("Start from scratch")}
-                />
-              <% end %>
-
-              <%!-- What the template brings (server-rendered preview). --%>
-              <div :if={@template_preview} class="rounded-lg border border-base-200 bg-base-200/40 p-3 text-xs">
-                <p class="font-semibold">
-                  {gettext("%{count} tasks from this template", count: @template_preview.task_count)}
-                </p>
-                <p :if={@template_preview.sample_titles != []} class="mt-1 opacity-70">
-                  {Enum.join(@template_preview.sample_titles, " · ")}<span :if={@template_preview.task_count > 5}> …</span>
-                </p>
-                <p :if={@template_preview.extensions != []} class="mt-1 opacity-70">
-                  {gettext("Brings extensions:")} {Enum.map_join(@template_preview.extensions, ", ", &ext_name(@ext_types, &1))}
-                </p>
-                <p class="mt-1 opacity-50">
-                  {gettext("Template capabilities carry over; your choices below win.")}
-                </p>
-              </div>
-
               <%!-- The receipt: one line of what Create will produce. --%>
               <p class="border-t border-base-200 pt-2 text-xs opacity-70">
                 {creation_summary(assigns)}
               </p>
+            </div>
+          </div>
+
+          <%!-- Site-PROMOTED blocks (Settings → Projects → New project
+               page): each renders as its own top-level card; everything
+               not promoted lives in the Setup options accordion below. --%>
+          <div :if={"template" in @top_blocks and @templates != []} id="create-top-template" class="card bg-base-100 shadow">
+            <div class="card-body flex flex-col gap-3">
+              <.template_block
+                templates={@templates}
+                selected_template={@selected_template}
+                template_preview={@template_preview}
+                ext_types={@ext_types}
+              />
+            </div>
+          </div>
+
+          <div :if={"start" in @top_blocks} id="create-top-start" class="card bg-base-100 shadow">
+            <div class="card-body flex flex-col gap-3">
+              <.start_block form={@form} />
+            </div>
+          </div>
+
+          <div
+            :if={"statuses" in @top_blocks and @flag_states["statuses"] != false}
+            id="create-top-statuses"
+            class="card bg-base-100 shadow"
+          >
+            <div class="card-body flex flex-col gap-2">
+              <.statuses_block
+                statuses_available={@statuses_available}
+                form={@form}
+                status_entities={@status_entities}
+                status_preview={@status_preview}
+                status_translation_mode={@status_translation_mode}
+              />
+            </div>
+          </div>
+
+          <div :if={"people" in @top_blocks} id="create-top-people" class="card bg-base-100 shadow">
+            <div class="card-body flex flex-col gap-3">
+              <h2 class="text-sm font-semibold">
+                {gettext("People")}
+                <span :if={@invites != []} class="badge badge-ghost badge-xs ml-2">{length(@invites)}</span>
+              </h2>
+              <.people_block
+                invites={@invites}
+                invite_email={@invite_email}
+                invite_role={@invite_role}
+                flag_states={@flag_states}
+                assign_type={@assign_type}
+                form={@form}
+                department_options={@department_options}
+                team_options={@team_options}
+                person_options={@person_options}
+              />
             </div>
           </div>
 
@@ -1415,27 +1599,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             </:content>
           </.accordion>
 
-          <%!-- Lifecycle statuses — compact but always visible: the ONE
-               irreversible choice (they cement at start) never hides in a
-               closed section. --%>
-          <div :if={@flag_states["statuses"] != false} class="card bg-base-100 shadow">
-            <div class="card-body flex flex-col gap-2">
-              <.workflow_status_fields
-                statuses_available={@statuses_available}
-                field={@form[:status_entity_uuid]}
-                status_entities={@status_entities}
-                status_preview={@status_preview}
-                status_translation_mode={@status_translation_mode}
-                locked={false}
-              />
-              <p class="text-xs opacity-50">
-                {gettext("Statuses lock in when the project starts.")}
-              </p>
-            </div>
-          </div>
-
           <%!-- Invite people (collapsed — empty pickers are fast-path noise). --%>
           <.accordion
+            :if={"people" not in @top_blocks}
             id="create-people"
             open={@open_sections["people"]}
             toggle_event="toggle_section"
@@ -1446,104 +1612,64 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               <span :if={@invites != []} class="badge badge-ghost badge-xs ml-2">{length(@invites)}</span>
             </:title>
             <:content>
-            <div class="flex flex-col gap-3">
-              <p class="text-xs opacity-60">
-                <span class="badge badge-ghost badge-sm">{gettext("You — Owner")}</span>
-              </p>
-
-              <div class="flex flex-wrap items-end gap-2">
-                <div class="grow max-w-xs">
-                  <.input
-                    type="email"
-                    name="invite_email"
-                    value={@invite_email}
-                    label={gettext("Email")}
-                    placeholder={gettext("person@example.com")}
-                    class="input-sm"
-                    phx-debounce="300"
-                  />
-                </div>
-                <div class="w-32">
-                  <.select
-                    name="invite_role"
-                    value={@invite_role}
-                    label={gettext("Role")}
-                    class="select-sm"
-                    options={[
-                      {gettext("Member"), "member"},
-                      {gettext("Manager"), "manager"},
-                      {gettext("Viewer"), "viewer"}
-                    ]}
-                  />
-                </div>
-                <button type="button" phx-click="add_invite" class="btn btn-ghost btn-sm gap-1">
-                  <.icon name="hero-user-plus" class="w-4 h-4" /> {gettext("Add")}
-                </button>
-              </div>
-
-              <div :if={@invites != []} class="flex flex-wrap gap-1">
-                <span :for={invite <- @invites} class="badge badge-outline gap-1">
-                  {invite.email} · {invite.role}
-                  <button
-                    type="button"
-                    phx-click="remove_invite"
-                    phx-value-uuid={invite.uuid}
-                    class="ml-1 opacity-60 hover:opacity-100"
-                    aria-label={gettext("Remove")}
-                  >
-                    ✕
-                  </button>
-                </span>
-              </div>
-
-              <%= if @flag_states["assignees"] != false do %>
-                <%!-- The matching picker reveals via CSS the instant the
-                     type is chosen (group-has on the option); the server
-                     still nulls non-matching uuids at save. --%>
-                <div class="group/assign flex flex-col gap-2 border-t border-base-200 pt-2">
-                  <.select
-                    name="assign_type"
-                    label={gettext("Responsible (optional)")}
-                    value={@assign_type}
-                    options={[
-                      {gettext("Nobody"), ""},
-                      {gettext("Department"), "department"},
-                      {gettext("Team"), "team"},
-                      {gettext("Person"), "person"}
-                    ]}
-                  />
-                  <div class="hidden group-has-[option[value=department]:checked]/assign:block">
-                    <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
-                  </div>
-                  <div class="hidden group-has-[option[value=team]:checked]/assign:block">
-                    <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
-                  </div>
-                  <div class="hidden group-has-[option[value=person]:checked]/assign:block">
-                    <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
-                  </div>
-                </div>
-              <% end %>
-            </div>
+              <.people_block
+                invites={@invites}
+                invite_email={@invite_email}
+                invite_role={@invite_role}
+                flag_states={@flag_states}
+                assign_type={@assign_type}
+                form={@form}
+                department_options={@department_options}
+                team_options={@team_options}
+                person_options={@person_options}
+              />
             </:content>
           </.accordion>
 
-          <%!-- Advanced --%>
+          <%!-- Setup options: everything the site didn't promote —
+               template, start timing, workflow statuses, schedule math. --%>
           <.accordion
-            :if={@flag_states["scheduling"] != false}
-            id="create-advanced"
-            open={@open_sections["advanced"]}
+            id="create-setup"
+            open={@open_sections["setup"]}
             toggle_event="toggle_section"
-            toggle_value="advanced"
+            toggle_value="setup"
           >
-            <:title>{gettext("Advanced")}</:title>
+            <:title>{gettext("Setup options")}</:title>
             <:content>
-            <div>
-              <.checkbox
-                field={@form[:counts_weekends]}
-                label={gettext("Count weekends in schedule")}
-                class="checkbox-sm"
-              />
-            </div>
+              <div class="flex flex-col gap-4">
+                <div :if={"template" not in @top_blocks and @templates != []} class="flex flex-col gap-3">
+                  <.template_block
+                    templates={@templates}
+                    selected_template={@selected_template}
+                    template_preview={@template_preview}
+                    ext_types={@ext_types}
+                  />
+                </div>
+
+                <div :if={"start" not in @top_blocks}>
+                  <.start_block form={@form} />
+                </div>
+
+                <div
+                  :if={"statuses" not in @top_blocks and @flag_states["statuses"] != false}
+                  class="flex flex-col gap-2 border-t border-base-200 pt-3"
+                >
+                  <.statuses_block
+                    statuses_available={@statuses_available}
+                    form={@form}
+                    status_entities={@status_entities}
+                    status_preview={@status_preview}
+                    status_translation_mode={@status_translation_mode}
+                  />
+                </div>
+
+                <.checkbox
+                  :if={@flag_states["scheduling"] != false}
+                  field={@form[:counts_weekends]}
+                  label={gettext("Count weekends in schedule")}
+                  class="checkbox-sm"
+                />
+              </div>
             </:content>
           </.accordion>
 
