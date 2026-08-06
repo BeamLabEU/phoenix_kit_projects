@@ -83,4 +83,73 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
 
     assert to =~ "/admin/projects"
   end
+
+  defmodule SelectProvider do
+    def phoenix_kit_project_extensions do
+      [
+        %{
+          key: "select_ext",
+          name: "Select Ext",
+          default_enabled: false,
+          config_schema: [
+            %{key: "picked", type: :select, label: "Pick one", options: {__MODULE__, :options}},
+            %{key: "plain", type: :string, label: "Plain"}
+          ]
+        }
+      ]
+    end
+
+    def options do
+      [%{value: "uuid-a", label: "Board A"}, %{value: "uuid-b", label: "Board B"}]
+    end
+  end
+
+  describe ":select config fields" do
+    setup %{project: project} do
+      Application.put_env(:phoenix_kit_projects, :extension_providers, [SelectProvider])
+      Registry.refresh()
+
+      on_exit(fn ->
+        Application.delete_env(:phoenix_kit_projects, :extension_providers)
+        Registry.refresh()
+      end)
+
+      {:ok, _} = Extensions.enable(project, "select_ext")
+      :ok
+    end
+
+    test "renders a <select> with the provider's lazy options (and text for the rest)",
+         %{conn: conn, project: project} do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+
+      assert html =~ ~s(<select)
+      assert html =~ "Board A"
+      assert html =~ "Board B"
+      # The sibling non-select field still renders a text input.
+      assert html =~ ~s(name="config[plain]")
+    end
+
+    test "save_config round-trips the picked value", %{conn: conn, project: project} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+
+      view
+      |> form("#ext-config-select_ext", %{"config" => %{"picked" => "uuid-b"}})
+      |> render_submit()
+
+      assert {_ext, %{config: %{"picked" => "uuid-b"}}} =
+               project.uuid
+               |> Extensions.enabled_for_project()
+               |> Enum.find(fn {ext, _row} -> ext.key == "select_ext" end)
+    end
+
+    test "a stored value the provider no longer offers stays visible",
+         %{conn: conn, project: project} do
+      {:ok, _} = Extensions.update_config(project, "select_ext", %{"picked" => "uuid-gone"})
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+
+      assert html =~ "uuid-gone"
+      assert html =~ "Current value (unavailable)"
+    end
+  end
 end
