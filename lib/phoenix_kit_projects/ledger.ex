@@ -138,6 +138,94 @@ defmodule PhoenixKitProjects.Ledger do
     end
   end
 
+  @doc """
+  The AI attribution sink's resolver (Phase G): maps a persisted
+  phoenix_kit_ai request (duck-typed map/struct — this package never
+  references that package's modules) onto `record_ai/3`.
+
+  The request's `metadata["attribution"]` carries `resource_type` +
+  `resource_uuid` from the translate pipeline (or any caller passing
+  `:attribution`). Resolution:
+
+    * `"assignment"` → that assignment's project + the assignment;
+    * `"project"` → the project itself;
+    * `"task"`/`"template"`/anything else → not ours (library tasks and
+      templates have no project) — `:skipped`.
+
+  UNIT TRAP (scout-verified): phoenix_kit_ai's `cost_cents` column is
+  NANODOLLARS despite the name (1e-6 dollars); the ledger stores CENTS.
+  Divide by 10_000 as a Decimal so sub-cent calls stay positive
+  fractions instead of silently rounding to zero.
+
+  The AI actor identity is the ENDPOINT uuid (`agent_uuid`) — the
+  stable "which AI did the work" until first-class agent records exist.
+  """
+  @spec record_ai_request(map() | struct()) ::
+          {:ok, [WorkEntry.t()]} | :skipped | {:error, term()}
+  def record_ai_request(request) do
+    attribution = request |> field(:metadata) |> attribution_map()
+
+    with %{} <- attribution || :skipped,
+         {:ok, project_uuid, assignment_uuid} <- resolve_attribution(attribution) do
+      tokens = field(request, :total_tokens)
+      nanodollars = field(request, :cost_cents)
+
+      cost_cents =
+        case nanodollars do
+          n when is_integer(n) and n > 0 -> Decimal.div(Decimal.new(n), 10_000)
+          _ -> nil
+        end
+
+      usage =
+        %{
+          tokens: tokens,
+          cost_cents: cost_cents,
+          model: field(request, :model),
+          request_uuid: field(request, :uuid),
+          agent_uuid: field(request, :endpoint_uuid)
+        }
+        |> Map.reject(fn {_k, v} -> is_nil(v) end)
+
+      record_ai(project_uuid, usage, assignment_uuid: assignment_uuid)
+    else
+      _ -> :skipped
+    end
+  end
+
+  defp field(request, key) when is_map(request),
+    do: Map.get(request, key) || Map.get(request, to_string(key))
+
+  defp attribution_map(metadata) when is_map(metadata),
+    do: Map.get(metadata, "attribution") || Map.get(metadata, :attribution)
+
+  defp attribution_map(_), do: nil
+
+  defp resolve_attribution(%{} = attribution) do
+    type = Map.get(attribution, "resource_type")
+    uuid = Map.get(attribution, "resource_uuid")
+
+    case {type, uuid} do
+      {"assignment", uuid} when is_binary(uuid) ->
+        case RepoHelper.repo().one(
+               from(a in PhoenixKitProjects.Schemas.Assignment,
+                 where: a.uuid == ^uuid,
+                 select: a.project_uuid
+               )
+             ) do
+          nil -> :skipped
+          project_uuid -> {:ok, project_uuid, uuid}
+        end
+
+      {"project", uuid} when is_binary(uuid) ->
+        {:ok, uuid, nil}
+
+      _ ->
+        :skipped
+    end
+  rescue
+    _ -> :skipped
+  end
+
   @doc "Entries for a project, newest first (capped)."
   @spec list_entries(binary(), keyword()) :: [WorkEntry.t()]
   def list_entries(project_uuid, opts \\ []) do

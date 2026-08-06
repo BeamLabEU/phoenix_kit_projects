@@ -36,7 +36,7 @@ defmodule PhoenixKitProjects.Members do
         preload: [:user]
       )
     )
-    |> Enum.sort_by(&{Map.get(role_order, &1.role, 9), &1.inserted_at})
+    |> Enum.sort_by(&{Map.get(role_order, &1.role, 9), DateTime.to_unix(&1.inserted_at)})
   end
 
   @doc "The member row for a user on a project, or nil."
@@ -252,5 +252,95 @@ defmodule PhoenixKitProjects.Members do
       target_uuid: member.user_uuid,
       metadata: extra
     )
+  end
+
+  @doc """
+  The `before_user_delete/1` lifecycle work (core calls the module hook
+  BEFORE the user row deletes, while memberships still exist — the
+  cascade would otherwise orphan sole-owner projects silently, the final
+  panel's ZAI #5):
+
+    * sole owner WITH other members → the most senior remaining member
+      (manager > member > viewer, earliest seat wins ties) is promoted
+      to owner (`projects.ownership_succeeded`);
+    * sole owner with NO other members → an orphan-warning activity row
+      (`projects.owner_departed`) — admin-recoverable, never guessed;
+    * every membership departure is logged with the deletion reason.
+
+  Best-effort by contract: core logs and continues if this raises.
+  """
+  @spec handle_user_deletion(binary()) :: :ok
+  def handle_user_deletion(user_uuid) do
+    memberships =
+      RepoHelper.repo().all(from(m in ProjectMember, where: m.user_uuid == ^user_uuid))
+
+    Enum.each(memberships, fn membership ->
+      Activity.log("projects.member_removed",
+        resource_type: "project",
+        resource_uuid: membership.project_uuid,
+        metadata: %{"reason" => "user_deleted", "role" => membership.role}
+      )
+
+      if membership.role == "owner" do
+        handle_owner_departure(membership)
+      end
+    end)
+
+    :ok
+  end
+
+  defp handle_owner_departure(membership) do
+    others =
+      RepoHelper.repo().all(
+        from(m in ProjectMember,
+          where: m.project_uuid == ^membership.project_uuid and m.uuid != ^membership.uuid,
+          order_by: [asc: m.inserted_at]
+        )
+      )
+
+    other_owners = Enum.filter(others, &(&1.role == "owner"))
+
+    cond do
+      other_owners != [] ->
+        # Not the sole owner — nothing to remediate.
+        :ok
+
+      others == [] ->
+        Activity.log("projects.owner_departed",
+          resource_type: "project",
+          resource_uuid: membership.project_uuid,
+          metadata: %{"note" => "sole owner deleted; project has no members"}
+        )
+
+      true ->
+        # to_unix, not the struct: tuple keys term-compare their elements, and
+        # DateTime structs term-compare by field name (day before month before
+        # year) — not chronologically.
+        successor =
+          Enum.min_by(others, fn m ->
+            {Map.fetch!(%{"manager" => 0, "member" => 1, "viewer" => 2}, m.role),
+             DateTime.to_unix(m.inserted_at)}
+          end)
+
+        successor
+        |> Ecto.Changeset.change(role: "owner")
+        |> RepoHelper.repo().update()
+        |> case do
+          {:ok, promoted} ->
+            Activity.log("projects.ownership_succeeded",
+              resource_type: "project",
+              resource_uuid: membership.project_uuid,
+              target_uuid: promoted.user_uuid,
+              metadata: %{"from_role" => successor.role}
+            )
+
+          {:error, _} ->
+            Activity.log("projects.owner_departed",
+              resource_type: "project",
+              resource_uuid: membership.project_uuid,
+              metadata: %{"note" => "sole owner deleted; succession failed"}
+            )
+        end
+    end
   end
 end

@@ -84,6 +84,153 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
     end
   end
 
+  describe "handle_user_deletion/1 — the before_user_delete hook" do
+    test "logs member_removed per membership with reason=user_deleted",
+         %{project: project, owner: owner, other: other} do
+      {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+      {:ok, _} = Members.add_member(project, other.uuid, role: "viewer")
+
+      assert :ok = Members.handle_user_deletion(other.uuid)
+
+      assert_activity_logged("projects.member_removed",
+        resource_uuid: project.uuid,
+        metadata_has: %{"reason" => "user_deleted", "role" => "viewer"}
+      )
+
+      # The hook only pre-logs — the CASCADE delete removes the row when core
+      # actually deletes the user, so the membership itself is untouched here.
+      assert Members.role_of(project, other.uuid) == :viewer
+    end
+
+    test "sole-owner departure promotes the best remaining member",
+         %{project: project, owner: owner, other: other} do
+      manager = user_fixture()
+      {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+      {:ok, _} = Members.add_member(project, other.uuid, role: "viewer")
+      {:ok, _} = Members.add_member(project, manager.uuid, role: "manager")
+
+      assert :ok = Members.handle_user_deletion(owner.uuid)
+
+      assert Members.role_of(project, manager.uuid) == :owner
+      assert Members.role_of(project, other.uuid) == :viewer
+
+      assert_activity_logged("projects.ownership_succeeded",
+        resource_uuid: project.uuid,
+        target_uuid: manager.uuid,
+        metadata_has: %{"from_role" => "manager"}
+      )
+    end
+
+    test "equal-role tiebreak is CHRONOLOGICAL seniority, not struct term order",
+         %{project: project, owner: owner} do
+      # Dates chosen so DateTime term order disagrees with chronology:
+      # the newer membership (Feb 1) has the smaller day field, and struct
+      # comparison reads day before month before year.
+      older = user_fixture()
+      newer = user_fixture()
+      {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+      {:ok, older_m} = Members.add_member(project, older.uuid, role: "member")
+      {:ok, newer_m} = Members.add_member(project, newer.uuid, role: "member")
+
+      backdate = fn m, dt ->
+        m
+        |> Ecto.Changeset.change(inserted_at: dt)
+        |> PhoenixKit.RepoHelper.repo().update!()
+      end
+
+      backdate.(older_m, ~U[2026-01-15 12:00:00Z])
+      backdate.(newer_m, ~U[2026-02-01 12:00:00Z])
+
+      assert :ok = Members.handle_user_deletion(owner.uuid)
+
+      assert Members.role_of(project, older.uuid) == :owner
+      assert Members.role_of(project, newer.uuid) == :member
+    end
+
+    test "other owners exist → no remediation", %{project: project, owner: owner, other: other} do
+      {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+      {:ok, _} = Members.add_member(project, other.uuid, role: "owner")
+
+      assert :ok = Members.handle_user_deletion(owner.uuid)
+
+      assert Members.role_of(project, other.uuid) == :owner
+      refute_activity_logged("projects.ownership_succeeded", resource_uuid: project.uuid)
+    end
+
+    test "sole owner of a memberless project → owner_departed flag",
+         %{project: project, owner: owner} do
+      {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+
+      assert :ok = Members.handle_user_deletion(owner.uuid)
+
+      assert_activity_logged("projects.owner_departed", resource_uuid: project.uuid)
+    end
+  end
+
+  describe "V9 creator→owner backfill" do
+    test "seats the creator from the activity log; memberless-only; idempotent",
+         %{owner: owner} do
+      # A "legacy" project: created with an activity trail but NO members
+      # (fixture_project takes the no-actor path, so seed the entry).
+      legacy = fixture_project()
+
+      PhoenixKitProjects.Activity.log("projects.project_created",
+        actor_uuid: owner.uuid,
+        resource_type: "project",
+        resource_uuid: legacy.uuid
+      )
+
+      # A project that ALREADY has members must be untouched.
+      seated = fixture_project()
+      other_user = user_fixture()
+      {:ok, _} = Members.add_member(seated, other_user.uuid, role: "viewer")
+
+      PhoenixKitProjects.Activity.log("projects.project_created",
+        actor_uuid: owner.uuid,
+        resource_type: "project",
+        resource_uuid: seated.uuid
+      )
+
+      run_backfill()
+
+      assert Members.role_of(legacy, owner.uuid) == :owner
+      assert Members.role_of(seated, owner.uuid) == nil
+      assert Members.role_of(seated, other_user.uuid) == :viewer
+
+      # Idempotent: a re-run adds nothing (legacy now has a member).
+      run_backfill()
+      assert length(Members.list_members(legacy.uuid)) == 1
+    end
+
+    defp run_backfill do
+      PhoenixKit.RepoHelper.repo().query!(
+        """
+        INSERT INTO phoenix_kit_project_members
+          (uuid, project_uuid, user_uuid, role, inserted_at, updated_at)
+        SELECT public.uuid_generate_v7(), pr.uuid, creator.actor_uuid, 'owner', NOW(), NOW()
+        FROM phoenix_kit_projects pr
+        JOIN LATERAL (
+          SELECT e.actor_uuid
+          FROM phoenix_kit_activities e
+          WHERE e.resource_uuid = pr.uuid
+            AND e.action IN ('projects.project_created', 'projects.project_created_from_template')
+            AND e.actor_uuid IS NOT NULL
+          ORDER BY e.inserted_at ASC
+          LIMIT 1
+        ) creator ON true
+        WHERE pr.is_template = false
+          AND EXISTS (
+            SELECT 1 FROM phoenix_kit_users u WHERE u.uuid = creator.actor_uuid
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM phoenix_kit_project_members m WHERE m.project_uuid = pr.uuid
+          )
+        """,
+        []
+      )
+    end
+  end
+
   describe "Authz member resolution" do
     setup %{project: project, owner: owner, other: other} do
       {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")

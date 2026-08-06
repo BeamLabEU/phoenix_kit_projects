@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 8
+  @current_version 9
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -105,6 +105,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v6_events(p, prefix)
     v7_priorities_labels(p, prefix)
     v8_invoiced_entries(p)
+    v9_backfill_creator_owners(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -125,6 +126,10 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     prefix = validated_prefix(opts)
     p = prefix_str(prefix)
     target = down_target(opts)
+
+    # V9 is a DATA backfill — rolling it back would delete memberships
+    # that may since have been legitimately edited; deliberately no
+    # down-path (the projects convention for data migrations).
 
     if target < 8 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_invoiced_entries")
@@ -666,6 +671,40 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     CREATE INDEX IF NOT EXISTS phoenix_kit_project_invoiced_entries_invoice_index
     ON #{p}phoenix_kit_project_invoiced_entries (invoice_uuid)
+    """)
+  end
+
+  # V9 — creator→owner backfill (Phase I): pre-hub projects have NO
+  # member rows, which is fine behind the admin override but LOCKS
+  # everyone out the day the member-facing surface ships (the final
+  # panel's Gemini #3). Derive each memberless non-template project's
+  # creator from its earliest projects.project_created activity entry
+  # (the template_creators/1 precedent) and seat them as owner. Projects
+  # whose creation entry is pruned/actor-less stay memberless —
+  # admin-recoverable, never guessed. Idempotent by construction (only
+  # memberless projects qualify).
+  defp v9_backfill_creator_owners(p, prefix) do
+    execute("""
+    INSERT INTO #{p}phoenix_kit_project_members
+      (uuid, project_uuid, user_uuid, role, inserted_at, updated_at)
+    SELECT #{prefix}.uuid_generate_v7(), pr.uuid, creator.actor_uuid, 'owner', NOW(), NOW()
+    FROM #{p}phoenix_kit_projects pr
+    JOIN LATERAL (
+      SELECT e.actor_uuid
+      FROM #{p}phoenix_kit_activities e
+      WHERE e.resource_uuid = pr.uuid
+        AND e.action IN ('projects.project_created', 'projects.project_created_from_template')
+        AND e.actor_uuid IS NOT NULL
+      ORDER BY e.inserted_at ASC
+      LIMIT 1
+    ) creator ON true
+    WHERE pr.is_template = false
+      AND EXISTS (
+        SELECT 1 FROM #{p}phoenix_kit_users u WHERE u.uuid = creator.actor_uuid
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM #{p}phoenix_kit_project_members m WHERE m.project_uuid = pr.uuid
+      )
     """)
   end
 

@@ -129,6 +129,27 @@ defmodule PhoenixKitProjects do
   # moduledoc for the core-chain handover contract.
   def migration_module, do: PhoenixKitProjects.Migrations.Schema
 
+  # AI usage sink (the attribution wave, Phase G): phoenix_kit_ai's
+  # dispatch_usage_sinks/1 calls every discovered module exporting this
+  # function with each persisted %Request{} — duck-typed, no dependency
+  # on that package. Resolution + the ledger write live in the Ledger's
+  # attribution helper; a request without a resolvable projects
+  # attribution is simply not ours.
+  def handle_ai_usage(request) do
+    PhoenixKitProjects.Ledger.record_ai_request(request)
+  end
+
+  @impl PhoenixKit.Module
+  # Lifecycle hook: core calls this BEFORE a user row deletes, while
+  # memberships still exist. RELEASE-GATED: the callback ships in an
+  # unreleased core, so the Hex-pin build won't compile until that
+  # release — gates run via PHOENIX_KIT_PATH (the admin-ui-overhaul
+  # precedent). Sole-owner departures get succession or an
+  # orphan-warning audit row.
+  def before_user_delete(user_uuid) do
+    PhoenixKitProjects.Members.handle_user_deletion(user_uuid)
+  end
+
   @impl PhoenixKit.Module
   def permission_metadata do
     %{

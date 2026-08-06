@@ -114,6 +114,77 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
     end
   end
 
+  describe "record_ai_request/1 — the attribution sink (Phase G)" do
+    test "an assignment-attributed request lands on the assignment's project",
+         %{project: project, assignment: a} do
+      request = %{
+        "uuid" => Ecto.UUID.generate(),
+        "total_tokens" => 4321,
+        # NANODOLLARS (the ai package's misnamed column): 1_234_567 nd
+        # = $1.234567 = 123.4567 cents.
+        "cost_cents" => 1_234_567,
+        "model" => "claude-fable-5",
+        "endpoint_uuid" => Ecto.UUID.generate(),
+        "metadata" => %{
+          "attribution" => %{"resource_type" => "assignment", "resource_uuid" => a.uuid}
+        }
+      }
+
+      assert {:ok, [tokens_entry, cost_entry]} = Ledger.record_ai_request(request)
+      assert tokens_entry.assignment_uuid == a.uuid
+      assert tokens_entry.project_uuid == project.uuid
+      assert Decimal.equal?(tokens_entry.amount, Decimal.new(4321))
+      # 1_234_567 / 10_000 = 123.4567 cents — the unit trap, as a fraction.
+      assert Decimal.equal?(cost_entry.amount, Decimal.new("123.4567"))
+      assert tokens_entry.actor_uuid == request["endpoint_uuid"]
+      assert tokens_entry.actor_kind == "ai_agent"
+    end
+
+    test "a SUB-CENT cost still records as a positive fraction", %{project: project} do
+      request = %{
+        "total_tokens" => 10,
+        "cost_cents" => 500,
+        "metadata" => %{
+          "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
+        }
+      }
+
+      assert {:ok, [_tokens, cost_entry]} = Ledger.record_ai_request(request)
+      assert Decimal.equal?(cost_entry.amount, Decimal.new("0.05"))
+    end
+
+    test "non-projects attributions and junk are skipped", %{project: project} do
+      refute_entries = fn -> assert Ledger.list_entries(project.uuid) == [] end
+
+      assert :skipped = Ledger.record_ai_request(%{"metadata" => %{}})
+      assert :skipped = Ledger.record_ai_request(%{"metadata" => nil})
+
+      assert :skipped =
+               Ledger.record_ai_request(%{
+                 "total_tokens" => 10,
+                 "metadata" => %{
+                   "attribution" => %{
+                     "resource_type" => "task",
+                     "resource_uuid" => Ecto.UUID.generate()
+                   }
+                 }
+               })
+
+      assert :skipped =
+               Ledger.record_ai_request(%{
+                 "total_tokens" => 10,
+                 "metadata" => %{
+                   "attribution" => %{
+                     "resource_type" => "assignment",
+                     "resource_uuid" => Ecto.UUID.generate()
+                   }
+                 }
+               })
+
+      refute_entries.()
+    end
+  end
+
   describe "totals" do
     test "totals_for_project sums per kind with billable split",
          %{project: project, assignment: a} do
