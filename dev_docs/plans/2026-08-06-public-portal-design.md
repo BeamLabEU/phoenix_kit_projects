@@ -1,9 +1,37 @@
 # Public portal — design for review (2026-08-06)
 
-**Status: AWAITING MAX'S SIGN-OFF — no code until approved.** This is the
-security-sensitive piece deliberately excluded from unsupervised work;
-you asked for the design first. The external panel reviews the security
-model after your read (their findings get folded in before code).
+**Status: BUILT (v1, chain V10) under your "keep going, don't stop"
+directive** — the external security panel reviewed this doc first
+(3 AIs, 17 findings) and the build folds their must-fixes in. The
+deviations from this doc, made to stay safe without your answers:
+
+1. **No submitter email in v1.** The panel's worst finding (HIGH, all
+   3 reviewers): an unverified notify-email is an open mail-bombing
+   relay. Rather than half-secure it, v1 collects nothing — the
+   notify-submitter feature waits for a double-opt-in design. The
+   column exists for that v2. Submissions notify project MEMBERS via
+   the Phase H fan-out instead (your Q2, answered safely).
+2. **No locale URL segment** (`/portal/:slug`, literal root route) —
+   one less unvalidated public parameter, and the safe splice point in
+   core's route order.
+3. **No auto-provisioned "Inbox" status** — submissions land in the
+   project's FIRST status with `source: "portal"` provenance; the
+   entity-backed status machinery was too much moving metal for an
+   unsupervised security surface. Revisit if triage needs a dedicated
+   column.
+4. **Per-IP block list deferred** (panel said v1 "needs" it) — with no
+   email, rate limits (per-peer /64-bucketed + per-project ceiling),
+   honeypot + min-fill-time, and the pause switch (the portal_submit
+   flag), the residual is triage noise, which the Inbox IS the
+   moderation point for. Deferred with eyes open — say the word.
+
+Your three questions from below, as built: Q1 slug-only (CSPRNG,
+~22 chars, rotate = revoke, live sessions downgrade); Q2 members
+notified, submitter not (see #1); Q3 per-assignment `public` flag
+(default false), flipped from the assignment form behind `:edit_tasks`.
+
+The remainder of this doc is the original proposal, kept for the
+record.
 
 ## What it is
 

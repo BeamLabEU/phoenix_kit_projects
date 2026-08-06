@@ -649,6 +649,29 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # Portal visibility flip — immediate write, never a form param. Gated
+  # explicitly on :edit_tasks (a PUBLIC-exposure change gets the strict
+  # shape even though this LV otherwise trusts its mount gate).
+  def handle_event("toggle_portal_public", _params, socket) do
+    assignment = socket.assigns[:assignment]
+    project = socket.assigns[:project]
+
+    actor =
+      socket.assigns[:phoenix_kit_current_scope] || Activity.actor_uuid(socket)
+
+    with %Assignment{uuid: uuid} when is_binary(uuid) <- assignment,
+         true <- portal_enabled?(project),
+         true <- actor != nil and PhoenixKitProjects.Authz.can?(actor, project, :edit_tasks),
+         {:ok, updated} <-
+           PhoenixKitProjects.Portal.set_public(assignment, assignment.public != true,
+             actor_uuid: Activity.actor_uuid(socket)
+           ) do
+      {:noreply, assign(socket, assignment: updated)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   # ── Sub-project mode (V127) ──────────────────────────────────────
   # Same add/edit page as a task, but the form is the child project
   # (name + assignee) and the dependency section uses the same handlers.
@@ -2040,8 +2063,38 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
       </.form>
+
+      <%!-- Portal visibility — OUTSIDE the form (its own immediate-write
+      event, never a cast param: `public` is server-set only). Edit mode,
+      portal extension on. --%>
+      <div
+        :if={@live_action == :edit and portal_enabled?(@project)}
+        class="card bg-base-100 shadow"
+      >
+        <div class="card-body flex-row items-center justify-between gap-3 py-4">
+          <div class="min-w-0">
+            <h3 class="text-sm font-semibold">{gettext("Public portal")}</h3>
+            <p class="text-xs opacity-60">
+              {gettext("Show this issue (title and status only) on the project's public page.")}
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            class="toggle toggle-primary"
+            checked={@assignment.public == true}
+            phx-click="toggle_portal_public"
+            aria-label={gettext("Show on the public portal")}
+          />
+        </div>
+      </div>
       <% end %>
     </div>
     """
+  end
+
+  defp portal_enabled?(project) do
+    PhoenixKitProjects.Extensions.enabled?(project, "portal")
+  rescue
+    _ -> false
   end
 end

@@ -4,6 +4,10 @@ import Config
 #   createdb phoenix_kit_projects_test
 config :phoenix_kit_projects, ecto_repos: [PhoenixKitProjects.Test.Repo]
 
+# Portal: no min-fill-time sleep in tests (the guard itself is covered by
+# an explicit test that raises the window back up).
+config :phoenix_kit_projects, portal_min_fill_ms: 0
+
 config :phoenix_kit_projects, PhoenixKitProjects.Test.Repo,
   username: System.get_env("PGUSER", "postgres"),
   password: System.get_env("PGPASSWORD", "postgres"),

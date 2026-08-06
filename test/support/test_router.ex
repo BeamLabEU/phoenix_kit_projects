@@ -55,6 +55,16 @@ defmodule PhoenixKitProjects.Test.Router do
     end
   end
 
+  # The PUBLIC portal — production mounts it via the module's
+  # route_module/0 (`Web.Routes.generate/1`), no auth, no scope hook.
+  scope "/", PhoenixKitProjects.Web do
+    pipe_through(:browser)
+
+    live_session :projects_portal_test do
+      live("/portal/:slug", PortalLive, :show)
+    end
+  end
+
   # The member-facing user-dashboard surface — production mounts it via
   # `user_dashboard_tabs/0` route discovery under core's authenticated
   # /dashboard session.

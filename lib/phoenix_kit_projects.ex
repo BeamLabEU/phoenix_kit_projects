@@ -151,6 +151,11 @@ defmodule PhoenixKitProjects do
   end
 
   @impl PhoenixKit.Module
+  # Public portal routes (/portal/:slug) — the admin surface stays on the
+  # admin_tabs/user_dashboard_tabs auto-generation.
+  def route_module, do: PhoenixKitProjects.Web.Routes
+
+  @impl PhoenixKit.Module
   def permission_metadata do
     %{
       key: module_key(),
@@ -325,6 +330,25 @@ defmodule PhoenixKitProjects do
         module_key: "comments",
         default_enabled: true,
         permission_actions: [:comment]
+      },
+      # Public portal (Phase J): anonymous issue intake + a public issue
+      # list/status page behind a random capability link. Off by default
+      # everywhere; the security model lives in PhoenixKitProjects.Portal
+      # (2026-08-06 design doc + the external security panel's findings).
+      %{
+        key: "portal",
+        name: "Public portal",
+        description: "Anonymous issue submission and a public status page behind a private link",
+        icon: "hero-globe-alt",
+        module_key: nil,
+        default_enabled: false,
+        permission_actions: [:edit_tasks],
+        on_enable: {PhoenixKitProjects.Portal, :ensure_portal},
+        feature_flags: [
+          %{key: "portal_submit", label: "Public issue submission", default: true},
+          %{key: "portal_list", label: "Public issue list", default: true},
+          %{key: "portal_status", label: "Public status summary", default: true}
+        ]
       }
     ]
   end

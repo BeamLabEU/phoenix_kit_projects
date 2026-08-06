@@ -152,7 +152,8 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       presets: Features.presets(),
       labels: Labels.list_for_project(project.uuid),
       labels_on: Features.on?(project, "labels"),
-      label_colors: Label.colors()
+      label_colors: Label.colors(),
+      portal: PhoenixKitProjects.Portal.get_portal(project.uuid)
     )
   end
 
@@ -220,6 +221,24 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
         {:error, _} ->
           {:noreply, put_flash(socket, :error, gettext("Could not apply the preset."))}
+      end
+    end)
+  end
+
+  def handle_event("rotate_portal_link", _params, socket) do
+    with_authz(socket, fn ->
+      case PhoenixKitProjects.Portal.rotate_slug(
+             socket.assigns.project.uuid,
+             actor_uuid: Activity.actor_uuid(socket)
+           ) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, gettext("Portal link rotated — the old link no longer works."))
+           |> reload()}
+
+        _ ->
+          {:noreply, put_flash(socket, :error, gettext("Could not rotate the link."))}
       end
     end)
   end
@@ -445,6 +464,25 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   {gettext("Save")}
                 </button>
               </form>
+
+              <%!-- Portal: the private link + rotate (revoke). The slug IS
+              the access grant, so rotation is the kill switch. --%>
+              <div
+                :if={ext.key == "portal" and enabled and @portal}
+                class="flex flex-wrap items-center gap-2 border-t border-base-200 pt-3"
+              >
+                <code class="rounded bg-base-200 px-2 py-1 text-xs">
+                  /portal/{@portal.slug}
+                </code>
+                <button
+                  type="button"
+                  phx-click="rotate_portal_link"
+                  data-confirm={gettext("Rotate the portal link? The current link stops working immediately.")}
+                  class="btn btn-ghost btn-sm gap-1"
+                >
+                  <span class="hero-arrow-path w-4 h-4"></span> {gettext("Rotate link")}
+                </button>
+              </div>
             </div>
           </div>
         </section>

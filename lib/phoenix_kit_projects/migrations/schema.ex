@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 9
+  @current_version 10
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -106,6 +106,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v7_priorities_labels(p, prefix)
     v8_invoiced_entries(p)
     v9_backfill_creator_owners(p, prefix)
+    v10_portal(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -130,6 +131,13 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 10 do
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_portal_submissions")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_portals")
+      execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS public")
+      execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS source")
+    end
 
     if target < 8 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_invoiced_entries")
@@ -705,6 +713,50 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       AND NOT EXISTS (
         SELECT 1 FROM #{p}phoenix_kit_project_members m WHERE m.project_uuid = pr.uuid
       )
+    """)
+  end
+
+  # V10 — the public portal (Phase J): one portal row per project (the
+  # slug IS the access grant — random, regenerable), per-assignment
+  # public/source columns, and submitter PII isolated on its own
+  # deletable table (email lives ONLY here).
+  defp v10_portal(p) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_portals (
+      uuid UUID PRIMARY KEY,
+      project_uuid UUID NOT NULL UNIQUE
+        REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      slug VARCHAR(64) NOT NULL UNIQUE,
+      settings JSONB NOT NULL DEFAULT '{}',
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT FALSE
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT 'internal'
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_portal_submissions (
+      uuid UUID PRIMARY KEY,
+      assignment_uuid UUID NOT NULL
+        REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE CASCADE,
+      email VARCHAR(160),
+      ip_hash VARCHAR(64),
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_portal_submissions_assignment_index
+    ON #{p}phoenix_kit_project_portal_submissions (assignment_uuid)
     """)
   end
 

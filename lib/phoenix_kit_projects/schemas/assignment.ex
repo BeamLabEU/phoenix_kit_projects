@@ -76,6 +76,15 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:completed_at, :utc_datetime)
     field(:translations, :map, default: %{})
 
+    # Portal (chain V10): `public` opts an assignment into the project's
+    # public portal list (default false — nothing leaks by existing);
+    # `source` marks provenance ("internal" | "portal") so triage can
+    # tell anonymous submissions apart. Both are SERVER-SET only —
+    # never cast from form params (`public` flips via the dedicated
+    # `set_public/2` context path, gated :edit_tasks).
+    field(:public, :boolean, default: false)
+    field(:source, :string, default: "internal")
+
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
 
