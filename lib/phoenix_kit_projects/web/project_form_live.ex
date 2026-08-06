@@ -148,21 +148,36 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # inline fields too (they'd otherwise render blank and clobber the
   # carried values on save — the panel's #2).
   defp seed_capability_states(socket) do
-    archetype = Archetypes.get(socket.assigns.archetype_key)
+    {flag_states, ext_states} = compute_seed_states(socket.assigns, socket.assigns.archetype_key)
+
+    template_configs =
+      case socket.assigns.template_preview do
+        %{} = preview -> Map.get(preview, :extension_configs, %{})
+        _ -> %{}
+      end
+
+    # Template configs are the base; anything the user already typed wins.
+    ext_configs = Map.merge(template_configs, socket.assigns.ext_configs)
+
+    assign(socket, flag_states: flag_states, ext_states: ext_states, ext_configs: ext_configs)
+  end
+
+  # The union rule as a PURE function of (assigns, archetype key) — the
+  # single source for the live seed AND the per-archetype receipt
+  # variants (which show what SWITCHING to that card would produce).
+  defp compute_seed_states(assigns, archetype_key) do
+    archetype = Archetypes.get(archetype_key)
     preset = archetype && Features.get_preset(archetype.preset)
     preset_flags = (preset && preset.flags) || %{}
 
-    {template_exts, template_flags, template_configs} =
-      case socket.assigns.template_preview do
-        %{extensions: exts} = preview ->
-          {exts, Map.get(preview, :features, %{}), Map.get(preview, :extension_configs, %{})}
-
-        _ ->
-          {[], %{}, %{}}
+    {template_exts, template_flags} =
+      case assigns.template_preview do
+        %{extensions: exts} = preview -> {exts, Map.get(preview, :features, %{})}
+        _ -> {[], %{}}
       end
 
     flag_states =
-      Map.new(socket.assigns.flag_defs, fn flag ->
+      Map.new(assigns.flag_defs, fn flag ->
         seeded = Map.get(preset_flags, flag.key, flag.default)
         {flag.key, Map.get(template_flags, flag.key, seeded)}
       end)
@@ -170,16 +185,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     seed_exts = ((archetype && archetype.extensions) || []) ++ template_exts
 
     ext_states =
-      Map.new(socket.assigns.ext_types, fn ext ->
+      Map.new(assigns.ext_types, fn ext ->
         seeded = ext.default_enabled or ext.key in seed_exts
 
-        {ext.key, Map.get(socket.assigns.ext_overrides, ext.key, seeded)}
+        {ext.key, Map.get(assigns.ext_overrides, ext.key, seeded)}
       end)
 
-    # Template configs are the base; anything the user already typed wins.
-    ext_configs = Map.merge(template_configs, socket.assigns.ext_configs)
-
-    assign(socket, flag_states: flag_states, ext_states: ext_states, ext_configs: ext_configs)
+    {flag_states, ext_states}
   end
 
   # Hub gate map + creation presets. :edit resolves the real project's
@@ -464,8 +476,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # Without this, toggling the start-mode select would light up
   # "can't be blank" on Name and "required for scheduled projects" on the
   # just-revealed date field even though the user has touched neither.
-  # The changeset is still rebuilt so reactive bits like
-  # `start_mode_value(@form)` stay in sync with form state.
+  # The changeset is still rebuilt so reactive bits stay in sync
+  # with form state.
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     selected_template = Map.get(params, "template_uuid", socket.assigns.selected_template)
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
@@ -1031,13 +1043,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
   end
 
-  defp start_mode_value(form) do
-    case form[:start_mode] do
-      %{value: val} when is_binary(val) and val != "" -> val
-      _ -> "immediate"
-    end
-  end
-
   # ── Creation-page render helpers ─────────────────────────────────
 
   # Archetype names/descriptions are catalog DATA (plain strings) —
@@ -1062,12 +1067,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     configs |> Map.get(ext_key, %{}) |> Map.get(field_key, "")
   end
 
-  # The receipt line: what Create will actually produce.
-  defp creation_summary(assigns) do
-    archetype = Archetypes.get(assigns.archetype_key)
+  # The receipt line for ONE archetype: what Create would produce if that
+  # card were the selection (simulated via the shared seed math). One
+  # variant renders per card, CSS-revealed by the checked radio — so the
+  # receipt answers a card click INSTANTLY; server re-renders refine all
+  # variants when the template/customize state changes.
+  defp creation_summary(assigns, archetype_key) do
+    archetype = Archetypes.get(archetype_key)
+    {flag_states, ext_states} = compute_seed_states(assigns, archetype_key)
+    current? = archetype_key == assigns.archetype_key
 
     kind =
-      case {archetype, assigns.customized?} do
+      case {archetype, current? and assigns.customized?} do
         {nil, _} -> gettext("Custom")
         {a, true} -> translate_catalog_string(a.name) <> " · " <> gettext("customized")
         {a, false} -> translate_catalog_string(a.name)
@@ -1075,12 +1086,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     ons =
       assigns.ext_types
-      |> Enum.filter(&assigns.ext_states[&1.key])
+      |> Enum.filter(&ext_states[&1.key])
       |> Enum.map_join(", ", & &1.name)
 
     statuses =
       cond do
-        assigns.flag_states["statuses"] == false -> nil
+        flag_states["statuses"] == false -> nil
         assigns.form[:status_entity_uuid].value in [nil, ""] -> gettext("Statuses: site default")
         true -> gettext("Statuses: custom set")
       end
@@ -1100,6 +1111,25 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" · ")
   end
+
+  # LITERAL class strings per archetype key — Tailwind's scanner needs
+  # them verbatim in source (an interpolated variant never compiles).
+  defp receipt_reveal_class("quick_todo"),
+    do: "hidden group-has-[[data-arch=quick-todo]:checked]/kind:block"
+
+  defp receipt_reveal_class("standard"),
+    do: "hidden group-has-[[data-arch=standard]:checked]/kind:block"
+
+  defp receipt_reveal_class("client_hub"),
+    do: "hidden group-has-[[data-arch=client-hub]:checked]/kind:block"
+
+  defp receipt_reveal_class("public_intake"),
+    do: "hidden group-has-[[data-arch=public-intake]:checked]/kind:block"
+
+  defp receipt_reveal_class("full"),
+    do: "hidden group-has-[[data-arch=full]:checked]/kind:block"
+
+  defp receipt_reveal_class(_), do: "hidden"
 
   # ── Creation-page blocks (promotable via Settings → Projects) ──────
 
@@ -1398,7 +1428,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                seeds (the panel's strongest consensus). The radio is real
                and visible — works without JS. --%>
           <div class="card bg-base-100 shadow">
-            <div class="card-body flex flex-col gap-3">
+            <div class="group/kind card-body flex flex-col gap-3">
               <h2 class="text-sm font-semibold">{gettext("What kind of project?")}</h2>
               <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <%!-- Selection highlight is PURE CSS (has-[:checked]) so the
@@ -1419,6 +1449,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       name="archetype"
                       value={a.key}
                       checked={@archetype_key == a.key}
+                      data-arch={String.replace(a.key, "_", "-")}
                       class="radio radio-primary radio-xs"
                     />
                     <.icon name={a.icon} class="w-4 h-4 opacity-70" />
@@ -1434,10 +1465,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 </label>
               </div>
 
-              <%!-- The receipt: one line of what Create will produce. --%>
-              <p class="border-t border-base-200 pt-2 text-xs opacity-70">
-                {creation_summary(assigns)}
-              </p>
+              <%!-- The receipt: one PRE-RENDERED line per card, revealed by
+                   the checked radio (pure CSS — instant on click; the
+                   server refines all variants on template/customize
+                   changes). --%>
+              <div class="border-t border-base-200 pt-2 text-xs opacity-70">
+                <p :for={a <- @archetypes} class={receipt_reveal_class(a.key)}>
+                  {creation_summary(assigns, a.key)}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -1711,14 +1747,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               label={gettext("Count weekends in schedule")}
               class="checkbox-sm"
             />
-            <.select
-              field={@form[:start_mode]}
-              label={gettext("Start")}
-              options={[{gettext("Immediately (set up tasks first)"), "immediate"}, {gettext("Scheduled date"), "scheduled"}]}
-            />
-            <%= if start_mode_value(@form) == "scheduled" do %>
-              <.input field={@form[:scheduled_start_date]} label={gettext("Start date and time")} type="datetime-local" />
-            <% end %>
+            <.start_block form={@form} />
 
             <%!-- Assignee (V128) — same polymorphic team/department/person
                  picker tasks use. Non-translatable, so it lives outside the
@@ -1726,26 +1755,31 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                  shows; `clear_other_assignees/2` nulls the rest on change.
                  Feature-gated (Step 4): hidden when `assignees` is off. --%>
             <%= if @fx.assignees do %>
-              <.select
-                name="assign_type"
-                label={gettext("Assign to")}
-                value={@assign_type}
-                options={[
-                  {gettext("Nobody"), ""},
-                  {gettext("Department"), "department"},
-                  {gettext("Team"), "team"},
-                  {gettext("Person"), "person"}
-                ]}
-              />
-              <%= if @assign_type == "department" do %>
-                <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
-              <% end %>
-              <%= if @assign_type == "team" do %>
-                <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
-              <% end %>
-              <%= if @assign_type == "person" do %>
-                <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
-              <% end %>
+              <%!-- Instant reveal via CSS (group-has) — same pattern as the
+                   :new People block; the server still nulls non-matching
+                   uuids at save. --%>
+              <div class="group/assign flex flex-col gap-2">
+                <.select
+                  name="assign_type"
+                  label={gettext("Assign to")}
+                  value={@assign_type}
+                  options={[
+                    {gettext("Nobody"), ""},
+                    {gettext("Department"), "department"},
+                    {gettext("Team"), "team"},
+                    {gettext("Person"), "person"}
+                  ]}
+                />
+                <div class="hidden group-has-[option[value=department]:checked]/assign:block">
+                  <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
+                </div>
+                <div class="hidden group-has-[option[value=team]:checked]/assign:block">
+                  <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
+                </div>
+                <div class="hidden group-has-[option[value=person]:checked]/assign:block">
+                  <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+                </div>
+              </div>
             <% end %>
 
             <%!-- Workflow-status list selection (entities-backed), via the
