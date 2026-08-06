@@ -1845,29 +1845,42 @@ defmodule PhoenixKitProjects.Projects do
           {:ok, Project.t()}
           | {:error, :template_not_found | Ecto.Changeset.t() | term()}
   def create_project_from_template(template_uuid, project_attrs, opts \\ []) do
+    # is_template guard (creation-panel find): a crafted uuid must not
+    # clone an arbitrary project — with settings/extensions now carried,
+    # the copied payload got wider.
     case get_project(template_uuid) do
-      nil -> {:error, :template_not_found}
-      template -> clone_template(template, project_attrs, opts)
+      %Project{is_template: true} = template -> clone_template(template, project_attrs, opts)
+      _ -> {:error, :template_not_found}
     end
   end
 
   defp clone_template(template, project_attrs, opts) do
-    # The caller's settings (if any) are preserved; the back-link key is
-    # forced. It makes the clone countable by `template_usage/1` long
-    # after the activity log's retention window has pruned the event.
+    # Capability carry (the creation-page brainstorm's union rule): the
+    # TEMPLATE's own settings — feature flags, authz overrides, status
+    # translation mode — are the base layer; caller-provided settings
+    # overlay them (explicit choices win); the back-link key is forced.
+    # It makes the clone countable by `template_usage/1` long after the
+    # activity log's retention window has pruned the event.
     settings =
-      project_attrs
-      |> Map.get("settings", %{})
+      template.settings
+      |> Map.merge(Map.get(project_attrs, "settings", %{}))
       |> Map.put("created_from_template_uuid", template.uuid)
+
+    # The form's explicit status-set choice wins; blank/absent inherits
+    # the template's catalog (nil = shared). The clone reads it live
+    # until it starts, then cements.
+    status_entity_uuid =
+      case Map.get(project_attrs, "status_entity_uuid") do
+        uuid when is_binary(uuid) and uuid != "" -> uuid
+        _ -> template.status_entity_uuid
+      end
 
     attrs =
       Map.merge(project_attrs, %{
         "is_template" => "false",
         "counts_weekends" => to_string(template.counts_weekends),
         "settings" => settings,
-        # Inherit the template's chosen status catalog (nil = shared). The
-        # cloned project reads it live until it starts, then cements.
-        "status_entity_uuid" => template.status_entity_uuid
+        "status_entity_uuid" => status_entity_uuid
       })
 
     template_assignments = list_assignments(template.uuid)
@@ -1897,12 +1910,37 @@ defmodule PhoenixKitProjects.Projects do
         # suppressed (`broadcast: false`); emit one `:project_created` now that
         # the whole tree has committed, so a rollback leaks nothing and
         # subscribers still learn the new project exists.
+        carry_template_extensions(template, project, opts)
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
         {:ok, project}
 
       {:error, _reason} = err ->
         err
     end
+  end
+
+  # Capability carry, extension half: the template's ENABLED extensions
+  # (with their configs) come along onto the clone. Best-effort after
+  # commit — a provider that vanished since the template was authored
+  # must not fail the create (enable/4 already refuses unavailable
+  # types). The creation form's own extension picks apply AFTER this and
+  # win (its explicit disables simply never enable here: enable-only
+  # carry can't turn something off).
+  defp carry_template_extensions(template, project, opts) do
+    template.uuid
+    |> PhoenixKitProjects.Extensions.list_rows()
+    |> Enum.filter(& &1.enabled)
+    |> Enum.each(fn row ->
+      PhoenixKitProjects.Extensions.enable(project.uuid, row.ext_key,
+        instance_key: row.instance_key,
+        config: row.config || %{},
+        actor_uuid: Keyword.get(opts, :actor_uuid)
+      )
+    end)
+
+    :ok
+  rescue
+    _ -> :ok
   end
 
   # Carry the template's selected status (a slug) onto the cloned project.
@@ -2295,6 +2333,50 @@ defmodule PhoenixKitProjects.Projects do
       other -> other
     end
   end
+
+  @doc """
+  What picking a template brings — the creation form's server-rendered
+  preview (the brainstorm's "preview consequences" consensus): task
+  count, the first few task titles (by position), the extensions the
+  clone will carry, and how many feature flags the template pins.
+  Cheap enough to run on selection; `nil` for an unknown uuid.
+  """
+  @spec template_preview(uuid()) :: map() | nil
+  def template_preview(template_uuid) when is_binary(template_uuid) do
+    case get_project(template_uuid) do
+      %Project{is_template: true} = template ->
+        assignments = list_assignments(template.uuid)
+
+        sample =
+          assignments
+          |> Enum.sort_by(& &1.position)
+          |> Enum.take(5)
+          |> Enum.map(&Assignment.label(&1, PhoenixKitProjects.L10n.current_content_lang()))
+          |> Enum.reject(&is_nil/1)
+
+        ext_rows =
+          template.uuid
+          |> PhoenixKitProjects.Extensions.list_rows()
+          |> Enum.filter(& &1.enabled)
+
+        %{
+          task_count: length(assignments),
+          sample_titles: sample,
+          extensions: Enum.map(ext_rows, & &1.ext_key),
+          extension_configs: Map.new(ext_rows, fn row -> {row.ext_key, row.config || %{}} end),
+          features: Map.get(template.settings, "features", %{}),
+          flag_count: template.settings |> Map.get("features", %{}) |> map_size(),
+          counts_weekends: template.counts_weekends == true
+        }
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  def template_preview(_), do: nil
 
   # ── Assignments ────────────────────────────────────────────────────
 

@@ -164,7 +164,13 @@ defmodule PhoenixKitProjects.Schemas.Project do
   # activity log which gets pruned past the retention window.
   @settings_keys %{
     "use_status_translations" => &is_boolean/1,
-    "created_from_template_uuid" => &is_binary/1
+    "created_from_template_uuid" => &is_binary/1,
+    # Feature-flag pins (the Features context's storage key). Allowed
+    # through the changeset so TEMPLATE CLONING carries them (the
+    # creation-panel's Codex find: the whitelist silently killed the
+    # carry); per-key validity is enforced at read time (Features.on?
+    # ignores non-catalog keys) and by set_flags on the write path.
+    "features" => &is_map/1
   }
 
   # At most one of team/department/person (mirrors the DB CHECK + the

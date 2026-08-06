@@ -436,30 +436,28 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                 class="flex flex-wrap items-end gap-2 border-t border-base-200 pt-3"
               >
                 <input type="hidden" name="ext" value={ext.key} />
-                <label :for={field <- ext.config_schema} class="form-control w-full max-w-xs">
-                  <span class="label-text text-xs opacity-70 mb-1">{field[:label] || field.key}</span>
-                  <select
+                <div :for={field <- ext.config_schema} class="w-full max-w-xs">
+                  <.select
                     :if={field.type == :select}
                     name={"config[#{field.key}]"}
-                    class="select select-bordered select-sm"
-                  >
-                    <option value="">—</option>
-                    <option
-                      :for={opt <- select_options(field, config_value(row, field))}
-                      value={opt.value}
-                      selected={opt.value == config_value(row, field)}
-                    >
-                      {opt.label}
-                    </option>
-                  </select>
-                  <input
+                    value={config_value(row, field)}
+                    label={field[:label] || field.key}
+                    class="select-sm"
+                    prompt={gettext("—")}
+                    options={
+                      for opt <- select_options(field, config_value(row, field)),
+                          do: {opt.label, opt.value}
+                    }
+                  />
+                  <.input
                     :if={field.type != :select}
                     type="text"
                     name={"config[#{field.key}]"}
                     value={config_value(row, field)}
-                    class="input input-bordered input-sm"
+                    label={field[:label] || field.key}
+                    class="input-sm"
                   />
-                </label>
+                </div>
                 <button type="submit" class="btn btn-primary btn-sm" phx-disable-with={gettext("Saving…")}>
                   {gettext("Save")}
                 </button>
@@ -582,54 +580,9 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   defp config_value(nil, field), do: field[:default] || ""
   defp config_value(row, field), do: Map.get(row.config || %{}, field.key, field[:default] || "")
 
-  # Options for a :select config field. The descriptor may carry a literal
-  # list or a lazy `{module, fun}` (0-arity — providers with data-driven
-  # options, e.g. the dashboards picker). Entries normalize to
-  # `%{value:, label:}`; a provider failure degrades to []. The STORED value
-  # always appears (even when the provider no longer offers it) so a stale
-  # link is visible instead of silently blanked.
-  defp select_options(field, current) do
-    options =
-      case field[:options] do
-        {m, f} when is_atom(m) and is_atom(f) -> safe_options(m, f)
-        list when is_list(list) -> list
-        _ -> []
-      end
-      |> Enum.flat_map(&normalize_option/1)
-
-    if is_binary(current) and current != "" and
-         not Enum.any?(options, &(&1.value == current)) do
-      options ++ [%{value: current, label: gettext("Current value (unavailable)")}]
-    else
-      options
-    end
-  end
-
-  defp safe_options(m, f) do
-    if Code.ensure_loaded?(m) and function_exported?(m, f, 0) do
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      case apply(m, f, []) do
-        list when is_list(list) -> list
-        _ -> []
-      end
-    else
-      []
-    end
-  rescue
-    _ -> []
-  catch
-    # kind+reason: a THROWING provider fun must not crash the panel either.
-    _, _ -> []
-  end
-
-  defp normalize_option(%{value: v, label: l}), do: [%{value: to_string(v), label: to_string(l)}]
-
-  defp normalize_option(%{"value" => v, "label" => l}),
-    do: [%{value: to_string(v), label: to_string(l)}]
-
-  defp normalize_option({l, v}), do: [%{value: to_string(v), label: to_string(l)}]
-  defp normalize_option(v) when is_binary(v), do: [%{value: v, label: v}]
-  defp normalize_option(_), do: []
+  # Option resolution moved to the shared Extensions.ConfigOptions when
+  # the creation form grew inline extension config.
+  defp select_options(field, current), do: Extensions.ConfigOptions.resolve(field, current)
 
   defp requires_labels(unmet, flag_groups) do
     labels =

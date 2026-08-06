@@ -474,14 +474,19 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       refute html =~ "generate_default_statuses"
     end
 
-    test "the new form offers the preset picker and applies it on create", %{conn: conn} do
+    test "the new form offers archetype cards and applies the recipe on create", %{conn: conn} do
       {:ok, view, html} = live(conn, "/en/admin/projects/list/new")
 
-      assert html =~ ~s(name="project_preset")
+      # The starting-point cards replaced the bare preset select.
+      assert html =~ ~s(name="archetype")
+      assert html =~ "Quick to-do"
+      refute html =~ ~s(name="project_preset")
+
+      # Pick the simple recipe (phx-change), then create.
+      render_change(view, "validate", %{"project" => %{"name" => ""}, "archetype" => "quick_todo"})
 
       render_submit(view, "save", %{
-        "project" => %{"name" => "Preset run #{System.unique_integer([:positive])}"},
-        "project_preset" => "simple"
+        "project" => %{"name" => "Preset run #{System.unique_integer([:positive])}"}
       })
 
       project =

@@ -196,10 +196,23 @@ defmodule PhoenixKitProjects.Extensions do
               |> maybe_put_name(opts)
               |> maybe_merge_config(row, opts, ext)
 
-            row |> ProjectModule.changeset(attrs) |> RepoHelper.repo().update()
+            # No-op quiet (creation-panel find): enabling an already-
+            # enabled instance with nothing effectively changing must not
+            # re-fire on_enable / re-log / re-broadcast — the creation
+            # form's reconcile pass enables template-carried extensions a
+            # second time by design.
+            if row.enabled and Map.get(attrs, :config, row.config) == row.config and
+                 not Map.has_key?(attrs, :name) do
+              {:noop, row}
+            else
+              row |> ProjectModule.changeset(attrs) |> RepoHelper.repo().update()
+            end
         end
 
       case result do
+        {:noop, row} ->
+          {:ok, row}
+
         {:ok, row} ->
           log_toggle("projects.module_enabled", project_uuid, ext, actor_uuid)
           broadcast_change(project_uuid, ext.key)
