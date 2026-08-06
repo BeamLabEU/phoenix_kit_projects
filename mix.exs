@@ -85,14 +85,19 @@ defmodule PhoenixKitProjects.MixProject do
 
   defp deps do
     [
-      # 1.7.184 is the core floor. It still satisfies the earlier floors:
-      # V127 `child_project_uuid` +
-      # V128 project-assignee columns shipped in 1.7.128, V125 for the
-      # workflow-status schema `PhoenixKitProjects.Statuses` requires. 1.7.184
-      # is required for `PhoenixKitWeb.Components.Core.Checkbox`'s
-      # `disabled`/`wrapper_class`/`title`/`:description` support, used by
-      # the module's own hand-rolled-checkbox migration.
-      pk_dep(:phoenix_kit, ">= 1.7.189"),
+      # 1.7.231 is the core floor: that is the release shipping
+      # `PhoenixKitWeb.Live.UrlState`, which `ProjectsLive`, `TasksLive` and
+      # `TemplatesLive` all `use`. It supersedes the earlier floors, which it
+      # still satisfies — V125/V127/V128 for the workflow-status schema and the
+      # project-assignee columns, and 1.7.184 for the `disabled` /
+      # `wrapper_class` / `title` / `:description` attrs on
+      # `PhoenixKitWeb.Components.Core.Checkbox`.
+      #
+      # Bounded with `~>` rather than `>=` on purpose: an unbounded requirement
+      # accepts a future 2.0 that could rename or drop any of the above, and
+      # the failure would surface as a compile error in a consumer's app rather
+      # than as a resolution conflict here.
+      pk_dep(:phoenix_kit, "~> 1.7.231"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move
