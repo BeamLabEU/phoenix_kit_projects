@@ -47,6 +47,24 @@ defmodule PhoenixKitProjects.AITranslateBinding do
   @impl true
   def actor_uuid(socket), do: Activity.actor_uuid(socket)
 
+  # VALUE MODE source (the glue's unsaved-form path): the primary-language
+  # text straight from the live changeset. Exporting this is what turns
+  # the AI button ON at :new — translations fold into the changeset and
+  # persist with the create. NO `@impl`: the callback ships in an
+  # unreleased phoenix_kit_ai (the release-gating convention — the Hex
+  # pin's behaviour doesn't declare it yet; the glue discovers it by
+  # `function_exported?/3` either way).
+  def source_fields(resource_type, assigns) do
+    changeset = assigns.form.source
+
+    resource_type
+    |> fields_for()
+    |> Map.new(fn field ->
+      value = Ecto.Changeset.get_field(changeset, String.to_existing_atom(field))
+      {field, if(is_binary(value), do: value, else: "")}
+    end)
+  end
+
   defp fields_for("task"), do: Task.translatable_fields()
   defp fields_for("assignment"), do: Assignment.translatable_fields()
   # project + template share the Project schema.
