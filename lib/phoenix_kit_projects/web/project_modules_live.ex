@@ -618,7 +618,8 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   rescue
     _ -> []
   catch
-    :exit, _ -> []
+    # kind+reason: a THROWING provider fun must not crash the panel either.
+    _, _ -> []
   end
 
   defp normalize_option(%{value: v, label: l}), do: [%{value: to_string(v), label: to_string(l)}]

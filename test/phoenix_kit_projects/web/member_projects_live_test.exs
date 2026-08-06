@@ -68,6 +68,23 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLiveTest do
     refute html =~ other.name
   end
 
+  test "a membership revoked MID-SESSION cannot open (fresh DB read per navigation)",
+       %{conn: conn, user: user, mine: mine} do
+    {:ok, view, html} = live(conn, "/en/dashboard/projects")
+    assert html =~ mine.name
+
+    # Add a second owner so the last-owner guard permits the removal,
+    # then revoke the viewer while their session is live.
+    second_owner = user_fixture()
+    {:ok, _} = Members.change_role(mine, user.uuid, "owner", nil)
+    {:ok, _} = Members.add_member(mine, second_owner.uuid, role: "owner")
+    {:ok, _} = Members.remove_member(mine, user.uuid)
+
+    html = render_patch(view, "/en/dashboard/projects?open=#{mine.uuid}")
+
+    refute html =~ "member-project-host-"
+  end
+
   test "no memberships → the empty state", %{conn: conn} do
     lonely = user_fixture()
     conn = put_test_scope(conn, fake_scope(user_uuid: lonely.uuid, permissions: []))

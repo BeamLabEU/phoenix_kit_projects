@@ -50,11 +50,19 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
 
   @impl true
   def handle_params(params, uri, socket) do
+    # Re-query on EVERY navigation (final panel find): the mount-time list
+    # goes stale, and a member revoked mid-session must not keep opening
+    # the project from the cached assign. This is the authorization
+    # boundary — it reads the DB, not memory.
+    user = socket.assigns.current_user
+    memberships = (user && Members.projects_for_user(user.uuid)) || []
+    socket = assign(socket, :memberships, memberships)
+
     open =
       case params["open"] do
         uuid when is_binary(uuid) and uuid != "" ->
           # The gate: resolve against the viewer's own membership list only.
-          Enum.find(socket.assigns.memberships, fn {p, _role} -> p.uuid == uuid end)
+          Enum.find(memberships, fn {p, _role} -> p.uuid == uuid end)
 
         _ ->
           nil

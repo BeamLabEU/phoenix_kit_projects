@@ -57,20 +57,22 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   end
 
   defp load_view(socket) do
-    case Portal.public_view(socket.assigns.slug) do
-      {:ok, view} ->
-        # The DTO has no project uuid (whitelist) — resolve it once for
-        # the rotation subscription; it never reaches the template.
-        project_uuid =
-          case Portal.resolve(socket.assigns.slug) do
-            {:ok, _portal, project} -> project.uuid
-            _ -> nil
-          end
+    # ONE resolve for both the uuid and the view (the final panel's
+    # TOCTOU find: a rotate between two resolves used to skip the
+    # rotation subscription). The uuid rides the socket for the PubSub
+    # topic only; it never reaches the template.
+    case Portal.resolve(socket.assigns.slug) do
+      {:ok, _portal, project} ->
+        case Portal.public_view(socket.assigns.slug) do
+          {:ok, view} ->
+            assign(socket,
+              view: Map.put(view, :project_uuid, project.uuid),
+              page_title: view.project_name
+            )
 
-        assign(socket,
-          view: Map.put(view, :project_uuid, project_uuid),
-          page_title: view.project_name
-        )
+          :error ->
+            assign(socket, view: nil, page_title: gettext("Not found"))
+        end
 
       :error ->
         assign(socket, view: nil, page_title: gettext("Not found"))

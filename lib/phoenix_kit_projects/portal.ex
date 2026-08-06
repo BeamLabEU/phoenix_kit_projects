@@ -24,6 +24,17 @@ defmodule PhoenixKitProjects.Portal do
       MEMBERS through the Phase H fan-out instead.
     * `ip_hash` is a truncated peppered HMAC (panel #12) — abuse
       telemetry only.
+
+  ## Host requirement for per-IP limits
+
+  The peer address comes from LiveView's `get_connect_info(socket,
+  :peer_data)`, which is only populated when the HOST endpoint's socket
+  declares it — `socket "/live", ..., websocket: [connect_info:
+  [:peer_data, session: ...]]`. Without it every submitter shares one
+  bucket (still fail-closed — stricter, not weaker — and the per-project
+  ceiling is IP-independent). Hosts behind a proxy additionally need
+  RemoteIp (or equivalent) terminating XFF BEFORE Phoenix; this module
+  never parses forwarded headers itself.
   """
 
   import Ecto.Query
@@ -331,45 +342,68 @@ defmodule PhoenixKitProjects.Portal do
     end
   end
 
+  # ONE transaction for all four writes (final panel find: the unchecked
+  # chain could orphan a task or silently drop the provenance row).
+  # Broadcast + activity + fan-out happen AFTER commit.
   defp create_submission(portal, project, title, description, meta) do
-    with {:ok, task} <-
-           Projects.create_task(%{"title" => title, "description" => description}),
-         {:ok, assignment} <-
-           Projects.create_assignment(%{
-             "project_uuid" => project.uuid,
-             "task_uuid" => task.uuid,
-             # The ASSIGNMENT status vocabulary (not the project-lifecycle
-             # status set): new portal issues are plain open tasks —
-             # `source: "portal"` is the triage marker.
-             "status" => "todo"
-           }),
-         {:ok, assignment} <-
-           assignment
-           |> Ecto.Changeset.change(source: "portal")
-           |> RepoHelper.repo().update() do
-      %PortalSubmission{}
-      |> PortalSubmission.changeset(%{
-        assignment_uuid: assignment.uuid,
-        ip_hash: ip_hash(portal, meta[:peer_ip])
-      })
-      |> RepoHelper.repo().insert()
+    result =
+      RepoHelper.repo().transaction(fn ->
+        with {:ok, task} <-
+               Projects.create_task(%{"title" => title, "description" => description}),
+             {:ok, assignment} <-
+               Projects.create_assignment(
+                 %{
+                   "project_uuid" => project.uuid,
+                   "task_uuid" => task.uuid,
+                   # The ASSIGNMENT status vocabulary (not the
+                   # project-lifecycle status set): new portal issues are
+                   # plain open tasks — `source: "portal"` is the triage
+                   # marker.
+                   "status" => "todo"
+                 },
+                 broadcast: false
+               ),
+             {:ok, assignment} <-
+               assignment
+               |> Ecto.Changeset.change(source: "portal")
+               |> RepoHelper.repo().update(),
+             {:ok, _submission} <-
+               %PortalSubmission{}
+               |> PortalSubmission.changeset(%{
+                 assignment_uuid: assignment.uuid,
+                 ip_hash: ip_hash(portal, meta[:peer_ip])
+               })
+               |> RepoHelper.repo().insert() do
+          assignment
+        else
+          _ -> RepoHelper.repo().rollback(:submission_failed)
+        end
+      end)
 
-      log_result =
-        Activity.log("projects.portal_issue_submitted",
-          resource_type: "assignment",
-          resource_uuid: assignment.uuid,
-          metadata: %{
-            "project_uuid" => project.uuid,
-            "title" => title,
-            "source" => "portal",
-            "ip_hash" => ip_hash(portal, meta[:peer_ip])
-          }
-        )
+    case result do
+      {:ok, assignment} ->
+        ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+          uuid: assignment.uuid,
+          project_uuid: assignment.project_uuid
+        })
 
-      notify_members(log_result, project.uuid)
-      {:ok, :submitted}
-    else
-      _ -> :error
+        log_result =
+          Activity.log("projects.portal_issue_submitted",
+            resource_type: "assignment",
+            resource_uuid: assignment.uuid,
+            metadata: %{
+              "project_uuid" => project.uuid,
+              "title" => title,
+              "source" => "portal",
+              "ip_hash" => ip_hash(portal, meta[:peer_ip])
+            }
+          )
+
+        notify_members(log_result, project.uuid)
+        {:ok, :submitted}
+
+      _ ->
+        :error
     end
   end
 
