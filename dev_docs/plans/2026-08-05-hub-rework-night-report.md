@@ -1,5 +1,12 @@
 # Hub Rework — Night Report (2026-08-05)
 
+> **DAY 2 (2026-08-06): the whole plan is now DONE — see the
+> "Day 2 — Phases A–K" section at the bottom.** Everything below the
+> divider is the original day-1 report; several of its "Deferred" items
+> (staff-optional, priorities/labels, saved views, document_creator,
+> billing, dashboards, AI attribution, member surface, portal) have
+> since shipped.
+
 All work is **local commits only** — nothing pushed, no PRs, no version or
 CHANGELOG changes anywhere. Every commit's tree passed
 `PHOENIX_KIT_PATH=../phoenix_kit mix test` + `mix precommit` (suite grew
@@ -334,3 +341,179 @@ too — a deliberate deviation from the LV-layer convention).
    `step75_hello_ext_tab` (after).
 4. Live: `phoenix_kit_parent` on :4000 (running the final code) — the
    Acme project's kebab menu reaches every new surface.
+
+---
+
+# Day 2 — Phases A–K (2026-08-06)
+
+Your directive: *"the whole project is for you… do the whole plan, no
+need to put anything off… don't stop until you finish."* Everything
+below is LOCAL COMMITS ONLY across six repos; every commit's tree passed
+its full suite + unpiped `mix precommit`
+(`PHOENIX_KIT_PATH=../phoenix_kit` for projects — 1173 tests at the
+end); each phase got an external-AI panel round; new features were
+browser-verified in the parent on :4000.
+
+## Phase-by-phase
+
+- **A — resync + re-gate**: rebased all repos onto the merged remotes;
+  the re-gate caught 6 inherited failures (self-inconsistent mix.lock,
+  a disabled-sortable core bug, an order-fragile atom test…) — all
+  fixed at the source, with an origin/main baseline proving they
+  predated my commits.
+- **B — staff → optional (your #8, "no time limit")**: shadow read-only
+  schemas + ONE doorway (`People`), `WITHOUT_STAFF=1` compile gate,
+  information_schema contract test, staff-parity semantics pinned
+  (trashed excluded in listings only).
+- **C — priorities + labels (V7) + saved views (your #19)**: priority
+  CHECK urgent/high/normal/low; labels registry + join table +
+  cross-project whitelist; chips/badges on list+board; saved views.
+  Panel round caught the fourth save path skipping pending labels.
+- **D — document_creator linkage (your #15)**: the module got its OWN
+  V1 migration chain (`dcr_schema` marker) adding
+  `documents.project_uuid`; a Documents tab (attach/detach) on the hub.
+- **E — billing (your #17, "ask the other AIs")**: the consult settled
+  Option B — a `billing_customer` extension (profile + hourly rate
+  config) and an **Invoice-effort button**: uninvoiced billable HUMAN
+  time → a DRAFT invoice via `PhoenixKitBilling.create_invoice/2`,
+  idempotent through the V8 refs table (entry_uuid PK). Produced a real
+  225.00 EUR draft (INV-2026-0001) in the live parent.
+- **F — dashboards (your #18)**: fixed the Registry cold-VM discovery
+  bug + string-geometry leaks; then **dashboards-in-projects**:
+  `ProjectDashboardLive`, a read-only session-mounted viewer of one
+  SHARED dashboard (readonly + id_prefix threaded through the builder
+  components; live refresh tick; live-sync; per-viewer widget
+  permission gating), a `:select` config picker in the Modules panel
+  (lazy `{module, fun}` options — closes the day-1 "config fields are
+  text inputs" gap), and the duck-typed provider descriptor. Browser:
+  a shared "Team Ops Board" (clock + projects board) renders read-only
+  as a project tab, clock ticking server-side.
+- **G — AI attribution wave**: phoenix_kit_ai threads an `:attribution`
+  option into request metadata and dispatches every persisted request
+  to duck-typed `handle_ai_usage/1` sinks; projects' sink resolves
+  assignment→project and records tokens + cost (nanodollars ÷ 10,000 →
+  cents as Decimal) into the ledger with request/agent provenance.
+- **H — events notifications (your call: ALL members)**: core gained
+  `Notifications.fan_out_from_activity/2` (one committed feed entry
+  re-routed per recipient through prefs/channels/digests, actor
+  self-skip); project events fan out to every member.
+- **I — user-deletion lifecycle + THE MEMBER SURFACE**:
+  - Core: `before_user_delete/1` module hook run before user deletion
+    (per-module rescue/catch).
+  - V9: creator→owner backfill for memberless pre-hub projects from
+    their earliest creation activity (never-guess rule: pruned/actor-less
+    trails stay memberless — in the dev DB all 7 creation entries
+    pointed at since-deleted projects, so it correctly seated nobody).
+  - Members succession: sole-owner deletion promotes the best remaining
+    member (manager<member<viewer, then seniority) with an audit trail;
+    orphaned projects get `owner_departed`.
+  - Core: **user_dashboard_tabs route auto-discovery** — the dormant
+    `:user_dashboard` context clause now generates `/dashboard/*` routes
+    for module tabs carrying `live_view` (closes the day-1 "generalize
+    authenticated module-route discovery" core suggestion).
+  - **`/dashboard/projects` — My Projects**: lists ONLY the viewer's
+    membership rows; `?open=` resolves against that list (THE
+    authorization boundary — embedded hub LVs are host-trusting) and
+    renders the full project page via PopupHostLive, so task forms /
+    gantt / calendar stack in modals. Browser-verified including the
+    non-member-uuid gate.
+- **J — the public portal (chain V10)**: design doc first, then a
+  3-AI SECURITY panel on the doc (17 findings), then the build with
+  every must-fix folded in. See the doc
+  (`2026-08-06-public-portal-design.md`) for the deviations — the
+  headline: **v1 collects NO submitter email** (the unverified-notify
+  mail-bomb vector is eliminated, not mitigated); members are notified
+  via the Phase H fan-out instead. CSPRNG slug (~22 chars) with
+  rotate-as-revoke that downgrades LIVE sessions; guard chain inside
+  the submit event (honeypot, min-fill-time, peer-IP limits /64-bucketed
+  + project ceiling, fail-closed); ONE whitelisting DTO doorway with
+  cross-project isolation tests; uniform `:error` everywhere;
+  no-referrer + noindex headers. Browser-verified end-to-end: enable →
+  link → anonymous submit → triage row (`source: "portal"`, status
+  todo, NOT public) → publish toggle on the assignment form → appears
+  on the public page → rotate → old link dead.
+- **K — this section + the final panel** (verdicts below).
+
+## Panel rounds (day 2)
+
+- **G+I panel** (4 models; Codex + Kimi quota-dead): confirmed a REAL
+  succession-tiebreak bug (DateTime structs term-compare non-
+  chronologically in `min_by` tuples) — fixed + regression-pinned; a
+  REAL throw-escapes-catch gap in both the ai sink dispatcher and the
+  core hook runner — fixed (`catch kind, reason`); a REAL missing
+  members broadcast on succession — fixed + pinned. Killed a
+  loudly-flagged "1000× cost bug" as FALSE (the ai package's
+  `cost_cents` field actually stores nanodollars — now documented at
+  the schema field so future reviewers stop tripping). Accepted with
+  comments: hooks run outside the delete transaction; the concurrent
+  co-owner-deletion race (narrow, admin-recoverable).
+- **Portal security panel** (3 models): 17 findings, must-fixes all
+  folded into the build (details in the design doc).
+- **FINAL panel** (3 models over the F/I/J diffs, every finding
+  verified against the repos before acting): V10 SQL, the portal DTO
+  whitelist, the uniform-error doorway, the guard-chain order, and the
+  never-castable public/source fields all came back CLEAN. Six real
+  findings, ALL FIXED in follow-up commits: (1) the member surface
+  resolved `?open=` against the mount-time membership list — a revoked
+  member kept read access until reload; now every navigation re-reads
+  the DB (+ regression test). (2) per-IP portal buckets were dead in
+  the default install (`:peer_data` absent from endpoint connect_info —
+  everyone shared one fail-closed bucket); core + parent endpoints now
+  declare it, and the Portal moduledoc documents the host requirement.
+  (3) portal submission writes now run in ONE transaction (an orphaned
+  task / silently-dropped provenance row was possible). (4) the
+  dashboards viewer re-reads mode/design_h on live updates (a remote
+  grid↔pixel switch rendered the wrong board). (5) the portal LV's
+  double-resolve TOCTOU that could skip the rotation subscription —
+  restructured to resolve-then-view. (6) a throwing provider options
+  fun could crash the Modules panel (`catch _, _`). Two findings
+  rejected with evidence: the route-gating claim (mirrors pre-existing
+  authenticated-only behavior) and the non-string select default
+  (unreachable — form values are always strings). Accepted as intended:
+  rate limits charging before input validation (invalid probes spending
+  quota is the stricter posture).
+
+## Commits (day 2, chronological, per repo)
+
+- `phoenix_kit`: sortable fix → fan_out_from_activity →
+  before_user_delete hook → user_dashboard_tabs route discovery →
+  throw-hardening. Latest: `ed609c45`.
+- `phoenix_kit_projects`: Phases B/C/E/H (day-2 morning) → G+I
+  (`87e028f`) → select config fields (`c079730`) → member surface
+  (`34b87c9`) → succession broadcast (`9b84a05`) → portal (`454189a`).
+- `phoenix_kit_ai`: attribution + sink dispatch (`778764b`) →
+  throw-hardening + nanodollar doc (`d3e4ee6`).
+- `phoenix_kit_dashboards`: cold-VM fix (`57794f8`) → project viewer +
+  provider (`ad3665a`).
+- `phoenix_kit_document_creator`: own migration chain + Documents tab
+  (`a357be9`).
+- `phoenix_kit_billing`: billing_customer provider (`a18a378`).
+
+## Open questions for you
+
+None blocking. Three product calls you may want to revisit:
+
+1. **Portal**: the design doc's 3 questions were answered with safe
+   defaults (slug-only, notify members not submitter, per-assignment
+   flag) — plus the per-IP block list was deferred (rationale in the
+   doc). Say the word if you want any changed.
+2. **Billing v2**: AI-cost invoicing needs a margin policy (v1 bills
+   human time only).
+3. **The viewport_width installer patch** is still orphaned (its
+   consumer was deleted by the dashboards lattice rebuild) — removal
+   pending your call.
+
+## Housekeeping notes
+
+- The parent dev DB now has: V162 core, projects V10, doc_creator V1 —
+  applied via `mix phoenix_kit.update`. A dev "Team Ops Board" shared
+  dashboard, a portal on Website redesign (rotated once), one portal
+  test issue, and max@don.ee seated as owner of Website redesign (the
+  seeded projects have no creation activity, so V9 had nothing to
+  recover — that seat was a manual dev-DB insert for the browser pass).
+- phoenix_kit_ai has 3 PRE-EXISTING seed-dependent flaky tests at
+  origin (playground_voice send_text, image size/quality override,
+  TTS response-shapes/logging) — verified identical at baseline with
+  fixed seeds; not touched.
+- Gettext: day-2 strings (portal, member surface, viewer) need the
+  extraction/po pass, same as day 1's.
