@@ -27,58 +27,66 @@ defmodule PhoenixKitProjects.Archetypes do
           key: String.t(),
           name: String.t(),
           description: String.t(),
+          outcomes: [String.t()],
           icon: String.t(),
           preset: String.t(),
-          extensions: [String.t()]
+          extensions: [String.t()],
+          requires_extensions: boolean()
         }
 
+  # The 2026-08-07 five-AI quorum spec: FOUR intent-named cards (the
+  # "Full tracker" density card folded into Customize), each with two
+  # plain-language OUTCOME lines replacing the internal-vocabulary
+  # chips. `requires_extensions: true` hides a card entirely when none
+  # of its extension seeds is installed (Codex's rule — a Client card
+  # that can't link a client is a lie).
   @archetypes [
     %{
       key: "quick_todo",
-      name: "Quick to-do",
-      description: "Just a shared checklist — no assignees, dates, or tracking.",
+      name: "Simple checklist",
+      description: "A shared checklist — no assignees, dates, or tracking.",
+      outcomes: ["Check off shared tasks", "No scheduling overhead"],
       icon: "hero-check-circle",
       preset: "simple",
-      extensions: []
+      extensions: [],
+      requires_extensions: false
     },
     %{
       key: "standard",
-      name: "Standard project",
-      description: "Tasks with assignees, scheduling, board and timeline views.",
-      icon: "hero-clipboard-document-list",
+      name: "Team project",
+      description: "Day-to-day team work with assignees, due dates, board and timeline views.",
+      outcomes: ["Assignees & due dates", "Board, list & timeline views"],
+      icon: "hero-view-columns",
       preset: "standard",
-      extensions: []
+      extensions: [],
+      requires_extensions: false
     },
     %{
       key: "client_hub",
-      name: "Client delivery",
-      description: "A client-facing project: CRM link, billable time, invoicing.",
+      name: "Client project",
+      description: "Work you deliver to a client — linked client, billable time, invoicing.",
+      outcomes: ["Linked client record", "Billable time & invoicing"],
       icon: "hero-briefcase",
       preset: "full",
-      extensions: ~w(crm_client billing_customer)
+      extensions: ~w(crm_client billing_customer),
+      requires_extensions: true
     },
     %{
       key: "public_intake",
       name: "Public intake",
-      description: "Collect issues from the outside world behind a private link.",
-      icon: "hero-globe-alt",
+      description: "Let outsiders submit requests through a private link; work stays internal.",
+      outcomes: ["Public submission form", "Internal triage board"],
+      icon: "hero-inbox-arrow-down",
       preset: "standard",
-      extensions: ~w(portal)
-    },
-    %{
-      key: "full",
-      name: "Full tracker",
-      description: "Everything on: estimates, dependencies, ledger, all views.",
-      icon: "hero-squares-plus",
-      preset: "full",
-      extensions: []
+      extensions: ~w(portal),
+      requires_extensions: true
     }
   ]
 
   @doc """
   The card list with each archetype's `extensions` filtered to the
-  AVAILABLE catalog (uninstalled/disabled providers drop off the face —
-  a Client delivery card without CRM installed seeds only what exists).
+  AVAILABLE catalog. A `requires_extensions` card whose seeds are ALL
+  unavailable is dropped entirely (its promise can't be kept).
   """
   @spec list() :: [t()]
   def list do
@@ -87,11 +95,16 @@ defmodule PhoenixKitProjects.Archetypes do
       |> Enum.filter(&Registry.available?/1)
       |> MapSet.new(& &1.key)
 
-    Enum.map(@archetypes, fn a ->
+    @archetypes
+    |> Enum.map(fn a ->
       %{a | extensions: Enum.filter(a.extensions, &MapSet.member?(available, &1))}
     end)
+    |> Enum.reject(&(&1.requires_extensions and &1.extensions == []))
   rescue
-    _ -> Enum.map(@archetypes, &%{&1 | extensions: []})
+    _ ->
+      @archetypes
+      |> Enum.reject(& &1.requires_extensions)
+      |> Enum.map(&%{&1 | extensions: []})
   end
 
   @doc "One archetype by key, from the availability-filtered list."

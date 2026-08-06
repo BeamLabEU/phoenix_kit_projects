@@ -1052,13 +1052,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp translate_catalog_string(s), do: s
 
-  defp preset_name(key) do
-    case Features.get_preset(key) do
-      %{name: name} -> translate_catalog_string(name)
-      _ -> key
-    end
-  end
-
   defp ext_name(ext_types, key) do
     Enum.find_value(ext_types, key, fn ext -> if ext.key == key, do: ext.name end)
   end
@@ -1125,9 +1118,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp receipt_reveal_class("public_intake"),
     do: "hidden group-has-[[data-arch=public-intake]:checked]/kind:block"
-
-  defp receipt_reveal_class("full"),
-    do: "hidden group-has-[[data-arch=full]:checked]/kind:block"
 
   defp receipt_reveal_class(_), do: "hidden"
 
@@ -1429,11 +1419,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                and visible — works without JS. --%>
           <div class="card bg-base-100 shadow">
             <div class="group/kind card-body flex flex-col gap-3">
-              <h2 class="text-sm font-semibold">{gettext("What kind of project?")}</h2>
+              <div>
+                <h2 class="text-sm font-semibold">{gettext("Choose a starting point")}</h2>
+                <p class="text-xs opacity-50">
+                  {gettext("Pick the closest fit — you can change everything below.")}
+                </p>
+              </div>
               <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <%!-- Selection highlight is PURE CSS (has-[:checked]) so the
-                     card responds the instant it's clicked — the server
-                     round-trip only reseeds the Customize checklist. --%>
+                <%!-- The quorum card face: icon + intent name, radio far
+                     right, description, two plain-language outcome lines
+                     (the internal-vocabulary chips are gone). Selection
+                     highlight is PURE CSS (has-[:checked]) — instant; the
+                     server round-trip only reseeds Customize. --%>
                 <label
                   :for={a <- @archetypes}
                   class={[
@@ -1443,23 +1440,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                     "has-[:checked]:ring-1 has-[:checked]:ring-primary"
                   ]}
                 >
-                  <span class="flex items-center gap-2">
+                  <span class="flex items-center justify-between gap-2">
+                    <span class="flex min-w-0 items-center gap-2">
+                      <.icon name={a.icon} class="w-5 h-5 opacity-70" />
+                      <span class="truncate text-sm font-semibold">
+                        {translate_catalog_string(a.name)}
+                      </span>
+                    </span>
                     <input
                       type="radio"
                       name="archetype"
                       value={a.key}
                       checked={@archetype_key == a.key}
                       data-arch={String.replace(a.key, "_", "-")}
-                      class="radio radio-primary radio-xs"
+                      class="radio radio-primary radio-xs shrink-0"
                     />
-                    <.icon name={a.icon} class="w-4 h-4 opacity-70" />
-                    <span class="text-sm font-semibold">{translate_catalog_string(a.name)}</span>
                   </span>
                   <span class="text-xs opacity-60">{translate_catalog_string(a.description)}</span>
-                  <span class="mt-1 flex flex-wrap gap-1">
-                    <span class="badge badge-ghost badge-xs">{preset_name(a.preset)}</span>
-                    <span :for={key <- a.extensions} class="badge badge-outline badge-xs">
-                      {ext_name(@ext_types, key)}
+                  <span class="mt-1 flex flex-col gap-0.5">
+                    <span :for={outcome <- a.outcomes} class="flex items-center gap-1 text-xs opacity-50">
+                      <.icon name="hero-check" class="w-3 h-3 shrink-0" />
+                      {translate_catalog_string(outcome)}
                     </span>
                   </span>
                 </label>
@@ -1469,10 +1470,20 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                    the checked radio (pure CSS — instant on click; the
                    server refines all variants on template/customize
                    changes). --%>
-              <div class="border-t border-base-200 pt-2 text-xs opacity-70">
-                <p :for={a <- @archetypes} class={receipt_reveal_class(a.key)}>
-                  {creation_summary(assigns, a.key)}
-                </p>
+              <div aria-live="polite" class="flex flex-wrap items-baseline justify-between gap-2 border-t border-base-200 pt-2 text-xs">
+                <div class="opacity-70">
+                  <p :for={a <- @archetypes} class={receipt_reveal_class(a.key)}>
+                    <span class="opacity-60">{gettext("Current setup:")}</span> {creation_summary(assigns, a.key)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  phx-click="toggle_section"
+                  phx-value-key="customize"
+                  class="link link-hover shrink-0 opacity-60"
+                >
+                  {gettext("Customize capabilities ↓")}
+                </button>
               </div>
             </div>
           </div>

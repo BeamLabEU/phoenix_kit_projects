@@ -43,8 +43,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
   test "renders the multilang card, the archetype cards, and the receipt line", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
 
-    assert html =~ "What kind of project?"
+    assert html =~ "Choose a starting point"
     assert html =~ "Public intake"
+    # The chips are gone — plain-language outcome lines replace them; and
+    # a card whose required extensions aren't installed (CRM/billing are
+    # absent in this env) hides entirely rather than making a promise it
+    # can't keep.
+    refute html =~ "Client project"
+    assert html =~ "Public submission form"
     # The HOUSE multilang pattern: the same translatable name/description
     # card every other create form uses (all languages from the start).
     assert html =~ ~s(name="project[name]")

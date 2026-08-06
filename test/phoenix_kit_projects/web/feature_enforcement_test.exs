@@ -479,7 +479,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       # The starting-point cards replaced the bare preset select.
       assert html =~ ~s(name="archetype")
-      assert html =~ "Quick to-do"
+      assert html =~ "Simple checklist"
       refute html =~ ~s(name="project_preset")
 
       # Pick the simple recipe (phx-change), then create.
