@@ -87,7 +87,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_preview: nil,
       template_ref: nil,
       customized?: false,
-      open_sections: %{},
       top_blocks: Features.creation_top_blocks()
     )
     |> seed_capability_states()
@@ -116,7 +115,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_preview: nil,
       template_ref: nil,
       customized?: false,
-      open_sections: %{},
       top_blocks: []
     )
   end
@@ -451,16 +449,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   def handle_event("add_invite", _params, socket), do: {:noreply, socket}
-
-  # The native <details> toggle happens client-side; mirroring it into an
-  # assign keeps the section OPEN across LiveView re-renders (morphdom
-  # otherwise strips the client-added `open` attr on every phx-change).
-  def handle_event("toggle_section", %{"key" => key}, socket)
-      when key in ~w(customize people advanced setup) do
-    open = socket.assigns.open_sections
-
-    {:noreply, assign(socket, open_sections: Map.put(open, key, not Map.get(open, key, false)))}
-  end
 
   def handle_event("remove_invite", %{"uuid" => uuid}, socket) do
     {:noreply, assign(socket, invites: Enum.reject(socket.assigns.invites, &(&1.uuid == uuid)))}
@@ -1478,8 +1466,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 </div>
                 <button
                   type="button"
-                  phx-click="toggle_section"
-                  phx-value-key="customize"
+                  phx-click={Phoenix.LiveView.JS.set_attribute({"open", ""}, to: "#create-customize")}
                   class="link link-hover shrink-0 opacity-60"
                 >
                   {gettext("Customize capabilities ↓")}
@@ -1549,9 +1536,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                without JS; unchecked extensions' fields are ignored). --%>
           <.accordion
             id="create-customize"
-            open={@open_sections["customize"]}
-            toggle_event="toggle_section"
-            toggle_value="customize"
           >
             <:title>
               {gettext("Customize capabilities")}
@@ -1650,9 +1634,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <.accordion
             :if={"people" not in @top_blocks}
             id="create-people"
-            open={@open_sections["people"]}
-            toggle_event="toggle_section"
-            toggle_value="people"
           >
             <:title>
               {gettext("People (optional)")}
@@ -1677,9 +1658,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                template, start timing, workflow statuses, schedule math. --%>
           <.accordion
             id="create-setup"
-            open={@open_sections["setup"]}
-            toggle_event="toggle_section"
-            toggle_value="setup"
           >
             <:title>{gettext("Setup options")}</:title>
             <:content>
