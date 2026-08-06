@@ -55,6 +55,19 @@ defmodule PhoenixKitProjects.Test.Router do
     end
   end
 
+  # The member-facing user-dashboard surface — production mounts it via
+  # `user_dashboard_tabs/0` route discovery under core's authenticated
+  # /dashboard session.
+  scope "/en/dashboard", PhoenixKitProjects.Web do
+    pipe_through(:browser)
+
+    live_session :projects_member_test,
+      layout: {PhoenixKitProjects.Test.Layouts, :app},
+      on_mount: {PhoenixKitProjects.Test.Hooks, :assign_scope} do
+      live("/projects", MemberProjectsLive, :index)
+    end
+  end
+
   # Global Projects settings page — production mounts it via the module's
   # `settings_tabs/0` callback under the core `/admin/settings` area.
   scope "/en/admin/settings", PhoenixKitProjects.Web do

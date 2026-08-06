@@ -39,6 +39,30 @@ defmodule PhoenixKitProjects.Members do
     |> Enum.sort_by(&{Map.get(role_order, &1.role, 9), DateTime.to_unix(&1.inserted_at)})
   end
 
+  @doc """
+  Every project the user is a member of, as `{project, role}` pairs —
+  templates excluded, newest membership first. The member-surface listing
+  (`/dashboard/projects`); fail-closed to `[]` on any read error.
+  """
+  @spec projects_for_user(binary()) :: [{map(), String.t()}]
+  def projects_for_user(user_uuid) when is_binary(user_uuid) do
+    RepoHelper.repo().all(
+      from(m in ProjectMember,
+        join: p in PhoenixKitProjects.Schemas.Project,
+        on: p.uuid == m.project_uuid,
+        where: m.user_uuid == ^user_uuid and p.is_template == false,
+        order_by: [desc: m.inserted_at],
+        select: {p, m.role}
+      )
+    )
+  rescue
+    _ -> []
+  catch
+    :exit, _ -> []
+  end
+
+  def projects_for_user(_), do: []
+
   @doc "The member row for a user on a project, or nil."
   @spec get_member(binary(), binary()) :: ProjectMember.t() | nil
   def get_member(project_uuid, user_uuid)

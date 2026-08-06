@@ -612,6 +612,29 @@ defmodule PhoenixKitProjects do
   end
 
   @impl PhoenixKit.Module
+  # The member-facing surface (Phase I): a "My Projects" page on the USER
+  # dashboard — membership-gated, no admin permission. The `live_view`
+  # field makes core's authenticated route table generate
+  # `/dashboard/projects` automatically (the user_dashboard_tabs route
+  # discovery this module is the first consumer of).
+  def user_dashboard_tabs do
+    [
+      %Tab{
+        id: :dashboard_projects,
+        label: "My Projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-briefcase",
+        path: "projects",
+        priority: 250,
+        match: :prefix,
+        group: :main,
+        live_view: {PhoenixKitProjects.Web.MemberProjectsLive, :index}
+      }
+    ]
+  end
+
+  @impl PhoenixKit.Module
   def settings_tabs do
     [
       Tab.new!(
