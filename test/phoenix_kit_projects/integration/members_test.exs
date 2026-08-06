@@ -109,6 +109,9 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       {:ok, _} = Members.add_member(project, other.uuid, role: "viewer")
       {:ok, _} = Members.add_member(project, manager.uuid, role: "manager")
 
+      pubsub = PhoenixKitProjects.PubSub
+      pubsub.subscribe(pubsub.topic_project(project.uuid))
+
       assert :ok = Members.handle_user_deletion(owner.uuid)
 
       assert Members.role_of(project, manager.uuid) == :owner
@@ -119,6 +122,11 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
         target_uuid: manager.uuid,
         metadata_has: %{"from_role" => "manager"}
       )
+
+      # Live member UIs re-render through the same channel every other
+      # membership mutation uses (the panel's staleness find).
+      project_uuid = project.uuid
+      assert_receive {:projects, :project_members_changed, %{uuid: ^project_uuid}}, 500
     end
 
     test "equal-role tiebreak is CHRONOLOGICAL seniority, not struct term order",

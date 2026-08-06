@@ -313,6 +313,11 @@ defmodule PhoenixKitProjects.Members do
     :ok
   end
 
+  # Known narrow race (panel find, accepted): two co-owner USERS deleted
+  # concurrently each see the other as a surviving owner, both skip
+  # succession, and the CASCADE then removes both — an ownerless project
+  # with no owner_departed row. Requires simultaneous multi-user deletion;
+  # admin-recoverable via the members page.
   defp handle_owner_departure(membership) do
     others =
       RepoHelper.repo().all(
@@ -357,6 +362,10 @@ defmodule PhoenixKitProjects.Members do
               target_uuid: promoted.user_uuid,
               metadata: %{"from_role" => successor.role}
             )
+
+            PubSub.broadcast_project(:project_members_changed, %{
+              uuid: membership.project_uuid
+            })
 
           {:error, _} ->
             Activity.log("projects.owner_departed",
