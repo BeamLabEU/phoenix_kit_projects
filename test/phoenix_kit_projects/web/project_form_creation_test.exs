@@ -155,6 +155,92 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
   end
 
+  describe "public exposure (the portal IS the visibility control)" do
+    test "the portal's public capabilities render on the form, not just in Modules", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+
+      # Enabling the portal publishes a capability URL; what that URL
+      # exposes is decided by these three, and every one defaults ON.
+      assert html =~ "Public issue submission"
+      assert html =~ "Public issue list"
+      assert html =~ "Public status summary"
+      assert html =~ ~s(name="flag[portal_submit]")
+    end
+
+    test "the reveal keys on the extension toggle, not any checked descendant", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+
+      # The capability toggles inside the reveal are checked by default, so
+      # a bare `group-has-[:checked]` made the block reveal ITSELF while the
+      # extension was still off. The reveal must key on the extension's own
+      # toggle.
+      assert html =~ "data-ext-toggle"
+      assert html =~ "group-has-[[data-ext-toggle]:checked]/extbox:flex"
+      refute html =~ "group-has-[:checked]/extbox:flex"
+    end
+
+    test "the permissions section warns once the portal is on", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/new")
+      refute html =~ "without signing in"
+
+      html =
+        render_change(view, "validate", %{
+          "project" => %{"name" => ""},
+          "archetype" => "public_intake"
+        })
+
+      assert html =~ "without signing in"
+    end
+
+    test "narrowing a public capability is pinned on create", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "archetype" => "public_intake"
+      })
+
+      # Take the submissions, but keep the issue list private.
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "flag" => %{"portal_list" => "false"}
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "PortalNarrow #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("PortalNarrow")
+      assert project
+      assert Extensions.enabled?(project, "portal")
+      # Only the narrowed capability is pinned; the others keep inheriting.
+      assert project.settings["features"]["portal_list"] == false
+      refute Map.has_key?(project.settings["features"], "portal_submit")
+      # And it binds on the public surface.
+      refute PhoenixKitProjects.Portal.capability?(project, :list)
+      assert PhoenixKitProjects.Portal.capability?(project, :submit)
+    end
+
+    test "a disabled extension's flags are not pinned", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      # Portal stays OFF (default archetype); its flags are inert.
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "flag" => %{"portal_list" => "false"}
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "PortalOff #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("PortalOff")
+      assert project
+      refute Extensions.enabled?(project, "portal")
+      refute Map.has_key?(project.settings["features"] || %{}, "portal_list")
+    end
+  end
+
   test "the drawers are grouped, and each header carries its current answer", %{conn: conn} do
     {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
 

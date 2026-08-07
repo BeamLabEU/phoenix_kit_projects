@@ -79,6 +79,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       archetype_key: archetype_key,
       ext_types: creation_ext_types(),
       flag_defs: creation_flag_defs(),
+      ext_flag_defs: creation_ext_flag_defs(),
       ext_overrides: %{},
       ext_configs: %{},
       invites: [],
@@ -109,6 +110,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       archetype_key: nil,
       ext_types: [],
       flag_defs: [],
+      ext_flag_defs: %{},
       ext_overrides: %{},
       ext_configs: %{},
       invites: [],
@@ -132,6 +134,20 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> Enum.reject(&(&1.key == "tasks"))
   rescue
     _ -> []
+  end
+
+  # Flags that EXTENSIONS own, keyed by extension. The portal's three
+  # public capabilities (submit / list / status) are the reason this is on
+  # the creation page at all: enabling the portal mints a public capability
+  # URL, and every capability defaults ON, so a form that hides them makes
+  # the page's biggest access decision silently. Generic over the catalog,
+  # so a provider-declared flag rides the same path.
+  defp creation_ext_flag_defs do
+    Features.catalog_by_extension()
+    |> Enum.reject(fn {ext, _flags} -> ext.key == "tasks" end)
+    |> Map.new(fn {ext, flags} -> {ext.key, flags} end)
+  rescue
+    _ -> %{}
   end
 
   # Extensions grouped by the JOB they do — see Registry.categories/0.
@@ -224,8 +240,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         _ -> {[], %{}}
       end
 
+    # Task flags AND the flags extensions own (the portal's public
+    # capabilities are the load-bearing case): both live in one
+    # `flag_states` map, so tracking, pinning and the union rule need no
+    # special case for either.
     flag_states =
-      Map.new(assigns.flag_defs, fn flag ->
+      (assigns.flag_defs ++ Enum.flat_map(assigns.ext_flag_defs, fn {_k, flags} -> flags end))
+      |> Map.new(fn flag ->
         seeded = Map.get(preset_flags, flag.key, flag.default)
         {flag.key, Map.get(template_flags, flag.key, seeded)}
       end)
@@ -854,8 +875,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     # default get pinned. Writing the whole rendered map froze catalog/
     # site-default drift for untouched flags (a panel find) — the old
     # "standard preset writes nothing" inheritance behavior is preserved.
+    # Task flags, plus the flags owned by extensions the user is turning ON
+    # (a disabled extension's flags are inert anyway — Features.on?/2 needs
+    # the owning extension enabled — so pinning them would be noise).
+    enabled_ext_flags =
+      socket.assigns.ext_flag_defs
+      |> Enum.filter(fn {ext_key, _flags} ->
+        Map.get(socket.assigns.ext_states, ext_key, false)
+      end)
+      |> Enum.flat_map(fn {_ext_key, flags} -> flags end)
+
     flags_to_pin =
-      socket.assigns.flag_defs
+      (socket.assigns.flag_defs ++ enabled_ext_flags)
       |> Enum.filter(fn flag ->
         Map.get(socket.assigns.flag_states, flag.key, flag.default) != flag.default
       end)
@@ -1299,6 +1330,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   attr(:authz_choices, :map, required: true)
   attr(:authz_actions, :list, required: true)
+  attr(:public_link?, :boolean, required: true)
 
   # Who can do what, for the roles invited above. Only the three floors
   # `Authz` actually lets a project override are offered — this is a
@@ -1315,6 +1347,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         </li>
         <li>{gettext("Editing and deleting anyone's task stays with managers and owners.")}</li>
       </ul>
+
+      <%!-- The other axis entirely: the portal publishes a link that needs
+           no account at all. It is the biggest access decision this page
+           makes, so it says so here, where someone checking permissions
+           looks — not only as an extension toggle further down. --%>
+      <p :if={@public_link?} class="rounded-lg bg-warning/10 p-2 text-xs">
+        {gettext("Anyone with this project's portal link will be able to reach it without signing in. Choose what that link exposes under Extensions → Public portal.")}
+      </p>
 
       <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div :for={action <- @authz_actions}>
@@ -1842,7 +1882,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   <h3 class="mb-2 text-xs font-semibold uppercase opacity-50">
                     {gettext("Who can do what")}
                   </h3>
-                  <.permissions_block authz_choices={@authz_choices} authz_actions={@authz_actions} />
+                  <.permissions_block
+                    authz_choices={@authz_choices}
+                    authz_actions={@authz_actions}
+                    public_link?={@ext_states["portal"] == true}
+                  />
                 </div>
               </div>
             </:content>
@@ -1908,17 +1952,50 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                           <span :if={ext.description} class="block text-xs opacity-50">{ext.description}</span>
                         </span>
                         <input type="hidden" name={"ext[#{ext.key}]"} value="false" />
+                        <%!-- data-ext-toggle, not a bare :checked, is what the
+                             reveals below key on: `group-has-[:checked]` matches
+                             ANY checked descendant, and the capability toggles
+                             inside the reveal are themselves checked by default
+                             — so the block triggered its own reveal while the
+                             extension was off. --%>
                         <input
                           type="checkbox"
                           name={"ext[#{ext.key}]"}
                           value="true"
                           checked={@ext_states[ext.key]}
+                          data-ext-toggle
                           class="toggle toggle-sm"
                         />
                       </label>
+                      <%!-- The extension's OWN capability flags, revealed
+                           by the same CSS group-has as its config (instant,
+                           no round trip) and inert until it is switched on.
+                           This is where the portal's public capabilities
+                           live: turning the portal on publishes a link, and
+                           these decide what that link exposes. --%>
+                      <div
+                        :if={Map.get(@ext_flag_defs, ext.key, []) != []}
+                        class="mt-2 hidden flex-col gap-1 border-t border-base-200 pt-2 group-has-[[data-ext-toggle]:checked]/extbox:flex"
+                      >
+                        <label
+                          :for={flag <- Map.get(@ext_flag_defs, ext.key, [])}
+                          class="flex items-center justify-between gap-3 py-0.5"
+                        >
+                          <span class="text-sm">{flag.label}</span>
+                          <input type="hidden" name={"flag[#{flag.key}]"} value="false" />
+                          <input
+                            type="checkbox"
+                            name={"flag[#{flag.key}]"}
+                            value="true"
+                            checked={@flag_states[flag.key]}
+                            class="toggle toggle-sm"
+                          />
+                        </label>
+                      </div>
+
                       <div
                         :if={ext.config_schema != []}
-                        class="mt-2 hidden flex-wrap gap-2 border-t border-base-200 pt-2 group-has-[:checked]/extbox:flex"
+                        class="mt-2 hidden flex-wrap gap-2 border-t border-base-200 pt-2 group-has-[[data-ext-toggle]:checked]/extbox:flex"
                       >
                         <div :for={field <- ext.config_schema} class="w-full max-w-xs">
                           <.select
