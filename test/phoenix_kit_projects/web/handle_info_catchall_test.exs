@@ -21,8 +21,19 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
 
   import ExUnit.CaptureLog
 
+  alias PhoenixKit.Users.Auth
+
   setup %{conn: conn} do
-    scope = fake_scope()
+    # A REAL user row: the gated LVs are mounted off-router here, so the
+    # session names this viewer and a membership row is written for them —
+    # both need a user that actually exists (fake_scope's uuid does not).
+    {:ok, user} =
+      Auth.register_user(%{
+        "email" => "catchall-#{System.unique_integer([:positive])}@example.com",
+        "password" => "CatchallPass123!"
+      })
+
+    scope = fake_scope(user_uuid: user.uuid)
     conn = put_test_scope(conn, scope)
 
     previous_level = Logger.level()
@@ -33,7 +44,7 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
   end
 
   describe "OverviewLive" do
-    test "logs unexpected handle_info at debug", %{conn: conn} do
+    test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       {:ok, view, _html} = live(conn, "/en/admin/projects")
 
       log =
@@ -48,7 +59,7 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
   end
 
   describe "ProjectsLive" do
-    test "logs unexpected handle_info at debug", %{conn: conn} do
+    test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/list")
 
       log =
@@ -62,7 +73,7 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
   end
 
   describe "TasksLive" do
-    test "logs unexpected handle_info at debug", %{conn: conn} do
+    test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/tasks")
 
       log =
@@ -76,7 +87,7 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
   end
 
   describe "TemplatesLive" do
-    test "logs unexpected handle_info at debug", %{conn: conn} do
+    test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
 
       log =
@@ -90,8 +101,9 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
   end
 
   describe "ProjectShowLive" do
-    test "logs unexpected handle_info at debug", %{conn: conn} do
+    test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
 
       log =
@@ -108,7 +120,7 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
   # mounted by the host; the gantt is nested inside ProjectShowLive). Drive them
   # with `live_isolated/3`.
   describe "PopupHostLive" do
-    test "logs unexpected handle_info at debug", %{conn: conn} do
+    test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       topic = "catchall:popup:#{System.unique_integer([:positive])}"
 
       {:ok, view, _html} =
@@ -127,12 +139,13 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
   end
 
   describe "ProjectGanttLive" do
-    test "logs unexpected handle_info at debug", %{conn: conn} do
+    test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
 
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectGanttLive,
-          session: %{"id" => project.uuid}
+          session: %{"id" => project.uuid, "current_user_uuid" => actor_uuid}
         )
 
       log =
@@ -146,12 +159,13 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
   end
 
   describe "ProjectCalendarLive" do
-    test "logs unexpected handle_info at debug", %{conn: conn} do
+    test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
 
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectCalendarLive,
-          session: %{"id" => project.uuid}
+          session: %{"id" => project.uuid, "current_user_uuid" => actor_uuid}
         )
 
       log =

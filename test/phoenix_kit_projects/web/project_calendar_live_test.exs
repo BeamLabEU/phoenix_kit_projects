@@ -27,6 +27,16 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     {:ok, conn: conn, actor_uuid: user.uuid}
   end
 
+  # This LV mounts off-router in these tests, so no on_mount runs and it has
+  # no scope — and it now gates :view itself. Name a viewer who can see the
+  # project. (Refusal is covered by its own test below.)
+  defp view_session(project_uuid, viewer_uuid, extra \\ %{}) do
+    {:ok, _} =
+      PhoenixKitProjects.Members.add_member(project_uuid, viewer_uuid, role: "member")
+
+    Map.merge(%{"id" => project_uuid, "current_user_uuid" => viewer_uuid}, extra)
+  end
+
   defp started_project_with_tasks do
     project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => false})
     {:ok, _} = Projects.start_project(project)
@@ -52,11 +62,14 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     {project, a1, a2}
   end
 
-  test "renders one all-day bar per assignment with titles and status colors", %{conn: conn} do
+  test "renders one all-day bar per assignment with titles and status colors", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     {project, _a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     html = render(view)
 
@@ -74,11 +87,11 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     for it <- items, do: assert(html =~ it.assignment.task.title)
   end
 
-  test "bars land on the same dates as the shared schedule walk", %{conn: conn} do
+  test "bars land on the same dates as the shared schedule walk", %{conn: conn, actor_uuid: actor} do
     {project, a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     html = render(view)
 
@@ -91,11 +104,14 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert html =~ Date.to_iso8601(NaiveDateTime.to_date(s))
   end
 
-  test "clicking a task bar navigates to its assignment edit form", %{conn: conn} do
+  test "clicking a task bar navigates to its assignment edit form", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     {project, a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     # The component reports clicks to the parent as a process message; drive
     # the handler directly (the chip→callback wiring is the library's own).
@@ -104,7 +120,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert_redirect(view, Paths.edit_assignment(project.uuid, a1.uuid))
   end
 
-  test "clicking a sub-project bar drills into the child project", %{conn: conn} do
+  test "clicking a sub-project bar drills into the child project", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     project = fixture_project(%{"start_mode" => "immediate"})
     {:ok, _} = Projects.start_project(project)
     project = Projects.get_project!(project.uuid)
@@ -113,7 +132,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       Projects.create_subproject(project.uuid, %{"name" => "Child sub"})
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     render(view)
     send(view.pid, {:calendar_event_click, link.uuid})
@@ -121,7 +140,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
   end
 
   test "only top-level assignments render — a sub-project's children stay on its own calendar",
-       %{conn: conn} do
+       %{conn: conn, actor_uuid: actor} do
     project = fixture_project(%{"start_mode" => "immediate"})
     {:ok, _} = Projects.start_project(project)
     project = Projects.get_project!(project.uuid)
@@ -143,7 +162,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       })
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     html = render(view)
 
@@ -153,7 +172,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     refute html =~ "Scrub the oven racks"
   end
 
-  test "a future scheduled project opens on its schedule's month, not today's", %{conn: conn} do
+  test "a future scheduled project opens on its schedule's month, not today's", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     future = DateTime.add(DateTime.utc_now(), 70 * 24 * 3600, :second)
 
     project =
@@ -168,7 +190,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => task.uuid})
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     html = render(view)
 
@@ -180,12 +202,13 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
   end
 
   test "shows the empty state (with an add-task CTA) when the project has no tasks", %{
-    conn: conn
+    conn: conn,
+    actor_uuid: actor
   } do
     project = fixture_project(%{"start_mode" => "immediate"})
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     html = render(view)
     assert html =~ "No tasks to place on the calendar yet."
@@ -193,19 +216,19 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     refute html =~ "cal-container"
   end
 
-  test "unknown project id redirects to the projects list", %{conn: conn} do
+  test "unknown project id redirects to the projects list", %{conn: conn, actor_uuid: actor} do
     assert {:error, {:live_redirect, %{to: to}}} =
              live_isolated(conn, ProjectCalendarLive, session: %{"id" => Ecto.UUID.generate()})
 
     assert to == Paths.projects()
   end
 
-  test "headless embed drops the back-link header", %{conn: conn} do
+  test "headless embed drops the back-link header", %{conn: conn, actor_uuid: actor} do
     {project, _a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
       live_isolated(conn, ProjectCalendarLive,
-        session: %{"id" => project.uuid, "headless" => true, "wrapper_class" => ""}
+        session: view_session(project.uuid, actor, %{"headless" => true, "wrapper_class" => ""})
       )
 
     html = render(view)
@@ -214,12 +237,13 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
   end
 
   test "a day-cell or +N more click fills the whole-day popup; a row click navigates", %{
-    conn: conn
+    conn: conn,
+    actor_uuid: actor
   } do
     {project, a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     render(view)
 
@@ -248,11 +272,11 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert_redirect(view, Paths.edit_assignment(project.uuid, a1.uuid))
   end
 
-  test "an empty day's popup says nothing is scheduled", %{conn: conn} do
+  test "an empty day's popup says nothing is scheduled", %{conn: conn, actor_uuid: actor} do
     {project, _a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     render(view)
     send(view.pid, {:calendar_date_click, Date.add(Date.utc_today(), 400)})
@@ -284,7 +308,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       %{person: person, team: team}
     end
 
-    test "the person picker offers only this project tree's people", %{conn: conn} do
+    test "the person picker offers only this project tree's people", %{
+      conn: conn,
+      actor_uuid: actor
+    } do
       %{person: person} = person_fixture()
       %{person: outsider} = person_fixture()
 
@@ -313,7 +340,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
         })
 
       {:ok, view, _html} =
-        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
       render(view)
       render_click(view, "assignee_search", %{"q" => ""})
@@ -324,7 +351,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       refute outsider.uuid in offered
     end
 
-    test "filters bars by picked person; the panel renders", %{conn: conn} do
+    test "filters bars by picked person; the panel renders", %{conn: conn, actor_uuid: actor} do
       %{person: person} = person_fixture()
 
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
@@ -356,7 +383,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
         Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => other.uuid})
 
       {:ok, view, _html} =
-        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
       html = render(view)
       assert html =~ "assignee_search"
@@ -377,7 +404,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       assert html =~ other.title
     end
 
-    test "a sub-project bar matches when a CHILD task belongs to the person", %{conn: conn} do
+    test "a sub-project bar matches when a CHILD task belongs to the person", %{
+      conn: conn,
+      actor_uuid: actor
+    } do
       %{person: person, team: team} = person_fixture()
 
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
@@ -411,7 +441,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
         Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => loose.uuid})
 
       {:ok, view, _html} =
-        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
       render(view)
       html = render_click(view, "assignee_pick", %{"uuid" => person.uuid})
@@ -427,7 +457,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     end
 
     test "late bars default to the overdue pattern; ring is the opt-in alternative",
-         %{conn: conn} do
+         %{conn: conn, actor_uuid: actor} do
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
       {:ok, _} = Projects.start_project(project, DateTime.add(DateTime.utc_now(), -5 * 24 * 3600))
       project = Projects.get_project!(project.uuid)
@@ -443,7 +473,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
         Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => late.uuid})
 
       {:ok, view, _html} =
-        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
       render(view)
       assert has_element?(view, "[id^=project-calendar-sync] .pk-overdue")
@@ -457,7 +487,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       refute has_element?(view, "[id^=project-calendar-sync] .cal-multiday-bar.pk-overdue")
     end
 
-    test "the Overdue-only toggle hides while no bar is late", %{conn: conn} do
+    test "the Overdue-only toggle hides while no bar is late", %{conn: conn, actor_uuid: actor} do
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
       {:ok, _} = Projects.start_project(project)
       project = Projects.get_project!(project.uuid)
@@ -473,7 +503,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
         Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => future.uuid})
 
       {:ok, view, _html} =
-        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
       html = render(view)
       # The panel renders (there IS work to filter by person)...
@@ -482,7 +512,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
       refute html =~ "toggle_overdue_only"
     end
 
-    test "overdue only keeps late bars", %{conn: conn} do
+    test "overdue only keeps late bars", %{conn: conn, actor_uuid: actor} do
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
       {:ok, _} = Projects.start_project(project, DateTime.add(DateTime.utc_now(), -5 * 24 * 3600))
       project = Projects.get_project!(project.uuid)
@@ -508,7 +538,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
         Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => ontime.uuid})
 
       {:ok, view, _html} =
-        live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+        live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
       render(view)
       html = render_click(view, "toggle_overdue_only", %{})
@@ -520,11 +550,14 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     end
   end
 
-  test "reloads on a projects PubSub broadcast (new assignment appears)", %{conn: conn} do
+  test "reloads on a projects PubSub broadcast (new assignment appears)", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     {project, _a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     render(view)
 
@@ -541,11 +574,11 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert render(view) =~ "Late-added chore"
   end
 
-  test "a project_deleted broadcast flashes and leaves the page", %{conn: conn} do
+  test "a project_deleted broadcast flashes and leaves the page", %{conn: conn, actor_uuid: actor} do
     {project, _a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     render(view)
 
@@ -553,11 +586,14 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert_redirect(view, Paths.projects())
   end
 
-  test "picking an unknown person uuid is a no-op (no chip, view alive)", %{conn: conn} do
+  test "picking an unknown person uuid is a no-op (no chip, view alive)", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     {project, _a1, _a2} = started_project_with_tasks()
 
     {:ok, view, _html} =
-      live_isolated(conn, ProjectCalendarLive, session: %{"id" => project.uuid})
+      live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
     render(view)
 

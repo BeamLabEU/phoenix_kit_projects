@@ -124,7 +124,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   defp load_projects(socket) do
     status_slug = socket.assigns[:status_filter]
     search = socket.assigns.search
-    total = Projects.count_projects(archived: false)
+
+    total =
+      Projects.count_projects_for(socket.assigns[:phoenix_kit_current_scope], archived: false)
+
     local_search? = total <= @local_search_threshold
 
     base_opts = [
@@ -150,7 +153,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         end)
       end
 
-    projects = Projects.list_projects(list_opts)
+    # Scoped to the viewer: the index showed every project on the site to
+    # anyone who could reach the module, which since the permission split
+    # is a population that legitimately includes contractors. Admins with
+    # projects.admin_all still see everything.
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    projects = Projects.list_projects_for(scope, list_opts)
     uuids = Enum.map(projects, & &1.uuid)
     visible = socket.assigns.visible_columns
 
@@ -162,7 +170,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         if(local_search?,
           do: total,
           else:
-            Projects.count_projects(
+            Projects.count_projects_for(scope,
               archived: false,
               current_status_slug: status_slug || :all,
               search: search

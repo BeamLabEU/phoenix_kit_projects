@@ -157,6 +157,96 @@ defmodule PhoenixKitProjects.Grants do
   def group_role_of(_project, _user_uuid), do: nil
 
   @doc """
+  Every project uuid a user can reach through GROUP grants alone, with the
+  strongest role each grant gives them.
+
+  Kept as ONE query over the user's resolved subjects rather than a
+  per-project check, so a list view can scope in SQL instead of loading
+  everything and filtering in memory — the N+1 the quorum flagged as the
+  main tax of indirect grants.
+  """
+  @spec project_roles_for_user(binary()) :: %{binary() => String.t()}
+  def project_roles_for_user(user_uuid) when is_binary(user_uuid) do
+    case subjects_for_user(user_uuid) do
+      [] ->
+        %{}
+
+      subjects ->
+        types = subjects |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+        uuids = Enum.map(subjects, &elem(&1, 1))
+
+        RepoHelper.repo().all(
+          from(g in ProjectSubjectGrant,
+            where: g.subject_type in ^types and g.subject_uuid in ^uuids,
+            select: {g.subject_type, g.subject_uuid, g.project_uuid, g.role}
+          )
+        )
+        # The WHERE is a cross-product of types and uuids (SQL can't express
+        # the pairs cheaply), so re-filter to the ACTUAL pairs before use —
+        # otherwise a team uuid colliding with a department grant would
+        # leak. Collisions are vanishingly unlikely with UUIDs, but "leaks
+        # only on a collision" is not a property worth shipping.
+        |> Enum.filter(fn {type, uuid, _p, _r} -> {type, uuid} in subjects end)
+        |> Enum.reduce(%{}, fn {_t, _u, project_uuid, role}, acc ->
+          Map.update(acc, project_uuid, role, &stronger_role(role, &1))
+        end)
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects.Grants] project_roles_for_user failed: #{Exception.message(e)}")
+      %{}
+  end
+
+  def project_roles_for_user(_), do: %{}
+
+  @doc """
+  How many user accounts a grant would currently reach — the blast radius
+  of "everyone with role X can see this". Counts CURRENT accounts; future
+  ones matching the same subject gain access too, which the UI must say.
+  """
+  @spec subject_reach(String.t(), binary()) :: non_neg_integer()
+  def subject_reach("role", role_uuid) when is_binary(role_uuid) do
+    case Roles.get_role_by_uuid(role_uuid) do
+      %{name: name} -> length(Roles.users_with_role(name))
+      _ -> 0
+    end
+  rescue
+    _ -> 0
+  end
+
+  def subject_reach("team", team_uuid) when is_binary(team_uuid) do
+    RepoHelper.repo().aggregate(
+      from(tm in PhoenixKitStaff.Schemas.TeamMembership, where: tm.team_uuid == ^team_uuid),
+      :count
+    )
+  rescue
+    _ -> 0
+  end
+
+  def subject_reach("department", dept_uuid) when is_binary(dept_uuid) do
+    team_uuids =
+      RepoHelper.repo().all(
+        from(t in PhoenixKitStaff.Schemas.Team,
+          where: t.department_uuid == ^dept_uuid,
+          select: t.uuid
+        )
+      )
+
+    if team_uuids == [] do
+      0
+    else
+      RepoHelper.repo().aggregate(
+        from(tm in PhoenixKitStaff.Schemas.TeamMembership, where: tm.team_uuid in ^team_uuids),
+        :count
+      )
+    end
+  rescue
+    _ -> 0
+  end
+
+  def subject_reach(_type, _uuid), do: 0
+
+  @doc """
   Why does this person have access? Returns every matching grant as
   `{subject_type, subject_uuid, role}`, so a UI can explain that removing
   someone's direct membership will not revoke their team's access.
@@ -276,6 +366,10 @@ defmodule PhoenixKitProjects.Grants do
   # ── Helpers ─────────────────────────────────────────────────────────
 
   defp dynamic_pair(type, uuid), do: {type, uuid}
+
+  defp stronger_role(a, b) do
+    if Map.get(@role_rank, a, 9) < Map.get(@role_rank, b, 9), do: a, else: b
+  end
 
   defp strongest([]), do: nil
 

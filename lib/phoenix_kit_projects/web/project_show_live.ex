@@ -194,184 +194,216 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       nil ->
         {:ok,
          socket
-         |> assign(
-           page_title: "",
-           project: %Project{},
-           fx: Features.default_gates(),
-           fx_files: true,
-           ext_tabs: [],
-           ext_mounted: MapSet.new(),
-           health: nil,
-           health_modal_open: false,
-           is_template: false,
-           wrapper_class: @default_wrapper_class,
-           router_mounted?: false,
-           # Must be assigned: the tab bar now renders on `not @is_template`
-           # (true here), so the render reads `@tab_url_sync?`. Router-mount
-           # context → true (matches the success branch); the embedded wrapper
-           # overrides it to the session value when this path is reached via an
-           # off-router mount with an unknown id.
-           tab_url_sync?: true,
-           active_tab: :list,
-           gantt_mounted?: false,
-           calendar_mounted?: false,
-           assignments: [],
-           deps_by_assignment: %{},
-           total_tasks: 0,
-           done_tasks: 0,
-           progress_pct: 0,
-           schedule: nil,
-           editing_duration_uuid: nil,
-           start_modal_open: false,
-           start_form: to_form(%{"start_at" => default_start_at_local()}),
-           comments_resource: nil,
-           comments_enabled: false,
-           project_comment_count: 0,
-           assignment_comment_counts: %{},
-           statuses_available: false,
-           current_status: nil,
-           status_options: [],
-           expanded_subprojects: MapSet.new(),
-           subproject_summaries: %{},
-           subproject_child_tasks: %{},
-           ledger_totals: nil,
-           ledger_minutes: %{},
-           log_time_open: false,
-           log_time_uuid: nil,
-           assignment_labels: %{},
-           invoice_ready?: false
-         )
+         |> assign(not_found_assigns())
          |> put_flash(:error, gettext("Project not found."))
          |> WebHelpers.close_or_navigate(Paths.projects())}
 
       project ->
-        if connected?(socket) do
-          # Per-project topic covers assignment/dependency events for this
-          # project; the tasks topic covers library-level task renames so
-          # the visible assignment rows don't go stale.
-          ProjectsPubSub.subscribe(ProjectsPubSub.topic_project(project.uuid))
-          ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
+        # The :view gate. It was missing: this page relied on the admin
+        # ROUTE being unreachable without the projects permission, which
+        # held only while that permission also meant "administer every
+        # project". Now a role can reach the module while belonging to
+        # nothing, and group grants can let someone in, so the page has
+        # to answer the question itself. It is also the root LV of every
+        # embed, where core's admin on_mount never runs at all.
+        #
+        # Templates are exempt: they are library objects with no
+        # membership rows, so gating them on :view would lock everyone
+        # out. They stay behind the route's module permission as before.
+        #
+        # A refusal is deliberately shaped exactly like "not found" —
+        # existence is itself information.
+        if project.is_template or
+             Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :view) do
+          if connected?(socket) do
+            # Per-project topic covers assignment/dependency events for this
+            # project; the tasks topic covers library-level task renames so
+            # the visible assignment rows don't go stale.
+            ProjectsPubSub.subscribe(ProjectsPubSub.topic_project(project.uuid))
+            ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
+          end
+
+          is_template = project.is_template
+
+          lang = L10n.current_content_lang()
+
+          wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
+
+          # Which tab the page opens on, straight from the route's live_action
+          # (`/list/:id/gantt` → `:gantt`, everything else → `:list`). Server-side
+          # so a direct/bookmarked `/gantt` load renders the gantt before any JS.
+          # Templates have no tabs/gantt (both are `not @is_template`), so a template
+          # uuid reached via the `/list/:id/gantt` route falls back to the list —
+          # otherwise both the list and the gantt would render hidden (blank page).
+          # The hub gate map (@fx): tasks extension + per-project feature
+          # flags, one resolved lookup for every render/event guard below.
+          # Rebuilt on :project_features_changed / :project_modules_changed.
+          # @fx_files is the second built-in extension's gate (its surface is
+          # its own page — only the menu link renders here).
+          fx = Features.gates(project)
+          fx_files = Extensions.enabled?(project, "files")
+
+          # Contributed extension tabs (the hub contract's `tabs`): rendered
+          # as first-class view tabs via live_render with the embed-session
+          # contract. Resolved once; recomputed on :project_modules_changed.
+          ext_tabs =
+            ext_tabs_for(project, is_template, socket.assigns[:phoenix_kit_current_scope])
+
+          active_tab =
+            tab_for_action(socket, is_template)
+            |> gate_tab(fx)
+            |> resolve_landing_tab(fx, ext_tabs)
+
+          # Resolve the workflow-status list once (read-only — nothing is
+          # provisioned or seeded here; an unset shared default simply yields
+          # an empty list). `current_status` is derived from the same list so
+          # we don't resolve twice.
+          statuses_available = Statuses.available?()
+          status_options = if statuses_available, do: Statuses.statuses_for(project), else: []
+
+          current_status =
+            Enum.find(status_options, &(&1.slug == project.current_status_slug))
+
+          socket =
+            socket
+            |> assign(
+              page_title: Project.localized_name(project, lang),
+              # Breadcrumb section ("Admin Panel / Templates / <name>") —
+              # the in-content back-link + h1 row is gone; the site header
+              # carries both the name and the way back to the list.
+              page_section: if(is_template, do: gettext("Templates"), else: gettext("Projects")),
+              page_section_path: if(is_template, do: Paths.templates(), else: Paths.projects()),
+              statuses_available: statuses_available,
+              status_options: status_options,
+              current_status: current_status,
+              project: project,
+              fx: fx,
+              fx_files: fx_files,
+              ext_tabs: ext_tabs,
+              ext_mounted: ext_initial_mounted(active_tab),
+              health: Health.get(project),
+              health_modal_open: false,
+              is_template: is_template,
+              wrapper_class: wrapper_class,
+              # Tab state. The tab bar renders in every context now (only
+              # templates stay list-only); `router_mounted?` is kept as an
+              # informational flag a few comments key off. URL sync is ON here —
+              # this is the standalone admin page, which owns a real `/gantt` URL
+              # to deep-link; embeds default it off (see the embed mount clause).
+              # The gantt/calendar are lazy-mounted: each only `live_render`s once
+              # its tab is first opened, then stays mounted so its own state
+              # (zoom/expand, month navigation) survives switching back.
+              router_mounted?: true,
+              tab_url_sync?: true,
+              active_tab: active_tab,
+              gantt_mounted?: active_tab == :gantt,
+              calendar_mounted?: active_tab == :calendar,
+              editing_duration_uuid: nil,
+              start_modal_open: false,
+              start_form: to_form(%{"start_at" => default_start_at_local()}),
+              # Comments drawer state. `comments_resource` is `nil` when
+              # closed; a `%{type, uuid, title}` map when open. The
+              # `CommentsComponent` is keyed on `{type, uuid}` so opening
+              # different resources doesn't reuse stale state.
+              comments_resource: nil,
+              # Availability ∧ the per-project "discussions" bridge toggle.
+              comments_enabled:
+                comments_available?() and Extensions.enabled?(project, "discussions"),
+              project_comment_count: 0,
+              assignment_comment_counts: %{},
+              # Skeleton defaults overwritten by the load_* helpers below;
+              # they keep the assigns coherent if either helper short-circuits.
+              assignments: [],
+              deps_by_assignment: %{},
+              total_tasks: 0,
+              done_tasks: 0,
+              progress_pct: 0,
+              schedule: nil,
+              # Sub-project UI state (V127). `expanded_subprojects` holds the
+              # linking-assignment uuids whose child task list is revealed;
+              # `subproject_*` maps are keyed by linking-assignment uuid and
+              # filled lazily (summaries in load_assignments, child tasks on
+              # first expand).
+              expanded_subprojects: MapSet.new(),
+              subproject_summaries: %{},
+              subproject_child_tasks: %{},
+              # Work-ledger state (Step 10): totals strip + per-task logged
+              # chips, filled by load_ledger/1 below (nil/empty when the
+              # `ledger` flag is off). `log_time_uuid` scopes the modal to a
+              # task; nil logs against the project overall.
+              ledger_totals: nil,
+              ledger_minutes: %{},
+              log_time_open: false,
+              log_time_uuid: nil,
+              assignment_labels: %{},
+              invoice_ready?: false
+            )
+            |> WebHelpers.attach_open_embed_hook()
+
+          {:ok,
+           socket |> load_assignments() |> load_comment_counts() |> load_ledger() |> load_labels()}
+        else
+          {:ok,
+           socket
+           |> assign(not_found_assigns())
+           |> put_flash(:error, gettext("Project not found."))
+           |> WebHelpers.close_or_navigate(Paths.projects())}
         end
-
-        is_template = project.is_template
-
-        lang = L10n.current_content_lang()
-
-        wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
-
-        # Which tab the page opens on, straight from the route's live_action
-        # (`/list/:id/gantt` → `:gantt`, everything else → `:list`). Server-side
-        # so a direct/bookmarked `/gantt` load renders the gantt before any JS.
-        # Templates have no tabs/gantt (both are `not @is_template`), so a template
-        # uuid reached via the `/list/:id/gantt` route falls back to the list —
-        # otherwise both the list and the gantt would render hidden (blank page).
-        # The hub gate map (@fx): tasks extension + per-project feature
-        # flags, one resolved lookup for every render/event guard below.
-        # Rebuilt on :project_features_changed / :project_modules_changed.
-        # @fx_files is the second built-in extension's gate (its surface is
-        # its own page — only the menu link renders here).
-        fx = Features.gates(project)
-        fx_files = Extensions.enabled?(project, "files")
-
-        # Contributed extension tabs (the hub contract's `tabs`): rendered
-        # as first-class view tabs via live_render with the embed-session
-        # contract. Resolved once; recomputed on :project_modules_changed.
-        ext_tabs = ext_tabs_for(project, is_template, socket.assigns[:phoenix_kit_current_scope])
-
-        active_tab =
-          tab_for_action(socket, is_template)
-          |> gate_tab(fx)
-          |> resolve_landing_tab(fx, ext_tabs)
-
-        # Resolve the workflow-status list once (read-only — nothing is
-        # provisioned or seeded here; an unset shared default simply yields
-        # an empty list). `current_status` is derived from the same list so
-        # we don't resolve twice.
-        statuses_available = Statuses.available?()
-        status_options = if statuses_available, do: Statuses.statuses_for(project), else: []
-
-        current_status =
-          Enum.find(status_options, &(&1.slug == project.current_status_slug))
-
-        socket =
-          socket
-          |> assign(
-            page_title: Project.localized_name(project, lang),
-            # Breadcrumb section ("Admin Panel / Templates / <name>") —
-            # the in-content back-link + h1 row is gone; the site header
-            # carries both the name and the way back to the list.
-            page_section: if(is_template, do: gettext("Templates"), else: gettext("Projects")),
-            page_section_path: if(is_template, do: Paths.templates(), else: Paths.projects()),
-            statuses_available: statuses_available,
-            status_options: status_options,
-            current_status: current_status,
-            project: project,
-            fx: fx,
-            fx_files: fx_files,
-            ext_tabs: ext_tabs,
-            ext_mounted: ext_initial_mounted(active_tab),
-            health: Health.get(project),
-            health_modal_open: false,
-            is_template: is_template,
-            wrapper_class: wrapper_class,
-            # Tab state. The tab bar renders in every context now (only
-            # templates stay list-only); `router_mounted?` is kept as an
-            # informational flag a few comments key off. URL sync is ON here —
-            # this is the standalone admin page, which owns a real `/gantt` URL
-            # to deep-link; embeds default it off (see the embed mount clause).
-            # The gantt/calendar are lazy-mounted: each only `live_render`s once
-            # its tab is first opened, then stays mounted so its own state
-            # (zoom/expand, month navigation) survives switching back.
-            router_mounted?: true,
-            tab_url_sync?: true,
-            active_tab: active_tab,
-            gantt_mounted?: active_tab == :gantt,
-            calendar_mounted?: active_tab == :calendar,
-            editing_duration_uuid: nil,
-            start_modal_open: false,
-            start_form: to_form(%{"start_at" => default_start_at_local()}),
-            # Comments drawer state. `comments_resource` is `nil` when
-            # closed; a `%{type, uuid, title}` map when open. The
-            # `CommentsComponent` is keyed on `{type, uuid}` so opening
-            # different resources doesn't reuse stale state.
-            comments_resource: nil,
-            # Availability ∧ the per-project "discussions" bridge toggle.
-            comments_enabled:
-              comments_available?() and Extensions.enabled?(project, "discussions"),
-            project_comment_count: 0,
-            assignment_comment_counts: %{},
-            # Skeleton defaults overwritten by the load_* helpers below;
-            # they keep the assigns coherent if either helper short-circuits.
-            assignments: [],
-            deps_by_assignment: %{},
-            total_tasks: 0,
-            done_tasks: 0,
-            progress_pct: 0,
-            schedule: nil,
-            # Sub-project UI state (V127). `expanded_subprojects` holds the
-            # linking-assignment uuids whose child task list is revealed;
-            # `subproject_*` maps are keyed by linking-assignment uuid and
-            # filled lazily (summaries in load_assignments, child tasks on
-            # first expand).
-            expanded_subprojects: MapSet.new(),
-            subproject_summaries: %{},
-            subproject_child_tasks: %{},
-            # Work-ledger state (Step 10): totals strip + per-task logged
-            # chips, filled by load_ledger/1 below (nil/empty when the
-            # `ledger` flag is off). `log_time_uuid` scopes the modal to a
-            # task; nil logs against the project overall.
-            ledger_totals: nil,
-            ledger_minutes: %{},
-            log_time_open: false,
-            log_time_uuid: nil,
-            assignment_labels: %{},
-            invoice_ready?: false
-          )
-          |> WebHelpers.attach_open_embed_hook()
-
-        {:ok,
-         socket |> load_assignments() |> load_comment_counts() |> load_ledger() |> load_labels()}
     end
+  end
+
+  # The assigns a mount needs to render nothing and redirect. Shared by the
+  # missing-project branch and the refused-:view branch so the two stay
+  # byte-identical — a refusal that renders differently from a 404 tells
+  # the caller the project exists.
+  defp not_found_assigns do
+    [
+      page_title: "",
+      project: %Project{},
+      fx: Features.default_gates(),
+      fx_files: true,
+      ext_tabs: [],
+      ext_mounted: MapSet.new(),
+      health: nil,
+      health_modal_open: false,
+      is_template: false,
+      wrapper_class: @default_wrapper_class,
+      router_mounted?: false,
+      # Must be assigned: the tab bar now renders on `not @is_template`
+      # (true here), so the render reads `@tab_url_sync?`. Router-mount
+      # context → true (matches the success branch); the embedded wrapper
+      # overrides it to the session value when this path is reached via an
+      # off-router mount with an unknown id.
+      tab_url_sync?: true,
+      active_tab: :list,
+      gantt_mounted?: false,
+      calendar_mounted?: false,
+      assignments: [],
+      deps_by_assignment: %{},
+      total_tasks: 0,
+      done_tasks: 0,
+      progress_pct: 0,
+      schedule: nil,
+      editing_duration_uuid: nil,
+      start_modal_open: false,
+      start_form: to_form(%{"start_at" => default_start_at_local()}),
+      comments_resource: nil,
+      comments_enabled: false,
+      project_comment_count: 0,
+      assignment_comment_counts: %{},
+      statuses_available: false,
+      current_status: nil,
+      status_options: [],
+      expanded_subprojects: MapSet.new(),
+      subproject_summaries: %{},
+      subproject_child_tasks: %{},
+      ledger_totals: nil,
+      ledger_minutes: %{},
+      log_time_open: false,
+      log_time_uuid: nil,
+      assignment_labels: %{},
+      invoice_ready?: false
+    ]
   end
 
   # ── PubSub reactivity ─────────────────────────────────────────

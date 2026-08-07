@@ -36,6 +36,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     {:ok, conn: conn, actor_uuid: user.uuid}
   end
 
+  # An off-router mount runs no on_mount, so the LV has no scope and gates
+  # :view against the viewer the session names. These embed tests are about
+  # layout, locale and tabs — not authz — so give them a viewer who can
+  # actually see the project. (The refusal paths have their own tests in
+  # embedding_test.exs.)
+  defp embed_session(project, actor_uuid, extra \\ %{}) do
+    {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+    Map.merge(%{"id" => project.uuid, "current_user_uuid" => actor_uuid}, extra)
+  end
+
   describe "mount" do
     test "router mount: no in-content h1 (breadcrumb owns the name) + empty state", %{
       conn: conn
@@ -85,52 +95,55 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
   # equivalent — it mounts the LV with `params == :not_mounted_at_router`
   # and the session map flowing into `mount/3`.
   describe "embedded (live_isolated)" do
-    test "mounts when given id via session and renders project name", %{conn: conn} do
+    test "mounts when given id via session and renders project name", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: embed_session(project, actor_uuid)
         )
 
       assert html =~ project.name
     end
 
-    test "wrapper_class defaults to the standalone full-width layout", %{conn: conn} do
+    test "wrapper_class defaults to the standalone full-width layout", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: embed_session(project, actor_uuid)
         )
 
       assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
-    test "wrapper_class override from session replaces the default", %{conn: conn} do
+    test "wrapper_class override from session replaces the default", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{
-            "id" => project.uuid,
-            "wrapper_class" => "host-specific-class"
-          }
+          session: embed_session(project, actor_uuid, %{"wrapper_class" => "host-specific-class"})
         )
 
       assert html =~ "host-specific-class"
       refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
-    test "locale from session is applied to embedded mount", %{conn: conn} do
+    test "locale from session is applied to embedded mount", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{
-            "id" => project.uuid,
-            "locale" => "et"
-          }
+          session: embed_session(project, actor_uuid, %{"locale" => "et"})
         )
 
       # The back-link breadcrumb renders "Projects" translated.
@@ -668,12 +681,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert html =~ "cal-container"
     end
 
-    test "embedded ProjectShowLive renders the List/Timeline tabs (lazy gantt)", %{conn: conn} do
+    test "embedded ProjectShowLive renders the List/Timeline tabs (lazy gantt)", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = started_project_for_tabs()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: embed_session(project, actor_uuid)
         )
 
       # The tab bar now renders in embeds too (only templates stay list-only),
@@ -685,13 +701,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
 
     test "embedded ProjectShowLive does not sync the URL on tab switch (off by default)", %{
-      conn: conn
+      conn: conn,
+      actor_uuid: actor_uuid
     } do
       project = started_project_for_tabs()
 
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: embed_session(project, actor_uuid)
         )
 
       render_click(view, "switch_tab", %{"tab" => "gantt"})
@@ -700,12 +717,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       refute_push_event(view, "project_tab_url", %{})
     end
 
-    test "an embed can opt into URL sync via session[\"tab_url_sync\"]", %{conn: conn} do
+    test "an embed can opt into URL sync via session[\"tab_url_sync\"]", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = started_project_for_tabs()
 
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid, "tab_url_sync" => true}
+          session: embed_session(project, actor_uuid, %{"tab_url_sync" => true})
         )
 
       render_click(view, "switch_tab", %{"tab" => "gantt"})

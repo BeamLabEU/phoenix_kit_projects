@@ -63,6 +63,67 @@ defmodule PhoenixKitProjects.Members do
 
   def projects_for_user(_), do: []
 
+  @doc """
+  Every non-template project a user can reach, as `{project, role}` — their
+  own memberships PLUS anything their teams, departments, or site roles
+  grant, with the strongest role per project.
+
+  This is the single scope every listing surface should use. A view that
+  keeps joining `phoenix_kit_project_members` directly will silently omit
+  group-granted projects — the leak class the quorum flagged first.
+
+  Site admins are NOT special-cased here: this answers "what does this
+  person hold", and `projects.admin_all` is a separate question the caller
+  asks with `PhoenixKitProjects.Authz.can?/5`.
+  """
+  @spec accessible_projects(binary()) :: [{map(), String.t()}]
+  def accessible_projects(user_uuid) when is_binary(user_uuid) do
+    direct = projects_for_user(user_uuid)
+    granted = PhoenixKitProjects.Grants.project_roles_for_user(user_uuid)
+
+    direct_uuids = MapSet.new(direct, fn {p, _r} -> p.uuid end)
+
+    extra_uuids =
+      granted |> Map.keys() |> Enum.reject(&MapSet.member?(direct_uuids, &1))
+
+    extra =
+      if extra_uuids == [] do
+        []
+      else
+        RepoHelper.repo().all(
+          from(p in PhoenixKitProjects.Schemas.Project,
+            where: p.uuid in ^extra_uuids and p.is_template == false,
+            order_by: [desc: p.inserted_at]
+          )
+        )
+        |> Enum.map(&{&1, Map.fetch!(granted, &1.uuid)})
+      end
+
+    # A group grant can also RAISE the role on a project they already
+    # belong to, so take the strongest of the two per project.
+    direct
+    |> Enum.map(fn {project, role} ->
+      case Map.get(granted, project.uuid) do
+        nil -> {project, role}
+        group_role -> {project, stronger(role, group_role)}
+      end
+    end)
+    |> Kernel.++(extra)
+  rescue
+    e ->
+      Logger.warning("[Projects.Members] accessible_projects failed: #{Exception.message(e)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  def accessible_projects(_), do: []
+
+  defp stronger(a, b) do
+    rank = %{"owner" => 0, "manager" => 1, "member" => 2, "viewer" => 3}
+    if Map.get(rank, a, 9) <= Map.get(rank, b, 9), do: a, else: b
+  end
+
   @doc "The member row for a user on a project, or nil."
   @spec get_member(binary(), binary()) :: ProjectMember.t() | nil
   def get_member(project_uuid, user_uuid)

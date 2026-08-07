@@ -26,6 +26,16 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     {:ok, conn: conn, actor_uuid: user.uuid}
   end
 
+  # This LV mounts off-router in these tests, so no on_mount runs and it has
+  # no scope — and it now gates :view itself. Name a viewer who can see the
+  # project. (Refusal is covered by its own test below.)
+  defp view_session(project_uuid, viewer_uuid, extra \\ %{}) do
+    {:ok, _} =
+      PhoenixKitProjects.Members.add_member(project_uuid, viewer_uuid, role: "member")
+
+    Map.merge(%{"id" => project_uuid, "current_user_uuid" => viewer_uuid}, extra)
+  end
+
   defp started_project_with_tasks(_actor_uuid) do
     project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => false})
     {:ok, _} = Projects.start_project(project)
@@ -54,7 +64,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
   test "renders one bar per assignment with titles", %{conn: conn, actor_uuid: actor} do
     {project, _a1, _a2} = started_project_with_tasks(actor)
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render(view)
 
     # The chart wrapper + a bar per assignment (lg-bar marker class).
@@ -71,7 +83,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
        %{conn: conn, actor_uuid: actor} do
     {project, a1, _a2} = started_project_with_tasks(actor)
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render(view)
 
     # The popover action is wired (the bar's own phx-value-event-id carries the
@@ -84,7 +98,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
   end
 
   test "sub-project bars carry an Open action that drills into the child",
-       %{conn: conn} do
+       %{conn: conn, actor_uuid: actor} do
     project = fixture_project(%{"start_mode" => "immediate"})
     {:ok, _} = Projects.start_project(project)
     project = Projects.get_project!(project.uuid)
@@ -92,7 +106,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     {:ok, %{child_project: child}} =
       Projects.create_subproject(project.uuid, %{"name" => "Phase"})
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render(view)
 
     assert html =~ ~s(phx-click="gantt_open")
@@ -106,7 +122,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     {project, a1, a2} = started_project_with_tasks(actor)
     {:ok, _} = Projects.add_dependency(a2.uuid, a1.uuid)
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render(view)
 
     # The SVG connector overlay renders when there's at least one edge.
@@ -126,7 +144,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     {project, a1, a2} = started_project_with_tasks(actor)
     {:ok, _} = Projects.add_dependency(a1.uuid, a2.uuid)
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render(view)
 
     assert row_index(html, a1.uuid) < row_index(html, a2.uuid),
@@ -146,7 +166,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     # reach another open chart via the broadcast `reorder_assignments` now fires.
     {project, a1, a2} = started_project_with_tasks(actor)
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     assert row_index(render(view), a1.uuid) < row_index(render(view), a2.uuid)
 
     # Flip the order in the DB (suppress the broadcast so we drive handle_info
@@ -167,7 +189,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     # actually triggers a reload (a new assignment, added without its own
     # broadcast, only appears if the lifecycle event pulled in fresh data).
     {project, _a1, _a2} = started_project_with_tasks(actor)
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
 
     t3 = fixture_task(%{"estimated_duration" => 1, "estimated_duration_unit" => "days"})
 
@@ -185,7 +209,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
   end
 
   test "maps a dependency BETWEEN sub-project tasks to a connector (tree-wide)",
-       %{conn: conn} do
+       %{conn: conn, actor_uuid: actor} do
     # A dependency between two tasks INSIDE a sub-project is stored on the CHILD
     # project, not the parent. The gantt must gather dependencies across the
     # whole rendered tree — the old parent-only query returned nothing, so a
@@ -208,7 +232,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
 
     {:ok, _} = Projects.add_dependency(c2.uuid, c1.uuid)
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     # Expand so both child tasks are visible; the intra-sub-project arrow draws.
     html = render_click(view, "toggle_subproject", %{"event-id" => link.uuid})
 
@@ -217,7 +243,10 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     assert html =~ ~s(data-to-id="#{c2.uuid}")
   end
 
-  test "expanding a sub-project keeps it in place (stable row order)", %{conn: conn} do
+  test "expanding a sub-project keeps it in place (stable row order)", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     # Sub-projects carry `extra.order` so the chart keeps the flattened tree
     # order. Without it the library auto-places rows by dependency/date, and
     # expanding a sub-project re-sorts its rolled-up bar below its siblings.
@@ -242,7 +271,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     tb = fixture_task(%{"estimated_duration" => 2, "estimated_duration_unit" => "days"})
     {:ok, _} = Projects.create_assignment(%{"project_uuid" => pb.uuid, "task_uuid" => tb.uuid})
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render_click(view, "toggle_subproject", %{"event-id" => la.uuid})
 
     # Rows render in order; the FIRST occurrence of each id (its label row) gives
@@ -263,7 +294,10 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     end
   end
 
-  test "live-updates the chart when a sub-project task changes (PubSub)", %{conn: conn} do
+  test "live-updates the chart when a sub-project task changes (PubSub)", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     # "Open it on a monitor and it stays current." A sub-project's task
     # broadcasts on the CHILD project's topic; the gantt subscribes to the whole
     # tree, so a status change inside a sub-project must refresh the chart with
@@ -284,7 +318,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
         "status" => "todo"
       })
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     render_click(view, "toggle_subproject", %{"event-id" => link.uuid})
     refute render(view) =~ "bg-success"
 
@@ -299,7 +335,8 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
   test "zoom switcher updates the chart", %{conn: conn, actor_uuid: actor} do
     {project, _a1, _a2} = started_project_with_tasks(actor)
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
 
     html = render_click(view, "set_zoom", %{"zoom" => "day"})
     # Day zoom renders per-day column headers (numeric day labels).
@@ -312,7 +349,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     # ~5-day span (2d + 3d tasks) → should open at :day, not the old fixed :week.
     {project, _a1, _a2} = started_project_with_tasks(actor)
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render(view)
 
     # The :day zoom button is the active one (aria-pressed="true").
@@ -321,7 +360,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
   end
 
   test "hour zoom lays tasks out at sub-day precision (widths differ by duration)",
-       %{conn: conn} do
+       %{conn: conn, actor_uuid: actor} do
     project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
     {:ok, _} = Projects.start_project(project)
     project = Projects.get_project!(project.uuid)
@@ -335,7 +374,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     {:ok, a_long} =
       Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => t_long.uuid})
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render_click(view, "set_zoom", %{"zoom" => "hour"})
 
     short_w = bar_width_px(html, a_short.uuid)
@@ -347,7 +388,10 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     assert long_w >= 120
   end
 
-  test "sub-project children are emitted with parent_id and a chevron", %{conn: conn} do
+  test "sub-project children are emitted with parent_id and a chevron", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     project = fixture_project(%{"start_mode" => "immediate"})
     {:ok, _} = Projects.start_project(project)
     project = Projects.get_project!(project.uuid)
@@ -363,7 +407,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
         "task_uuid" => child_task.uuid
       })
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render(view)
 
     # Collapsed: the expand chevron renders (the library detected a
@@ -377,7 +423,10 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     assert expanded =~ child_assignment.uuid
   end
 
-  test "sub-project bar spans its children, not just its rolled-up hours", %{conn: conn} do
+  test "sub-project bar spans its children, not just its rolled-up hours", %{
+    conn: conn,
+    actor_uuid: actor
+  } do
     project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
     {:ok, _} = Projects.start_project(project)
     project = Projects.get_project!(project.uuid)
@@ -396,7 +445,9 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
         Projects.create_assignment(%{"project_uuid" => child.uuid, "task_uuid" => t.uuid})
     end
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render_click(view, "toggle_subproject", %{"event-id" => link.uuid})
 
     # Parse the sub-project bar's pixel width from its rendered style. At week
@@ -430,10 +481,12 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     round(pct / 100 * content_width)
   end
 
-  test "empty project shows the empty state, no chart", %{conn: conn} do
+  test "empty project shows the empty state, no chart", %{conn: conn, actor_uuid: actor} do
     project = fixture_project(%{"start_mode" => "immediate"})
 
-    {:ok, view, _html} = live_isolated(conn, ProjectGanttLive, session: %{"id" => project.uuid})
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive, session: view_session(project.uuid, actor))
+
     html = render(view)
 
     refute html =~ "lg-wrap"

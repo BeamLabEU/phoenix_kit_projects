@@ -8,7 +8,7 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
   use PhoenixKitProjects.DataCase, async: false
 
   alias PhoenixKit.Users.{Auth, Roles}
-  alias PhoenixKitProjects.{Authz, Grants, Members}
+  alias PhoenixKitProjects.{Authz, Grants, Members, Projects}
   alias PhoenixKitStaff.{Departments, Staff, Teams}
 
   setup do
@@ -205,6 +205,59 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
       {:ok, _} = Grants.grant(project, "team", Ecto.UUID.generate(), "manager")
       stranger = user()
       refute Authz.can?(stranger.uuid, project, :view)
+    end
+  end
+
+  describe "read scoping" do
+    test "the index lists only what the viewer can reach", %{project: project} do
+      %{user: u, team: team} = staffed_user()
+      other = fixture_project(%{"name" => "Unrelated-#{System.unique_integer([:positive])}"})
+
+      scope = %PhoenixKit.Users.Auth.Scope{
+        user: %{uuid: u.uuid, email: "x@y.z"},
+        authenticated?: true,
+        cached_roles: [],
+        cached_permissions: MapSet.new(["projects"])
+      }
+
+      # Reaching the module is not seeing every project.
+      assert Projects.list_projects_for(scope) == []
+      assert Projects.count_projects_for(scope) == 0
+
+      {:ok, _} = Grants.grant(project, "team", team.uuid, "viewer")
+
+      names = Projects.list_projects_for(scope) |> Enum.map(& &1.name)
+      assert project.name in names
+      refute other.name in names
+      assert Projects.count_projects_for(scope) == 1
+    end
+
+    test "a site admin still sees everything", %{project: project} do
+      admin =
+        PhoenixKitProjects.LiveCase.fake_scope(permissions: ["projects", "projects.admin_all"])
+
+      names = Projects.list_projects_for(admin) |> Enum.map(& &1.name)
+      assert project.name in names
+    end
+
+    test "accessible_projects merges memberships and grants, strongest role per project",
+         %{project: project} do
+      %{user: u, team: team} = staffed_user()
+
+      {:ok, _} = Members.add_member(project, u.uuid, role: "viewer")
+      {:ok, _} = Grants.grant(project, "team", team.uuid, "manager")
+
+      assert [{listed, "manager"}] =
+               Enum.filter(Members.accessible_projects(u.uuid), fn {p, _} ->
+                 p.uuid == project.uuid
+               end)
+
+      assert listed.uuid == project.uuid
+    end
+
+    test "a nil scope reaches nothing" do
+      assert Projects.list_projects_for(nil) == []
+      assert Projects.count_projects_for(nil) == 0
     end
   end
 

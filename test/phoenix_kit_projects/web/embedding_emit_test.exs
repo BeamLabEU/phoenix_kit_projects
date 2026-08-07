@@ -48,6 +48,15 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
     {:ok, conn: conn, actor_uuid: user.uuid}
   end
 
+  # ProjectShowLive gates :view itself on an off-router mount (no on_mount,
+  # so no scope). These tests are about emit plumbing, not authz — make the
+  # session name a viewer who can see the project. Refusal paths are covered
+  # in embedding_test.exs.
+  defp show_session(project, actor_uuid, extra \\ %{}) do
+    {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+    Map.merge(%{"id" => project.uuid, "current_user_uuid" => actor_uuid}, extra)
+  end
+
   # ─────────────────────────────────────────────────────────────────
   # OverviewLive
   # ─────────────────────────────────────────────────────────────────
@@ -224,14 +233,26 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert html =~ ~s(phx-click="open_embed")
     end
 
-    test "clicking 'New project' emits :opened for ProjectFormLive", %{conn: conn} do
-      fixture_project()
+    test "clicking 'New project' emits :opened for ProjectFormLive", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
+      project = fixture_project()
+      # The index is viewer-scoped: without a visible row the page renders
+      # its empty state, which has no toolbar button to click.
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0,
+            "current_user_uuid" => actor_uuid
+          }
         )
 
       view
@@ -453,18 +474,18 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
   # ─────────────────────────────────────────────────────────────────
 
   describe "ProjectShowLive emit mode" do
-    test "mounts in emit mode with project id", %{conn: conn} do
+    test "mounts in emit mode with project id", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project(%{"name" => "Embed Show"})
       topic = unique_topic()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{
-            "mode" => "emit",
-            "pubsub_topic" => topic,
-            "id" => project.uuid,
-            "frame_ref" => 0
-          }
+          session:
+            show_session(project, actor_uuid, %{
+              "mode" => "emit",
+              "pubsub_topic" => topic,
+              "frame_ref" => 0
+            })
         )
 
       assert html =~ "Embed Show"
@@ -488,19 +509,22 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert_receive {:projects, :closed, %{frame_ref: 51}}, 500
     end
 
-    test "clicking 'Add task' emits :opened for AssignmentFormLive", %{conn: conn} do
+    test "clicking 'Add task' emits :opened for AssignmentFormLive", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project()
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{
-            "mode" => "emit",
-            "pubsub_topic" => topic,
-            "id" => project.uuid,
-            "frame_ref" => 0
-          }
+          session:
+            show_session(project, actor_uuid, %{
+              "mode" => "emit",
+              "pubsub_topic" => topic,
+              "frame_ref" => 0
+            })
         )
 
       view
@@ -634,19 +658,22 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
   # ─────────────────────────────────────────────────────────────────
 
   describe "Codex H1 regression: ProjectShow Edit button emits in emit mode" do
-    test "Edit on a regular project emits :opened for ProjectFormLive", %{conn: conn} do
+    test "Edit on a regular project emits :opened for ProjectFormLive", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project(%{"name" => "H1 Regular"})
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{
-            "mode" => "emit",
-            "pubsub_topic" => topic,
-            "id" => project.uuid,
-            "frame_ref" => 0
-          }
+          session:
+            show_session(project, actor_uuid, %{
+              "mode" => "emit",
+              "pubsub_topic" => topic,
+              "frame_ref" => 0
+            })
         )
 
       view
@@ -1014,11 +1041,20 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
   # the assertions below fail.
 
   describe "C11 pinning: row-action kebab menus" do
-    test "ProjectsLive rows carry the Actions kebab trigger", %{conn: conn} do
-      _project = fixture_project(%{"name" => "Doomed list row"})
+    test "ProjectsLive rows carry the Actions kebab trigger", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
+      project = fixture_project(%{"name" => "Doomed list row"})
+
+      # The index is viewer-scoped now: an embed with no identity sees an
+      # empty list (correct), so name a viewer who can see this row.
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
 
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive, session: %{})
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive,
+          session: %{"current_user_uuid" => actor_uuid}
+        )
 
       # `data-row-menu-trigger` is the structural attr on the ⋮ button
       # rendered by `<.table_row_menu>`. If row actions revert to inline
@@ -1045,12 +1081,15 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert html =~ ~s(data-row-menu-trigger)
     end
 
-    test "ProjectShowLive header + assignments carry kebab triggers", %{conn: conn} do
+    test "ProjectShowLive header + assignments carry kebab triggers", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project(%{"name" => "Header + row kebab"})
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: show_session(project, actor_uuid)
         )
 
       # The project header has Edit + Archive in a kebab; assignment rows
@@ -1063,18 +1102,21 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
   end
 
   describe "ProjectShowLive emit forwarding into nested tabs" do
-    test "an emit-embedded show page's Calendar tab mounts in emit mode too", %{conn: conn} do
+    test "an emit-embedded show page's Calendar tab mounts in emit mode too", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project(%{"name" => "Emit tab forwarding"})
       topic = unique_topic()
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{
-            "mode" => "emit",
-            "pubsub_topic" => topic,
-            "id" => project.uuid,
-            "frame_ref" => 0
-          }
+          session:
+            show_session(project, actor_uuid, %{
+              "mode" => "emit",
+              "pubsub_topic" => topic,
+              "frame_ref" => 0
+            })
         )
 
       # Lazy-mounted: the nested live_render only exists after activation.
@@ -1107,37 +1149,43 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
     describe "#{name} emit mode" do
       @lv lv
 
-      test "mounts in emit mode and renders open_embed buttons", %{conn: conn} do
+      test "mounts in emit mode and renders open_embed buttons", %{
+        conn: conn,
+        actor_uuid: actor_uuid
+      } do
         project = fixture_project(%{"name" => "Emit tab #{System.unique_integer([:positive])}"})
         topic = unique_topic()
 
         {:ok, _view, html} =
           live_isolated(conn, @lv,
-            session: %{
-              "mode" => "emit",
-              "pubsub_topic" => topic,
-              "id" => project.uuid,
-              "frame_ref" => 0
-            }
+            session:
+              show_session(project, actor_uuid, %{
+                "mode" => "emit",
+                "pubsub_topic" => topic,
+                "frame_ref" => 0
+              })
           )
 
         # "Back to project" renders as an emit button (not headless here).
         assert html =~ ~s(phx-click="open_embed")
       end
 
-      test "clicking 'Back to project' emits :opened for ProjectShowLive", %{conn: conn} do
+      test "clicking 'Back to project' emits :opened for ProjectShowLive", %{
+        conn: conn,
+        actor_uuid: actor_uuid
+      } do
         project = fixture_project(%{"name" => "Emit back #{System.unique_integer([:positive])}"})
         topic = unique_topic()
         ProjectsPubSub.subscribe(topic)
 
         {:ok, view, _} =
           live_isolated(conn, @lv,
-            session: %{
-              "mode" => "emit",
-              "pubsub_topic" => topic,
-              "id" => project.uuid,
-              "frame_ref" => 3
-            }
+            session:
+              show_session(project, actor_uuid, %{
+                "mode" => "emit",
+                "pubsub_topic" => topic,
+                "frame_ref" => 3
+              })
           )
 
         view
@@ -1150,11 +1198,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
         assert payload.frame_ref == 3
       end
 
-      test "navigate-mode behaviour is unchanged (regression guard)", %{conn: conn} do
+      test "navigate-mode behaviour is unchanged (regression guard)", %{
+        conn: conn,
+        actor_uuid: actor_uuid
+      } do
         project = fixture_project(%{"name" => "Nav tab #{System.unique_integer([:positive])}"})
 
         {:ok, _view, html} =
-          live_isolated(conn, @lv, session: %{"id" => project.uuid})
+          live_isolated(conn, @lv, session: show_session(project, actor_uuid))
 
         refute html =~ ~s(phx-click="open_embed")
       end

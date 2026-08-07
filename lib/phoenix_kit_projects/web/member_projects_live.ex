@@ -13,7 +13,9 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
   Embedded hub LVs trust their host (`session["current_user_uuid"]`, no
   internal authz on mount) — so THIS page is the authorization boundary:
   it only lists projects from the viewer's OWN membership rows
-  (`Members.projects_for_user/1`), and `?open=` resolves against that
+  (`Members.accessible_projects/1` — memberships AND anything the
+  viewer's teams, departments, or site roles grant), and `?open=`
+  resolves against that
   same list — a foreign uuid simply doesn't open. Inside an opened
   project the normal `Authz.can?/4` membership floors apply to every
   event (owner > manager > member > viewer).
@@ -44,7 +46,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
      assign(socket,
        page_title: gettext("My Projects"),
        current_user: user,
-       memberships: (user && Members.projects_for_user(user.uuid)) || []
+       memberships: (user && Members.accessible_projects(user.uuid)) || []
      )}
   end
 
@@ -55,7 +57,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
     # the project from the cached assign. This is the authorization
     # boundary — it reads the DB, not memory.
     user = socket.assigns.current_user
-    memberships = (user && Members.projects_for_user(user.uuid)) || []
+    memberships = (user && Members.accessible_projects(user.uuid)) || []
     socket = assign(socket, :memberships, memberships)
 
     open =

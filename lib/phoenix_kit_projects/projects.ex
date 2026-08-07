@@ -820,9 +820,48 @@ defmodule PhoenixKitProjects.Projects do
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> maybe_search_name_description(Keyword.get(opts, :search))
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> project_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
     |> repo().all()
+  end
+
+  @doc """
+  `list_projects/1` narrowed to what a scope may actually see.
+
+  Site admins (`projects.admin_all`) get the unfiltered list. Everyone else
+  gets only the projects they hold through membership or a group grant —
+  the index used to show every project on the site to anyone who could
+  reach the module, which since the permission split is a population that
+  legitimately includes contractors.
+
+  Filtering happens IN SQL (a uuid set from one grants query), not by
+  loading everything and rejecting in memory.
+  """
+  @spec list_projects_for(term(), keyword()) :: [Project.t()]
+  def list_projects_for(scope, opts \\ []) do
+    if PhoenixKitProjects.Authz.admin_all?(scope) do
+      list_projects(opts)
+    else
+      case PhoenixKitProjects.Authz.subject_user_uuid_of(scope) do
+        nil -> []
+        user_uuid -> list_projects(Keyword.put(opts, :viewer, user_uuid))
+      end
+    end
+  end
+
+  # nil viewer = no narrowing (the admin path). A viewer with zero
+  # accessible projects yields `uuid in []`, which is an empty result —
+  # fail-closed by construction rather than by a forgotten branch.
+  defp maybe_scope_to_viewer(query, nil), do: query
+
+  defp maybe_scope_to_viewer(query, user_uuid) when is_binary(user_uuid) do
+    uuids =
+      user_uuid
+      |> PhoenixKitProjects.Members.accessible_projects()
+      |> Enum.map(fn {project, _role} -> project.uuid end)
+
+    from(p in query, where: p.uuid in ^uuids)
   end
 
   # Sort by `position` is the canonical "manual" mode and gets a
@@ -1249,7 +1288,25 @@ defmodule PhoenixKitProjects.Projects do
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> maybe_search_name_description(Keyword.get(opts, :search))
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> repo().aggregate(:count, :uuid)
+  end
+
+  @doc """
+  `count_projects/1` narrowed to a scope, so a scoped list and its counter
+  agree. A header that counts rows the viewer cannot open is both a lie and
+  a leak — it discloses how many projects exist.
+  """
+  @spec count_projects_for(term(), keyword()) :: non_neg_integer()
+  def count_projects_for(scope, opts \\ []) do
+    if PhoenixKitProjects.Authz.admin_all?(scope) do
+      count_projects(opts)
+    else
+      case PhoenixKitProjects.Authz.subject_user_uuid_of(scope) do
+        nil -> 0
+        user_uuid -> count_projects(Keyword.put(opts, :viewer, user_uuid))
+      end
+    end
   end
 
   @doc """
@@ -1452,8 +1509,8 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_search_name_description(query, _), do: query
 
   @doc "Running projects (started, not archived, not yet completed)."
-  @spec list_active_projects() :: [Project.t()]
-  def list_active_projects do
+  @spec list_active_projects(keyword()) :: [Project.t()]
+  def list_active_projects(opts \\ []) do
     Project
     |> where(
       [p],
@@ -1461,27 +1518,29 @@ defmodule PhoenixKitProjects.Projects do
         is_nil(p.completed_at)
     )
     |> exclude_subprojects()
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> order_by([p], desc: p.started_at)
     |> repo().all()
   end
 
   @doc "Completed projects (all tasks done), most recently completed first."
-  @spec list_recently_completed_projects(pos_integer()) :: [Project.t()]
-  def list_recently_completed_projects(limit \\ 5) do
+  @spec list_recently_completed_projects(pos_integer(), keyword()) :: [Project.t()]
+  def list_recently_completed_projects(limit \\ 5, opts \\ []) do
     Project
     |> where(
       [p],
       p.is_template == false and is_nil(p.archived_at) and not is_nil(p.completed_at)
     )
     |> exclude_subprojects()
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> order_by([p], desc: p.completed_at)
     |> limit(^limit)
     |> repo().all()
   end
 
   @doc "Scheduled projects waiting to start."
-  @spec list_upcoming_projects() :: [Project.t()]
-  def list_upcoming_projects do
+  @spec list_upcoming_projects(keyword()) :: [Project.t()]
+  def list_upcoming_projects(opts \\ []) do
     Project
     |> where(
       [p],
@@ -1489,13 +1548,14 @@ defmodule PhoenixKitProjects.Projects do
         p.start_mode == "scheduled" and not is_nil(p.scheduled_start_date)
     )
     |> exclude_subprojects()
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> order_by([p], asc: p.scheduled_start_date)
     |> repo().all()
   end
 
   @doc "Projects not yet started, in setup (immediate mode, not scheduled)."
-  @spec list_setup_projects() :: [Project.t()]
-  def list_setup_projects do
+  @spec list_setup_projects(keyword()) :: [Project.t()]
+  def list_setup_projects(opts \\ []) do
     Project
     |> where(
       [p],
@@ -1503,6 +1563,7 @@ defmodule PhoenixKitProjects.Projects do
         p.start_mode == "immediate"
     )
     |> exclude_subprojects()
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> order_by([p], desc: p.inserted_at)
     |> repo().all()
   end

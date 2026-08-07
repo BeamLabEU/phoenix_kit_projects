@@ -160,6 +160,18 @@ defmodule PhoenixKitProjects.Authz do
 
   defp admin_override?(_), do: false
 
+  @doc """
+  Does this subject hold `projects.admin_all` — the site-wide "administer
+  projects you are not a member of" grant? Exposed so listing queries can
+  skip narrowing for admins instead of re-deriving the rule.
+  """
+  @spec admin_all?(term()) :: boolean()
+  def admin_all?(subject), do: admin_override?(subject)
+
+  @doc "The user uuid behind a scope, a user struct, or a bare uuid."
+  @spec subject_user_uuid_of(term()) :: binary() | nil
+  def subject_user_uuid_of(subject), do: subject_user_uuid(subject)
+
   # ── Member resolution (Step 5) ──────────────────────────────────────
   #
   # role floor ∨ relationship grant, with the project's "who can X"
