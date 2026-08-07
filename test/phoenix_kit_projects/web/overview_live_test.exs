@@ -801,7 +801,15 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       # Backdated project: its 10-minute tasks were scheduled to finish days
       # ago. The done one must NOT read as late.
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
-      {:ok, _} = Prj.start_project(project, DateTime.add(DateTime.utc_now(), -3 * 24 * 3600))
+
+      # 00:05 UTC three days ago, not "utc_now() minus 3 days" — started within
+      # ten minutes of midnight, a 10-minute task ENDS on the next date, and
+      # the month grid renders anything covering two dates as a
+      # `.cal-multiday-bar` rather than a `.cal-event` chip. The marker
+      # assertion below then found nothing, every night from 23:50 UTC. Same
+      # flake class as `filter_fixture`.
+      backdated = DateTime.new!(Date.add(Date.utc_today(), -3), ~T[00:05:00], "Etc/UTC")
+      {:ok, _} = Prj.start_project(project, backdated)
 
       late_task =
         fixture_task(%{
