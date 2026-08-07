@@ -204,9 +204,12 @@ defmodule PhoenixKitProjects.Authz do
         false
 
       user_uuid ->
-        case PhoenixKitProjects.Members.role_of(project, user_uuid) do
+        case effective_role(project, user_uuid) do
           nil ->
-            false
+            # No role at all — but an assignee may still act on their OWN
+            # task. Checked here rather than skipped so a task handed to
+            # someone outside the project still works, as it always has.
+            relationship_grant?(user_uuid, action, record)
 
           role ->
             meets_floor?(role, floor_for(project, action)) or
@@ -218,6 +221,51 @@ defmodule PhoenixKitProjects.Authz do
   catch
     :exit, _ -> false
   end
+
+  @doc """
+  The role a user effectively holds on a project: the STRONGEST of their
+  direct membership and every group grant that matches them (their teams,
+  their departments, their site roles). Always an ATOM from `roles/0`, or
+  nil when nothing matches.
+
+  Additive by design — a group grant can raise someone's role, but a
+  direct row never silently lowers what a group already gave them.
+  Specificity-wins would make ADDING a grant a revocation. See
+  `PhoenixKitProjects.Grants`.
+  """
+  @spec effective_role(map() | binary(), binary()) :: atom() | nil
+  def effective_role(project, user_uuid) when is_binary(user_uuid) do
+    direct = PhoenixKitProjects.Members.role_of(project, user_uuid)
+    group = PhoenixKitProjects.Grants.group_role_of(project, user_uuid)
+
+    # The two sources disagree on representation — memberships resolve to
+    # atoms, grant rows are strings straight off the column — and
+    # meets_floor?/2 ranks atoms, so normalize before comparing rather
+    # than letting a string reach Map.fetch!/2.
+    [direct, group]
+    |> Enum.map(&to_role_atom/1)
+    |> Enum.reject(&is_nil/1)
+    |> case do
+      [] -> nil
+      roles -> Enum.min_by(roles, &Map.fetch!(@role_rank, &1))
+    end
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  def effective_role(_project, _user_uuid), do: nil
+
+  defp to_role_atom(role) when is_atom(role) do
+    if role in @roles, do: role
+  end
+
+  defp to_role_atom(role) when is_binary(role) do
+    Enum.find(@roles, fn r -> Atom.to_string(r) == role end)
+  end
+
+  defp to_role_atom(_), do: nil
 
   defp floor_for(project, action) do
     default = Map.get(@role_floors, action)

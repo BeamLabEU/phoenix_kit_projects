@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 10
+  @current_version 11
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -107,6 +107,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v8_invoiced_entries(p)
     v9_backfill_creator_owners(p, prefix)
     v10_portal(p)
+    v11_subject_grants(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -131,6 +132,10 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 11 do
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_subject_grants")
+    end
 
     if target < 10 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_portal_submissions")
@@ -757,6 +762,60 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     CREATE INDEX IF NOT EXISTS phoenix_kit_project_portal_submissions_assignment_index
     ON #{p}phoenix_kit_project_portal_submissions (assignment_uuid)
+    """)
+  end
+
+  # ---------------------------------------------------------------------------
+  # V11 — indirect access grants: a project role held by a TEAM, a
+  # DEPARTMENT, or a site ROLE rather than by one person.
+  #
+  # Kept as its OWN table rather than making phoenix_kit_project_members
+  # polymorphic (the 2026-08-07 four-AI quorum's advice): members stays the
+  # authoritative direct-user table, keeps its real FK to phoenix_kit_users,
+  # and keeps the last-owner guard and succession logic untouched.
+  #
+  # `subject_uuid` is deliberately FK-less — it points into three different
+  # tables (staff teams, staff departments, core roles), two of which live
+  # in a SIBLING package that may not be installed. Referential integrity is
+  # enforced at the context layer, which resolves the subject before writing
+  # and drops grants whose subject has vanished when reading.
+  #
+  # `role` excludes 'owner' at the DB level: ownership needs an accountable
+  # person, and a team-owned project would break the last-owner guard the
+  # moment the team emptied.
+  # ---------------------------------------------------------------------------
+
+  defp v11_subject_grants(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_subject_grants (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      subject_type VARCHAR(16) NOT NULL,
+      subject_uuid UUID NOT NULL,
+      role VARCHAR(20) NOT NULL DEFAULT 'viewer',
+      granted_by_uuid UUID,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT phoenix_kit_project_subject_grants_type_check
+        CHECK (subject_type IN ('team', 'department', 'role')),
+      CONSTRAINT phoenix_kit_project_subject_grants_role_check
+        CHECK (role IN ('manager', 'member', 'viewer'))
+    )
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_subject_grants_identity_index
+    ON #{p}phoenix_kit_project_subject_grants (project_uuid, subject_type, subject_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_subject_grants_project_index
+    ON #{p}phoenix_kit_project_subject_grants (project_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_subject_grants_subject_index
+    ON #{p}phoenix_kit_project_subject_grants (subject_type, subject_uuid)
     """)
   end
 
