@@ -47,7 +47,14 @@ defmodule PhoenixKitProjects.Authz do
   Threaded now so portal work is additive, not a refactor.
   """
 
+  import Ecto.Query
+
+  require Logger
+
+  alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.Scope
+  alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.Schemas.Project
 
   @roles [:owner, :manager, :member, :viewer]
 
@@ -246,7 +253,100 @@ defmodule PhoenixKitProjects.Authz do
   @spec overridable_actions() :: [map()]
   def overridable_actions do
     Enum.map(@overridable, fn {action, {key, choices}} ->
-      %{action: action, settings_key: key, choices: Map.keys(choices) |> Enum.sort()}
+      %{
+        action: action,
+        settings_key: key,
+        choices: Map.keys(choices) |> Enum.sort(),
+        default: default_choice(action, choices)
+      }
     end)
+  end
+
+  # Which choice string the action's DEFAULT floor corresponds to, so a UI
+  # can show the inherited answer instead of inventing one — and so callers
+  # can skip writing an override that changes nothing.
+  defp default_choice(action, choices) do
+    floor = Map.get(@role_floors, action)
+
+    Enum.find_value(choices, fn {choice, role} -> if role == floor, do: choice end)
+  end
+
+  @doc """
+  The choice a project currently resolves to for each overridable action —
+  its stored override, or the default floor's choice when unset.
+  """
+  @spec current_overrides(map()) :: %{String.t() => String.t()}
+  def current_overrides(project) do
+    stored = project |> project_settings() |> Map.get("authz", %{})
+
+    Map.new(overridable_actions(), fn %{settings_key: key, default: default} ->
+      {key, Map.get(stored, key, default)}
+    end)
+  end
+
+  @doc """
+  Writes the per-project "who can X" floors (`settings["authz"]`).
+
+  Only known action keys with known choice values are accepted; anything
+  else is dropped rather than stored, and an unknown value would in any
+  case resolve back to the default floor in `floor_for/2`.
+
+  Like `Features.set_flags/3` this is an ATOMIC targeted merge, not a
+  read-merge-write of the whole `settings` map: the column is shared with
+  the features key, and writing a map built from a possibly-stale struct
+  silently clobbers concurrent writes to its siblings.
+  """
+  @spec set_overrides(Project.t(), map(), keyword()) :: {:ok, Project.t()} | {:error, :not_found}
+  def set_overrides(%Project{} = project, overrides, opts \\ []) when is_map(overrides) do
+    valid = Map.new(@overridable, fn {_action, {key, choices}} -> {key, choices} end)
+
+    accepted =
+      overrides
+      |> Enum.filter(fn {k, v} ->
+        is_binary(k) and is_binary(v) and Map.has_key?(valid, k) and
+          Map.has_key?(Map.fetch!(valid, k), v)
+      end)
+      |> Map.new()
+
+    if accepted == %{} do
+      {:ok, project}
+    else
+      query =
+        from(p in Project,
+          where: p.uuid == ^project.uuid,
+          update: [
+            set: [
+              settings:
+                fragment(
+                  """
+                  jsonb_set(
+                    COALESCE(settings, '{}'::jsonb),
+                    '{authz}',
+                    COALESCE(settings->'authz', '{}'::jsonb) || ?::jsonb
+                  )
+                  """,
+                  ^accepted
+                ),
+              updated_at: fragment("NOW()")
+            ]
+          ],
+          select: p
+        )
+
+      {1, [updated]} = RepoHelper.repo().update_all(query, [])
+
+      Activity.log("projects.permissions_changed",
+        actor_uuid: Keyword.get(opts, :actor_uuid),
+        resource_type: "project",
+        resource_uuid: project.uuid,
+        metadata: %{"changed" => accepted}
+      )
+
+      {:ok, updated}
+    end
+  rescue
+    e in [MatchError, Postgrex.Error] ->
+      Logger.warning("[Projects.Authz] set_overrides failed: #{Exception.message(e)}")
+      {:error, :not_found}
   end
 end

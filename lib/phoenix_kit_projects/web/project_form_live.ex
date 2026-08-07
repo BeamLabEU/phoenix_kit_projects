@@ -11,7 +11,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, Archetypes, Errors, Features, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
   alias PhoenixKitProjects.{Extensions, Members, Statuses}
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
@@ -87,6 +87,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_preview: nil,
       template_ref: nil,
       customized?: false,
+      authz_actions: overridable_authz_actions(),
+      authz_choices: default_authz_choices(),
       top_blocks: Features.creation_top_blocks()
     )
     |> seed_capability_states()
@@ -115,6 +117,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_preview: nil,
       template_ref: nil,
       customized?: false,
+      authz_actions: [],
+      authz_choices: %{},
       top_blocks: []
     )
   end
@@ -128,6 +132,52 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> Enum.reject(&(&1.key == "tasks"))
   rescue
     _ -> []
+  end
+
+  # Extensions grouped by the JOB they do — see Registry.categories/0.
+  defp creation_ext_groups(ext_types) do
+    Extensions.Registry.group_by_category(ext_types)
+  rescue
+    _ -> [{"more", "More", ext_types}]
+  end
+
+  # The actions a project may override, and the floors it resolves to with
+  # nothing stored — i.e. the defaults the site already enforces.
+  defp overridable_authz_actions do
+    Enum.sort_by(Authz.overridable_actions(), & &1.settings_key)
+  rescue
+    _ -> []
+  end
+
+  defp default_authz_choices do
+    Map.new(overridable_authz_actions(), fn %{settings_key: key, default: default} ->
+      {key, default}
+    end)
+  end
+
+  # Task-feature groups: the 13 flags are one flat wall today, which is the
+  # findability complaint. Grouped by what the flag DOES, with a catch-all
+  # so a provider-declared flag can never vanish from the form.
+  @flag_groups [
+    {"work", "Working on tasks",
+     ~w(assignees priorities labels subprojects dependencies statuses)},
+    {"time", "Time & progress", ~w(estimates progress scheduling ledger)},
+    {"views", "Views", ~w(view_board view_timeline view_calendar)}
+  ]
+
+  defp grouped_flag_defs(flag_defs) do
+    known = Enum.flat_map(@flag_groups, fn {_k, _label, keys} -> keys end)
+
+    groups =
+      for {key, label, keys} <- @flag_groups,
+          members = Enum.filter(flag_defs, &(&1.key in keys)),
+          members != [],
+          do: {key, label, Enum.sort_by(members, &Enum.find_index(keys, fn k -> k == &1.key end))}
+
+    case Enum.reject(flag_defs, &(&1.key in known)) do
+      [] -> groups
+      rest -> groups ++ [{"more", "More", rest}]
+    end
   end
 
   # The tasks extension's flag catalog — the Customize checklist.
@@ -557,6 +607,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> then(fn s ->
       if switched?, do: s, else: s |> track_extensions(params) |> track_flags(params)
     end)
+    |> track_authz(params)
     |> assign(
       invite_email: Map.get(params, "invite_email", socket.assigns.invite_email),
       invite_role: valid_invite_role(Map.get(params, "invite_role", socket.assigns.invite_role))
@@ -564,6 +615,31 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp track_creation_state(socket, _params), do: socket
+
+  # "Who can X" floors. Only known actions with known choices survive;
+  # anything else keeps whatever the socket already held, so a crafted
+  # param can neither invent an action nor smuggle an unknown floor.
+  defp track_authz(socket, params) do
+    case Map.get(params, "authz") do
+      submitted when is_map(submitted) ->
+        choices =
+          Enum.reduce(socket.assigns.authz_actions, socket.assigns.authz_choices, fn action,
+                                                                                     acc ->
+            case Map.get(submitted, action.settings_key) do
+              value when value in ["members", "managers"] ->
+                Map.put(acc, action.settings_key, value)
+
+              _ ->
+                acc
+            end
+          end)
+
+        assign(socket, authz_choices: choices)
+
+      _ ->
+        socket
+    end
+  end
 
   # Compared against template_ref, NOT the preview: a bogus/deleted uuid
   # leaves the preview nil, and comparing against it made EVERY validate a
@@ -788,6 +864,25 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     best_effort("set_flags", fn ->
       if flags_to_pin != %{} do
         Features.set_flags(project, flags_to_pin, actor_uuid: actor_uuid)
+      end
+    end)
+
+    # Same minimal-diff rule as the flags: only floors the user actually
+    # moved off the default get stored, so a project that took the defaults
+    # keeps inheriting them if the site's matrix ever changes.
+    authz_to_store =
+      socket.assigns.authz_actions
+      |> Enum.filter(fn action ->
+        Map.get(socket.assigns.authz_choices, action.settings_key, action.default) !=
+          action.default
+      end)
+      |> Map.new(fn action ->
+        {action.settings_key, Map.get(socket.assigns.authz_choices, action.settings_key)}
+      end)
+
+    best_effort("set_authz", fn ->
+      if authz_to_store != %{} do
+        Authz.set_overrides(project, authz_to_store, actor_uuid: actor_uuid)
       end
     end)
 
@@ -1093,6 +1188,99 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> Enum.join(" · ")
   end
 
+  # ── Collapsed-section summaries ─────────────────────────────────────
+  #
+  # Every drawer header carries its CURRENT ANSWER, not a count of the
+  # controls inside (the panel was unanimous: "13 options" describes the
+  # form, "Starts immediately · Site default statuses" describes the
+  # project). They recompute on the phx-change the form already fires, so
+  # no extra round trip is introduced.
+
+  # The Start-from drawer disappears when the site has promoted everything
+  # inside it to top-level cards.
+  defp setup_section_shown?(assigns) do
+    ("template" not in assigns.top_blocks and assigns.templates != []) or
+      "start" not in assigns.top_blocks or
+      ("statuses" not in assigns.top_blocks and assigns.flag_states["statuses"] != false) or
+      assigns.flag_states["scheduling"] != false
+  end
+
+  defp setup_summary(assigns) do
+    template =
+      cond do
+        "template" in assigns.top_blocks -> nil
+        match?(%{task_count: _}, assigns.template_preview) -> gettext("From a template")
+        true -> gettext("No template")
+      end
+
+    start =
+      cond do
+        "start" in assigns.top_blocks -> nil
+        assigns.form[:start_mode].value in ["scheduled", :scheduled] -> gettext("Scheduled start")
+        true -> gettext("Starts immediately")
+      end
+
+    statuses =
+      cond do
+        "statuses" in assigns.top_blocks or assigns.flag_states["statuses"] == false -> nil
+        assigns.form[:status_entity_uuid].value in [nil, ""] -> gettext("Site default statuses")
+        true -> gettext("Custom statuses")
+      end
+
+    join_summary([template, start, statuses])
+  end
+
+  defp people_summary(assigns) do
+    invites =
+      case length(assigns.invites) do
+        0 -> gettext("Just you")
+        n -> ngettext("You + %{count} invited", "You + %{count} invited", n, count: n)
+      end
+
+    # Only mention permissions when they differ from the site defaults —
+    # a summary that always says the same thing is noise.
+    tightened =
+      Enum.count(assigns.authz_actions, fn action ->
+        Map.get(assigns.authz_choices, action.settings_key, action.default) != action.default
+      end)
+
+    permissions =
+      if tightened > 0,
+        do:
+          ngettext("%{count} permission changed", "%{count} permissions changed", tightened,
+            count: tightened
+          )
+
+    join_summary([invites, permissions])
+  end
+
+  defp features_summary(assigns) do
+    changed =
+      Enum.count(assigns.flag_defs, fn flag ->
+        Map.get(assigns.flag_states, flag.key, flag.default) != flag.default
+      end)
+
+    on = Enum.count(assigns.flag_defs, &Map.get(assigns.flag_states, &1.key, &1.default))
+
+    base = ngettext("%{count} feature on", "%{count} features on", on, count: on)
+
+    if changed > 0, do: base <> " · " <> gettext("customized"), else: base
+  end
+
+  defp extensions_summary(assigns) do
+    on = Enum.filter(assigns.ext_types, &Map.get(assigns.ext_states, &1.key, false))
+
+    case on do
+      [] -> gettext("None")
+      exts when length(exts) <= 2 -> Enum.map_join(exts, ", ", & &1.name)
+      [a, b | rest] -> "#{a.name}, #{b.name} +#{length(rest)}"
+    end
+  end
+
+  defp join_summary(parts) do
+    parts |> Enum.reject(&is_nil/1) |> Enum.join(" · ")
+  end
+
   # LITERAL class strings per archetype key — Tailwind's scanner needs
   # them verbatim in source (an interpolated variant never compiles).
   defp receipt_reveal_class("quick_todo"),
@@ -1108,6 +1296,48 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     do: "hidden group-has-[[data-arch=public-intake]:checked]/kind:block"
 
   defp receipt_reveal_class(_), do: "hidden"
+
+  attr(:authz_choices, :map, required: true)
+  attr(:authz_actions, :list, required: true)
+
+  # Who can do what, for the roles invited above. Only the three floors
+  # `Authz` actually lets a project override are offered — this is a
+  # "who can X" panel, not a permission-scheme editor. The fixed rules are
+  # stated in plain language rather than hidden: they are what most people
+  # are checking for when they come looking for permissions at all.
+  defp permissions_block(assigns) do
+    ~H"""
+    <div class="flex flex-col gap-3">
+      <ul class="flex flex-col gap-1 text-xs opacity-60">
+        <li>{gettext("You create the project, so you own it — you can do everything.")}</li>
+        <li>
+          {gettext("Whoever a task is assigned to can always move it along and log time on it, whatever their role.")}
+        </li>
+        <li>{gettext("Editing and deleting anyone's task stays with managers and owners.")}</li>
+      </ul>
+
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div :for={action <- @authz_actions}>
+          <.select
+            name={"authz[#{action.settings_key}]"}
+            value={Map.get(@authz_choices, action.settings_key, action.default)}
+            label={authz_action_label(action.settings_key)}
+            class="select-sm"
+            options={[
+              {gettext("Members and up"), "members"},
+              {gettext("Managers and owners"), "managers"}
+            ]}
+          />
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp authz_action_label("create_tasks"), do: gettext("Who can add tasks")
+  defp authz_action_label("assign_tasks"), do: gettext("Who can assign tasks")
+  defp authz_action_label("update_status"), do: gettext("Who can change task status")
+  defp authz_action_label(key), do: key
 
   # ── Creation-page blocks (promotable via Settings → Projects) ──────
 
@@ -1531,135 +1761,22 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             </div>
           </div>
 
-          <%!-- Customize: flags + extensions with inert-unless-on inline
-               config (ZAI's pattern — the whole form submits in one pass
-               without JS; unchecked extensions' fields are ignored). --%>
-          <.accordion
-            id="create-customize"
-          >
+          <%!-- The four sections below replace three grab-bags ("Customize
+               capabilities" / "People" / "Setup options"). The 2026-08-07
+               four-AI panel was unanimous on the diagnosis: those labels
+               describe the FORM, not the decisions, and 26 unrelated
+               toggles in one drawer is the findability failure. Each
+               section is now one question, and each header carries its
+               CURRENT ANSWER so nobody opens a drawer to check a default.
+               Sections the site promoted to top-level cards drop out
+               entirely (and out of their own summaries). --%>
+
+          <%!-- 1. What it starts from — template, timing, statuses. --%>
+          <.accordion :if={setup_section_shown?(assigns)} id="create-start">
             <:title>
-              {gettext("Customize capabilities")}
-              <span :if={@customized?} class="badge badge-ghost badge-xs ml-2">{gettext("custom")}</span>
+              {gettext("Start from")}
+              <span class="ml-2 text-xs font-normal opacity-50">{setup_summary(assigns)}</span>
             </:title>
-            <:content>
-            <div class="flex flex-col gap-4">
-              <div>
-                <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{gettext("Task features")}</h3>
-                <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
-                  <label :for={flag <- @flag_defs} class="flex items-center justify-between gap-3 py-0.5">
-                    <span class="text-sm">
-                      {flag.label}
-                      <span :if={flag.requires != []} class="block text-xs opacity-40">
-                        {gettext("Needs: %{list}", list: Enum.join(flag.requires, ", "))}
-                      </span>
-                    </span>
-                    <input type="hidden" name={"flag[#{flag.key}]"} value="false" />
-                    <input
-                      type="checkbox"
-                      name={"flag[#{flag.key}]"}
-                      value="true"
-                      checked={@flag_states[flag.key]}
-                      class="toggle toggle-sm"
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <div :if={@ext_types != []}>
-                <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{gettext("Extensions")}</h3>
-                <div class="flex flex-col gap-2">
-                  <%!-- Config reveals via CSS the instant the toggle flips
-                       (group-has); the server enforces inert-unless-on at
-                       save regardless of what the hidden fields submit. --%>
-                  <div :for={ext <- @ext_types} class="group/extbox rounded-lg border border-base-200 p-2">
-                    <label class="flex items-center justify-between gap-3">
-                      <span class="min-w-0">
-                        <span class="flex items-center gap-2 text-sm font-medium">
-                          <.icon name={ext.icon} class="w-4 h-4 opacity-60" /> {ext.name}
-                        </span>
-                        <span :if={ext.description} class="block text-xs opacity-50">{ext.description}</span>
-                      </span>
-                      <input type="hidden" name={"ext[#{ext.key}]"} value="false" />
-                      <input
-                        type="checkbox"
-                        name={"ext[#{ext.key}]"}
-                        value="true"
-                        checked={@ext_states[ext.key]}
-                        class="toggle toggle-sm"
-                      />
-                    </label>
-                    <div
-                      :if={ext.config_schema != []}
-                      class="mt-2 hidden flex-wrap gap-2 border-t border-base-200 pt-2 group-has-[:checked]/extbox:flex"
-                    >
-                      <div :for={field <- ext.config_schema} class="w-full max-w-xs">
-                        <.select
-                          :if={field.type == :select}
-                          name={"ext_config[#{ext.key}][#{field.key}]"}
-                          value={ext_config_value(@ext_configs, ext.key, field.key)}
-                          label={field[:label] || field.key}
-                          class="select-sm"
-                          prompt={gettext("—")}
-                          options={
-                            for opt <-
-                                  ConfigOptions.resolve(
-                                    field,
-                                    ext_config_value(@ext_configs, ext.key, field.key)
-                                  ),
-                                do: {opt.label, opt.value}
-                          }
-                        />
-                        <.input
-                          :if={field.type != :select}
-                          type="text"
-                          name={"ext_config[#{ext.key}][#{field.key}]"}
-                          value={ext_config_value(@ext_configs, ext.key, field.key)}
-                          label={field[:label] || field.key}
-                          class="input-sm"
-                          phx-debounce="300"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <p class="mt-1 text-xs opacity-40">
-                  {gettext("Everything here can be changed later in Modules & features.")}
-                </p>
-              </div>
-            </div>
-            </:content>
-          </.accordion>
-
-          <%!-- Invite people (collapsed — empty pickers are fast-path noise). --%>
-          <.accordion
-            :if={"people" not in @top_blocks}
-            id="create-people"
-          >
-            <:title>
-              {gettext("People (optional)")}
-              <span :if={@invites != []} class="badge badge-ghost badge-xs ml-2">{length(@invites)}</span>
-            </:title>
-            <:content>
-              <.people_block
-                invites={@invites}
-                invite_email={@invite_email}
-                invite_role={@invite_role}
-                flag_states={@flag_states}
-                assign_type={@assign_type}
-                form={@form}
-                department_options={@department_options}
-                team_options={@team_options}
-                person_options={@person_options}
-              />
-            </:content>
-          </.accordion>
-
-          <%!-- Setup options: everything the site didn't promote —
-               template, start timing, workflow statuses, schedule math. --%>
-          <.accordion
-            id="create-setup"
-          >
-            <:title>{gettext("Setup options")}</:title>
             <:content>
               <div class="flex flex-col gap-4">
                 <div :if={"template" not in @top_blocks and @templates != []} class="flex flex-col gap-3">
@@ -1694,6 +1811,149 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   label={gettext("Count weekends in schedule")}
                   class="checkbox-sm"
                 />
+              </div>
+            </:content>
+          </.accordion>
+
+          <%!-- 2. Who's on it and what they may do. Permissions live here
+               rather than in their own drawer: "who is on this project" and
+               "what can they do" is one question, and the roles picked
+               above are exactly what the floors below apply to. --%>
+          <.accordion :if={"people" not in @top_blocks} id="create-people">
+            <:title>
+              {gettext("People & permissions")}
+              <span class="ml-2 text-xs font-normal opacity-50">{people_summary(assigns)}</span>
+            </:title>
+            <:content>
+              <div class="flex flex-col gap-4">
+                <.people_block
+                  invites={@invites}
+                  invite_email={@invite_email}
+                  invite_role={@invite_role}
+                  flag_states={@flag_states}
+                  assign_type={@assign_type}
+                  form={@form}
+                  department_options={@department_options}
+                  team_options={@team_options}
+                  person_options={@person_options}
+                />
+
+                <div :if={@authz_actions != []} class="border-t border-base-200 pt-3">
+                  <h3 class="mb-2 text-xs font-semibold uppercase opacity-50">
+                    {gettext("Who can do what")}
+                  </h3>
+                  <.permissions_block authz_choices={@authz_choices} authz_actions={@authz_actions} />
+                </div>
+              </div>
+            </:content>
+          </.accordion>
+
+          <%!-- 3. The task-tracker's own shape. Grouped by what the flag
+               DOES — one flat wall of 13 was the panel's example of the
+               problem. Prerequisites stay inline on the flag they gate. --%>
+          <.accordion :if={@flag_defs != []} id="create-features">
+            <:title>
+              {gettext("Task features")}
+              <span class="ml-2 text-xs font-normal opacity-50">{features_summary(assigns)}</span>
+            </:title>
+            <:content>
+              <div class="flex flex-col gap-4">
+                <div :for={{group_key, group_label, flags} <- grouped_flag_defs(@flag_defs)} id={"create-flags-#{group_key}"}>
+                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
+                  <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+                    <label :for={flag <- flags} class="flex items-center justify-between gap-3 py-0.5">
+                      <span class="text-sm">
+                        {flag.label}
+                        <span :if={flag.requires != []} class="block text-xs opacity-40">
+                          {gettext("Needs: %{list}", list: Enum.join(flag.requires, ", "))}
+                        </span>
+                      </span>
+                      <input type="hidden" name={"flag[#{flag.key}]"} value="false" />
+                      <input
+                        type="checkbox"
+                        name={"flag[#{flag.key}]"}
+                        value="true"
+                        checked={@flag_states[flag.key]}
+                        class="toggle toggle-sm"
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </:content>
+          </.accordion>
+
+          <%!-- 4. Add-ons, grouped by the job they do rather than by which
+               package shipped them (the panel's unanimous criterion — the
+               list grows every time the site installs a module, and nobody
+               hunting for "publish documents" thinks in package names).
+               Inline config stays inert until its toggle is on: pure CSS
+               reveal, and the server ignores unchecked rows at save. --%>
+          <.accordion :if={@ext_types != []} id="create-extensions">
+            <:title>
+              {gettext("Extensions")}
+              <span class="ml-2 text-xs font-normal opacity-50">{extensions_summary(assigns)}</span>
+            </:title>
+            <:content>
+              <div class="flex flex-col gap-4">
+                <div :for={{group_key, group_label, exts} <- creation_ext_groups(@ext_types)} id={"create-exts-#{group_key}"}>
+                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
+                  <div class="flex flex-col gap-2">
+                    <div :for={ext <- exts} class="group/extbox rounded-lg border border-base-200 p-2">
+                      <label class="flex items-center justify-between gap-3">
+                        <span class="min-w-0">
+                          <span class="flex items-center gap-2 text-sm font-medium">
+                            <.icon name={ext.icon} class="w-4 h-4 opacity-60" /> {ext.name}
+                          </span>
+                          <span :if={ext.description} class="block text-xs opacity-50">{ext.description}</span>
+                        </span>
+                        <input type="hidden" name={"ext[#{ext.key}]"} value="false" />
+                        <input
+                          type="checkbox"
+                          name={"ext[#{ext.key}]"}
+                          value="true"
+                          checked={@ext_states[ext.key]}
+                          class="toggle toggle-sm"
+                        />
+                      </label>
+                      <div
+                        :if={ext.config_schema != []}
+                        class="mt-2 hidden flex-wrap gap-2 border-t border-base-200 pt-2 group-has-[:checked]/extbox:flex"
+                      >
+                        <div :for={field <- ext.config_schema} class="w-full max-w-xs">
+                          <.select
+                            :if={field.type == :select}
+                            name={"ext_config[#{ext.key}][#{field.key}]"}
+                            value={ext_config_value(@ext_configs, ext.key, field.key)}
+                            label={field[:label] || field.key}
+                            class="select-sm"
+                            prompt={gettext("—")}
+                            options={
+                              for opt <-
+                                    ConfigOptions.resolve(
+                                      field,
+                                      ext_config_value(@ext_configs, ext.key, field.key)
+                                    ),
+                                  do: {opt.label, opt.value}
+                            }
+                          />
+                          <.input
+                            :if={field.type != :select}
+                            type="text"
+                            name={"ext_config[#{ext.key}][#{field.key}]"}
+                            value={ext_config_value(@ext_configs, ext.key, field.key)}
+                            label={field[:label] || field.key}
+                            class="input-sm"
+                            phx-debounce="300"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p class="text-xs opacity-40">
+                  {gettext("Everything here can be changed later in Modules & features.")}
+                </p>
               </div>
             </:content>
           </.accordion>

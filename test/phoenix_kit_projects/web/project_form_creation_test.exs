@@ -8,7 +8,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Extensions, Features, Members, Projects}
+  alias PhoenixKitProjects.{Authz, Extensions, Features, Members, Projects}
 
   defmodule ConfigProvider do
     def phoenix_kit_project_extensions do
@@ -56,6 +56,139 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     assert html =~ ~s(name="project[name]")
     # The summary receipt renders.
     assert html =~ "Statuses: site default"
+  end
+
+  describe "who-can-do-what floors (the 2026-08-07 panel's permissions answer)" do
+    test "the section renders the overridable floors, not a scheme editor", %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+
+      assert html =~ "People &amp; permissions"
+      assert html =~ "Who can do what"
+      assert html =~ "Who can add tasks"
+      assert html =~ "Who can assign tasks"
+      assert html =~ "Who can change task status"
+      # The fixed rules are stated rather than left to be discovered.
+      assert html =~ "you own it"
+      # No per-extension action matrix — the panel cut that explicitly.
+      refute html =~ "upload_files"
+    end
+
+    test "taking the defaults stores nothing (the project keeps inheriting)", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "AuthzDefault #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("AuthzDefault")
+      assert project
+      refute Map.has_key?(project.settings || %{}, "authz")
+      # ...and it still resolves to the site defaults.
+      assert Authz.current_overrides(project)["create_tasks"] == "members"
+      assert Authz.current_overrides(project)["assign_tasks"] == "managers"
+    end
+
+    test "a tightened floor is stored and enforced", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "authz" => %{"create_tasks" => "managers"}
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "AuthzTight #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("AuthzTight")
+      assert project
+      # ONLY the moved floor is written — minimal diff, like the flags.
+      assert project.settings["authz"] == %{"create_tasks" => "managers"}
+
+      # And it actually binds: a plain member may no longer add tasks.
+      {:ok, member} =
+        Auth.register_user(%{
+          "email" => "floor-#{System.unique_integer([:positive])}@example.com",
+          "password" => "MemberPass123!"
+        })
+
+      {:ok, _} = Members.add_member(project, member.uuid, role: "member")
+      project = Projects.get_project!(project.uuid)
+
+      refute Authz.can?(member.uuid, project, :create_tasks)
+      # A manager still can.
+      {:ok, manager} =
+        Auth.register_user(%{
+          "email" => "floor-mgr-#{System.unique_integer([:positive])}@example.com",
+          "password" => "MgrPass123!"
+        })
+
+      {:ok, _} = Members.add_member(project, manager.uuid, role: "manager")
+      assert Authz.can?(manager.uuid, project, :create_tasks)
+
+      # Control: the SAME member role on a project that took the defaults
+      # can create tasks. Without this, the refute above would also pass if
+      # member resolution were simply broken.
+      {:ok, plain} =
+        Projects.create_project(%{"name" => "AuthzPlain #{System.unique_integer([:positive])}"})
+
+      {:ok, _} = Members.add_member(plain, member.uuid, role: "member")
+      assert Authz.can?(member.uuid, plain, :create_tasks)
+    end
+
+    test "a crafted floor value is ignored rather than stored", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "authz" => %{"create_tasks" => "everyone", "delete_project" => "members"}
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "AuthzEvil #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("AuthzEvil")
+      assert project
+      # Neither the bogus choice nor the non-overridable action lands.
+      refute Map.has_key?(project.settings || %{}, "authz")
+    end
+  end
+
+  test "the drawers are grouped, and each header carries its current answer", %{conn: conn} do
+    {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+
+    # Four intent-named sections replace the three grab-bags.
+    assert html =~ ~s(id="create-start")
+    assert html =~ ~s(id="create-people")
+    assert html =~ ~s(id="create-features")
+    assert html =~ ~s(id="create-extensions")
+    refute html =~ ~s(id="create-customize")
+
+    # Task features are grouped, not one flat wall of 13.
+    assert html =~ ~s(id="create-flags-work")
+    assert html =~ ~s(id="create-flags-time")
+    assert html =~ ~s(id="create-flags-views")
+    assert html =~ "Working on tasks"
+
+    # Extensions are grouped by the job they do, not by which package
+    # shipped them.
+    assert html =~ ~s(id="create-exts-collaborate")
+    assert html =~ "Files &amp; documents"
+
+    # Headers state the answer, not a count of controls.
+    assert html =~ "Starts immediately"
+    assert html =~ "Site default statuses"
+    assert html =~ "Just you"
+  end
+
+  test "an uncategorized extension still appears, under More", %{conn: conn} do
+    {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+
+    # ConfigProvider's cfg_ext declares no category and isn't in the
+    # fallback map — it must not silently vanish from the form.
+    assert html =~ ~s(id="create-exts-more")
+    assert html =~ "Config Ext"
   end
 
   test "the public_intake archetype enables the portal on create", %{conn: conn} do
@@ -341,10 +474,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       :ok
     end
 
-    test "default: template + start live inside the Setup options accordion", %{conn: conn} do
+    test "default: template + start live inside the Start from accordion", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
 
-      assert html =~ ~s(id="create-setup")
+      assert html =~ ~s(id="create-start")
       assert html =~ "From template (optional)"
       refute html =~ ~s(id="create-top-template")
       refute html =~ ~s(id="create-top-start")

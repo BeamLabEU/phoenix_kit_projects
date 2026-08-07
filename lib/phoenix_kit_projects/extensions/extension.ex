@@ -82,6 +82,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
             on_disable: nil,
             data_retention: :keep,
             default_enabled: false,
+            category: nil,
             source: nil
 
   @type tab :: %{
@@ -107,6 +108,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
           on_disable: {module(), atom()} | nil,
           data_retention: :keep,
           default_enabled: boolean(),
+          category: String.t() | nil,
           source: module() | nil
         }
 
@@ -140,6 +142,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
          on_disable: normalize_callback(map[:on_disable], source, :on_disable),
          data_retention: :keep,
          default_enabled: map[:default_enabled] == true,
+         category: map[:category] && to_string(map[:category]),
          source: source
        }}
     end

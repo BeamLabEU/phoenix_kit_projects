@@ -66,6 +66,70 @@ defmodule PhoenixKitProjects.Extensions.Registry do
   def available?(%Extension{module_key: nil}), do: true
   def available?(%Extension{module_key: key}), do: module_enabled?(key)
 
+  # Extension categories — what JOB the extension does for a project, which
+  # is what someone scanning the list is actually looking for. Grouping by
+  # provenance instead (built-in vs installed module) was the panel's
+  # unanimous anti-pattern: nobody hunting for "publish documents" thinks
+  # about which package supplied it.
+  #
+  # A descriptor may declare its own `category`; these are the fallbacks for
+  # the catalog as it stands, so sibling modules opt in whenever they like
+  # without a breaking contract change. Anything unrecognized lands in
+  # "more" rather than disappearing.
+  @category_labels [
+    {"collaborate", "Working together"},
+    {"documents", "Files & documents"},
+    {"clients", "Clients & public access"},
+    {"data", "Data & dashboards"},
+    {"more", "More"}
+  ]
+
+  @category_fallback %{
+    "discussions" => "collaborate",
+    "whiteboards" => "collaborate",
+    "events" => "collaborate",
+    "files" => "documents",
+    "publishing_docs" => "documents",
+    "document_creator_docs" => "documents",
+    "portal" => "clients",
+    "crm_client" => "clients",
+    "billing_customer" => "clients",
+    "dashboards_board" => "data",
+    "entities_data" => "data",
+    "locations_sites" => "data"
+  }
+
+  @doc "Category keys with display labels, in scan order."
+  @spec categories() :: [{String.t(), String.t()}]
+  def categories, do: @category_labels
+
+  @doc """
+  The category an extension belongs to: its declared `category` when it
+  names a known one, else the built-in fallback for its key, else "more".
+  """
+  @spec category_of(Extension.t()) :: String.t()
+  def category_of(%Extension{key: key, category: declared}) do
+    known = Enum.map(@category_labels, &elem(&1, 0))
+
+    if declared in known,
+      do: declared,
+      else: Map.get(@category_fallback, key, "more")
+  end
+
+  @doc """
+  Extensions grouped for display: `[{category_key, label, [extension]}]`,
+  in scan order, with empty categories dropped.
+  """
+  @spec group_by_category([Extension.t()]) :: [{String.t(), String.t(), [Extension.t()]}]
+  def group_by_category(extensions) do
+    grouped = Enum.group_by(extensions, &category_of/1)
+
+    for {key, label} <- @category_labels,
+        members = Map.get(grouped, key, []),
+        members != [],
+        do: {key, label, members}
+  end
+
   @doc """
   Whether a scope may SEE this extension's contributed surface. The
   required permission resolves `permission` → `module_key` → the hub's
