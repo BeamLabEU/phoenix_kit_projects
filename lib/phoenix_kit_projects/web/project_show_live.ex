@@ -1922,10 +1922,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # hands the tab a boolean — mutating tabs (whiteboards, events) honor
   # it. A nil scope is an embed mount: host-authorized, per the
   # documented trust model. No declared write action = no writes.
+  # A nil scope used to mean "can write" — the embed case, where no on_mount
+  # runs, was handed write access to every contributed tab. Fail CLOSED: an
+  # unidentified viewer gets read-only. (The mount gate now refuses an
+  # unidentified embed outright, so this is the second line rather than the
+  # first, but a fail-open authz branch should not exist at all.)
   defp ext_tab_can_write(assigns, tab) do
     case {assigns[:phoenix_kit_current_scope], tab.write_action} do
       {_, nil} -> false
-      {nil, _} -> true
+      {nil, _} -> false
       {scope, action} -> Authz.can?(scope, assigns.project, action)
     end
   end

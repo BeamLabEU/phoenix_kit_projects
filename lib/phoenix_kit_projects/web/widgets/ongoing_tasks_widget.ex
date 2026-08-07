@@ -25,7 +25,7 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
 
     if available?() do
       settings = assigns[:settings] || %{}
-      project = resolve_project(settings["project"])
+      project = resolve_project(settings["project"], assigns[:scope])
 
       {:ok,
        socket

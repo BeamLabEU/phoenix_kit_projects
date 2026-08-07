@@ -20,7 +20,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectStatusWidget do
     socket = assign(socket, :id, assigns.id)
 
     if available?() do
-      project = resolve_project((assigns[:settings] || %{})["project"])
+      project = resolve_project((assigns[:settings] || %{})["project"], assigns[:scope])
 
       {:ok,
        socket

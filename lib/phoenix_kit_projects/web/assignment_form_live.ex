@@ -284,6 +284,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     project = Projects.get_project(project_id)
     assignment = Projects.get_assignment(id)
 
+    # The assignment is re-scoped to the project named in the params. These
+    # were fetched independently and never compared, so pairing any
+    # project_id with any assignment uuid loaded a FOREIGN task into the
+    # edit form — the project gate said yes about one project while the
+    # form edited another's row.
+    assignment =
+      if assignment && project && assignment.project_uuid == project.uuid,
+        do: assignment,
+        else: nil
+
     case {project, assignment} do
       {nil, _} ->
         socket

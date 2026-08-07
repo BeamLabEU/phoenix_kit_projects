@@ -5,7 +5,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -500,25 +500,45 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   def handle_event("delete", %{"uuid" => uuid}, socket) do
+    # Existence was the only check here: a client event naming any project
+    # uuid deleted it, whatever the sender's relationship to it. The list is
+    # scoped now, but a handler must never trust that the row came from the
+    # rendered page.
     case Projects.get_project(uuid) do
       nil ->
         {:noreply, put_flash(socket, :error, gettext("Project not found."))}
 
       project ->
-        case Projects.delete_project(project) do
-          {:ok, _} ->
-            log_and_flash_deleted(socket, project)
+        delete_if_permitted(socket, project)
+    end
+  end
 
-          {:error, _} ->
-            Activity.log_failed("projects.project_deleted",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "project",
-              resource_uuid: project.uuid,
-              metadata: %{"name" => project.name}
-            )
+  defp delete_if_permitted(socket, project) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
 
-            {:noreply, put_flash(socket, :error, gettext("Could not delete project."))}
-        end
+    if Authz.can?(scope, project, :delete_project) do
+      do_delete(socket, project)
+    else
+      # Same shape as not-found: whether the project exists is not something
+      # a caller without access should be able to probe.
+      {:noreply, put_flash(socket, :error, gettext("Project not found."))}
+    end
+  end
+
+  defp do_delete(socket, project) do
+    case Projects.delete_project(project) do
+      {:ok, _} ->
+        log_and_flash_deleted(socket, project)
+
+      {:error, _} ->
+        Activity.log_failed("projects.project_deleted",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: project.uuid,
+          metadata: %{"name" => project.name}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not delete project."))}
     end
   end
 

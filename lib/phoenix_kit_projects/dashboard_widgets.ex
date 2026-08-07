@@ -41,6 +41,17 @@ defmodule PhoenixKitProjects.DashboardWidgets do
   (non-template, non-archived) project, blank = first running. Degrades to just
   the blank option when the module/tables aren't available.
   """
+  # ⚠ NOT viewer-scoped, and cannot be from here: the catalog (and this
+  # select's options with it) is built once, with no viewer in hand — the
+  # widget-settings contract in phoenix_kit_dashboards would have to pass a
+  # scope through. So this dropdown still names every project to anyone who
+  # can edit a dashboard widget.
+  #
+  # What it no longer does is grant access: `Widgets.Helpers.resolve_project/2`
+  # re-checks :view on whatever the setting names, so picking a project you
+  # cannot see renders the widget's empty state. Names and uuids in the
+  # select are the residual exposure; closing it needs the sibling contract
+  # change.
   @spec project_options() :: [{String.t(), String.t()}]
   def project_options do
     prompt = {"First running project", ""}

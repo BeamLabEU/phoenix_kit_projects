@@ -308,7 +308,24 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp apply_action(socket, :edit, %{"id" => id}) do
-    case Projects.get_project(id) do
+    # Any project uuid used to load straight into the edit form. Templates
+    # keep riding the route's module permission (they have no membership
+    # rows); a real project needs :edit_settings, and a refusal is shaped
+    # like not-found so the form can't be used to probe for existence.
+    project =
+      case Projects.get_project(id) do
+        %Project{is_template: true} = template ->
+          template
+
+        %Project{} = project ->
+          if Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :edit_settings),
+            do: project
+
+        other ->
+          other
+      end
+
+    case project do
       nil ->
         socket
         |> assign(

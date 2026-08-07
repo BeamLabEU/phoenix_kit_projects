@@ -916,14 +916,27 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
   end
 
   describe "Codex R2-M3 regression: :deleted emit at delete call sites" do
-    test "ProjectsLive delete handler emits :deleted in emit mode", %{conn: conn} do
+    test "ProjectsLive delete handler emits :deleted in emit mode", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project(%{"name" => "Doomed"})
+      # Deleting is an owner-floor action, and the handler no longer trusts
+      # that a uuid arriving by client event came from a row the sender
+      # could see.
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "owner")
+
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0,
+            "current_user_uuid" => actor_uuid
+          }
         )
 
       render_hook(view, "delete", %{"uuid" => project.uuid})
@@ -968,14 +981,21 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
     end
 
     test "notify_deleted emits with close: false (informational only)",
-         %{conn: conn} do
+         %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project(%{"name" => "Close-flag check"})
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "owner")
+
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectsLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0,
+            "current_user_uuid" => actor_uuid
+          }
         )
 
       render_hook(view, "delete", %{"uuid" => project.uuid})

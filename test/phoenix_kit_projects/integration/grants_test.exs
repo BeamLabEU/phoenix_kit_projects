@@ -5,7 +5,7 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
   quorum settled on.
   """
 
-  use PhoenixKitProjects.DataCase, async: false
+  use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Users.{Auth, Roles}
   alias PhoenixKitProjects.{Authz, Grants, Members, Projects}
@@ -258,6 +258,57 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
     test "a nil scope reaches nothing" do
       assert Projects.list_projects_for(nil) == []
       assert Projects.count_projects_for(nil) == 0
+    end
+  end
+
+  describe "handlers don't trust client-supplied uuids" do
+    test "deleting a project requires :delete_project, not just its existence",
+         %{project: project, conn: conn} do
+      {:ok, stranger} =
+        Auth.register_user(%{
+          "email" => "stranger-#{System.unique_integer([:positive])}@example.com",
+          "password" => "StrangerPass123!"
+        })
+
+      # A member who is not an owner: can see the project, cannot delete it.
+      {:ok, _} = Members.add_member(project, stranger.uuid, role: "member")
+
+      scope =
+        PhoenixKitProjects.LiveCase.fake_scope(
+          user_uuid: stranger.uuid,
+          permissions: ["projects"]
+        )
+
+      conn = PhoenixKitProjects.LiveCase.put_test_scope(conn, scope)
+      {:ok, view, _} = live(conn, "/en/admin/projects/list")
+
+      render_hook(view, "delete", %{"uuid" => project.uuid})
+
+      # Still there.
+      assert PhoenixKitProjects.Projects.get_project(project.uuid)
+    end
+
+    test "an owner can delete", %{project: project, conn: conn} do
+      {:ok, owner} =
+        Auth.register_user(%{
+          "email" => "owner-#{System.unique_integer([:positive])}@example.com",
+          "password" => "OwnerPass123!"
+        })
+
+      {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+
+      scope =
+        PhoenixKitProjects.LiveCase.fake_scope(
+          user_uuid: owner.uuid,
+          permissions: ["projects"]
+        )
+
+      conn = PhoenixKitProjects.LiveCase.put_test_scope(conn, scope)
+      {:ok, view, _} = live(conn, "/en/admin/projects/list")
+
+      render_hook(view, "delete", %{"uuid" => project.uuid})
+
+      refute PhoenixKitProjects.Projects.get_project(project.uuid)
     end
   end
 

@@ -25,7 +25,7 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
     socket = assign(socket, :id, assigns.id)
 
     if available?() do
-      projects = safe_list_projects()
+      projects = safe_list_projects(assigns[:scope])
       status_by = statuses_by_project(projects)
 
       tiles =

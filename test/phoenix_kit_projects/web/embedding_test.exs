@@ -647,12 +647,24 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   end
 
   describe "ProjectFormLive embed (:edit)" do
-    test "edits an existing project when id is passed via session", %{conn: conn} do
+    test "edits an existing project when id is passed via session", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project(%{"name" => "Existing"})
+
+      # Editing a project's settings is an owner-floor action, so the
+      # embedded viewer has to actually hold it — the form used to load any
+      # project by uuid.
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "owner")
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-          session: %{"live_action" => "edit", "id" => project.uuid}
+          session: %{
+            "live_action" => "edit",
+            "id" => project.uuid,
+            "current_user_uuid" => actor_uuid
+          }
         )
 
       assert html =~ "Edit Existing"
