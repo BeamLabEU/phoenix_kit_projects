@@ -81,7 +81,11 @@ defmodule PhoenixKitProjects.LiveCase do
     user_uuid = Keyword.get(opts, :user_uuid, Ecto.UUID.generate())
     email = Keyword.get(opts, :email, "test-#{System.unique_integer([:positive])}@example.com")
     roles = Keyword.get(opts, :roles, ["Owner"])
-    permissions = Keyword.get(opts, :permissions, ["projects"])
+    # The default fixture is a SITE ADMIN: it holds the module key AND the
+    # `projects.admin_all` sub-key, which is what "may administer projects
+    # I'm not a member of" now requires. Pass `permissions: ["projects"]` to
+    # build a plain module-reacher instead — the contractor shape.
+    permissions = Keyword.get(opts, :permissions, ["projects", "projects.admin_all"])
     authenticated? = Keyword.get(opts, :authenticated?, true)
 
     user = %{uuid: user_uuid, email: email}

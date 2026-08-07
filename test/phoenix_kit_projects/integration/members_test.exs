@@ -316,9 +316,16 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       refute Authz.can?(other.uuid, project, :update_status, %{assigned_person: nil})
     end
 
-    test "the admin override still covers admin-area scopes", %{project: project} do
-      scope = PhoenixKitProjects.LiveCase.fake_scope(permissions: ["projects"])
-      assert Authz.can?(scope, project, :manage_members)
+    test "the admin override covers a site admin, not a bare module-reacher",
+         %{project: project} do
+      admin =
+        PhoenixKitProjects.LiveCase.fake_scope(permissions: ["projects", "projects.admin_all"])
+
+      assert Authz.can?(admin, project, :manage_members)
+
+      # The split: reaching the module is not administering every project.
+      reacher = PhoenixKitProjects.LiveCase.fake_scope(permissions: ["projects"])
+      refute Authz.can?(reacher, project, :manage_members)
     end
   end
 end

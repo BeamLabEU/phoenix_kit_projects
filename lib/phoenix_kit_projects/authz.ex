@@ -19,14 +19,18 @@ defmodule PhoenixKitProjects.Authz do
 
   ## Resolution stages (implementation honesty)
 
-    * **Tonight (v1)**: site-permission based — the resolver mirrors the
-      status quo: a scope with admin access to the `projects` module may do
-      everything; anyone else nothing. Fail-closed on nil/malformed input.
-    * **Step 5 (members)**: role + relationship terms — owner/manager/
-      member/viewer from the members table, relationship grants (assignee
-      may `:update_status` on their own assignment, etc.), "who can X"
-      per-project settings. The v1 admin path remains as the
-      `projects.view_all`-style admin override.
+    * **v1**: site-permission based — module access meant "do everything".
+    * **Members**: role + relationship terms — owner/manager/member/viewer
+      from the members table, relationship grants (an assignee may
+      `:update_status` on their own assignment), and the per-project
+      "who can X" floors in `settings["authz"]`.
+    * **The split (2026-08-07)**: the admin path is no longer bare module
+      access. `projects` means "may enter the module"; the
+      `projects.admin_all` SUB-permission means "administer projects you
+      are not a member of". Before this, granting a role the module so its
+      people could see their own projects handed them every project on the
+      site — the resolver short-circuited on module access before
+      membership was consulted.
 
   ## Vocabulary (frozen)
 
@@ -122,14 +126,32 @@ defmodule PhoenixKitProjects.Authz do
 
   def can?(_subject, _project, _action, _record, _opts), do: false
 
-  # The site-admin path — core's ensure_admin on_mount already required the
-  # "projects" module permission to reach any admin page; the resolver
-  # re-derives it so off-router (embedded) callers get the same answer.
-  # Admin-area users see and manage everything (the transitional state until
-  # a member-facing surface exists; a future `projects.view_all`-style
-  # sub-permission can narrow this).
+  @admin_all_key "projects.admin_all"
+
+  @doc "The sub-permission that grants power over projects you don't belong to."
+  @spec admin_all_key() :: String.t()
+  def admin_all_key, do: @admin_all_key
+
+  # The site-admin path. This used to be bare module access, which made the
+  # "projects" permission mean "do everything on every project" — checked
+  # BEFORE membership, so a role granted the module purely to let its people
+  # SEE their own projects silently got full power over all of them. It now
+  # keys on the `projects.admin_all` sub-permission: the base key means "may
+  # enter the module", this one means "administer projects you are not a
+  # member of". Owner rides core's "*" wildcard, Admin is auto-granted the
+  # sub-key at boot, and `PhoenixKitProjects.migrate_legacy/0` carries every
+  # other role that already held the base key — so the split changes nobody's
+  # access on an existing install, only what a NEW grant of "projects" means.
+  # Deliberately NOT `Scope.can?/2`: that also requires the module to be
+  # feature-ENABLED, which routes a settings read (DB-backed, ETS-cached)
+  # into an authorization decision — a cache miss or DB blip rescues to
+  # false and silently drops every admin mid-session. Module enablement is
+  # already enforced where it belongs, at the tab/route layer. What is kept
+  # from `can?/2` is the base-held rule: a dotted key is only effective
+  # while its base is held, so an orphan row can't outlive a revoked grant.
   defp admin_override?(%Scope{} = scope) do
-    Scope.has_module_access?(scope, "projects")
+    Scope.has_module_access?(scope, @admin_all_key) and
+      Scope.has_module_access?(scope, "projects")
   rescue
     _ -> false
   catch

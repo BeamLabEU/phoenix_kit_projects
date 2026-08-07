@@ -161,8 +161,52 @@ defmodule PhoenixKitProjects do
       key: module_key(),
       label: "Projects",
       icon: "hero-clipboard-document-list",
-      description: "Manage projects, tasks, and assignments"
+      description: "Reach the Projects module — see the projects you belong to",
+      sub_permissions: [
+        # The base key used to mean "do everything on every project": the
+        # resolver short-circuited on module access before membership was
+        # ever consulted, so granting a contractor's role the projects
+        # permission handed them full power over every project on the site.
+        # Splitting it makes the base key mean "may enter the module" and
+        # this one mean "administer projects you are not a member of".
+        # Core auto-grants declared sub-keys to Admin at boot, Owner rides
+        # the "*" wildcard, and `migrate_legacy/0` carries every other role
+        # that already held the base key — so nobody loses access, while a
+        # role granted the base key from now on gets no such power.
+        %{
+          key: "admin_all",
+          label: "Administer all projects",
+          description:
+            "See and manage every project on the site, including ones this user is not a member of"
+        }
+      ]
     }
+  end
+
+  @doc """
+  Grants `projects.admin_all` to every role that already holds the base
+  `projects` key, preserving the pre-split behavior for existing installs.
+
+  Idempotent (a role that already holds it is skipped) and safe to re-run on
+  every boot, which is how core invokes it. Deliberately one-way: it never
+  revokes, so an Owner who removes the sub-key from a role keeps that
+  decision.
+  """
+  def migrate_legacy do
+    alias PhoenixKit.Users.{Permissions, Roles}
+
+    Enum.each(Roles.list_roles(), fn role ->
+      granted = Permissions.get_permissions_for_role(role.uuid)
+
+      if "projects" in granted and "projects.admin_all" not in granted do
+        Permissions.grant_permission(role.uuid, "projects.admin_all", nil)
+      end
+    end)
+
+    :ok
+  rescue
+    error ->
+      {:error, Exception.message(error)}
   end
 
   @impl PhoenixKit.Module

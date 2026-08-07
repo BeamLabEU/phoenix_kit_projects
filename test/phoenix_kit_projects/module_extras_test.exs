@@ -19,6 +19,40 @@ defmodule PhoenixKitProjects.ModuleExtrasTest do
       assert is_binary(meta.icon)
       assert is_binary(meta.description)
     end
+
+    test "declares the admin_all sub-permission" do
+      meta = PhoenixKitProjects.permission_metadata()
+      assert [%{key: "admin_all"} = sub] = meta.sub_permissions
+      assert is_binary(sub.label)
+      assert is_binary(sub.description)
+    end
+  end
+
+  describe "migrate_legacy/0 (the permission-split backfill)" do
+    # The real grant path can't run here: `grant_permission/3` validates the
+    # key against the module registry, and "projects" isn't registered in
+    # this env (verified: all_module_keys/0 excludes it). What IS worth
+    # pinning is that the backfill degrades gracefully rather than raising
+    # on a host where the key is absent — it runs on every boot, inside a
+    # supervisor that swallows errors, so a raise would be invisible. The
+    # grant itself is verified against a populated registry in the parent app.
+    test "is idempotent and never raises, even where the key is unregistered" do
+      assert :ok = PhoenixKitProjects.migrate_legacy()
+      assert :ok = PhoenixKitProjects.migrate_legacy()
+    end
+
+    test "grants nothing to a role that never held the base key" do
+      alias PhoenixKit.Users.{Permissions, Roles}
+
+      {:ok, role} =
+        Roles.create_role(%{
+          name: "NoProjects-#{System.unique_integer([:positive])}",
+          description: "fixture"
+        })
+
+      assert :ok = PhoenixKitProjects.migrate_legacy()
+      refute "projects.admin_all" in Permissions.get_permissions_for_role(role.uuid)
+    end
   end
 
   describe "version/0" do

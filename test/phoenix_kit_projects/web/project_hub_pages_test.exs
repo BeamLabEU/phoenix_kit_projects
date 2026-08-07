@@ -150,9 +150,16 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
                :set_health
              )
 
-      # And the admin-scoped path allows it.
-      assert PhoenixKitProjects.Authz.can?(
+      # Nor does merely reaching the module — that is the permission split.
+      refute PhoenixKitProjects.Authz.can?(
                fake_scope(permissions: ["projects"]),
+               project,
+               :set_health
+             )
+
+      # A site admin (module + admin_all) does.
+      assert PhoenixKitProjects.Authz.can?(
+               fake_scope(permissions: ["projects", "projects.admin_all"]),
                project,
                :set_health
              )
