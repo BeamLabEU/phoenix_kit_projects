@@ -16,9 +16,11 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Roles
   alias PhoenixKitProjects.Activity
-  alias PhoenixKitProjects.{Authz, L10n, Members, Paths, Projects}
+  alias PhoenixKitProjects.{Authz, Grants, L10n, Members, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -95,12 +97,93 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
      |> WebHelpers.close_or_navigate(Paths.projects())}
   end
 
+  defp do_add_grant(socket, type, uuid, role) do
+    case Grants.grant(socket.assigns.project, type, uuid, role,
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, _} ->
+        {:noreply, socket |> load_members() |> put_flash(:info, gettext("Access granted."))}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not grant access."))}
+    end
+  end
+
   defp allowed?(socket, project) do
     Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :manage_members)
   end
 
   defp load_members(socket) do
-    assign(socket, members: Members.list_members(socket.assigns.project.uuid))
+    project_uuid = socket.assigns.project.uuid
+
+    assign(socket,
+      members: Members.list_members(project_uuid),
+      grants: decorate_grants(Grants.list_grants(project_uuid)),
+      subject_options: subject_options()
+    )
+  end
+
+  # A grant row carries only a subject uuid — it has no foreign key,
+  # because it points into three different tables, two of them in an
+  # optional package. Resolve each to a display name here, and mark the
+  # ones whose subject has since been deleted rather than hiding them: an
+  # invisible grant that still resolves is worse than a labelled orphan.
+  defp decorate_grants(grants) do
+    Enum.map(grants, fn grant ->
+      Map.merge(grant, %{
+        subject_label: subject_label(grant.subject_type, grant.subject_uuid),
+        reach: Grants.subject_reach(grant.subject_type, grant.subject_uuid)
+      })
+    end)
+  end
+
+  defp subject_label("role", uuid) do
+    case Roles.get_role_by_uuid(uuid) do
+      %{name: name} -> name
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp subject_label("team", uuid), do: staff_name(PhoenixKitStaff.Schemas.Team, uuid)
+  defp subject_label("department", uuid), do: staff_name(PhoenixKitStaff.Schemas.Department, uuid)
+  defp subject_label(_type, _uuid), do: nil
+
+  defp staff_name(schema, uuid) do
+    case RepoHelper.repo().get(schema, uuid) do
+      %{name: name} -> name
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # The options a grant can point at. Staff is optional, so a site without
+  # it simply offers site roles.
+  # {kind, group label, [{name, uuid}]} — empty kinds drop out, so a site
+  # without the staff package simply offers site roles.
+  defp subject_options do
+    [
+      {"team", gettext("Teams"), staff_options(PhoenixKitStaff.Schemas.Team)},
+      {"department", gettext("Departments"), staff_options(PhoenixKitStaff.Schemas.Department)},
+      {"role", gettext("Site roles"), role_options()}
+    ]
+    |> Enum.reject(fn {_kind, _label, options} -> options == [] end)
+  end
+
+  defp role_options do
+    Roles.list_roles() |> Enum.map(&{&1.name, &1.uuid})
+  rescue
+    _ -> []
+  end
+
+  defp staff_options(schema) do
+    RepoHelper.repo().all(schema)
+    |> Enum.map(&{&1.name, &1.uuid})
+    |> Enum.sort_by(&elem(&1, 0))
+  rescue
+    _ -> []
   end
 
   # ── Events ──────────────────────────────────────────────────────
@@ -161,6 +244,35 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
 
         {:error, _} ->
           {:noreply, put_flash(socket, :error, gettext("Could not change the role."))}
+      end
+    end)
+  end
+
+  def handle_event("add_grant", %{"subject" => subject} = params, socket) do
+    with_authz(socket, fn ->
+      role = Map.get(params, "role", "viewer")
+
+      # "team:<uuid>" — the kind travels with the choice, so there is no
+      # separate type field a caller could mismatch against the uuid.
+      case String.split(subject, ":", parts: 2) do
+        [type, uuid] when type in ~w(team department role) and byte_size(uuid) > 0 ->
+          do_add_grant(socket, type, uuid, role)
+
+        _ ->
+          {:noreply, put_flash(socket, :error, gettext("Choose a group first."))}
+      end
+    end)
+  end
+
+  def handle_event("revoke_grant", %{"uuid" => uuid}, socket) do
+    with_authz(socket, fn ->
+      # Scoped to THIS project: a grant uuid arriving by client event must
+      # not be able to revoke a grant on some other project.
+      if Enum.any?(socket.assigns.grants, &(&1.uuid == uuid)) do
+        Grants.revoke(uuid, actor_uuid: Activity.actor_uuid(socket))
+        {:noreply, socket |> load_members() |> put_flash(:info, gettext("Access removed."))}
+      else
+        {:noreply, put_flash(socket, :error, gettext("Access not found."))}
       end
     end)
   end
@@ -272,6 +384,92 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
           </button>
         </form>
 
+        <%!-- Group access. The other half of "who works here": a role held
+             by a team, a department, or a site role, so inviting Design or
+             letting contractors look is one row instead of a person-by-
+             person chore that drifts when people change team. --%>
+        <div class="card border border-base-200 bg-base-100">
+          <div class="card-body gap-3 py-3 px-4">
+            <div>
+              <h2 class="text-sm font-semibold">{gettext("Groups with access")}</h2>
+              <p class="text-xs opacity-60">
+                {gettext("Everyone in the group gets this role here, including people who join it later.")}
+              </p>
+            </div>
+
+            <form id="add-grant-form" phx-submit="add_grant" class="flex flex-wrap items-end gap-2">
+              <%!-- ONE select, grouped by kind. Three selects sharing a
+                   field name would need JS (or a CSS reveal) to keep
+                   exactly one enabled; an optgroup needs neither, and the
+                   value carries its own kind so the server never has to
+                   trust a separate type field. --%>
+              <label class="form-control grow max-w-sm">
+                <span class="label-text text-xs opacity-70 mb-1">{gettext("Group")}</span>
+                <label class="select select-bordered select-sm">
+                  <select name="subject">
+                    <option value="">{gettext("Choose a team, department, or role…")}</option>
+                    <optgroup :for={{kind, label, options} <- @subject_options} label={label}>
+                      <option :for={{name, uuid} <- options} value={"#{kind}:#{uuid}"}>
+                        {name}
+                      </option>
+                    </optgroup>
+                  </select>
+                </label>
+              </label>
+
+              <label class="form-control w-36">
+                <span class="label-text text-xs opacity-70 mb-1">{gettext("Role")}</span>
+                <label class="select select-bordered select-sm">
+                  <select name="role">
+                    <option value="viewer">{gettext("Viewer")}</option>
+                    <option value="member">{gettext("Member")}</option>
+                    <option value="manager">{gettext("Manager")}</option>
+                  </select>
+                </label>
+              </label>
+
+              <button type="submit" class="btn btn-primary btn-sm gap-1">
+                <.icon name="hero-user-group" class="w-4 h-4" /> {gettext("Grant")}
+              </button>
+            </form>
+
+            <p class="text-xs opacity-50">
+              {gettext("Groups can't own a project — ownership stays with a person.")}
+            </p>
+
+            <div :if={@grants != []} class="divide-y divide-base-200 border-t border-base-200">
+              <div :for={grant <- @grants} class="flex items-center gap-3 py-2">
+                <.icon name={grant_icon(grant.subject_type)} class="w-4 h-4 opacity-60 shrink-0" />
+                <div class="min-w-0 grow">
+                  <div class="text-sm font-medium truncate">
+                    {grant.subject_label || gettext("(deleted group)")}
+                  </div>
+                  <%!-- Blast radius: how many accounts this reaches TODAY,
+                       plus the part people forget — that it keeps applying
+                       to accounts that join the group later. --%>
+                  <div class="text-xs opacity-50">
+                    {grant_kind_label(grant.subject_type)} ·
+                    {ngettext("%{count} person now", "%{count} people now", grant.reach,
+                      count: grant.reach
+                    )} · {gettext("and anyone added later")}
+                  </div>
+                </div>
+                <span class="badge badge-ghost badge-sm shrink-0">{grant.role}</span>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs btn-circle text-error"
+                  phx-click="revoke_grant"
+                  phx-value-uuid={grant.uuid}
+                  data-confirm={gettext("Remove this group's access?")}
+                  aria-label={gettext("Remove access")}
+                >
+                  <.icon name="hero-x-mark" class="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <%!-- Member rows --%>
         <div class="card border border-base-200 bg-base-100">
           <div class="card-body py-2 px-4 divide-y divide-base-200">
@@ -313,6 +511,14 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
     </div>
     """
   end
+
+  defp grant_icon("team"), do: "hero-user-group"
+  defp grant_icon("department"), do: "hero-building-office"
+  defp grant_icon(_), do: "hero-identification"
+
+  defp grant_kind_label("team"), do: gettext("Team")
+  defp grant_kind_label("department"), do: gettext("Department")
+  defp grant_kind_label(_), do: gettext("Site role")
 
   attr(:name, :string, required: true)
   attr(:value, :string, required: true)

@@ -2,6 +2,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLiveTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Roles
   alias PhoenixKitProjects.Members
 
   setup %{conn: conn} do
@@ -86,5 +87,116 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLiveTest do
   test "templates bounce", %{conn: conn} do
     template = fixture_template()
     {:error, {:live_redirect, %{to: _}}} = live(conn, path(template))
+  end
+
+  describe "group access (indirect grants)" do
+    alias PhoenixKitProjects.{Authz, Grants, Projects}
+
+    test "granting a site role gives its holders the role, and says who it reaches", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      {:ok, role} =
+        Roles.create_role(%{
+          name: "UiContractor-#{System.unique_integer([:positive])}"
+        })
+
+      {:ok, _} = Roles.assign_role(user, role.name)
+      refute Authz.can?(user.uuid, project, :view)
+
+      {:ok, view, html} = live(conn, path(project))
+      assert html =~ "Groups with access"
+
+      html =
+        render_submit(view, "add_grant", %{"subject" => "role:#{role.uuid}", "role" => "viewer"})
+
+      assert html =~ role.name
+      # Blast radius, including the part people forget.
+      assert html =~ "1 person now"
+      assert html =~ "anyone added later"
+
+      assert Authz.effective_role(project, user.uuid) == :viewer
+      refute Authz.can?(user.uuid, project, :create_tasks)
+    end
+
+    test "revoking removes the access", %{conn: conn, project: project, user: user} do
+      {:ok, role} =
+        Roles.create_role(%{
+          name: "UiRevoke-#{System.unique_integer([:positive])}"
+        })
+
+      {:ok, _} = Roles.assign_role(user, role.name)
+      {:ok, grant} = Grants.grant(project, "role", role.uuid, "viewer")
+      assert Authz.can?(user.uuid, project, :view)
+
+      {:ok, view, _} = live(conn, path(project))
+      render_click(view, "revoke_grant", %{"uuid" => grant.uuid})
+
+      refute Authz.can?(user.uuid, project, :view)
+    end
+
+    test "a grant uuid from ANOTHER project can't be revoked through this page", %{
+      conn: conn,
+      project: project,
+      user: user
+    } do
+      other = fixture_project(%{"name" => "Other-#{System.unique_integer([:positive])}"})
+
+      {:ok, role} =
+        Roles.create_role(%{
+          name: "UiCross-#{System.unique_integer([:positive])}"
+        })
+
+      {:ok, _} = Roles.assign_role(user, role.name)
+      {:ok, foreign} = Grants.grant(other, "role", role.uuid, "viewer")
+
+      {:ok, view, _} = live(conn, path(project))
+      render_click(view, "revoke_grant", %{"uuid" => foreign.uuid})
+
+      # Untouched — the handler scopes the uuid to the project on screen.
+      assert Authz.can?(user.uuid, other, :view)
+      assert length(Grants.list_grants(other.uuid)) == 1
+    end
+
+    test "a malformed subject is refused rather than stored", %{conn: conn, project: project} do
+      {:ok, view, _} = live(conn, path(project))
+
+      render_submit(view, "add_grant", %{
+        "subject" => "wizard:#{Ecto.UUID.generate()}",
+        "role" => "viewer"
+      })
+
+      render_submit(view, "add_grant", %{"subject" => "", "role" => "viewer"})
+
+      assert Grants.list_grants(project.uuid) == []
+    end
+
+    test "a grant whose subject was deleted is labelled, not hidden", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, _} = Grants.grant(project, "team", Ecto.UUID.generate(), "viewer")
+
+      {:ok, _view, html} = live(conn, path(project))
+      assert html =~ "(deleted group)"
+    end
+
+    test "the project's own page still lists it for a group-granted viewer", %{
+      project: project,
+      user: user
+    } do
+      {:ok, role} =
+        Roles.create_role(%{
+          name: "UiList-#{System.unique_integer([:positive])}"
+        })
+
+      {:ok, _} = Roles.assign_role(user, role.name)
+      {:ok, _} = Grants.grant(project, "role", role.uuid, "viewer")
+
+      scope = fake_scope(user_uuid: user.uuid, permissions: ["projects"])
+      names = Projects.list_projects_for(scope) |> Enum.map(& &1.name)
+      assert project.name in names
+    end
   end
 end
