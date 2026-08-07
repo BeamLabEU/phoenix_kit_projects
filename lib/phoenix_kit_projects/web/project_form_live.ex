@@ -15,6 +15,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitWeb.Components.Core.ChangeCue
 
   require Logger
 
@@ -837,32 +838,19 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   defp flash_changed_sections(socket, before) do
     now = capability_snapshot(socket.assigns)
 
-    sections =
-      [
-        section_change("create-features", changed_keys(before.flags, now.flags), "flag-row-"),
-        section_change("create-extensions", changed_keys(before.exts, now.exts), "ext-row-"),
-        # The permissions drawer changes when a ROW comes or goes — a
-        # capability appearing or disappearing — not when a floor is merely
-        # re-answered in the drawer the reader is already looking at.
-        section_change(
-          "create-people",
+    # Only WHAT changed. Where to show it — and whether to show the rows or
+    # the section that holds them — is the client's call, because only the
+    # client knows which sections are open.
+    targets =
+      Enum.map(changed_keys(before.flags, now.flags), &("flag-row-" <> &1)) ++
+        Enum.map(changed_keys(before.exts, now.exts), &("ext-row-" <> &1)) ++
+        Enum.map(
           symmetric_difference(before.authz_rows, now.authz_rows),
-          "authz-row-"
-        ),
-        # Start-from has no per-row ids worth highlighting, so a change
-        # there flashes the drawer itself.
-        if(setup_changed?(before, now), do: %{id: "create-start", targets: []})
-      ]
-      |> Enum.reject(&is_nil/1)
+          &("authz-row-" <> &1)
+        ) ++
+        if(setup_changed?(before, now), do: ["create-start"], else: [])
 
-    if sections == [], do: socket, else: push_event(socket, "pk-flash", %{sections: sections})
-  end
-
-  # nil = nothing changed here, so the section is left alone.
-  defp section_change(_id, [], _prefix), do: nil
-
-  defp section_change(id, keys, prefix) do
-    %{id: id, targets: Enum.map(keys, &(prefix <> &1))}
+    ChangeCue.push(socket, targets, announce: gettext("Project setup updated"))
   end
 
   defp changed_keys(before, now) do
@@ -2220,7 +2208,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                entirely (and out of their own summaries). --%>
 
           <%!-- 1. What it starts from — template, timing, statuses. --%>
-          <.accordion :if={setup_section_shown?(assigns)} id="create-start">
+          <.accordion :if={setup_section_shown?(assigns)} id="create-start" cue={true}>
             <:title>
               {gettext("Start from")}
               <span class="ml-2 text-xs font-normal opacity-50">{setup_summary(assigns)}</span>
@@ -2267,7 +2255,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                rather than in their own drawer: "who is on this project" and
                "what can they do" is one question, and the roles picked
                above are exactly what the floors below apply to. --%>
-          <.accordion :if={"people" not in @top_blocks} id="create-people">
+          <.accordion :if={"people" not in @top_blocks} id="create-people" cue={true}>
             <:title>
               {gettext("People & permissions")}
               <span class="ml-2 text-xs font-normal opacity-50">{people_summary(assigns)}</span>
@@ -2294,7 +2282,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <%!-- 3. The task-tracker's own shape. Grouped by what the flag
                DOES — one flat wall of 13 was the panel's example of the
                problem. Prerequisites stay inline on the flag they gate. --%>
-          <.accordion :if={@flag_defs != []} id="create-features">
+          <.accordion :if={@flag_defs != []} id="create-features" cue={true}>
             <:title>
               {gettext("Task features")}
               <span class="ml-2 text-xs font-normal opacity-50">{features_summary(assigns)}</span>
@@ -2336,7 +2324,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                hunting for "publish documents" thinks in package names).
                Inline config stays inert until its toggle is on: pure CSS
                reveal, and the server ignores unchecked rows at save. --%>
-          <.accordion :if={@ext_types != []} id="create-extensions">
+          <.accordion :if={@ext_types != []} id="create-extensions" cue={true}>
             <:title>
               {gettext("Extensions")}
               <span class="ml-2 text-xs font-normal opacity-50">{extensions_summary(assigns)}</span>

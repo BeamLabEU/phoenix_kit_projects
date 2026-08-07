@@ -572,13 +572,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
         "archetype" => "quick_todo"
       })
 
-      # Simple checklist turns most task features off, so the features
-      # drawer changed underneath the reader — and the payload names the
-      # exact rows, so an open drawer highlights those instead of itself.
-      assert_push_event(view, "pk-flash", %{sections: sections})
-      features = Enum.find(sections, &(&1.id == "create-features"))
-      assert features
-      assert "flag-row-assignees" in features.targets
+      # Simple checklist turns most task features off. The payload names
+      # the ROWS, not the section: the client decides whether to highlight
+      # them or the section that holds them, because only it knows what is
+      # open.
+      assert_push_event(view, "pk:change-cue", %{targets: targets})
+      assert "flag-row-assignees" in targets
     end
 
     test "enabling an extension flashes the permissions drawer when a row appears",
@@ -597,17 +596,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
         "ext" => %{"files" => "true"}
       })
 
-      assert_push_event(view, "pk-flash", %{sections: sections})
-      ids = Enum.map(sections, & &1.id)
-      assert "create-people" in ids
-      assert "create-extensions" in ids
+      assert_push_event(view, "pk:change-cue", %{targets: targets, announce: announce})
 
-      # The permissions drawer points at the row that came back...
-      people = Enum.find(sections, &(&1.id == "create-people"))
-      assert people.targets == ["authz-row-upload_files"]
-      # ...and the extensions drawer at the toggle that moved.
-      exts = Enum.find(sections, &(&1.id == "create-extensions"))
-      assert exts.targets == ["ext-row-files"]
+      # The permission row that came back, and the toggle that moved.
+      assert "authz-row-upload_files" in targets
+      assert "ext-row-files" in targets
+      # Announced in the reader's words, not the mechanics.
+      assert announce =~ "updated"
     end
 
     test "re-answering a floor doesn't flash the drawer it was answered in",
@@ -619,7 +614,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
         "authz" => %{"create_tasks" => "managers"}
       })
 
-      refute_push_event(view, "pk-flash", %{})
+      refute_push_event(view, "pk:change-cue", %{})
     end
 
     test "typing a name flashes nothing", %{conn: conn} do
@@ -627,7 +622,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
       render_change(view, "validate", %{"project" => %{"name" => "Just typing"}})
 
-      refute_push_event(view, "pk-flash", %{})
+      refute_push_event(view, "pk:change-cue", %{})
     end
   end
 
