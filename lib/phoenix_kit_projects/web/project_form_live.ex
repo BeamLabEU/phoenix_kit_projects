@@ -12,7 +12,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
-  alias PhoenixKitProjects.{Extensions, Members, Statuses}
+  alias PhoenixKitProjects.{Extensions, Grants, Members, Statuses}
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -82,9 +82,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       ext_flag_defs: creation_ext_flag_defs(),
       ext_overrides: %{},
       ext_configs: %{},
-      invites: [],
-      invite_email: "",
-      invite_role: "member",
+      participants: [],
+      add_open: false,
+      add_kind: "person",
+      add_role: "member",
+      add_email: "",
+      add_team_uuid: "",
+      add_department_uuid: "",
       template_preview: nil,
       template_ref: nil,
       customized?: false,
@@ -113,9 +117,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       ext_flag_defs: %{},
       ext_overrides: %{},
       ext_configs: %{},
-      invites: [],
-      invite_email: "",
-      invite_role: "member",
+      participants: [],
+      add_open: false,
+      add_kind: "person",
+      add_role: "member",
+      add_email: "",
+      add_team_uuid: "",
+      add_department_uuid: "",
       template_preview: nil,
       template_ref: nil,
       customized?: false,
@@ -135,6 +143,61 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   rescue
     _ -> []
   end
+
+  # Each kind reads ONLY its own field, so a submitted kind can never be
+  # paired with another kind's uuid.
+  defp build_participant(socket, "person", role, params) do
+    email = params |> Map.get("email", "") |> String.trim()
+
+    if email == "" do
+      {:error, gettext("Enter an email address.")}
+    else
+      person_participant(socket, email, role)
+    end
+  end
+
+  defp build_participant(socket, "team", role, params) do
+    group_participant(socket.assigns.team_options, "team", params["team_uuid"], role)
+  end
+
+  defp build_participant(socket, "department", role, params) do
+    group_participant(
+      socket.assigns.department_options,
+      "department",
+      params["department_uuid"],
+      role
+    )
+  end
+
+  defp build_participant(_socket, _kind, _role, _params),
+    do: {:error, gettext("Choose a person, team, or department.")}
+
+  defp person_participant(socket, email, role) do
+    case find_user(email) do
+      nil ->
+        {:error, gettext("No account with that email address.")}
+
+      user ->
+        if user.uuid == Activity.actor_uuid(socket) do
+          # The creator is seated as owner automatically.
+          {:error, gettext("You already own this project.")}
+        else
+          {:ok, %{kind: "person", uuid: user.uuid, label: email, role: role}}
+        end
+    end
+  end
+
+  # Resolved against the OFFERED options, so a crafted uuid can't queue a
+  # group the form never showed.
+  defp group_participant(options, kind, uuid, role) do
+    case Enum.find(options, fn {_label, value} -> value == uuid end) do
+      nil -> {:error, gettext("Choose a person, team, or department.")}
+      {label, value} -> {:ok, %{kind: kind, uuid: value, label: label, role: role}}
+    end
+  end
+
+  defp valid_participant_role(role) when role in ~w(manager member viewer), do: role
+  defp valid_participant_role(_), do: "member"
 
   # Flags that EXTENSIONS own, keyed by extension. The portal's three
   # public capabilities (submit / list / status) are the reason this is on
@@ -498,48 +561,67 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   @impl true
+  # ── Participants (pending access, applied after create) ──────────
+  #
+  # One queue for people AND groups. People become membership rows; teams
+  # and departments become access grants. Each carries its own role and
+  # there's no cap on either — the previous UI was one email row plus a
+  # single "Responsible" picker, which read as though a project could only
+  # ever have one of anything.
+
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do
     {:noreply, handle_switch_language(socket, lang_code)}
   end
 
-  # ── Invites (pending seats, applied after create) ────────────────
+  def handle_event("open_add_participant", _params, socket) do
+    {:noreply, assign(socket, add_open: true)}
+  end
 
-  def handle_event("add_invite", _params, %{assigns: %{live_action: :new}} = socket) do
-    email = String.trim(socket.assigns.invite_email || "")
+  def handle_event("close_add_participant", _params, socket) do
+    {:noreply, reset_add_form(socket)}
+  end
 
-    cond do
-      email == "" ->
-        {:noreply, socket}
+  def handle_event("track_add_participant", params, socket) do
+    {:noreply,
+     assign(socket,
+       add_kind: valid_participant_kind(Map.get(params, "kind", socket.assigns.add_kind)),
+       add_role: valid_participant_role(Map.get(params, "role", socket.assigns.add_role)),
+       add_email: Map.get(params, "email", socket.assigns.add_email),
+       add_team_uuid: Map.get(params, "team_uuid", socket.assigns.add_team_uuid),
+       add_department_uuid: Map.get(params, "department_uuid", socket.assigns.add_department_uuid)
+     )}
+  end
 
-      Enum.any?(socket.assigns.invites, &(&1.email == email)) ->
-        {:noreply, assign(socket, invite_email: "")}
+  def handle_event("add_participant", params, %{assigns: %{live_action: :new}} = socket) do
+    kind = Map.get(params, "kind", "person")
+    role = valid_participant_role(Map.get(params, "role"))
 
-      true ->
-        case find_user(email) do
-          nil ->
-            {:noreply, put_flash(socket, :error, gettext("No account with that email address."))}
-
-          user ->
-            if user.uuid == Activity.actor_uuid(socket) do
-              # The creator is seated as owner automatically.
-              {:noreply, assign(socket, invite_email: "")}
-            else
-              invite = %{uuid: user.uuid, email: email, role: socket.assigns.invite_role}
-
-              {:noreply,
-               assign(socket,
-                 invites: socket.assigns.invites ++ [invite],
-                 invite_email: ""
-               )}
-            end
+    case build_participant(socket, kind, role, params) do
+      {:ok, entry} ->
+        if Enum.any?(
+             socket.assigns.participants,
+             &(&1.kind == entry.kind and &1.uuid == entry.uuid)
+           ) do
+          {:noreply, assign(socket, add_open: false, add_email: "")}
+        else
+          {:noreply,
+           assign(socket,
+             participants: socket.assigns.participants ++ [entry],
+             add_open: false,
+             add_email: ""
+           )}
         end
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, message)}
     end
   end
 
-  def handle_event("add_invite", _params, socket), do: {:noreply, socket}
+  def handle_event("add_participant", _params, socket), do: {:noreply, socket}
 
-  def handle_event("remove_invite", %{"uuid" => uuid}, socket) do
-    {:noreply, assign(socket, invites: Enum.reject(socket.assigns.invites, &(&1.uuid == uuid)))}
+  def handle_event("remove_participant", %{"uuid" => uuid}, socket) do
+    {:noreply,
+     assign(socket, participants: Enum.reject(socket.assigns.participants, &(&1.uuid == uuid)))}
   end
 
   # AI-translate modal events handled by `use ...AITranslate.Embed`.
@@ -647,8 +729,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end)
     |> track_authz(params)
     |> assign(
-      invite_email: Map.get(params, "invite_email", socket.assigns.invite_email),
-      invite_role: valid_invite_role(Map.get(params, "invite_role", socket.assigns.invite_role))
+      add_kind: valid_participant_kind(Map.get(params, "kind", socket.assigns.add_kind)),
+      add_role: valid_participant_role(Map.get(params, "role", socket.assigns.add_role)),
+      add_email: Map.get(params, "email", socket.assigns.add_email)
     )
   end
 
@@ -803,8 +886,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end
   end
 
-  defp valid_invite_role(role) when role in ~w(manager member viewer), do: role
-  defp valid_invite_role(_), do: "member"
+  defp reset_add_form(socket) do
+    assign(socket,
+      add_open: false,
+      add_email: "",
+      add_team_uuid: "",
+      add_department_uuid: ""
+    )
+  end
+
+  defp valid_participant_kind(kind) when kind in ~w(person team department), do: kind
+  defp valid_participant_kind(_), do: "person"
 
   defp find_user(email) do
     Auth.get_user_by_email(email)
@@ -960,10 +1052,20 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       end)
     end)
 
-    # Seat the pending invites (the creator's owner seat already exists).
-    Enum.each(socket.assigns.invites, fn invite ->
-      best_effort("invite #{invite.email}", fn ->
-        Members.add_member(project, invite.uuid, role: invite.role, actor_uuid: actor_uuid)
+    # Apply the queued participants: people become membership rows, groups
+    # become access grants. The creator's owner seat already exists.
+    Enum.each(socket.assigns.participants, fn entry ->
+      best_effort("participant #{entry.kind}:#{entry.label}", fn ->
+        case entry.kind do
+          "person" ->
+            Members.add_member(project, entry.uuid, role: entry.role, actor_uuid: actor_uuid)
+
+          kind when kind in ["team", "department"] ->
+            Grants.grant(project, kind, entry.uuid, entry.role, actor_uuid: actor_uuid)
+
+          _ ->
+            :ok
+        end
       end)
     end)
 
@@ -1280,9 +1382,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp people_summary(assigns) do
     invites =
-      case length(assigns.invites) do
+      case length(assigns.participants) do
         0 -> gettext("Just you")
-        n -> ngettext("You + %{count} invited", "You + %{count} invited", n, count: n)
+        n -> ngettext("You + %{count} added", "You + %{count} added", n, count: n)
       end
 
     # Only mention permissions when they differ from the site defaults —
@@ -1373,18 +1475,32 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         {gettext("Anyone with this project's portal link will be able to reach it without signing in. Choose what that link exposes under Extensions → Public portal.")}
       </p>
 
-      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div :for={action <- @authz_actions}>
-          <.select
-            name={"authz[#{action.settings_key}]"}
-            value={Map.get(@authz_choices, action.settings_key, action.default)}
-            label={authz_action_label(action.settings_key)}
-            class="select-sm"
-            options={[
-              {gettext("Members and up"), "members"},
-              {gettext("Managers and owners"), "managers"}
-            ]}
-          />
+      <%!-- One row per action, label left and control right — core's
+           permissions matrix shape. Three-across put a nowrap label
+           ("Who can change task status") in a 162px column, so it
+           overflowed the cell while its select truncated the answer. --%>
+      <div class="divide-y divide-base-200 rounded-lg border border-base-200">
+        <div
+          :for={action <- @authz_actions}
+          class="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+        >
+          <span class="text-sm">{authz_action_label(action.settings_key)}</span>
+          <label class="select select-sm w-56 shrink-0">
+            <select name={"authz[#{action.settings_key}]"}>
+              <option
+                value="members"
+                selected={Map.get(@authz_choices, action.settings_key, action.default) == "members"}
+              >
+                {gettext("Members and up")}
+              </option>
+              <option
+                value="managers"
+                selected={Map.get(@authz_choices, action.settings_key, action.default) == "managers"}
+              >
+                {gettext("Managers and owners")}
+              </option>
+            </select>
+          </label>
         </div>
       </div>
     </div>
@@ -1479,98 +1595,213 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     """
   end
 
-  attr(:invites, :list, required: true)
-  attr(:invite_email, :string, required: true)
-  attr(:invite_role, :string, required: true)
-  attr(:flag_states, :map, required: true)
-  attr(:assign_type, :string, required: true)
-  attr(:form, :any, required: true)
-  attr(:department_options, :list, required: true)
-  attr(:team_options, :list, required: true)
-  attr(:person_options, :list, required: true)
+  attr(:participants, :list, required: true)
 
   defp people_block(assigns) do
     ~H"""
     <div class="flex flex-col gap-3">
-      <p class="text-xs opacity-60">
-        <span class="badge badge-ghost badge-sm">{gettext("You — Owner")}</span>
-      </p>
-
-      <div class="flex flex-wrap items-end gap-2">
-        <div class="grow max-w-xs">
-          <.input
-            type="email"
-            name="invite_email"
-            value={@invite_email}
-            label={gettext("Email")}
-            placeholder={gettext("person@example.com")}
-            class="input-sm"
-            phx-debounce="300"
-          />
-        </div>
-        <div class="w-32">
-          <.select
-            name="invite_role"
-            value={@invite_role}
-            label={gettext("Role")}
-            class="select-sm"
-            options={[
-              {gettext("Member"), "member"},
-              {gettext("Manager"), "manager"},
-              {gettext("Viewer"), "viewer"}
-            ]}
-          />
-        </div>
-        <button type="button" phx-click="add_invite" class="btn btn-ghost btn-sm gap-1">
-          <.icon name="hero-user-plus" class="w-4 h-4" /> {gettext("Add")}
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <p class="text-xs opacity-70">
+          <span class="badge badge-ghost badge-sm">{gettext("You — Owner")}</span>
+        </p>
+        <button
+          type="button"
+          phx-click="open_add_participant"
+          class="btn btn-primary btn-sm gap-1"
+        >
+          <.icon name="hero-user-plus" class="w-4 h-4" /> {gettext("Add to project")}
         </button>
       </div>
 
-      <div :if={@invites != []} class="flex flex-wrap gap-1">
-        <span :for={invite <- @invites} class="badge badge-outline gap-1">
-          {invite.email} · {invite.role}
+      <%!-- Queued entries. People become membership rows and groups become
+           access grants when the project is created; both carry their own
+           role, and there is no limit on either — the old UI offered one
+           email row plus a single "Responsible" picker, which read like you
+           could only ever add one of anything. --%>
+      <div :if={@participants != []} class="divide-y divide-base-200 rounded-lg border border-base-200">
+        <div
+          :for={entry <- @participants}
+          class="flex flex-wrap items-center gap-2 px-3 py-2"
+        >
+          <.icon name={participant_icon(entry.kind)} class="w-4 h-4 opacity-60 shrink-0" />
+          <span class="grow min-w-0 truncate text-sm">{entry.label}</span>
+          <span class="text-xs opacity-50">{participant_kind_label(entry.kind)}</span>
+          <span class="badge badge-ghost badge-sm">{participant_role_label(entry.role)}</span>
           <button
             type="button"
-            phx-click="remove_invite"
-            phx-value-uuid={invite.uuid}
-            class="ml-1 opacity-60 hover:opacity-100"
+            phx-click="remove_participant"
+            phx-value-uuid={entry.uuid}
+            class="btn btn-ghost btn-xs btn-circle"
             aria-label={gettext("Remove")}
           >
-            ✕
+            <.icon name="hero-x-mark" class="w-4 h-4" />
           </button>
-        </span>
+        </div>
       </div>
 
-      <%= if @flag_states["assignees"] != false do %>
-        <%!-- The matching picker reveals via CSS the instant the
-             type is chosen (group-has on the option); the server
-             still nulls non-matching uuids at save. --%>
-        <div class="group/assign flex flex-col gap-2 border-t border-base-200 pt-2">
-          <.select
-            name="assign_type"
-            label={gettext("Responsible (optional)")}
-            value={@assign_type}
-            options={[
-              {gettext("Nobody"), ""},
-              {gettext("Department"), "department"},
-              {gettext("Team"), "team"},
-              {gettext("Person"), "person"}
-            ]}
-          />
-          <div class="hidden group-has-[option[value=department]:checked]/assign:block">
-            <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
-          </div>
-          <div class="hidden group-has-[option[value=team]:checked]/assign:block">
-            <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
-          </div>
-          <div class="hidden group-has-[option[value=person]:checked]/assign:block">
-            <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
-          </div>
-        </div>
-      <% end %>
+      <p :if={@participants == []} class="text-xs opacity-50">
+        {gettext("Nobody else yet — the project starts private to you and site admins.")}
+      </p>
     </div>
     """
   end
+
+  defp participant_icon("person"), do: "hero-user"
+  defp participant_icon("team"), do: "hero-user-group"
+  defp participant_icon("department"), do: "hero-building-office"
+  defp participant_icon(_), do: "hero-identification"
+
+  defp participant_kind_label("person"), do: gettext("Person")
+  defp participant_kind_label("team"), do: gettext("Team")
+  defp participant_kind_label("department"), do: gettext("Department")
+  defp participant_kind_label(_), do: gettext("Site role")
+
+  defp participant_role_label("manager"), do: gettext("Manager")
+  defp participant_role_label("member"), do: gettext("Member")
+  defp participant_role_label("viewer"), do: gettext("Viewer")
+  defp participant_role_label(role), do: role
+
+  attr(:open, :boolean, required: true)
+  attr(:kind, :string, required: true)
+  attr(:role, :string, required: true)
+  attr(:email, :string, required: true)
+  attr(:team_uuid, :string, required: true)
+  attr(:department_uuid, :string, required: true)
+  attr(:team_options, :list, required: true)
+  attr(:department_options, :list, required: true)
+
+  # The add dialog. Kept in the DOM so the trigger opens it instantly, and
+  # the kind switch is a radio + CSS reveal for the same reason — only the
+  # submit needs the server.
+  defp add_participant_dialog(assigns) do
+    ~H"""
+    <.modal
+      keep_in_dom
+      id="add-participant-dialog"
+      show={@open}
+      on_close="close_add_participant"
+      max_width="md"
+    >
+      <:title>
+        <.icon name="hero-user-plus" class="w-5 h-5" /> {gettext("Add to project")}
+      </:title>
+
+      <%!-- phx-change keeps the picked values in assigns. They used to be
+           rendered as literal "" — so ANY re-render (a flash, the main
+           form's debounced validate) silently cleared the selection and the
+           submit posted an empty uuid. --%>
+      <form
+        id="add-participant-form"
+        phx-change="track_add_participant"
+        phx-submit="add_participant"
+        class="group/who flex flex-col gap-3"
+      >
+        <div>
+          <span class="mb-1 block text-xs font-semibold uppercase opacity-50">{gettext("Who")}</span>
+          <div class="grid grid-cols-3 gap-2">
+            <label
+              :for={{value, label, icon} <- participant_kinds()}
+              class="flex cursor-pointer items-center justify-center gap-1 rounded-lg border border-base-300 px-2 py-2 text-sm transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
+            >
+              <input
+                type="radio"
+                name="kind"
+                value={value}
+                checked={@kind == value}
+                data-who={value}
+                class="sr-only"
+              />
+              <.icon name={icon} class="w-4 h-4 opacity-70" />
+              <span class="truncate">{label}</span>
+            </label>
+          </div>
+        </div>
+
+        <%!-- One picker per kind, revealed by the radio above. Each input is
+             named for its own kind, so the server reads the one matching the
+             submitted kind and can't be handed a mismatched pair. --%>
+        <div class={participant_reveal_class("person")}>
+          <.input
+            type="email"
+            name="email"
+            value={@email}
+            label={gettext("Email of an existing account")}
+            placeholder={gettext("person@example.com")}
+            class="input-sm"
+          />
+        </div>
+
+        <div class={participant_reveal_class("team")}>
+          <.select
+            name="team_uuid"
+            value={@team_uuid}
+            label={gettext("Team")}
+            class="select-sm"
+            prompt={gettext("Select a team")}
+            options={@team_options}
+          />
+        </div>
+
+        <div class={participant_reveal_class("department")}>
+          <.select
+            name="department_uuid"
+            value={@department_uuid}
+            label={gettext("Department")}
+            class="select-sm"
+            prompt={gettext("Select a department")}
+            options={@department_options}
+          />
+        </div>
+
+        <div>
+          <.select
+            name="role"
+            value={@role}
+            label={gettext("Role on this project")}
+            class="select-sm"
+            options={[
+              {gettext("Viewer — can look, not change"), "viewer"},
+              {gettext("Member — can add tasks and comment"), "member"},
+              {gettext("Manager — can edit and assign anyone's task"), "manager"}
+            ]}
+          />
+          <p class="mt-1 text-xs opacity-50">
+            {gettext("Everyone in a team or department gets this role, including people who join it later.")}
+          </p>
+        </div>
+
+        <div class="flex justify-end gap-2">
+          <button type="button" phx-click="close_add_participant" class="btn btn-ghost btn-sm">
+            {gettext("Cancel")}
+          </button>
+          <button type="submit" class="btn btn-primary btn-sm">{gettext("Add")}</button>
+        </div>
+      </form>
+    </.modal>
+    """
+  end
+
+  defp participant_kinds do
+    [
+      {"person", gettext("Person"), "hero-user"},
+      {"team", gettext("Team"), "hero-user-group"},
+      {"department", gettext("Department"), "hero-building-office"}
+    ]
+  end
+
+  # LITERAL class strings per kind — Tailwind's scanner needs them verbatim
+  # in source, and a dash-safe `data-who` marker avoids the `_`-reads-as-
+  # space trap in arbitrary values.
+  defp participant_reveal_class("person"),
+    do: "hidden group-has-[[data-who=person]:checked]/who:block"
+
+  defp participant_reveal_class("team"),
+    do: "hidden group-has-[[data-who=team]:checked]/who:block"
+
+  defp participant_reveal_class("department"),
+    do: "hidden group-has-[[data-who=department]:checked]/who:block"
+
+  defp participant_reveal_class(_), do: "hidden"
 
   # The multilang name+description card — the house pattern shared by
   # BOTH actions (Max: every create form offers all languages from the
@@ -1802,19 +2033,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             <div class="card-body flex flex-col gap-3">
               <h2 class="text-sm font-semibold">
                 {gettext("People")}
-                <span :if={@invites != []} class="badge badge-ghost badge-xs ml-2">{length(@invites)}</span>
+                <span :if={@participants != []} class="badge badge-ghost badge-xs ml-2">
+                  {length(@participants)}
+                </span>
               </h2>
-              <.people_block
-                invites={@invites}
-                invite_email={@invite_email}
-                invite_role={@invite_role}
-                flag_states={@flag_states}
-                assign_type={@assign_type}
-                form={@form}
-                department_options={@department_options}
-                team_options={@team_options}
-                person_options={@person_options}
-              />
+              <.people_block participants={@participants} />
             </div>
           </div>
 
@@ -1883,17 +2106,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             </:title>
             <:content>
               <div class="flex flex-col gap-4">
-                <.people_block
-                  invites={@invites}
-                  invite_email={@invite_email}
-                  invite_role={@invite_role}
-                  flag_states={@flag_states}
-                  assign_type={@assign_type}
-                  form={@form}
-                  department_options={@department_options}
-                  team_options={@team_options}
-                  person_options={@person_options}
-                />
+                <.people_block participants={@participants} />
 
                 <div :if={@authz_actions != []} class="border-t border-base-200 pt-3">
                   <h3 class="mb-2 text-xs font-semibold uppercase opacity-50">
@@ -2159,6 +2372,21 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </div>
         </div>
       </.form>
+
+      <%!-- Outside the project form on purpose: nested <form> elements are
+           invalid HTML, so the browser silently drops the inner one — its
+           phx-submit never fires and its submit button posts the OUTER
+           form, which here would CREATE the project. --%>
+      <.add_participant_dialog
+        open={@add_open}
+        kind={@add_kind}
+        role={@add_role}
+        email={@add_email}
+        team_uuid={@add_team_uuid}
+        department_uuid={@add_department_uuid}
+        team_options={@team_options}
+        department_options={@department_options}
+      />
 
       <%!--
         AI translate modal lives OUTSIDE the project form on purpose

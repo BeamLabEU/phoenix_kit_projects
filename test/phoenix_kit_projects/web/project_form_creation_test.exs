@@ -360,39 +360,135 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
              |> Enum.find(fn {ext, _row} -> ext.key == "cfg_ext" end)
   end
 
-  test "invites seat members with their role after create", %{conn: conn} do
-    invitee = user_fixture()
+  describe "adding people and groups (the 2026-08-07 Add-to-project rework)" do
+    alias PhoenixKitProjects.Grants
+    alias PhoenixKitStaff.{Departments, Teams}
 
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    test "a person is seated as a member with the chosen role", %{conn: conn} do
+      invitee = user_fixture()
 
-    render_change(view, "validate", %{
-      "project" => %{"name" => ""},
-      "invite_email" => invitee.email,
-      "invite_role" => "manager"
-    })
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
 
-    html = render_click(view, "add_invite", %{})
-    assert html =~ invitee.email
+      html =
+        render_submit(view, "add_participant", %{
+          "kind" => "person",
+          "email" => invitee.email,
+          "role" => "manager"
+        })
 
-    render_submit(view, "save", %{
-      "project" => %{"name" => "Seats #{System.unique_integer([:positive])}"}
-    })
+      assert html =~ invitee.email
 
-    project = created("Seats")
-    assert project
-    assert Members.role_of(project, invitee.uuid) == :manager
-  end
+      render_submit(view, "save", %{
+        "project" => %{"name" => "Seats #{System.unique_integer([:positive])}"}
+      })
 
-  test "an unknown invite email flashes and seats nobody", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      project = created("Seats")
+      assert project
+      assert Members.role_of(project, invitee.uuid) == :manager
+    end
 
-    render_change(view, "validate", %{
-      "project" => %{"name" => ""},
-      "invite_email" => "ghost-#{System.unique_integer([:positive])}@example.com"
-    })
+    test "MULTIPLE groups can be added, each with its own role", %{conn: conn} do
+      # The complaint the rework answers: the old UI's single "Responsible"
+      # picker read as though a project could have one department, full stop.
+      n = System.unique_integer([:positive])
+      {:ok, dept_a} = Departments.create(%{"name" => "AddDeptA-#{n}"})
+      {:ok, dept_b} = Departments.create(%{"name" => "AddDeptB-#{n}"})
+      {:ok, team} = Teams.create(%{"name" => "AddTeam-#{n}", "department_uuid" => dept_a.uuid})
 
-    html = render_click(view, "add_invite", %{})
-    assert html =~ "No account with that email"
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_submit(view, "add_participant", %{
+        "kind" => "department",
+        "department_uuid" => dept_a.uuid,
+        "role" => "member"
+      })
+
+      render_submit(view, "add_participant", %{
+        "kind" => "department",
+        "department_uuid" => dept_b.uuid,
+        "role" => "viewer"
+      })
+
+      html =
+        render_submit(view, "add_participant", %{
+          "kind" => "team",
+          "team_uuid" => team.uuid,
+          "role" => "manager"
+        })
+
+      assert html =~ "AddDeptA-#{n}"
+      assert html =~ "AddDeptB-#{n}"
+      assert html =~ "AddTeam-#{n}"
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "Groups #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("Groups")
+      assert project
+
+      grants =
+        Grants.list_grants(project.uuid)
+        |> Map.new(fn g -> {{g.subject_type, g.subject_uuid}, g.role} end)
+
+      assert grants[{"department", dept_a.uuid}] == "member"
+      assert grants[{"department", dept_b.uuid}] == "viewer"
+      assert grants[{"team", team.uuid}] == "manager"
+    end
+
+    test "an unknown email is refused and seats nobody", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      html =
+        render_submit(view, "add_participant", %{
+          "kind" => "person",
+          "email" => "ghost-#{System.unique_integer([:positive])}@example.com",
+          "role" => "member"
+        })
+
+      assert html =~ "No account with that email"
+    end
+
+    test "a group uuid the form never offered is refused", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      html =
+        render_submit(view, "add_participant", %{
+          "kind" => "department",
+          "department_uuid" => Ecto.UUID.generate(),
+          "role" => "manager"
+        })
+
+      assert html =~ "Choose a person, team, or department"
+    end
+
+    test "a kind can't be paired with another kind's uuid", %{conn: conn} do
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "MismatchDept-#{n}"})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      # Says "team", supplies a DEPARTMENT uuid in the department field:
+      # each kind reads only its own field, so nothing is queued.
+      html =
+        render_submit(view, "add_participant", %{
+          "kind" => "team",
+          "department_uuid" => dept.uuid,
+          "role" => "manager"
+        })
+
+      assert html =~ "Choose a person, team, or department"
+    end
+
+    test "the permissions rows read one per line, not a squeezed three-across",
+         %{conn: conn} do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+
+      # The labels are nowrap, so a 3-column grid overflowed them out of
+      # their cells and truncated the selects beside them.
+      refute html =~ ~s(grid grid-cols-1 gap-3 sm:grid-cols-3)
+      assert html =~ "Who can change task status"
+    end
   end
 
   test "template capabilities carry, and the form's explicit choices win", %{conn: conn} do
