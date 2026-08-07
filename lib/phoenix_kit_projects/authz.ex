@@ -128,6 +128,32 @@ defmodule PhoenixKitProjects.Authz do
 
   @admin_all_key "projects.admin_all"
 
+  @visibilities ~w(private everyone)
+
+  @doc """
+  Project visibility — who can see it AT ALL, before any role question:
+
+    * `"private"` (default) — the people and groups on the project, plus
+      site admins.
+    * `"everyone"` — anyone who can reach the Projects module. They come
+      in as a VIEWER, so the same "who can do what" floors apply; being
+      able to see a project is not being able to change it.
+
+  Stored on the project (`settings["visibility"]`) and resolved by
+  `effective_role/2`, so every surface that asks the resolver — the index,
+  the counters, the page gates — honors it without its own special case.
+  """
+  @spec visibilities() :: [String.t()]
+  def visibilities, do: @visibilities
+
+  @spec visibility_of(map()) :: String.t()
+  def visibility_of(project) do
+    case project |> project_settings() |> Map.get("visibility") do
+      v when v in @visibilities -> v
+      _ -> "private"
+    end
+  end
+
   @doc "The sub-permission that grants power over projects you don't belong to."
   @spec admin_all_key() :: String.t()
   def admin_all_key, do: @admin_all_key
@@ -181,32 +207,47 @@ defmodule PhoenixKitProjects.Authz do
   # An action absent here resolves ONLY via admin override (fail-closed
   # for members) — extensions' custom permission_actions land as :member
   # floor when they declare them (future refinement).
+  # Minimum role per action. The default is DELIBERATELY OPEN: once someone
+  # is on a project — as a member or through a team, department, or site
+  # role — they can do the work, and a project tightens what it cares about
+  # in its own "who can do what" panel. A permission model nobody asked for
+  # is friction, not safety.
+  #
+  # The exceptions are the actions that don't change work but change the
+  # CONTAINER — settings, membership, modules, archiving, deletion. Those
+  # stay with owners: "no restrictions on the work" is not the same as
+  # "any viewer may delete the project", and there is no undo for the last
+  # one. They are not overridable either.
   @role_floors %{
     view: :viewer,
-    create_tasks: :member,
-    edit_tasks: :manager,
-    delete_tasks: :manager,
-    assign_tasks: :manager,
-    update_status: :manager,
-    log_time: :manager,
-    comment: :member,
-    upload_files: :member,
+    create_tasks: :viewer,
+    edit_tasks: :viewer,
+    delete_tasks: :viewer,
+    assign_tasks: :viewer,
+    update_status: :viewer,
+    log_time: :viewer,
+    comment: :viewer,
+    upload_files: :viewer,
+    set_health: :viewer,
     manage_members: :owner,
     manage_modules: :owner,
     edit_settings: :owner,
-    set_health: :manager,
     archive_project: :owner,
     delete_project: :owner
   }
 
-  # Per-project overridable floors — the "who can X" dropdowns
-  # (settings["authz"]): a couple of high-traffic actions where teams
-  # legitimately differ, NOT a Jira scheme editor.
-  @overridable %{
-    assign_tasks: {"assign_tasks", %{"managers" => :manager, "members" => :member}},
-    create_tasks: {"create_tasks", %{"managers" => :manager, "members" => :member}},
-    update_status: {"update_status", %{"managers" => :manager, "members" => :member}}
-  }
+  # Per-project overridable floors — the "who can do what" rows. Every
+  # WORK action is tunable now that the defaults are open: the panel's job
+  # is to let a project restrict, so it has to cover the things a project
+  # would want to restrict. The container-level actions above are not here
+  # on purpose.
+  @choices %{"anyone" => :viewer, "members" => :member, "managers" => :manager}
+
+  @overridable Map.new(
+                 ~w(create_tasks edit_tasks delete_tasks assign_tasks update_status
+                    log_time comment upload_files set_health)a,
+                 fn action -> {action, {Atom.to_string(action), @choices}} end
+               )
 
   @role_rank %{owner: 0, manager: 1, member: 2, viewer: 3}
 
@@ -250,11 +291,16 @@ defmodule PhoenixKitProjects.Authz do
     direct = PhoenixKitProjects.Members.role_of(project, user_uuid)
     group = PhoenixKitProjects.Grants.group_role_of(project, user_uuid)
 
+    # An "everyone" project hands every module-reacher a viewer seat. It is
+    # the weakest possible role, so it can only ever ADD access — someone
+    # who is also a manager through their team stays a manager.
+    open = if visibility_of(project) == "everyone", do: :viewer
+
     # The two sources disagree on representation — memberships resolve to
     # atoms, grant rows are strings straight off the column — and
     # meets_floor?/2 ranks atoms, so normalize before comparing rather
     # than letting a string reach Map.fetch!/2.
-    [direct, group]
+    [direct, group, open]
     |> Enum.map(&to_role_atom/1)
     |> Enum.reject(&is_nil/1)
     |> case do

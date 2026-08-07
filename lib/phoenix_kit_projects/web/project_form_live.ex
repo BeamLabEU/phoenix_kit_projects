@@ -8,7 +8,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   import PhoenixKitWeb.Components.MultilangForm
 
-  alias PhoenixKit.Users.Auth
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
@@ -84,14 +83,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       ext_configs: %{},
       participants: [],
       add_open: false,
-      add_kind: "person",
       add_role: "member",
-      add_email: "",
-      add_team_uuid: "",
-      add_department_uuid: "",
+      add_staged: nil,
       template_preview: nil,
       template_ref: nil,
       customized?: false,
+      visibility: "private",
       authz_actions: overridable_authz_actions(),
       authz_choices: default_authz_choices(),
       top_blocks: Features.creation_top_blocks()
@@ -119,14 +116,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       ext_configs: %{},
       participants: [],
       add_open: false,
-      add_kind: "person",
       add_role: "member",
-      add_email: "",
-      add_team_uuid: "",
-      add_department_uuid: "",
+      add_staged: nil,
       template_preview: nil,
       template_ref: nil,
       customized?: false,
+      visibility: "private",
       authz_actions: [],
       authz_choices: %{},
       top_blocks: []
@@ -146,55 +141,91 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # Each kind reads ONLY its own field, so a submitted kind can never be
   # paired with another kind's uuid.
-  defp build_participant(socket, "person", role, params) do
-    email = params |> Map.get("email", "") |> String.trim()
+  # The queued entry comes from the picker's staged pick, so there is no
+  # kind/uuid pairing to validate — but the pick still has to resolve to a
+  # real subject, and the creator already owns the project.
+  defp staged_participant(%{assigns: %{add_staged: nil}}, _role),
+    do: {:error, gettext("Search for a person, team, or department first.")}
 
-    if email == "" do
-      {:error, gettext("Enter an email address.")}
+  defp staged_participant(%{assigns: %{add_staged: staged}} = socket, role) do
+    if staged.kind == "person" and staged.uuid == Activity.actor_uuid(socket) do
+      {:error, gettext("You already own this project.")}
     else
-      person_participant(socket, email, role)
+      {:ok, %{kind: staged.kind, uuid: staged.uuid, label: staged.label, role: role}}
     end
   end
 
-  defp build_participant(socket, "team", role, params) do
-    group_participant(socket.assigns.team_options, "team", params["team_uuid"], role)
-  end
+  # People, teams and departments in one ranked list. Each row carries its
+  # own kind, and anything already queued is filtered out so it can't be
+  # added twice.
+  defp search_participants(socket, query, limit, taken) do
+    q = query |> to_string() |> String.trim() |> String.downcase()
 
-  defp build_participant(socket, "department", role, params) do
-    group_participant(
-      socket.assigns.department_options,
-      "department",
-      params["department_uuid"],
-      role
-    )
-  end
+    available =
+      participant_candidates(socket)
+      |> Enum.reject(fn row -> {row.kind, row.uuid} in taken end)
+      |> Enum.sort_by(fn row ->
+        {participant_kind_order(row.kind), String.downcase(row.label)}
+      end)
 
-  defp build_participant(_socket, _kind, _role, _params),
-    do: {:error, gettext("Choose a person, team, or department.")}
-
-  defp person_participant(socket, email, role) do
-    case find_user(email) do
-      nil ->
-        {:error, gettext("No account with that email address.")}
-
-      user ->
-        if user.uuid == Activity.actor_uuid(socket) do
-          # The creator is seated as owner automatically.
-          {:error, gettext("You already own this project.")}
-        else
-          {:ok, %{kind: "person", uuid: user.uuid, label: email, role: role}}
-        end
+    if q == "" do
+      browse_page(available, limit)
+    else
+      matches = Enum.filter(available, &String.contains?(String.downcase(&1.label), q))
+      {Enum.take(matches, limit), length(matches) > limit}
     end
   end
 
-  # Resolved against the OFFERED options, so a crafted uuid can't queue a
-  # group the form never showed.
-  defp group_participant(options, kind, uuid, role) do
-    case Enum.find(options, fn {_label, value} -> value == uuid end) do
-      nil -> {:error, gettext("Choose a person, team, or department.")}
-      {label, value} -> {:ok, %{kind: kind, uuid: value, label: label, role: role}}
-    end
+  # The click-with-nothing-typed page. A flat take filled it entirely with
+  # people on any real site, so teams and departments stayed invisible until
+  # you guessed a name — the opposite of offering options before typing.
+  # Show a slice of each kind instead.
+  defp browse_page(available, limit) do
+    per_kind = max(2, div(limit, 3))
+    by_kind = Enum.group_by(available, & &1.kind)
+
+    rows =
+      Enum.flat_map(~w(person team department), fn kind ->
+        by_kind |> Map.get(kind, []) |> Enum.take(per_kind)
+      end)
+
+    {rows, length(available) > length(rows)}
   end
+
+  defp participant_candidates(socket) do
+    # NOT person_options: those are staff PERSON uuids, and a membership row
+    # keys on the core USER. A staff person with no account can't be a member
+    # at all, so they don't appear.
+    people = socket.assigns.participant_people
+
+    teams =
+      Enum.map(socket.assigns.team_options, fn {label, uuid} ->
+        %{
+          kind: "team",
+          uuid: uuid,
+          label: label,
+          sublabel: gettext("Team"),
+          icon: "hero-user-group"
+        }
+      end)
+
+    departments =
+      Enum.map(socket.assigns.department_options, fn {label, uuid} ->
+        %{
+          kind: "department",
+          uuid: uuid,
+          label: label,
+          sublabel: gettext("Department"),
+          icon: "hero-building-office"
+        }
+      end)
+
+    people ++ teams ++ departments
+  end
+
+  defp participant_kind_order("person"), do: 0
+  defp participant_kind_order("team"), do: 1
+  defp participant_kind_order(_), do: 2
 
   defp valid_participant_role(role) when role in ~w(manager member viewer), do: role
   defp valid_participant_role(_), do: "member"
@@ -443,6 +474,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   defp assign_assignee_state(socket) do
     assign(socket,
       assign_type: assignee_type(socket.assigns.project),
+      participant_people: load_participant_people(),
       team_options: load_teams(),
       department_options: load_departments(),
       person_options: load_people()
@@ -471,6 +503,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Projects] load_departments failed: #{Exception.message(e)}")
+      []
+  end
+
+  # People who can actually hold a membership: a staff person linked to a
+  # core account, labelled by name (falling back to the email).
+  defp load_participant_people do
+    PhoenixKitProjects.People.list_people()
+    |> Enum.filter(& &1.user)
+    |> Enum.map(fn person ->
+      %{
+        kind: "person",
+        uuid: person.user.uuid,
+        label: person.name || person.user.email,
+        sublabel: person.user.email,
+        icon: "hero-user"
+      }
+    end)
+    |> Enum.uniq_by(& &1.uuid)
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Projects] load_participant_people failed: #{Exception.message(e)}")
       []
   end
 
@@ -581,35 +634,64 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     {:noreply, reset_add_form(socket)}
   end
 
-  def handle_event("track_add_participant", params, socket) do
+  # The picker's three events. Rows are {kind, uuid, label} so a pick is
+  # self-describing — nothing pairs a kind chosen in one control with an id
+  # chosen in another.
+  def handle_event("participant_search", %{"q" => q} = params, socket) do
+    limit =
+      case params["limit"] do
+        n when is_integer(n) and n > 0 ->
+          n
+
+        n when is_binary(n) ->
+          case Integer.parse(n) do
+            {i, _} -> max(i, 1)
+            :error -> 8
+          end
+
+        _ ->
+          8
+      end
+
+    taken = Enum.map(socket.assigns.participants, &{&1.kind, &1.uuid})
+    {rows, has_more} = search_participants(socket, q, limit, taken)
+
     {:noreply,
-     assign(socket,
-       add_kind: valid_participant_kind(Map.get(params, "kind", socket.assigns.add_kind)),
-       add_role: valid_participant_role(Map.get(params, "role", socket.assigns.add_role)),
-       add_email: Map.get(params, "email", socket.assigns.add_email),
-       add_team_uuid: Map.get(params, "team_uuid", socket.assigns.add_team_uuid),
-       add_department_uuid: Map.get(params, "department_uuid", socket.assigns.add_department_uuid)
-     )}
+     push_event(socket, "participant_results", %{q: q, results: rows, has_more: has_more})}
+  end
+
+  def handle_event("participant_pick", %{"kind" => kind, "uuid" => uuid} = params, socket) do
+    label = Map.get(params, "label", "")
+
+    socket =
+      if valid_participant_kind(kind) == kind and uuid != "" do
+        assign(socket, add_staged: %{kind: kind, uuid: uuid, label: label})
+      else
+        socket
+      end
+
+    {:noreply, push_event(socket, "participant_staged", %{})}
+  end
+
+  def handle_event("clear_staged_participant", _params, socket) do
+    {:noreply, assign(socket, add_staged: nil)}
   end
 
   def handle_event("add_participant", params, %{assigns: %{live_action: :new}} = socket) do
-    kind = Map.get(params, "kind", "person")
     role = valid_participant_role(Map.get(params, "role"))
 
-    case build_participant(socket, kind, role, params) do
+    case staged_participant(socket, role) do
       {:ok, entry} ->
         if Enum.any?(
              socket.assigns.participants,
              &(&1.kind == entry.kind and &1.uuid == entry.uuid)
            ) do
-          {:noreply, assign(socket, add_open: false, add_email: "")}
+          {:noreply, reset_add_form(socket)}
         else
-          {:noreply,
-           assign(socket,
-             participants: socket.assigns.participants ++ [entry],
-             add_open: false,
-             add_email: ""
-           )}
+          socket
+          |> assign(participants: socket.assigns.participants ++ [entry])
+          |> reset_add_form()
+          |> then(&{:noreply, &1})
         end
 
       {:error, message} ->
@@ -728,11 +810,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       if switched?, do: s, else: s |> track_extensions(params) |> track_flags(params)
     end)
     |> track_authz(params)
-    |> assign(
-      add_kind: valid_participant_kind(Map.get(params, "kind", socket.assigns.add_kind)),
-      add_role: valid_participant_role(Map.get(params, "role", socket.assigns.add_role)),
-      add_email: Map.get(params, "email", socket.assigns.add_email)
-    )
+    |> track_visibility(params)
+    |> assign(add_role: valid_participant_role(Map.get(params, "role", socket.assigns.add_role)))
   end
 
   defp track_creation_state(socket, _params), do: socket
@@ -740,6 +819,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # "Who can X" floors. Only known actions with known choices survive;
   # anything else keeps whatever the socket already held, so a crafted
   # param can neither invent an action nor smuggle an unknown floor.
+  defp track_visibility(socket, params) do
+    case Map.get(params, "visibility") do
+      v when v in ["private", "everyone"] -> assign(socket, visibility: v)
+      _ -> socket
+    end
+  end
+
   defp track_authz(socket, params) do
     case Map.get(params, "authz") do
       submitted when is_map(submitted) ->
@@ -747,7 +833,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           Enum.reduce(socket.assigns.authz_actions, socket.assigns.authz_choices, fn action,
                                                                                      acc ->
             case Map.get(submitted, action.settings_key) do
-              value when value in ["members", "managers"] ->
+              value when value in ["anyone", "members", "managers"] ->
                 Map.put(acc, action.settings_key, value)
 
               _ ->
@@ -887,24 +973,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp reset_add_form(socket) do
-    assign(socket,
-      add_open: false,
-      add_email: "",
-      add_team_uuid: "",
-      add_department_uuid: ""
-    )
+    assign(socket, add_open: false, add_staged: nil)
   end
 
   defp valid_participant_kind(kind) when kind in ~w(person team department), do: kind
   defp valid_participant_kind(_), do: "person"
-
-  defp find_user(email) do
-    Auth.get_user_by_email(email)
-  rescue
-    _ -> nil
-  catch
-    :exit, _ -> nil
-  end
 
   # {:ai_translation, ...} events folded into the form by `use ...AITranslate.Embed`.
 
@@ -1023,6 +1096,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     best_effort("set_authz", fn ->
       if authz_to_store != %{} do
         Authz.set_overrides(project, authz_to_store, actor_uuid: actor_uuid)
+      end
+    end)
+
+    # Same minimal-diff rule: "private" is the default, so only an explicit
+    # opening is written.
+    best_effort("set_visibility", fn ->
+      if socket.assigns.visibility == "everyone" do
+        Projects.set_visibility(project, "everyone", actor_uuid: actor_uuid)
       end
     end)
 
@@ -1449,6 +1530,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   attr(:authz_choices, :map, required: true)
   attr(:authz_actions, :list, required: true)
+  attr(:visibility, :string, required: true)
   attr(:public_link?, :boolean, required: true)
 
   # Who can do what, for the roles invited above. Only the three floors
@@ -1458,13 +1540,64 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # are checking for when they come looking for permissions at all.
   defp permissions_block(assigns) do
     ~H"""
-    <div class="flex flex-col gap-3">
+    <div class="flex flex-col gap-4">
+      <%!-- Visibility first: it answers "who can even see this", which comes
+           before any question about what they may do. Everything below is
+           about people who already have access. --%>
+      <div>
+        <h4 class="mb-1 text-xs font-semibold uppercase opacity-50">{gettext("Who can see it")}</h4>
+        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <label
+            :for={{value, title, hint} <- visibility_choices()}
+            class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-300 p-2 transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
+          >
+            <input
+              type="radio"
+              name="visibility"
+              value={value}
+              checked={@visibility == value}
+              class="radio radio-primary radio-xs mt-0.5 shrink-0"
+            />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium">{title}</span>
+              <span class="block text-xs opacity-60">{hint}</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <h4 class="mb-1 text-xs font-semibold uppercase opacity-50">{gettext("What they can do")}</h4>
+        <p class="mb-2 text-xs opacity-60">
+          {gettext("Everyone with access can do everything by default. Restrict anything you'd rather keep to managers.")}
+        </p>
+
+        <div class="divide-y divide-base-200 rounded-lg border border-base-200">
+          <div
+            :for={action <- @authz_actions}
+            class="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+          >
+            <span class="text-sm">{authz_action_label(action.settings_key)}</span>
+            <label class="select select-sm w-56 shrink-0">
+              <select name={"authz[#{action.settings_key}]"}>
+                <option
+                  :for={{value, label} <- authz_choice_labels()}
+                  value={value}
+                  selected={Map.get(@authz_choices, action.settings_key, action.default) == value}
+                >
+                  {label}
+                </option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+
       <ul class="flex flex-col gap-1 text-xs opacity-60">
         <li>{gettext("You create the project, so you own it — you can do everything.")}</li>
         <li>
-          {gettext("Whoever a task is assigned to can always move it along and log time on it, whatever their role.")}
+          {gettext("Settings, membership, archiving and deletion always stay with owners.")}
         </li>
-        <li>{gettext("Editing and deleting anyone's task stays with managers and owners.")}</li>
       </ul>
 
       <%!-- The other axis entirely: the portal publishes a link that needs
@@ -1474,42 +1607,36 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       <p :if={@public_link?} class="rounded-lg bg-warning/10 p-2 text-xs">
         {gettext("Anyone with this project's portal link will be able to reach it without signing in. Choose what that link exposes under Extensions → Public portal.")}
       </p>
-
-      <%!-- One row per action, label left and control right — core's
-           permissions matrix shape. Three-across put a nowrap label
-           ("Who can change task status") in a 162px column, so it
-           overflowed the cell while its select truncated the answer. --%>
-      <div class="divide-y divide-base-200 rounded-lg border border-base-200">
-        <div
-          :for={action <- @authz_actions}
-          class="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
-        >
-          <span class="text-sm">{authz_action_label(action.settings_key)}</span>
-          <label class="select select-sm w-56 shrink-0">
-            <select name={"authz[#{action.settings_key}]"}>
-              <option
-                value="members"
-                selected={Map.get(@authz_choices, action.settings_key, action.default) == "members"}
-              >
-                {gettext("Members and up")}
-              </option>
-              <option
-                value="managers"
-                selected={Map.get(@authz_choices, action.settings_key, action.default) == "managers"}
-              >
-                {gettext("Managers and owners")}
-              </option>
-            </select>
-          </label>
-        </div>
-      </div>
     </div>
     """
   end
 
-  defp authz_action_label("create_tasks"), do: gettext("Who can add tasks")
-  defp authz_action_label("assign_tasks"), do: gettext("Who can assign tasks")
-  defp authz_action_label("update_status"), do: gettext("Who can change task status")
+  defp visibility_choices do
+    [
+      {"private", gettext("Just the people on it"),
+       gettext("Members, the teams and departments you add, and site admins.")},
+      {"everyone", gettext("Everyone who can open Projects"),
+       gettext("Anyone with access to the Projects module can see it, as a viewer.")}
+    ]
+  end
+
+  defp authz_choice_labels do
+    [
+      {"anyone", gettext("Anyone with access")},
+      {"members", gettext("Members and up")},
+      {"managers", gettext("Managers and owners")}
+    ]
+  end
+
+  defp authz_action_label("create_tasks"), do: gettext("Add tasks")
+  defp authz_action_label("edit_tasks"), do: gettext("Edit anyone's task")
+  defp authz_action_label("delete_tasks"), do: gettext("Delete tasks")
+  defp authz_action_label("assign_tasks"), do: gettext("Assign tasks")
+  defp authz_action_label("update_status"), do: gettext("Change task status")
+  defp authz_action_label("log_time"), do: gettext("Log time")
+  defp authz_action_label("comment"), do: gettext("Comment")
+  defp authz_action_label("upload_files"), do: gettext("Upload files")
+  defp authz_action_label("set_health"), do: gettext("Set project health")
   defp authz_action_label(key), do: key
 
   # ── Creation-page blocks (promotable via Settings → Projects) ──────
@@ -1662,13 +1789,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   defp participant_role_label(role), do: role
 
   attr(:open, :boolean, required: true)
-  attr(:kind, :string, required: true)
   attr(:role, :string, required: true)
-  attr(:email, :string, required: true)
-  attr(:team_uuid, :string, required: true)
-  attr(:department_uuid, :string, required: true)
-  attr(:team_options, :list, required: true)
-  attr(:department_options, :list, required: true)
+  attr(:staged, :any, required: true)
 
   # The add dialog. Kept in the DOM so the trigger opens it instantly, and
   # the kind switch is a radio + CSS reveal for the same reason — only the
@@ -1686,122 +1808,76 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         <.icon name="hero-user-plus" class="w-5 h-5" /> {gettext("Add to project")}
       </:title>
 
-      <%!-- phx-change keeps the picked values in assigns. They used to be
-           rendered as literal "" — so ANY re-render (a flash, the main
-           form's debounced validate) silently cleared the selection and the
-           submit posted an empty uuid. --%>
-      <form
-        id="add-participant-form"
-        phx-change="track_add_participant"
-        phx-submit="add_participant"
-        class="group/who flex flex-col gap-3"
-      >
+      <div class="flex flex-col gap-3">
+        <%!-- ONE box for people, teams and departments. Rows carry their own
+             kind, so there is nothing to pick first and no way to pair a
+             kind with another kind's id. `search_on_focus` means a click
+             offers a list before any typing — the workspace picker rule. --%>
         <div>
-          <span class="mb-1 block text-xs font-semibold uppercase opacity-50">{gettext("Who")}</span>
-          <div class="grid grid-cols-3 gap-2">
-            <label
-              :for={{value, label, icon} <- participant_kinds()}
-              class="flex cursor-pointer items-center justify-center gap-1 rounded-lg border border-base-300 px-2 py-2 text-sm transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
-            >
-              <input
-                type="radio"
-                name="kind"
-                value={value}
-                checked={@kind == value}
-                data-who={value}
-                class="sr-only"
-              />
-              <.icon name={icon} class="w-4 h-4 opacity-70" />
-              <span class="truncate">{label}</span>
-            </label>
-          </div>
-        </div>
-
-        <%!-- One picker per kind, revealed by the radio above. Each input is
-             named for its own kind, so the server reads the one matching the
-             submitted kind and can't be handed a mismatched pair. --%>
-        <div class={participant_reveal_class("person")}>
-          <.input
-            type="email"
-            name="email"
-            value={@email}
-            label={gettext("Email of an existing account")}
-            placeholder={gettext("person@example.com")}
-            class="input-sm"
+          <span class="mb-1 block text-xs font-semibold uppercase opacity-50">
+            {gettext("Who")}
+          </span>
+          <.search_picker
+            id="participant-search"
+            dropdown_id="participant-dropdown"
+            search_event="participant_search"
+            results_event="participant_results"
+            pick_event="participant_pick"
+            staged_event="participant_staged"
+            placeholder={gettext("Search people, teams, departments…")}
+            class="input input-bordered input-sm w-full"
+            searching_label={gettext("Searching…")}
+            more_label={gettext("Load more")}
+            no_matches_label={gettext("No matches")}
+            search_on_focus
           />
         </div>
 
-        <div class={participant_reveal_class("team")}>
-          <.select
-            name="team_uuid"
-            value={@team_uuid}
-            label={gettext("Team")}
-            class="select-sm"
-            prompt={gettext("Select a team")}
-            options={@team_options}
-          />
-        </div>
-
-        <div class={participant_reveal_class("department")}>
-          <.select
-            name="department_uuid"
-            value={@department_uuid}
-            label={gettext("Department")}
-            class="select-sm"
-            prompt={gettext("Select a department")}
-            options={@department_options}
-          />
-        </div>
-
-        <div>
-          <.select
-            name="role"
-            value={@role}
-            label={gettext("Role on this project")}
-            class="select-sm"
-            options={[
-              {gettext("Viewer — can look, not change"), "viewer"},
-              {gettext("Member — can add tasks and comment"), "member"},
-              {gettext("Manager — can edit and assign anyone's task"), "manager"}
-            ]}
-          />
-          <p class="mt-1 text-xs opacity-50">
-            {gettext("Everyone in a team or department gets this role, including people who join it later.")}
-          </p>
-        </div>
-
-        <div class="flex justify-end gap-2">
-          <button type="button" phx-click="close_add_participant" class="btn btn-ghost btn-sm">
-            {gettext("Cancel")}
+        <div :if={@staged} class="flex items-center gap-2 rounded-lg border border-base-200 p-2">
+          <.icon name={participant_icon(@staged.kind)} class="w-4 h-4 opacity-60 shrink-0" />
+          <span class="grow min-w-0 truncate text-sm font-medium">{@staged.label}</span>
+          <span class="text-xs opacity-50">{participant_kind_label(@staged.kind)}</span>
+          <button
+            type="button"
+            phx-click="clear_staged_participant"
+            class="btn btn-ghost btn-xs btn-circle"
+            aria-label={gettext("Clear")}
+          >
+            <.icon name="hero-x-mark" class="w-4 h-4" />
           </button>
-          <button type="submit" class="btn btn-primary btn-sm">{gettext("Add")}</button>
         </div>
-      </form>
+
+        <form id="add-participant-form" phx-submit="add_participant" class="flex flex-col gap-3">
+          <div>
+            <.select
+              name="role"
+              value={@role}
+              label={gettext("Role on this project")}
+              class="select-sm"
+              options={[
+                {gettext("Viewer — can look, not change"), "viewer"},
+                {gettext("Member — normal access"), "member"},
+                {gettext("Manager — can also restrict what others do"), "manager"}
+              ]}
+            />
+            <p :if={@staged && @staged.kind != "person"} class="mt-1 text-xs opacity-50">
+              {gettext("Everyone in it gets this role, including people who join later.")}
+            </p>
+          </div>
+
+          <div class="flex justify-end gap-2">
+            <button type="button" phx-click="close_add_participant" class="btn btn-ghost btn-sm">
+              {gettext("Cancel")}
+            </button>
+            <button type="submit" class="btn btn-primary btn-sm" disabled={is_nil(@staged)}>
+              {gettext("Add")}
+            </button>
+          </div>
+        </form>
+      </div>
     </.modal>
     """
   end
-
-  defp participant_kinds do
-    [
-      {"person", gettext("Person"), "hero-user"},
-      {"team", gettext("Team"), "hero-user-group"},
-      {"department", gettext("Department"), "hero-building-office"}
-    ]
-  end
-
-  # LITERAL class strings per kind — Tailwind's scanner needs them verbatim
-  # in source, and a dash-safe `data-who` marker avoids the `_`-reads-as-
-  # space trap in arbitrary values.
-  defp participant_reveal_class("person"),
-    do: "hidden group-has-[[data-who=person]:checked]/who:block"
-
-  defp participant_reveal_class("team"),
-    do: "hidden group-has-[[data-who=team]:checked]/who:block"
-
-  defp participant_reveal_class("department"),
-    do: "hidden group-has-[[data-who=department]:checked]/who:block"
-
-  defp participant_reveal_class(_), do: "hidden"
 
   # The multilang name+description card — the house pattern shared by
   # BOTH actions (Max: every create form offers all languages from the
@@ -2115,6 +2191,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   <.permissions_block
                     authz_choices={@authz_choices}
                     authz_actions={@authz_actions}
+                    visibility={@visibility}
                     public_link?={@ext_states["portal"] == true}
                   />
                 </div>
@@ -2377,16 +2454,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
            invalid HTML, so the browser silently drops the inner one — its
            phx-submit never fires and its submit button posts the OUTER
            form, which here would CREATE the project. --%>
-      <.add_participant_dialog
-        open={@add_open}
-        kind={@add_kind}
-        role={@add_role}
-        email={@add_email}
-        team_uuid={@add_team_uuid}
-        department_uuid={@add_department_uuid}
-        team_options={@team_options}
-        department_options={@department_options}
-      />
+      <.add_participant_dialog open={@add_open} role={@add_role} staged={@add_staged} />
 
       <%!--
         AI translate modal lives OUTSIDE the project form on purpose

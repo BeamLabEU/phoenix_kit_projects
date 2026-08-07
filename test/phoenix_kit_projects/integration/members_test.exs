@@ -246,18 +246,36 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       :ok
     end
 
-    test "role floors: member vs manager vs owner actions",
+    test "role floors: the work is open, the container is not",
          %{project: project, owner: owner, other: other} do
       # Owner may do everything.
       assert Authz.can?(owner.uuid, project, :manage_members)
       assert Authz.can?(owner.uuid, project, :assign_tasks)
 
-      # Member: create/comment yes; assign/manage no.
+      # A member does the WORK without asking — the default is open.
       assert Authz.can?(other.uuid, project, :view)
       assert Authz.can?(other.uuid, project, :create_tasks)
-      refute Authz.can?(other.uuid, project, :assign_tasks)
+      assert Authz.can?(other.uuid, project, :assign_tasks)
+      assert Authz.can?(other.uuid, project, :update_status)
+
+      # But settings, membership, archiving and deletion stay with owners,
+      # and are not overridable — "no restrictions on the work" is not
+      # "any member may dissolve the project".
       refute Authz.can?(other.uuid, project, :manage_members)
-      refute Authz.can?(other.uuid, project, :update_status)
+      refute Authz.can?(other.uuid, project, :edit_settings)
+      refute Authz.can?(other.uuid, project, :archive_project)
+      refute Authz.can?(other.uuid, project, :delete_project)
+    end
+
+    test "a project can restrict what it cares about", %{project: project, other: other} do
+      assert Authz.can?(other.uuid, project, :assign_tasks)
+
+      {:ok, _} = Authz.set_overrides(project, %{"assign_tasks" => "managers"})
+      project = PhoenixKitProjects.Projects.get_project!(project.uuid)
+
+      refute Authz.can?(other.uuid, project, :assign_tasks)
+      # Untouched actions stay open.
+      assert Authz.can?(other.uuid, project, :create_tasks)
     end
 
     test "non-members resolve false for everything", %{project: project} do
@@ -266,9 +284,10 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       refute Authz.can?(stranger.uuid, project, :create_tasks)
     end
 
-    test "who-can-X override lowers the assign floor to members",
+    test "a stored who-can-X override raises the assign floor",
          %{project: project, other: other} do
-      refute Authz.can?(other.uuid, project, :assign_tasks)
+      # Open by default; the override is how a project tightens.
+      assert Authz.can?(other.uuid, project, :assign_tasks)
 
       {:ok, _} =
         Features.set_flags(project, %{})
@@ -278,25 +297,30 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       project =
         project
         |> Ecto.Changeset.change(
-          settings: Map.put(project.settings || %{}, "authz", %{"assign_tasks" => "members"})
+          settings: Map.put(project.settings || %{}, "authz", %{"assign_tasks" => "managers"})
         )
         |> PhoenixKit.RepoHelper.repo().update!()
 
-      assert Authz.can?(other.uuid, project, :assign_tasks)
+      refute Authz.can?(other.uuid, project, :assign_tasks)
     end
 
-    test "log_time floors at manager with the assignee relationship grant",
+    test "the assignee grant still stands when log_time is restricted",
          %{project: project, owner: owner, other: other} do
-      # Plain member, no record: below the manager floor.
-      refute Authz.can?(other.uuid, project, :log_time)
-      # Owner clears the floor.
+      # Open by default.
+      assert Authz.can?(other.uuid, project, :log_time)
       assert Authz.can?(owner.uuid, project, :log_time)
 
-      # The member logging on THEIR OWN task: relationship grant.
+      # Restrict it to managers: the plain member loses it...
+      {:ok, _} = Authz.set_overrides(project, %{"log_time" => "managers"})
+      project = PhoenixKitProjects.Projects.get_project!(project.uuid)
+      refute Authz.can?(other.uuid, project, :log_time)
+
+      # ...except on THEIR OWN task, which the relationship grant covers
+      # whatever the floor says.
       own = %{assigned_person: %{user_uuid: other.uuid}}
       assert Authz.can?(other.uuid, project, :log_time, own)
 
-      # Someone else's task or an unassigned one: refused.
+      # Someone else's task or an unassigned one stays refused.
       foreign = %{assigned_person: %{user_uuid: Ecto.UUID.generate()}}
       refute Authz.can?(other.uuid, project, :log_time, foreign)
       refute Authz.can?(other.uuid, project, :log_time, %{assigned_person: nil})
@@ -308,7 +332,9 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       assignment = %{assigned_person: %{user_uuid: other.uuid}}
       assert Authz.can?(other.uuid, project, :update_status, assignment)
 
-      # Someone else's assignment: still refused.
+      # Someone else's assignment, once the project restricts the action.
+      {:ok, _} = Authz.set_overrides(project, %{"update_status" => "managers"})
+      project = PhoenixKitProjects.Projects.get_project!(project.uuid)
       foreign = %{assigned_person: %{user_uuid: Ecto.UUID.generate()}}
       refute Authz.can?(other.uuid, project, :update_status, foreign)
 

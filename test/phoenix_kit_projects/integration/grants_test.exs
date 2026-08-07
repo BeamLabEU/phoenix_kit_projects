@@ -56,8 +56,11 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
       assert Authz.effective_role(project, u.uuid) == :member
       assert Authz.can?(u.uuid, project, :view)
       assert Authz.can?(u.uuid, project, :create_tasks)
-      # ...but a member floor still stops manager-level work.
-      refute Authz.can?(u.uuid, project, :delete_tasks)
+      # Defaults are open, so being on the project means doing the work.
+      assert Authz.can?(u.uuid, project, :delete_tasks)
+      # The container still isn't theirs.
+      refute Authz.can?(u.uuid, project, :delete_project)
+      refute Authz.can?(u.uuid, project, :manage_members)
     end
 
     test "revoking the grant removes the access", %{project: project} do
@@ -87,7 +90,6 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
 
       assert Authz.effective_role(project, u.uuid) == :viewer
       assert Authz.can?(u.uuid, project, :view)
-      refute Authz.can?(u.uuid, project, :create_tasks)
     end
   end
 
@@ -104,8 +106,13 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
 
       assert Authz.effective_role(project, u.uuid) == :viewer
       assert Authz.can?(u.uuid, project, :view)
+      # Open by default — a viewer is a participant, not a spectator.
+      assert Authz.can?(u.uuid, project, :create_tasks)
+      # Until the project restricts it, which is what the panel is for.
+      {:ok, _} = Authz.set_overrides(project, %{"create_tasks" => "managers"})
+      project = PhoenixKitProjects.Projects.get_project!(project.uuid)
       refute Authz.can?(u.uuid, project, :create_tasks)
-      refute Authz.can?(u.uuid, project, :edit_tasks)
+      # And the container is never theirs.
       refute Authz.can?(u.uuid, project, :manage_members)
     end
 
@@ -129,8 +136,13 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
       assert Authz.effective_role(project, u.uuid) == :member
       assert Authz.can?(u.uuid, project, :comment)
 
+      # Same person, weaker role on the other project — which only shows up
+      # once that project restricts something to members and up.
       assert Authz.effective_role(other, u.uuid) == :viewer
+      {:ok, _} = Authz.set_overrides(other, %{"comment" => "members"})
+      other = PhoenixKitProjects.Projects.get_project!(other.uuid)
       refute Authz.can?(u.uuid, other, :comment)
+      assert Authz.can?(u.uuid, project, :comment)
     end
   end
 

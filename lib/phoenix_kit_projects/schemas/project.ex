@@ -170,7 +170,11 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # creation-panel's Codex find: the whitelist silently killed the
     # carry); per-key validity is enforced at read time (Features.on?
     # ignores non-catalog keys) and by set_flags on the write path.
-    "features" => &is_map/1
+    "features" => &is_map/1,
+    # Who can SEE the project — resolved by Authz.visibility_of/1. Values
+    # outside the vocabulary fall back to "private" at read time, so a bad
+    # write can only ever be more restrictive.
+    "visibility" => &is_binary/1
   }
 
   # At most one of team/department/person (mirrors the DB CHECK + the

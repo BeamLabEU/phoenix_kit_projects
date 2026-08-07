@@ -349,6 +349,11 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       {:ok, _} = Members.add_member(project, member_user.uuid, role: "member")
 
+      # Logging time is open by default now, so this test only means
+      # something once the project restricts it to managers.
+      {:ok, _} =
+        PhoenixKitProjects.Authz.set_overrides(project, %{"log_time" => "managers"})
+
       conn =
         Phoenix.ConnTest.build_conn()
         |> put_test_scope(fake_scope(user_uuid: member_user.uuid, permissions: []))

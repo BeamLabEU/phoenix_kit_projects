@@ -141,10 +141,11 @@ defmodule PhoenixKitProjects.Integration.PeopleSeamTest do
     assert %Person{} = loaded.assigned_person
     assert loaded.assigned_person.user.email == user.email
 
-    # Authz relationship grant reads user_uuid off the shadow preload —
-    # grants AUGMENT membership (a viewer below the manager floor), they
-    # don't replace it.
+    # Authz relationship grant reads user_uuid off the shadow preload. The
+    # default floors are open, so restrict the action first — otherwise the
+    # grant proves nothing about the preload.
     {:ok, _} = PhoenixKitProjects.Members.add_member(project, user.uuid, role: "viewer")
+    {:ok, project} = Authz.set_overrides(project, %{"log_time" => "managers"})
     refute Authz.can?(user.uuid, project, :log_time)
     assert Authz.can?(user.uuid, project, :log_time, loaded)
 

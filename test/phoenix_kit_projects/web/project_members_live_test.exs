@@ -117,7 +117,9 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLiveTest do
       assert html =~ "anyone added later"
 
       assert Authz.effective_role(project, user.uuid) == :viewer
-      refute Authz.can?(user.uuid, project, :create_tasks)
+      # A viewer participates by default; the container stays the owner's.
+      assert Authz.can?(user.uuid, project, :create_tasks)
+      refute Authz.can?(user.uuid, project, :manage_members)
     end
 
     test "revoking removes the access", %{conn: conn, project: project, user: user} do

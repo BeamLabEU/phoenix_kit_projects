@@ -36,6 +36,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     {:ok, conn: put_test_scope(conn, scope), scope: scope}
   end
 
+  defp user_fixture_with_email(email) do
+    Auth.register_user(%{"email" => email, "password" => "BrowsePass123!"})
+  end
+
   defp created(prefix) do
     Projects.list_projects() |> Enum.find(&String.starts_with?(&1.name, prefix))
   end
@@ -63,14 +67,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
 
       assert html =~ "People &amp; permissions"
-      assert html =~ "Who can do what"
-      assert html =~ "Who can add tasks"
-      assert html =~ "Who can assign tasks"
-      assert html =~ "Who can change task status"
+      assert html =~ "What they can do"
+      assert html =~ "Add tasks"
+      assert html =~ "Assign tasks"
+      assert html =~ "Change task status"
+      # Defaults are open; the panel's job is to let a project RESTRICT.
+      assert html =~ "can do everything by default"
+      assert html =~ "Anyone with access"
       # The fixed rules are stated rather than left to be discovered.
       assert html =~ "you own it"
-      # No per-extension action matrix — the panel cut that explicitly.
-      refute html =~ "upload_files"
+      assert html =~ "always stay with owners"
     end
 
     test "taking the defaults stores nothing (the project keeps inheriting)", %{conn: conn} do
@@ -84,8 +90,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       assert project
       refute Map.has_key?(project.settings || %{}, "authz")
       # ...and it still resolves to the site defaults.
-      assert Authz.current_overrides(project)["create_tasks"] == "members"
-      assert Authz.current_overrides(project)["assign_tasks"] == "managers"
+      # Open by default now — every work action resolves to "anyone".
+      assert Authz.current_overrides(project)["create_tasks"] == "anyone"
+      assert Authz.current_overrides(project)["assign_tasks"] == "anyone"
     end
 
     test "a tightened floor is stored and enforced", %{conn: conn} do
@@ -360,36 +367,68 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
              |> Enum.find(fn {ext, _row} -> ext.key == "cfg_ext" end)
   end
 
-  describe "adding people and groups (the 2026-08-07 Add-to-project rework)" do
+  describe "adding people and groups (the Add-to-project picker)" do
     alias PhoenixKitProjects.Grants
-    alias PhoenixKitStaff.{Departments, Teams}
+    alias PhoenixKitStaff.{Departments, Staff, Teams}
 
-    test "a person is seated as a member with the chosen role", %{conn: conn} do
-      invitee = user_fixture()
+    # A pick is {kind, uuid, label} straight off the picker row, so staging
+    # then submitting is the whole flow.
+    defp pick_and_add(view, kind, uuid, label, role) do
+      render_hook(view, "participant_pick", %{"kind" => kind, "uuid" => uuid, "label" => label})
+      render_submit(view, "add_participant", %{"role" => role})
+    end
+
+    test "the picker offers people, teams and departments in one list", %{conn: conn} do
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "PickDept-#{n}"})
+      {:ok, _team} = Teams.create(%{"name" => "PickTeam-#{n}", "department_uuid" => dept.uuid})
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
 
-      html =
-        render_submit(view, "add_participant", %{
-          "kind" => "person",
-          "email" => invitee.email,
-          "role" => "manager"
-        })
+      # An empty query answers with a first page — the picker opens a list
+      # on first click rather than waiting for typing.
+      render_hook(view, "participant_search", %{"q" => "", "limit" => 20})
+      assert_push_event(view, "participant_results", %{results: results})
 
-      assert html =~ invitee.email
+      kinds = results |> Enum.map(& &1.kind) |> Enum.uniq() |> Enum.sort()
+      assert "department" in kinds
+      assert "team" in kinds
+      assert Enum.any?(results, &(&1.label =~ "PickDept-#{n}"))
+    end
 
-      render_submit(view, "save", %{
-        "project" => %{"name" => "Seats #{System.unique_integer([:positive])}"}
-      })
+    test "the browse page shows every kind, not just the first page of people",
+         %{conn: conn} do
+      # A flat take filled the no-query page entirely with people on any
+      # real site, hiding teams and departments until you guessed a name.
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "BrowseDept-#{n}"})
+      {:ok, _} = Teams.create(%{"name" => "BrowseTeam-#{n}", "department_uuid" => dept.uuid})
 
-      project = created("Seats")
-      assert project
-      assert Members.role_of(project, invitee.uuid) == :manager
+      for i <- 1..8 do
+        {:ok, u} = user_fixture_with_email("browse-#{n}-#{i}@example.com")
+
+        {:ok, _} =
+          Staff.create_person(%{
+            "user_uuid" => u.uuid,
+            "name" => "Browser #{n}-#{i}",
+            "employment_type" => "full_time"
+          })
+      end
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_hook(view, "participant_search", %{"q" => "", "limit" => 8})
+      assert_push_event(view, "participant_results", %{results: results})
+
+      kinds = results |> Enum.map(& &1.kind) |> Enum.uniq()
+      assert "person" in kinds
+      assert "team" in kinds
+      assert "department" in kinds
     end
 
     test "MULTIPLE groups can be added, each with its own role", %{conn: conn} do
-      # The complaint the rework answers: the old UI's single "Responsible"
-      # picker read as though a project could have one department, full stop.
+      # The complaint the rework answers: one "Responsible" picker read as
+      # though a project could have a single department, full stop.
       n = System.unique_integer([:positive])
       {:ok, dept_a} = Departments.create(%{"name" => "AddDeptA-#{n}"})
       {:ok, dept_b} = Departments.create(%{"name" => "AddDeptB-#{n}"})
@@ -397,24 +436,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
 
-      render_submit(view, "add_participant", %{
-        "kind" => "department",
-        "department_uuid" => dept_a.uuid,
-        "role" => "member"
-      })
-
-      render_submit(view, "add_participant", %{
-        "kind" => "department",
-        "department_uuid" => dept_b.uuid,
-        "role" => "viewer"
-      })
-
-      html =
-        render_submit(view, "add_participant", %{
-          "kind" => "team",
-          "team_uuid" => team.uuid,
-          "role" => "manager"
-        })
+      pick_and_add(view, "department", dept_a.uuid, "AddDeptA-#{n}", "member")
+      pick_and_add(view, "department", dept_b.uuid, "AddDeptB-#{n}", "viewer")
+      html = pick_and_add(view, "team", team.uuid, "AddTeam-#{n}", "manager")
 
       assert html =~ "AddDeptA-#{n}"
       assert html =~ "AddDeptB-#{n}"
@@ -436,58 +460,116 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       assert grants[{"team", team.uuid}] == "manager"
     end
 
-    test "an unknown email is refused and seats nobody", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    test "a person is seated as a member with the chosen role", %{conn: conn} do
+      invitee = user_fixture()
 
-      html =
-        render_submit(view, "add_participant", %{
-          "kind" => "person",
-          "email" => "ghost-#{System.unique_integer([:positive])}@example.com",
-          "role" => "member"
+      {:ok, _} =
+        Staff.create_person(%{
+          "user_uuid" => invitee.uuid,
+          "name" => "Picked Person #{System.unique_integer([:positive])}",
+          "employment_type" => "full_time"
         })
 
-      assert html =~ "No account with that email"
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      pick_and_add(view, "person", invitee.uuid, invitee.email, "manager")
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "Seats #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("Seats")
+      assert project
+      assert Members.role_of(project, invitee.uuid) == :manager
     end
 
-    test "a group uuid the form never offered is refused", %{conn: conn} do
+    test "submitting with nothing staged adds nobody", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
 
-      html =
-        render_submit(view, "add_participant", %{
-          "kind" => "department",
-          "department_uuid" => Ecto.UUID.generate(),
-          "role" => "manager"
-        })
-
-      assert html =~ "Choose a person, team, or department"
+      html = render_submit(view, "add_participant", %{"role" => "manager"})
+      assert html =~ "Search for a person, team, or department"
     end
 
-    test "a kind can't be paired with another kind's uuid", %{conn: conn} do
-      n = System.unique_integer([:positive])
-      {:ok, dept} = Departments.create(%{"name" => "MismatchDept-#{n}"})
-
+    test "a crafted kind is ignored rather than staged", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
 
-      # Says "team", supplies a DEPARTMENT uuid in the department field:
-      # each kind reads only its own field, so nothing is queued.
-      html =
-        render_submit(view, "add_participant", %{
-          "kind" => "team",
-          "department_uuid" => dept.uuid,
-          "role" => "manager"
-        })
+      render_hook(view, "participant_pick", %{
+        "kind" => "wizard",
+        "uuid" => Ecto.UUID.generate(),
+        "label" => "Gandalf"
+      })
 
-      assert html =~ "Choose a person, team, or department"
+      html = render_submit(view, "add_participant", %{"role" => "manager"})
+      assert html =~ "Search for a person, team, or department"
     end
+  end
 
-    test "the permissions rows read one per line, not a squeezed three-across",
-         %{conn: conn} do
+  describe "visibility (who can see it at all)" do
+    alias PhoenixKitProjects.{Authz, Projects}
+
+    test "the choice renders in the permissions section", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
 
-      # The labels are nowrap, so a 3-column grid overflowed them out of
-      # their cells and truncated the selects beside them.
-      refute html =~ ~s(grid grid-cols-1 gap-3 sm:grid-cols-3)
-      assert html =~ "Who can change task status"
+      assert html =~ "Who can see it"
+      assert html =~ "Just the people on it"
+      assert html =~ "Everyone who can open Projects"
+    end
+
+    test "private is the default and stores nothing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "VisDefault #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("VisDefault")
+      assert project
+      refute Map.has_key?(project.settings || %{}, "visibility")
+      assert Authz.visibility_of(project) == "private"
+    end
+
+    test "everyone is stored and gives any viewer a seat", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "visibility" => "everyone"
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "VisOpen #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("VisOpen")
+      assert project
+      assert Authz.visibility_of(project) == "everyone"
+
+      # A stranger — no membership, no grant — can now see it, as a VIEWER.
+      stranger = user_fixture()
+      assert Authz.effective_role(project, stranger.uuid) == :viewer
+      assert Authz.can?(stranger.uuid, project, :view)
+
+      # ...and it appears in their list.
+      scope =
+        PhoenixKitProjects.LiveCase.fake_scope(
+          user_uuid: stranger.uuid,
+          permissions: ["projects"]
+        )
+
+      assert project.name in (Projects.list_projects_for(scope) |> Enum.map(& &1.name))
+    end
+
+    test "a private project stays invisible to a stranger", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "VisShut #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("VisShut")
+      stranger = user_fixture()
+
+      refute Authz.effective_role(project, stranger.uuid)
+      refute Authz.can?(stranger.uuid, project, :view)
     end
   end
 

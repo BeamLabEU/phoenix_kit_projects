@@ -1293,6 +1293,54 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
+  Sets a project's visibility (`"private"` | `"everyone"`).
+
+  Written with the same atomic jsonb_set as the feature flags and authz
+  floors — `settings` is a shared column, so a read-merge-write of the
+  whole map silently clobbers concurrent writes to its siblings.
+  """
+  @spec set_visibility(Project.t(), String.t(), keyword()) ::
+          {:ok, Project.t()} | {:error, term()}
+  def set_visibility(%Project{} = project, visibility, opts \\ []) do
+    if visibility in PhoenixKitProjects.Authz.visibilities() do
+      query =
+        from(p in Project,
+          where: p.uuid == ^project.uuid,
+          update: [
+            set: [
+              settings:
+                fragment(
+                  # to_jsonb(?::text), not ?::jsonb — a bare string like
+                  # `everyone` is not valid JSON, so the direct cast errors.
+                  "jsonb_set(COALESCE(settings, '{}'::jsonb), '{visibility}', to_jsonb(?::text))",
+                  ^visibility
+                ),
+              updated_at: fragment("NOW()")
+            ]
+          ],
+          select: p
+        )
+
+      {1, [updated]} = repo().update_all(query, [])
+
+      PhoenixKitProjects.Activity.log("projects.visibility_changed",
+        actor_uuid: Keyword.get(opts, :actor_uuid),
+        resource_type: "project",
+        resource_uuid: project.uuid,
+        metadata: %{"visibility" => visibility}
+      )
+
+      {:ok, updated}
+    else
+      {:error, :invalid_visibility}
+    end
+  rescue
+    e in [MatchError, Postgrex.Error] ->
+      Logger.warning("[Projects] set_visibility failed: #{Exception.message(e)}")
+      {:error, :not_found}
+  end
+
+  @doc """
   `count_projects/1` narrowed to a scope, so a scoped list and its counter
   agree. A header that counts rows the viewer cannot open is both a lie and
   a leak — it discloses how many projects exist.

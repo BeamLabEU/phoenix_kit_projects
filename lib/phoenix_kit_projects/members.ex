@@ -81,6 +81,21 @@ defmodule PhoenixKitProjects.Members do
     direct = projects_for_user(user_uuid)
     granted = PhoenixKitProjects.Grants.project_roles_for_user(user_uuid)
 
+    # Projects marked visible to everyone are reachable without any row of
+    # their own, so the LIST has to know about them too — otherwise the
+    # page gate says yes and the index they came from never showed it.
+    open_uuids =
+      RepoHelper.repo().all(
+        from(p in PhoenixKitProjects.Schemas.Project,
+          where:
+            p.is_template == false and
+              fragment("COALESCE(?->>'visibility', 'private') = 'everyone'", p.settings),
+          select: p.uuid
+        )
+      )
+
+    granted = Enum.reduce(open_uuids, granted, &Map.put_new(&2, &1, "viewer"))
+
     direct_uuids = MapSet.new(direct, fn {p, _r} -> p.uuid end)
 
     extra_uuids =
