@@ -828,27 +828,58 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     %{
       flags: assigns.flag_states,
       exts: assigns.ext_states,
-      authz_rows: assigns |> visible_authz_actions() |> Enum.map(& &1.settings_key)
+      authz_rows: assigns |> visible_authz_actions() |> Enum.map(& &1.settings_key),
+      statuses: assigns.form[:status_entity_uuid].value,
+      start_mode: assigns.form[:start_mode].value
     }
   end
 
   defp flash_changed_sections(socket, before) do
     now = capability_snapshot(socket.assigns)
 
-    ids =
-      []
-      |> maybe_id(now.flags != before.flags, "create-features")
-      |> maybe_id(now.exts != before.exts, "create-extensions")
-      # The permissions drawer flashes when the ROWS change — a capability
-      # coming or going — not when a floor is merely re-answered.
-      |> maybe_id(now.authz_rows != before.authz_rows, "create-people")
-      |> maybe_id(now.flags != before.flags, "create-start")
+    sections =
+      [
+        section_change("create-features", changed_keys(before.flags, now.flags), "flag-row-"),
+        section_change("create-extensions", changed_keys(before.exts, now.exts), "ext-row-"),
+        # The permissions drawer changes when a ROW comes or goes — a
+        # capability appearing or disappearing — not when a floor is merely
+        # re-answered in the drawer the reader is already looking at.
+        section_change(
+          "create-people",
+          symmetric_difference(before.authz_rows, now.authz_rows),
+          "authz-row-"
+        ),
+        # Start-from has no per-row ids worth highlighting, so a change
+        # there flashes the drawer itself.
+        if(setup_changed?(before, now), do: %{id: "create-start", targets: []})
+      ]
+      |> Enum.reject(&is_nil/1)
 
-    if ids == [], do: socket, else: push_event(socket, "pk-flash", %{ids: ids})
+    if sections == [], do: socket, else: push_event(socket, "pk-flash", %{sections: sections})
   end
 
-  defp maybe_id(ids, true, id), do: [id | ids]
-  defp maybe_id(ids, false, _id), do: ids
+  # nil = nothing changed here, so the section is left alone.
+  defp section_change(_id, [], _prefix), do: nil
+
+  defp section_change(id, keys, prefix) do
+    %{id: id, targets: Enum.map(keys, &(prefix <> &1))}
+  end
+
+  defp changed_keys(before, now) do
+    (Map.keys(before) ++ Map.keys(now))
+    |> Enum.uniq()
+    |> Enum.filter(&(Map.get(before, &1) != Map.get(now, &1)))
+  end
+
+  defp symmetric_difference(a, b) do
+    Enum.uniq((a -- b) ++ (b -- a))
+  end
+
+  defp setup_changed?(before, now) do
+    before.statuses != now.statuses or before.start_mode != now.start_mode or
+      Map.get(before.flags, "scheduling") != Map.get(now.flags, "scheduling") or
+      Map.get(before.flags, "statuses") != Map.get(now.flags, "statuses")
+  end
 
   # "Who can X" floors. Only known actions with known choices survive;
   # anything else keeps whatever the socket already held, so a crafted
@@ -2273,7 +2304,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 <div :for={{group_key, group_label, flags} <- grouped_flag_defs(@flag_defs)} id={"create-flags-#{group_key}"}>
                   <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
                   <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
-                    <label :for={flag <- flags} class="flex items-center justify-between gap-3 py-0.5">
+                    <label
+                      :for={flag <- flags}
+                      id={"flag-row-#{flag.key}"}
+                      class="flex items-center justify-between gap-3 py-0.5"
+                    >
                       <span class="text-sm">
                         {flag.label}
                         <span :if={flag.requires != []} class="block text-xs opacity-40">
@@ -2311,7 +2346,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 <div :for={{group_key, group_label, exts} <- creation_ext_groups(@ext_types)} id={"create-exts-#{group_key}"}>
                   <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
                   <div class="flex flex-col gap-2">
-                    <div :for={ext <- exts} class="group/extbox rounded-lg border border-base-200 p-2">
+                    <div
+                      :for={ext <- exts}
+                      id={"ext-row-#{ext.key}"}
+                      class="group/extbox rounded-lg border border-base-200 p-2"
+                    >
                       <label class="flex items-center justify-between gap-3">
                         <span class="min-w-0">
                           <span class="flex items-center gap-2 text-sm font-medium">
