@@ -802,6 +802,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     # so applying them would immediately undo the reseed (and mint
     # spurious overrides). Skip diff-tracking on switch cycles.
     switched? = template_switching?(socket, params) or archetype_switching?(socket, params)
+    before = capability_snapshot(socket.assigns)
 
     socket
     |> track_template(params)
@@ -812,9 +813,42 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> track_authz(params)
     |> track_visibility(params)
     |> assign(add_role: valid_participant_role(Map.get(params, "role", socket.assigns.add_role)))
+    |> flash_changed_sections(before)
   end
 
   defp track_creation_state(socket, _params), do: socket
+
+  # Which collapsed sections did this change actually touch? Picking a
+  # starting point rewrites the capability checklists, and enabling an
+  # extension can add or remove a permission row — all of it inside
+  # sections the reader isn't looking at. Flashing the ones that changed
+  # says "that click landed here" without opening anything or moving the
+  # page. Nothing flashes when nothing changed, so typing a name is silent.
+  defp capability_snapshot(assigns) do
+    %{
+      flags: assigns.flag_states,
+      exts: assigns.ext_states,
+      authz_rows: assigns |> visible_authz_actions() |> Enum.map(& &1.settings_key)
+    }
+  end
+
+  defp flash_changed_sections(socket, before) do
+    now = capability_snapshot(socket.assigns)
+
+    ids =
+      []
+      |> maybe_id(now.flags != before.flags, "create-features")
+      |> maybe_id(now.exts != before.exts, "create-extensions")
+      # The permissions drawer flashes when the ROWS change — a capability
+      # coming or going — not when a floor is merely re-answered.
+      |> maybe_id(now.authz_rows != before.authz_rows, "create-people")
+      |> maybe_id(now.flags != before.flags, "create-start")
+
+    if ids == [], do: socket, else: push_event(socket, "pk-flash", %{ids: ids})
+  end
+
+  defp maybe_id(ids, true, id), do: [id | ids]
+  defp maybe_id(ids, false, _id), do: ids
 
   # "Who can X" floors. Only known actions with known choices survive;
   # anything else keeps whatever the socket already held, so a crafted
@@ -1083,8 +1117,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     # Same minimal-diff rule as the flags: only floors the user actually
     # moved off the default get stored, so a project that took the defaults
     # keeps inheriting them if the site's matrix ever changes.
+    # Only floors for capabilities the project is actually getting: turning
+    # Discussions off after restricting comments would otherwise store a
+    # floor for something that isn't there.
     authz_to_store =
-      socket.assigns.authz_actions
+      visible_authz_actions(socket.assigns)
       |> Enum.filter(fn action ->
         Map.get(socket.assigns.authz_choices, action.settings_key, action.default) !=
           action.default
@@ -1576,6 +1613,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <div
             :for={action <- @authz_actions}
             class="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
+            id={"authz-row-#{action.settings_key}"}
           >
             <span class="text-sm">{authz_action_label(action.settings_key)}</span>
             <label class="select select-sm w-56 shrink-0">
@@ -1626,6 +1664,29 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       {"members", gettext("Members and up")},
       {"managers", gettext("Managers and owners")}
     ]
+  end
+
+  # What each floor DEPENDS on. A project whose tasks are simple enough not
+  # to need comments shouldn't be asked who may comment — the question is
+  # noise, and answering it stores a floor for a capability that isn't
+  # there. Keyed on the same flags/extensions the rest of the form toggles,
+  # so the rows appear and disappear as those change.
+  @authz_requires %{
+    "assign_tasks" => {:flag, "assignees"},
+    "update_status" => {:flag, "statuses"},
+    "log_time" => {:flag, "ledger"},
+    "comment" => {:ext, "discussions"},
+    "upload_files" => {:ext, "files"}
+  }
+
+  defp visible_authz_actions(assigns) do
+    Enum.filter(assigns.authz_actions, fn action ->
+      case Map.get(@authz_requires, action.settings_key) do
+        {:flag, key} -> Map.get(assigns.flag_states, key, true) != false
+        {:ext, key} -> Map.get(assigns.ext_states, key, false) == true
+        nil -> true
+      end
+    end)
   end
 
   defp authz_action_label("create_tasks"), do: gettext("Add tasks")
@@ -2190,7 +2251,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   </h3>
                   <.permissions_block
                     authz_choices={@authz_choices}
-                    authz_actions={@authz_actions}
+                    authz_actions={visible_authz_actions(assigns)}
                     visibility={@visibility}
                     public_link?={@ext_states["portal"] == true}
                   />

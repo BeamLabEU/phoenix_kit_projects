@@ -503,6 +503,111 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
   end
 
+  describe "permissions follow the enabled capabilities" do
+    test "a row only appears when its capability will exist", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/new")
+
+      # Files is on by default, so "Upload files" is offered...
+      assert html =~ ~s(id="authz-row-upload_files")
+
+      # ...and disappears with the extension. Asking who may upload to a
+      # project with no files is noise, and answering it would store a
+      # floor for a capability that isn't there.
+      html =
+        render_change(view, "validate", %{
+          "project" => %{"name" => ""},
+          "ext" => %{"files" => "false"}
+        })
+
+      refute html =~ ~s(id="authz-row-upload_files")
+      # The task rows are unaffected.
+      assert html =~ ~s(id="authz-row-create_tasks")
+    end
+
+    test "a flag-backed row follows its flag", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/new")
+      assert html =~ ~s(id="authz-row-log_time")
+      assert html =~ ~s(id="authz-row-assign_tasks")
+
+      html =
+        render_change(view, "validate", %{
+          "project" => %{"name" => ""},
+          "flag" => %{"ledger" => "false", "assignees" => "false"}
+        })
+
+      refute html =~ ~s(id="authz-row-log_time")
+      refute html =~ ~s(id="authz-row-assign_tasks")
+    end
+
+    test "a hidden row's floor is not stored", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      # Restrict uploads, THEN turn Files off.
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "authz" => %{"upload_files" => "managers"}
+      })
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "ext" => %{"files" => "false"}
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "NoFiles #{System.unique_integer([:positive])}"}
+      })
+
+      project = created("NoFiles")
+      assert project
+      refute get_in(project.settings || %{}, ["authz", "upload_files"])
+    end
+  end
+
+  describe "changed sections flash" do
+    test "switching the starting point flashes the sections it rewrote", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "archetype" => "quick_todo"
+      })
+
+      # Simple checklist turns most task features off, so the features and
+      # setup drawers changed underneath the reader.
+      assert_push_event(view, "pk-flash", %{ids: ids})
+      assert "create-features" in ids
+    end
+
+    test "enabling an extension flashes the permissions drawer when a row appears",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      # Off first (row goes), then on — the permissions drawer regains
+      # "Upload files".
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "ext" => %{"files" => "false"}
+      })
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "ext" => %{"files" => "true"}
+      })
+
+      assert_push_event(view, "pk-flash", %{ids: ids})
+      assert "create-people" in ids
+      assert "create-extensions" in ids
+    end
+
+    test "typing a name flashes nothing", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_change(view, "validate", %{"project" => %{"name" => "Just typing"}})
+
+      refute_push_event(view, "pk-flash", %{})
+    end
+  end
+
   describe "visibility (who can see it at all)" do
     alias PhoenixKitProjects.{Authz, Projects}
 
