@@ -577,7 +577,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       # them or the section that holds them, because only it knows what is
       # open.
       assert_push_event(view, "pk:change-cue", %{targets: targets})
-      assert "flag-row-assignees" in targets
+      ids = Enum.map(targets, & &1.id)
+      assert "flag-row-assignees" in ids
+      # Grouped by the section that holds each row, so a row that vanished
+      # still has something to cue.
+      assert Enum.all?(targets, &Map.has_key?(&1, :region))
     end
 
     test "enabling an extension flashes the permissions drawer when a row appears",
@@ -597,10 +601,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       })
 
       assert_push_event(view, "pk:change-cue", %{targets: targets, announce: announce})
+      ids = Enum.map(targets, & &1.id)
 
       # The permission row that came back, and the toggle that moved.
-      assert "authz-row-upload_files" in targets
-      assert "ext-row-files" in targets
+      assert "authz-row-upload_files" in ids
+      assert "ext-row-files" in ids
+
+      # Each carries the section that contains it.
+      people = Enum.find(targets, &(&1.id == "authz-row-upload_files"))
+      assert people.region == "create-people"
       # Announced in the reader's words, not the mechanics.
       assert announce =~ "updated"
     end
@@ -615,6 +624,76 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       })
 
       refute_push_event(view, "pk:change-cue", %{})
+    end
+
+    test "a row that DISAPPEARS still cues, via the section that held it",
+         %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      # Turning Files off REMOVES the "Upload files" permission row. A
+      # removed element can't be found, and neither can the section around
+      # it, so without the region the reader would get no cue at all —
+      # exactly when something visibly vanished.
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "ext" => %{"files" => "false"}
+      })
+
+      assert_push_event(view, "pk:change-cue", %{targets: targets})
+
+      gone = Enum.find(targets, &(&1.id == "authz-row-upload_files"))
+      assert gone, "the removed permission row must still be reported"
+      assert gone.region == "create-people"
+    end
+
+    test "returning to where you started clears the marks", %{conn: conn} do
+      # The mark means "there is something here you haven't seen", not "an
+      # event happened". Flipping between presets used to leave every
+      # section marked even when the state came back to the start.
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "archetype" => "quick_todo"
+      })
+
+      assert_push_event(view, "pk:change-cue", %{targets: targets})
+      assert targets != []
+
+      # ...and back to the starting point.
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "archetype" => "standard"
+      })
+
+      assert_push_event(view, "pk:change-cue", %{targets: back, clear: cleared})
+      assert back == [], "nothing differs from the baseline any more"
+      assert "create-features" in cleared
+    end
+
+    test "opening a section makes it the new baseline", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "ext" => %{"files" => "false"}
+      })
+
+      assert_push_event(view, "pk:change-cue", %{targets: targets})
+      assert Enum.any?(targets, &(&1.region == "create-extensions"))
+
+      # The reader opens it — from here that IS what they've seen.
+      render_click(view, "pk_cue_seen", %{"region" => "create-extensions"})
+
+      # An unrelated change must not re-report the extension they just saw.
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "flag" => %{"labels" => "false"}
+      })
+
+      assert_push_event(view, "pk:change-cue", %{targets: later})
+      refute Enum.any?(later, &(&1.region == "create-extensions"))
+      assert Enum.any?(later, &(&1.id == "flag-row-labels"))
     end
 
     test "typing a name flashes nothing", %{conn: conn} do

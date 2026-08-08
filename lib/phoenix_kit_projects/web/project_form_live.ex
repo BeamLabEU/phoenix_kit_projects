@@ -58,6 +58,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign_status_preview()
       |> assign_status_mode()
       |> assign_ai_translate()
+      |> assign_cue_baseline()
 
     {:ok, socket}
   end
@@ -90,6 +91,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_ref: nil,
       customized?: false,
       visibility: "private",
+      cue_seen: %{},
+      cue_marked: MapSet.new(),
       authz_actions: overridable_authz_actions(),
       authz_choices: default_authz_choices(),
       top_blocks: Features.creation_top_blocks()
@@ -123,6 +126,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_ref: nil,
       customized?: false,
       visibility: "private",
+      cue_seen: %{},
+      cue_marked: MapSet.new(),
       authz_actions: [],
       authz_choices: %{},
       top_blocks: []
@@ -627,6 +632,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     {:noreply, handle_switch_language(socket, lang_code)}
   end
 
+  # A cued section reports itself when the reader opens it. From then on
+  # its baseline is what they just saw.
+  def handle_event(unquote(ChangeCue.seen_event()), %{"region" => region}, socket) do
+    {:noreply, mark_region_seen(socket, region)}
+  end
+
   def handle_event("open_add_participant", _params, socket) do
     {:noreply, assign(socket, add_open: true)}
   end
@@ -835,39 +846,91 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     }
   end
 
-  defp flash_changed_sections(socket, before) do
+  # Diffed against what the reader last SAW in each section, not against the
+  # previous keystroke. Flipping a preset back and forth used to leave every
+  # section marked even though nothing differed from where they started —
+  # the mark had come to mean "an event happened" rather than "there is
+  # something here you haven't seen".
+  defp flash_changed_sections(socket, _before) do
     now = capability_snapshot(socket.assigns)
+    seen = socket.assigns.cue_seen
 
-    # Only WHAT changed. Where to show it — and whether to show the rows or
-    # the section that holds them — is the client's call, because only the
-    # client knows which sections are open.
-    targets =
-      Enum.map(changed_keys(before.flags, now.flags), &("flag-row-" <> &1)) ++
-        Enum.map(changed_keys(before.exts, now.exts), &("ext-row-" <> &1)) ++
-        Enum.map(
-          symmetric_difference(before.authz_rows, now.authz_rows),
-          &("authz-row-" <> &1)
-        ) ++
-        if(setup_changed?(before, now), do: ["create-start"], else: [])
+    changes =
+      Map.new(cue_regions(), fn region ->
+        {region, region_diff(region, Map.get(seen, region, %{}), now)}
+      end)
 
-    ChangeCue.push(socket, targets, announce: gettext("Project setup updated"))
+    {changed, settled} = Enum.split_with(changes, fn {_region, ids} -> ids != [] end)
+    marked = socket.assigns.cue_marked
+
+    # Only clear what is actually marked. Sending a clear for every settled
+    # section would fire on each keystroke — the same noise the diff exists
+    # to avoid.
+    to_clear = settled |> Enum.map(&elem(&1, 0)) |> Enum.filter(&MapSet.member?(marked, &1))
+
+    socket
+    |> assign(cue_marked: changed |> Enum.map(&elem(&1, 0)) |> MapSet.new())
+    |> ChangeCue.clear(to_clear)
+    |> ChangeCue.push(Map.new(changed), announce: gettext("Project setup updated"))
   end
 
-  defp changed_keys(before, now) do
-    (Map.keys(before) ++ Map.keys(now))
-    |> Enum.uniq()
-    |> Enum.filter(&(Map.get(before, &1) != Map.get(now, &1)))
+  # The baseline starts at what the page renders, not empty — otherwise the
+  # first change reports every row as new, because nothing had been "seen".
+  defp assign_cue_baseline(%{assigns: %{live_action: :new}} = socket) do
+    snap = capability_snapshot(socket.assigns)
+    assign(socket, cue_seen: Map.new(cue_regions(), &{&1, region_state(&1, snap)}))
+  rescue
+    _ -> socket
   end
 
-  defp symmetric_difference(a, b) do
-    Enum.uniq((a -- b) ++ (b -- a))
+  defp assign_cue_baseline(socket), do: socket
+
+  defp mark_region_seen(socket, region) do
+    if region in cue_regions() do
+      state = region_state(region, capability_snapshot(socket.assigns))
+
+      assign(socket,
+        cue_seen: Map.put(socket.assigns.cue_seen, region, state),
+        cue_marked: MapSet.delete(socket.assigns.cue_marked, region)
+      )
+    else
+      socket
+    end
   end
 
-  defp setup_changed?(before, now) do
-    before.statuses != now.statuses or before.start_mode != now.start_mode or
-      Map.get(before.flags, "scheduling") != Map.get(now.flags, "scheduling") or
-      Map.get(before.flags, "statuses") != Map.get(now.flags, "statuses")
+  defp cue_regions, do: ~w(create-features create-extensions create-people create-start)
+
+  # What each section shows the reader, as a flat map — the unit the
+  # baseline is compared against.
+  defp region_state("create-features", snap), do: snap.flags
+  defp region_state("create-extensions", snap), do: snap.exts
+  defp region_state("create-people", snap), do: Map.new(snap.authz_rows, &{&1, true})
+
+  defp region_state("create-start", snap),
+    do: %{
+      "statuses" => snap.statuses,
+      "start_mode" => snap.start_mode,
+      "scheduling" => Map.get(snap.flags, "scheduling"),
+      "statuses_flag" => Map.get(snap.flags, "statuses")
+    }
+
+  defp region_diff(region, seen, now) do
+    current = region_state(region, now)
+
+    keys =
+      (Map.keys(seen) ++ Map.keys(current))
+      |> Enum.uniq()
+      |> Enum.filter(&(Map.get(seen, &1) != Map.get(current, &1)))
+
+    Enum.map(keys, &cue_target_id(region, &1))
   end
+
+  defp cue_target_id("create-features", key), do: "flag-row-" <> key
+  defp cue_target_id("create-extensions", key), do: "ext-row-" <> key
+  defp cue_target_id("create-people", key), do: "authz-row-" <> key
+  # Start-from has no per-row ids worth highlighting, so any change there
+  # cues the section itself.
+  defp cue_target_id("create-start", _key), do: "create-start"
 
   # "Who can X" floors. Only known actions with known choices survive;
   # anything else keeps whatever the socket already held, so a crafted
