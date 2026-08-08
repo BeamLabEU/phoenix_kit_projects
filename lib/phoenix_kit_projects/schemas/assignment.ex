@@ -83,6 +83,12 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     # never cast from form params (`public` flips via the dedicated
     # `set_public/2` context path, gated :edit_tasks).
     field(:public, :boolean, default: false)
+    # On the PUBLIC board, or not. Deliberately separate from `public`:
+    # that flag has meant "visible to whoever holds the secret link" since
+    # the portal shipped, and reusing it for "visible to the open web"
+    # would retroactively publish everything staff ever flagged under the
+    # older, narrower promise. Nil = not on a public board.
+    field(:board_published_at, :utc_datetime)
     field(:source, :string, default: "internal")
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)

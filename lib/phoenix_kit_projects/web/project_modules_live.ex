@@ -119,7 +119,8 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
         labels: [],
         labels_on: false,
         label_colors: [],
-        portal: nil
+        portal: nil,
+        board_exposure: 0
       )
 
     if socket.assigns.embedded_in_form do
@@ -180,7 +181,8 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       labels: Labels.list_for_project(project.uuid),
       labels_on: Features.on?(project, "labels"),
       label_colors: Label.colors(),
-      portal: PhoenixKitProjects.Portal.get_portal(project.uuid)
+      portal: PhoenixKitProjects.Portal.get_portal(project.uuid),
+      board_exposure: PhoenixKitProjects.Portal.board_exposure_count(project.uuid)
     )
   end
 
@@ -250,6 +252,63 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           {:noreply, put_flash(socket, :error, gettext("Could not apply the preset."))}
       end
     end)
+  end
+
+  def handle_event("set_portal_access_mode", %{"mode" => mode}, socket) do
+    project = socket.assigns.project
+
+    # `publish_existing: false` is not a default to be lazy about — it IS
+    # the guard. Tasks flagged `public` were flagged for whoever holds the
+    # link; putting them on the open web is a separate decision, taken
+    # per task afterwards.
+    case PhoenixKitProjects.Portal.set_access_mode(project.uuid, mode,
+           actor_uuid: Activity.actor_uuid(socket),
+           slug: suggested_slug(mode, project)
+         ) do
+      {:ok, _portal} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, access_mode_flash(mode))
+         |> reload()}
+
+      {:error, _} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not change who can reach the portal."))}
+    end
+  end
+
+  def handle_event("set_portal_slug", %{"slug" => slug}, socket) do
+    case PhoenixKitProjects.Portal.set_access_mode(socket.assigns.project.uuid, "public",
+           slug: String.trim(slug),
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, _portal} ->
+        {:noreply, socket |> put_flash(:info, gettext("Board address updated.")) |> reload()}
+
+      {:error, _} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext(
+             "That address is taken or not allowed — lowercase letters, numbers and hyphens."
+           )
+         )}
+    end
+  end
+
+  def handle_event("set_portal_participation", params, socket) do
+    case PhoenixKitProjects.Portal.set_participation(
+           socket.assigns.project.uuid,
+           Map.take(params, ["submit_access", "comment_access"]),
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, _} ->
+        {:noreply, socket |> put_flash(:info, gettext("Participation updated.")) |> reload()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not update participation."))}
+    end
   end
 
   def handle_event("rotate_portal_link", _params, socket) do
@@ -506,19 +565,103 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
               the access grant, so rotation is the kill switch. --%>
               <div
                 :if={ext.key == "portal" and enabled and @portal}
-                class="flex flex-wrap items-center gap-2 border-t border-base-200 pt-3"
+                class="flex flex-col gap-3 border-t border-base-200 pt-3"
               >
-                <code class="rounded bg-base-200 px-2 py-1 text-xs">
-                  /portal/{@portal.slug}
-                </code>
-                <button
-                  type="button"
-                  phx-click="rotate_portal_link"
-                  data-confirm={gettext("Rotate the portal link? The current link stops working immediately.")}
-                  class="btn btn-ghost btn-sm gap-1"
+                <div class="flex flex-wrap items-center gap-2">
+                  <code class="rounded bg-base-200 px-2 py-1 text-xs">
+                    /portal/{@portal.slug}
+                  </code>
+                  <button
+                    type="button"
+                    phx-click="rotate_portal_link"
+                    data-confirm={gettext("Rotate the portal link? The current link stops working immediately.")}
+                    class="btn btn-ghost btn-sm gap-1"
+                  >
+                    <span class="hero-arrow-path w-4 h-4"></span> {gettext("Rotate link")}
+                  </button>
+                </div>
+
+                <%!-- Who may reach the page at all. Three radios rather than
+                     a pair of switches: "secret slug that search engines
+                     index" and "human-readable address where possession is
+                     the authorization" are both nonsense, and checkboxes
+                     let an admin build them. --%>
+                <div>
+                  <h4 class="mb-1 text-xs font-semibold uppercase opacity-50">
+                    {gettext("Who can reach it")}
+                  </h4>
+                  <div class="flex flex-col gap-2">
+                    <label
+                      :for={{mode, title, hint} <- access_mode_choices()}
+                      class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-300 p-2 transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
+                    >
+                      <input
+                        type="radio"
+                        name="portal_access_mode"
+                        value={mode}
+                        checked={@portal.access_mode == mode}
+                        phx-click="set_portal_access_mode"
+                        phx-value-mode={mode}
+                        data-confirm={access_mode_confirm(mode, @portal, @board_exposure)}
+                        class="radio radio-primary radio-xs mt-0.5 shrink-0"
+                      />
+                      <span class="min-w-0">
+                        <span class="block text-sm font-medium">{title}</span>
+                        <span class="block text-xs opacity-60">{hint}</span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
+                <%!-- A public board's address is a NAME people type and
+                     read, so it is chosen rather than generated. --%>
+                <form
+                  :if={@portal.access_mode == "public"}
+                  phx-submit="set_portal_slug"
+                  class="flex flex-wrap items-end gap-2"
                 >
-                  <span class="hero-arrow-path w-4 h-4"></span> {gettext("Rotate link")}
-                </button>
+                  <label class="form-control grow max-w-xs">
+                    <span class="label-text text-xs opacity-70 mb-1">{gettext("Board address")}</span>
+                    <input
+                      type="text"
+                      name="slug"
+                      value={@portal.slug}
+                      class="input input-bordered input-sm font-mono"
+                    />
+                  </label>
+                  <button type="submit" class="btn btn-sm">{gettext("Rename")}</button>
+                </form>
+
+                <div>
+                  <h4 class="mb-1 text-xs font-semibold uppercase opacity-50">
+                    {gettext("Who can take part")}
+                  </h4>
+                  <form phx-change="set_portal_participation" class="flex flex-wrap gap-3">
+                    <label class="form-control">
+                      <span class="label-text text-xs opacity-70 mb-1">{gettext("Submit issues")}</span>
+                      <select name="submit_access" class="select select-bordered select-sm">
+                        <option
+                          :for={{value, label} <- participation_choices()}
+                          value={value}
+                          selected={@portal.submit_access == value}
+                        >{label}</option>
+                      </select>
+                    </label>
+                    <label class="form-control">
+                      <span class="label-text text-xs opacity-70 mb-1">{gettext("Comment")}</span>
+                      <select name="comment_access" class="select select-bordered select-sm">
+                        <option
+                          :for={{value, label} <- participation_choices()}
+                          value={value}
+                          selected={@portal.comment_access == value}
+                        >{label}</option>
+                      </select>
+                    </label>
+                  </form>
+                  <p :if={@portal.comment_access == "anyone"} class="mt-1 text-xs opacity-60">
+                    {PhoenixKitProjects.Portal.comment_access_note()}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -637,4 +780,71 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
   defp requires_hint(unmet, flag_groups),
     do: gettext("Turn on %{list} first.", list: requires_labels(unmet, flag_groups))
+
+  # ── Portal access presentation ──────────────────────────────────
+
+  defp access_mode_choices do
+    [
+      {"link", gettext("Anyone with the link"),
+       gettext("The address is the key. Not indexed, and rotating it revokes access.")},
+      {"members", gettext("Signed-in users"),
+       gettext("Anyone with an account on this site. Still not indexed.")},
+      {"public", gettext("Anyone on the internet"),
+       gettext("A findable, indexable board with an address you choose.")}
+    ]
+  end
+
+  defp participation_choices do
+    [
+      {"anyone", gettext("Anyone")},
+      {"members", gettext("Signed-in users")},
+      {"nobody", gettext("Nobody")}
+    ]
+  end
+
+  # The one-way-door warning. Going public is the only transition that can
+  # expose work retroactively, so it is the only one that stops to say so —
+  # and it names the number, because "some tasks" is not a thing anyone can
+  # make a decision about.
+  defp access_mode_confirm("public", portal, exposure) when portal.access_mode != "public" do
+    base =
+      gettext(
+        "Make this board public? It gets a findable address and search engines may index it."
+      )
+
+    if exposure > 0 do
+      base <>
+        "\n\n" <>
+        ngettext(
+          "%{count} task is currently marked public for link-holders. It will NOT be published to the board — you publish tasks to a public board one at a time.",
+          "%{count} tasks are currently marked public for link-holders. They will NOT be published to the board — you publish tasks to a public board one at a time.",
+          exposure,
+          count: exposure
+        )
+    else
+      base
+    end
+  end
+
+  defp access_mode_confirm("link", portal, _exposure) when portal.access_mode == "public" do
+    gettext(
+      "Go back to a private link? The current public address stops working and cannot be reused as a secret."
+    )
+  end
+
+  defp access_mode_confirm(_mode, _portal, _exposure), do: nil
+
+  defp access_mode_flash("public"),
+    do: gettext("This board is public. Publish individual tasks to put them on it.")
+
+  defp access_mode_flash("members"), do: gettext("Signed-in users can now reach this portal.")
+  defp access_mode_flash(_), do: gettext("The portal is back to a private link.")
+
+  # Only public boards need a chosen address; the other modes mint their own
+  # unguessable one.
+  defp suggested_slug("public", project) do
+    PhoenixKitProjects.Schemas.Portal.suggest_public_slug(project.name)
+  end
+
+  defp suggested_slug(_mode, _project), do: nil
 end

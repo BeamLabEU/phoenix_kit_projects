@@ -92,12 +92,20 @@ defmodule PhoenixKitProjects.Integration.PortalTest do
     test "the DTO carries EXACTLY the whitelisted keys", %{portal: portal} do
       assert {:ok, view} = Portal.public_view(portal.slug)
 
+      # Widening this list is a deliberate act, which is the point of
+      # asserting it exactly. `access_mode` and the two `may_*` booleans
+      # describe the page and the viewer's own permissions — not project
+      # data — and the template needs them to avoid offering a control the
+      # server would refuse.
       assert Map.keys(view) |> Enum.sort() ==
                [
+                 :access_mode,
                  :capabilities,
                  :completed_at,
                  :issue_counts,
                  :issues,
+                 :may_comment,
+                 :may_submit,
                  :project_name,
                  :project_status,
                  :started_at

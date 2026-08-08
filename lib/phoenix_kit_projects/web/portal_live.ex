@@ -53,7 +53,8 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   end
 
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, view: nil, slug: nil, submitted: false, error: nil)}
+    {:ok,
+     assign(socket, view: nil, slug: nil, submitted: false, error: nil, needs_sign_in: false)}
   end
 
   defp load_view(socket) do
@@ -61,9 +62,11 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     # TOCTOU find: a rotate between two resolves used to skip the
     # rotation subscription). The uuid rides the socket for the PubSub
     # topic only; it never reaches the template.
-    case Portal.resolve(socket.assigns.slug) do
+    viewer = socket.assigns[:phoenix_kit_current_scope]
+
+    case Portal.resolve(socket.assigns.slug, viewer) do
       {:ok, _portal, project} ->
-        case Portal.public_view(socket.assigns.slug) do
+        case Portal.public_view(socket.assigns.slug, viewer) do
           {:ok, view} ->
             assign(socket,
               view: Map.put(view, :project_uuid, project.uuid),
@@ -75,9 +78,24 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         end
 
       :error ->
-        assign(socket, view: nil, page_title: gettext("Not found"))
+        assign(socket,
+          view: nil,
+          page_title: gettext("Not found"),
+          needs_sign_in: needs_sign_in?(socket, viewer)
+        )
     end
   end
+
+  # Only for a portal that is genuinely `members` and a visitor who is
+  # genuinely anonymous. Everything else keeps the uniform "unavailable"
+  # answer, so the page never becomes an oracle for which slugs exist.
+  defp needs_sign_in?(socket, viewer) do
+    is_nil(viewer_uuid(viewer)) and
+      Portal.access_mode_of(socket.assigns.slug) == "members"
+  end
+
+  defp viewer_uuid(%{user: %{uuid: uuid}}) when is_binary(uuid), do: uuid
+  defp viewer_uuid(_), do: nil
 
   # Rotation / re-configuration while mounted: re-resolve; a dead slug
   # downgrades to the uniform unavailable state on the spot.
@@ -117,12 +135,26 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   @impl true
   def render(%{view: nil} = assigns) do
+    assigns = assign_new(assigns, :needs_sign_in, fn -> false end)
+
     ~H"""
     <div class="mx-auto flex min-h-[60vh] max-w-lg flex-col items-center justify-center gap-3 px-4 text-center">
       <meta name="robots" content="noindex, nofollow" />
       <span class="hero-link-slash w-10 h-10 opacity-30"></span>
-      <h1 class="text-xl font-semibold">{gettext("This page is unavailable")}</h1>
-      <p class="text-sm opacity-60">
+
+      <%!-- A members board tells an anonymous visitor what to do about it.
+           Every other failure keeps the uniform wording, so the page can't
+           be used to discover which slugs exist. --%>
+      <h1 :if={@needs_sign_in} class="text-xl font-semibold">{gettext("Sign in to view this board")}</h1>
+      <p :if={@needs_sign_in} class="text-sm opacity-60">
+        {gettext("This board is open to signed-in users.")}
+      </p>
+      <a :if={@needs_sign_in} href={PhoenixKit.Utils.Routes.path("/users/log-in")} class="btn btn-primary btn-sm">
+        {gettext("Sign in")}
+      </a>
+
+      <h1 :if={not @needs_sign_in} class="text-xl font-semibold">{gettext("This page is unavailable")}</h1>
+      <p :if={not @needs_sign_in} class="text-sm opacity-60">
         {gettext("The link may have been rotated or the portal turned off.")}
       </p>
     </div>
@@ -132,7 +164,13 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   def render(assigns) do
     ~H"""
     <div class="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-10">
-      <meta name="robots" content="noindex, nofollow" />
+      <%!-- A public board WANTS to be found; that is the difference between
+           it and a capability link. The response header says the same
+           thing — this is the belt to its suspender. --%>
+      <meta
+        name="robots"
+        content={if @view.access_mode == "public", do: "index, follow", else: "noindex, nofollow"}
+      />
 
       <header class="flex flex-col gap-1">
         <h1 class="text-2xl font-bold">{@view.project_name}</h1>

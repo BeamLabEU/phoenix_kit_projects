@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 11
+  @current_version 12
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -108,6 +108,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v9_backfill_creator_owners(p, prefix)
     v10_portal(p)
     v11_subject_grants(p, prefix)
+    v12_public_board(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -132,6 +133,31 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 12 do
+      # Dropping access_mode returns every portal to secret-link semantics,
+      # which is the safe direction. board_published_at goes with it: on the
+      # way back down a public board stops existing, so nothing should be
+      # left flagged as published to one.
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_portals
+        DROP CONSTRAINT IF EXISTS phoenix_kit_project_portals_access_mode_check
+      """)
+
+      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_board_published_index")
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_portals
+        DROP COLUMN IF EXISTS access_mode,
+        DROP COLUMN IF EXISTS submit_access,
+        DROP COLUMN IF EXISTS comment_access
+      """)
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_assignments
+        DROP COLUMN IF EXISTS board_published_at
+      """)
+    end
 
     if target < 11 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_subject_grants")
@@ -784,6 +810,69 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # person, and a team-owned project would break the last-owner guard the
   # moment the team emptied.
   # ---------------------------------------------------------------------------
+
+  # V12: the portal stops assuming its own secrecy.
+  #
+  # `access_mode` is one enum rather than a pair of booleans because the
+  # quadrants aren't orthogonal: "secret slug + indexable" and "human slug
+  # + possession-is-authorization" are both nonsense, and booleans let an
+  # admin construct them. An enum makes those states unrepresentable.
+  #
+  # `board_published_at` is the blast-radius guard, and it is the reason
+  # this is safe to ship. `public == true` has meant "visible to whoever
+  # holds the secret link" for as long as the portal has existed, and staff
+  # flagged tasks under that understanding. Reusing it as "visible to the
+  # open web" would retroactively publish every one of them the moment an
+  # admin flipped a switch. A task reaches a PUBLIC board only by being
+  # explicitly published to it — a second, deliberate act — so switching a
+  # portal to `public` exposes nothing by itself.
+  defp v12_public_board(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_portals
+    ADD COLUMN IF NOT EXISTS access_mode VARCHAR(16) NOT NULL DEFAULT 'link'
+    """)
+
+    # What outsiders may DO, split from who may look. Submitting and
+    # discussing are different risks: a submission is invisible until staff
+    # act on it, a comment is live surface area the moment it lands.
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_portals
+    ADD COLUMN IF NOT EXISTS submit_access VARCHAR(16) NOT NULL DEFAULT 'anyone'
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_portals
+    ADD COLUMN IF NOT EXISTS comment_access VARCHAR(16) NOT NULL DEFAULT 'nobody'
+    """)
+
+    execute("""
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT FROM information_schema.constraint_column_usage
+        WHERE table_schema = current_schema()
+          AND constraint_name = 'phoenix_kit_project_portals_access_mode_check'
+      ) THEN
+        ALTER TABLE #{p}phoenix_kit_project_portals
+          ADD CONSTRAINT phoenix_kit_project_portals_access_mode_check
+          CHECK (access_mode IN ('link', 'members', 'public'));
+      END IF;
+    END $$;
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD COLUMN IF NOT EXISTS board_published_at TIMESTAMPTZ
+    """)
+
+    # The public board's read query filters on it, and a board with many
+    # tasks behind it is the normal case.
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_board_published_index
+      ON #{p}phoenix_kit_project_assignments (project_uuid, board_published_at)
+      WHERE (board_published_at IS NOT NULL)
+    """)
+  end
 
   defp v11_subject_grants(p, prefix) do
     execute("""

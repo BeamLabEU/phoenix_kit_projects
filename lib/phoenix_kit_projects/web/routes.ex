@@ -24,7 +24,13 @@ defmodule PhoenixKitProjects.Web.Routes do
       scope unquote(url_prefix) do
         pipe_through([:browser, :phoenix_kit_auto_setup, :pk_projects_portal])
 
-        live_session :pk_projects_portal do
+        # `mount_current_scope` LOADS identity without requiring it: the
+        # portal stays reachable to anonymous visitors, and a `members`
+        # board can still tell whether someone is signed in. Requiring auth
+        # at the router instead would break `link` and `public` boards,
+        # which is why the check lives in `Portal.resolve/2`.
+        live_session :pk_projects_portal,
+          on_mount: [{PhoenixKitWeb.Users.Auth, :phoenix_kit_mount_current_scope}] do
           live("/portal/:slug", PhoenixKitProjects.Web.PortalLive, :show)
         end
       end
