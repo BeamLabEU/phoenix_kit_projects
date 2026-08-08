@@ -15,7 +15,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{Authz, GanttDisplay, L10n, Paths, Projects, ScheduleLayout}
+  alias PhoenixKitProjects.{GanttDisplay, L10n, Paths, Projects, ScheduleLayout}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -62,8 +62,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
         # LV is on the embeddable allowlist, so it is reachable off-router
         # with a client-supplied session and no on_mount to gate it.
         # Templates stay exempt — they have no membership rows.
-        if project.is_template or
-             Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :view) do
+        if WebHelpers.template_or_viewable?(project, socket.assigns[:phoenix_kit_current_scope]) do
           # `topic_tasks` (global task-template edits) is constant; the per-project
           # topics for the whole tree are subscribed in `load_gantt`/`subscribe_tree`.
           if connected?(socket) do

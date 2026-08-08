@@ -89,4 +89,33 @@ defmodule PhoenixKitProjects.AuthzTest do
       refute Authz.can?(scope, @project, :view, nil, context: :public)
     end
   end
+
+  describe "can_use_templates?/1" do
+    # Templates have no membership rows, so `can?/5` can't resolve them and
+    # the page used to skip the check entirely with `project.is_template or
+    # …`. That rested on templates being reachable only through the admin
+    # route — false for an embed, which mounts off-router with a
+    # host-supplied session.
+
+    test "a module-reacher may use templates" do
+      assert Authz.can_use_templates?(template_scope(["projects"]))
+    end
+
+    test "no identity means no templates" do
+      refute Authz.can_use_templates?(nil)
+    end
+
+    test "a scope without the module permission is refused" do
+      refute Authz.can_use_templates?(template_scope(["billing"]))
+    end
+
+    defp template_scope(permissions) do
+      %PhoenixKit.Users.Auth.Scope{
+        user: %{uuid: Ecto.UUID.generate()},
+        authenticated?: true,
+        cached_roles: ["User"],
+        cached_permissions: MapSet.new(permissions)
+      }
+    end
+  end
 end

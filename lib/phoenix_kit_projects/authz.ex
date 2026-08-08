@@ -198,6 +198,31 @@ defmodule PhoenixKitProjects.Authz do
   @spec subject_user_uuid_of(term()) :: binary() | nil
   def subject_user_uuid_of(subject), do: subject_user_uuid(subject)
 
+  @doc """
+  May this subject reach the TEMPLATE library?
+
+  Templates are library objects with no membership rows, so `can?/5`'s
+  per-project resolution has nothing to work with and would lock everyone
+  out. The rule is therefore module-level: hold the `projects` permission.
+
+  This exists because "templates stay behind the admin route" is not a
+  rule the module can rely on. Every one of these pages is also the root
+  LiveView of an EMBED, mounted off-router with a host-supplied session,
+  where core's admin `on_mount` never runs — so an exemption phrased as
+  "skip the check for templates" meant no check at all, for anyone,
+  including a session with no identity.
+  """
+  @spec can_use_templates?(term()) :: boolean()
+  def can_use_templates?(%Scope{} = scope) do
+    Scope.has_module_access?(scope, "projects")
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
+  end
+
+  def can_use_templates?(_), do: false
+
   # ── Member resolution (Step 5) ──────────────────────────────────────
   #
   # role floor ∨ relationship grant, with the project's "who can X"

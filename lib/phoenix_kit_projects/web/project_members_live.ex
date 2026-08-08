@@ -20,9 +20,10 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Roles
   alias PhoenixKitProjects.Activity
-  alias PhoenixKitProjects.{Authz, Grants, L10n, Members, Paths, Projects}
+  alias PhoenixKitProjects.{Authz, Extensions, Features, Grants, L10n, Members, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.AccessPanel
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -116,11 +117,31 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   defp load_members(socket) do
     project_uuid = socket.assigns.project.uuid
 
+    project = socket.assigns.project
+
     assign(socket,
       members: Members.list_members(project_uuid),
       grants: decorate_grants(Grants.list_grants(project_uuid)),
-      subject_options: subject_options()
+      subject_options: subject_options(),
+      visibility: Authz.visibility_of(project),
+      authz_choices: Authz.current_overrides(project),
+      authz_actions: relevant_authz_actions(project)
     )
+  end
+
+  # The same filtering the creation form does, resolved from what the
+  # project actually has enabled: a floor for a capability this project
+  # turned off is a question with no meaning.
+  defp relevant_authz_actions(project) do
+    flag_states =
+      Map.new(Features.catalog(), fn {key, _def} -> {key, Features.on?(project, key)} end)
+
+    ext_states =
+      Map.new(Extensions.list_types(), fn type ->
+        {type.key, Extensions.enabled?(project, type.key)}
+      end)
+
+    AccessPanel.visible_actions(Authz.overridable_actions(), flag_states, ext_states)
   end
 
   # A grant row carries only a subject uuid — it has no foreign key,
@@ -277,6 +298,34 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
     end)
   end
 
+  # Visibility and the work floors, written the same way creation writes
+  # them: two targeted jsonb merges, never a read-merge-write of the whole
+  # settings map (it is shared with the feature flags).
+  def handle_event("save_access", params, socket) do
+    with_authz(socket, fn ->
+      project = socket.assigns.project
+
+      with {:ok, project} <- save_visibility(project, params),
+           {:ok, project} <- save_overrides(project, params) do
+        Activity.log("projects.project_access_updated",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: project.uuid,
+          metadata: %{"visibility" => Authz.visibility_of(project)}
+        )
+
+        {:noreply,
+         socket
+         |> assign(project: project)
+         |> load_members()
+         |> put_flash(:info, gettext("Access updated."))}
+      else
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, gettext("Could not update access."))}
+      end
+    end)
+  end
+
   def handle_event("remove_member", %{"user" => user_uuid}, socket) do
     with_authz(socket, fn ->
       case Members.remove_member(socket.assigns.project, user_uuid,
@@ -292,6 +341,29 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
           {:noreply, put_flash(socket, :error, gettext("Could not remove the member."))}
       end
     end)
+  end
+
+  defp save_visibility(project, %{"visibility" => value}) when is_binary(value),
+    do: Projects.set_visibility(project, value)
+
+  defp save_visibility(project, _params), do: {:ok, project}
+
+  # Only the rows this project actually SHOWED are written. A floor whose
+  # capability is off isn't on the form, and re-saving must not invent one
+  # — nor drop a stored floor for a capability that is merely hidden right
+  # now, which is why this takes the visible keys rather than replacing the
+  # whole map.
+  defp save_overrides(project, %{"authz" => submitted}) when is_map(submitted) do
+    case Map.take(submitted, socket_visible_keys(project)) do
+      empty when map_size(empty) == 0 -> {:ok, project}
+      floors -> Authz.set_overrides(project, floors)
+    end
+  end
+
+  defp save_overrides(project, _params), do: {:ok, project}
+
+  defp socket_visible_keys(project) do
+    project |> relevant_authz_actions() |> Enum.map(& &1.settings_key)
   end
 
   defp with_authz(socket, fun) do
@@ -383,6 +455,36 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
             <.icon name="hero-user-plus" class="w-4 h-4" /> {gettext("Add")}
           </button>
         </form>
+
+        <%!-- Access. Everything here was settable only while CREATING the
+             project, which meant a visibility or floor chosen wrongly at
+             minute one could never be changed. It belongs on this page
+             because this is where every other "who can reach this" answer
+             already lives. --%>
+        <div class="card border border-base-200 bg-base-100">
+          <div class="card-body gap-3 py-3 px-4">
+            <div>
+              <h2 class="text-sm font-semibold">{gettext("Access")}</h2>
+              <p class="text-xs opacity-60">
+                {gettext("Who can see this project, and what they're allowed to do in it.")}
+              </p>
+            </div>
+
+            <form id="access-form" phx-submit="save_access" class="flex flex-col gap-4">
+              <AccessPanel.access_panel
+                authz_choices={@authz_choices}
+                authz_actions={@authz_actions}
+                visibility={@visibility}
+                ownership_note={false}
+              />
+              <div>
+                <button type="submit" class="btn btn-primary btn-sm" phx-disable-with={gettext("Saving…")}>
+                  {gettext("Save access")}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
 
         <%!-- Group access. The other half of "who works here": a role held
              by a team, a department, or a site role, so inviting Design or

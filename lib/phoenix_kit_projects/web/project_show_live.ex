@@ -213,8 +213,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         #
         # A refusal is deliberately shaped exactly like "not found" —
         # existence is itself information.
-        if project.is_template or
-             Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :view) do
+        if WebHelpers.template_or_viewable?(project, socket.assigns[:phoenix_kit_current_scope]) do
           if connected?(socket) do
             # Per-project topic covers assignment/dependency events for this
             # project; the tasks topic covers library-level task renames so
@@ -1061,21 +1060,88 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "generate_invoice" => :ledger
   }
 
+  # ── Hub permission gating ────────────────────────────────────────
+  #
+  # @gated_events above answers "is this feature ON for this project".
+  # It says nothing about "may THIS person do it" — every mutation below
+  # used to run for anyone who could open the page, which made the
+  # project's own "who can do what" floors a UI-only decoration and left
+  # archiving, an owner-only action, with no check whatsoever.
+  #
+  # Same shape as the feature gate deliberately: one table, one
+  # interceptor, fail-closed. A handler that forgets to check is the
+  # failure mode being designed out, so the check cannot live in the
+  # handlers.
+  #
+  # Events NOT listed here are reads, UI state (tabs, modals, filters)
+  # or already guard themselves with a record — see :log_time below.
+  @event_actions %{
+    "complete" => :update_status,
+    "start_task" => :update_status,
+    "reopen" => :update_status,
+    "change_workflow_status" => :update_status,
+    "update_progress" => :update_status,
+    "toggle_tracking" => :update_status,
+    "remove_assignment" => :delete_tasks,
+    "reorder_assignments" => :edit_tasks,
+    "save_duration" => :edit_tasks,
+    "remove_dependency" => :edit_tasks,
+    "detach_subproject" => :edit_tasks,
+    "archive_project" => :archive_project,
+    "unarchive_project" => :archive_project
+  }
+
+  # Task-scoped events carry the task's uuid, and the task is what makes
+  # a relationship grant work: the person a task is assigned to may move
+  # their own task even when the floor is higher. Resolving the record
+  # here (rather than passing nil) is what keeps "assignees can update
+  # their own status" true through the interceptor.
+  @record_param_events ~w(complete start_task reopen change_workflow_status
+                          update_progress toggle_tracking remove_assignment save_duration)
+
   @impl true
   def handle_event(event, params, socket) do
     case Map.get(@gated_events, event) do
       nil ->
-        gated_handle_event(event, params, socket)
+        authorized_handle_event(event, params, socket)
 
       gate ->
         if socket.assigns.fx[gate] do
-          gated_handle_event(event, params, socket)
+          authorized_handle_event(event, params, socket)
         else
           {:noreply,
            put_flash(socket, :error, gettext("This feature is turned off for this project."))}
         end
     end
   end
+
+  defp authorized_handle_event(event, params, socket) do
+    case Map.get(@event_actions, event) do
+      nil ->
+        gated_handle_event(event, params, socket)
+
+      action ->
+        if Authz.can?(
+             socket.assigns[:phoenix_kit_current_scope],
+             socket.assigns.project,
+             action,
+             authz_record(event, params, socket)
+           ) do
+          gated_handle_event(event, params, socket)
+        else
+          {:noreply,
+           put_flash(socket, :error, gettext("You don't have permission to do that here."))}
+        end
+    end
+  end
+
+  defp authz_record(event, %{"uuid" => uuid}, socket) when is_binary(uuid) do
+    if event in @record_param_events do
+      Enum.find(socket.assigns[:assignments] || [], &(&1.uuid == uuid))
+    end
+  end
+
+  defp authz_record(_event, _params, _socket), do: nil
 
   defp gated_handle_event("switch_tab", %{"tab" => tab} = params, socket) do
     active = resolve_switch_target(tab, socket)

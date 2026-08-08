@@ -14,6 +14,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.{Extensions, Grants, Members, Statuses}
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.AccessPanel
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Components.Core.ChangeCue
 
@@ -125,6 +126,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       template_preview: nil,
       template_ref: nil,
       customized?: false,
+      # These two are the capability snapshot's inputs. The `:new` branch
+      # seeds them from the catalog; omitting them here left the edit page
+      # one replayed `pk_cue_seen` away from a KeyError, since that handler
+      # is deliberately not gated on live_action.
+      flag_states: %{},
+      ext_states: %{},
       visibility: "private",
       cue_seen: %{},
       cue_marked: MapSet.new(),
@@ -1647,140 +1654,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp receipt_reveal_class(_), do: "hidden"
 
-  attr(:authz_choices, :map, required: true)
-  attr(:authz_actions, :list, required: true)
-  attr(:visibility, :string, required: true)
-  attr(:public_link?, :boolean, required: true)
-
-  # Who can do what, for the roles invited above. Only the three floors
-  # `Authz` actually lets a project override are offered — this is a
-  # "who can X" panel, not a permission-scheme editor. The fixed rules are
-  # stated in plain language rather than hidden: they are what most people
-  # are checking for when they come looking for permissions at all.
-  defp permissions_block(assigns) do
-    ~H"""
-    <div class="flex flex-col gap-4">
-      <%!-- Visibility first: it answers "who can even see this", which comes
-           before any question about what they may do. Everything below is
-           about people who already have access. --%>
-      <div>
-        <h4 class="mb-1 text-xs font-semibold uppercase opacity-50">{gettext("Who can see it")}</h4>
-        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <label
-            :for={{value, title, hint} <- visibility_choices()}
-            class="flex cursor-pointer items-start gap-2 rounded-lg border border-base-300 p-2 transition-colors has-[:checked]:border-primary has-[:checked]:bg-primary/5"
-          >
-            <input
-              type="radio"
-              name="visibility"
-              value={value}
-              checked={@visibility == value}
-              class="radio radio-primary radio-xs mt-0.5 shrink-0"
-            />
-            <span class="min-w-0">
-              <span class="block text-sm font-medium">{title}</span>
-              <span class="block text-xs opacity-60">{hint}</span>
-            </span>
-          </label>
-        </div>
-      </div>
-
-      <div>
-        <h4 class="mb-1 text-xs font-semibold uppercase opacity-50">{gettext("What they can do")}</h4>
-        <p class="mb-2 text-xs opacity-60">
-          {gettext("Everyone with access can do everything by default. Restrict anything you'd rather keep to managers.")}
-        </p>
-
-        <div class="divide-y divide-base-200 rounded-lg border border-base-200">
-          <div
-            :for={action <- @authz_actions}
-            class="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
-            id={"authz-row-#{action.settings_key}"}
-          >
-            <span class="text-sm">{authz_action_label(action.settings_key)}</span>
-            <label class="select select-sm w-56 shrink-0">
-              <select name={"authz[#{action.settings_key}]"}>
-                <option
-                  :for={{value, label} <- authz_choice_labels()}
-                  value={value}
-                  selected={Map.get(@authz_choices, action.settings_key, action.default) == value}
-                >
-                  {label}
-                </option>
-              </select>
-            </label>
-          </div>
-        </div>
-      </div>
-
-      <ul class="flex flex-col gap-1 text-xs opacity-60">
-        <li>{gettext("You create the project, so you own it — you can do everything.")}</li>
-        <li>
-          {gettext("Settings, membership, archiving and deletion always stay with owners.")}
-        </li>
-      </ul>
-
-      <%!-- The other axis entirely: the portal publishes a link that needs
-           no account at all. It is the biggest access decision this page
-           makes, so it says so here, where someone checking permissions
-           looks — not only as an extension toggle further down. --%>
-      <p :if={@public_link?} class="rounded-lg bg-warning/10 p-2 text-xs">
-        {gettext("Anyone with this project's portal link will be able to reach it without signing in. Choose what that link exposes under Extensions → Public portal.")}
-      </p>
-    </div>
-    """
-  end
-
-  defp visibility_choices do
-    [
-      {"private", gettext("Just the people on it"),
-       gettext("Members, the teams and departments you add, and site admins.")},
-      {"everyone", gettext("Everyone who can open Projects"),
-       gettext("Anyone with access to the Projects module can see it, as a viewer.")}
-    ]
-  end
-
-  defp authz_choice_labels do
-    [
-      {"anyone", gettext("Anyone with access")},
-      {"members", gettext("Members and up")},
-      {"managers", gettext("Managers and owners")}
-    ]
-  end
-
-  # What each floor DEPENDS on. A project whose tasks are simple enough not
-  # to need comments shouldn't be asked who may comment — the question is
-  # noise, and answering it stores a floor for a capability that isn't
-  # there. Keyed on the same flags/extensions the rest of the form toggles,
-  # so the rows appear and disappear as those change.
-  @authz_requires %{
-    "assign_tasks" => {:flag, "assignees"},
-    "update_status" => {:flag, "statuses"},
-    "log_time" => {:flag, "ledger"},
-    "comment" => {:ext, "discussions"},
-    "upload_files" => {:ext, "files"}
-  }
-
+  # The floors panel is shared with the members page — see
+  # Web.Components.AccessPanel. Which rows are RELEVANT depends on this
+  # form's live flag/extension state, so the filtering stays here.
   defp visible_authz_actions(assigns) do
-    Enum.filter(assigns.authz_actions, fn action ->
-      case Map.get(@authz_requires, action.settings_key) do
-        {:flag, key} -> Map.get(assigns.flag_states, key, true) != false
-        {:ext, key} -> Map.get(assigns.ext_states, key, false) == true
-        nil -> true
-      end
-    end)
+    AccessPanel.visible_actions(assigns.authz_actions, assigns.flag_states, assigns.ext_states)
   end
-
-  defp authz_action_label("create_tasks"), do: gettext("Add tasks")
-  defp authz_action_label("edit_tasks"), do: gettext("Edit anyone's task")
-  defp authz_action_label("delete_tasks"), do: gettext("Delete tasks")
-  defp authz_action_label("assign_tasks"), do: gettext("Assign tasks")
-  defp authz_action_label("update_status"), do: gettext("Change task status")
-  defp authz_action_label("log_time"), do: gettext("Log time")
-  defp authz_action_label("comment"), do: gettext("Comment")
-  defp authz_action_label("upload_files"), do: gettext("Upload files")
-  defp authz_action_label("set_health"), do: gettext("Set project health")
-  defp authz_action_label(key), do: key
 
   # ── Creation-page blocks (promotable via Settings → Projects) ──────
 
@@ -2331,7 +2210,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   <h3 class="mb-2 text-xs font-semibold uppercase opacity-50">
                     {gettext("Who can do what")}
                   </h3>
-                  <.permissions_block
+                  <AccessPanel.access_panel
                     authz_choices={@authz_choices}
                     authz_actions={visible_authz_actions(assigns)}
                     visibility={@visibility}

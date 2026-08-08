@@ -47,6 +47,7 @@ defmodule PhoenixKitProjects.LiveCase do
   end
 
   alias Ecto.Adapters.SQL.Sandbox
+  alias PhoenixKit.Users.{Auth, Permissions, Roles}
   alias PhoenixKitProjects.Test.Repo, as: TestRepo
 
   setup tags do
@@ -103,6 +104,47 @@ defmodule PhoenixKitProjects.LiveCase do
   `:assign_scope` `on_mount` hook can put it on socket assigns at
   mount time. Pair with `fake_scope/1`.
   """
+  @doc """
+  A real user uuid for an EMBED session's `"current_user_uuid"`, holding
+  the `projects` module permission.
+
+  Embeds mount off-router, so the `on_mount` hooks that build a scope
+  never run; the module rebuilds identity from this uuid instead. A test
+  that embeds a page behind any authorization gate needs a real user with
+  real permissions, not a synthetic scope — passing `fake_scope/1` in the
+  session does nothing here.
+  """
+  def embed_user_uuid! do
+    n = System.unique_integer([:positive])
+
+    {:ok, user} =
+      Auth.register_user(%{
+        "email" => "embed-#{n}@example.com",
+        "password" => "ValidPassword123!"
+      })
+
+    {:ok, role} =
+      Roles.create_role(%{
+        "name" => "EmbedProjects-#{n}",
+        "description" => "projects module access for embed tests"
+      })
+
+    # The superadmin key, not "projects": module keys are validated
+    # against the registered set, and the projects module isn't registered
+    # in the test environment. `Scope.has_module_access?/2` honors "*" for
+    # every key, so this is a real grant — the precise module-reacher rule
+    # is pinned in authz_test.exs.
+    {:ok, _} =
+      Permissions.grant_permission(
+        role.uuid,
+        Permissions.superadmin_key()
+      )
+
+    {:ok, _} = Roles.assign_role(user, role.name)
+
+    user.uuid
+  end
+
   def put_test_scope(conn, scope) do
     Plug.Test.init_test_session(conn, %{"phoenix_kit_test_scope" => scope})
   end

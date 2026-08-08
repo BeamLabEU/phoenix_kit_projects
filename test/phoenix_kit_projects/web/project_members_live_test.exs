@@ -3,7 +3,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLiveTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Roles
-  alias PhoenixKitProjects.Members
+  alias PhoenixKitProjects.{Authz, Members, Projects}
 
   setup %{conn: conn} do
     PhoenixKitProjects.Extensions.Registry.refresh()
@@ -199,6 +199,61 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLiveTest do
       scope = fake_scope(user_uuid: user.uuid, permissions: ["projects"])
       names = Projects.list_projects_for(scope) |> Enum.map(& &1.name)
       assert project.name in names
+    end
+  end
+
+  describe "access panel — editable after creation" do
+    # Everything here was `live_action: :new` only, so a visibility or
+    # floor chosen wrongly at minute one was permanent.
+
+    test "the panel renders with the project's current access", %{conn: conn, project: project} do
+      {:ok, _view, html} = live(conn, path(project))
+
+      assert html =~ "Access"
+      assert html =~ "Who can see it"
+      assert html =~ "What they can do"
+    end
+
+    test "visibility can be changed after creation", %{conn: conn, project: project} do
+      assert Authz.visibility_of(project) == "private"
+
+      {:ok, view, _} = live(conn, path(project))
+      render_submit(view, "save_access", %{"visibility" => "everyone"})
+
+      assert Authz.visibility_of(Projects.get_project(project.uuid)) == "everyone"
+    end
+
+    test "a work floor can be tightened after creation", %{conn: conn, project: project} do
+      {:ok, view, _} = live(conn, path(project))
+
+      render_submit(view, "save_access", %{
+        "visibility" => "private",
+        "authz" => %{"delete_tasks" => "managers"}
+      })
+
+      assert Authz.current_overrides(Projects.get_project(project.uuid))["delete_tasks"] ==
+               "managers"
+    end
+
+    test "a floor for a capability this project doesn't have is refused", %{
+      conn: conn,
+      project: project
+    } do
+      # "comment" needs the discussions extension. The row isn't on the
+      # form, so a forged submit must not store a floor for it.
+      {:ok, view, _} = live(conn, path(project))
+
+      render_submit(view, "save_access", %{
+        "visibility" => "private",
+        "authz" => %{"comment" => "managers"}
+      })
+
+      stored =
+        Projects.get_project(project.uuid).settings
+        |> Map.get("authz", %{})
+
+      refute Map.has_key?(stored, "comment"),
+             "stored a floor for a capability the project doesn't have"
     end
   end
 end

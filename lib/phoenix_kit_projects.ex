@@ -183,6 +183,10 @@ defmodule PhoenixKitProjects do
     }
   end
 
+  # Set once the split's compatibility backfill has run, so it never runs
+  # again and an Owner's revoke sticks.
+  @admin_all_backfill_key "projects_admin_all_backfilled"
+
   @doc """
   Grants `projects.admin_all` to every role that already holds the base
   `projects` key, preserving the pre-split behavior for existing installs.
@@ -193,17 +197,28 @@ defmodule PhoenixKitProjects do
   decision.
   """
   def migrate_legacy do
+    alias PhoenixKit.Settings
     alias PhoenixKit.Users.{Permissions, Roles}
 
-    Enum.each(Roles.list_roles(), fn role ->
-      granted = Permissions.get_permissions_for_role(role.uuid)
+    # ONCE, not on every boot. This runs from the host's start-up, and an
+    # unconditional version fights the Owner: revoke admin_all from the
+    # contractor role and the next restart hands it back. The flag is the
+    # same guard core uses for its own auto-grants — the point is to carry
+    # an existing install across the split, not to keep re-deciding.
+    if Settings.get_setting(@admin_all_backfill_key) == "true" do
+      :ok
+    else
+      Enum.each(Roles.list_roles(), fn role ->
+        granted = Permissions.get_permissions_for_role(role.uuid)
 
-      if "projects" in granted and "projects.admin_all" not in granted do
-        Permissions.grant_permission(role.uuid, "projects.admin_all", nil)
-      end
-    end)
+        if "projects" in granted and "projects.admin_all" not in granted do
+          Permissions.grant_permission(role.uuid, "projects.admin_all", nil)
+        end
+      end)
 
-    :ok
+      Settings.update_setting_with_module(@admin_all_backfill_key, "true", module_key())
+      :ok
+    end
   rescue
     error ->
       {:error, Exception.message(error)}

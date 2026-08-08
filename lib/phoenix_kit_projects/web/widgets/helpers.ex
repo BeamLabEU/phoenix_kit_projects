@@ -88,9 +88,16 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
       List.first(Projects.list_projects_for(scope))
   end
 
-  # nil = don't narrow (a site admin). A non-admin without a resolvable user
-  # gets a uuid matching nothing rather than the whole site.
-  defp viewer_for(scope) do
+  @doc """
+  The `viewer:` a widget's queries should narrow by.
+
+  `nil` = don't narrow (a site admin with `projects.admin_all`). A
+  non-admin without a resolvable user gets a uuid matching nothing rather
+  than the whole site — the narrowing must fail CLOSED, since a widget
+  renders on a host dashboard where nothing else is checking.
+  """
+  @spec viewer_for(map() | nil) :: String.t() | nil
+  def viewer_for(scope) do
     if PhoenixKitProjects.Authz.admin_all?(scope) do
       nil
     else

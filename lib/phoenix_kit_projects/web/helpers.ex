@@ -1032,6 +1032,27 @@ defmodule PhoenixKitProjects.Web.Helpers do
     end
   end
 
+  @doc """
+  The read gate every project page shares: may this viewer open it?
+
+  A regular project resolves through `Authz.can?(…, :view)`. A TEMPLATE
+  has no membership rows for that to resolve against, so it falls back to
+  module-level access — which is a real check, unlike the blanket
+  `project.is_template or …` exemption this replaces. That exemption rested
+  on templates being reachable only via the admin route, which stops being
+  true the moment these LiveViews are embedded off-router with a
+  host-supplied session and no identity.
+
+  A refusal should be shaped exactly like "not found" at the call site:
+  existence is itself information.
+  """
+  @spec template_or_viewable?(map(), term()) :: boolean()
+  def template_or_viewable?(%{is_template: true}, scope),
+    do: PhoenixKitProjects.Authz.can_use_templates?(scope)
+
+  def template_or_viewable?(project, scope),
+    do: PhoenixKitProjects.Authz.can?(scope, project, :view)
+
   # Accepts absolute paths under the current host (`/admin/...`,
   # `/host/orders/123`). Rejects schemes (`https://...`,
   # `javascript:...`) and protocol-relative URLs (`//evil.example.com/...`).

@@ -126,9 +126,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
       {:ok, _view, router_html} = live(conn, "/en/admin/projects/list/#{template.uuid}")
       refute router_html =~ "<h1"
 
+      # The embed carries identity: a template is reachable to anyone who
+      # holds the module permission, and an embed session with no identity
+      # at all is refused like any other project (the host supplies the
+      # session, so it can't be trusted to have gated anything).
       {:ok, _view, embed_html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => template.uuid}
+          session: %{"id" => template.uuid, "current_user_uuid" => embed_user_uuid!()}
         )
 
       assert embed_html =~ template.name

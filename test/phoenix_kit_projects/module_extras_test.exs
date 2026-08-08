@@ -41,6 +41,19 @@ defmodule PhoenixKitProjects.ModuleExtrasTest do
       assert :ok = PhoenixKitProjects.migrate_legacy()
     end
 
+    test "runs ONCE, so a deliberate revoke isn't undone on the next boot" do
+      # It runs from host start-up. An unconditional version fights the
+      # Owner: revoke admin_all from a role and the next restart hands it
+      # straight back.
+      PhoenixKit.Settings.update_setting("projects_admin_all_backfilled", "false")
+
+      assert :ok = PhoenixKitProjects.migrate_legacy()
+      assert PhoenixKit.Settings.get_setting("projects_admin_all_backfilled") == "true"
+
+      # Second run is a no-op: it doesn't even look at the roles.
+      assert :ok = PhoenixKitProjects.migrate_legacy()
+    end
+
     test "grants nothing to a role that never held the base key" do
       alias PhoenixKit.Users.{Permissions, Roles}
 

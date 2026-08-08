@@ -28,7 +28,6 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
 
   alias PhoenixKitProjects.{
     Assignees,
-    Authz,
     CalendarDisplay,
     L10n,
     Paths,
@@ -92,8 +91,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
         # LV is on the embeddable allowlist, so it is reachable off-router
         # with a client-supplied session and no on_mount to gate it.
         # Templates stay exempt — they have no membership rows.
-        if project.is_template or
-             Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :view) do
+        if WebHelpers.template_or_viewable?(project, socket.assigns[:phoenix_kit_current_scope]) do
           socket =
             socket
             |> assign(default_assigns(session))

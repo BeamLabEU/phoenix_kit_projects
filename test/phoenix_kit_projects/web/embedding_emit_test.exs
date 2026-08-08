@@ -698,7 +698,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
             "mode" => "emit",
             "pubsub_topic" => topic,
             "id" => template.uuid,
-            "frame_ref" => 0
+            "frame_ref" => 0,
+            # A template embed needs identity like any other: the host
+            # supplies this session, so it proves nothing on its own.
+            "current_user_uuid" => embed_user_uuid!()
           }
         )
 

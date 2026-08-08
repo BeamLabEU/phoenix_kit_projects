@@ -386,11 +386,16 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   defp ensure_task_calendar(%{assigns: %{task_calendar_loaded?: true}} = socket), do: socket
 
   defp ensure_task_calendar(socket) do
+    # All three take the viewer. The dashboard buckets above were scoped
+    # and these copies were not, so the calendar still enumerated every
+    # project's name and schedule to anyone who could reach the module.
+    viewer = overview_viewer(socket)
+
     load_task_calendar(
       socket,
-      Projects.list_active_projects(viewer: overview_viewer(socket)),
-      Projects.list_upcoming_projects(),
-      Projects.list_recently_completed_projects(),
+      Projects.list_active_projects(viewer: viewer),
+      Projects.list_upcoming_projects(viewer: viewer),
+      Projects.list_recently_completed_projects(5, viewer: viewer),
       resolve_offset(socket)
     )
   end
