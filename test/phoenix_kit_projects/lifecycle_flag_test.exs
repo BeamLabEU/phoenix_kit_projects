@@ -200,4 +200,35 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
              "the backfill re-disabled a flag the owner turned back on"
     end
   end
+
+  describe "a checklist can still be ended" do
+    # No START ceremony doesn't mean no way out: the list is implicitly
+    # running, and archiving is the end — reversible, and the only one,
+    # since completion was always automatic and is now off here.
+
+    test "archiving a checklist takes it out of the running list", %{conn: _conn} do
+      project = checklist()
+
+      assert Enum.any?(Projects.list_active_projects(), &(&1.uuid == project.uuid))
+
+      {:ok, project} = Projects.archive_project(project)
+
+      assert project.archived_at
+      refute Enum.any?(Projects.list_active_projects(), &(&1.uuid == project.uuid))
+
+      # ...and it's reversible, so ending it is never a one-way door.
+      {:ok, project} = Projects.unarchive_project(project)
+      assert Enum.any?(Projects.list_active_projects(), &(&1.uuid == project.uuid))
+    end
+
+    test "the Archive action is on the hub for a checklist", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+      project = checklist()
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert html =~ "archive_project",
+             "a checklist has no start bar, so archiving is its only way out"
+    end
+  end
 end
