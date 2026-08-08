@@ -1876,6 +1876,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 type="textarea"
                 rows={3}
                 disabled={@current_lang in @ai_in_flight}
+                mentions
               />
             </.multilang_fields_wrapper>
 

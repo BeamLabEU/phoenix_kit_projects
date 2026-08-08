@@ -5,9 +5,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   use PhoenixKitAI.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
+  # The typeahead's server half + the access-request events, for the
+  # description field's @/# picker.
+  use PhoenixKit.Mentions.Live
 
   import PhoenixKitWeb.Components.MultilangForm
 
+  alias PhoenixKit.Mentions
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
@@ -1328,6 +1332,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     case Projects.create_project(attrs, actor_uuid: Activity.actor_uuid(socket)) do
       {:ok, project} ->
         apply_creation_capabilities(socket, project)
+        sync_mentions(socket, project)
 
         Activity.log("projects.project_created",
           actor_uuid: Activity.actor_uuid(socket),
@@ -1456,6 +1461,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     case Statuses.update_project_with_statuses(socket.assigns.project, attrs) do
       {:ok, project} ->
+        sync_mentions(socket, project)
+
         Activity.log("projects.project_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
@@ -1680,6 +1687,26 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     do: "hidden group-has-[[data-arch=public-intake]:checked]/kind:block"
 
   defp receipt_reveal_class(_), do: "hidden"
+
+  # Indexes the description's mentions and delivers its pings, on the
+  # durable save. Never allowed to cost the save: a missing backlink is a
+  # smaller loss than a rolled-back project.
+  defp sync_mentions(socket, project) do
+    case Mentions.sync("project", project.uuid, project.description,
+           field: "description",
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, new} ->
+        Mentions.notify(new,
+          source_type: "project",
+          source_uuid: project.uuid,
+          preview: project.description
+        )
+
+      _ ->
+        :ok
+    end
+  end
 
   # The floors panel is shared with the members page — see
   # Web.Components.AccessPanel. Which rows are RELEVANT depends on this
@@ -2011,7 +2038,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               type="textarea"
               rows={4}
               disabled={@current_lang in @ai_in_flight}
-            />
+              mentions
+              />
           </.multilang_fields_wrapper>
     </div>
     """

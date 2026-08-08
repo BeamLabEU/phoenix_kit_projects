@@ -771,6 +771,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # `scoped_assignment/2` accepts any displayed assignment and
   # `update_assignment_with_activity/5` recomputes the assignment's own project.
   attr(:a, :map, required: true)
+  # The viewer, for resolving @/# mentions in a task's description. Optional
+  # so a caller that forgets it degrades to "sees nothing private" rather
+  # than crashing.
+  attr(:scope, :any, default: nil)
   attr(:draggable, :boolean, default: true)
   attr(:is_template, :boolean, required: true)
   attr(:project, :map, required: true)
@@ -870,7 +874,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <%!-- Description --%>
           <% lang = L10n.current_content_lang() %>
           <% shown_desc = Assignment.localized_description(@a, lang) || TaskSchema.localized_description(@a.task, lang) %>
-          <div :if={shown_desc} class="text-xs text-base-content/60">{shown_desc}</div>
+          <div :if={shown_desc} class="text-xs text-base-content/60">
+            <.mention_text text={shown_desc} scope={@scope} />
+          </div>
 
           <%!-- Meta row: duration, assignee, completed by. Each chip is
                feature-gated via @fx (Step 4 enforcement threading). --%>
@@ -2550,7 +2556,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                title + subtitle as a stacked pair before the action row. --%>
           <% desc = Project.localized_description(@project, L10n.current_content_lang()) %>
           <p :if={desc} class="text-sm text-base-content/60">
-            {desc}
+            <.mention_text text={desc} scope={@phoenix_kit_current_scope} />
           </p>
           <%!-- Assignee (V128) — who the project is assigned to. Reuses the same
                assignee helpers the task rows use; a Project carries the same
@@ -3309,6 +3315,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                   <div class={"flex-1 card bg-base-100 shadow-sm border #{if ct.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"}"}>
                                     <.task_body
                                       a={ct}
+                                      scope={@phoenix_kit_current_scope}
                                       draggable={false}
                                       is_template={@is_template}
                                       project={child}
@@ -3332,6 +3339,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   <% else %>
                     <.task_body
                       a={a}
+                      scope={@phoenix_kit_current_scope}
                       draggable={true}
                       is_template={@is_template}
                       project={@project}
