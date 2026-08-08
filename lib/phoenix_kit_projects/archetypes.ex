@@ -31,6 +31,7 @@ defmodule PhoenixKitProjects.Archetypes do
           icon: String.t(),
           preset: String.t(),
           extensions: [String.t()],
+          extensions_off: [String.t()],
           requires_extensions: boolean()
         }
 
@@ -49,6 +50,11 @@ defmodule PhoenixKitProjects.Archetypes do
       icon: "hero-check-circle",
       preset: "simple",
       extensions: [],
+      # Files and Discussions default ON, so the leanest archetype was
+      # arriving with a Files page and a Comments button — the two menu
+      # entries a shared checklist least needs. `extensions` can only ADD,
+      # so suppressing a default takes its own list.
+      extensions_off: ~w(files discussions),
       requires_extensions: false
     },
     %{
@@ -59,6 +65,7 @@ defmodule PhoenixKitProjects.Archetypes do
       icon: "hero-view-columns",
       preset: "standard",
       extensions: [],
+      extensions_off: [],
       requires_extensions: false
     },
     %{
@@ -69,6 +76,7 @@ defmodule PhoenixKitProjects.Archetypes do
       icon: "hero-briefcase",
       preset: "full",
       extensions: ~w(crm_client billing_customer),
+      extensions_off: [],
       requires_extensions: true
     },
     %{
@@ -79,6 +87,7 @@ defmodule PhoenixKitProjects.Archetypes do
       icon: "hero-inbox-arrow-down",
       preset: "standard",
       extensions: ~w(portal),
+      extensions_off: [],
       requires_extensions: true
     }
   ]

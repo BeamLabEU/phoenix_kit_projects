@@ -1054,6 +1054,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "remove_dependency" => :dependencies,
     "change_workflow_status" => :statuses,
     "detach_subproject" => :subprojects,
+    "open_health_modal" => :lifecycle,
+    "close_health_modal" => :lifecycle,
+    "save_health" => :lifecycle,
     "open_start_modal" => :lifecycle,
     "close_start_modal" => :lifecycle,
     "confirm_start_project" => :lifecycle,
@@ -2633,13 +2636,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 label={gettext("Edit")}
               />
               <.smart_menu_link
-                navigate={Paths.modules(@project.uuid)}
-                emit={{PhoenixKitProjects.Web.ProjectModulesLive, %{"id" => @project.uuid}}}
-                embed_mode={@embed_mode}
-                icon="hero-squares-plus"
-                label={gettext("Modules & features")}
-              />
-              <.smart_menu_link
                 :if={not @is_template}
                 navigate={Paths.members(@project.uuid)}
                 emit={{PhoenixKitProjects.Web.ProjectMembersLive, %{"id" => @project.uuid}}}
@@ -2663,8 +2659,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 icon="hero-clock"
                 label={gettext("Activity")}
               />
+              <%!-- Health is a judgment about whether the project is on
+                   track to FINISH. A checklist has no finish, so the
+                   question has no meaning — same reason its start bar is
+                   gone. --%>
               <.table_row_menu_button
-                :if={not @is_template}
+                :if={not @is_template and @fx.lifecycle}
                 phx-click="open_health_modal"
                 icon="hero-heart"
                 label={gettext("Set health")}
@@ -2780,7 +2780,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- Health strip — the hub's manual "Needle" (P2b): a human judgment
            with a note, never auto-computed. Click-through opens the modal. --%>
       <div
-        :if={not @is_template and @health}
+        :if={not @is_template and @health && @fx.lifecycle}
         class={["alert py-2 px-4", Health.color_class(@health["status"])]}
       >
         <.icon name="hero-heart" class="w-4 h-4" />

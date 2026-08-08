@@ -11,7 +11,8 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
-  alias PhoenixKitProjects.{Features, Projects}
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.{Features, Members, Projects}
 
   setup do
     PhoenixKitProjects.Extensions.Registry.refresh()
@@ -229,6 +230,119 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
 
       assert html =~ "archive_project",
              "a checklist has no start bar, so archiving is its only way out"
+    end
+  end
+
+  describe "the hub menu reflects what the project is" do
+    test "a checklist offers no health judgment", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+      project = checklist()
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      refute html =~ "open_health_modal",
+             "health asks whether a project is on track to finish; this one has no finish"
+    end
+
+    test "a normal project still offers it", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert html =~ "open_health_modal"
+    end
+
+    test "setting health on a checklist is refused, not just hidden", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+      project = checklist()
+
+      {:ok, view, _} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_click(view, "save_health", %{"status" => "at_risk", "note" => "forged"})
+
+      assert is_nil(Projects.get_project(project.uuid).settings["health"]),
+             "a forged event set health on a project that has none"
+    end
+
+    test "Modules & features is no longer its own menu entry", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      refute html =~ "Modules &amp; features",
+             "it lives inside Edit now — changing what a project is IS editing it"
+    end
+  end
+
+  describe "the simple archetype's extensions" do
+    test "files and discussions are not seeded on" do
+      archetype = PhoenixKitProjects.Archetypes.get("quick_todo")
+
+      assert "files" in archetype.extensions_off
+
+      assert "discussions" in archetype.extensions_off,
+             "a shared checklist arrived with a Files page and a Comments button"
+    end
+
+    test "the other archetypes suppress nothing" do
+      for key <- ~w(standard client_hub public_intake),
+          archetype = PhoenixKitProjects.Archetypes.get(key),
+          archetype != nil do
+        assert archetype.extensions_off == []
+      end
+    end
+  end
+
+  describe "Modules & features embedded in Edit" do
+    test "the owner sees it inside the edit form", %{conn: conn} do
+      # A REAL user: the embedded panel mounts off-router and rebuilds its
+      # scope from the uuid we thread through the session, so a synthetic
+      # scope resolves to nobody and the panel refuses.
+      conn = put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!()))
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+
+      assert html =~ "Modules &amp; features"
+      assert html =~ "Presets:", "the embedded panel didn't render its contents"
+    end
+
+    test "a manager can't reach the edit form at all — both are owner-only", %{conn: conn} do
+      # The embedded panel enforces :manage_modules itself, but refuses by
+      # REDIRECTING, which inside a host page would navigate the whole edit
+      # form away. Today that can't bite, because :edit_settings is
+      # owner-only too, so anyone who reaches this form can also manage
+      # modules. The conditional render is the guard for the day those
+      # floors diverge; this test pins the assumption it rests on, so a
+      # change to either floor fails here rather than silently bouncing
+      # someone out of editing.
+      {:ok, user} =
+        Auth.register_user(%{
+          "email" => "manager-#{uniq()}@example.com",
+          "password" => "ValidPassword123!"
+        })
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
+
+      {:ok, _} = Members.add_member(project, user.uuid, role: "manager")
+      scope = fake_scope(user_uuid: user.uuid, permissions: ["projects"])
+
+      refute PhoenixKitProjects.Authz.can?(scope, project, :edit_settings)
+      refute PhoenixKitProjects.Authz.can?(scope, project, :manage_modules)
+
+      assert {:error, {:live_redirect, _}} =
+               conn
+               |> put_test_scope(scope)
+               |> live("/en/admin/projects/list/#{project.uuid}/edit")
     end
   end
 end

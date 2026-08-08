@@ -49,7 +49,10 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
-      |> assign(wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class))
+      |> assign(
+        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
+        embedded_in_form: Map.get(session, "embedded_in_form", false)
+      )
 
     with %Project{} = project <- Projects.get_project(id) || :not_found,
          true <- allowed?(socket, project) || :forbidden do
@@ -71,25 +74,16 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
        |> load_panel()}
     else
       :not_found ->
-        {:ok,
-         socket
-         |> assign(project: nil, extensions: [], flag_groups: [], presets: [])
-         |> put_flash(:error, gettext("Project not found."))
-         |> WebHelpers.close_or_navigate(Paths.projects())}
+        refuse(socket, gettext("Project not found."))
 
       :forbidden ->
-        {:ok,
-         socket
-         |> assign(project: nil, extensions: [], flag_groups: [], presets: [])
-         |> put_flash(
-           :error,
-           gettext("You don't have permission to manage this project's modules.")
-         )
-         |> WebHelpers.close_or_navigate(Paths.projects())}
+        refuse(
+          socket,
+          gettext("You don't have permission to manage this project's modules.")
+        )
     end
   end
 
-  # Fallback for an embed session without "id".
   def mount(_params, session, socket) do
     WebHelpers.maybe_put_locale(session)
 
@@ -106,6 +100,39 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
      |> put_flash(:error, gettext("Project not found."))
      |> WebHelpers.close_or_navigate(Paths.projects())}
   end
+
+  # As a PAGE, a refusal navigates away with a flash. As a SECTION inside
+  # the edit form it must not: a redirect from a child LiveView takes the
+  # whole host page with it, so one panel the viewer can't have would
+  # bounce them out of editing the project's name. Embedded, it simply
+  # renders nothing — the host already decided whether to show it, and the
+  # gate here is the backstop.
+  defp refuse(socket, message) do
+    # Every assign load_panel/1 would have set: with no project the
+    # template short-circuits, but HEEx still needs the keys to exist.
+    socket =
+      assign(socket,
+        project: nil,
+        extensions: [],
+        flag_groups: [],
+        presets: [],
+        labels: [],
+        labels_on: false,
+        label_colors: [],
+        portal: nil
+      )
+
+    if socket.assigns.embedded_in_form do
+      {:ok, socket}
+    else
+      {:ok,
+       socket
+       |> put_flash(:error, message)
+       |> WebHelpers.close_or_navigate(Paths.projects())}
+    end
+  end
+
+  # Fallback for an embed session without "id".
 
   defp allowed?(socket, project) do
     Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :manage_modules)
@@ -353,7 +380,19 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
     ~H"""
     <div class={@wrapper_class}>
       <%= if @project do %>
+        <%!-- Inside the edit form this page is a SECTION, not a page: the
+             form already names the project and owns the way back, so a
+             second title and a second back link would read as a page
+             nested in a page. --%>
+        <div :if={@embedded_in_form}>
+          <h2 class="text-sm font-semibold">{gettext("Modules & features")}</h2>
+          <p class="text-xs opacity-60">
+            {gettext("Choose what this project uses — from a simple to-do list to a full tracker.")}
+          </p>
+        </div>
+
         <.page_header
+          :if={not @embedded_in_form}
           title={gettext("Modules & features")}
           description={
             gettext("Choose what %{name} uses — from a simple to-do list to a full tracker.",

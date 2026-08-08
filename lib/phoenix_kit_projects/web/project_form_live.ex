@@ -47,7 +47,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         embed_redirect_to: redirect_to,
         live_action: live_action,
         statuses_available: Statuses.available?(),
-        status_entities: status_entity_options()
+        status_entities: status_entity_options(),
+        # Seeded here, before apply_action: it is what decides them for a
+        # real project, and assign_creation_state runs afterwards — a
+        # default set there would clobber the answer.
+        can_manage_modules: false,
+        current_user_uuid: nil
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
@@ -96,7 +101,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       cue_marked: MapSet.new(),
       authz_actions: overridable_authz_actions(),
       authz_choices: default_authz_choices(),
-      top_blocks: Features.creation_top_blocks()
+      top_blocks: Features.creation_top_blocks(),
+      # Defaults for every path: the :new form and the fail-closed
+      # catch-all never embed the modules panel, and the template has to
+      # be able to ask without a KeyError.
+      can_manage_modules: false,
+      current_user_uuid: nil
     )
     |> seed_capability_states()
     |> then(fn s ->
@@ -359,10 +369,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       end)
 
     seed_exts = ((archetype && archetype.extensions) || []) ++ template_exts
+    off_exts = (archetype && Map.get(archetype, :extensions_off, [])) || []
 
     ext_states =
       Map.new(assigns.ext_types, fn ext ->
-        seeded = ext.default_enabled or ext.key in seed_exts
+        # The off-list suppresses a DEFAULT, it doesn't veto a choice: an
+        # extension the archetype or the template explicitly seeds still
+        # wins, and anything the user toggled wins over both.
+        default_on = ext.default_enabled and ext.key not in off_exts
+        seeded = default_on or ext.key in seed_exts
 
         {ext.key, Map.get(assigns.ext_overrides, ext.key, seeded)}
       end)
@@ -439,6 +454,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           page_title: "",
           project: %Project{},
           live_action: :edit,
+          can_manage_modules: false,
+          current_user_uuid: nil,
           templates: [],
           selected_template: nil
         )
@@ -455,6 +472,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             ),
           project: project,
           live_action: :edit,
+          can_manage_modules:
+            not project.is_template and
+              Authz.can?(
+                socket.assigns[:phoenix_kit_current_scope],
+                project,
+                :manage_modules
+              ),
+          current_user_uuid:
+            Authz.subject_user_uuid_of(socket.assigns[:phoenix_kit_current_scope]),
           templates: [],
           selected_template: nil
         )
@@ -2406,6 +2432,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
         <%!-- Non-translatable settings stay outside the wrapper so they
              don't lose state when the user switches languages. --%>
+        <%!-- Holds the feature-gated settings AND the form's action row, so
+             it stays even when every control inside is switched off — the
+             card is how you save a rename. --%>
         <div :if={@live_action == :edit} class="card bg-base-100 shadow">
           <div class="card-body flex flex-col gap-3">
             <%!-- Schedule math config — gated on `scheduling` (start mode /
@@ -2482,6 +2511,39 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
               </button>
             </div>
+          </div>
+        </div>
+
+        <%!-- What this project can DO lives here too, rather than behind a
+             separate menu entry. The creation form already asks these
+             questions in its Features and Extensions drawers; splitting
+             them onto their own page after creation was the asymmetry —
+             "edit the project" and "change what the project is" are the
+             same errand.
+
+             Embedded rather than moved: this page is 600 lines with its own
+             events, PubSub and per-extension config forms, and the module
+             already supports mounting it off-router. --%>
+        <%!-- Rendered only when the viewer may actually manage modules.
+             The embedded LV enforces that itself, but its refusal is a
+             REDIRECT — inside a host page that navigates the whole edit
+             form away, so a manager who can rename a project but not
+             change its modules would be bounced out of editing it.
+
+             Identity has to be threaded explicitly: an embed mounts
+             off-router, so the hooks that build a scope never run and the
+             LV rebuilds it from this uuid. --%>
+        <div :if={@live_action == :edit and @can_manage_modules} class="card bg-base-100 shadow">
+          <div class="card-body">
+            {live_render(@socket, PhoenixKitProjects.Web.ProjectModulesLive,
+              id: "edit-modules-#{@project.uuid}",
+              session: %{
+                "id" => @project.uuid,
+                "embedded_in_form" => true,
+                "current_user_uuid" => @current_user_uuid,
+                "wrapper_class" => "flex flex-col gap-6"
+              }
+            )}
           </div>
         </div>
       </.form>
