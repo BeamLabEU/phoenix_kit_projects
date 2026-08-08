@@ -8,12 +8,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
+  # The typeahead's server half + the access-request events. Injected
+  # rather than hand-written so this form can't drift from every other
+  # surface that offers mentions.
+  use PhoenixKit.Mentions.Live
   use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.MultilangForm
 
   require Logger
 
+  alias PhoenixKit.Mentions
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, Features, L10n, Labels, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
@@ -842,6 +847,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
 
         flush_pending_deps(socket, link)
+        sync_mentions(socket, child)
 
         {:noreply,
          socket
@@ -859,6 +865,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {:error, _other} ->
         log_subproject_save_failed(socket, "projects.subproject_created")
         {:noreply, put_flash(socket, :error, gettext("Could not add sub-project."))}
+    end
+  end
+
+  # Indexes the @ and # mentions in a saved description and delivers the
+  # pings. Deliberately on the DURABLE save rather than on change: `sync`
+  # returns only what is new, and notifying from a debounce would ping on
+  # every pause in typing.
+  #
+  # Never allowed to fail the save. A mention that doesn't index is a
+  # missing backlink; a save that rolls back because of one is lost work.
+  defp sync_mentions(socket, %{uuid: uuid, description: description}) do
+    case Mentions.sync("project", uuid, description,
+           field: "description",
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, new} ->
+        Mentions.notify(new,
+          source_type: "project",
+          source_uuid: uuid,
+          preview: description
+        )
+
+      _ ->
+        :ok
     end
   end
 
@@ -1606,7 +1636,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <div class="card bg-base-100 shadow">
             <div class="card-body flex flex-col gap-3">
               <.input field={@sp_form[:name]} label={gettext("Sub-project name")} required />
-              <.textarea field={@sp_form[:description]} label={gettext("Description (optional)")} rows="2" />
+              <.textarea
+                field={@sp_form[:description]}
+                label={gettext("Description (optional)")}
+                rows="2"
+                mentions
+              />
 
               <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
               <.select

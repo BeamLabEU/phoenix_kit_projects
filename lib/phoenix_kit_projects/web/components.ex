@@ -28,6 +28,9 @@ defmodule PhoenixKitProjects.Web.Components do
       import PhoenixKitProjects.Web.Components.SmartLink
       import PhoenixKitProjects.Web.Components.SmartMenuLink
       import PhoenixKitProjects.Web.Components.PopupHost
+      # Renders @ and # mentions inside any free text, resolved for the
+      # viewer looking at it.
+      import PhoenixKitWeb.Components.Core.MentionText
       # Shared core AI-translate UI (button / modal / progress / hint) —
       # replaces the module-local AITranslateBar, now backed by core's
       # generic translation pipeline.

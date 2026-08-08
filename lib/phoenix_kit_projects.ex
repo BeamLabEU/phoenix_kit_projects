@@ -156,6 +156,12 @@ defmodule PhoenixKitProjects do
   def route_module, do: PhoenixKitProjects.Web.Routes
 
   @impl PhoenixKit.Module
+  # Makes projects and their tasks deep-linkable from Activity and Comments,
+  # and mentionable with `#` anywhere someone can type. The handler owns its
+  # own permission scoping — see PhoenixKitProjects.ResourceLinks.
+  def resource_links, do: PhoenixKitProjects.ResourceLinks.types()
+
+  @impl PhoenixKit.Module
   def permission_metadata do
     %{
       key: module_key(),

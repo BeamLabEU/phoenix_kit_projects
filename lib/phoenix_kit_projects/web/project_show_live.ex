@@ -35,6 +35,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
+  # A redacted mention on this page is a button; this is what makes it do
+  # something. Without it the chip still explains itself, it just can't ask.
+  use PhoenixKit.Mentions.Live
 
   # Forwards the comment composer's {:leaf_changed, …} process message into
   # CommentsComponent.forward_leaf_event/2 via a :handle_info lifecycle hook
@@ -2793,6 +2796,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </button>
       </div>
 
+      <%!-- Access-request dialog: opened by a redacted mention anywhere on
+           this page. Renders nothing until one is clicked. --%>
+      <.access_request_dialog request={assigns[:pk_access_request]} />
+
       <%!-- Health modal --%>
       <%= if @health_modal_open do %>
         <dialog open class="modal modal-open" phx-window-keydown="close_health_modal" phx-key="Escape">
@@ -3206,7 +3213,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
                       <%!-- Sub-project description --%>
                       <% sp_desc = Project.localized_description(child, sp_lang) %>
-                      <div :if={sp_desc} class="text-xs text-base-content/60">{sp_desc}</div>
+                      <%!-- Through mention_text, so an @ or # written here
+                           resolves for THIS reader: a link if they may open
+                           it, the author's words if it's gone, a locked chip
+                           if it isn't theirs to see. --%>
+                      <div :if={sp_desc} class="text-xs text-base-content/60">
+                        <.mention_text text={sp_desc} scope={@phoenix_kit_current_scope} />
+                      </div>
 
                       <%!-- Rolled-up meta (read-only — driven by the child) --%>
                       <div :if={sp_summary} class="flex flex-wrap items-center gap-2 text-xs">
