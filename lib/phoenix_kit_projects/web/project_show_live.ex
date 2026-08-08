@@ -1054,6 +1054,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "remove_dependency" => :dependencies,
     "change_workflow_status" => :statuses,
     "detach_subproject" => :subprojects,
+    "open_start_modal" => :lifecycle,
+    "close_start_modal" => :lifecycle,
+    "confirm_start_project" => :lifecycle,
     "open_log_time" => :ledger,
     "close_log_time" => :ledger,
     "save_work_entry" => :ledger,
@@ -2690,8 +2693,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </div>
       </div>
 
-      <%!-- Start mode / template bar --%>
-      <div class="flex flex-wrap items-center gap-3 bg-base-200 rounded-lg px-4 py-3">
+      <%!-- Start mode / template bar. Hidden entirely when the project has
+           no lifecycle: a checklist has no beginning to announce, and the
+           bar's whole job is announcing one. Templates keep it — their
+           branch is about how to USE the template, not about starting. --%>
+      <div
+        :if={@is_template or @fx.lifecycle}
+        class="flex flex-wrap items-center gap-3 bg-base-200 rounded-lg px-4 py-3"
+      >
         <%= cond do %>
           <% @is_template -> %>
             <.icon name="hero-document-duplicate" class="w-5 h-5 text-info" />

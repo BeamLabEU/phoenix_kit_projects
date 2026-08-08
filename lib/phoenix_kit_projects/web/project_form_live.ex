@@ -1557,7 +1557,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # inside it to top-level cards.
   defp setup_section_shown?(assigns) do
     ("template" not in assigns.top_blocks and assigns.templates != []) or
-      "start" not in assigns.top_blocks or
+      ("start" not in assigns.top_blocks and assigns.flag_states["lifecycle"] != false) or
       ("statuses" not in assigns.top_blocks and assigns.flag_states["statuses"] != false) or
       assigns.flag_states["scheduling"] != false
   end
@@ -1573,6 +1573,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     start =
       cond do
         "start" in assigns.top_blocks -> nil
+        assigns.flag_states["lifecycle"] == false -> nil
         assigns.form[:start_mode].value in ["scheduled", :scheduled] -> gettext("Scheduled start")
         true -> gettext("Starts immediately")
       end
@@ -1697,12 +1698,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   attr(:form, :any, required: true)
+  attr(:lifecycle, :boolean, default: true)
 
+  # Renders nothing when the project has no start and no finish: asking a
+  # shared checklist when it begins is the question that has no answer.
+  # The `:if` lives HERE rather than at the two call sites so they can't
+  # drift apart.
   defp start_block(assigns) do
     ~H"""
     <%!-- The date field reveals via CSS the instant "Scheduled" is
          picked (group-has on the option) — no round trip. --%>
-    <div class="group/start flex flex-col gap-3">
+    <div :if={@lifecycle} class="group/start flex flex-col gap-3">
       <.select
         field={@form[:start_mode]}
         label={gettext("Start")}
@@ -2107,7 +2113,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
           <div :if={"start" in @top_blocks} id="create-top-start" class="card bg-base-100 shadow">
             <div class="card-body flex flex-col gap-3">
-              <.start_block form={@form} />
+              <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
             </div>
           </div>
 
@@ -2167,7 +2173,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 </div>
 
                 <div :if={"start" not in @top_blocks}>
-                  <.start_block form={@form} />
+                  <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
                 </div>
 
                 <div
@@ -2410,7 +2416,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               label={gettext("Count weekends in schedule")}
               class="checkbox-sm"
             />
-            <.start_block form={@form} />
+            <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
 
             <%!-- Assignee (V128) — same polymorphic team/department/person
                  picker tasks use. Non-translatable, so it lives outside the

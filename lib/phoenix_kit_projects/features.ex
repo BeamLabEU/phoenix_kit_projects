@@ -154,6 +154,7 @@ defmodule PhoenixKitProjects.Features do
     :priorities,
     :labels,
     :ledger,
+    :lifecycle,
     :view_board,
     :view_timeline,
     :view_calendar
@@ -282,7 +283,7 @@ defmodule PhoenixKitProjects.Features do
       %{
         key: "simple",
         name: "Simple to-do list",
-        description: "Just a task list — no assignees, estimates, statuses, or scheduling.",
+        description: "Just a task list — no start or finish, no tracking, no scheduling.",
         flags: %{
           "assignees" => false,
           "priorities" => false,
@@ -293,6 +294,17 @@ defmodule PhoenixKitProjects.Features do
           "statuses" => false,
           "scheduling" => false,
           "subprojects" => false,
+          # A checklist has no beginning and no end — it is a list that
+          # exists. With this on, the hub asked the reader to "start" it
+          # and then parked it in the dashboard's not-started bucket
+          # indefinitely, for a project type whose whole promise is "no
+          # scheduling overhead".
+          "lifecycle" => false,
+          # The other two the preset silently missed: the work ledger put
+          # a "Logged: 0m" readout on a list nobody is billing, and the
+          # board is a view of workflow statuses this preset turns off.
+          "ledger" => false,
+          "view_board" => false,
           "view_timeline" => false,
           "view_calendar" => false
         }

@@ -188,13 +188,18 @@ defmodule PhoenixKitProjects do
   @admin_all_backfill_key "projects_admin_all_backfilled"
 
   @doc """
-  Grants `projects.admin_all` to every role that already holds the base
-  `projects` key, preserving the pre-split behavior for existing installs.
+  One-time data repairs for installs that predate a change here. Core calls
+  this on every boot, so each repair carries its own "already done" flag and
+  runs exactly once.
 
-  Idempotent (a role that already holds it is skipped) and safe to re-run on
-  every boot, which is how core invokes it. Deliberately one-way: it never
-  revokes, so an Owner who removes the sub-key from a role keeps that
-  decision.
+    * `projects.admin_all` is granted to every role that already holds the
+      base `projects` key, preserving the pre-split behavior.
+    * Projects carrying the old, incomplete "simple to-do list" preset get
+      the three flags that preset should always have turned off.
+
+  Both are deliberately one-way and one-time: re-deciding on every boot
+  would fight the Owner, handing back a permission they revoked or
+  re-disabling a feature they turned on.
   """
   def migrate_legacy do
     alias PhoenixKit.Settings
@@ -205,9 +210,7 @@ defmodule PhoenixKitProjects do
     # contractor role and the next restart hands it back. The flag is the
     # same guard core uses for its own auto-grants — the point is to carry
     # an existing install across the split, not to keep re-deciding.
-    if Settings.get_setting(@admin_all_backfill_key) == "true" do
-      :ok
-    else
+    unless Settings.get_setting(@admin_all_backfill_key) == "true" do
       Enum.each(Roles.list_roles(), fn role ->
         granted = Permissions.get_permissions_for_role(role.uuid)
 
@@ -217,11 +220,59 @@ defmodule PhoenixKitProjects do
       end)
 
       Settings.update_setting_with_module(@admin_all_backfill_key, "true", module_key())
-      :ok
     end
+
+    backfill_checklist_flags()
   rescue
     error ->
       {:error, Exception.message(error)}
+  end
+
+  # The "simple to-do list" preset shipped incomplete: it turned off the
+  # eleven task features but left the work ledger, the board and the
+  # start/finish lifecycle ON. A shared checklist therefore asked to be
+  # "started", sat in the dashboard's not-started bucket until it was,
+  # carried a `Logged: 0m` readout, and announced its own "completion"
+  # when the last box was ticked — for a project type whose card promises
+  # "no scheduling overhead".
+  #
+  # New checklists get the corrected preset. Existing ones can't: absence
+  # means "inherit the default", and the default is on. So complete the
+  # bundle for projects that carry ALL of the old one — an exact match, not
+  # a heuristic, so a project someone configured to look similar by hand is
+  # left alone. Anything here can be turned back on in Modules & features.
+  @old_simple_bundle ~w(assignees priorities labels estimates progress
+                        dependencies statuses scheduling subprojects
+                        view_timeline view_calendar)
+  @checklist_backfill_key "projects_checklist_flags_backfilled"
+
+  defp backfill_checklist_flags do
+    alias PhoenixKit.Settings
+    alias PhoenixKitProjects.{Features, Projects}
+
+    if Settings.get_setting(@checklist_backfill_key) == "true" do
+      :ok
+    else
+      Projects.list_projects()
+      |> Enum.filter(&old_simple_preset?/1)
+      |> Enum.each(fn project ->
+        Features.set_flags(project, %{
+          "lifecycle" => false,
+          "ledger" => false,
+          "view_board" => false
+        })
+      end)
+
+      Settings.update_setting_with_module(@checklist_backfill_key, "true", module_key())
+      :ok
+    end
+  end
+
+  defp old_simple_preset?(project) do
+    flags = project.settings |> Kernel.||(%{}) |> Map.get("features", %{})
+
+    Enum.all?(@old_simple_bundle, &(Map.get(flags, &1) == false)) and
+      Enum.all?(~w(lifecycle ledger view_board), &(not Map.has_key?(flags, &1)))
   end
 
   @impl PhoenixKit.Module
@@ -313,6 +364,13 @@ defmodule PhoenixKitProjects do
           %{key: "priorities", label: "Priorities", default: true},
           %{key: "labels", label: "Labels", default: true},
           %{key: "ledger", label: "Work ledger", default: true},
+          # Whether the project HAS a start and a finish. Off, it is just a
+          # list of tasks that exists: no "start it" step, no completion, no
+          # dashboard bucket asking when it begins. A shared checklist has
+          # no beginning to name, and being asked to name one is the whole
+          # complaint. Defaults on, like every flag here, so existing
+          # projects are unchanged with no backfill.
+          %{key: "lifecycle", label: "Start & finish", default: true},
           %{key: "view_board", label: "Board view", default: true},
           %{
             key: "view_timeline",

@@ -70,6 +70,23 @@ defmodule PhoenixKitProjects.Projects do
     default_assigned_person: [:user]
   ]
 
+  # "This project has no start and no finish" — the `lifecycle` feature
+  # flag turned explicitly off (a checklist). Expressed in SQL because the
+  # dashboard buckets are queries: a lifecycle-less project is never
+  # WAITING to be started, so it belongs in Running from the moment it
+  # exists rather than parked in the not-started bucket forever.
+  #
+  # COALESCE, not a bare comparison: absence means "inherit the default",
+  # which is on. Only an explicit false counts.
+  defmacrop lifecycle_off(settings) do
+    quote do
+      fragment(
+        "COALESCE(? -> 'features' ->> 'lifecycle', 'true') = 'false'",
+        unquote(settings)
+      )
+    end
+  end
+
   @doc """
   Lists all task-library entries, preloaded with defaults.
 
@@ -1562,7 +1579,8 @@ defmodule PhoenixKitProjects.Projects do
     Project
     |> where(
       [p],
-      p.is_template == false and is_nil(p.archived_at) and not is_nil(p.started_at) and
+      p.is_template == false and is_nil(p.archived_at) and
+        (not is_nil(p.started_at) or lifecycle_off(p.settings)) and
         is_nil(p.completed_at)
     )
     |> exclude_subprojects()
@@ -1608,7 +1626,7 @@ defmodule PhoenixKitProjects.Projects do
     |> where(
       [p],
       p.is_template == false and is_nil(p.archived_at) and is_nil(p.started_at) and
-        p.start_mode == "immediate"
+        p.start_mode == "immediate" and not lifecycle_off(p.settings)
     )
     |> exclude_subprojects()
     |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
@@ -2287,9 +2305,22 @@ defmodule PhoenixKitProjects.Projects do
     result =
       repo().transaction(fn ->
         case get_project(project_uuid) do
-          nil -> :ok
-          %Project{is_template: true} -> :ok
-          project -> decide_completion(project)
+          nil ->
+            :ok
+
+          %Project{is_template: true} ->
+            :ok
+
+          project ->
+            # A project with no lifecycle has no finish to reach. Checking
+            # the last item off a shared checklist is not an achievement
+            # to announce and file away — it is a checklist with
+            # everything checked, and it stays exactly where it was.
+            if PhoenixKitProjects.Features.on?(project, "lifecycle") do
+              decide_completion(project)
+            else
+              :ok
+            end
         end
       end)
       |> case do

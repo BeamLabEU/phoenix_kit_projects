@@ -100,11 +100,6 @@ defmodule PhoenixKitProjects.LiveCase do
   end
 
   @doc """
-  Plugs a fake scope into the test conn's session so the
-  `:assign_scope` `on_mount` hook can put it on socket assigns at
-  mount time. Pair with `fake_scope/1`.
-  """
-  @doc """
   A real user uuid for an EMBED session's `"current_user_uuid"`, holding
   the `projects` module permission.
 
@@ -145,6 +140,11 @@ defmodule PhoenixKitProjects.LiveCase do
     user.uuid
   end
 
+  @doc """
+  Plugs a fake scope into the test conn's session so the
+  `:assign_scope` `on_mount` hook can put it on socket assigns at
+  mount time. Pair with `fake_scope/1`.
+  """
   def put_test_scope(conn, scope) do
     Plug.Test.init_test_session(conn, %{"phoenix_kit_test_scope" => scope})
   end
