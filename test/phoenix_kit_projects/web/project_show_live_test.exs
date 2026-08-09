@@ -868,7 +868,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert list_rows(html) == [active.uuid]
       assert number_for(html, active.uuid) == "2"
 
-      all = view |> element("button[phx-value-status=all]") |> render_click()
+      all = view |> element("button[phx-value-tab=all]") |> render_click()
 
       assert list_rows(all) == [done.uuid, active.uuid]
       assert number_for(all, active.uuid) == "2"
@@ -883,7 +883,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       # Showing everything in manual order brings both back together: they
       # are one affordance, and either without the other is a lie.
-      manual = view |> element("button[phx-value-status=all]") |> render_click()
+      manual = view |> element("button[phx-value-tab=all]") |> render_click()
 
       assert manual =~ ~s(data-sortable="true")
       assert manual =~ "bottom-0 w-0.5"
@@ -922,7 +922,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     } do
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
 
-      view |> element("button[phx-value-status=all]") |> render_click()
+      view |> element("button[phx-value-tab=all]") |> render_click()
 
       render_hook(view, "reorder_assignments", %{
         "ordered_ids" => [active.uuid, done.uuid],

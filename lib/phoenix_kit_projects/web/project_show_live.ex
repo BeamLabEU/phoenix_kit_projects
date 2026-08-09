@@ -657,13 +657,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> Map.new(fn {a, idx} -> {a.uuid, idx} end)
   end
 
-  defp count_for(counts, "all"), do: counts.total
-  defp count_for(counts, "active"), do: counts.active
-  defp count_for(counts, "todo"), do: counts.todo
-  defp count_for(counts, "in_progress"), do: counts.in_progress
-  defp count_for(counts, "done"), do: counts.done
-  defp count_for(_counts, _key), do: 0
-
   defp matches_status?(_a, "all"), do: true
   # "Not finished", NOT "one of the two statuses I happened to think of".
   # A task carrying an out-of-band status — and this codebase deliberately
@@ -671,7 +664,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # and disappeared from the default view entirely. A lens that hides rows
   # has to fail toward showing too many.
   defp matches_status?(a, "active"), do: a.status != "done"
-  defp matches_status?(a, status), do: a.status == status
+  defp matches_status?(a, "done"), do: a.status == "done"
+  defp matches_status?(_a, _status), do: true
 
   defp matches_source?(_a, "all"), do: true
   defp matches_source?(a, "portal"), do: a.source == "portal"
@@ -691,8 +685,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     %{
       total: length(all),
       active: Enum.count(all, &(&1.status != "done")),
-      todo: Enum.count(all, &(&1.status == "todo")),
-      in_progress: Enum.count(all, &(&1.status == "in_progress")),
       done: Enum.count(all, &(&1.status == "done")),
       # Untriaged inbound: submitted from the public board and not yet
       # picked up. This is the number that was buried at the bottom of the
@@ -1280,8 +1272,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Every value is whitelisted in the guard rather than trusted: these
   # reach a comparison and an atom, and `String.to_existing_atom/1` on
   # unfiltered input is how a client picks the atom table apart.
-  defp gated_handle_event("list_filter_status", %{"status" => status}, socket)
-       when status in ["all", "active", "todo", "in_progress", "done"] do
+  defp gated_handle_event("list_filter_status", %{"tab" => status}, socket)
+       when status in ["active", "done", "all"] do
     {:noreply, socket |> assign(list_status: status) |> apply_list_lens()}
   end
 
@@ -3245,69 +3237,50 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            holds 947 is not. The number is the honesty; the rows are just
            what you happen to be reading. --%>
       <div :if={@assignments != []} class="flex flex-wrap items-center gap-2 mb-4">
-        <%!-- Two groups, because these are not five slices of one pie.
-             "Active" CONTAINS "To do" and "In progress" (and anything else
-             not finished), and "All" contains everything — so putting all
-             five in one strip reads as a partition whose numbers refuse to
-             add up. Broad on the left, exact on the right; one selection
-             across both. --%>
-        <div class="join">
-          <button
-            :for={{key, label} <- [{"active", gettext("Active")}, {"all", gettext("All")}]}
-            type="button"
-            phx-click="list_filter_status"
-            phx-value-status={key}
-            class={[
-              "btn btn-sm join-item",
-              if(@list_status == key, do: "btn-primary", else: "btn-ghost")
-            ]}
-          >
-            {label}
-            <span class="badge badge-sm badge-ghost ml-1">
-              {count_for(@assignment_counts, key)}
-            </span>
-          </button>
-        </div>
+        <%!-- Active and Done partition the project exactly — Active means
+             "not done", so nothing is in both and nothing is in neither,
+             including a row carrying a status we do not model. The earlier
+             strip listed Active AND To do AND In progress side by side,
+             which looked like slices of one pie whose numbers then refused
+             to add up, because Active contained the other two. --%>
+        <.nav_tabs
+          active_tab={@list_status}
+          on_change="list_filter_status"
+          tabs={[
+            %{id: "active", label: gettext("Active"), badge: @assignment_counts.active},
+            %{id: "done", label: gettext("Done"), badge: @assignment_counts.done},
+            %{id: "all", label: gettext("All"), badge: @assignment_counts.total}
+          ]}
+        />
 
-        <div class="join">
-          <button
-            :for={
-              {key, label} <- [
-                {"todo", gettext("To do")},
-                {"in_progress", gettext("In progress")},
-                {"done", gettext("Done")}
-              ]
-            }
-            type="button"
-            phx-click="list_filter_status"
-            phx-value-status={key}
-            class={[
-              "btn btn-sm join-item",
-              if(@list_status == key, do: "btn-primary", else: "btn-ghost")
-            ]}
-          >
-            {label}
-            <span class="badge badge-sm badge-ghost ml-1">
-              {count_for(@assignment_counts, key)}
-            </span>
-          </button>
-        </div>
+        <%!-- A second, independent axis: it narrows whichever status lens
+             is selected rather than replacing it, so it is deliberately
+             outside the strip above and styled as a toggle.
 
-        <%!-- Untriaged inbound. New assignments append, so on a busy board
-             this is exactly the pile that sat at the very bottom of the
-             page — the thing nobody scrolled far enough to find. --%>
+             "Unsorted", not "New" — new is a moment and stops being true
+             on its own, whereas these are submissions nobody has placed in
+             the plan yet, which stays true until somebody acts. They also
+             land at the very bottom of the manual order, because new
+             assignments append, so this chip is how they get found at all. --%>
         <button
           :if={@assignment_counts.portal_new > 0}
           type="button"
           phx-click="list_filter_source"
           phx-value-source={if(@list_source == "portal", do: "all", else: "portal")}
           class={[
-            "btn btn-sm",
-            if(@list_source == "portal", do: "btn-info", else: "btn-info btn-outline")
+            "btn btn-sm gap-1",
+            if(@list_source == "portal", do: "btn-info", else: "btn-outline")
           ]}
+          title={
+            gettext("Submitted from the public board and not started yet — nobody has placed these in the plan.")
+          }
+          aria-pressed={to_string(@list_source == "portal")}
         >
-          <.icon name="hero-inbox-arrow-down" class="w-4 h-4" />
-          {gettext("New from the public board")}
+          <.icon
+            name={if(@list_source == "portal", do: "hero-funnel-solid", else: "hero-funnel")}
+            class="w-4 h-4"
+          />
+          {gettext("Unsorted")}
           <span class="badge badge-sm">{@assignment_counts.portal_new}</span>
         </button>
 
@@ -3345,7 +3318,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <button
               type="button"
               phx-click="list_filter_status"
-              phx-value-status="all"
+              phx-value-tab="all"
               class="link link-primary text-sm"
             >
               {gettext("Show all %{count} tasks", count: @assignment_counts.total)}
