@@ -26,7 +26,15 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  alias PhoenixKitProjects.{Assignees, CalendarDisplay, L10n, Paths, Projects, ScheduleLayout}
+  alias PhoenixKitProjects.{
+    Assignees,
+    CalendarDisplay,
+    L10n,
+    Paths,
+    Projects,
+    ScheduleLayout
+  }
+
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.AssigneeFilter
@@ -79,34 +87,54 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
          |> WebHelpers.close_or_navigate(Paths.projects())}
 
       project ->
-        socket =
-          socket
-          |> assign(default_assigns(session))
-          |> assign(
-            page_title: Project.localized_name(project, L10n.current_content_lang()),
-            project: project,
-            is_template: project.is_template
-          )
-          # The root topic is already subscribed (pre-read, above) — seed the
-          # seen-set so `subscribe_tree` doesn't double-subscribe it (double
-          # subscription = duplicate PubSub delivery).
-          |> then(fn s ->
-            if connected?(s), do: assign(s, subscribed_projects: MapSet.new([id])), else: s
-          end)
+        # Same :view gate as the show page, and for the same reason: this
+        # LV is on the embeddable allowlist, so it is reachable off-router
+        # with a client-supplied session and no on_mount to gate it.
+        # Templates stay exempt — they have no membership rows.
+        if WebHelpers.template_or_viewable?(project, socket.assigns[:phoenix_kit_current_scope]) do
+          socket =
+            socket
+            |> assign(default_assigns(session))
+            |> assign(
+              page_title: Project.localized_name(project, L10n.current_content_lang()),
+              project: project,
+              is_template: project.is_template
+            )
+            # The root topic is already subscribed (pre-read, above) — seed the
+            # seen-set so `subscribe_tree` doesn't double-subscribe it (double
+            # subscription = duplicate PubSub delivery).
+            |> seed_subscribed_root(id)
 
-        # On the live (connected) mount, defer the per-project build off the
-        # first paint so the Calendar tab shows a skeleton immediately. The
-        # dead (HTTP/SEO/no-JS) render builds inline so it ships the real grid.
-        socket =
-          if connected?(socket) do
-            send(self(), :load_calendar)
-            assign(socket, calendar_loading: true)
-          else
-            load_calendar(socket)
-          end
+          # On the live (connected) mount, defer the per-project build off the
+          # first paint so the Calendar tab shows a skeleton immediately. The
+          # dead (HTTP/SEO/no-JS) render builds inline so it ships the real grid.
+          socket =
+            if connected?(socket) do
+              send(self(), :load_calendar)
+              assign(socket, calendar_loading: true)
+            else
+              load_calendar(socket)
+            end
 
-        {:ok, socket}
+          {:ok, socket}
+        else
+          {:ok,
+           socket
+           |> assign(default_assigns(session))
+           |> put_flash(:error, gettext("Project not found."))
+           |> WebHelpers.close_or_navigate(Paths.projects())}
+        end
     end
+  end
+
+  # Extracted from mount/3 so the :view gate doesn't push the pipeline past
+  # the nesting limit. Seeds the seen-set with the root topic (already
+  # subscribed above) so subscribe_tree can't double-subscribe it —
+  # a double subscription means duplicate PubSub delivery.
+  defp seed_subscribed_root(socket, id) do
+    if connected?(socket),
+      do: assign(socket, subscribed_projects: MapSet.new([id])),
+      else: socket
   end
 
   defp default_assigns(session) do

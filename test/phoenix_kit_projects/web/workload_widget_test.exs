@@ -39,7 +39,13 @@ defmodule PhoenixKitProjects.Web.WorkloadWidgetTest do
           DateTime.utc_now() |> DateTime.add(14, :day) |> DateTime.truncate(:second)
       })
 
-    html = render_component(WorkloadWidget, id: "w-workload", view: "detailed")
+    # Widgets are viewer-scoped now: without a scope the widget sees nothing,
+    # which is the point. Render as a site admin so this stays a test about
+    # tile arithmetic.
+    admin =
+      PhoenixKitProjects.LiveCase.fake_scope(permissions: ["projects", "projects.admin_all"])
+
+    html = render_component(WorkloadWidget, id: "w-workload", view: "detailed", scope: admin)
 
     assert html =~ "Not started"
     refute html =~ ">Scheduled<"

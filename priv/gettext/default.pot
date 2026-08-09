@@ -16,7 +16,7 @@ msgid_plural "%{count} ds"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1706
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2106
 #, elixir-autogen, elixir-format
 msgid "%{count} day"
 msgid_plural "%{count} days"
@@ -38,7 +38,7 @@ msgid_plural "%{count} fortnights"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1704
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2104
 #, elixir-autogen, elixir-format
 msgid "%{count} hour"
 msgid_plural "%{count} hours"
@@ -80,44 +80,44 @@ msgid_plural "%{count} yrs"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1950
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2499
 #, elixir-autogen, elixir-format
 msgid "%{delta} ahead"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1955
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2504
 #, elixir-autogen, elixir-format
 msgid "%{delta} behind"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1945
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2494
 #, elixir-autogen, elixir-format
 msgid "%{delta} overdue"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2025
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2749
 #, elixir-autogen, elixir-format
 msgid "%{done}/%{total} done"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2202
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2960
 #, elixir-autogen, elixir-format
 msgid "%{done}/%{total} tasks"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1235
-#: lib/phoenix_kit_projects/web/project_form_live.ex:538
-#: lib/phoenix_kit_projects/web/task_form_live.ex:391
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1248
+#: lib/phoenix_kit_projects/web/project_form_live.ex:622
+#: lib/phoenix_kit_projects/web/task_form_live.ex:393
 #, elixir-autogen, elixir-format
 msgid "%{field}: %{message}"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1708
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2108
 #, elixir-autogen, elixir-format
 msgid "%{n} months"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1707
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2107
 #, elixir-autogen, elixir-format
 msgid "%{n} weeks"
 msgstr ""
@@ -128,22 +128,22 @@ msgstr ""
 msgid "%{n} weeks ago"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1959
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2508
 #, elixir-autogen, elixir-format
 msgid "(%{actual}% done vs %{expected}% expected)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:114
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "(already in project)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:131
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:144
 #, elixir-autogen, elixir-format
 msgid "(parent unchecked)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:129
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:142
 #, elixir-autogen, elixir-format
 msgid "(this task)"
 msgstr ""
@@ -153,155 +153,166 @@ msgstr ""
 msgid "+%{count} more"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1705
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2105
 #, elixir-autogen, elixir-format
 msgid "1 day"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1716
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2116
 #, elixir-autogen, elixir-format
 msgid "< 1"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1703
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2103
 #, elixir-autogen, elixir-format
 msgid "< 1 hour"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:670
-#: lib/phoenix_kit_projects/web/tasks_live.ex:798
-#: lib/phoenix_kit_projects/web/templates_live.ex:579
+#: lib/phoenix_kit_projects/web/projects_live.ex:674
+#: lib/phoenix_kit_projects/web/tasks_live.ex:805
+#: lib/phoenix_kit_projects/web/templates_live.ex:584
 #, elixir-autogen, elixir-format
 msgid "Actions"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1839
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1948
+#: lib/phoenix_kit_projects/web/project_members_live.ex:271
 #, elixir-autogen, elixir-format
 msgid "Add"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1448
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1474
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1781
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1820
-#: lib/phoenix_kit_projects/web/task_form_live.ex:572
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1562
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1588
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1890
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1929
+#: lib/phoenix_kit_projects/web/task_form_live.ex:570
 #, elixir-autogen, elixir-format
 msgid "Add dependency"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2066
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2823
 #, elixir-autogen, elixir-format
 msgid "Add one from the task library"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1819
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2330
 #, elixir-autogen, elixir-format
 msgid "Add task"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:218
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:235
 #, elixir-autogen, elixir-format
 msgid "Add task to %{name}"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1900
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2449
 #, elixir-autogen, elixir-format
 msgid "Archive"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1898
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2447
 #, elixir-autogen, elixir-format
 msgid "Archive this project? It will be hidden from the main lists but kept in the database."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1787
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2297
 #, elixir-autogen, elixir-format
 msgid "Archived"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1897
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2446
 #, elixir-autogen, elixir-format
 msgid "Archiving…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1408
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1700
-#: lib/phoenix_kit_projects/web/project_form_live.ex:686
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1522
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1808
+#: lib/phoenix_kit_projects/web/project_form_live.ex:767
 #, elixir-autogen, elixir-format
 msgid "Assign to"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1405
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1696
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1519
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1804
 #, elixir-autogen, elixir-format
 msgid "Assignment (optional)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:280
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:297
 #, elixir-autogen, elixir-format
 msgid "Assignment not found."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1204
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1217
 #, elixir-autogen, elixir-format
 msgid "Assignment updated."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1510
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1836
-#: lib/phoenix_kit_projects/web/project_form_live.ex:720
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2407
-#: lib/phoenix_kit_projects/web/task_form_live.ex:589
-#: lib/phoenix_kit_projects/web/template_form_live.ex:394
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1624
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1945
+#: lib/phoenix_kit_projects/web/project_events_live.ex:516
+#: lib/phoenix_kit_projects/web/project_form_live.ex:817
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2588
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2655
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3265
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:353
+#: lib/phoenix_kit_projects/web/task_form_live.ex:587
+#: lib/phoenix_kit_projects/web/template_form_live.ex:390
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/components/popup_host.ex:153
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2419
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2468
+#: lib/phoenix_kit_projects/web/project_events_live.ex:431
+#: lib/phoenix_kit_projects/web/project_events_live.ex:435
+#: lib/phoenix_kit_projects/web/project_events_live.ex:532
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2596
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2671
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3277
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3326
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:369
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1862
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2451
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2374
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3309
 #, elixir-autogen, elixir-format
 msgid "Comments"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1782
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2292
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:97
 #, elixir-autogen, elixir-format
 msgid "Completed"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1926
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2475
 #, elixir-autogen, elixir-format
 msgid "Completed %{when}"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:573
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1309
 #, elixir-autogen, elixir-format
 msgid "Could not add dependency."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1248
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1525
 #, elixir-autogen, elixir-format
 msgid "Could not archive project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:462
+#: lib/phoenix_kit_projects/web/project_form_live.ex:546
 #, elixir-autogen, elixir-format
 msgid "Could not copy the template. Please check the source and try again."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:870
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:877
 #, elixir-autogen, elixir-format
 msgid "Could not create task. Title may already exist."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1085
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1097
 #, elixir-autogen, elixir-format
 msgid "Could not create the task and its dependencies. Please try again."
 msgstr ""
@@ -321,13 +332,13 @@ msgstr ""
 msgid "Could not delete template."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:601
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1154
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1333
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1354
 #, elixir-autogen, elixir-format
 msgid "Could not remove dependency."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1012
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1206
 #, elixir-autogen, elixir-format
 msgid "Could not remove task."
 msgstr ""
@@ -337,78 +348,79 @@ msgstr ""
 msgid "Could not reorder projects."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1307
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1584
 #: lib/phoenix_kit_projects/web/tasks_live.ex:329
 #: lib/phoenix_kit_projects/web/tasks_live.ex:359
 #, elixir-autogen, elixir-format
 msgid "Could not reorder tasks."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1238
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1251
 #, elixir-autogen, elixir-format
 msgid "Could not save the assignment."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:541
+#: lib/phoenix_kit_projects/web/project_form_live.ex:625
 #, elixir-autogen, elixir-format
 msgid "Could not save the project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:394
+#: lib/phoenix_kit_projects/web/task_form_live.ex:396
 #, elixir-autogen, elixir-format
 msgid "Could not save the task."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1459
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1859
 #, elixir-autogen, elixir-format
 msgid "Could not start project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1117
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1315
 #, elixir-autogen, elixir-format
 msgid "Could not toggle tracking."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1334
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1611
 #, elixir-autogen, elixir-format
 msgid "Could not unarchive project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:975
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1169
 #, elixir-autogen, elixir-format
 msgid "Could not update duration."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1524
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1924
 #, elixir-autogen, elixir-format
 msgid "Could not update progress."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:493
+#: lib/phoenix_kit_projects/web/project_show_live.ex:617
 #, elixir-autogen, elixir-format
 msgid "Could not update task."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:668
-#: lib/phoenix_kit_projects/web/template_form_live.ex:378
+#: lib/phoenix_kit_projects/web/project_form_live.ex:747
+#: lib/phoenix_kit_projects/web/template_form_live.ex:374
 #, elixir-autogen, elixir-format
 msgid "Count weekends in schedule"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1693
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1800
 #, elixir-autogen, elixir-format
 msgid "Counts weekends (e.g. deliveries, external processes)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:728
-#: lib/phoenix_kit_projects/web/task_form_live.ex:597
-#: lib/phoenix_kit_projects/web/template_form_live.ex:402
+#: lib/phoenix_kit_projects/web/project_form_live.ex:825
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:360
+#: lib/phoenix_kit_projects/web/task_form_live.ex:595
+#: lib/phoenix_kit_projects/web/template_form_live.ex:398
 #, elixir-autogen, elixir-format
 msgid "Create"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1372
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1544
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1486
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1658
 #, elixir-autogen, elixir-format
 msgid "Create new"
 msgstr ""
@@ -418,7 +430,7 @@ msgstr ""
 msgid "Create one to get started."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1921
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2470
 #, elixir-autogen, elixir-format
 msgid "Create project from this template"
 msgstr ""
@@ -431,118 +443,119 @@ msgstr ""
 msgid "Create your first"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:106
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:119
 #, elixir-autogen, elixir-format
 msgid "Cycle detected — traversal stopped here"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1329
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1737
-#: lib/phoenix_kit_projects/web/task_form_live.ex:404
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1443
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2247
+#: lib/phoenix_kit_projects/web/task_form_live.ex:406
 #, elixir-autogen, elixir-format
 msgid "Days"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:518
+#: lib/phoenix_kit_projects/web/task_form_live.ex:516
 #, elixir-autogen, elixir-format
 msgid "Default assign to"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:514
+#: lib/phoenix_kit_projects/web/task_form_live.ex:512
 #, elixir-autogen, elixir-format
 msgid "Default assignment (optional)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:545
+#: lib/phoenix_kit_projects/web/task_form_live.ex:543
 #, elixir-autogen, elixir-format
 msgid "Default dependencies"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:750
+#: lib/phoenix_kit_projects/web/projects_live.ex:754
 #, elixir-autogen, elixir-format
 msgid "Delete project \"%{name}\"? All assignments will be removed."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/tasks_live.ex:882
+#: lib/phoenix_kit_projects/web/tasks_live.ex:889
 #, elixir-autogen, elixir-format
 msgid "Delete task \"%{title}\"? Assignments using it will also be removed."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/templates_live.ex:663
+#: lib/phoenix_kit_projects/web/templates_live.ex:668
 #, elixir-autogen, elixir-format
 msgid "Delete template \"%{name}\"?"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:749
-#: lib/phoenix_kit_projects/web/tasks_live.ex:881
-#: lib/phoenix_kit_projects/web/templates_live.ex:662
+#: lib/phoenix_kit_projects/web/projects_live.ex:753
+#: lib/phoenix_kit_projects/web/tasks_live.ex:888
+#: lib/phoenix_kit_projects/web/templates_live.ex:667
 #, elixir-autogen, elixir-format
 msgid "Deleting…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1412
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1417
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1702
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1706
-#: lib/phoenix_kit_projects/web/project_form_live.ex:690
-#: lib/phoenix_kit_projects/web/project_form_live.ex:696
-#: lib/phoenix_kit_projects/web/task_form_live.ex:520
-#: lib/phoenix_kit_projects/web/task_form_live.ex:524
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1526
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1531
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1810
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1814
+#: lib/phoenix_kit_projects/web/project_form_live.ex:771
+#: lib/phoenix_kit_projects/web/project_form_live.ex:777
+#: lib/phoenix_kit_projects/web/task_form_live.ex:518
+#: lib/phoenix_kit_projects/web/task_form_live.ex:522
 #, elixir-autogen, elixir-format
 msgid "Department"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1428
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1746
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1542
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1855
 #, elixir-autogen, elixir-format
 msgid "Dependencies"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1532
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1932
 #, elixir-autogen, elixir-format
 msgid "Dept"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1641
-#: lib/phoenix_kit_projects/web/project_form_live.ex:645
-#: lib/phoenix_kit_projects/web/task_form_live.ex:490
-#: lib/phoenix_kit_projects/web/template_form_live.ex:364
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1748
+#: lib/phoenix_kit_projects/web/project_form_live.ex:721
+#: lib/phoenix_kit_projects/web/task_form_live.ex:488
+#: lib/phoenix_kit_projects/web/template_form_live.ex:360
 #, elixir-autogen, elixir-format
 msgid "Description"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1591
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1705
 #, elixir-autogen, elixir-format
 msgid "Details"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:752
+#: lib/phoenix_kit_projects/web/project_show_live.ex:901
 #, elixir-autogen, elixir-format
 msgid "Disable percentage tracking"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1667
-#: lib/phoenix_kit_projects/web/project_show_live.ex:650
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1774
+#: lib/phoenix_kit_projects/web/project_show_live.ex:777
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3098
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:110
 #, elixir-autogen, elixir-format
 msgid "Done"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:621
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2116
+#: lib/phoenix_kit_projects/web/project_show_live.ex:748
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2873
 #, elixir-autogen, elixir-format
 msgid "Drag to reorder"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1652
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1759
 #: lib/phoenix_kit_projects/web/tasks_live.ex:190
 #: lib/phoenix_kit_projects/web/tasks_live.ex:738
-#: lib/phoenix_kit_projects/web/tasks_live.ex:773
+#: lib/phoenix_kit_projects/web/tasks_live.ex:780
 #, elixir-autogen, elixir-format
 msgid "Duration"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2011
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2702
 #, elixir-autogen, elixir-format
 msgid "ETA:"
 msgstr ""
@@ -553,18 +566,18 @@ msgid "Each group is rooted at a task that nothing else depends on. Tasks reused
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:435
-#: lib/phoenix_kit_projects/web/project_show_live.ex:679
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1883
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2168
-#: lib/phoenix_kit_projects/web/projects_live.ex:743
-#: lib/phoenix_kit_projects/web/tasks_live.ex:875
-#: lib/phoenix_kit_projects/web/templates_live.ex:656
+#: lib/phoenix_kit_projects/web/project_show_live.ex:806
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2395
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2925
+#: lib/phoenix_kit_projects/web/projects_live.ex:747
+#: lib/phoenix_kit_projects/web/tasks_live.ex:882
+#: lib/phoenix_kit_projects/web/templates_live.ex:661
 #, elixir-autogen, elixir-format
 msgid "Edit"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:293
-#: lib/phoenix_kit_projects/web/project_form_live.ex:106
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:310
+#: lib/phoenix_kit_projects/web/project_form_live.ex:124
 #: lib/phoenix_kit_projects/web/template_form_live.ex:112
 #, elixir-autogen, elixir-format
 msgid "Edit %{name}"
@@ -575,34 +588,34 @@ msgstr ""
 msgid "Edit %{title}"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:329
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:346
 #, elixir-autogen, elixir-format
 msgid "Edit assignment"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:503
+#: lib/phoenix_kit_projects/web/task_form_live.ex:501
 #, elixir-autogen, elixir-format
 msgid "Estimated duration"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1999
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2690
 #, elixir-autogen, elixir-format
 msgid "Finished:"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1331
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1739
-#: lib/phoenix_kit_projects/web/task_form_live.ex:406
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1445
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2249
+#: lib/phoenix_kit_projects/web/task_form_live.ex:408
 #, elixir-autogen, elixir-format
 msgid "Fortnights"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1543
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1657
 #, elixir-autogen, elixir-format
 msgid "From library"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:660
+#: lib/phoenix_kit_projects/web/project_form_live.ex:736
 #, elixir-autogen, elixir-format
 msgid "From template (optional)"
 msgstr ""
@@ -613,19 +626,21 @@ msgstr ""
 msgid "Groups"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1328
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1736
-#: lib/phoenix_kit_projects/web/task_form_live.ex:403
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1442
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2246
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2617
+#: lib/phoenix_kit_projects/web/task_form_live.ex:405
 #, elixir-autogen, elixir-format
 msgid "Hours"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:674
+#: lib/phoenix_kit_projects/web/project_form_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Immediately (set up tasks first)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1667
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1774
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3097
 #: lib/phoenix_kit_projects/web/widgets/project_status_widget.ex:111
 #, elixir-autogen, elixir-format
 msgid "In progress"
@@ -636,30 +651,31 @@ msgstr ""
 msgid "In setup"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1351
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1356
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1628
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1633
 #, elixir-autogen, elixir-format
 msgid "Invalid date — please pick a valid date and time."
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/overview_live.ex:755
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2047
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2764
 #: lib/phoenix_kit_projects/web/tasks_live.ex:713
 #: lib/phoenix_kit_projects/web/tasks_live.ex:714
 #, elixir-autogen, elixir-format
 msgid "List"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1327
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1735
-#: lib/phoenix_kit_projects/web/task_form_live.ex:402
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1441
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2245
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2628
+#: lib/phoenix_kit_projects/web/task_form_live.ex:404
 #, elixir-autogen, elixir-format
 msgid "Minutes"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1332
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1740
-#: lib/phoenix_kit_projects/web/task_form_live.ex:407
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1446
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2250
+#: lib/phoenix_kit_projects/web/task_form_live.ex:409
 #, elixir-autogen, elixir-format
 msgid "Months"
 msgstr ""
@@ -671,20 +687,21 @@ msgstr ""
 msgid "My tasks"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:629
+#: lib/phoenix_kit_projects/web/project_form_live.ex:705
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:335
 #: lib/phoenix_kit_projects/web/projects_live.ex:223
-#: lib/phoenix_kit_projects/web/projects_live.ex:642
-#: lib/phoenix_kit_projects/web/template_form_live.ex:348
+#: lib/phoenix_kit_projects/web/projects_live.ex:646
+#: lib/phoenix_kit_projects/web/template_form_live.ex:344
 #: lib/phoenix_kit_projects/web/templates_live.ex:173
-#: lib/phoenix_kit_projects/web/templates_live.ex:544
+#: lib/phoenix_kit_projects/web/templates_live.ex:549
 #, elixir-autogen, elixir-format
 msgid "Name"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/overview_live.ex:829
-#: lib/phoenix_kit_projects/web/project_form_live.ex:78
+#: lib/phoenix_kit_projects/web/project_form_live.ex:96
 #: lib/phoenix_kit_projects/web/projects_live.ex:62
-#: lib/phoenix_kit_projects/web/projects_live.ex:574
+#: lib/phoenix_kit_projects/web/projects_live.ex:578
 #, elixir-autogen, elixir-format
 msgid "New project"
 msgstr ""
@@ -698,23 +715,23 @@ msgstr ""
 
 #: lib/phoenix_kit_projects/web/template_form_live.ex:88
 #: lib/phoenix_kit_projects/web/templates_live.ex:76
-#: lib/phoenix_kit_projects/web/templates_live.ex:503
+#: lib/phoenix_kit_projects/web/templates_live.ex:508
 #, elixir-autogen, elixir-format
 msgid "New template"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:581
+#: lib/phoenix_kit_projects/web/task_form_live.ex:579
 #, elixir-autogen, elixir-format
 msgid "No other tasks in the library to depend on."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1790
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1828
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1899
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1937
 #, elixir-autogen, elixir-format
 msgid "No other tasks in this project to depend on."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:563
+#: lib/phoenix_kit_projects/web/projects_live.ex:567
 #, elixir-autogen, elixir-format
 msgid "No projects match."
 msgstr ""
@@ -726,7 +743,7 @@ msgstr ""
 msgid "No projects yet."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2058
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2815
 #, elixir-autogen, elixir-format
 msgid "No tasks in this project yet."
 msgstr ""
@@ -742,10 +759,10 @@ msgstr ""
 msgid "No templates yet."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1411
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1702
-#: lib/phoenix_kit_projects/web/project_form_live.ex:689
-#: lib/phoenix_kit_projects/web/task_form_live.ex:520
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1525
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1810
+#: lib/phoenix_kit_projects/web/project_form_live.ex:770
+#: lib/phoenix_kit_projects/web/task_form_live.ex:518
 #, elixir-autogen, elixir-format
 msgid "Nobody"
 msgstr ""
@@ -755,7 +772,7 @@ msgstr ""
 msgid "Not started yet"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1976
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2525
 #, elixir-autogen, elixir-format
 msgid "Not started — set up tasks, then start"
 msgstr ""
@@ -776,37 +793,37 @@ msgstr ""
 msgid "Open a project and click Start to begin."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:668
+#: lib/phoenix_kit_projects/web/project_show_live.ex:795
 #, elixir-autogen, elixir-format
 msgid "Open comments"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1860
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2372
 #, elixir-autogen, elixir-format
 msgid "Open project comments"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1414
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1419
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1702
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1712
-#: lib/phoenix_kit_projects/web/project_form_live.ex:692
-#: lib/phoenix_kit_projects/web/project_form_live.ex:702
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1530
-#: lib/phoenix_kit_projects/web/task_form_live.ex:520
-#: lib/phoenix_kit_projects/web/task_form_live.ex:530
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1528
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1533
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1810
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1820
+#: lib/phoenix_kit_projects/web/project_form_live.ex:773
+#: lib/phoenix_kit_projects/web/project_form_live.ex:783
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1930
+#: lib/phoenix_kit_projects/web/task_form_live.ex:518
+#: lib/phoenix_kit_projects/web/task_form_live.ex:528
 #, elixir-autogen, elixir-format
 msgid "Person"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2395
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3253
 #, elixir-autogen, elixir-format
 msgid "Pick the date and time this project starts. Defaults to right now; backdate it if work began earlier, or pick a future moment if you're queueing it up."
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:42
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:684
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2457
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3315
 #, elixir-autogen, elixir-format
 msgid "Project"
 msgstr ""
@@ -816,17 +833,17 @@ msgstr ""
 msgid "Project Templates"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1238
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1515
 #, elixir-autogen, elixir-format
 msgid "Project archived."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:416
+#: lib/phoenix_kit_projects/web/project_form_live.ex:500
 #, elixir-autogen, elixir-format
 msgid "Project created from template with all tasks and dependencies."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:380
+#: lib/phoenix_kit_projects/web/project_form_live.ex:462
 #, elixir-autogen, elixir-format
 msgid "Project created."
 msgstr ""
@@ -841,31 +858,41 @@ msgstr ""
 msgid "Project list changed; please try again."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:208
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:274
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:370
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:216
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:291
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:387
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:62
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:72
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:78
-#: lib/phoenix_kit_projects/web/project_form_live.ex:99
-#: lib/phoenix_kit_projects/web/project_form_live.ex:131
+#: lib/phoenix_kit_projects/web/project_events_live.ex:336
+#: lib/phoenix_kit_projects/web/project_files_live.ex:69
+#: lib/phoenix_kit_projects/web/project_files_live.ex:80
+#: lib/phoenix_kit_projects/web/project_form_live.ex:117
+#: lib/phoenix_kit_projects/web/project_form_live.ex:149
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:57
-#: lib/phoenix_kit_projects/web/project_show_live.ex:140
-#: lib/phoenix_kit_projects/web/project_show_live.ex:205
+#: lib/phoenix_kit_projects/web/project_members_live.ex:70
+#: lib/phoenix_kit_projects/web/project_members_live.ex:81
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:76
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:105
+#: lib/phoenix_kit_projects/web/project_show_live.ex:163
+#: lib/phoenix_kit_projects/web/project_show_live.ex:238
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:235
 #: lib/phoenix_kit_projects/web/projects_live.ex:421
 #, elixir-autogen, elixir-format
 msgid "Project not found."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1446
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1846
 #, elixir-autogen, elixir-format
 msgid "Project started!"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1324
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1601
 #, elixir-autogen, elixir-format
 msgid "Project unarchived."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:503
+#: lib/phoenix_kit_projects/web/project_form_live.ex:587
 #, elixir-autogen, elixir-format
 msgid "Project updated."
 msgstr ""
@@ -873,9 +900,13 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:32
 #: lib/phoenix_kit_projects/web/overview_live.ex:73
 #: lib/phoenix_kit_projects/web/overview_live.ex:1163
-#: lib/phoenix_kit_projects/web/project_form_live.ex:566
-#: lib/phoenix_kit_projects/web/project_show_live.ex:248
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1768
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:52
+#: lib/phoenix_kit_projects/web/project_files_live.ex:61
+#: lib/phoenix_kit_projects/web/project_form_live.ex:650
+#: lib/phoenix_kit_projects/web/project_members_live.ex:62
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:66
+#: lib/phoenix_kit_projects/web/project_show_live.ex:297
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2278
 #: lib/phoenix_kit_projects/web/projects_live.ex:57
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:78
 #, elixir-autogen, elixir-format
@@ -892,33 +923,35 @@ msgstr ""
 msgid "Record not found."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2005
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2696
 #, elixir-autogen, elixir-format
 msgid "Remaining:"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:686
+#: lib/phoenix_kit_projects/web/project_events_live.ex:425
+#: lib/phoenix_kit_projects/web/project_show_live.ex:813
 #, elixir-autogen, elixir-format
 msgid "Remove \"%{title}\"?"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1439
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1768
-#: lib/phoenix_kit_projects/web/project_show_live.ex:685
-#: lib/phoenix_kit_projects/web/project_show_live.ex:778
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2184
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2229
-#: lib/phoenix_kit_projects/web/task_form_live.ex:559
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1553
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1877
+#: lib/phoenix_kit_projects/web/project_show_live.ex:812
+#: lib/phoenix_kit_projects/web/project_show_live.ex:927
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2942
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2987
+#: lib/phoenix_kit_projects/web/task_form_live.ex:557
 #, elixir-autogen, elixir-format
 msgid "Removing…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:654
+#: lib/phoenix_kit_projects/web/project_show_live.ex:781
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3142
 #, elixir-autogen, elixir-format
 msgid "Reopen"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:653
+#: lib/phoenix_kit_projects/web/project_show_live.ex:780
 #, elixir-autogen, elixir-format
 msgid "Reopening…"
 msgstr ""
@@ -931,29 +964,33 @@ msgstr ""
 msgid "Running"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1519
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1839
-#: lib/phoenix_kit_projects/web/project_form_live.ex:728
-#: lib/phoenix_kit_projects/web/task_form_live.ex:597
-#: lib/phoenix_kit_projects/web/template_form_live.ex:402
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1633
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1948
+#: lib/phoenix_kit_projects/web/project_form_live.ex:825
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:368
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2591
+#: lib/phoenix_kit_projects/web/task_form_live.ex:595
+#: lib/phoenix_kit_projects/web/template_form_live.ex:398
 #, elixir-autogen, elixir-format
 msgid "Save"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1720
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1829
 #, elixir-autogen, elixir-format
 msgid "Save as reusable template in the task library"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1514
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1838
-#: lib/phoenix_kit_projects/web/project_form_live.ex:724
-#: lib/phoenix_kit_projects/web/project_show_live.ex:649
-#: lib/phoenix_kit_projects/web/project_show_live.ex:709
-#: lib/phoenix_kit_projects/web/project_show_live.ex:752
-#: lib/phoenix_kit_projects/web/project_show_live.ex:757
-#: lib/phoenix_kit_projects/web/task_form_live.ex:593
-#: lib/phoenix_kit_projects/web/template_form_live.ex:398
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1628
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1947
+#: lib/phoenix_kit_projects/web/project_form_live.ex:821
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:367
+#: lib/phoenix_kit_projects/web/project_show_live.ex:776
+#: lib/phoenix_kit_projects/web/project_show_live.ex:837
+#: lib/phoenix_kit_projects/web/project_show_live.ex:901
+#: lib/phoenix_kit_projects/web/project_show_live.ex:906
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2590
+#: lib/phoenix_kit_projects/web/task_form_live.ex:591
+#: lib/phoenix_kit_projects/web/template_form_live.ex:394
 #, elixir-autogen, elixir-format
 msgid "Saving…"
 msgstr ""
@@ -963,54 +1000,54 @@ msgstr ""
 msgid "Scheduled"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:674
+#: lib/phoenix_kit_projects/web/project_form_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Scheduled date"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1965
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2514
 #, elixir-autogen, elixir-format
 msgid "Scheduled for %{when}"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1417
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1706
-#: lib/phoenix_kit_projects/web/project_form_live.ex:696
-#: lib/phoenix_kit_projects/web/task_form_live.ex:524
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1531
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1814
+#: lib/phoenix_kit_projects/web/project_form_live.ex:777
+#: lib/phoenix_kit_projects/web/task_form_live.ex:522
 #, elixir-autogen, elixir-format
 msgid "Select department"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1419
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1712
-#: lib/phoenix_kit_projects/web/project_form_live.ex:702
-#: lib/phoenix_kit_projects/web/task_form_live.ex:530
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1533
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1820
+#: lib/phoenix_kit_projects/web/project_form_live.ex:783
+#: lib/phoenix_kit_projects/web/task_form_live.ex:528
 #, elixir-autogen, elixir-format
 msgid "Select person"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1553
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1784
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1823
-#: lib/phoenix_kit_projects/web/task_form_live.ex:575
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1667
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1893
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1932
+#: lib/phoenix_kit_projects/web/task_form_live.ex:573
 #, elixir-autogen, elixir-format
 msgid "Select task"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1418
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1709
-#: lib/phoenix_kit_projects/web/project_form_live.ex:699
-#: lib/phoenix_kit_projects/web/task_form_live.ex:527
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1532
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1817
+#: lib/phoenix_kit_projects/web/project_form_live.ex:780
+#: lib/phoenix_kit_projects/web/task_form_live.ex:525
 #, elixir-autogen, elixir-format
 msgid "Select team"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1752
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1861
 #, elixir-autogen, elixir-format
 msgid "Selections will be applied when you save this task."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:728
+#: lib/phoenix_kit_projects/web/project_show_live.ex:857
 #, elixir-autogen, elixir-format
 msgid "Set duration"
 msgstr ""
@@ -1020,7 +1057,7 @@ msgstr ""
 msgid "Show"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:479
+#: lib/phoenix_kit_projects/web/project_form_live.ex:563
 #, elixir-autogen, elixir-format
 msgid "Something went wrong while creating the project. Please try again."
 msgstr ""
@@ -1035,89 +1072,90 @@ msgstr ""
 msgid "Standalone"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:673
-#: lib/phoenix_kit_projects/web/project_show_live.ex:646
+#: lib/phoenix_kit_projects/web/project_form_live.ex:752
+#: lib/phoenix_kit_projects/web/project_show_live.ex:773
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3134
 #, elixir-autogen, elixir-format
 msgid "Start"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:677
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2399
+#: lib/phoenix_kit_projects/web/project_form_live.ex:756
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3257
 #, elixir-autogen, elixir-format
 msgid "Start date and time"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:663
+#: lib/phoenix_kit_projects/web/project_form_live.ex:739
 #, elixir-autogen, elixir-format
 msgid "Start from scratch"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1972
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2521
 #, elixir-autogen, elixir-format
 msgid "Start now"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1982
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2393
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2414
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2531
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3251
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3272
 #, elixir-autogen, elixir-format
 msgid "Start project"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/components/running_card.ex:147
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1937
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2486
 #, elixir-autogen, elixir-format
 msgid "Started %{when}"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:645
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2411
+#: lib/phoenix_kit_projects/web/project_show_live.ex:772
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3269
 #, elixir-autogen, elixir-format
 msgid "Starting…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1666
-#: lib/phoenix_kit_projects/web/projects_live.ex:617
-#: lib/phoenix_kit_projects/web/projects_live.ex:645
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1773
+#: lib/phoenix_kit_projects/web/projects_live.ex:621
+#: lib/phoenix_kit_projects/web/projects_live.ex:649
 #, elixir-autogen, elixir-format
 msgid "Status"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:464
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2459
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3317
 #, elixir-autogen, elixir-format
 msgid "Task"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/overview_live.ex:1177
-#: lib/phoenix_kit_projects/web/task_form_live.ex:424
+#: lib/phoenix_kit_projects/web/task_form_live.ex:426
 #: lib/phoenix_kit_projects/web/tasks_live.ex:59
 #, elixir-autogen, elixir-format
 msgid "Task Library"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1186
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1198
 #, elixir-autogen, elixir-format
 msgid "Task added to project, but applying default dependencies from the template failed."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1042
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1096
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1051
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1108
 #, elixir-autogen, elixir-format
 msgid "Task added to project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1043
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1052
 #, elixir-autogen, elixir-format
 msgid "Task added with %{count} dependent task(s)."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:885
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:892
 #, elixir-autogen, elixir-format
 msgid "Task created and added to project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:325
+#: lib/phoenix_kit_projects/web/task_form_live.ex:327
 #, elixir-autogen, elixir-format
 msgid "Task created. You can now add default dependencies by editing it."
 msgstr ""
@@ -1139,27 +1177,27 @@ msgstr ""
 msgid "Task not found."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1000
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1194
 #, elixir-autogen, elixir-format
 msgid "Task removed."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1551
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1665
 #, elixir-autogen, elixir-format
 msgid "Task template"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1586
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1700
 #, elixir-autogen, elixir-format
 msgid "Task title"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:843
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:850
 #, elixir-autogen, elixir-format
 msgid "Task title is required."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:361
+#: lib/phoenix_kit_projects/web/task_form_live.ex:363
 #, elixir-autogen, elixir-format
 msgid "Task updated."
 msgstr ""
@@ -1169,7 +1207,7 @@ msgstr ""
 msgid "Tasks done"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1300
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1577
 #, elixir-autogen, elixir-format
 msgid "Tasks have changed; please try again."
 msgstr ""
@@ -1179,7 +1217,7 @@ msgstr ""
 msgid "Tasks in progress"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1748
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1857
 #, elixir-autogen, elixir-format
 msgid "Tasks in this project that must finish before this one can start."
 msgstr ""
@@ -1194,21 +1232,21 @@ msgstr ""
 msgid "Tasks with no dependency relationships yet."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1413
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1418
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1702
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1709
-#: lib/phoenix_kit_projects/web/project_form_live.ex:691
-#: lib/phoenix_kit_projects/web/project_form_live.ex:699
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1531
-#: lib/phoenix_kit_projects/web/task_form_live.ex:520
-#: lib/phoenix_kit_projects/web/task_form_live.ex:527
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1527
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1532
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1810
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1817
+#: lib/phoenix_kit_projects/web/project_form_live.ex:772
+#: lib/phoenix_kit_projects/web/project_form_live.ex:780
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1931
+#: lib/phoenix_kit_projects/web/task_form_live.ex:518
+#: lib/phoenix_kit_projects/web/task_form_live.ex:525
 #, elixir-autogen, elixir-format
 msgid "Team"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:45
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1778
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2288
 #, elixir-autogen, elixir-format
 msgid "Template"
 msgstr ""
@@ -1247,38 +1285,40 @@ msgstr ""
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:34
 #: lib/phoenix_kit_projects/web/overview_live.ex:1191
-#: lib/phoenix_kit_projects/web/project_show_live.ex:248
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1768
+#: lib/phoenix_kit_projects/web/project_show_live.ex:297
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2278
 #: lib/phoenix_kit_projects/web/template_form_live.ex:294
 #, elixir-autogen, elixir-format
 msgid "Templates"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1914
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2463
 #, elixir-autogen, elixir-format
 msgid "This is a template — set up tasks, then create projects from it."
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:198
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:162
-#: lib/phoenix_kit_projects/web/project_show_live.ex:347
+#: lib/phoenix_kit_projects/web/project_show_live.ex:462
 #, elixir-autogen, elixir-format
 msgid "This project was deleted."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1568
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1682
 #, elixir-autogen, elixir-format
 msgid "This task pulls in other tasks"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:474
+#: lib/phoenix_kit_projects/web/project_events_live.ex:447
+#: lib/phoenix_kit_projects/web/task_form_live.ex:472
 #: lib/phoenix_kit_projects/web/tasks_live.ex:187
-#: lib/phoenix_kit_projects/web/tasks_live.ex:766
+#: lib/phoenix_kit_projects/web/tasks_live.ex:773
 #, elixir-autogen, elixir-format
 msgid "Title"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1667
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1774
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3096
 #, elixir-autogen, elixir-format
 msgid "To do"
 msgstr ""
@@ -1288,7 +1328,7 @@ msgstr ""
 msgid "Too many projects to reorder at once."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1291
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1568
 #: lib/phoenix_kit_projects/web/tasks_live.ex:352
 #, elixir-autogen, elixir-format
 msgid "Too many tasks to reorder at once."
@@ -1299,38 +1339,39 @@ msgstr ""
 msgid "Too many templates to reorder at once."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:758
+#: lib/phoenix_kit_projects/web/project_show_live.ex:907
 #, elixir-autogen, elixir-format
 msgid "Track %"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:757
+#: lib/phoenix_kit_projects/web/project_show_live.ex:906
 #, elixir-autogen, elixir-format
 msgid "Track progress as a percentage"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1892
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2441
 #, elixir-autogen, elixir-format
 msgid "Unarchive"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1890
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2439
 #, elixir-autogen, elixir-format
 msgid "Unarchiving…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1657
-#: lib/phoenix_kit_projects/web/task_form_live.ex:508
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1764
+#: lib/phoenix_kit_projects/web/task_form_live.ex:506
 #, elixir-autogen, elixir-format
 msgid "Unit"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1572
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1686
 #, elixir-autogen, elixir-format
 msgid "Untick any you don't want for this project. Tasks already in this project (✓) won't be re-added."
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/overview_live.ex:1109
+#: lib/phoenix_kit_projects/web/project_events_live.ex:374
 #, elixir-autogen, elixir-format
 msgid "Upcoming"
 msgstr ""
@@ -1351,26 +1392,26 @@ msgid "View projects"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/templates_live.ex:181
-#: lib/phoenix_kit_projects/web/templates_live.ex:547
+#: lib/phoenix_kit_projects/web/templates_live.ex:552
 #, elixir-autogen, elixir-format
 msgid "Weekends"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1330
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1738
-#: lib/phoenix_kit_projects/web/task_form_live.ex:405
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1444
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2248
+#: lib/phoenix_kit_projects/web/task_form_live.ex:407
 #, elixir-autogen, elixir-format
 msgid "Weeks"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/task_form_live.ex:547
+#: lib/phoenix_kit_projects/web/task_form_live.ex:545
 #, elixir-autogen, elixir-format
 msgid "When this task is added to a project, dependencies will be auto-created for any of these tasks already in the same project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1333
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1741
-#: lib/phoenix_kit_projects/web/task_form_live.ex:408
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1447
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2251
+#: lib/phoenix_kit_projects/web/task_form_live.ex:410
 #, elixir-autogen, elixir-format
 msgid "Years"
 msgstr ""
@@ -1381,7 +1422,7 @@ msgstr ""
 msgid "archived"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2019
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2710
 #, elixir-autogen, elixir-format
 msgid "at planned pace"
 msgstr ""
@@ -1398,12 +1439,12 @@ msgstr ""
 msgid "completed"
 msgstr ""
 
-#: lib/phoenix_kit_projects/projects.ex:3275
+#: lib/phoenix_kit_projects/projects.ex:3286
 #, elixir-autogen, elixir-format
 msgid "conflicting dependency change in flight, please retry"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1718
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2118
 #, elixir-autogen, elixir-format
 msgid "days"
 msgstr ""
@@ -1414,8 +1455,8 @@ msgstr ""
 msgid "dependency already exists"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:777
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2224
+#: lib/phoenix_kit_projects/web/project_show_live.ex:926
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2982
 #, elixir-autogen, elixir-format
 msgid "depends on:"
 msgstr ""
@@ -1427,12 +1468,12 @@ msgstr ""
 msgid "done"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1716
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2116
 #, elixir-autogen, elixir-format
 msgid "hour"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1717
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2117
 #, elixir-autogen, elixir-format
 msgid "hours"
 msgstr ""
@@ -1458,7 +1499,7 @@ msgstr ""
 msgid "in progress"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:740
+#: lib/phoenix_kit_projects/web/project_show_live.ex:889
 #, elixir-autogen, elixir-format
 msgid "incl. weekends"
 msgstr ""
@@ -1471,7 +1512,7 @@ msgstr ""
 msgid "late"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1720
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2120
 #, elixir-autogen, elixir-format
 msgid "months"
 msgstr ""
@@ -1481,7 +1522,7 @@ msgstr ""
 msgid "near done"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/templates_live.ex:601
+#: lib/phoenix_kit_projects/web/templates_live.ex:606
 #, elixir-autogen, elixir-format
 msgid "no"
 msgstr ""
@@ -1538,8 +1579,8 @@ msgid "setup"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/components/derived_status_badge.ex:141
-#: lib/phoenix_kit_projects/web/templates_live.ex:452
-#: lib/phoenix_kit_projects/web/templates_live.ex:522
+#: lib/phoenix_kit_projects/web/templates_live.ex:457
+#: lib/phoenix_kit_projects/web/templates_live.ex:527
 #, elixir-autogen, elixir-format
 msgid "template"
 msgstr ""
@@ -1564,27 +1605,27 @@ msgstr ""
 msgid "tomorrow"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1931
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2480
 #, elixir-autogen, elixir-format
 msgid "took %{duration}"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:742
+#: lib/phoenix_kit_projects/web/project_show_live.ex:891
 #, elixir-autogen, elixir-format
 msgid "weekdays only"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1719
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2119
 #, elixir-autogen, elixir-format
 msgid "weeks"
 msgstr ""
 
-#: lib/phoenix_kit_projects/projects.ex:3243
+#: lib/phoenix_kit_projects/projects.ex:3254
 #, elixir-autogen, elixir-format
 msgid "would create a dependency cycle"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/templates_live.ex:601
+#: lib/phoenix_kit_projects/web/templates_live.ex:606
 #, elixir-autogen, elixir-format
 msgid "yes"
 msgstr ""
@@ -1595,12 +1636,12 @@ msgstr ""
 msgid "yesterday"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1659
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1766
 #, elixir-autogen, elixir-format
 msgid "—"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:573
+#: lib/phoenix_kit_projects/web/project_show_live.ex:697
 #, elixir-autogen, elixir-format
 msgid "🎉 All tasks done — project completed!"
 msgstr ""
@@ -1656,10 +1697,10 @@ msgid "Overview"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:35
-#: lib/phoenix_kit_projects/web/projects_live.ex:618
-#: lib/phoenix_kit_projects/web/projects_live.ex:648
+#: lib/phoenix_kit_projects/web/projects_live.ex:622
+#: lib/phoenix_kit_projects/web/projects_live.ex:652
 #: lib/phoenix_kit_projects/web/templates_live.ex:182
-#: lib/phoenix_kit_projects/web/templates_live.ex:550
+#: lib/phoenix_kit_projects/web/templates_live.ex:555
 #: lib/phoenix_kit_projects/web/widgets/project_schedule_widget.ex:109
 #: lib/phoenix_kit_projects/web/widgets/project_status_widget.ex:110
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:105
@@ -1718,13 +1759,13 @@ msgstr ""
 msgid "5m"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:744
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:751
 #, elixir-autogen, elixir-format
 msgid "A project can't be its own sub-project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:602
-#: lib/phoenix_kit_projects/web/templates_live.ex:516
+#: lib/phoenix_kit_projects/web/projects_live.ex:606
+#: lib/phoenix_kit_projects/web/templates_live.ex:521
 #, elixir-autogen, elixir-format
 msgid "A → Z by name"
 msgstr ""
@@ -1752,18 +1793,18 @@ msgstr ""
 msgid "Add a task"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2250
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3008
 #, elixir-autogen, elixir-format
 msgid "Add one"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1521
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1831
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1635
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2343
 #, elixir-autogen, elixir-format
 msgid "Add sub-project"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:217
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Add sub-project to %{name}"
 msgstr ""
@@ -1788,8 +1829,12 @@ msgstr ""
 msgid "Auto"
 msgstr ""
 
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:149
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:519
+#: lib/phoenix_kit_projects/web/project_files_live.ex:203
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:596
+#: lib/phoenix_kit_projects/web/project_members_live.ex:243
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:291
 #, elixir-autogen, elixir-format
 msgid "Back to project"
 msgstr ""
@@ -1815,7 +1860,7 @@ msgid "Build phase"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:523
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2049
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2774
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:816
 #, elixir-autogen, elixir-format
 msgid "Calendar"
@@ -1856,12 +1901,12 @@ msgstr ""
 msgid "Compact"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:789
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:796
 #, elixir-autogen, elixir-format
 msgid "Could not add sub-project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1223
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1500
 #, elixir-autogen, elixir-format
 msgid "Could not change the status."
 msgstr ""
@@ -1871,19 +1916,19 @@ msgstr ""
 msgid "Could not create the default status list."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:683
-#: lib/phoenix_kit_projects/web/project_form_live.ex:350
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1285
+#: lib/phoenix_kit_projects/web/project_form_live.ex:401
 #: lib/phoenix_kit_projects/web/template_form_live.ex:180
 #, elixir-autogen, elixir-format
 msgid "Could not create the default statuses entity."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1074
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1272
 #, elixir-autogen, elixir-format
 msgid "Could not detach the sub-project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:756
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:763
 #, elixir-autogen, elixir-format
 msgid "Could not nest that project."
 msgstr ""
@@ -1926,8 +1971,8 @@ msgstr ""
 msgid "Default status list updated."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:673
-#: lib/phoenix_kit_projects/web/project_form_live.ex:346
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1275
+#: lib/phoenix_kit_projects/web/project_form_live.ex:397
 #: lib/phoenix_kit_projects/web/template_form_live.ex:176
 #, elixir-autogen, elixir-format
 msgid "Default statuses entity created."
@@ -1938,9 +1983,9 @@ msgstr ""
 msgid "Defaults for the projects module."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:752
-#: lib/phoenix_kit_projects/web/tasks_live.ex:884
-#: lib/phoenix_kit_projects/web/templates_live.ex:665
+#: lib/phoenix_kit_projects/web/projects_live.ex:756
+#: lib/phoenix_kit_projects/web/tasks_live.ex:891
+#: lib/phoenix_kit_projects/web/templates_live.ex:670
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr ""
@@ -1951,12 +1996,13 @@ msgstr ""
 msgid "Dependency arrows"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1403
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1517
+#: lib/phoenix_kit_projects/web/project_events_live.ex:510
 #, elixir-autogen, elixir-format
 msgid "Description (optional)"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2175
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2933
 #, elixir-autogen, elixir-format
 msgid "Detaching…"
 msgstr ""
@@ -1987,7 +2033,7 @@ msgstr ""
 msgid "Each task spans the days it is scheduled to run, in the project's task order — the same schedule as the Timeline tab."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:328
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:345
 #, elixir-autogen, elixir-format
 msgid "Edit task: %{name}"
 msgstr ""
@@ -1998,7 +2044,7 @@ msgstr ""
 msgid "Estimate"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:725
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:732
 #, elixir-autogen, elixir-format
 msgid "Existing project nested as a sub-project."
 msgstr ""
@@ -2050,7 +2096,7 @@ msgstr ""
 msgid "Generating…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_form_live.ex:319
+#: lib/phoenix_kit_projects/web/project_form_live.ex:347
 #: lib/phoenix_kit_projects/web/task_form_live.ex:211
 #: lib/phoenix_kit_projects/web/template_form_live.ex:198
 #, elixir-autogen, elixir-format
@@ -2077,7 +2123,7 @@ msgstr ""
 msgid "Inside, only where it fits"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1430
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1544
 #, elixir-autogen, elixir-format
 msgid "Items in this project that must finish before this sub-project can start."
 msgstr ""
@@ -2122,12 +2168,12 @@ msgstr ""
 msgid "Loading the timeline…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2176
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2934
 #, elixir-autogen, elixir-format
 msgid "Make \"%{name}\" a standalone project? It keeps all its tasks — it just won't be a sub-project anymore."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2178
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2936
 #, elixir-autogen, elixir-format
 msgid "Make standalone"
 msgstr ""
@@ -2154,24 +2200,24 @@ msgstr ""
 msgid "Month"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1381
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1495
 #, elixir-autogen, elixir-format
 msgid "Nest a standalone project under this one. It keeps its own tasks and sub-projects; its progress rolls up here."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1373
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1487
 #, elixir-autogen, elixir-format
 msgid "Nest existing"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1520
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1634
 #, elixir-autogen, elixir-format
 msgid "Nest sub-project"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:604
+#: lib/phoenix_kit_projects/web/projects_live.ex:608
 #: lib/phoenix_kit_projects/web/tasks_live.ex:688
-#: lib/phoenix_kit_projects/web/templates_live.ex:518
+#: lib/phoenix_kit_projects/web/templates_live.ex:523
 #, elixir-autogen, elixir-format
 msgid "Newest first"
 msgstr ""
@@ -2181,7 +2227,7 @@ msgstr ""
 msgid "Next"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1385
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1499
 #, elixir-autogen, elixir-format
 msgid "No eligible standalone projects to nest."
 msgstr ""
@@ -2191,8 +2237,8 @@ msgstr ""
 msgid "No ongoing tasks. 🎉"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1455
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1481
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1569
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1595
 #, elixir-autogen, elixir-format
 msgid "No other items in this project to depend on."
 msgstr ""
@@ -2214,13 +2260,13 @@ msgstr ""
 msgid "No running projects with a planned end."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1848
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2360
 #: lib/phoenix_kit_projects/web/widgets/projects_board_widget.ex:111
 #, elixir-autogen, elixir-format
 msgid "No status"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2243
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3001
 #, elixir-autogen, elixir-format
 msgid "No tasks in this sub-project yet."
 msgstr ""
@@ -2255,9 +2301,9 @@ msgstr ""
 msgid "Off — static, no motion"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:605
+#: lib/phoenix_kit_projects/web/projects_live.ex:609
 #: lib/phoenix_kit_projects/web/tasks_live.ex:689
-#: lib/phoenix_kit_projects/web/templates_live.ex:519
+#: lib/phoenix_kit_projects/web/templates_live.ex:524
 #, elixir-autogen, elixir-format
 msgid "Oldest first"
 msgstr ""
@@ -2278,13 +2324,13 @@ msgstr ""
 msgid "Opacity"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2151
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2908
 #, elixir-autogen, elixir-format
 msgid "Open"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:425
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2159
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2916
 #, elixir-autogen, elixir-format
 msgid "Open sub-project"
 msgstr ""
@@ -2305,7 +2351,7 @@ msgstr ""
 msgid "Peak brightness"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:708
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:715
 #, elixir-autogen, elixir-format
 msgid "Pick a project to nest."
 msgstr ""
@@ -2350,7 +2396,7 @@ msgstr ""
 msgid "Project status"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1390
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1504
 #, elixir-autogen, elixir-format
 msgid "Project to nest"
 msgstr ""
@@ -2384,13 +2430,14 @@ msgstr ""
 msgid "Reading the calendar"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:688
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2187
+#: lib/phoenix_kit_projects/web/project_events_live.ex:428
+#: lib/phoenix_kit_projects/web/project_show_live.ex:815
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2945
 #, elixir-autogen, elixir-format
 msgid "Remove"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2185
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2943
 #, elixir-autogen, elixir-format
 msgid "Remove sub-project \"%{name}\" and everything inside it?"
 msgstr ""
@@ -2417,9 +2464,9 @@ msgstr ""
 msgid "Resetting…"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:606
+#: lib/phoenix_kit_projects/web/projects_live.ex:610
 #: lib/phoenix_kit_projects/web/tasks_live.ex:690
-#: lib/phoenix_kit_projects/web/templates_live.ex:520
+#: lib/phoenix_kit_projects/web/templates_live.ex:525
 #, elixir-autogen, elixir-format
 msgid "Reverse current order"
 msgstr ""
@@ -2450,23 +2497,23 @@ msgstr ""
 msgid "Schedule"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1451
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1477
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1565
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1591
 #, elixir-autogen, elixir-format
 msgid "Select"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1393
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1507
 #, elixir-autogen, elixir-format
 msgid "Select a project"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:639
+#: lib/phoenix_kit_projects/web/projects_live.ex:643
 #, elixir-autogen, elixir-format
 msgid "Select all projects"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/tasks_live.ex:763
+#: lib/phoenix_kit_projects/web/tasks_live.ex:770
 #, elixir-autogen, elixir-format
 msgid "Select all tasks"
 msgstr ""
@@ -2484,6 +2531,7 @@ msgstr ""
 msgid "Selection no longer valid; please reselect."
 msgstr ""
 
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:229
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:142
 #, elixir-autogen, elixir-format
 msgid "Settings saved."
@@ -2494,7 +2542,7 @@ msgstr ""
 msgid "Show original"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2124
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2881
 #, elixir-autogen, elixir-format
 msgid "Show sub-project tasks"
 msgstr ""
@@ -2549,28 +2597,28 @@ msgstr ""
 msgid "Stripes — diagonal inverse-colour stripes"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2129
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2260
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2886
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3018
 #, elixir-autogen, elixir-format
 msgid "Sub-project"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:776
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:783
 #, elixir-autogen, elixir-format
 msgid "Sub-project added."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/project_show_live.ex:1062
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1260
 #, elixir-autogen, elixir-format
 msgid "Sub-project is now a standalone project."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1402
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:1516
 #, elixir-autogen, elixir-format
 msgid "Sub-project name"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:823
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:830
 #, elixir-autogen, elixir-format
 msgid "Sub-project updated."
 msgstr ""
@@ -2585,22 +2633,22 @@ msgstr ""
 msgid "Tasks reordered."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:753
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:760
 #, elixir-autogen, elixir-format
 msgid "Templates and projects can't be nested into each other."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:750
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:757
 #, elixir-autogen, elixir-format
 msgid "That project is already a sub-project of another parent."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:747
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:754
 #, elixir-autogen, elixir-format
 msgid "That project is an ancestor — nesting it here would create a cycle."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/assignment_form_live.ex:755
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:762
 #, elixir-autogen, elixir-format
 msgid "That project no longer exists."
 msgstr ""
@@ -2611,7 +2659,7 @@ msgid "The entities module is not enabled, so workflow statuses are currently un
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:600
-#: lib/phoenix_kit_projects/web/project_show_live.ex:2048
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2770
 #, elixir-autogen, elixir-format
 msgid "Timeline"
 msgstr ""
@@ -2708,8 +2756,8 @@ msgstr ""
 msgid "Workflow statuses"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:603
-#: lib/phoenix_kit_projects/web/templates_live.ex:517
+#: lib/phoenix_kit_projects/web/projects_live.ex:607
+#: lib/phoenix_kit_projects/web/templates_live.ex:522
 #, elixir-autogen, elixir-format
 msgid "Z → A by name"
 msgstr ""
@@ -2734,8 +2782,8 @@ msgstr ""
 msgid "an assignment must be exactly one of a task or a sub-project"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:527
-#: lib/phoenix_kit_projects/web/projects_live.ex:608
+#: lib/phoenix_kit_projects/web/projects_live.ex:531
+#: lib/phoenix_kit_projects/web/projects_live.ex:612
 #, elixir-autogen, elixir-format
 msgid "project"
 msgstr ""
@@ -2745,9 +2793,9 @@ msgstr ""
 msgid "project is already a sub-project of another project"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:528
-#: lib/phoenix_kit_projects/web/projects_live.ex:609
-#: lib/phoenix_kit_projects/web/projects_live.ex:766
+#: lib/phoenix_kit_projects/web/projects_live.ex:532
+#: lib/phoenix_kit_projects/web/projects_live.ex:613
+#: lib/phoenix_kit_projects/web/projects_live.ex:770
 #, elixir-autogen, elixir-format
 msgid "projects"
 msgstr ""
@@ -2765,7 +2813,7 @@ msgstr ""
 
 #: lib/phoenix_kit_projects/web/tasks_live.ex:613
 #: lib/phoenix_kit_projects/web/tasks_live.ex:693
-#: lib/phoenix_kit_projects/web/tasks_live.ex:898
+#: lib/phoenix_kit_projects/web/tasks_live.ex:905
 #: lib/phoenix_kit_projects/web/widgets/deadlines_widget.ex:145
 #, elixir-autogen, elixir-format
 msgid "tasks"
@@ -2830,11 +2878,13 @@ msgid "Add person…"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:105
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:184
 #, elixir-autogen, elixir-format
 msgid "Load more"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:106
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:182
 #, elixir-autogen, elixir-format
 msgid "Loading…"
 msgstr ""
@@ -3033,17 +3083,17 @@ msgstr ""
 msgid "Could not reorder templates."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:619
-#: lib/phoenix_kit_projects/web/projects_live.ex:655
+#: lib/phoenix_kit_projects/web/projects_live.ex:623
+#: lib/phoenix_kit_projects/web/projects_live.ex:659
 #: lib/phoenix_kit_projects/web/tasks_live.ex:741
-#: lib/phoenix_kit_projects/web/tasks_live.ex:786
+#: lib/phoenix_kit_projects/web/tasks_live.ex:793
 #: lib/phoenix_kit_projects/web/templates_live.ex:185
-#: lib/phoenix_kit_projects/web/templates_live.ex:563
+#: lib/phoenix_kit_projects/web/templates_live.ex:568
 #, elixir-autogen, elixir-format
 msgid "Created"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/templates_live.ex:541
+#: lib/phoenix_kit_projects/web/templates_live.ex:546
 #, elixir-autogen, elixir-format
 msgid "Select all templates"
 msgstr ""
@@ -3053,66 +3103,66 @@ msgstr ""
 msgid "Templates reordered."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/templates_live.ex:453
-#: lib/phoenix_kit_projects/web/templates_live.ex:523
-#: lib/phoenix_kit_projects/web/templates_live.ex:680
+#: lib/phoenix_kit_projects/web/templates_live.ex:458
+#: lib/phoenix_kit_projects/web/templates_live.ex:528
+#: lib/phoenix_kit_projects/web/templates_live.ex:685
 #, elixir-autogen, elixir-format
 msgid "templates"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/templates_live.ex:492
+#: lib/phoenix_kit_projects/web/templates_live.ex:497
 #, elixir-autogen, elixir-format
 msgid "No templates match."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/templates_live.ex:474
+#: lib/phoenix_kit_projects/web/templates_live.ex:479
 #, elixir-autogen, elixir-format
 msgid "Search templates..."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:621
-#: lib/phoenix_kit_projects/web/projects_live.ex:665
+#: lib/phoenix_kit_projects/web/projects_live.ex:625
+#: lib/phoenix_kit_projects/web/projects_live.ex:669
 #: lib/phoenix_kit_projects/web/tasks_live.ex:743
-#: lib/phoenix_kit_projects/web/tasks_live.ex:796
+#: lib/phoenix_kit_projects/web/tasks_live.ex:803
 #: lib/phoenix_kit_projects/web/templates_live.ex:187
-#: lib/phoenix_kit_projects/web/templates_live.ex:573
+#: lib/phoenix_kit_projects/web/templates_live.ex:578
 #, elixir-autogen, elixir-format
 msgid "Created by"
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:622
-#: lib/phoenix_kit_projects/web/projects_live.ex:668
+#: lib/phoenix_kit_projects/web/projects_live.ex:626
+#: lib/phoenix_kit_projects/web/projects_live.ex:672
 #: lib/phoenix_kit_projects/web/templates_live.ex:188
-#: lib/phoenix_kit_projects/web/templates_live.ex:576
+#: lib/phoenix_kit_projects/web/templates_live.ex:581
 #, elixir-autogen, elixir-format
 msgid "External ID"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/projects_live.ex:225
-#: lib/phoenix_kit_projects/web/projects_live.ex:620
-#: lib/phoenix_kit_projects/web/projects_live.ex:662
+#: lib/phoenix_kit_projects/web/projects_live.ex:624
+#: lib/phoenix_kit_projects/web/projects_live.ex:666
 #: lib/phoenix_kit_projects/web/tasks_live.ex:189
 #: lib/phoenix_kit_projects/web/tasks_live.ex:742
-#: lib/phoenix_kit_projects/web/tasks_live.ex:793
+#: lib/phoenix_kit_projects/web/tasks_live.ex:800
 #: lib/phoenix_kit_projects/web/templates_live.ex:175
 #: lib/phoenix_kit_projects/web/templates_live.ex:186
-#: lib/phoenix_kit_projects/web/templates_live.ex:570
+#: lib/phoenix_kit_projects/web/templates_live.ex:575
 #, elixir-autogen, elixir-format
 msgid "Last edited"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/tasks_live.ex:740
-#: lib/phoenix_kit_projects/web/tasks_live.ex:779
+#: lib/phoenix_kit_projects/web/tasks_live.ex:786
 #: lib/phoenix_kit_projects/web/templates_live.ex:184
-#: lib/phoenix_kit_projects/web/templates_live.ex:556
+#: lib/phoenix_kit_projects/web/templates_live.ex:561
 #, elixir-autogen, elixir-format
 msgid "Last used"
 msgstr ""
 
 #: lib/phoenix_kit_projects/web/tasks_live.ex:739
-#: lib/phoenix_kit_projects/web/tasks_live.ex:776
+#: lib/phoenix_kit_projects/web/tasks_live.ex:783
 #: lib/phoenix_kit_projects/web/templates_live.ex:183
-#: lib/phoenix_kit_projects/web/templates_live.ex:553
+#: lib/phoenix_kit_projects/web/templates_live.ex:558
 #, elixir-autogen, elixir-format
 msgid "Uses"
 msgstr ""
@@ -3122,7 +3172,7 @@ msgstr ""
 msgid "No tasks match."
 msgstr ""
 
-#: lib/phoenix_kit_projects/web/projects_live.ex:545
+#: lib/phoenix_kit_projects/web/projects_live.ex:549
 #, elixir-autogen, elixir-format
 msgid "Search projects..."
 msgstr ""
@@ -3130,4 +3180,723 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/tasks_live.ex:629
 #, elixir-autogen, elixir-format
 msgid "Search tasks..."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2199
+#, elixir-autogen, elixir-format
+msgid "%{h}h"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2200
+#, elixir-autogen, elixir-format
+msgid "%{h}h %{m}m"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2198
+#, elixir-autogen, elixir-format
+msgid "%{m}m"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:49
+#, elixir-autogen, elixir-format
+msgid "%{name} · Activity"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:58
+#, elixir-autogen, elixir-format
+msgid "%{name} · Files"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:59
+#, elixir-autogen, elixir-format
+msgid "%{name} · Members"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:63
+#, elixir-autogen, elixir-format
+msgid "%{name} · Modules"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2208
+#, elixir-autogen, elixir-format
+msgid "%{n} tokens"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2205
+#, elixir-autogen, elixir-format
+msgid "%{n}M tokens"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2207
+#, elixir-autogen, elixir-format
+msgid "%{n}k tokens"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2727
+#, elixir-autogen, elixir-format
+msgid "(%{amount} billable)"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:291
+#, elixir-autogen, elixir-format
+msgid "(deleted account)"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:208
+#, elixir-autogen, elixir-format
+msgid "A project needs at least one owner — promote someone else first."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2736
+#, elixir-autogen, elixir-format
+msgid "AI:"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:134
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2426
+#, elixir-autogen, elixir-format
+msgid "Activity"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:523
+#, elixir-autogen, elixir-format
+msgid "Add event"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:208
+#, elixir-autogen, elixir-format
+msgid "Add files"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:217
+#, elixir-autogen, elixir-format
+msgid "Add the first file"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:520
+#: lib/phoenix_kit_projects/web/project_members_live.ex:270
+#, elixir-autogen, elixir-format
+msgid "Adding…"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:408
+#: lib/phoenix_kit_projects/web/project_events_live.ex:483
+#, elixir-autogen, elixir-format
+msgid "All day"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:240
+#, elixir-autogen, elixir-format
+msgid "All whiteboards"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:307
+#, elixir-autogen, elixir-format
+msgid "Apply the \"%{name}\" preset? This overwrites this project's feature toggles."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:305
+#, elixir-autogen, elixir-format
+msgid "Applying…"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2651
+#, elixir-autogen, elixir-format
+msgid "Billable"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2766
+#, elixir-autogen, elixir-format
+msgid "Board"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:278
+#, elixir-autogen, elixir-format
+msgid "Choose what %{name} uses — from a simple to-do list to a full tracker."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1728
+#, elixir-autogen, elixir-format
+msgid "Concerned"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:142
+#, elixir-autogen, elixir-format
+msgid "Could not add the member."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:218
+#, elixir-autogen, elixir-format
+msgid "Could not apply the preset."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:163
+#, elixir-autogen, elixir-format
+msgid "Could not change the role."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:133
+#, elixir-autogen, elixir-format
+msgid "Could not create the whiteboard — is the Storage module set up?"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2149
+#, elixir-autogen, elixir-format
+msgid "Could not log the time."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:113
+#, elixir-autogen, elixir-format
+msgid "Could not prepare the project folder."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:135
+#, elixir-autogen, elixir-format
+msgid "Could not remove the file."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:180
+#, elixir-autogen, elixir-format
+msgid "Could not remove the member."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:289
+#, elixir-autogen, elixir-format
+msgid "Could not save the event."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:236
+#, elixir-autogen, elixir-format
+msgid "Could not save the settings."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:202
+#, elixir-autogen, elixir-format
+msgid "Could not update the feature."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1396
+#, elixir-autogen, elixir-format
+msgid "Could not update the health."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:186
+#, elixir-autogen, elixir-format
+msgid "Could not update the module."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:288
+#, elixir-autogen, elixir-format
+msgid "Create the first one"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:357
+#, elixir-autogen, elixir-format
+msgid "Creating…"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:459
+#, elixir-autogen, elixir-format
+msgid "Date"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:256
+#, elixir-autogen, elixir-format
+msgid "Email"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:182
+#, elixir-autogen, elixir-format
+msgid "Enable the backing module site-wide first."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:232
+#, elixir-autogen, elixir-format
+msgid "Enable the module first."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:470
+#, elixir-autogen, elixir-format
+msgid "End date (optional)"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:494
+#, elixir-autogen, elixir-format
+msgid "End time (UTC)"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2153
+#, elixir-autogen, elixir-format
+msgid "Enter a positive amount of time."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:122
+#, elixir-autogen, elixir-format
+msgid "Event added."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:139
+#, elixir-autogen, elixir-format
+msgid "Event removed."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:190
+#, elixir-autogen, elixir-format
+msgid "Everything attached to %{name}."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:136
+#, elixir-autogen, elixir-format
+msgid "Everything that happened in %{name}."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_form_live.ex:811
+#, elixir-autogen, elixir-format
+msgid "Feature preset"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:377
+#, elixir-autogen, elixir-format
+msgid "Features"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:132
+#, elixir-autogen, elixir-format
+msgid "File removed."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:188
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2418
+#, elixir-autogen, elixir-format
+msgid "Files"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:168
+#, elixir-autogen, elixir-format
+msgid "Files added."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:70
+#, elixir-autogen, elixir-format
+msgid "Files are turned off for this project."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:267
+#, elixir-autogen, elixir-format
+msgid "Freeform boards — draw, mark up, and pin images with the annotation tools."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:286
+#, elixir-autogen, elixir-format
+msgid "Give the event a title (up to 200 characters)."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:123
+#, elixir-autogen, elixir-format
+msgid "Give the whiteboard a name (up to 160 characters)."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:500
+#, elixir-autogen, elixir-format
+msgid "Location (optional)"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:875
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2606
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2662
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2744
+#, elixir-autogen, elixir-format
+msgid "Log time"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:866
+#, elixir-autogen, elixir-format
+msgid "Log time on this task"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2724
+#, elixir-autogen, elixir-format
+msgid "Logged:"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2659
+#, elixir-autogen, elixir-format
+msgid "Logging…"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2805
+#, elixir-autogen, elixir-format
+msgid "Manage this project's modules & features"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:325
+#, elixir-autogen, elixir-format
+msgid "Manager"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:326
+#, elixir-autogen, elixir-format
+msgid "Member"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:135
+#, elixir-autogen, elixir-format
+msgid "Member added."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:174
+#, elixir-autogen, elixir-format
+msgid "Member removed."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:228
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2410
+#, elixir-autogen, elixir-format
+msgid "Members"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:319
+#, elixir-autogen, elixir-format
+msgid "Modules"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:276
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2402
+#, elixir-autogen, elixir-format
+msgid "Modules & features"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:356
+#: lib/phoenix_kit_projects/web/project_events_live.ex:444
+#, elixir-autogen, elixir-format
+msgid "New event"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:275
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:332
+#, elixir-autogen, elixir-format
+msgid "New whiteboard"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:346
+#, elixir-autogen, elixir-format
+msgid "Next month"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:123
+#, elixir-autogen, elixir-format
+msgid "No account with that email address."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:155
+#, elixir-autogen, elixir-format
+msgid "No activity recorded yet."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:214
+#, elixir-autogen, elixir-format
+msgid "No files yet."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:280
+#, elixir-autogen, elixir-format
+msgid "No members yet — the project is visible to admins only."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:280
+#, elixir-autogen, elixir-format
+msgid "No whiteboards yet."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2578
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2641
+#, elixir-autogen, elixir-format
+msgid "Note (optional)"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:3107
+#, elixir-autogen, elixir-format
+msgid "Nothing here."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:376
+#, elixir-autogen, elixir-format
+msgid "Nothing scheduled."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2609
+#, elixir-autogen, elixir-format
+msgid "On task: %{task}"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2611
+#, elixir-autogen, elixir-format
+msgid "On the project overall"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1726
+#, elixir-autogen, elixir-format
+msgid "On track"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:243
+#, elixir-autogen, elixir-format
+msgid "Open file"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:324
+#, elixir-autogen, elixir-format
+msgid "Owner"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:287
+#, elixir-autogen, elixir-format
+msgid "Pick a date for the event."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1393
+#, elixir-autogen, elixir-format
+msgid "Pick a health status."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:215
+#, elixir-autogen, elixir-format
+msgid "Preset applied."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:298
+#, elixir-autogen, elixir-format
+msgid "Presets:"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:340
+#, elixir-autogen, elixir-format
+msgid "Previous month"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2556
+#, elixir-autogen, elixir-format
+msgid "Project health"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:317
+#, elixir-autogen, elixir-format
+msgid "Remove \"%{name}\"? The drawing stays in the project files."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:254
+#, elixir-autogen, elixir-format
+msgid "Remove file"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:305
+#, elixir-autogen, elixir-format
+msgid "Remove member"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:253
+#, elixir-autogen, elixir-format
+msgid "Remove this file from the project?"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:304
+#, elixir-autogen, elixir-format
+msgid "Remove this member from the project?"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:319
+#, elixir-autogen, elixir-format
+msgid "Remove whiteboard"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:390
+#, elixir-autogen, elixir-format
+msgid "Requires: %{list}"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:267
+#, elixir-autogen, elixir-format
+msgid "Role"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2432
+#, elixir-autogen, elixir-format
+msgid "Set health"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:103
+#, elixir-autogen, elixir-format
+msgid "Sign in to create a whiteboard."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:346
+#, elixir-autogen, elixir-format
+msgid "Size"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1727
+#, elixir-autogen, elixir-format
+msgid "Some risk"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:488
+#, elixir-autogen, elixir-format
+msgid "Start time (UTC)"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2797
+#, elixir-autogen, elixir-format
+msgid "Tasks are turned off for this project."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:71
+#, elixir-autogen, elixir-format
+msgid "Templates don't have members."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1430
+#, elixir-autogen, elixir-format
+msgid "That task is no longer in this project."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:261
+#, elixir-autogen, elixir-format
+msgid "The background file for this whiteboard is missing."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:288
+#, elixir-autogen, elixir-format
+msgid "The end must not be before the start."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:506
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:581
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:592
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:634
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:666
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:682
+#: lib/phoenix_kit_projects/web/assignment_form_live.ex:709
+#: lib/phoenix_kit_projects/web/project_form_live.ex:361
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1012
+#, elixir-autogen, elixir-format
+msgid "This feature is turned off for this project."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2146
+#, elixir-autogen, elixir-format
+msgid "Time logged."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:346
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:400
+#, elixir-autogen, elixir-format
+msgid "Toggle %{name}"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:428
+#, elixir-autogen, elixir-format
+msgid "Turn on %{list} first."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:336
+#, elixir-autogen, elixir-format
+msgid "Unavailable — enable the backing module in Admin › Modules first."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2548
+#, elixir-autogen, elixir-format
+msgid "Update"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:327
+#, elixir-autogen, elixir-format
+msgid "Viewer"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2646
+#, elixir-autogen, elixir-format
+msgid "What was the time spent on?"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2583
+#, elixir-autogen, elixir-format
+msgid "What's behind this call?"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:160
+#, elixir-autogen, elixir-format
+msgid "Whiteboard removed."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:230
+#, elixir-autogen, elixir-format
+msgid "Who works in %{name} and what they can do."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:104
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to change events."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:100
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to change whiteboards."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1439
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to log time here."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_files_live.ex:146
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to manage files here."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:72
+#: lib/phoenix_kit_projects/web/project_members_live.ex:190
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to manage members."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:85
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:250
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to manage this project's modules."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:1400
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to set the health."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_activity_live.ex:63
+#: lib/phoenix_kit_projects/web/project_files_live.ex:71
+#, elixir-autogen, elixir-format
+msgid "You don't have permission to view this project."
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_show_live.ex:2558
+#, elixir-autogen, elixir-format
+msgid "Your judgment, not a computed number — how does this project feel right now?"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_modules_live.ex:331
+#, elixir-autogen, elixir-format
+msgid "built-in"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_events_live.ex:454
+#, elixir-autogen, elixir-format
+msgid "e.g. Sprint review"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:342
+#, elixir-autogen, elixir-format
+msgid "e.g. Sprint sketches"
+msgstr ""
+
+#: lib/phoenix_kit_projects/web/project_members_live.ex:261
+#, elixir-autogen, elixir-format
+msgid "person@example.com"
 msgstr ""

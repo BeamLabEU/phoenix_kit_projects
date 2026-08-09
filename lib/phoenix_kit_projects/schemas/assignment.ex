@@ -15,7 +15,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKitProjects.L10n
   alias PhoenixKitProjects.Schemas.{Dependency, Project, Task}
-  alias PhoenixKitStaff.Schemas.{Department, Person, Team}
+  # SHADOW schemas (staff-optional seam): projects' own read-only
+  # mappings over the core-owned staff tables — see PhoenixKitProjects.People.
+  alias PhoenixKitProjects.People.{Department, Person, Team}
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
   @foreign_key_type UUIDv7
@@ -63,6 +65,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
 
   schema "phoenix_kit_project_assignments" do
     field(:status, :string, default: "todo")
+    field(:priority, :string, default: "normal")
     field(:position, :integer, default: 0)
     field(:description, :string)
     field(:estimated_duration, :integer)
@@ -72,6 +75,27 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:track_progress, :boolean, default: false)
     field(:completed_at, :utc_datetime)
     field(:translations, :map, default: %{})
+
+    # Portal (chain V10): `public` opts an assignment into the project's
+    # public portal list (default false — nothing leaks by existing);
+    # `source` marks provenance ("internal" | "portal") so triage can
+    # tell anonymous submissions apart. Both are SERVER-SET only —
+    # never cast from form params (`public` flips via the dedicated
+    # `set_public/2` context path, gated :edit_tasks).
+    field(:public, :boolean, default: false)
+    # On the PUBLIC board, or not. Deliberately separate from `public`:
+    # that flag has meant "visible to whoever holds the secret link" since
+    # the portal shipped, and reusing it for "visible to the open web"
+    # would retroactively publish everything staff ever flagged under the
+    # older, narrower promise. Nil = not on a public board.
+    field(:board_published_at, :utc_datetime)
+    field(:source, :string, default: "internal")
+    # Whether staff have accepted this into the project. "pending" is a
+    # request from a stranger that nobody has agreed to yet — it is NOT
+    # work, so it stays out of the plan, the counts and every view until
+    # somebody decides. Distinct from `status`, which describes work that
+    # has already been accepted.
+    field(:review_status, :string, default: "accepted")
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
@@ -106,7 +130,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   # `validate_task_xor_child/1` + the DB check constraint.
   @required ~w(project_uuid status)a
   @optional ~w(task_uuid child_project_uuid position description estimated_duration
-               estimated_duration_unit counts_weekends progress_pct track_progress
+               estimated_duration_unit counts_weekends progress_pct track_progress priority
                translations assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
   # Server-only fields: set by trusted server code (completion tracking),
@@ -139,6 +163,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   defp validate(changeset) do
     changeset
     |> validate_required(@required)
+    |> validate_inclusion(:priority, ~w(urgent high normal low))
     |> validate_task_xor_child()
     |> validate_inclusion(:status, @statuses)
     |> validate_number(:estimated_duration, greater_than: 0)

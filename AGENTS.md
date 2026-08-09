@@ -26,7 +26,7 @@ sudo supervisorctl restart elixir
 ## Dependencies
 
 - `phoenix_kit` (path dep) — Module behaviour, Settings, RepoHelper, Activity
-- `phoenix_kit_staff` — **hard dep.** Assignment/Task schemas reference `PhoenixKitStaff.Schemas.{Team, Department, Person}` for the polymorphic assignee; staff tables must exist for our migrations (V101 depends on V100). Both must be declared in the parent app's `mix.exs` *and* in `extra_applications`
+- `phoenix_kit_staff` — **OPTIONAL** (the staff-optional seam, Phase B of the hub rework). The staff DB tables are created by CORE (V100), so the assignee data model runs on projects' own read-only SHADOW schemas (`PhoenixKitProjects.People.{Person,Team,Department,TeamMembership}`) over those core-owned tables; the staff package is only the people ADMIN surface. All people/team/department reads go through the ONE doorway `PhoenixKitProjects.People`; `People.staff_admin_available?/0` gates admin-UI affordances only. The seam's compile gate: `WITHOUT_STAFF=1 mix deps.get && WITHOUT_STAFF=1 mix compile --warnings-as-errors` must stay green; the contract + functional proofs live in `test/phoenix_kit_projects/integration/people_seam_test.exs`
 - `phoenix_live_view`, `ecto_sql`
 
 ## Local cross-repo development
@@ -653,7 +653,7 @@ Release checklist:
 - **Paths**: `PhoenixKitProjects.Paths.*` only
 - **Activity**: via `PhoenixKitProjects.Activity` wrapper, always at the LiveView layer
 - **Duration units + conversion**: centralized in `Schemas.Task`
-- **Cross-module staff lookups**: direct calls to `PhoenixKitStaff.*` are fine — it's a declared hard dep. Wrap DB-backed lookups in a `rescue [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError]` that logs and returns an empty list so a staff DB outage never takes the projects UI down with it
+- **Cross-module people lookups**: NEVER call `PhoenixKitStaff.*` directly (staff is optional) — go through `PhoenixKitProjects.People` (shadow schemas over the core-owned tables; read-only, trashed-excluded by default, staff-parity label semantics). The doorway's reads rescue to safe defaults; the only sanctioned staff reference is `People.staff_admin_available?/0`'s guarded probe
 - **Gettext (hybrid, two backends)**:
   - **Module-domain strings** (project / task / template / assignment /
     dependency UI — the bulk) live in `PhoenixKitProjects.Gettext` with

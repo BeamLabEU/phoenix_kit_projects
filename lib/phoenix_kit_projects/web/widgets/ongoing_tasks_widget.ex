@@ -13,8 +13,9 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   import PhoenixKitProjects.Web.Widgets.Helpers
 
   alias PhoenixKitProjects.{Paths, Projects}
+  alias PhoenixKitProjects.People
+  alias PhoenixKitProjects.People.Person
   alias PhoenixKitProjects.Schemas.Assignment
-  alias PhoenixKitStaff.Schemas.Person
 
   @default_limit 6
 
@@ -24,7 +25,7 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
 
     if available?() do
       settings = assigns[:settings] || %{}
-      project = resolve_project(settings["project"])
+      project = resolve_project(settings["project"], assigns[:scope])
 
       {:ok,
        socket
@@ -131,6 +132,6 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
 
   defp assignee(%{assigned_team: %{name: n}}) when is_binary(n), do: n
   defp assignee(%{assigned_department: %{name: n}}) when is_binary(n), do: n
-  defp assignee(%{assigned_person: %Person{} = p}), do: Person.display_name(p)
+  defp assignee(%{assigned_person: %Person{} = p}), do: People.display_name(p)
   defp assignee(_), do: nil
 end

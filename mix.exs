@@ -35,7 +35,9 @@ defmodule PhoenixKitProjects.MixProject do
   end
 
   def application do
-    [extra_applications: [:logger, :phoenix_kit, :phoenix_kit_staff]]
+    # `:phoenix_kit_staff` is deliberately absent: it is an optional dep, and
+    # naming it here makes the app fail to boot wherever it is not installed.
+    [extra_applications: [:logger, :phoenix_kit]]
   end
 
   def cli do
@@ -114,7 +116,15 @@ defmodule PhoenixKitProjects.MixProject do
       # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
       # The call is unguarded, so `~> 0.1` admitted releases where building an
       # assignee list raises `UndefinedFunctionError`.
-      pk_dep(:phoenix_kit_staff, "~> 0.3"),
+      # Optional (staff-optional seam): the staff DB tables are created by
+      # CORE (V100), so projects' shadow schemas and FKs work without this
+      # package — it is the people ADMIN surface, not the data's owner.
+      # `WITHOUT_STAFF=1 mix compile` drops it entirely, which is the seam's
+      # compile gate proving no stray hard reference sneaks back in.
+      #
+      # The 0.3 floor above still applies whenever staff IS present: making a
+      # dependency optional does not make an older release safe.
+      pk_dep(:phoenix_kit_staff, "~> 0.3", optional: true),
       # 0.2.6 is the floor: `ProjectShowLive` does `use
       # PhoenixKitComments.Embed`, first published in that release. `~> 0.2`
       # admitted 0.2.0–0.2.5, where that `use` site fails to compile.

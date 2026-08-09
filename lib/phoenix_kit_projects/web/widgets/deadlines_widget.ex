@@ -15,6 +15,7 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
   import PhoenixKitProjects.Web.Widgets.Helpers
 
   alias PhoenixKitProjects.{Paths, Projects}
+  alias PhoenixKitProjects.Web.Widgets.Helpers
 
   @default_limit 6
 
@@ -28,7 +29,7 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
       mine = if only_mine?, do: mine_uuids(scope_user_uuid(assigns[:scope])), else: nil
 
       rows =
-        deadline_candidates()
+        deadline_candidates(assigns[:scope])
         |> scope_and_limit(only_mine?, mine, limit(settings))
 
       {:ok,
@@ -90,9 +91,14 @@ defmodule PhoenixKitProjects.Web.Widgets.DeadlinesWidget do
   end
 
   # Started, unfinished projects with a computable planned end, soonest first.
-  # No cap here — `scope_and_limit/4` filters to the viewer first, then takes.
-  defp deadline_candidates do
-    Projects.list_active_projects()
+  #
+  # Scoped to the viewer at the QUERY, not by scope_and_limit/4: that only
+  # narrows when the "only my projects" setting is on, which is a display
+  # preference an unprivileged reader can simply leave off. Without this
+  # the widget named every private project on the site — deadline, status
+  # and progress included — to anyone who could open the dashboard.
+  defp deadline_candidates(scope) do
+    Projects.list_active_projects(viewer: Helpers.viewer_for(scope))
     |> Projects.project_summaries()
     |> Enum.filter(&(&1.planned_end && &1.progress_pct < 100))
     |> Enum.sort_by(& &1.planned_end, DateTime)

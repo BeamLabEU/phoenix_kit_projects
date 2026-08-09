@@ -150,7 +150,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   end
 
   defp load_teams do
-    PhoenixKitStaff.Teams.list() |> Enum.map(&{"#{&1.name} (#{&1.department.name})", &1.uuid})
+    PhoenixKitProjects.People.list_teams()
+    |> Enum.map(&{"#{&1.name} (#{&1.department.name})", &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Projects] load_teams failed: #{Exception.message(e)}")
@@ -158,7 +159,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   end
 
   defp load_departments do
-    PhoenixKitStaff.Departments.list() |> Enum.map(&{&1.name, &1.uuid})
+    PhoenixKitProjects.People.list_departments() |> Enum.map(&{&1.name, &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Projects] load_departments failed: #{Exception.message(e)}")
@@ -166,7 +167,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   end
 
   defp load_people do
-    PhoenixKitStaff.Staff.list_people()
+    PhoenixKitProjects.People.list_people()
     |> Enum.map(&{(&1.user && &1.user.email) || "—", &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
@@ -221,8 +222,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
           resource_uuid: socket.assigns.task.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{"task" => socket.assigns.task.title}
+          metadata: %{"task" => socket.assigns.task.title, "depends_on_task_uuid" => dep_uuid}
         )
 
       _ ->
@@ -230,8 +230,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
           resource_uuid: socket.assigns.task.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{"task" => socket.assigns.task.title}
+          metadata: %{"task" => socket.assigns.task.title, "depends_on_task_uuid" => dep_uuid}
         )
     end
 
@@ -251,8 +250,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
           resource_uuid: socket.assigns.task.uuid,
-          target_uuid: dep_task_uuid,
-          metadata: %{"task" => socket.assigns.task.title}
+          metadata: %{
+            "task" => socket.assigns.task.title,
+            "depends_on_task_uuid" => dep_task_uuid
+          }
         )
 
       _ ->
@@ -260,8 +261,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "task",
           resource_uuid: socket.assigns.task.uuid,
-          target_uuid: dep_task_uuid,
-          metadata: %{"task" => socket.assigns.task.title}
+          metadata: %{
+            "task" => socket.assigns.task.title,
+            "depends_on_task_uuid" => dep_task_uuid
+          }
         )
     end
 

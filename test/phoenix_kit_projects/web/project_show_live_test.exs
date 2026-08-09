@@ -14,6 +14,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias Ecto.Adapters.SQL
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Test.Repo
@@ -34,6 +35,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     scope = fake_scope(user_uuid: user.uuid)
     conn = put_test_scope(conn, scope)
     {:ok, conn: conn, actor_uuid: user.uuid}
+  end
+
+  # An off-router mount runs no on_mount, so the LV has no scope and gates
+  # :view against the viewer the session names. These embed tests are about
+  # layout, locale and tabs — not authz — so give them a viewer who can
+  # actually see the project. (The refusal paths have their own tests in
+  # embedding_test.exs.)
+  defp embed_session(project, actor_uuid, extra \\ %{}) do
+    {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+    Map.merge(%{"id" => project.uuid, "current_user_uuid" => actor_uuid}, extra)
   end
 
   describe "mount" do
@@ -85,52 +96,55 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
   # equivalent — it mounts the LV with `params == :not_mounted_at_router`
   # and the session map flowing into `mount/3`.
   describe "embedded (live_isolated)" do
-    test "mounts when given id via session and renders project name", %{conn: conn} do
+    test "mounts when given id via session and renders project name", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: embed_session(project, actor_uuid)
         )
 
       assert html =~ project.name
     end
 
-    test "wrapper_class defaults to the standalone full-width layout", %{conn: conn} do
+    test "wrapper_class defaults to the standalone full-width layout", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: embed_session(project, actor_uuid)
         )
 
       assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
 
-    test "wrapper_class override from session replaces the default", %{conn: conn} do
+    test "wrapper_class override from session replaces the default", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{
-            "id" => project.uuid,
-            "wrapper_class" => "host-specific-class"
-          }
+          session: embed_session(project, actor_uuid, %{"wrapper_class" => "host-specific-class"})
         )
 
       assert html =~ "host-specific-class"
       refute html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
-    test "locale from session is applied to embedded mount", %{conn: conn} do
+    test "locale from session is applied to embedded mount", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{
-            "id" => project.uuid,
-            "locale" => "et"
-          }
+          session: embed_session(project, actor_uuid, %{"locale" => "et"})
         )
 
       # The back-link breadcrumb renders "Projects" translated.
@@ -668,12 +682,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert html =~ "cal-container"
     end
 
-    test "embedded ProjectShowLive renders the List/Timeline tabs (lazy gantt)", %{conn: conn} do
+    test "embedded ProjectShowLive renders the List/Timeline tabs (lazy gantt)", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = started_project_for_tabs()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: embed_session(project, actor_uuid)
         )
 
       # The tab bar now renders in embeds too (only templates stay list-only),
@@ -685,13 +702,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
 
     test "embedded ProjectShowLive does not sync the URL on tab switch (off by default)", %{
-      conn: conn
+      conn: conn,
+      actor_uuid: actor_uuid
     } do
       project = started_project_for_tabs()
 
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: embed_session(project, actor_uuid)
         )
 
       render_click(view, "switch_tab", %{"tab" => "gantt"})
@@ -700,12 +718,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       refute_push_event(view, "project_tab_url", %{})
     end
 
-    test "an embed can opt into URL sync via session[\"tab_url_sync\"]", %{conn: conn} do
+    test "an embed can opt into URL sync via session[\"tab_url_sync\"]", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = started_project_for_tabs()
 
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid, "tab_url_sync" => true}
+          session: embed_session(project, actor_uuid, %{"tab_url_sync" => true})
         )
 
       render_click(view, "switch_tab", %{"tab" => "gantt"})
@@ -749,6 +770,516 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       # the task count lives only in its title tooltip — not a visible "N/M done"
       # label (which the merge intentionally removed).
       assert html =~ ~r/class="w-full bg-base-300 h-1\.5"\s+title="[^"]*done"/
+    end
+  end
+
+  describe "the list lens" do
+    setup %{conn: conn} do
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{
+          "name" => "Lens #{n}",
+          "start_mode" => "immediate"
+        })
+
+      done = task_named(project, "Finished thing #{n}", "done")
+      active = task_named(project, "Live thing #{n}", "todo")
+
+      {:ok, conn: conn, project: project, done: done, active: active}
+    end
+
+    defp task_named(project, title, status) do
+      {:ok, task} = Projects.create_task(%{"title" => title})
+
+      {:ok, assignment} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => status
+        })
+
+      assignment
+    end
+
+    test "opens on active work, and says how much it is not showing", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # Scoped to the list itself: the board tab renders every assignment
+      # into the same document (hidden by CSS), so asserting on the whole
+      # page proves nothing about what the list is showing.
+      assert list_rows(html) == [active.uuid]
+
+      refute done.uuid in list_rows(html),
+             "a mature project opened on its finished work, which is what buried the live tasks"
+
+      # Hiding rows is fine; hiding the number is not. The done count has to
+      # stay on the page or the project silently looks smaller than it is.
+      assert html =~ "Done"
+    end
+
+    test "a task with an out-of-band status is never silently hidden", %{
+      conn: conn,
+      project: project
+    } do
+      # "Active" means NOT FINISHED, not "one of the two statuses I thought
+      # of". This codebase renders a fallback badge for out-of-band statuses
+      # on purpose, and the first cut of this filter made every one of them
+      # vanish from the default view.
+      # The changeset validates the vocabulary, so an out-of-band status can
+      # only arrive by a raw write or from legacy data — which is exactly
+      # the case the rendering fallback exists for.
+      odd = task_named(project, "Odd status #{System.unique_integer([:positive])}", "todo")
+      {:ok, raw_uuid} = Ecto.UUID.dump(odd.uuid)
+
+      SQL.query!(
+        Repo,
+        "UPDATE phoenix_kit_project_assignments SET status = $1 WHERE uuid = $2",
+        ["archived", raw_uuid]
+      )
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert odd.uuid in list_rows(html)
+    end
+
+    test "a task keeps its number when the lens moves", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      # A finished row shows a check rather than a number, so `active` is
+      # the one whose digit can be compared across lenses.
+      # `done` was created first, so in manual order it is 1 and `active` is
+      # 2. Numbering the rows on screen instead of the project made `active`
+      # render as "1" under the default lens and "2" under All — the same
+      # task, two numbers, depending on what else you happened to be
+      # looking at.
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # Under the default lens `active` is the only row on screen, so a
+      # counter over the visible rows would call it 1.
+      assert list_rows(html) == [active.uuid]
+      assert number_for(html, active.uuid) == "2"
+
+      all = view |> element("button[phx-value-tab=all]") |> render_click()
+
+      assert list_rows(all) == [done.uuid, active.uuid]
+      assert number_for(all, active.uuid) == "2"
+    end
+
+    test "a submission is not in the project until somebody accepts it", %{
+      conn: conn,
+      project: project
+    } do
+      # A stranger's request is not work. Until a person agrees to it, it
+      # must be in no list, no count and no lens — mixing it into the plan
+      # was what made every filter and drag treat a message as a task.
+      pending = task_named(project, "Please fix #{System.unique_integer([:positive])}", "todo")
+
+      {:ok, _} =
+        pending
+        |> Ecto.Changeset.change(review_status: "pending", source: "portal")
+        |> Repo.update()
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      refute pending.uuid in list_rows(html)
+      assert html =~ "Review submissions"
+
+      # Even with every lens wide open it stays out — it is not a filtered
+      # task, it is not a task.
+      all = view |> element("button[phx-value-tab=all]") |> render_click()
+      refute pending.uuid in list_rows(all)
+
+      view |> element(~s(button[phx-click="open_review"])) |> render_click()
+
+      accepted =
+        view
+        |> element(
+          ~s(button[phx-click="review_submission"][phx-value-uuid="#{pending.uuid}"][phx-value-decision="accepted"])
+        )
+        |> render_click()
+
+      assert pending.uuid in list_rows(accepted)
+      assert Projects.get_assignment(pending.uuid).review_status == "accepted"
+    end
+
+    test "a submission opens to show what the person actually sent", %{
+      conn: conn,
+      project: project
+    } do
+      first = task_named(project, "First report #{System.unique_integer([:positive])}", "todo")
+      second = task_named(project, "Second report #{System.unique_integer([:positive])}", "todo")
+
+      for a <- [first, second] do
+        {:ok, _} =
+          a
+          |> Ecto.Changeset.change(
+            review_status: "pending",
+            source: "portal",
+            description: "Steps for #{a.uuid}"
+          )
+          |> Repo.update()
+      end
+
+      # Both rows land in the same second (utc_datetime truncation), so
+      # backdate one or "newest first" has no defined answer.
+      {:ok, _} =
+        first
+        |> Ecto.Changeset.change(inserted_at: ~U[2026-01-01 00:00:00Z])
+        |> Repo.update()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      opened = view |> element(~s(button[phx-click="open_review"])) |> render_click()
+
+      assert opened =~ "Submissions to review"
+
+      # Newest first, and the top one is already expanded — with a single
+      # submission waiting, which is the common case, an extra click to see
+      # anything at all tells nobody anything.
+      assert opened =~ "Steps for #{second.uuid}"
+      refute opened =~ "Steps for #{first.uuid}"
+
+      switched =
+        view
+        |> element(~s(button[phx-click="select_review"][phx-value-uuid="#{first.uuid}"]))
+        |> render_click()
+
+      assert switched =~ "Steps for #{first.uuid}"
+      refute switched =~ "Steps for #{second.uuid}"
+
+      # Clicking the open one closes it, so the dialog reads back down to a
+      # list without hunting for a control.
+      collapsed =
+        view
+        |> element(~s(button[phx-click="select_review"][phx-value-uuid="#{first.uuid}"]))
+        |> render_click()
+
+      refute collapsed =~ "Steps for #{first.uuid}"
+    end
+
+    test "rejecting keeps the record and shows it to nobody", %{conn: conn, project: project} do
+      pending = task_named(project, "Spam #{System.unique_integer([:positive])}", "todo")
+
+      {:ok, _} =
+        pending
+        |> Ecto.Changeset.change(review_status: "pending", source: "portal")
+        |> Repo.update()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      view |> element(~s(button[phx-click="open_review"])) |> render_click()
+
+      view
+      |> element(
+        ~s(button[phx-click="review_submission"][phx-value-uuid="#{pending.uuid}"][phx-value-decision="rejected"])
+      )
+      |> render_click()
+
+      all = view |> element("button[phx-value-tab=all]") |> render_click()
+      refute pending.uuid in list_rows(all)
+
+      # Kept, not deleted: a public intake has to be able to answer what
+      # strangers sent and what was done about it.
+      assert Projects.get_assignment(pending.uuid).review_status == "rejected"
+    end
+
+    test "a forged uuid cannot be reviewed through this project's queue", %{
+      conn: conn,
+      project: project
+    } do
+      other = fixture_project(%{"name" => "Other #{System.unique_integer([:positive])}"})
+      stranger = task_named(other, "Not yours", "todo")
+
+      {:ok, _} =
+        stranger |> Ecto.Changeset.change(review_status: "pending") |> Repo.update()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "review_submission", %{
+        "uuid" => stranger.uuid,
+        "decision" => "accepted"
+      })
+
+      assert Projects.get_assignment(stranger.uuid).review_status == "pending",
+             "a submission from another project was decided from this page"
+    end
+
+    test "the rail and the drag handles are gone under a lens", %{conn: conn, project: project} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # Default is "active" — a filter — so neither may render.
+      assert html =~ ~s(data-sortable="false")
+      refute html =~ "bottom-0 w-0.5"
+
+      # Showing everything in manual order brings both back together: they
+      # are one affordance, and either without the other is a lie.
+      manual = view |> element("button[phx-value-tab=all]") |> render_click()
+
+      assert manual =~ ~s(data-sortable="true")
+      assert manual =~ "bottom-0 w-0.5"
+      assert manual =~ "pk-drag-handle"
+    end
+
+    test "reordering is refused under a lens, not merely hidden", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      before = ordered_uuids(project)
+
+      # A forged event carrying only the rows the client could SEE. Accepting
+      # it rewrites `position` for the whole project from a partial list, and
+      # nothing afterwards says the order used to mean something.
+      html =
+        render_hook(view, "reorder_assignments", %{
+          "ordered_ids" => [active.uuid],
+          "moved_id" => active.uuid
+        })
+
+      assert html =~ "manual order"
+      assert ordered_uuids(project) == before
+      assert done.uuid in before
+    end
+
+    test "reordering works once everything is in view", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      view |> element("button[phx-value-tab=all]") |> render_click()
+
+      render_hook(view, "reorder_assignments", %{
+        "ordered_ids" => [active.uuid, done.uuid],
+        "moved_id" => active.uuid
+      })
+
+      assert ordered_uuids(project) == [active.uuid, done.uuid]
+    end
+
+    # The number rendered in a row's timeline dot.
+    defp number_for(html, uuid) do
+      case Regex.run(
+             ~r/data-id="#{uuid}".*?rounded-full[^>]*>\s*(?:<span[^>]*><\/span>\s*)?([0-9]+)/s,
+             html
+           ) do
+        [_, number] -> number
+        _ -> nil
+      end
+    end
+
+    # The uuids the LIST tab is drawing, in order.
+    #
+    # Sliced to the timeline container first: the board tab renders every
+    # card into the same document (CSS-hidden) and its cards are ALSO
+    # `sortable-item`s now that they can be dragged between columns, so an
+    # unscoped scan counts each task twice.
+    defp list_rows(html) do
+      html
+      |> timeline_fragment()
+      |> then(&Regex.scan(~r/sortable-item"[^>]*data-id="([^"]+)"/, &1))
+      |> Enum.map(fn [_, uuid] -> uuid end)
+    end
+
+    defp timeline_fragment(html) do
+      case :binary.match(html, "id=\"project-show-timeline\"") do
+        {start, _} ->
+          rest = binary_part(html, start, byte_size(html) - start)
+
+          case :binary.match(rest, "id=\"board-column-") do
+            {stop, _} -> binary_part(rest, 0, stop)
+            :nomatch -> rest
+          end
+
+        :nomatch ->
+          ""
+      end
+    end
+
+    defp ordered_uuids(project) do
+      project.uuid
+      |> Projects.list_assignments()
+      |> Enum.map(& &1.uuid)
+    end
+  end
+
+  describe "the board" do
+    setup %{conn: conn} do
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Board #{n}", "start_mode" => "immediate"})
+
+      {:ok, task} = Projects.create_task(%{"title" => "Draggable #{n}"})
+
+      {:ok, a} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, conn: conn, project: project, a: a}
+    end
+
+    test "dragging to another column changes the status", %{conn: conn, project: project, a: a} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "in_progress",
+        "ordered_ids" => [a.uuid]
+      })
+
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
+    end
+
+    test "dropping in Done carries the same side effects as the button", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "done",
+        "ordered_ids" => [a.uuid]
+      })
+
+      done = Projects.get_assignment(a.uuid)
+
+      # A naked status write would look identical on the board and leave a
+      # finished task with no record of who finished it.
+      assert done.status == "done"
+      assert done.progress_pct == 100
+      refute is_nil(done.completed_at)
+    end
+
+    test "a drop lands where it was dropped, without disturbing anyone else", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      others =
+        for i <- 1..3 do
+          {:ok, t} =
+            Projects.create_task(%{"title" => "Other #{i}-#{System.unique_integer([:positive])}"})
+
+          {:ok, x} =
+            Projects.create_assignment(%{
+              "project_uuid" => project.uuid,
+              "task_uuid" => t.uuid,
+              "status" => "todo"
+            })
+
+          x
+        end
+
+      [o1, o2, o3] = others
+
+      # Move `a` to In progress, dropped ABOVE o2 in that column's order.
+      # o2 is in a different column here, which is the point: the client's
+      # list is partial, and only the insertion point may be taken from it.
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "in_progress",
+        "ordered_ids" => [a.uuid, o2.uuid]
+      })
+
+      order = Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid)
+
+      # It sits where it was let go...
+      assert Enum.find_index(order, &(&1 == a.uuid)) ==
+               Enum.find_index(order, &(&1 == o2.uuid)) - 1
+
+      # ...and every card the client never sent keeps its relative order.
+      # Renumbering from the column's partial list would have thrown these
+      # to the end of the plan.
+      untouched = Enum.filter(order, &(&1 in [o1.uuid, o2.uuid, o3.uuid]))
+      assert untouched == [o1.uuid, o2.uuid, o3.uuid]
+    end
+
+    test "a drop with no ordered_ids leaves the plan alone", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      before = Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid)
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{"moved_id" => a.uuid, "status" => "done"})
+
+      assert Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid) == before
+      assert Projects.get_assignment(a.uuid).status == "done"
+    end
+
+    test "a forged destination status is refused", %{conn: conn, project: project, a: a} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "archived",
+        "ordered_ids" => [a.uuid]
+      })
+
+      assert Projects.get_assignment(a.uuid).status == "todo"
+    end
+
+    test "a card from another project cannot be moved from here", %{conn: conn, project: project} do
+      other = fixture_project(%{"name" => "Elsewhere #{System.unique_integer([:positive])}"})
+      {:ok, t} = Projects.create_task(%{"title" => "Theirs"})
+
+      {:ok, stranger} =
+        Projects.create_assignment(%{
+          "project_uuid" => other.uuid,
+          "task_uuid" => t.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => stranger.uuid,
+        "status" => "done",
+        "ordered_ids" => [stranger.uuid]
+      })
+
+      assert Projects.get_assignment(stranger.uuid).status == "todo"
+    end
+
+    test "a status the board cannot place is named, not silently dropped", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      {:ok, raw_uuid} = Ecto.UUID.dump(a.uuid)
+
+      SQL.query!(
+        Repo,
+        "UPDATE phoenix_kit_project_assignments SET status = $1 WHERE uuid = $2",
+        ["archived", raw_uuid]
+      )
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert html =~ "does not show"
     end
   end
 end

@@ -1,0 +1,519 @@
+# Hub Rework — Night Report (2026-08-05)
+
+> **DAY 2 (2026-08-06): the whole plan is now DONE — see the
+> "Day 2 — Phases A–K" section at the bottom.** Everything below the
+> divider is the original day-1 report; several of its "Deferred" items
+> (staff-optional, priorities/labels, saved views, document_creator,
+> billing, dashboards, AI attribution, member surface, portal) have
+> since shipped.
+
+All work is **local commits only** — nothing pushed, no PRs, no version or
+CHANGELOG changes anywhere. Every commit's tree passed
+`PHOENIX_KIT_PATH=../phoenix_kit mix test` + `mix precommit` (suite grew
+955 → 1056+ along the way). Read this top-to-bottom, then `git log
+--oneline aa8e53a..HEAD` per repo.
+
+## What exists now (the short version)
+
+The projects module is a **hub**. A project is a container whose
+capabilities are chosen per project:
+
+- **Modules & Features panel** per project (header kebab → "Modules &
+  features"): Level 1 = extensions (built-in Tasks/Files/Discussions +
+  any module's contribution) with per-instance config forms; Level 2 =
+  granular feature flags with a dependency matrix
+  (disable-and-explain); presets (Simple to-do list / Standard / Full
+  tracker) + a site default for new projects.
+- **The extension contract is real and proven**: any module exports
+  `phoenix_kit_project_extensions/0` (duck-typed one-way, the dashboards
+  widget shape) and its tabs render as first-class view tabs on the
+  project page via `live_render` + a session contract. Providers live in
+  `hello_world` (the annotated reference), `crm` (Client tab),
+  `locations` (Sites tab). Browser-verified: the Acme dev project shows
+  **List / Board / Timeline / Calendar / Hello**.
+- **Enforcement is fail-closed at the server**: every gated event runs
+  through one dispatcher; forged events are refused; smuggled params are
+  stripped at save time with save-time gate re-resolution.
+- **Native hub layer**: Members (core users, owner/manager/member/viewer,
+  last-owner guard, creator auto-owner), Files (core Storage,
+  staff-pattern folder scoping), Activity (core feed per project),
+  Health (the manual Basecamp-style "Needle").
+- **Authorization**: `Authz.can?/5` = admin override ∨ (role floor ∨
+  relationship grant [assignee may move their own task]) with per-project
+  "who can X" overrides; `:public` context pre-wired fail-closed.
+- **Notifications**: `notification_types/0` (membership/tasks/health
+  toggles in core's prefs UI) + `target_uuid` threading, so member and
+  assignee events reach users through core's channels automatically.
+- **Board view**: kanban columns over the same task data (v1: status
+  buttons move cards; drag is a follow-up).
+- **Work ledger** (the boss's unified effort tracker): chain V4
+  `phoenix_kit_project_work_entries` — actor can be a user, staff person,
+  or AI AGENT; `kind` fixes the unit (time=minutes / tokens / cost=cents);
+  append-only. Show page: effort strip (logged + billable time, AI tokens
+  + $) in the schedule card, per-task logged chips, hours+minutes log
+  modal behind a new `ledger` flag + `Authz :log_time` (manager floor,
+  assignee relationship grant). `Ledger.record_ai/3` is the ready seam
+  the phoenix_kit_ai attribution wave calls (ai-repo side deferred per
+  panel advice).
+- **Whiteboards** (chain V5): freeform Fresco/Etcher drawing boards as a
+  built-in extension whose surface is a contributed TAB through the same
+  pipeline external providers use (dogfoods the tab contract; default
+  off). Each board = a server-generated solid-white PNG registered as a
+  real Storage file (core's annotation persistence hard-FKs
+  phoenix_kit_files) + core's `MediaCanvasViewer` doing all the drawing.
+  The PNG is pure Elixir and SALTED (a tEXt uuid chunk) because
+  `store_file` dedups per-user by content checksum — unsalted, same-size
+  boards would collide onto one file sharing one annotation set.
+  Browser-proven: created a board on Acme, drew a rectangle, the
+  annotation row landed, and the drawing re-renders after reload.
+- **Events** (chain V6): dated happenings that aren't tasks — meetings,
+  milestones, reviews — as a built-in extension tab (default off):
+  phoenix_live_calendar month grid (all-day bars, timed chips with HH:MM
+  prefixes), server-rendered Upcoming list, create/detail modals, UTC
+  frame. No notification fan-out yet (events carry no target_uuid —
+  who an event notifies is a daylight product call).
+- **Wave-2 provider tabs**: `phoenix_kit_entities` contributes a
+  **Data** tab (config-links one entity per project, read-only records
+  list w/ admin link-outs; unconfigured state lists entity uuids to
+  copy) and `phoenix_kit_publishing` contributes a **Docs** tab
+  (config-links a group by SLUG — groups are slug-keyed in that package;
+  published entries + editor link-outs). Both follow the CRM/locations
+  provider pattern with contract tests; both browser-verified on Acme.
+  **Acme now renders NINE tabs** (List / Board / Timeline / Calendar /
+  Events / Whiteboards / Data / Docs / Hello) — the hub thesis
+  end-to-end.
+- **Migrations are module-owned**: `PhoenixKitProjects.Migrations.Schema`
+  (V1 baseline of the core-built shape, V2 enablement, V3 members,
+  V4 work ledger, V5 whiteboards, V6 events) on core's
+  `migration_module/0` protocol — no core releases in the loop.
+
+## Commits (chronological)
+
+**phoenix_kit_projects** (`aa8e53a..`): night plan doc · dep-lock float
+(ai 0.16→0.17.1 — HEAD couldn't compile against its own lock) + brittle
+attr-order test fix · migration protocol V1+V2 (`9add57a`) · target_uuid
+misuse fix — 15 sites, a panel find (`e7f0af0`) · panel plan-amendments
+doc · extension contract/registry/context + Authz vocabulary (`4a573eb`)
+· flags + presets + Modules panel (`ae69b2a`) · enforcement threading
+(`75c2d79`) · members + roles V3 + Authz deepening (`78f5445`) ·
+Files/Activity/Health (`bd474ed`) · notification wiring (`48ef16d`) ·
+extension-tab rendering + discussions bridge (`e937a3b`) · Board view
+(`6bc04d3`) · panel-fix round (`9cf1abd`, see below) · work ledger V4
+(`371cc31`) + its panel fix round (`c838bbc`, `99525c1`, `010adac`) ·
+whiteboards V5 (`cc2013c`) + its panel round (`231c49d`, `8eb3fe1`) ·
+events V6 (`c084e13`) + its panel round (`e739dc2`).
+
+**phoenix_kit_entities**: Data tab provider (`5621688`).
+**phoenix_kit_publishing**: Docs tab provider (`bdd7d8c`).
+
+**phoenix_kit_hello_world**: reference provider + contract test
+(`ddef65c`), AGENTS doc (`524c85f`). **phoenix_kit_crm**: Client provider
+(`7a524d3`). **phoenix_kit_locations**: Sites provider (`9a41be8`).
+
+**Dev environment**: parent dev DB carries chain V2–V6 (applied via
+psql — the real path is `mix phoenix_kit.update`, which discovers
+`migration_module/0`); dev showcase state: Acme has the hello_world
+extension enabled, 1h30m logged time, a seeded AI tokens+cost pair
+(245k tokens / $1.87) so the effort strip demonstrates itself, a
+"Relaunch moodboard" whiteboard with a drawn rectangle, and a
+"Relaunch go-live review" event on Aug 12.
+
+## External-AI panel — findings & dispositions
+
+Four review rounds ran (plan review pre-code; Steps 1, 2; P1 milestone).
+Roster reality: zai + grok delivered consistently; codex delivered two
+rounds then hit its usage limit (locked out until Aug 11); kimi
+billing-capped; m2 402. Full compiled report in the session log.
+
+**Adopted before code existed** (plan round): instance_key + config in
+the enablement identity; the full contract surface up front; authz
+vocabulary before enforcement; step-8 rescope; ledger wording; provider-
+side 7.5 shape. **Confirmed + fixed during the night**: the
+`target_uuid` entity-uuid misuse (ZAI); `enable_system` not refreshing
+the registry (Grok); the project form's ungated `counts_weekends`
+(compiler grounding).
+
+**Step-10 round** (zai/gemini/grok on the ledger commit) — all three
+dispositioned, three fix commits:
+- Gemini + ZAI + Grok all caught the SAME real HIGH independently:
+  `cost_cents: 0` is TRUTHY in Elixir, so a free/cached AI call built a
+  zero-amount cost entry that failed validation AFTER the tokens row
+  committed (orphan write, retry double-counts). Fixed (`c838bbc`):
+  positive-amount filtering, all-or-nothing transaction,
+  activity/broadcast after commit. Reproduced with failing tests first.
+- ZAI/Grok LOW: the claimed authz behavior had no tests. Closed
+  (`99525c1`): resolver-level floor/grant tests + an LV deny-path test
+  with a real plain-member user.
+- Grok MEDIUM (uniquely found): logging time on an EXPANDED sub-project
+  child task attributed the entry to the parent project while the
+  assignment belongs to the child. Fixed (`010adac`): attribute to the
+  assignment's owning project; chips now resolve from the displayed
+  assignment set. Parent-strip rollup of child effort = deliberate v1
+  non-goal.
+
+**Step-11 round** (zai/gemini/grok on the whiteboards commit) — full
+three-way consensus, everything dispositioned:
+- All three found the orphaned-background-file HIGH/MEDIUM: the blank
+  PNG was stored BEFORE the board name was validated, so a whitespace
+  name leaked one file row + blob per failed attempt. Fixed (`231c49d`):
+  name validated before Storage is touched; residual insert failures
+  best-effort delete the background. Reproduced-first.
+- Grok + ZAI: the PNG writer materialized the full raw raster before
+  compressing (~190 MB at the 8000×8000 API cap). Fixed (`8eb3fe1`):
+  streamed zlib deflate, one row resident; pinned by an inflate-back
+  equivalence test.
+- Gemini's claim that `viewer_only={true}` makes the canvas read-only
+  was REFUTED with direct browser evidence (drawing persisted and
+  re-rendered); Grok and ZAI independently confirmed the flag is
+  chrome-only. All three validated the PNG format internals (CRC
+  endianness, IHDR, filter bytes, zlib wrapper, tEXt salt) and the V5
+  DDL + version-aware down/1.
+
+**Step-12 round** (zai/grok on the events commit; gemini timed out
+mid-output): Grok found three real defects, ZAI independently confirmed
+two — all fixed in `e739dc2`, reproduced-first: (1) Upcoming dropped
+all-day events for their entire active day (midnight comparisons);
+(2) a timed end WITHOUT an end date silently persisted open-ended;
+(3) a PubSub delete left a stale detail panel open. Gemini's visible
+HIGH (nil title crashes String.trim in update_change) was REFUTED
+empirically — the new tests get a clean {:error, changeset}; both kept
+as regression pins.
+
+**The combined-report fix round** (last commit): version-aware `down/1`
+(R1-1 HIGH — a plain `mix ecto.rollback` after an update dropped EVERY
+projects table); fresh-project reload in the flag-change handler (R3-1
+HIGH — open pages kept accepting gated mutations forever); the
+sub-project save/validate/generate branch gated + stripped (R3-2 HIGH);
+pending-dep gate (R3-3 HIGH); save-time fx re-resolution in both forms
+(R3-4); status-mode fold gated (R3-5); enable/disable upsert on the
+identity index (R2-1); enable preserves stored name and MERGES config
+(R2-5/6); `can?` fail-closed on unknown context instead of crashing
+(R2-3); marker query classoid anchor (R1-4); `validate_prefix!` at the
+chain entries (R1-3).
+
+**Accepted-as-documented / morning list** (not fixed tonight):
+- R1-2: the IF-NOT-EXISTS baseline can stamp a DRIFTED marker-less table
+  as current — mitigated by the pg_dump-derived baseline + the core ≥
+  V128 contract; a shape-verify step would harden it.
+- R1-5/R1-6: `rescue → 0` conflates errors with not-installed;
+  replayed host migrations run the current chain (protocol design).
+- R3-6: on a subprojects-off project the sub-project row's destructive
+  Remove stays available while gentle Detach is refused — gate
+  inconsistency, decide intent.
+- R3-7: `default_gates/0` resolves `requires` one level deep — latent
+  while all defaults are true.
+- `Features.set_flags/3` read-modify-writes the whole settings map —
+  same race shape as R2-1, needs the same treatment.
+
+## FINAL panel — holistic review of the composed system
+
+After the per-step rounds, zai + grok + gemini-3.1-pro reviewed the
+COMPOSITION (commit log + this report), hunting cross-cutting gaps the
+per-diff reviews couldn't see. Convergence was strong; dispositions:
+
+**Fixed tonight (two commits):**
+- All three found the same top hole: contributed tabs re-export SIBLING
+  modules' data, and the Registry's `visible_for_scope?/2` gate —
+  built in Step 2, tested, promised by the descriptor comments — was
+  never wired into the show path, so any projects-permission viewer
+  could read linked CRM/entities/publishing data. Plus (Grok) the two
+  MUTATING built-in tabs sat on the view-only trust model while
+  `permission_actions` enforced nothing. Fixed (`870fdce`): visibility
+  now resolves permission → module_key → "projects" and filters the tab
+  strip on the admin path (embeds keep the documented host-trust); the
+  tab session carries a HOST-resolved `"can_write"` (Authz over the
+  extension's declared write action) that whiteboards + events enforce
+  on every mutation.
+- ZAI: `settings` is a shared JSONB where the authz "who can X" floors
+  live beside the feature flags — the whole-map read-merge-write in
+  `set_flags` could silently REVERT a concurrent authz tightening (the
+  report had only flagged the flag-vs-flag shape). Fixed (`08f7d61`):
+  one atomic `jsonb_set` merge touching only `settings->'features'`,
+  with a stale-struct regression test.
+
+**Refuted:**
+- Gemini's CRITICAL ("malformed config crashes the whole hub page"):
+  every shipped provider wraps its loads in rescue→empty-state (pinned
+  by tests, e.g. `viewer_file(bad-uuid) == nil`); a garbage uuid lands
+  on the unconfigured card. Residual truth: a MISBEHAVING future
+  provider degrades its pane — the contract docs already demand
+  never-crash; kept as contract guidance.
+- Gemini's storage-GC claim assumes a sweeper core doesn't have; the
+  whiteboard background is home-filed in a real folder and FK'd by V5.
+
+**Documented, needs your call (not code tonight):**
+- Admin override makes the member/role matrix inert on admin surfaces
+  (Grok #3) — the DELIBERATE Step-5 transitional design, but the panel
+  is right that it deserves a timeline: floors go live only when
+  member-facing routes land. Same coin: Gemini's "V1 projects have no
+  member rows" lockout can only bite AFTER those routes — **backfill
+  legacy projects' creators as owners before any member surface ships.**
+- Per-provider DATA authorization ("is this project entitled to that
+  entity?") is still config-trust after the permission gate; a hub-side
+  authorize callback in the contract is the next hardening step if you
+  want it.
+- `Ledger.record_ai/3` is an ungated backend seam by design (the ai
+  attribution wave's caller); Authz has no agent subject yet. The
+  project FK already rejects dead projects cleanly.
+- Core-user deletion CASCADEs member rows, so deleting a sole owner
+  silently orphans a project with no audit trail (ZAI #5) — recovery is
+  the admin override; a core deletion hook is the real fix.
+- Operational (ZAI): the REAL `mix phoenix_kit.update` migration path
+  has only been exercised greenfield + psql-seeded — run it against a
+  cloned populated DB before pushing any of this.
+
+## Defaults I assumed (all reversible)
+
+Instance-ready toggle rows (unique per project+ext+instance, v1 UI =
+toggle) · flags default to preserving current behavior; presets write
+explicit values; absence = inherit catalog default (frozen semantics) ·
+members admin-scoped (member-facing surface needs the core
+authenticated-routes generalization — deferred) · board built in-module
+· `enabled_by`/`invited_by` are FK-less provenance (activity is the
+audit trail) · extension toggles log in the CONTEXT (presets must audit
+too — a deliberate deviation from the LV-layer convention).
+
+## Deferred / not done (and why)
+
+- **Step 8 (staff → optional)**: the designated clock-cut. Diffuse,
+  regression-prone; nothing tonight blocks doing it next.
+- **Wave-2 remainder** (designed, not built — the API scout's full map
+  is in the session log):
+  - *document_creator Documents tab (15)*: no clean per-project linkage
+    exists — documents have no project field and no filtered list API;
+    the honest v1 would config-link a taxonomy category. Deferred
+    rather than shipping a stamping hack into `data`.
+  - *billing rollup (17)*: no project linkage on any billing schema and
+    no metadata query path; the plausible zero-schema design is
+    CUSTOMER-scoped (config a billing_profile/user uuid + the existing
+    list_user_* functions), pairing with the CRM Client tab. Needs your
+    call on whether customer-scoped is the intended semantics.
+  - *bookings tab (14)*: untouched per the hands-off rule (in-progress
+    unpushed module).
+  - *dashboards attempt (18)* and *saved views (19)*: out of night.
+- **AI attribution's ai-repo side**: `Ledger.record_ai/3` is live and
+  tested; wiring phoenix_kit_ai call sites to report usage into it is a
+  daylight change to that repo (panel advice: don't thread another
+  module's internals unsupervised). Display currency for cost cents is
+  hardcoded `$` in v1.
+- **Priorities/labels**: board shipped without them (chain V4 material).
+- **Public portal**: excluded by plan (security work, not unsupervised).
+- **Core suggestions** (not committed to core despite permission —
+  each deserves its own daylight PR): annotation-change PubSub (live
+  co-drawing), file-less canvas for Etcher, generalize authenticated
+  module-route discovery (currently hardcoded per module in
+  `integration.ex`, unlike `public_routes/1`), dashboards Registry has
+  the same ensure_loaded discovery bug fixed here tonight. NEW from the
+  whiteboards work (both reproduced on core's own media page, so they're
+  core behaviors, not whiteboards bugs): (a) the jsdelivr lazy-loader
+  can miss the FIRST-ever canvas mount — Etcher's toolbar is absent
+  until a revisit; (b) drawn shapes persist with `creator_uuid` NULL
+  (the adapter strips creator from the wire payload; `creator_attrs`
+  evidently isn't applied on the shape-sync path).
+
+## Morning list (small, concrete)
+
+- Entities module suite has **18 pre-existing failures** at `0a8dcb3`
+  (before tonight's change — verified by baseline run; likely stale
+  local env vs the merged PR).
+- Core: jsdelivr lazy-loader misses the FIRST-ever canvas mount;
+  drawn shapes store `creator_uuid` NULL (both reproduced on core's own
+  media page).
+- Dashboards Registry has the same cold-VM `ensure_loaded` discovery bug
+  fixed in the projects Registry tonight.
+- Events: decide who an event should notify (no target_uuid yet);
+  ledger cost display currency is hardcoded `$`.
+- The Modules panel renders every config field as a text input —
+  `:select` isn't implemented; provider tabs list candidates to copy
+  as the workaround.
+- Whiteboards: parent-strip rollup of child-project logged time is a
+  deliberate v1 non-goal (data attributes to the owning project).
+- Gettext: tonight's new strings need an extraction/po pass.
+
+## How to review
+
+1. This doc, then the plan doc + panel amendments
+   (`2026-08-05-hub-rework-night-plan.md`).
+2. `git log -p aa8e53a..HEAD` — commit messages carry the reasoning and
+   the panel-find references.
+3. Screenshots in the workspace root: `c0_night_*` (before) vs
+   `step3_modules_panel*`, `step4_show_tasks_off`, `step6_activity_page`,
+   `step75_hello_ext_tab` (after).
+4. Live: `phoenix_kit_parent` on :4000 (running the final code) — the
+   Acme project's kebab menu reaches every new surface.
+
+---
+
+# Day 2 — Phases A–K (2026-08-06)
+
+Your directive: *"the whole project is for you… do the whole plan, no
+need to put anything off… don't stop until you finish."* Everything
+below is LOCAL COMMITS ONLY across six repos; every commit's tree passed
+its full suite + unpiped `mix precommit`
+(`PHOENIX_KIT_PATH=../phoenix_kit` for projects — 1173 tests at the
+end); each phase got an external-AI panel round; new features were
+browser-verified in the parent on :4000.
+
+## Phase-by-phase
+
+- **A — resync + re-gate**: rebased all repos onto the merged remotes;
+  the re-gate caught 6 inherited failures (self-inconsistent mix.lock,
+  a disabled-sortable core bug, an order-fragile atom test…) — all
+  fixed at the source, with an origin/main baseline proving they
+  predated my commits.
+- **B — staff → optional (your #8, "no time limit")**: shadow read-only
+  schemas + ONE doorway (`People`), `WITHOUT_STAFF=1` compile gate,
+  information_schema contract test, staff-parity semantics pinned
+  (trashed excluded in listings only).
+- **C — priorities + labels (V7) + saved views (your #19)**: priority
+  CHECK urgent/high/normal/low; labels registry + join table +
+  cross-project whitelist; chips/badges on list+board; saved views.
+  Panel round caught the fourth save path skipping pending labels.
+- **D — document_creator linkage (your #15)**: the module got its OWN
+  V1 migration chain (`dcr_schema` marker) adding
+  `documents.project_uuid`; a Documents tab (attach/detach) on the hub.
+- **E — billing (your #17, "ask the other AIs")**: the consult settled
+  Option B — a `billing_customer` extension (profile + hourly rate
+  config) and an **Invoice-effort button**: uninvoiced billable HUMAN
+  time → a DRAFT invoice via `PhoenixKitBilling.create_invoice/2`,
+  idempotent through the V8 refs table (entry_uuid PK). Produced a real
+  225.00 EUR draft (INV-2026-0001) in the live parent.
+- **F — dashboards (your #18)**: fixed the Registry cold-VM discovery
+  bug + string-geometry leaks; then **dashboards-in-projects**:
+  `ProjectDashboardLive`, a read-only session-mounted viewer of one
+  SHARED dashboard (readonly + id_prefix threaded through the builder
+  components; live refresh tick; live-sync; per-viewer widget
+  permission gating), a `:select` config picker in the Modules panel
+  (lazy `{module, fun}` options — closes the day-1 "config fields are
+  text inputs" gap), and the duck-typed provider descriptor. Browser:
+  a shared "Team Ops Board" (clock + projects board) renders read-only
+  as a project tab, clock ticking server-side.
+- **G — AI attribution wave**: phoenix_kit_ai threads an `:attribution`
+  option into request metadata and dispatches every persisted request
+  to duck-typed `handle_ai_usage/1` sinks; projects' sink resolves
+  assignment→project and records tokens + cost (nanodollars ÷ 10,000 →
+  cents as Decimal) into the ledger with request/agent provenance.
+- **H — events notifications (your call: ALL members)**: core gained
+  `Notifications.fan_out_from_activity/2` (one committed feed entry
+  re-routed per recipient through prefs/channels/digests, actor
+  self-skip); project events fan out to every member.
+- **I — user-deletion lifecycle + THE MEMBER SURFACE**:
+  - Core: `before_user_delete/1` module hook run before user deletion
+    (per-module rescue/catch).
+  - V9: creator→owner backfill for memberless pre-hub projects from
+    their earliest creation activity (never-guess rule: pruned/actor-less
+    trails stay memberless — in the dev DB all 7 creation entries
+    pointed at since-deleted projects, so it correctly seated nobody).
+  - Members succession: sole-owner deletion promotes the best remaining
+    member (manager<member<viewer, then seniority) with an audit trail;
+    orphaned projects get `owner_departed`.
+  - Core: **user_dashboard_tabs route auto-discovery** — the dormant
+    `:user_dashboard` context clause now generates `/dashboard/*` routes
+    for module tabs carrying `live_view` (closes the day-1 "generalize
+    authenticated module-route discovery" core suggestion).
+  - **`/dashboard/projects` — My Projects**: lists ONLY the viewer's
+    membership rows; `?open=` resolves against that list (THE
+    authorization boundary — embedded hub LVs are host-trusting) and
+    renders the full project page via PopupHostLive, so task forms /
+    gantt / calendar stack in modals. Browser-verified including the
+    non-member-uuid gate.
+- **J — the public portal (chain V10)**: design doc first, then a
+  3-AI SECURITY panel on the doc (17 findings), then the build with
+  every must-fix folded in. See the doc
+  (`2026-08-06-public-portal-design.md`) for the deviations — the
+  headline: **v1 collects NO submitter email** (the unverified-notify
+  mail-bomb vector is eliminated, not mitigated); members are notified
+  via the Phase H fan-out instead. CSPRNG slug (~22 chars) with
+  rotate-as-revoke that downgrades LIVE sessions; guard chain inside
+  the submit event (honeypot, min-fill-time, peer-IP limits /64-bucketed
+  + project ceiling, fail-closed); ONE whitelisting DTO doorway with
+  cross-project isolation tests; uniform `:error` everywhere;
+  no-referrer + noindex headers. Browser-verified end-to-end: enable →
+  link → anonymous submit → triage row (`source: "portal"`, status
+  todo, NOT public) → publish toggle on the assignment form → appears
+  on the public page → rotate → old link dead.
+- **K — this section + the final panel** (verdicts below).
+
+## Panel rounds (day 2)
+
+- **G+I panel** (4 models; Codex + Kimi quota-dead): confirmed a REAL
+  succession-tiebreak bug (DateTime structs term-compare non-
+  chronologically in `min_by` tuples) — fixed + regression-pinned; a
+  REAL throw-escapes-catch gap in both the ai sink dispatcher and the
+  core hook runner — fixed (`catch kind, reason`); a REAL missing
+  members broadcast on succession — fixed + pinned. Killed a
+  loudly-flagged "1000× cost bug" as FALSE (the ai package's
+  `cost_cents` field actually stores nanodollars — now documented at
+  the schema field so future reviewers stop tripping). Accepted with
+  comments: hooks run outside the delete transaction; the concurrent
+  co-owner-deletion race (narrow, admin-recoverable).
+- **Portal security panel** (3 models): 17 findings, must-fixes all
+  folded into the build (details in the design doc).
+- **FINAL panel** (3 models over the F/I/J diffs, every finding
+  verified against the repos before acting): V10 SQL, the portal DTO
+  whitelist, the uniform-error doorway, the guard-chain order, and the
+  never-castable public/source fields all came back CLEAN. Six real
+  findings, ALL FIXED in follow-up commits: (1) the member surface
+  resolved `?open=` against the mount-time membership list — a revoked
+  member kept read access until reload; now every navigation re-reads
+  the DB (+ regression test). (2) per-IP portal buckets were dead in
+  the default install (`:peer_data` absent from endpoint connect_info —
+  everyone shared one fail-closed bucket); core + parent endpoints now
+  declare it, and the Portal moduledoc documents the host requirement.
+  (3) portal submission writes now run in ONE transaction (an orphaned
+  task / silently-dropped provenance row was possible). (4) the
+  dashboards viewer re-reads mode/design_h on live updates (a remote
+  grid↔pixel switch rendered the wrong board). (5) the portal LV's
+  double-resolve TOCTOU that could skip the rotation subscription —
+  restructured to resolve-then-view. (6) a throwing provider options
+  fun could crash the Modules panel (`catch _, _`). Two findings
+  rejected with evidence: the route-gating claim (mirrors pre-existing
+  authenticated-only behavior) and the non-string select default
+  (unreachable — form values are always strings). Accepted as intended:
+  rate limits charging before input validation (invalid probes spending
+  quota is the stricter posture).
+
+## Commits (day 2, chronological, per repo)
+
+- `phoenix_kit`: sortable fix → fan_out_from_activity →
+  before_user_delete hook → user_dashboard_tabs route discovery →
+  throw-hardening. Latest: `ed609c45`.
+- `phoenix_kit_projects`: Phases B/C/E/H (day-2 morning) → G+I
+  (`87e028f`) → select config fields (`c079730`) → member surface
+  (`34b87c9`) → succession broadcast (`9b84a05`) → portal (`454189a`).
+- `phoenix_kit_ai`: attribution + sink dispatch (`778764b`) →
+  throw-hardening + nanodollar doc (`d3e4ee6`).
+- `phoenix_kit_dashboards`: cold-VM fix (`57794f8`) → project viewer +
+  provider (`ad3665a`).
+- `phoenix_kit_document_creator`: own migration chain + Documents tab
+  (`a357be9`).
+- `phoenix_kit_billing`: billing_customer provider (`a18a378`).
+
+## Open questions for you
+
+None blocking. Three product calls you may want to revisit:
+
+1. **Portal**: the design doc's 3 questions were answered with safe
+   defaults (slug-only, notify members not submitter, per-assignment
+   flag) — plus the per-IP block list was deferred (rationale in the
+   doc). Say the word if you want any changed.
+2. **Billing v2**: AI-cost invoicing needs a margin policy (v1 bills
+   human time only).
+3. **The viewport_width installer patch** is still orphaned (its
+   consumer was deleted by the dashboards lattice rebuild) — removal
+   pending your call.
+
+## Housekeeping notes
+
+- The parent dev DB now has: V162 core, projects V10, doc_creator V1 —
+  applied via `mix phoenix_kit.update`. A dev "Team Ops Board" shared
+  dashboard, a portal on Website redesign (rotated once), one portal
+  test issue, and max@don.ee seated as owner of Website redesign (the
+  seeded projects have no creation activity, so V9 had nothing to
+  recover — that seat was a manual dev-DB insert for the browser pass).
+- phoenix_kit_ai has 3 PRE-EXISTING seed-dependent flaky tests at
+  origin (playground_voice send_text, image size/quality override,
+  TTS response-shapes/logging) — verified identical at baseline with
+  fixed seeds; not touched.
+- Gettext: day-2 strings (portal, member surface, viewer) need the
+  extraction/po pass, same as day 1's.

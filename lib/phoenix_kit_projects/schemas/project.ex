@@ -21,7 +21,9 @@ defmodule PhoenixKitProjects.Schemas.Project do
   import Ecto.Changeset
 
   alias PhoenixKitProjects.{L10n, Schemas.Assignment}
-  alias PhoenixKitStaff.Schemas.{Department, Person, Team}
+  # SHADOW schemas (staff-optional seam): projects' own read-only
+  # mappings over the core-owned staff tables — see PhoenixKitProjects.People.
+  alias PhoenixKitProjects.People.{Department, Person, Team}
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
   @foreign_key_type UUIDv7
@@ -162,7 +164,25 @@ defmodule PhoenixKitProjects.Schemas.Project do
   # activity log which gets pruned past the retention window.
   @settings_keys %{
     "use_status_translations" => &is_boolean/1,
-    "created_from_template_uuid" => &is_binary/1
+    "created_from_template_uuid" => &is_binary/1,
+    # Feature-flag pins (the Features context's storage key). Allowed
+    # through the changeset so TEMPLATE CLONING carries them (the
+    # creation-panel's Codex find: the whitelist silently killed the
+    # carry); per-key validity is enforced at read time (Features.on?
+    # ignores non-catalog keys) and by set_flags on the write path.
+    "features" => &is_map/1,
+    # Who can SEE the project — resolved by Authz.visibility_of/1. Values
+    # outside the vocabulary fall back to "private" at read time, so a bad
+    # write can only ever be more restrictive.
+    "visibility" => &is_binary/1,
+    # Per-project "who can do what" floors (Authz.set_overrides/3's
+    # storage key). Same reason `features` is here: any changeset that
+    # touches settings rebuilds the whole map, so a key missing from this
+    # list is silently DELETED — which for authz means a project quietly
+    # reverting to fully open, and a template clone losing the floors it
+    # was supposed to carry. Values are re-validated at read time
+    # (Authz.current_overrides/1 drops anything off-vocabulary).
+    "authz" => &is_map/1
   }
 
   # At most one of team/department/person (mirrors the DB CHECK + the

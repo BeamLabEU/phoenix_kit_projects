@@ -40,6 +40,10 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/list/:id/gantt", ProjectShowLive, :gantt)
       live("/list/:id/calendar", ProjectShowLive, :calendar)
       live("/list/:id/edit", ProjectFormLive, :edit)
+      live("/list/:id/modules", ProjectModulesLive, :edit)
+      live("/list/:id/members", ProjectMembersLive, :edit)
+      live("/list/:id/files", ProjectFilesLive, :edit)
+      live("/list/:id/activity", ProjectActivityLive, :index)
 
       live("/list/:project_id/assignments/new", AssignmentFormLive, :new)
       live("/list/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)
@@ -48,6 +52,34 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/templates/new", TemplateFormLive, :new)
       live("/templates/:id", ProjectShowLive, :show_template)
       live("/templates/:id/edit", TemplateFormLive, :edit)
+    end
+  end
+
+  # The PUBLIC portal — production mounts it via the module's
+  # route_module/0 (`Web.Routes.generate/1`). The scope hook is mirrored
+  # here because a `members` board asks whether the visitor is signed in,
+  # and without it every portal test would look anonymous.
+  scope "/", PhoenixKitProjects.Web do
+    pipe_through(:browser)
+
+    live_session :projects_portal_test,
+      on_mount: [{PhoenixKitProjects.Test.Hooks, :assign_scope}] do
+      live("/portal/:slug", PortalLive, :show)
+      live("/portal/:slug/i/:issue", PortalLive, :issue)
+      live("/portal/:slug/report", PortalLive, :report)
+    end
+  end
+
+  # The member-facing user-dashboard surface — production mounts it via
+  # `user_dashboard_tabs/0` route discovery under core's authenticated
+  # /dashboard session.
+  scope "/en/dashboard", PhoenixKitProjects.Web do
+    pipe_through(:browser)
+
+    live_session :projects_member_test,
+      layout: {PhoenixKitProjects.Test.Layouts, :app},
+      on_mount: {PhoenixKitProjects.Test.Hooks, :assign_scope} do
+      live("/projects", MemberProjectsLive, :index)
     end
   end
 

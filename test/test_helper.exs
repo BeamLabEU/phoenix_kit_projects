@@ -20,6 +20,7 @@ support_dir = Path.expand("support", __DIR__)
 
 [
   "test_repo.ex",
+  "schema_migration.ex",
   "test_layouts.ex",
   "hooks.ex",
   "test_router.ex",
@@ -81,6 +82,25 @@ repo_available =
       # on every boot. See `dev_docs/migration_cleanup.md` for the
       # staleness story.
       PhoenixKit.Migration.ensure_current(TestRepo, log: false)
+
+      # Then run the module-owned chain (V1 baselines the core-built shape,
+      # V2+ add hub-rework tables). The migration is keyed on the CHAIN
+      # version, not a fixed number — when Schema.@current_version bumps,
+      # the new version number is unapplied and the (idempotent, full-chain)
+      # up re-runs. A fixed `{0, Module}` would go silently stale, the exact
+      # trap core's ensure_current/2 moduledoc warns about. Running on every
+      # boot also proves the baseline's idempotency against tables core's
+      # chain already created.
+      Ecto.Migrator.run(
+        TestRepo,
+        [
+          {PhoenixKitProjects.Migrations.Schema.current_version(),
+           PhoenixKitProjects.Test.SchemaMigration}
+        ],
+        :up,
+        all: true,
+        log: false
+      )
 
       Ecto.Adapters.SQL.Sandbox.mode(TestRepo, :manual)
       true

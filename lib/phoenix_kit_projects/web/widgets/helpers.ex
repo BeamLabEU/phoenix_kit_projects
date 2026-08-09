@@ -32,15 +32,22 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
   name substring) to a `%Project{}`. Falls back to the first running project (or
   any project) when the setting is blank, so a freshly-added widget shows data.
   """
-  @spec resolve_project(term()) :: Project.t() | nil
-  def resolve_project(setting) do
+  @spec resolve_project(term(), term()) :: Project.t() | nil
+  def resolve_project(setting, scope \\ nil) do
     key = setting |> to_string() |> String.trim()
 
-    cond do
-      key == "" -> default_project()
-      uuid?(key) -> Projects.get_project(key) || find_project(key)
-      true -> find_project(key)
-    end
+    resolved =
+      cond do
+        key == "" -> default_project(scope)
+        uuid?(key) -> Projects.get_project(key) || find_project(key, scope)
+        true -> find_project(key, scope)
+      end
+
+    # A widget setting naming a uuid resolves it directly, so the setting
+    # itself was a read primitive: anyone who could edit a dashboard widget
+    # could name any project and read its summary. Re-check the resolved
+    # project against the viewer.
+    if resolved && visible_to?(resolved, scope), do: resolved
   rescue
     e ->
       Logger.warning("[Widgets.Helpers] resolve_project failed: #{Exception.message(e)}")
@@ -52,9 +59,9 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
   error (connection loss, mid-migration missing table) degrades to an empty
   list — a widget must never crash the host dashboard.
   """
-  @spec safe_list_projects() :: [Project.t()]
-  def safe_list_projects do
-    Projects.list_projects()
+  @spec safe_list_projects(term()) :: [Project.t()]
+  def safe_list_projects(scope \\ nil) do
+    Projects.list_projects_for(scope)
   rescue
     e ->
       Logger.warning("[Widgets.Helpers] safe_list_projects failed: #{Exception.message(e)}")
@@ -74,15 +81,41 @@ defmodule PhoenixKitProjects.Web.Widgets.Helpers do
       nil
   end
 
-  defp default_project do
-    List.first(Projects.list_active_projects()) || List.first(Projects.list_projects())
+  defp default_project(scope) do
+    viewer = viewer_for(scope)
+
+    List.first(Projects.list_active_projects(viewer: viewer)) ||
+      List.first(Projects.list_projects_for(scope))
+  end
+
+  @doc """
+  The `viewer:` a widget's queries should narrow by.
+
+  `nil` = don't narrow (a site admin with `projects.admin_all`). A
+  non-admin without a resolvable user gets a uuid matching nothing rather
+  than the whole site — the narrowing must fail CLOSED, since a widget
+  renders on a host dashboard where nothing else is checking.
+  """
+  @spec viewer_for(map() | nil) :: String.t() | nil
+  def viewer_for(scope) do
+    if PhoenixKitProjects.Authz.admin_all?(scope) do
+      nil
+    else
+      PhoenixKitProjects.Authz.subject_user_uuid_of(scope) || Ecto.UUID.generate()
+    end
+  end
+
+  defp visible_to?(project, scope) do
+    PhoenixKitProjects.Authz.can?(scope, project, :view)
+  rescue
+    _ -> false
   end
 
   defp uuid?(s), do: Regex.match?(~r/^[0-9a-fA-F]{8}-[0-9a-fA-F-]{27}$/, s)
 
-  defp find_project(key) do
+  defp find_project(key, scope) do
     down = String.downcase(key)
-    projects = Projects.list_projects(include_templates: true)
+    projects = Projects.list_projects_for(scope, include_templates: true)
 
     Enum.find(projects, fn p -> p.name == key or p.external_id == key end) ||
       Enum.find(projects, fn p -> String.contains?(String.downcase(p.name || ""), down) end)

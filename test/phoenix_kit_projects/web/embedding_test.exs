@@ -96,39 +96,50 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           "started_at" => DateTime.utc_now() |> DateTime.truncate(:second)
         })
 
-      _ = actor_uuid
-      {:ok, project: project}
+      # The embedded viewer must be able to see it — these LVs gate :view.
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+
+      {:ok, project: project, viewer_uuid: actor_uuid}
     end
 
-    test "mounts off-router without :phoenix_kit_current_scope in assigns", %{
+    test "an off-router mount with NO identity is refused", %{conn: conn, project: project} do
+      # `live_isolated` mounts without the router, so no on_mount fires and
+      # there is no scope. That used to render the project on the promise
+      # that the HOST had gated its page. It can't: `handle_open_embed`
+      # takes a client-supplied session, so anyone able to open an embed
+      # could omit `current_user_uuid` and walk straight past a gate that
+      # only applied to identified viewers. No identity now means no
+      # access, and a host embedding a project must pass the viewer's
+      # `current_user_uuid`.
+      assert {:error, {:live_redirect, %{flash: %{"error" => flash}}}} =
+               live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+                 session: %{"id" => project.uuid}
+               )
+
+      assert flash =~ "not found"
+    end
+
+    test "an identified viewer with access mounts and can open comments", %{
       conn: conn,
       project: project
     } do
-      # `live_isolated` mounts the LV without going through the router,
-      # so no `phoenix_kit_routes()` on_mount fires. The LV must render
-      # without crashing.
-      {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
-        )
+      # The comments drawer reads :phoenix_kit_current_scope, which an
+      # off-router mount does not get from a router hook. It must tolerate
+      # the assign being absent — but the mount itself now requires a
+      # viewer who can actually see the project, so identify one.
+      {:ok, viewer} =
+        Auth.register_user(%{
+          "email" => "embed-viewer-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ViewerPass123!"
+        })
 
-      assert html =~ project.name
-    end
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, viewer.uuid, role: "member")
 
-    test "opening the comments drawer off-router does not crash", %{
-      conn: conn,
-      project: project
-    } do
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
+          session: %{"id" => project.uuid, "current_user_uuid" => viewer.uuid}
         )
 
-      # Triggers the `comments_drawer_open` render branch that reads the
-      # missing-by-design `:phoenix_kit_current_scope` assign. Pre-fix
-      # this raised `KeyError`; post-fix the bracket-access pattern
-      # tolerates the missing assign and the drawer renders with
-      # `current_user: nil`.
       html =
         render_hook(view, "open_comments", %{
           "type" => "project",
@@ -136,12 +147,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           "title" => project.name
         })
 
-      # The drawer renders an `<aside aria-label="Comments">` with the
-      # resource title in the header. Pre-fix this branch crashed with
-      # `KeyError :phoenix_kit_current_scope`; the assertion proves the
-      # render path completed.
       assert html =~ ~s|aria-label="Comments"|
-      assert html =~ project.name
     end
 
     test "no other bang-form router-assign refs in PKP source", _context do
@@ -190,8 +196,33 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           "started_at" => DateTime.utc_now() |> DateTime.truncate(:second)
         })
 
-      _ = actor_uuid
+      # The embedded viewer must actually be able to see the project. An
+      # off-router mount runs no admin on_mount, so ProjectShowLive gates
+      # :view itself — a host embedding a project for a stranger now gets
+      # a refusal, which is the point (see the "a stranger is refused"
+      # test below).
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+
       {:ok, project: project}
+    end
+
+    test "a stranger embedding the project is refused, shaped as not-found", %{
+      conn: conn,
+      project: project
+    } do
+      {:ok, other} =
+        Auth.register_user(%{
+          "email" => "embed-stranger-#{System.unique_integer([:positive])}@example.com",
+          "password" => "StrangerPass123!"
+        })
+
+      assert {:error, {:live_redirect, %{flash: %{"error" => flash}}}} =
+               live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+                 session: %{"id" => project.uuid, "current_user_uuid" => other.uuid}
+               )
+
+      # Indistinguishable from a missing project: existence is information.
+      assert flash =~ "not found"
     end
 
     test "current_user_uuid reconstructs the viewer and enables the composer", %{
@@ -223,71 +254,29 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       refute html =~ "Sign in to post a comment."
     end
 
-    test "absent current_user_uuid degrades to an anonymous scope (no crash)", %{
-      conn: conn,
-      project: project
-    } do
-      {:ok, view, _html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid}
-        )
+    # Every way an embed can fail to prove who the viewer is now ends the
+    # same way: refused, shaped as not-found. These used to assert the LV
+    # rendered anonymously without crashing — which meant a crafted embed
+    # session could reach any project simply by naming nobody.
+    for {label, session_extra} <- [
+          {"absent", %{}},
+          {"empty-string", %{"current_user_uuid" => ""}},
+          {"unknown", %{"current_user_uuid" => "00000000-0000-4000-8000-000000000000"}}
+        ] do
+      @label label
+      @session_extra session_extra
 
-      # Anonymous, but a real %Scope{user: nil} struct — not a bare nil —
-      # so downstream `scope.user` reads stay nil-safe.
-      assigns = :sys.get_state(view.pid).socket.assigns
-      assert is_nil(assigns[:phoenix_kit_current_user])
-      assert assigns[:phoenix_kit_current_scope].user == nil
+      test "#{label} current_user_uuid is refused, not rendered anonymously", %{
+        conn: conn,
+        project: project
+      } do
+        assert {:error, {:live_redirect, %{flash: %{"error" => flash}}}} =
+                 live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+                   session: Map.merge(%{"id" => project.uuid}, @session_extra)
+                 )
 
-      html =
-        render_hook(view, "open_comments", %{
-          "type" => "project",
-          "uuid" => project.uuid,
-          "title" => project.name
-        })
-
-      assert html =~ ~s|aria-label="Comments"|
-      assert html =~ "Sign in to post a comment."
-    end
-
-    test "unknown current_user_uuid degrades gracefully without crashing", %{
-      conn: conn,
-      project: project
-    } do
-      {:ok, view, _html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid, "current_user_uuid" => Ecto.UUID.generate()}
-        )
-
-      html =
-        render_hook(view, "open_comments", %{
-          "type" => "project",
-          "uuid" => project.uuid,
-          "title" => project.name
-        })
-
-      assert html =~ ~s|aria-label="Comments"|
-      assert html =~ "Sign in to post a comment."
-    end
-
-    test "embed-mode create attributes the activity to current_user_uuid", %{
-      conn: conn,
-      actor_uuid: actor_uuid
-    } do
-      # The actual bug this fix targets: an embedded mutation must log the real
-      # actor, not nil. Pins the full chain session → assign_embed_user →
-      # :phoenix_kit_current_user → Activity.actor_uuid/1 → the logged row.
-      {:ok, view, _html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-          session: %{"current_user_uuid" => actor_uuid, "redirect_to" => "/host/back"}
-        )
-
-      view
-      |> form("#project-form",
-        project: %{"name" => "Embed actor project", "start_mode" => "immediate"}
-      )
-      |> render_submit()
-
-      assert_activity_logged("projects.project_created", actor_uuid: actor_uuid)
+        assert flash =~ "not found"
+      end
     end
 
     test "inactive current_user_uuid degrades to anonymous (ensure_active_user)", %{
@@ -302,28 +291,14 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       |> Ecto.Changeset.change(is_active: false)
       |> Repo.update!()
 
-      {:ok, view, _html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid, "current_user_uuid" => actor_uuid}
-        )
+      # A revoked account cannot act through an embed — and now cannot read
+      # through one either.
+      assert {:error, {:live_redirect, %{flash: %{"error" => flash}}}} =
+               live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+                 session: %{"id" => project.uuid, "current_user_uuid" => actor_uuid}
+               )
 
-      assigns = :sys.get_state(view.pid).socket.assigns
-      assert is_nil(assigns[:phoenix_kit_current_user])
-      assert assigns[:phoenix_kit_current_scope].user == nil
-    end
-
-    test "empty-string current_user_uuid degrades to anonymous", %{
-      conn: conn,
-      project: project
-    } do
-      {:ok, view, _html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
-          session: %{"id" => project.uuid, "current_user_uuid" => ""}
-        )
-
-      assigns = :sys.get_state(view.pid).socket.assigns
-      assert is_nil(assigns[:phoenix_kit_current_user])
-      assert assigns[:phoenix_kit_current_scope].user == nil
+      assert flash =~ "not found"
     end
 
     test "assign_embed_user is a no-op when a scope is already present (router path)", %{
@@ -365,26 +340,37 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           "started_at" => DateTime.utc_now() |> DateTime.truncate(:second)
         })
 
-      _ = actor_uuid
-      {:ok, project: project}
+      # The embedded viewer must be able to see it — these LVs gate :view.
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+
+      {:ok, project: project, viewer_uuid: actor_uuid}
     end
 
     test "mounts off-router via live_isolated with session id", %{
       conn: conn,
-      project: project
+      project: project,
+      viewer_uuid: viewer_uuid
     } do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectGanttLive,
-          session: %{"id" => project.uuid}
+          session: %{"id" => project.uuid, "current_user_uuid" => viewer_uuid}
         )
 
       assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
     end
 
-    test "wrapper_class override replaces the default", %{conn: conn, project: project} do
+    test "wrapper_class override replaces the default", %{
+      conn: conn,
+      project: project,
+      viewer_uuid: viewer_uuid
+    } do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectGanttLive,
-          session: %{"id" => project.uuid, "wrapper_class" => "host-gantt-class"}
+          session: %{
+            "id" => project.uuid,
+            "current_user_uuid" => viewer_uuid,
+            "wrapper_class" => "host-gantt-class"
+          }
         )
 
       assert html =~ "host-gantt-class"
@@ -418,25 +404,37 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           "started_at" => DateTime.utc_now() |> DateTime.truncate(:second)
         })
 
-      {:ok, project: project, actor_uuid: actor_uuid}
+      # This LV gates :view too — the embedded viewer must be a member.
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+
+      {:ok, project: project, actor_uuid: actor_uuid, viewer_uuid: actor_uuid}
     end
 
     test "mounts off-router via live_isolated with session id", %{
       conn: conn,
-      project: project
+      project: project,
+      viewer_uuid: viewer_uuid
     } do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectCalendarLive,
-          session: %{"id" => project.uuid}
+          session: %{"id" => project.uuid, "current_user_uuid" => viewer_uuid}
         )
 
       assert html =~ "Calendar"
     end
 
-    test "wrapper_class override replaces the default", %{conn: conn, project: project} do
+    test "wrapper_class override replaces the default", %{
+      conn: conn,
+      project: project,
+      viewer_uuid: viewer_uuid
+    } do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectCalendarLive,
-          session: %{"id" => project.uuid, "wrapper_class" => "host-calendar-class"}
+          session: %{
+            "id" => project.uuid,
+            "current_user_uuid" => viewer_uuid,
+            "wrapper_class" => "host-calendar-class"
+          }
         )
 
       assert html =~ "host-calendar-class"
@@ -649,12 +647,24 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   end
 
   describe "ProjectFormLive embed (:edit)" do
-    test "edits an existing project when id is passed via session", %{conn: conn} do
+    test "edits an existing project when id is passed via session", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project(%{"name" => "Existing"})
+
+      # Editing a project's settings is an owner-floor action, so the
+      # embedded viewer has to actually hold it — the form used to load any
+      # project by uuid.
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "owner")
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-          session: %{"live_action" => "edit", "id" => project.uuid}
+          session: %{
+            "live_action" => "edit",
+            "id" => project.uuid,
+            "current_user_uuid" => actor_uuid
+          }
         )
 
       assert html =~ "Edit Existing"

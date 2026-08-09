@@ -51,6 +51,8 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
        status_entities: if(available?, do: Statuses.list_status_source_entities(), else: []),
        default_status_entity_uuid: Statuses.global_default_status_entity_uuid(),
        use_status_translations: Statuses.global_use_status_translations?(),
+       creation_blocks: PhoenixKitProjects.Features.creation_blocks(),
+       creation_top_blocks: PhoenixKitProjects.Features.creation_top_blocks(),
        gantt_display: GanttDisplay.read(),
        calendar_anim: CalendarDisplay.read(),
        # Anchor for the calendar demo grid (real current month, unlike the
@@ -118,6 +120,26 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       {:error, _reason} ->
         {:noreply,
          put_flash(socket, :error, gettext("Could not create the default status list."))}
+    end
+  end
+
+  # New-project page customizer: which optional blocks render TOP-LEVEL
+  # on the creation form instead of inside its Setup options accordion.
+  def handle_event("toggle_creation_block", %{"key" => key}, socket) do
+    current = socket.assigns.creation_top_blocks
+
+    updated =
+      if key in current,
+        do: List.delete(current, key),
+        else: current ++ [key]
+
+    case PhoenixKitProjects.Features.set_creation_top_blocks(updated) do
+      {:ok, _} ->
+        {:noreply, assign(socket, creation_top_blocks: updated)}
+
+      {:error, _} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not update the new-project page layout."))}
     end
   end
 
@@ -549,6 +571,35 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
         title={gettext("Project settings")}
         description={gettext("Defaults for the projects module.")}
       />
+
+      <%!-- New-project page customizer: the creation form defaults to
+           name + description + kind; promote the blocks this site uses
+           constantly to top level. --%>
+      <div class="card bg-base-100 shadow">
+        <div class="card-body gap-3">
+          <h2 class="card-title text-base">{gettext("New project page")}</h2>
+          <p class="text-xs text-base-content/60">
+            {gettext(
+              "By default the creation page shows only the essentials — everything else folds into \"Setup options\". Promote the blocks your team uses on every project to top level."
+            )}
+          </p>
+          <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
+            <label
+              :for={block <- @creation_blocks}
+              class="flex cursor-pointer items-center justify-between gap-3 py-1"
+            >
+              <span class="text-sm">{block.label}</span>
+              <input
+                type="checkbox"
+                class="toggle toggle-sm"
+                checked={block.key in @creation_top_blocks}
+                phx-click="toggle_creation_block"
+                phx-value-key={block.key}
+              />
+            </label>
+          </div>
+        </div>
+      </div>
 
       <div class="card bg-base-100 shadow">
         <div class="card-body gap-4">

@@ -25,6 +25,8 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias PhoenixKitProjects.Web.ListUi
+
   alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKitProjects.Projects
 
@@ -300,6 +302,50 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       html = render_click(view, "load_more", %{})
       assert html =~ ~s(data-sortable="true")
       assert html =~ "pk-drag-handle"
+    end
+  end
+
+  describe "ProjectsLive — saved views (Step 19)" do
+    test "save / apply / delete round-trip with stale-state degradation", %{conn: conn} do
+      fixture_project(%{"name" => "Viewed"})
+      {:ok, view, _} = live(conn, "/en/admin/projects/list")
+
+      # Shape some state, save it as a named view.
+      render_change(view, "sort_form", %{"sort_by" => "name"})
+      render_click(view, "toggle_column", %{"col" => "created"})
+      html = render_submit(view, "save_view", %{"name" => "By name"})
+      assert html =~ "View saved."
+      assert html =~ "By name"
+
+      # Change state away, then apply the view — it restores.
+      render_change(view, "sort_form", %{"sort_by" => "updated_at"})
+      html = render_click(view, "apply_view", %{"name" => "By name"})
+      assert html =~ ~s(<option selected="" value="name">)
+
+      # A tampered stored view degrades to safe defaults instead of junk.
+      ListUi.save_view("projects_list_views", "Evil", %{
+        "sort_by" => "'; DROP TABLE--",
+        "sort_dir" => "sideways",
+        "status" => "no-such-status",
+        "columns" => ["created", "bogus"]
+      })
+
+      {:ok, view2, _} = live(conn, "/en/admin/projects/list")
+      html = render_click(view2, "apply_view", %{"name" => "Evil"})
+      # Falls back: sort stays a roster field, bogus column dropped.
+      refute html =~ "bogus"
+
+      # Delete removes it from the dropdown.
+      html = render_click(view2, "delete_view", %{"name" => "Evil"})
+      refute html =~ "Evil"
+      html = render_click(view2, "delete_view", %{"name" => "By name"})
+      assert html =~ "No saved views yet."
+    end
+
+    test "blank names are refused", %{conn: conn} do
+      {:ok, view, _} = live(conn, "/en/admin/projects/list")
+      html = render_submit(view, "save_view", %{"name" => "   "})
+      assert html =~ "Give the view a name."
     end
   end
 

@@ -8,14 +8,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
+  # The typeahead's server half + the access-request events. Injected
+  # rather than hand-written so this form can't drift from every other
+  # surface that offers mentions.
+  use PhoenixKit.Mentions.Live
   use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.MultilangForm
 
   require Logger
 
+  alias PhoenixKit.Mentions
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Features, L10n, Labels, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -49,9 +54,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
+      |> assign_fx()
       |> assign_ai_translate()
 
     {:ok, socket}
+  end
+
+  # The hub gate map for this form's project. Placeholder projects (the
+  # not-found render window) fall back to catalog defaults.
+  defp assign_fx(socket) do
+    case socket.assigns[:project] do
+      %Project{uuid: uuid} = project when is_binary(uuid) ->
+        assign(socket, fx: Features.gates(project))
+
+      _ ->
+        assign(socket, fx: Features.default_gates())
+    end
   end
 
   # Wires the AI-translate modal/buttons for the assignment's `description`.
@@ -191,11 +209,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp apply_action(socket, :new, %{"project_id" => project_id} = params) do
-    # `kind: "subproject"` (V127) routes the same add page into sub-project
-    # mode: the render shows a child-project form (name + assignee) + the
-    # standard dependency section, instead of the task picker.
-    kind = if Map.get(params, "kind") == "subproject", do: "subproject", else: "task"
-
     case Projects.get_project(project_id) do
       nil ->
         # In navigate mode, `close_or_navigate` push-navigates and the LV is
@@ -209,6 +222,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         |> WebHelpers.close_or_navigate(Paths.projects())
 
       project ->
+        # `kind: "subproject"` (V127) routes the same add page into
+        # sub-project mode — feature-gated per project: with the
+        # `subprojects` flag off, a crafted `?kind=subproject` URL falls
+        # back to the plain task form (Step 4 enforcement).
+        kind =
+          if Map.get(params, "kind") == "subproject" and Features.on?(project, "subprojects"),
+            do: "subproject",
+            else: "task"
+
         assignment = %Assignment{project_uuid: project.uuid}
         existing_assignments = Projects.list_assignments(project.uuid)
 
@@ -230,6 +252,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             if(kind == "subproject", do: Projects.available_projects_to_link(project), else: []),
           project: project,
           assignment: assignment,
+          portal_review_images: [],
           live_action: :new,
           task_mode: "existing",
           assign_type: "",
@@ -267,6 +290,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     project = Projects.get_project(project_id)
     assignment = Projects.get_assignment(id)
 
+    # The assignment is re-scoped to the project named in the params. These
+    # were fetched independently and never compared, so pairing any
+    # project_id with any assignment uuid loaded a FOREIGN task into the
+    # edit form — the project gate said yes about one project while the
+    # form edited another's row.
+    assignment =
+      if assignment && project && assignment.project_uuid == project.uuid,
+        do: assignment,
+        else: nil
+
     case {project, assignment} do
       {nil, _} ->
         socket
@@ -299,6 +332,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           link_options: [],
           project: project,
           assignment: assignment,
+          portal_review_images: PhoenixKitProjects.Portal.review_images(assignment.uuid),
           live_action: :edit,
           assign_type: assignee_kind(child),
           assignment_deps: Projects.list_dependencies(assignment.uuid),
@@ -334,6 +368,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           link_options: [],
           project: project,
           assignment: assignment,
+          portal_review_images: PhoenixKitProjects.Portal.review_images(assignment.uuid),
           live_action: :edit,
           task_mode: "existing",
           assign_type: assignee_kind(assignment),
@@ -409,12 +444,35 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       task_options: Projects.list_tasks() |> Enum.map(&{Task.localized_title(&1, lang), &1.uuid}),
       team_options: load_teams(),
       department_options: load_departments(),
-      person_options: load_people()
+      person_options: load_people(),
+      project_labels: load_project_labels(socket),
+      selected_labels: current_label_uuids(socket)
     )
   end
 
+  defp load_project_labels(socket) do
+    case socket.assigns[:project] do
+      %{uuid: uuid} -> Labels.list_for_project(uuid)
+      _ -> []
+    end
+  end
+
+  defp current_label_uuids(socket) do
+    case socket.assigns[:assignment] do
+      %{uuid: uuid} ->
+        [uuid]
+        |> Labels.labels_for_assignments()
+        |> Map.get(uuid, [])
+        |> Enum.map(& &1.uuid)
+
+      _ ->
+        []
+    end
+  end
+
   defp load_teams do
-    PhoenixKitStaff.Teams.list() |> Enum.map(&{"#{&1.name} (#{&1.department.name})", &1.uuid})
+    PhoenixKitProjects.People.list_teams()
+    |> Enum.map(&{"#{&1.name} (#{&1.department.name})", &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Projects] load_teams failed: #{Exception.message(e)}")
@@ -422,7 +480,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp load_departments do
-    PhoenixKitStaff.Departments.list() |> Enum.map(&{&1.name, &1.uuid})
+    PhoenixKitProjects.People.list_departments() |> Enum.map(&{&1.name, &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
       Logger.warning("[Projects] load_departments failed: #{Exception.message(e)}")
@@ -430,7 +488,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp load_people do
-    PhoenixKitStaff.Staff.list_people()
+    PhoenixKitProjects.People.list_people()
     |> Enum.map(&{(&1.user && &1.user.email) || "—", &1.uuid})
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
@@ -474,12 +532,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # row exists. Uses a list (not a MapSet) so the rendered order
   # mirrors the user's add order; the `if dep_uuid in current` guard
   # below skips dupes when the same uuid is added twice.
+  # Pending deps are flushed into REAL dependency rows on save — they get
+  # the same dependencies gate as the live add/remove pair, or a forged
+  # pending-add on a dependencies-off project persists rows (panel R3-3).
   def handle_event("add_pending_dep", %{"depends_on_uuid" => dep_uuid}, socket)
       when dep_uuid != "" do
-    {:noreply,
-     update(socket, :pending_dep_uuids, fn current ->
-       if dep_uuid in current, do: current, else: current ++ [dep_uuid]
-     end)}
+    if socket.assigns.fx.dependencies do
+      {:noreply,
+       update(socket, :pending_dep_uuids, fn current ->
+         if dep_uuid in current, do: current, else: current ++ [dep_uuid]
+       end)}
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+    end
   end
 
   def handle_event("add_pending_dep", _params, socket), do: {:noreply, socket}
@@ -549,56 +615,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   def handle_event("add_assignment_dep", %{"depends_on_uuid" => dep_uuid}, socket)
       when dep_uuid != "" do
-    case Projects.add_dependency(socket.assigns.assignment.uuid, dep_uuid) do
-      {:ok, _} ->
-        Activity.log("projects.dependency_added",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{}
-        )
-
-        reload_deps(socket)
-
-      {:error, _} ->
-        Activity.log_failed("projects.dependency_added",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{}
-        )
-
-        {:noreply, put_flash(socket, :error, gettext("Could not add dependency."))}
+    if socket.assigns.fx.dependencies do
+      do_add_assignment_dep(dep_uuid, socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
 
   def handle_event("add_assignment_dep", _params, socket), do: {:noreply, socket}
 
   def handle_event("remove_assignment_dep", %{"uuid" => dep_uuid}, socket) do
-    case Projects.remove_dependency(socket.assigns.assignment.uuid, dep_uuid) do
-      {:ok, _} ->
-        Activity.log("projects.dependency_removed",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{}
-        )
-
-        reload_deps(socket)
-
-      {:error, _} ->
-        Activity.log_failed("projects.dependency_removed",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: socket.assigns.assignment.uuid,
-          target_uuid: dep_uuid,
-          metadata: %{}
-        )
-
-        {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
+    if socket.assigns.fx.dependencies do
+      do_remove_assignment_dep(dep_uuid, socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
 
@@ -608,9 +640,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     assign_type = Map.get(params, "assign_type", "")
     task_mode = Map.get(params, "task_mode", "existing")
 
+    # Save-time gate re-resolution (panel R3-4): the submit binds to the
+    # CURRENT flags, not the mount-time snapshot a mid-edit toggle staled.
+    fx = Features.gates(socket.assigns.project)
+    socket = assign(socket, fx: fx)
+
+    # Labels ride a separate param (checkbox list) — captured only when
+    # the flag is on at SAVE time, applied after the record write.
+    socket =
+      assign(
+        socket,
+        :pending_labels,
+        if(fx.labels, do: Enum.uniq(List.wrap(params["labels"] || [])))
+      )
+
     attrs =
       attrs
       |> clear_other_assignees(assign_type)
+      |> strip_gated_attrs(fx)
       |> merge_attrs(socket)
 
     case {socket.assigns.live_action, task_mode} do
@@ -620,14 +667,83 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # Portal visibility flip — immediate write, never a form param. Gated
+  # explicitly on :edit_tasks (a PUBLIC-exposure change gets the strict
+  # shape even though this LV otherwise trusts its mount gate).
+  def handle_event("toggle_board_published", _params, socket) do
+    assignment = socket.assigns[:assignment]
+    project = socket.assigns[:project]
+    actor = socket.assigns[:phoenix_kit_current_scope] || Activity.actor_uuid(socket)
+    publish? = is_map(assignment) and is_nil(assignment.board_published_at)
+
+    # Same guard chain as the link-holder toggle beside it: publishing to
+    # the OPEN WEB cannot be an easier action than publishing to the link.
+    with %Assignment{uuid: uuid} when is_binary(uuid) <- assignment,
+         true <- public_board?(project),
+         true <- actor != nil and PhoenixKitProjects.Authz.can?(actor, project, :edit_tasks),
+         {:ok, _} <- PhoenixKitProjects.Portal.set_board_published(uuid, publish?) do
+      Activity.log(
+        if(publish?,
+          do: "projects.issue_board_published",
+          else: "projects.issue_board_unpublished"
+        ),
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: assignment.uuid,
+        metadata: %{"project_uuid" => assignment.project_uuid}
+      )
+
+      {:noreply,
+       socket
+       |> assign(assignment: Projects.get_assignment(assignment.uuid))
+       |> put_flash(
+         :info,
+         if(publish?,
+           do: gettext("Published to the public board."),
+           else: gettext("Removed from the public board.")
+         )
+       )}
+    else
+      _ -> {:noreply, put_flash(socket, :error, gettext("Could not change that."))}
+    end
+  end
+
+  def handle_event("toggle_portal_public", _params, socket) do
+    assignment = socket.assigns[:assignment]
+    project = socket.assigns[:project]
+
+    actor =
+      socket.assigns[:phoenix_kit_current_scope] || Activity.actor_uuid(socket)
+
+    with %Assignment{uuid: uuid} when is_binary(uuid) <- assignment,
+         true <- portal_enabled?(project),
+         true <- actor != nil and PhoenixKitProjects.Authz.can?(actor, project, :edit_tasks),
+         {:ok, updated} <-
+           PhoenixKitProjects.Portal.set_public(assignment, assignment.public != true,
+             actor_uuid: Activity.actor_uuid(socket)
+           ) do
+      {:noreply, assign(socket, assignment: updated)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   # ── Sub-project mode (V127) ──────────────────────────────────────
   # Same add/edit page as a task, but the form is the child project
   # (name + assignee) and the dependency section uses the same handlers.
 
   # Toggle between "create new child" and "nest existing project" (V127).
+  # Feature-gated: sub-project mode is unreachable when the flag is off
+  # (kind resolution already forces "task"), but a stale client could still
+  # emit the event — refuse it the same way.
   def handle_event("set_sp_mode", %{"value" => mode}, socket)
       when mode in ~w(new existing) do
-    {:noreply, assign(socket, sp_mode: mode)}
+    if socket.assigns.fx.subprojects do
+      do_set_sp_mode(mode, socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+    end
   end
 
   def handle_event("validate_subproject", %{"subproject" => attrs} = params, socket) do
@@ -651,55 +767,57 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def handle_event("validate_subproject", _params, socket), do: {:noreply, socket}
 
   # A sub-project is a project, so it gets the same "Generate default" action
-  # ProjectFormLive has (V125). Operates on `@sp_form`.
+  # ProjectFormLive has (V125). Operates on `@sp_form`. Feature-gated on
+  # `statuses` (panel R3-5): with the flag off this provisions nothing.
   def handle_event("generate_default_statuses", _params, socket) do
-    case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
-      {:ok, entity} ->
-        Activity.log("projects.status_entity_provisioned",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "entity",
-          resource_uuid: entity.uuid,
-          metadata: %{"scope" => "subproject"}
-        )
-
-        cs =
-          socket.assigns.sp_form.source
-          |> Ecto.Changeset.put_change(:status_entity_uuid, entity.uuid)
-
-        {:noreply,
-         socket
-         |> assign(status_entities: WSF.entity_options(), sp_form: to_form(cs, as: :subproject))
-         |> refresh_status_preview()
-         |> put_flash(:info, gettext("Default statuses entity created."))}
-
-      {:error, _reason} ->
-        Activity.log_failed("projects.status_entity_provisioned",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "entity",
-          metadata: %{"scope" => "subproject"}
-        )
-
-        {:noreply,
-         put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
+    if Features.gates(socket.assigns.project).statuses do
+      do_generate_default_statuses(socket)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
 
   # "Link existing" mode: no `subproject[...]` inputs, just the picked child.
+  # The whole sub-project branch is feature-gated (panel R3-2): kind
+  # resolution already forces the task form when the flag is off, but a
+  # forged save_subproject would still create/link a child — refuse it, and
+  # strip gated attrs the same way the task save does.
   def handle_event("save_subproject", %{"link_child_uuid" => child_uuid}, socket) do
-    link_existing_subproject(socket, child_uuid)
+    fx = Features.gates(socket.assigns.project)
+
+    if fx.subprojects do
+      link_existing_subproject(socket, child_uuid)
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
+    end
   end
 
   def handle_event("save_subproject", %{"subproject" => attrs} = params, socket) do
-    assign_type = Map.get(params, "assign_type", "")
+    # Re-resolve at save time (panel R3-4): a mid-edit toggle in another
+    # session must bind the SUBMIT, not the stale mount-time map.
+    fx = Features.gates(socket.assigns.project)
 
-    attrs =
-      attrs
-      |> clear_other_assignees(assign_type)
-      |> WSF.apply_mode(params, sp_source(socket))
+    if fx.subprojects do
+      assign_type = Map.get(params, "assign_type", "")
 
-    case socket.assigns.live_action do
-      :new -> save_new_subproject(socket, attrs)
-      :edit -> save_edit_subproject(socket, attrs)
+      attrs =
+        attrs
+        |> clear_other_assignees(assign_type)
+        |> strip_gated_attrs(fx)
+        |> then(fn a ->
+          if fx.statuses, do: a, else: Map.drop(a, ~w(status_entity_uuid))
+        end)
+        |> WSF.apply_mode(params, sp_source(socket))
+
+      case socket.assigns.live_action do
+        :new -> save_new_subproject(socket, attrs)
+        :edit -> save_edit_subproject(socket, attrs)
+      end
+    else
+      {:noreply,
+       put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
 
@@ -770,6 +888,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
 
         flush_pending_deps(socket, link)
+        sync_mentions(socket, child)
 
         {:noreply,
          socket
@@ -787,6 +906,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {:error, _other} ->
         log_subproject_save_failed(socket, "projects.subproject_created")
         {:noreply, put_flash(socket, :error, gettext("Could not add sub-project."))}
+    end
+  end
+
+  # Indexes the @ and # mentions in a saved description and delivers the
+  # pings. Deliberately on the DURABLE save rather than on change: `sync`
+  # returns only what is new, and notifying from a debounce would ping on
+  # every pause in typing.
+  #
+  # Never allowed to fail the save. A mention that doesn't index is a
+  # missing backlink; a save that rolls back because of one is lost work.
+  defp sync_mentions(socket, %{uuid: uuid, description: description}) do
+    case Mentions.sync("project", uuid, description,
+           field: "description",
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, new} ->
+        Mentions.notify(new,
+          source_type: "project",
+          source_uuid: uuid,
+          preview: description
+        )
+
+      _ ->
+        :ok
     end
   end
 
@@ -879,6 +1022,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     case Projects.create_assignment(assignment_attrs) do
       {:ok, assignment} ->
+        apply_pending_labels(socket, assignment)
+
         {flash_kind, flash_msg} =
           flash_for_template_deps(
             assignment,
@@ -889,6 +1034,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: assignment.uuid,
+          target_uuid: Activity.assignee_target_uuid(assignment),
           metadata: %{"project" => socket.assigns.project.name, "new_task" => title}
         )
 
@@ -1013,10 +1159,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
            excluded_task_uuids: effective_excluded
          ) do
       {:ok, %{root: root, extras: extras}} ->
+        apply_pending_labels(socket, root)
+
         Activity.log("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: root.uuid,
+          target_uuid: Activity.assignee_target_uuid(root),
           metadata: %{
             "project" => socket.assigns.project.name,
             "closure_extras" => length(extras)
@@ -1056,8 +1205,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         Activity.log_failed("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
-          target_uuid: socket.assigns.project.uuid,
-          metadata: %{"project" => socket.assigns.project.name, "via_closure_of" => task_uuid}
+          metadata: %{
+            "project" => socket.assigns.project.name,
+            "project_uuid" => socket.assigns.project.uuid,
+            "via_closure_of" => task_uuid
+          }
         )
 
         {:noreply, on_save_error(socket, cs)}
@@ -1070,9 +1222,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         Activity.log_failed("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
-          target_uuid: socket.assigns.project.uuid,
           metadata: %{
             "project" => socket.assigns.project.name,
+            "project_uuid" => socket.assigns.project.uuid,
             "via_closure_of" => task_uuid,
             "reason" => inspect(reason)
           }
@@ -1090,6 +1242,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp save_new_simple(socket, attrs) do
     case Projects.create_assignment(attrs) do
       {:ok, assignment} ->
+        apply_pending_labels(socket, assignment)
+
         {flash_kind, flash_msg} =
           flash_for_template_deps(
             assignment,
@@ -1118,8 +1272,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         Activity.log_failed("projects.assignment_created",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
-          target_uuid: socket.assigns.project.uuid,
-          metadata: %{"project" => socket.assigns.project.name}
+          metadata: %{
+            "project" => socket.assigns.project.name,
+            "project_uuid" => socket.assigns.project.uuid
+          }
         )
 
         {:noreply, on_save_error(socket, cs)}
@@ -1141,8 +1297,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             actor_uuid: Activity.actor_uuid(socket),
             resource_type: "assignment",
             resource_uuid: assignment.uuid,
-            target_uuid: dep_uuid,
-            metadata: %{"source" => "assignment_form_pending"}
+            metadata: %{"source" => "assignment_form_pending", "depends_on_uuid" => dep_uuid}
           )
 
         {:error, reason} ->
@@ -1155,8 +1310,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             actor_uuid: Activity.actor_uuid(socket),
             resource_type: "assignment",
             resource_uuid: assignment.uuid,
-            target_uuid: dep_uuid,
-            metadata: %{"source" => "assignment_form_pending"}
+            metadata: %{"source" => "assignment_form_pending", "depends_on_uuid" => dep_uuid}
           )
       end
     end)
@@ -1192,10 +1346,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp save_edit(socket, attrs) do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
+        apply_pending_labels(socket, updated)
+
         Activity.log("projects.assignment_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: updated.uuid,
+          target_uuid: Activity.assignee_target_uuid(updated),
           metadata: %{"project" => socket.assigns.project.name}
         )
 
@@ -1239,6 +1396,126 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp humanize(field) do
     field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
+  end
+
+  defp do_generate_default_statuses(socket) do
+    case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
+      {:ok, entity} ->
+        Activity.log("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "entity",
+          resource_uuid: entity.uuid,
+          metadata: %{"scope" => "subproject"}
+        )
+
+        cs =
+          socket.assigns.sp_form.source
+          |> Ecto.Changeset.put_change(:status_entity_uuid, entity.uuid)
+
+        {:noreply,
+         socket
+         |> assign(status_entities: WSF.entity_options(), sp_form: to_form(cs, as: :subproject))
+         |> refresh_status_preview()
+         |> put_flash(:info, gettext("Default statuses entity created."))}
+
+      {:error, _reason} ->
+        Activity.log_failed("projects.status_entity_provisioned",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "entity",
+          metadata: %{"scope" => "subproject"}
+        )
+
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
+    end
+  end
+
+  defp do_add_assignment_dep(dep_uuid, socket) do
+    case Projects.add_dependency(socket.assigns.assignment.uuid, dep_uuid) do
+      {:ok, _} ->
+        Activity.log("projects.dependency_added",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"depends_on_uuid" => dep_uuid}
+        )
+
+        reload_deps(socket)
+
+      {:error, _} ->
+        Activity.log_failed("projects.dependency_added",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"depends_on_uuid" => dep_uuid}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not add dependency."))}
+    end
+  end
+
+  defp do_remove_assignment_dep(dep_uuid, socket) do
+    case Projects.remove_dependency(socket.assigns.assignment.uuid, dep_uuid) do
+      {:ok, _} ->
+        Activity.log("projects.dependency_removed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"depends_on_uuid" => dep_uuid}
+        )
+
+        reload_deps(socket)
+
+      {:error, _} ->
+        Activity.log_failed("projects.dependency_removed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: socket.assigns.assignment.uuid,
+          metadata: %{"depends_on_uuid" => dep_uuid}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not remove dependency."))}
+    end
+  end
+
+  defp do_set_sp_mode(mode, socket) do
+    {:noreply, assign(socket, sp_mode: mode)}
+  end
+
+  # Server-side mate of the render gates (Step 4): a submit crafted past a
+  # hidden section can't smuggle gated fields in. Assignee attrs drop when
+  # `assignees` is off; duration attrs when `estimates` is off;
+  # counts_weekends when `scheduling` is off.
+  defp strip_gated_attrs(attrs, fx) do
+    attrs
+    |> then(fn a ->
+      if fx.assignees,
+        do: a,
+        else: Map.drop(a, ~w(assigned_team_uuid assigned_department_uuid assigned_person_uuid))
+    end)
+    |> then(fn a ->
+      if fx.estimates, do: a, else: Map.drop(a, ~w(estimated_duration estimated_duration_unit))
+    end)
+    |> then(fn a -> if fx.scheduling, do: a, else: Map.drop(a, ~w(counts_weekends)) end)
+    |> then(fn a -> if fx.priorities, do: a, else: Map.drop(a, ~w(priority)) end)
+  end
+
+  defp priority_options do
+    [
+      {gettext("Urgent"), "urgent"},
+      {gettext("High"), "high"},
+      {gettext("Normal"), "normal"},
+      {gettext("Low"), "low"}
+    ]
+  end
+
+  # Replace the saved assignment's labels with the submit's checkbox set
+  # (nil = the flag was off at save time — leave the joins untouched).
+  defp apply_pending_labels(socket, assignment) do
+    case socket.assigns[:pending_labels] do
+      nil -> :ok
+      uuids -> Labels.set_assignment_labels(assignment, uuids)
+    end
   end
 
   defp clear_other_assignees(attrs, "team") do
@@ -1400,7 +1677,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <div class="card bg-base-100 shadow">
             <div class="card-body flex flex-col gap-3">
               <.input field={@sp_form[:name]} label={gettext("Sub-project name")} required />
-              <.textarea field={@sp_form[:description]} label={gettext("Description (optional)")} rows="2" />
+              <.textarea
+                field={@sp_form[:description]}
+                label={gettext("Description (optional)")}
+                rows="2"
+                mentions
+              />
 
               <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
               <.select
@@ -1423,7 +1705,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <%!-- Dependencies — identical to a task's (this sub-project is a row in
                the parent's timeline). Edit mode adds/removes live; new mode
                collects pending selections applied on save. --%>
-          <div class="card bg-base-100 shadow">
+          <div :if={@fx.dependencies} class="card bg-base-100 shadow">
             <div class="card-body">
               <h2 class="card-title text-lg">{gettext("Dependencies")}</h2>
               <p class="text-xs text-base-content/60">
@@ -1635,12 +1917,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 type="textarea"
                 rows={3}
                 disabled={@current_lang in @ai_in_flight}
+                mentions
               />
             </.multilang_fields_wrapper>
 
             <%!-- Bigger gap separating the translatable Description (governed by
                  the language tabs) from the non-translatable fields below. --%>
-            <div class="flex gap-2 mt-4">
+            <div :if={@fx.estimates} class="flex gap-2 mt-4">
               <div class="flex-1">
                 <.input field={@form[:estimated_duration]} label={gettext("Duration")} type="number" />
               </div>
@@ -1660,6 +1943,36 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               options={[{gettext("To do"), "todo"}, {gettext("In progress"), "in_progress"}, {gettext("Done"), "done"}]}
             />
 
+            <div :if={@fx.priorities} class="w-48">
+              <.select
+                field={@form[:priority]}
+                label={gettext("Priority")}
+                options={priority_options()}
+              />
+            </div>
+
+            <%!-- Labels: plain checkboxes over the PROJECT's registry (managed
+                 in the Modules panel); selection replaces the join rows on
+                 save. Renders only when the flag is on AND labels exist. --%>
+            <div :if={@fx.labels and @project_labels != []} class="form-control">
+              <span class="label-text text-sm font-medium mb-1">{gettext("Labels")}</span>
+              <div class="flex flex-wrap gap-2">
+                <label
+                  :for={label <- @project_labels}
+                  class="flex items-center gap-1.5 cursor-pointer rounded-lg border border-base-200 px-2 py-1"
+                >
+                  <input
+                    type="checkbox"
+                    name="labels[]"
+                    value={label.uuid}
+                    checked={label.uuid in @selected_labels}
+                    class="checkbox checkbox-xs"
+                  />
+                  <span class={["badge badge-sm", label.color]}>{label.name}</span>
+                </label>
+              </div>
+            </div>
+
             <%!-- NOT migrated to `<.checkbox>`: unlike Project/Template,
                  `Assignment.counts_weekends` has no schema default — `nil`
                  is a load-bearing third state meaning "inherit the parent
@@ -1674,7 +1987,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                  every unchecked submit into an explicit "never count
                  weekends" override and permanently lose the inherit-from-
                  project state through this form. --%>
-            <label class="flex items-center gap-2 cursor-pointer">
+            <label :if={@fx.scheduling} class="flex items-center gap-2 cursor-pointer">
               <input type="hidden" name={@form[:counts_weekends].name} value="" />
               <input
                 type="checkbox"
@@ -1686,23 +1999,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <span class="text-sm">{gettext("Counts weekends (e.g. deliveries, external processes)")}</span>
             </label>
 
-            <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
+            <%= if @fx.assignees do %>
+              <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
 
-            <.select
-              name="assign_type"
-              label={gettext("Assign to")}
-              value={@assign_type}
-              options={[{gettext("Nobody"), ""}, {gettext("Department"), "department"}, {gettext("Team"), "team"}, {gettext("Person"), "person"}]}
-            />
+              <.select
+                name="assign_type"
+                label={gettext("Assign to")}
+                value={@assign_type}
+                options={[{gettext("Nobody"), ""}, {gettext("Department"), "department"}, {gettext("Team"), "team"}, {gettext("Person"), "person"}]}
+              />
 
-            <%= if @assign_type == "department" do %>
-              <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
-            <% end %>
-            <%= if @assign_type == "team" do %>
-              <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
-            <% end %>
-            <%= if @assign_type == "person" do %>
-              <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+              <%= if @assign_type == "department" do %>
+                <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
+              <% end %>
+              <%= if @assign_type == "team" do %>
+                <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
+              <% end %>
+              <%= if @assign_type == "person" do %>
+                <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+              <% end %>
             <% end %>
 
             <%= if @live_action == :new and @task_mode == "new" do %>
@@ -1734,7 +2049,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                `create_assignment_for_new_task` after insert.
              --%>
         <% lang = L10n.current_content_lang() %>
-        <div class="card bg-base-100 shadow">
+        <div :if={@fx.dependencies} class="card bg-base-100 shadow">
           <div class="card-body">
             <h2 class="card-title text-lg">{gettext("Dependencies")}</h2>
             <p class="text-xs text-base-content/60">
@@ -1824,6 +2139,99 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </div>
         </div>
 
+        <%!-- Portal visibility. Inside the form so the page reads in
+             order — fields, then who can see this, then Save. It used to
+             sit after the closing tag, which put two switches BELOW the
+             Save button and made the page look like it had ended and
+             then carried on.
+
+             Still immediate writes, not form params: each input carries
+             `phx-click` and deliberately NO `name`, so nothing here is
+             ever cast from the submitted params. `public` and
+             `board_published_at` are server-set only — do not name them. --%>
+        <div
+          :if={@live_action == :edit and portal_enabled?(@project)}
+          class="card bg-base-100 shadow"
+        >
+          <div class="card-body flex-row items-center justify-between gap-3 py-4">
+            <div class="min-w-0">
+              <h3 class="text-sm font-semibold">{gettext("Public portal")}</h3>
+              <p class="text-xs opacity-60">
+              {gettext("Show this issue (title and status only) on the project's public page.")}
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              class="toggle toggle-primary"
+              checked={@assignment.public == true}
+              phx-click="toggle_portal_public"
+              aria-label={gettext("Show on the public portal")}
+            />
+          </div>
+
+          <%!-- What the stranger actually attached. This sits ABOVE the two
+               publish switches on purpose: the whole justification for
+               letting anonymous people upload files is that a person looks
+               at them first, and that was not true until this panel existed
+               — the text was reviewed here while the images went from an
+               unknown submitter straight onto an indexable page, seen by
+               nobody. Server-side re-encoding strips the payloads it can;
+               it cannot tell you what the picture is OF. --%>
+          <div
+            :if={@portal_review_images != []}
+            class="card-body border-t border-base-200 py-4"
+          >
+            <h3 class="text-sm font-semibold">{gettext("Attached by the submitter")}</h3>
+            <p class="text-xs opacity-60">
+              {gettext(
+                "Sent by an anonymous visitor and re-encoded on arrival. Look at them before publishing — publishing puts them on the open internet."
+              )}
+            </p>
+            <div class="mt-2 flex flex-wrap gap-3">
+              <a
+                :for={image <- @portal_review_images}
+                href={image.url}
+                target="_blank"
+                rel="noopener noreferrer nofollow"
+                class="block"
+              >
+                <img
+                  src={image.url}
+                  alt={gettext("Submitted attachment")}
+                  loading="lazy"
+                  class="h-28 w-28 rounded-lg border border-base-300 object-cover"
+                />
+              </a>
+            </div>
+          </div>
+
+        <%!-- The second, deliberate act. Only offered on a board that is
+             actually public and for an issue already visible to
+             link-holders: "on the open web" is a bigger decision than "on
+             the private link", and the design's whole blast-radius guard
+             depends on it being taken one issue at a time. Without this
+             control the guard has no product path and a public board stays
+             empty forever. --%>
+          <div
+            :if={@assignment.public == true and public_board?(@project)}
+            class="card-body flex-row items-center justify-between gap-3 border-t border-base-200 py-4"
+          >
+            <div class="min-w-0">
+              <h3 class="text-sm font-semibold">{gettext("Publish to the public board")}</h3>
+              <p class="text-xs opacity-60">
+              {gettext("This board is on the open internet and can be indexed by search engines. The issue's description is shown too.")}
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              class="toggle toggle-warning"
+              checked={@assignment.board_published_at != nil}
+              phx-click="toggle_board_published"
+              aria-label={gettext("Publish to the public board")}
+            />
+          </div>
+        </div>
+
         <div class="flex justify-end gap-2 mt-2">
           <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
             {gettext("Cancel")}
@@ -1838,5 +2246,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       <% end %>
     </div>
     """
+  end
+
+  defp public_board?(project) do
+    case PhoenixKitProjects.Portal.get_portal(project.uuid) do
+      %{access_mode: "public"} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp portal_enabled?(project) do
+    PhoenixKitProjects.Extensions.enabled?(project, "portal")
+  rescue
+    _ -> false
   end
 end

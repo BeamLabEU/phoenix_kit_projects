@@ -164,6 +164,23 @@ defmodule PhoenixKitProjects.Schemas.ProjectTest do
       assert Changeset.get_field(cs, :settings) == %{}
     end
 
+    test "keeps the per-project permission floors" do
+      # `authz` was missing from the whitelist, so ANY save that touched
+      # settings deleted the floors — a project silently reverting to
+      # fully open, and a template clone losing what it should carry.
+      # Same failure `features` was fixed for.
+      floors = %{"create_tasks" => "managers", "delete_tasks" => "members"}
+
+      cs =
+        Project.changeset(%Project{}, %{
+          "name" => "P",
+          "start_mode" => "immediate",
+          "settings" => %{"authz" => floors}
+        })
+
+      assert Changeset.get_field(cs, :settings) == %{"authz" => floors}
+    end
+
     test "rejects a non-map settings value" do
       cs =
         Project.changeset(%Project{}, %{

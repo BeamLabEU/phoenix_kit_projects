@@ -81,7 +81,7 @@ defmodule PhoenixKitProjects.ActivityLogAssertions do
 
   defp query_activities(filters) do
     query =
-      "SELECT action, module, mode, actor_uuid, resource_type, resource_uuid, metadata FROM phoenix_kit_activities ORDER BY inserted_at DESC"
+      "SELECT action, module, mode, actor_uuid, resource_type, resource_uuid, target_uuid, metadata FROM phoenix_kit_activities ORDER BY inserted_at DESC"
 
     %{rows: rows, columns: cols} = SQL.query!(TestRepo, query)
 
@@ -106,6 +106,7 @@ defmodule PhoenixKitProjects.ActivityLogAssertions do
   defp matches_opts?(row, opts) do
     match_opt(opts, :resource_uuid, &uuid_match?(row.resource_uuid, &1)) and
       match_opt(opts, :actor_uuid, &uuid_match?(row.actor_uuid, &1)) and
+      match_opt(opts, :target_uuid, &uuid_match?(row.target_uuid, &1)) and
       match_opt(opts, :metadata_has, &metadata_subset?(row.metadata, &1))
   end
 

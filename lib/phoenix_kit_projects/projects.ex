@@ -70,6 +70,23 @@ defmodule PhoenixKitProjects.Projects do
     default_assigned_person: [:user]
   ]
 
+  # "This project has no start and no finish" — the `lifecycle` feature
+  # flag turned explicitly off (a checklist). Expressed in SQL because the
+  # dashboard buckets are queries: a lifecycle-less project is never
+  # WAITING to be started, so it belongs in Running from the moment it
+  # exists rather than parked in the not-started bucket forever.
+  #
+  # COALESCE, not a bare comparison: absence means "inherit the default",
+  # which is on. Only an explicit false counts.
+  defmacrop lifecycle_off(settings) do
+    quote do
+      fragment(
+        "COALESCE(? -> 'features' ->> 'lifecycle', 'true') = 'false'",
+        unquote(settings)
+      )
+    end
+  end
+
   @doc """
   Lists all task-library entries, preloaded with defaults.
 
@@ -820,9 +837,48 @@ defmodule PhoenixKitProjects.Projects do
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> maybe_search_name_description(Keyword.get(opts, :search))
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> project_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
     |> repo().all()
+  end
+
+  @doc """
+  `list_projects/1` narrowed to what a scope may actually see.
+
+  Site admins (`projects.admin_all`) get the unfiltered list. Everyone else
+  gets only the projects they hold through membership or a group grant —
+  the index used to show every project on the site to anyone who could
+  reach the module, which since the permission split is a population that
+  legitimately includes contractors.
+
+  Filtering happens IN SQL (a uuid set from one grants query), not by
+  loading everything and rejecting in memory.
+  """
+  @spec list_projects_for(term(), keyword()) :: [Project.t()]
+  def list_projects_for(scope, opts \\ []) do
+    if PhoenixKitProjects.Authz.admin_all?(scope) do
+      list_projects(opts)
+    else
+      case PhoenixKitProjects.Authz.subject_user_uuid_of(scope) do
+        nil -> []
+        user_uuid -> list_projects(Keyword.put(opts, :viewer, user_uuid))
+      end
+    end
+  end
+
+  # nil viewer = no narrowing (the admin path). A viewer with zero
+  # accessible projects yields `uuid in []`, which is an empty result —
+  # fail-closed by construction rather than by a forgotten branch.
+  defp maybe_scope_to_viewer(query, nil), do: query
+
+  defp maybe_scope_to_viewer(query, user_uuid) when is_binary(user_uuid) do
+    uuids =
+      user_uuid
+      |> PhoenixKitProjects.Members.accessible_projects()
+      |> Enum.map(fn {project, _role} -> project.uuid end)
+
+    from(p in query, where: p.uuid in ^uuids)
   end
 
   # Sort by `position` is the canonical "manual" mode and gets a
@@ -967,6 +1023,16 @@ defmodule PhoenixKitProjects.Projects do
     attrs = put_default_position(attrs, fn -> next_project_position(is_template?) end)
 
     with {:ok, project} <- %Project{} |> Project.changeset(attrs) |> repo().insert() do
+      # Hub membership (P2a): the creator holds the first owner seat. Only
+      # real (non-template) projects get members; best-effort so a members
+      # hiccup never fails the create. `:actor_uuid` is the LV-layer opt.
+      if not is_template? do
+        PhoenixKitProjects.Members.ensure_creator_owner(
+          project.uuid,
+          Keyword.get(opts, :actor_uuid)
+        )
+      end
+
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
       end
@@ -1239,7 +1305,73 @@ defmodule PhoenixKitProjects.Projects do
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> maybe_search_name_description(Keyword.get(opts, :search))
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> repo().aggregate(:count, :uuid)
+  end
+
+  @doc """
+  Sets a project's visibility (`"private"` | `"everyone"`).
+
+  Written with the same atomic jsonb_set as the feature flags and authz
+  floors — `settings` is a shared column, so a read-merge-write of the
+  whole map silently clobbers concurrent writes to its siblings.
+  """
+  @spec set_visibility(Project.t(), String.t(), keyword()) ::
+          {:ok, Project.t()} | {:error, term()}
+  def set_visibility(%Project{} = project, visibility, opts \\ []) do
+    if visibility in PhoenixKitProjects.Authz.visibilities() do
+      query =
+        from(p in Project,
+          where: p.uuid == ^project.uuid,
+          update: [
+            set: [
+              settings:
+                fragment(
+                  # to_jsonb(?::text), not ?::jsonb — a bare string like
+                  # `everyone` is not valid JSON, so the direct cast errors.
+                  "jsonb_set(COALESCE(settings, '{}'::jsonb), '{visibility}', to_jsonb(?::text))",
+                  ^visibility
+                ),
+              updated_at: fragment("NOW()")
+            ]
+          ],
+          select: p
+        )
+
+      {1, [updated]} = repo().update_all(query, [])
+
+      PhoenixKitProjects.Activity.log("projects.visibility_changed",
+        actor_uuid: Keyword.get(opts, :actor_uuid),
+        resource_type: "project",
+        resource_uuid: project.uuid,
+        metadata: %{"visibility" => visibility}
+      )
+
+      {:ok, updated}
+    else
+      {:error, :invalid_visibility}
+    end
+  rescue
+    e in [MatchError, Postgrex.Error] ->
+      Logger.warning("[Projects] set_visibility failed: #{Exception.message(e)}")
+      {:error, :not_found}
+  end
+
+  @doc """
+  `count_projects/1` narrowed to a scope, so a scoped list and its counter
+  agree. A header that counts rows the viewer cannot open is both a lie and
+  a leak — it discloses how many projects exist.
+  """
+  @spec count_projects_for(term(), keyword()) :: non_neg_integer()
+  def count_projects_for(scope, opts \\ []) do
+    if PhoenixKitProjects.Authz.admin_all?(scope) do
+      count_projects(opts)
+    else
+      case PhoenixKitProjects.Authz.subject_user_uuid_of(scope) do
+        nil -> 0
+        user_uuid -> count_projects(Keyword.put(opts, :viewer, user_uuid))
+      end
+    end
   end
 
   @doc """
@@ -1442,36 +1574,39 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_search_name_description(query, _), do: query
 
   @doc "Running projects (started, not archived, not yet completed)."
-  @spec list_active_projects() :: [Project.t()]
-  def list_active_projects do
+  @spec list_active_projects(keyword()) :: [Project.t()]
+  def list_active_projects(opts \\ []) do
     Project
     |> where(
       [p],
-      p.is_template == false and is_nil(p.archived_at) and not is_nil(p.started_at) and
+      p.is_template == false and is_nil(p.archived_at) and
+        (not is_nil(p.started_at) or lifecycle_off(p.settings)) and
         is_nil(p.completed_at)
     )
     |> exclude_subprojects()
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> order_by([p], desc: p.started_at)
     |> repo().all()
   end
 
   @doc "Completed projects (all tasks done), most recently completed first."
-  @spec list_recently_completed_projects(pos_integer()) :: [Project.t()]
-  def list_recently_completed_projects(limit \\ 5) do
+  @spec list_recently_completed_projects(pos_integer(), keyword()) :: [Project.t()]
+  def list_recently_completed_projects(limit \\ 5, opts \\ []) do
     Project
     |> where(
       [p],
       p.is_template == false and is_nil(p.archived_at) and not is_nil(p.completed_at)
     )
     |> exclude_subprojects()
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> order_by([p], desc: p.completed_at)
     |> limit(^limit)
     |> repo().all()
   end
 
   @doc "Scheduled projects waiting to start."
-  @spec list_upcoming_projects() :: [Project.t()]
-  def list_upcoming_projects do
+  @spec list_upcoming_projects(keyword()) :: [Project.t()]
+  def list_upcoming_projects(opts \\ []) do
     Project
     |> where(
       [p],
@@ -1479,20 +1614,22 @@ defmodule PhoenixKitProjects.Projects do
         p.start_mode == "scheduled" and not is_nil(p.scheduled_start_date)
     )
     |> exclude_subprojects()
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> order_by([p], asc: p.scheduled_start_date)
     |> repo().all()
   end
 
   @doc "Projects not yet started, in setup (immediate mode, not scheduled)."
-  @spec list_setup_projects() :: [Project.t()]
-  def list_setup_projects do
+  @spec list_setup_projects(keyword()) :: [Project.t()]
+  def list_setup_projects(opts \\ []) do
     Project
     |> where(
       [p],
       p.is_template == false and is_nil(p.archived_at) and is_nil(p.started_at) and
-        p.start_mode == "immediate"
+        p.start_mode == "immediate" and not lifecycle_off(p.settings)
     )
     |> exclude_subprojects()
+    |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
     |> order_by([p], desc: p.inserted_at)
     |> repo().all()
   end
@@ -1537,7 +1674,7 @@ defmodule PhoenixKitProjects.Projects do
   """
   @spec list_assignments_for_user(uuid()) :: [Assignment.t()]
   def list_assignments_for_user(user_uuid) do
-    case PhoenixKitStaff.Staff.get_person_by_user_uuid(user_uuid, preload: []) do
+    case PhoenixKitProjects.People.get_person_by_user_uuid(user_uuid, preload: []) do
       nil ->
         []
 
@@ -1834,30 +1971,43 @@ defmodule PhoenixKitProjects.Projects do
   @spec create_project_from_template(uuid(), map()) ::
           {:ok, Project.t()}
           | {:error, :template_not_found | Ecto.Changeset.t() | term()}
-  def create_project_from_template(template_uuid, project_attrs) do
+  def create_project_from_template(template_uuid, project_attrs, opts \\ []) do
+    # is_template guard (creation-panel find): a crafted uuid must not
+    # clone an arbitrary project — with settings/extensions now carried,
+    # the copied payload got wider.
     case get_project(template_uuid) do
-      nil -> {:error, :template_not_found}
-      template -> clone_template(template, project_attrs)
+      %Project{is_template: true} = template -> clone_template(template, project_attrs, opts)
+      _ -> {:error, :template_not_found}
     end
   end
 
-  defp clone_template(template, project_attrs) do
-    # The caller's settings (if any) are preserved; the back-link key is
-    # forced. It makes the clone countable by `template_usage/1` long
-    # after the activity log's retention window has pruned the event.
+  defp clone_template(template, project_attrs, opts) do
+    # Capability carry (the creation-page brainstorm's union rule): the
+    # TEMPLATE's own settings — feature flags, authz overrides, status
+    # translation mode — are the base layer; caller-provided settings
+    # overlay them (explicit choices win); the back-link key is forced.
+    # It makes the clone countable by `template_usage/1` long after the
+    # activity log's retention window has pruned the event.
     settings =
-      project_attrs
-      |> Map.get("settings", %{})
+      template.settings
+      |> Map.merge(Map.get(project_attrs, "settings", %{}))
       |> Map.put("created_from_template_uuid", template.uuid)
+
+    # The form's explicit status-set choice wins; blank/absent inherits
+    # the template's catalog (nil = shared). The clone reads it live
+    # until it starts, then cements.
+    status_entity_uuid =
+      case Map.get(project_attrs, "status_entity_uuid") do
+        uuid when is_binary(uuid) and uuid != "" -> uuid
+        _ -> template.status_entity_uuid
+      end
 
     attrs =
       Map.merge(project_attrs, %{
         "is_template" => "false",
         "counts_weekends" => to_string(template.counts_weekends),
         "settings" => settings,
-        # Inherit the template's chosen status catalog (nil = shared). The
-        # cloned project reads it live until it starts, then cements.
-        "status_entity_uuid" => template.status_entity_uuid
+        "status_entity_uuid" => status_entity_uuid
       })
 
     template_assignments = list_assignments(template.uuid)
@@ -1874,7 +2024,7 @@ defmodule PhoenixKitProjects.Projects do
     # Template clones are short and rare; the isolation cost is negligible.
     repo().transaction(
       fn ->
-        project = attrs |> create_project_in_tx() |> inherit_status_slug_in_tx(template)
+        project = attrs |> create_project_in_tx(opts) |> inherit_status_slug_in_tx(template)
         uuid_map = clone_assignments_in_tx(template_assignments, project)
         clone_dependencies_in_tx(template_deps, uuid_map)
         project
@@ -1887,12 +2037,37 @@ defmodule PhoenixKitProjects.Projects do
         # suppressed (`broadcast: false`); emit one `:project_created` now that
         # the whole tree has committed, so a rollback leaks nothing and
         # subscribers still learn the new project exists.
+        carry_template_extensions(template, project, opts)
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
         {:ok, project}
 
       {:error, _reason} = err ->
         err
     end
+  end
+
+  # Capability carry, extension half: the template's ENABLED extensions
+  # (with their configs) come along onto the clone. Best-effort after
+  # commit — a provider that vanished since the template was authored
+  # must not fail the create (enable/4 already refuses unavailable
+  # types). The creation form's own extension picks apply AFTER this and
+  # win (its explicit disables simply never enable here: enable-only
+  # carry can't turn something off).
+  defp carry_template_extensions(template, project, opts) do
+    template.uuid
+    |> PhoenixKitProjects.Extensions.list_rows()
+    |> Enum.filter(& &1.enabled)
+    |> Enum.each(fn row ->
+      PhoenixKitProjects.Extensions.enable(project.uuid, row.ext_key,
+        instance_key: row.instance_key,
+        config: row.config || %{},
+        actor_uuid: Keyword.get(opts, :actor_uuid)
+      )
+    end)
+
+    :ok
+  rescue
+    _ -> :ok
   end
 
   # Carry the template's selected status (a slug) onto the cloned project.
@@ -1910,10 +2085,11 @@ defmodule PhoenixKitProjects.Projects do
 
   defp inherit_status_slug_in_tx(project, _template), do: project
 
-  defp create_project_in_tx(attrs) do
+  defp create_project_in_tx(attrs, opts \\ []) do
     # `broadcast: false`: the project is created inside the clone transaction;
-    # `clone_template/2` emits a single `:project_created` after commit.
-    case create_project(attrs, broadcast: false) do
+    # `clone_template/3` emits a single `:project_created` after commit.
+    # `actor_uuid` rides through so the creator gets the owner seat (P2a).
+    case create_project(attrs, broadcast: false, actor_uuid: Keyword.get(opts, :actor_uuid)) do
       {:ok, project} -> project
       {:error, cs} -> repo().rollback(cs)
     end
@@ -2129,9 +2305,22 @@ defmodule PhoenixKitProjects.Projects do
     result =
       repo().transaction(fn ->
         case get_project(project_uuid) do
-          nil -> :ok
-          %Project{is_template: true} -> :ok
-          project -> decide_completion(project)
+          nil ->
+            :ok
+
+          %Project{is_template: true} ->
+            :ok
+
+          project ->
+            # A project with no lifecycle has no finish to reach. Checking
+            # the last item off a shared checklist is not an achievement
+            # to announce and file away — it is a checklist with
+            # everything checked, and it stays exactly where it was.
+            if PhoenixKitProjects.Features.on?(project, "lifecycle") do
+              decide_completion(project)
+            else
+              :ok
+            end
         end
       end)
       |> case do
@@ -2285,6 +2474,50 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
+  @doc """
+  What picking a template brings — the creation form's server-rendered
+  preview (the brainstorm's "preview consequences" consensus): task
+  count, the first few task titles (by position), the extensions the
+  clone will carry, and how many feature flags the template pins.
+  Cheap enough to run on selection; `nil` for an unknown uuid.
+  """
+  @spec template_preview(uuid()) :: map() | nil
+  def template_preview(template_uuid) when is_binary(template_uuid) do
+    case get_project(template_uuid) do
+      %Project{is_template: true} = template ->
+        assignments = list_assignments(template.uuid)
+
+        sample =
+          assignments
+          |> Enum.sort_by(& &1.position)
+          |> Enum.take(5)
+          |> Enum.map(&Assignment.label(&1, PhoenixKitProjects.L10n.current_content_lang()))
+          |> Enum.reject(&is_nil/1)
+
+        ext_rows =
+          template.uuid
+          |> PhoenixKitProjects.Extensions.list_rows()
+          |> Enum.filter(& &1.enabled)
+
+        %{
+          task_count: length(assignments),
+          sample_titles: sample,
+          extensions: Enum.map(ext_rows, & &1.ext_key),
+          extension_configs: Map.new(ext_rows, fn row -> {row.ext_key, row.config || %{}} end),
+          features: Map.get(template.settings, "features", %{}),
+          flag_count: template.settings |> Map.get("features", %{}) |> map_size(),
+          counts_weekends: template.counts_weekends == true
+        }
+
+      _ ->
+        nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  def template_preview(_), do: nil
+
   # ── Assignments ────────────────────────────────────────────────────
 
   @assignment_preloads [
@@ -2310,8 +2543,79 @@ defmodule PhoenixKitProjects.Projects do
   @spec list_assignments(uuid()) :: [Assignment.t()]
   def list_assignments(project_uuid) do
     Assignment
-    |> where([a], a.project_uuid == ^project_uuid)
+    |> where([a], a.project_uuid == ^project_uuid and a.review_status == "accepted")
     |> order_by([a], asc: a.position, asc: a.inserted_at)
+    |> preload(^@assignment_preloads)
+    |> repo().all()
+  end
+
+  defp maybe_pending_review(changeset, :pending) do
+    Ecto.Changeset.put_change(changeset, :review_status, "pending")
+  end
+
+  defp maybe_pending_review(changeset, _accepted), do: changeset
+
+  @doc """
+  Accepts or rejects a submission that is waiting on a decision.
+
+  Only ever moves a row OUT of `pending`: accepting an accepted task is a
+  no-op, and nothing here can push accepted work back into the queue, which
+  would make a decision somebody already took look undecided.
+
+  Rejected rows are kept rather than deleted. A public intake needs to be
+  able to answer "what did strangers send us, and what did we do about it",
+  and a deleted row answers neither.
+  """
+  @spec review_assignment(uuid(), :accepted | :rejected, keyword()) ::
+          {:ok, Assignment.t()} | {:error, term()}
+  def review_assignment(assignment_uuid, decision, opts \\ [])
+      when is_binary(assignment_uuid) and decision in [:accepted, :rejected] do
+    case repo().get(Assignment, assignment_uuid) do
+      nil ->
+        {:error, :not_found}
+
+      %Assignment{review_status: "pending"} = assignment ->
+        assignment
+        |> Ecto.Changeset.change(review_status: Atom.to_string(decision))
+        |> repo().update()
+        |> case do
+          {:ok, updated} ->
+            log_activity(%{
+              action: "projects.submission_#{decision}",
+              actor_uuid: Keyword.get(opts, :actor_uuid),
+              resource_type: "assignment",
+              resource_uuid: updated.uuid,
+              metadata: %{"project_uuid" => updated.project_uuid}
+            })
+
+            ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+              uuid: updated.uuid,
+              project_uuid: updated.project_uuid
+            })
+
+            {:ok, updated}
+
+          error ->
+            error
+        end
+
+      already ->
+        {:ok, already}
+    end
+  end
+
+  @doc """
+  Submissions still awaiting a decision, newest first.
+
+  Separate from `list_assignments/1` on purpose: these are not tasks yet,
+  so nothing that draws the project should be able to pick them up by
+  accident.
+  """
+  @spec list_pending_reviews(uuid()) :: [Assignment.t()]
+  def list_pending_reviews(project_uuid) when is_binary(project_uuid) do
+    Assignment
+    |> where([a], a.project_uuid == ^project_uuid and a.review_status == "pending")
+    |> order_by([a], desc: a.inserted_at)
     |> preload(^@assignment_preloads)
     |> repo().all()
   end
@@ -2361,7 +2665,19 @@ defmodule PhoenixKitProjects.Projects do
     attrs =
       put_default_position(attrs, fn -> next_assignment_position(project_uuid) end)
 
-    with {:ok, a} <- %Assignment{} |> Assignment.changeset(attrs) |> repo().insert() do
+    # Sorted on creation by default: somebody sitting in the admin who adds
+    # a task has, by the act of adding it, decided it belongs here. Callers
+    # that receive work from OUTSIDE — the public portal — pass
+    # `sorted: false`, and that is what fills the triage queue.
+    #
+    # Not castable, deliberately, for the same reason `source` is not: it
+    # records a decision a person made, so it must come from trusted code
+    # rather than from whatever the caller put in a params map.
+    with {:ok, a} <-
+           %Assignment{}
+           |> Assignment.changeset(attrs)
+           |> maybe_pending_review(Keyword.get(opts, :review, :accepted))
+           |> repo().insert() do
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_created, %{
           uuid: a.uuid,
@@ -3097,6 +3413,10 @@ defmodule PhoenixKitProjects.Projects do
   @spec delete_assignment(Assignment.t()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t() | term()}
   def delete_assignment(%Assignment{child_project_uuid: nil} = a) do
+    # Before the row goes: the portal submission cascades with it, and
+    # once that is gone nothing points at the screenshots it carried.
+    PhoenixKitProjects.Portal.delete_attachments_for(a.uuid)
+
     with {:ok, deleted} <- repo().delete(a) do
       ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
         uuid: deleted.uuid,

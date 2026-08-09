@@ -33,7 +33,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       sort_dir: [default: :desc, cast: :atom, in: [:asc, :desc], url_key: "dir"]
     ]
 
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -69,6 +69,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   @optional_columns ~w(status tasks created updated created_by external_id)
   @default_columns ~w(status)
   @columns_key "projects_list_columns"
+  @views_key "projects_list_views"
 
   @impl true
   def mount(_params, session, socket) do
@@ -123,7 +124,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         # (without provisioning it); `nil` = no filter. Hidden when
         # entities is unavailable or the shared list has no statuses yet.
         statuses_available: Statuses.available?(),
-        status_options: status_filter_options()
+        status_options: status_filter_options(),
+        saved_views: ListUi.read_views(@views_key)
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
@@ -158,7 +160,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   defp load_projects(socket) do
     status_slug = socket.assigns[:status_filter]
     search = socket.assigns.search
-    total = Projects.count_projects(archived: false)
+
+    total =
+      Projects.count_projects_for(socket.assigns[:phoenix_kit_current_scope], archived: false)
+
     local_search? = total <= @local_search_threshold
 
     base_opts = [
@@ -184,7 +189,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         end)
       end
 
-    projects = Projects.list_projects(list_opts)
+    # Scoped to the viewer: the index showed every project on the site to
+    # anyone who could reach the module, which since the permission split
+    # is a population that legitimately includes contractors. Admins with
+    # projects.admin_all still see everything.
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    projects = Projects.list_projects_for(scope, list_opts)
     uuids = Enum.map(projects, & &1.uuid)
     visible = socket.assigns.visible_columns
 
@@ -196,7 +206,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         if(local_search?,
           do: total,
           else:
-            Projects.count_projects(
+            Projects.count_projects_for(scope,
               archived: false,
               current_status_slug: status_slug || :all,
               search: search
@@ -248,6 +258,22 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       />
     </form>
     """
+  end
+
+  # Stored view status filters re-validate against the live options —
+  # a renamed/removed status degrades to "no filter".
+  defp safe_status_filter(status, options) when is_binary(status) do
+    if Enum.any?(options, fn {_label, slug} -> slug == status end), do: status
+  end
+
+  defp safe_status_filter(_status, _options), do: nil
+
+  # Stored view sort fields re-validate against the roster (atom-safe).
+  defp safe_sort_field(str, fallback) do
+    case Enum.find(@sort_fields, &(Atom.to_string(&1) == str)) do
+      nil -> fallback
+      field -> field
+    end
   end
 
   defp sort_options do
@@ -338,6 +364,64 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
+
+  # ── Saved views (Step 19): SHARED named presets of the list state
+  # (sort + status filter + columns), the columns-persistence precedent.
+
+  def handle_event("save_view", %{"name" => name}, socket) do
+    name = String.trim(to_string(name))
+
+    if name == "" do
+      {:noreply, put_flash(socket, :error, gettext("Give the view a name."))}
+    else
+      state = %{
+        "sort_by" => Atom.to_string(socket.assigns.sort_by),
+        "sort_dir" => Atom.to_string(socket.assigns.sort_dir),
+        "status" => socket.assigns.status_filter,
+        "columns" => socket.assigns.visible_columns
+      }
+
+      views = ListUi.save_view(@views_key, String.slice(name, 0, 60), state)
+
+      {:noreply,
+       socket
+       |> assign(saved_views: views)
+       |> put_flash(:info, gettext("View saved."))}
+    end
+  end
+
+  def handle_event("apply_view", %{"name" => name}, socket) do
+    case Enum.find(socket.assigns.saved_views, &(&1["name"] == name)) do
+      nil ->
+        {:noreply, socket}
+
+      view ->
+        # Every stored field re-validates against the live rosters —
+        # a stale view (renamed status, removed column) degrades to the
+        # current defaults instead of crashing or leaking junk state.
+        sort_by = safe_sort_field(view["sort_by"], socket.assigns.sort_by)
+        sort_dir = if view["sort_dir"] == "asc", do: :asc, else: :desc
+
+        status = safe_status_filter(view["status"], socket.assigns.status_options)
+
+        columns = Enum.filter(@optional_columns, &(&1 in List.wrap(view["columns"])))
+
+        {:noreply,
+         socket
+         |> assign(
+           sort_by: sort_by,
+           sort_dir: sort_dir,
+           status_filter: status,
+           visible_columns: columns,
+           loaded_count: @per_batch
+         )
+         |> load_projects()}
+    end
+  end
+
+  def handle_event("delete_view", %{"name" => name}, socket) do
+    {:noreply, assign(socket, saved_views: ListUi.delete_view(@views_key, name))}
+  end
 
   # The bulk toolbar's Reorder button pushes this event with the
   # currently-selected UUIDs (gathered from the DOM by the
@@ -446,25 +530,45 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   def handle_event("delete", %{"uuid" => uuid}, socket) do
+    # Existence was the only check here: a client event naming any project
+    # uuid deleted it, whatever the sender's relationship to it. The list is
+    # scoped now, but a handler must never trust that the row came from the
+    # rendered page.
     case Projects.get_project(uuid) do
       nil ->
         {:noreply, put_flash(socket, :error, gettext("Project not found."))}
 
       project ->
-        case Projects.delete_project(project) do
-          {:ok, _} ->
-            log_and_flash_deleted(socket, project)
+        delete_if_permitted(socket, project)
+    end
+  end
 
-          {:error, _} ->
-            Activity.log_failed("projects.project_deleted",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "project",
-              resource_uuid: project.uuid,
-              metadata: %{"name" => project.name}
-            )
+  defp delete_if_permitted(socket, project) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
 
-            {:noreply, put_flash(socket, :error, gettext("Could not delete project."))}
-        end
+    if Authz.can?(scope, project, :delete_project) do
+      do_delete(socket, project)
+    else
+      # Same shape as not-found: whether the project exists is not something
+      # a caller without access should be able to probe.
+      {:noreply, put_flash(socket, :error, gettext("Project not found."))}
+    end
+  end
+
+  defp do_delete(socket, project) do
+    case Projects.delete_project(project) do
+      {:ok, _} ->
+        log_and_flash_deleted(socket, project)
+
+      {:error, _} ->
+        Activity.log_failed("projects.project_deleted",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: project.uuid,
+          metadata: %{"name" => project.name}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not delete project."))}
     end
   end
 
@@ -574,6 +678,58 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
               />
               {status_filter_control(assigns)}
               <ListUi.columns_control options={column_options()} visible={@visible_columns} />
+              <%!-- Saved views (Step 19): SHARED named presets of sort +
+                   status filter + columns (the columns precedent). --%>
+              <div class="dropdown">
+                <div tabindex="0" role="button" class="btn btn-sm btn-ghost">
+                  <.icon name="hero-bookmark" class="w-4 h-4" /> {gettext("Views")}
+                </div>
+                <div
+                  tabindex="0"
+                  class="dropdown-content z-20 bg-base-100 rounded-box border border-base-200 shadow-md w-64 p-2 flex flex-col gap-1"
+                >
+                  <p :if={@saved_views == []} class="text-xs opacity-50 px-1 py-1">
+                    {gettext("No saved views yet.")}
+                  </p>
+                  <div
+                    :for={view <- @saved_views}
+                    class="flex items-center gap-1 rounded-lg hover:bg-base-200 px-1"
+                  >
+                    <button
+                      type="button"
+                      phx-click="apply_view"
+                      phx-value-name={view["name"]}
+                      class="flex-1 text-left text-sm px-1 py-1.5 cursor-pointer truncate"
+                    >
+                      {view["name"]}
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="delete_view"
+                      phx-value-name={view["name"]}
+                      data-confirm={gettext("Delete the \"%{name}\" view?", name: view["name"])}
+                      aria-label={gettext("Delete %{name}", name: view["name"])}
+                      class="btn btn-ghost btn-xs text-error"
+                    >
+                      <.icon name="hero-x-mark" class="w-3 h-3" />
+                    </button>
+                  </div>
+                  <form
+                    phx-submit="save_view"
+                    class="flex items-center gap-1 border-t border-base-200 pt-2 mt-1"
+                  >
+                    <input
+                      type="text"
+                      name="name"
+                      required
+                      maxlength="60"
+                      placeholder={gettext("Save current as…")}
+                      class="input input-bordered input-xs flex-1"
+                    />
+                    <button type="submit" class="btn btn-primary btn-xs">{gettext("Save")}</button>
+                  </form>
+                </div>
+              </div>
               <.search_toolbar
                 value={@search}
                 on_submit="search"

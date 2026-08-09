@@ -58,33 +58,45 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
          |> WebHelpers.close_or_navigate(Paths.projects())}
 
       project ->
-        # `topic_tasks` (global task-template edits) is constant; the per-project
-        # topics for the whole tree are subscribed in `load_gantt`/`subscribe_tree`.
-        if connected?(socket) do
-          ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
-        end
-
-        socket =
-          socket
-          |> assign(default_assigns(session))
-          |> assign(
-            page_title: Project.localized_name(project, L10n.current_content_lang()),
-            project: project,
-            is_template: project.is_template
-          )
-
-        # On the live (connected) mount, defer the per-project build off the first
-        # paint so the Timeline tab shows a skeleton immediately. The dead
-        # (HTTP/SEO/no-JS) render builds inline so it ships the real chart.
-        socket =
+        # Same :view gate as the show page, and for the same reason: this
+        # LV is on the embeddable allowlist, so it is reachable off-router
+        # with a client-supplied session and no on_mount to gate it.
+        # Templates stay exempt — they have no membership rows.
+        if WebHelpers.template_or_viewable?(project, socket.assigns[:phoenix_kit_current_scope]) do
+          # `topic_tasks` (global task-template edits) is constant; the per-project
+          # topics for the whole tree are subscribed in `load_gantt`/`subscribe_tree`.
           if connected?(socket) do
-            send(self(), :load_gantt)
-            assign(socket, gantt_loading: true)
-          else
-            load_gantt(socket)
+            ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
           end
 
-        {:ok, socket}
+          socket =
+            socket
+            |> assign(default_assigns(session))
+            |> assign(
+              page_title: Project.localized_name(project, L10n.current_content_lang()),
+              project: project,
+              is_template: project.is_template
+            )
+
+          # On the live (connected) mount, defer the per-project build off the first
+          # paint so the Timeline tab shows a skeleton immediately. The dead
+          # (HTTP/SEO/no-JS) render builds inline so it ships the real chart.
+          socket =
+            if connected?(socket) do
+              send(self(), :load_gantt)
+              assign(socket, gantt_loading: true)
+            else
+              load_gantt(socket)
+            end
+
+          {:ok, socket}
+        else
+          {:ok,
+           socket
+           |> assign(default_assigns(session))
+           |> put_flash(:error, gettext("Project not found."))
+           |> WebHelpers.close_or_navigate(Paths.projects())}
+        end
     end
   end
 

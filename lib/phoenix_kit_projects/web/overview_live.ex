@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   alias PhoenixKitProjects.{
     Activity,
     Assignees,
+    Authz,
     CalendarDisplay,
     L10n,
     Paths,
@@ -130,12 +131,31 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     {:ok, reload(socket)}
   end
 
+  # nil = no narrowing (a site admin). A non-admin with no resolvable user
+  # gets a uuid that matches nothing rather than the whole site.
+  defp overview_viewer(socket) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    if Authz.admin_all?(scope) do
+      nil
+    else
+      Authz.subject_user_uuid_of(scope) || Ecto.UUID.generate()
+    end
+  end
+
   defp reload(socket) do
     user_uuid = socket.assigns[:user_uuid]
-    active_projects = Projects.list_active_projects()
-    completed_projects = Projects.list_recently_completed_projects()
-    upcoming_projects = Projects.list_upcoming_projects()
-    setup_projects = Projects.list_setup_projects()
+
+    # The dashboard buckets are scoped to the viewer for the same reason
+    # the index is: without it, every project on the site is named to
+    # anyone who can reach the module. Admins with projects.admin_all get
+    # the unscoped view (viewer: nil).
+    viewer = overview_viewer(socket)
+
+    active_projects = Projects.list_active_projects(viewer: viewer)
+    completed_projects = Projects.list_recently_completed_projects(5, viewer: viewer)
+    upcoming_projects = Projects.list_upcoming_projects(viewer: viewer)
+    setup_projects = Projects.list_setup_projects(viewer: viewer)
 
     any_projects? =
       active_projects != [] or completed_projects != [] or upcoming_projects != [] or
@@ -366,11 +386,16 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   defp ensure_task_calendar(%{assigns: %{task_calendar_loaded?: true}} = socket), do: socket
 
   defp ensure_task_calendar(socket) do
+    # All three take the viewer. The dashboard buckets above were scoped
+    # and these copies were not, so the calendar still enumerated every
+    # project's name and schedule to anyone who could reach the module.
+    viewer = overview_viewer(socket)
+
     load_task_calendar(
       socket,
-      Projects.list_active_projects(),
-      Projects.list_upcoming_projects(),
-      Projects.list_recently_completed_projects(),
+      Projects.list_active_projects(viewer: viewer),
+      Projects.list_upcoming_projects(viewer: viewer),
+      Projects.list_recently_completed_projects(5, viewer: viewer),
       resolve_offset(socket)
     )
   end
