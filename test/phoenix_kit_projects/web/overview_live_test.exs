@@ -161,6 +161,16 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     # Starts at 00:05 UTC TODAY (not "now") so the sequential walk keeps every
     # short task inside today — anchored at now, a run near UTC midnight pushes
     # the tail tasks past midnight and out of today's popup (observed flake).
+    # Like calendar_fixture/1 but started two hours ago, so its 10-minute
+    # task is late at every hour of the day. Still inside the rendered
+    # month, which is all the late-chip assertion needs.
+    defp late_calendar_fixture do
+      {project, assignments} = calendar_fixture(1)
+      started_at = DateTime.utc_now() |> DateTime.add(-2 * 60 * 60, :second)
+      {:ok, _} = Projects.start_project(Projects.get_project!(project.uuid), started_at)
+      {Projects.get_project!(project.uuid), assignments}
+    end
+
     defp calendar_fixture(n) do
       project =
         fixture_project(%{
@@ -169,6 +179,10 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
           "counts_weekends" => true
         })
 
+      # Anchored to TODAY, because the popup tests click today's cell. Note
+      # this says nothing about whether the task is LATE — a task starting
+      # today isn't late until its duration has elapsed, which is why the
+      # late-chip test uses its own fixture rather than this one.
       early_today = DateTime.new!(Date.utc_today(), ~T[00:05:00], "Etc/UTC")
       {:ok, _} = Projects.start_project(project, early_today)
       project = Projects.get_project!(project.uuid)
@@ -235,10 +249,12 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
     test "late chips default to the overdue pattern; the ring is the opt-in alternative",
          %{conn: conn} do
-      # A late chip that lands on TODAY's cell (a month-old span wouldn't be
-      # in the rendered month): 10-minute task anchored at 00:05 UTC today —
-      # same convention as calendar_fixture, late whenever now > 00:15.
-      {_project, _} = calendar_fixture(1)
+      # A late chip inside the rendered month. Deliberately NOT
+      # calendar_fixture/1: that one anchors to today so the popup tests can
+      # click today's cell, and a task that STARTED today is not late until
+      # its duration has elapsed — which made this test fail every day
+      # between 00:05 and 00:15 UTC.
+      {_project, _} = late_calendar_fixture()
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
       open_calendar_tab(view)

@@ -204,6 +204,23 @@ defmodule PhoenixKitProjects.Portal do
 
   def access_mode_of(_), do: "link"
 
+  @doc """
+  The portal and project behind a slug, but ONLY when it is a public board.
+
+  For the response-header and social-preview decisions, which are made
+  before the page renders and must be conservative: anything this cannot
+  confirm is a portal to be treated as secret.
+  """
+  @spec get_public_board(String.t()) :: {:ok, PortalRow.t(), map()} | :none
+  def get_public_board(slug) when is_binary(slug) do
+    case resolve(slug, nil) do
+      {:ok, %PortalRow{access_mode: "public"} = portal, project} -> {:ok, portal, project}
+      _ -> :none
+    end
+  end
+
+  def get_public_board(_), do: :none
+
   @doc "Whether a portal capability flag is on for the project."
   @spec capability?(map(), :submit | :list | :status) :: boolean()
   def capability?(project, cap) when cap in [:submit, :list, :status] do
