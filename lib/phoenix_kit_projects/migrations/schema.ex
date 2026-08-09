@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 13
+  @current_version 14
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -110,6 +110,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v11_subject_grants(p, prefix)
     v12_public_board(p)
     v13_submission_attachments(p)
+    v14_sorted_at(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -134,6 +135,15 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 14 do
+      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_unsorted_idx")
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_assignments
+        DROP COLUMN IF EXISTS sorted_at
+      """)
+    end
 
     if target < 13 do
       execute("""
@@ -847,6 +857,40 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # and a file deleted by a retention job must not take the submission
   # with it — the reference simply stops resolving, which is what the
   # render path already handles for every other resource.
+  # When a human decided where this task belongs — NULL until they do.
+  #
+  # "Unsorted" used to mean "arrived from the public board and nobody has
+  # started it", which described where a task came from rather than any
+  # state of it, and left the word promising an action that did not exist:
+  # the only way to stop being unsorted was to start the work. Sorting and
+  # starting are different decisions, and a triage queue has to survive
+  # somebody triaging without picking the task up.
+  #
+  # Backfilled to `inserted_at` for everything that already exists EXCEPT
+  # portal submissions. Anything created inside the admin was placed by the
+  # person who created it; the inbound pile is exactly what nobody has
+  # looked at yet, and that is the queue this column exists to hold.
+  defp v14_sorted_at(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD COLUMN IF NOT EXISTS sorted_at TIMESTAMPTZ
+    """)
+
+    execute("""
+    UPDATE #{p}phoenix_kit_project_assignments
+    SET sorted_at = inserted_at
+    WHERE sorted_at IS NULL AND (source IS NULL OR source <> 'portal')
+    """)
+
+    # The unsorted queue is a small slice of a big table, and it is read on
+    # every hub load to draw the count.
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_unsorted_idx
+      ON #{p}phoenix_kit_project_assignments (project_uuid)
+      WHERE sorted_at IS NULL
+    """)
+  end
+
   defp v13_submission_attachments(p) do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_portal_submissions

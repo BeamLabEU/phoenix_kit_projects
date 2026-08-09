@@ -668,8 +668,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp matches_status?(_a, _status), do: true
 
   defp matches_source?(_a, "all"), do: true
-  defp matches_source?(a, "portal"), do: a.source == "portal"
-  defp matches_source?(a, "internal"), do: a.source != "portal"
+  defp matches_source?(a, "portal"), do: is_nil(a.sorted_at)
+  defp matches_source?(a, "internal"), do: not is_nil(a.sorted_at)
 
   defp sort_list(assignments, :position), do: assignments
 
@@ -686,10 +686,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       total: length(all),
       active: Enum.count(all, &(&1.status != "done")),
       done: Enum.count(all, &(&1.status == "done")),
-      # Untriaged inbound: submitted from the public board and not yet
-      # picked up. This is the number that was buried at the bottom of the
-      # list, because new assignments append.
-      portal_new: Enum.count(all, &(&1.source == "portal" and &1.status == "todo"))
+      # Arrived, and nobody has placed it. A real state now rather than a
+      # guess from "came from the portal and hasn't been started" — which
+      # described where a task came from, could only be cleared by starting
+      # the work, and left the word promising an action that did not exist.
+      portal_new: Enum.count(all, &is_nil(&1.sorted_at))
     }
   end
 
@@ -964,6 +965,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   icon="hero-pencil"
                   label={gettext("Edit")}
                 />
+                <.table_row_menu_button
+                  :if={is_nil(@a.sorted_at)}
+                  phx-click="mark_sorted"
+                  phx-value-uuid={@a.uuid}
+                  phx-disable-with={gettext("Sorting…")}
+                  icon="hero-inbox-arrow-down"
+                  label={gettext("Mark as sorted")}
+                />
                 <.table_row_menu_divider />
                 <.table_row_menu_button
                   phx-click="remove_assignment"
@@ -1163,6 +1172,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "reopen" => :tasks,
     "remove_assignment" => :tasks,
     "reorder_assignments" => :tasks,
+    "mark_sorted" => :tasks,
     "edit_duration" => :estimates,
     "save_duration" => :estimates,
     "update_progress" => :progress,
@@ -1206,6 +1216,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "toggle_tracking" => :update_status,
     "remove_assignment" => :delete_tasks,
     "reorder_assignments" => :edit_tasks,
+    # Placing a task in the plan is the same class of decision as
+    # reordering one — it changes where the work sits, not what it is.
+    "mark_sorted" => :edit_tasks,
     "save_duration" => :edit_tasks,
     "remove_dependency" => :edit_tasks,
     "detach_subproject" => :edit_tasks,
@@ -1219,7 +1232,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # here (rather than passing nil) is what keeps "assignees can update
   # their own status" true through the interceptor.
   @record_param_events ~w(complete start_task reopen change_workflow_status
-                          update_progress toggle_tracking remove_assignment save_duration)
+                          update_progress toggle_tracking remove_assignment save_duration
+                          mark_sorted)
 
   @impl true
   def handle_event(event, params, socket) do
@@ -1272,6 +1286,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Every value is whitelisted in the guard rather than trusted: these
   # reach a comparison and an atom, and `String.to_existing_atom/1` on
   # unfiltered input is how a client picks the atom table apart.
+  defp gated_handle_event("mark_sorted", %{"uuid" => uuid}, socket) do
+    case scoped_assignment(socket, uuid) do
+      nil ->
+        {:noreply, socket}
+
+      assignment ->
+        Projects.mark_sorted(assignment.uuid, actor_uuid: Activity.actor_uuid(socket))
+        {:noreply, load_assignments(socket)}
+    end
+  end
+
   defp gated_handle_event("list_filter_status", %{"tab" => status}, socket)
        when status in ["active", "done", "all"] do
     {:noreply, socket |> assign(list_status: status) |> apply_list_lens()}
@@ -1897,6 +1922,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            actor_uuid: Activity.actor_uuid(socket)
          ) do
       :ok ->
+        # Placing a card in the order is the act the queue was waiting for,
+        # so nobody should have to say it twice via the menu.
+        Projects.mark_sorted_many(ordered_ids)
+
         {:noreply,
          socket
          |> push_event("sortable:flash", %{uuid: moved_id, status: "ok"})

@@ -874,6 +874,60 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert number_for(all, active.uuid) == "2"
     end
 
+    test "unsorted is a state a person can clear, not a guess about provenance", %{
+      conn: conn,
+      project: project
+    } do
+      # Created in the admin: whoever added it decided it belongs here, so
+      # it is placed on arrival and never enters the queue.
+      placed = task_named(project, "Planned #{System.unique_integer([:positive])}", "todo")
+      refute is_nil(Projects.get_assignment(placed.uuid).sorted_at)
+
+      # Arrived from outside: nobody inside has looked at it yet.
+      inbound = task_named(project, "Inbound #{System.unique_integer([:positive])}", "todo")
+
+      {:ok, _} =
+        inbound
+        |> Ecto.Changeset.change(sorted_at: nil, source: "portal")
+        |> Repo.update()
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      assert html =~ "Unsorted"
+
+      only_unsorted =
+        view |> element("button[phx-value-source=portal]") |> render_click()
+
+      assert list_rows(only_unsorted) == [inbound.uuid]
+
+      # The action the menu was missing. Sorting is a decision of its own —
+      # it must not require starting the work.
+      view
+      |> element(~s(button[phx-click="mark_sorted"][phx-value-uuid="#{inbound.uuid}"]))
+      |> render_click()
+
+      refute is_nil(Projects.get_assignment(inbound.uuid).sorted_at)
+      assert Projects.get_assignment(inbound.uuid).status == "todo"
+    end
+
+    test "dragging a task into place sorts it, without anyone saying so twice", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      {:ok, _} = active |> Ecto.Changeset.change(sorted_at: nil) |> Repo.update()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      view |> element("button[phx-value-tab=all]") |> render_click()
+
+      render_hook(view, "reorder_assignments", %{
+        "ordered_ids" => [active.uuid, done.uuid],
+        "moved_id" => active.uuid
+      })
+
+      refute is_nil(Projects.get_assignment(active.uuid).sorted_at)
+    end
+
     test "the rail and the drag handles are gone under a lens", %{conn: conn, project: project} do
       {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
 

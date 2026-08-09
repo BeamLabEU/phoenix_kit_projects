@@ -1335,7 +1335,10 @@ defmodule PhoenixKitProjects.Portal do
                    # marker.
                    "status" => "todo"
                  },
-                 broadcast: false
+                 broadcast: false,
+                 # The whole point of the triage queue: this arrived from
+                 # outside and nobody inside has decided where it belongs.
+                 sorted: false
                ),
              {:ok, assignment} <-
                assignment

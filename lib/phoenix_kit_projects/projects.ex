@@ -2549,6 +2549,66 @@ defmodule PhoenixKitProjects.Projects do
     |> repo().all()
   end
 
+  defp maybe_mark_sorted(changeset, false), do: changeset
+
+  defp maybe_mark_sorted(changeset, _sorted) do
+    Ecto.Changeset.put_change(changeset, :sorted_at, DateTime.utc_now(:second))
+  end
+
+  @doc """
+  Marks a task as placed in the plan — what "sorting" actually IS.
+
+  Idempotent, and never un-sorts: the queue is a list of things nobody has
+  looked at, so a second decision is not a different one.
+  """
+  @spec mark_sorted(uuid(), keyword()) :: {:ok, Assignment.t()} | {:error, term()}
+  def mark_sorted(assignment_uuid, opts \\ []) when is_binary(assignment_uuid) do
+    case repo().get(Assignment, assignment_uuid) do
+      nil ->
+        {:error, :not_found}
+
+      %Assignment{sorted_at: %DateTime{}} = already ->
+        {:ok, already}
+
+      assignment ->
+        assignment
+        |> Ecto.Changeset.change(sorted_at: DateTime.utc_now(:second))
+        |> repo().update()
+        |> case do
+          {:ok, updated} ->
+            log_activity(%{
+              action: "projects.assignment_sorted",
+              actor_uuid: Keyword.get(opts, :actor_uuid),
+              resource_type: "assignment",
+              resource_uuid: updated.uuid,
+              metadata: %{"project_uuid" => updated.project_uuid}
+            })
+
+            {:ok, updated}
+
+          error ->
+            error
+        end
+    end
+  end
+
+  @doc """
+  Marks several as placed at once — the drag handler's path.
+
+  Dragging a task into position IS placing it, so a reorder that touches an
+  unsorted task takes it out of the queue without anyone having to say so
+  twice.
+  """
+  @spec mark_sorted_many([uuid()]) :: :ok
+  def mark_sorted_many([]), do: :ok
+
+  def mark_sorted_many(uuids) when is_list(uuids) do
+    from(a in Assignment, where: a.uuid in ^uuids and is_nil(a.sorted_at))
+    |> repo().update_all(set: [sorted_at: DateTime.utc_now(:second)])
+
+    :ok
+  end
+
   @doc "Fetches an assignment by uuid with related records preloaded, or `nil` if not found."
   @spec get_assignment(uuid()) :: Assignment.t() | nil
   def get_assignment(uuid) do
@@ -2594,7 +2654,19 @@ defmodule PhoenixKitProjects.Projects do
     attrs =
       put_default_position(attrs, fn -> next_assignment_position(project_uuid) end)
 
-    with {:ok, a} <- %Assignment{} |> Assignment.changeset(attrs) |> repo().insert() do
+    # Sorted on creation by default: somebody sitting in the admin who adds
+    # a task has, by the act of adding it, decided it belongs here. Callers
+    # that receive work from OUTSIDE — the public portal — pass
+    # `sorted: false`, and that is what fills the triage queue.
+    #
+    # Not castable, deliberately, for the same reason `source` is not: it
+    # records a decision a person made, so it must come from trusted code
+    # rather than from whatever the caller put in a params map.
+    with {:ok, a} <-
+           %Assignment{}
+           |> Assignment.changeset(attrs)
+           |> maybe_mark_sorted(Keyword.get(opts, :sorted, true))
+           |> repo().insert() do
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_created, %{
           uuid: a.uuid,

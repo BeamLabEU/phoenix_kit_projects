@@ -90,6 +90,10 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     # older, narrower promise. Nil = not on a public board.
     field(:board_published_at, :utc_datetime)
     field(:source, :string, default: "internal")
+    # When a human decided where this belongs. NULL is the triage queue:
+    # it arrived, and nobody has placed it yet. Distinct from `status`,
+    # because sorting a task and starting it are different decisions.
+    field(:sorted_at, :utc_datetime)
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
