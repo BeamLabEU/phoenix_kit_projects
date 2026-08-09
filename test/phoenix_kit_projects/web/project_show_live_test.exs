@@ -911,6 +911,60 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert Projects.get_assignment(pending.uuid).review_status == "accepted"
     end
 
+    test "a submission opens to show what the person actually sent", %{
+      conn: conn,
+      project: project
+    } do
+      first = task_named(project, "First report #{System.unique_integer([:positive])}", "todo")
+      second = task_named(project, "Second report #{System.unique_integer([:positive])}", "todo")
+
+      for a <- [first, second] do
+        {:ok, _} =
+          a
+          |> Ecto.Changeset.change(
+            review_status: "pending",
+            source: "portal",
+            description: "Steps for #{a.uuid}"
+          )
+          |> Repo.update()
+      end
+
+      # Both rows land in the same second (utc_datetime truncation), so
+      # backdate one or "newest first" has no defined answer.
+      {:ok, _} =
+        first
+        |> Ecto.Changeset.change(inserted_at: ~U[2026-01-01 00:00:00Z])
+        |> Repo.update()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      opened = view |> element(~s(button[phx-click="open_review"])) |> render_click()
+
+      assert opened =~ "Submissions to review"
+
+      # Newest first, and the top one is already expanded — with a single
+      # submission waiting, which is the common case, an extra click to see
+      # anything at all tells nobody anything.
+      assert opened =~ "Steps for #{second.uuid}"
+      refute opened =~ "Steps for #{first.uuid}"
+
+      switched =
+        view
+        |> element(~s(button[phx-click="select_review"][phx-value-uuid="#{first.uuid}"]))
+        |> render_click()
+
+      assert switched =~ "Steps for #{first.uuid}"
+      refute switched =~ "Steps for #{second.uuid}"
+
+      # Clicking the open one closes it, so the dialog reads back down to a
+      # list without hunting for a control.
+      collapsed =
+        view
+        |> element(~s(button[phx-click="select_review"][phx-value-uuid="#{first.uuid}"]))
+        |> render_click()
+
+      refute collapsed =~ "Steps for #{first.uuid}"
+    end
+
     test "rejecting keeps the record and shows it to nobody", %{conn: conn, project: project} do
       pending = task_named(project, "Spam #{System.unique_integer([:positive])}", "todo")
 

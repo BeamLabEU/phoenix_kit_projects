@@ -167,7 +167,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        list_status: "active",
        list_sort: :position,
        pending_reviews: [],
+       review_images: %{},
        review_open?: false,
+       review_selected: nil,
        subproject_summaries: %{},
        subproject_child_tasks: %{},
        ledger_totals: nil,
@@ -340,7 +342,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               list_status: "active",
               list_sort: :position,
               pending_reviews: [],
+              review_images: %{},
               review_open?: false,
+              review_selected: nil,
               subproject_summaries: %{},
               subproject_child_tasks: %{},
               # Work-ledger state (Step 10): totals strip + per-task logged
@@ -385,7 +389,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       # The not-found branch still renders the page shell, so every assign
       # the template reads has to exist here too.
       pending_reviews: [],
+      review_images: %{},
       review_open?: false,
+      review_selected: nil,
       list_status: "active",
       list_sort: :position,
       is_template: false,
@@ -618,7 +624,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       subproject_summaries: subproject_summaries,
       subproject_child_tasks: subproject_child_tasks
     )
-    |> assign(pending_reviews: Projects.list_pending_reviews(project_uuid))
+    |> assign_pending_reviews(project_uuid)
     |> apply_list_lens()
   end
 
@@ -668,7 +674,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> Map.new(fn {a, idx} -> {a.uuid, idx} end)
   end
 
-  defp review_images(assignment), do: Portal.review_images(assignment.uuid)
+  defp assign_pending_reviews(socket, project_uuid) do
+    pending = Projects.list_pending_reviews(project_uuid)
+
+    assign(socket,
+      pending_reviews: pending,
+      review_images: Map.new(pending, &{&1.uuid, Portal.review_images(&1.uuid)})
+    )
+  end
 
   defp matches_status?(_a, "all"), do: true
   # "Not finished", NOT "one of the two statuses I happened to think of".
@@ -1285,7 +1298,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # reach a comparison and an atom, and `String.to_existing_atom/1` on
   # unfiltered input is how a client picks the atom table apart.
   defp gated_handle_event("open_review", _params, socket) do
-    {:noreply, assign(socket, review_open?: true)}
+    # Opens on the first one already expanded. With a single submission
+    # waiting — the common case — that removes a click that told nobody
+    # anything.
+    first = socket.assigns[:pending_reviews] |> List.first() |> then(&(&1 && &1.uuid))
+    {:noreply, assign(socket, review_open?: true, review_selected: first)}
+  end
+
+  defp gated_handle_event("select_review", %{"uuid" => uuid}, socket) do
+    # Toggle: clicking the open one closes it, so the dialog can be read
+    # back down to a list without reaching for the chevron again.
+    selected = if socket.assigns[:review_selected] == uuid, do: nil, else: uuid
+    {:noreply, assign(socket, review_selected: selected)}
   end
 
   defp gated_handle_event("close_review", _params, socket) do
@@ -3006,20 +3030,52 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               {gettext("Sent from the public board. Accepting adds it to the project; rejecting keeps a record and shows nobody.")}
             </p>
 
-            <div class="flex flex-col gap-3 mt-4 max-h-[60vh] overflow-y-auto">
+            <div class="flex flex-col gap-2 mt-4 max-h-[60vh] overflow-y-auto">
               <div
                 :for={a <- @pending_reviews}
-                class="rounded-box border border-base-200 p-3 flex flex-col gap-2"
+                class={[
+                  "rounded-box border transition-colors",
+                  if(@review_selected == a.uuid,
+                    do: "border-info bg-base-200",
+                    else: "border-base-200"
+                  )
+                ]}
               >
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <p class="font-medium break-words">
-                      {TaskSchema.localized_title(a.task, L10n.current_content_lang())}
-                    </p>
-                    <p class="text-xs opacity-60">
-                      <.time_ago datetime={a.inserted_at} />
-                    </p>
-                  </div>
+                <%!-- The whole header is the toggle. A submission is mostly
+                     unreadable at a glance — the title is a stranger's one
+                     line and the substance is underneath it — so opening one
+                     has to be the cheapest thing on this dialog. --%>
+                <div class="flex items-start justify-between gap-3 p-3">
+                  <button
+                    type="button"
+                    phx-click="select_review"
+                    phx-value-uuid={a.uuid}
+                    class="flex items-start gap-2 min-w-0 text-left flex-1"
+                    aria-expanded={to_string(@review_selected == a.uuid)}
+                  >
+                    <.icon
+                      name={
+                        if(@review_selected == a.uuid,
+                          do: "hero-chevron-down",
+                          else: "hero-chevron-right"
+                        )
+                      }
+                      class="w-4 h-4 mt-0.5 shrink-0 opacity-60"
+                    />
+                    <span class="min-w-0">
+                      <span class="font-medium break-words block">
+                        {TaskSchema.localized_title(a.task, L10n.current_content_lang())}
+                      </span>
+                      <span class="text-xs opacity-60 flex items-center gap-2">
+                        <.time_ago datetime={a.inserted_at} />
+                        <span :if={Map.get(@review_images, a.uuid, []) != []} class="flex items-center gap-1">
+                          <.icon name="hero-photo" class="w-3 h-3" />
+                          {length(Map.get(@review_images, a.uuid, []))}
+                        </span>
+                      </span>
+                    </span>
+                  </button>
+
                   <div class="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
@@ -3045,27 +3101,41 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   </div>
                 </div>
 
-                <p :if={a.description not in [nil, ""]} class="text-sm whitespace-pre-wrap break-words opacity-80">
-                  {a.description}
-                </p>
-
-                <%!-- The images the stranger attached. The decision to let
-                     something onto a public page has to be taken with the
-                     payload in view, not just its title. --%>
-                <div :if={review_images(a) != []} class="flex flex-wrap gap-2">
-                  <a
-                    :for={image <- review_images(a)}
-                    href={image.url}
-                    target="_blank"
-                    rel="noopener noreferrer nofollow"
+                <%!-- Everything the person actually sent. Rendered only for
+                     the open one: the images are signed URLs, and drawing
+                     every submission's attachments to decide on one of them
+                     is bandwidth nobody asked for. --%>
+                <div :if={@review_selected == a.uuid} class="px-3 pb-3 flex flex-col gap-3">
+                  <p
+                    :if={a.description not in [nil, ""]}
+                    class="text-sm whitespace-pre-wrap break-words opacity-80"
                   >
-                    <img
-                      src={image.url}
-                      alt={gettext("Submitted attachment")}
-                      loading="lazy"
-                      class="h-20 w-20 rounded-lg border border-base-300 object-cover"
-                    />
-                  </a>
+                    {a.description}
+                  </p>
+                  <p :if={a.description in [nil, ""]} class="text-sm italic opacity-50">
+                    {gettext("No description was given.")}
+                  </p>
+
+                  <div :if={Map.get(@review_images, a.uuid, []) != []} class="flex flex-wrap gap-2">
+                    <a
+                      :for={image <- Map.get(@review_images, a.uuid, [])}
+                      href={image.url}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      title={gettext("Open full size")}
+                    >
+                      <img
+                        src={image.url}
+                        alt={gettext("Submitted attachment")}
+                        loading="lazy"
+                        class="h-32 w-32 rounded-lg border border-base-300 object-cover hover:opacity-90"
+                      />
+                    </a>
+                  </div>
+
+                  <p class="text-xs opacity-50">
+                    {gettext("Sent from the public board. Re-encoded on arrival; the sender is anonymous.")}
+                  </p>
                 </div>
               </div>
             </div>
