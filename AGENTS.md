@@ -632,14 +632,15 @@ Conventions for these widget components:
 
 ## Versioning & Releases
 
-Versioning follows [SemVer](https://semver.org/). The version appears in two places that must stay in sync:
-
-1. `mix.exs` — the `@version` module attribute
-2. `lib/phoenix_kit_projects.ex` — `def version, do: "x.y.z"` (returned by the `PhoenixKit.Module` callback)
+Versioning follows [SemVer](https://semver.org/). The version is single-sourced
+in `mix.exs` (the `@version` module attribute).
+`lib/phoenix_kit_projects.ex` reads it at compile time
+(`@version Mix.Project.config()[:version]`, returned by the `PhoenixKit.Module`
+callback), so it cannot drift — there is nothing to keep in sync by hand.
 
 Release checklist:
 
-1. Bump both versions; add a `CHANGELOG.md` entry. Date the header in the
+1. Bump `@version` in `mix.exs`; add a `CHANGELOG.md` entry. Date the header in the
    workspace-standard format `## x.y.z - YYYY-MM-DD` (matches core
    `phoenix_kit`, `phoenix_kit_publishing`, `phoenix_kit_document_creator`).
 2. Run `mix precommit` — must exit clean
@@ -979,13 +980,14 @@ Informational only (never a delete-blocker). Counts projects/templates
 currently *sourcing* from a catalog entity — started projects no longer
 reference it (cemented), which is the intended semantics.
 
-### ⚠️ Cross-repo release ordering
-V125 ships in **core `phoenix_kit`**. This module pins `phoenix_kit
-~> 1.7.121`; the feature can't run until core releases V125 (≥1.7.122)
-and this pin is bumped. **Projects CI stays red until then** — same as
-catalogue #28 / core #570. The status test suite + the new columns
-require V125 in the projects build; develop/test locally via a temporary
-`{:phoenix_kit, path: "../phoenix_kit", override: true}` until the release.
+### Cross-repo release ordering
+V125 ships in **core `phoenix_kit`** — released, and long since below this
+module's floor (`~> 1.7.231`), so the status feature runs against any core
+the pin admits. The pattern still applies to the *next* cross-repo schema
+change: a migration this module needs can't run until core releases it and
+the `mix.exs` pin is bumped, and projects CI stays red in between. While
+iterating ahead of a core release, develop/test locally via
+`PHOENIX_KIT_PATH=../phoenix_kit` (see `pk_dep/3` in `mix.exs`).
 
 ## Sub-projects (project-as-task, core V127)
 
@@ -1133,10 +1135,10 @@ depth-capped propagation still fails closed on corrupt data as a backstop.
 ### Cross-repo schema dependency
 V127 (`child_project_uuid` on `phoenix_kit_project_assignments`) **and V128**
 (assignee columns on `phoenix_kit_projects`) live in **core `phoenix_kit`**
-(`@current_version` 128). Both shipped in `1.7.128`, which this module now pins
-as its floor (`~> 1.7.128`), so the sub-project features run against any released
-core. When iterating on the schema ahead of a core release, develop/test locally
-via a temporary `{:phoenix_kit, path: "../phoenix_kit", override: true}`. Tests:
+(`@current_version` 128). Both shipped in `1.7.128`, well below this module's
+current floor (`~> 1.7.231`), so the sub-project features run against any core
+the pin admits. When iterating on the schema ahead of a core release,
+develop/test locally via `PHOENIX_KIT_PATH=../phoenix_kit`. Tests:
 `test/phoenix_kit_projects/integration/subprojects_test.exs` (context) +
 `test/phoenix_kit_projects/web/project_show_subprojects_test.exs` (LV render).
 

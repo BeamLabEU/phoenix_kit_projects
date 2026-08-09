@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.20.0 - 2026-08-06
+
+**List state lives in the URL, and the core floor finally names what the module actually needs.** Search, status filter and sort on Projects / Tasks / Templates are now query-string state, so a filtered list is a real link — shareable, reload-proof, and Back returns to the previous query instead of leaving the page. They get there via core's `PhoenixKitWeb.Live.UrlState` in `mode: :history`, which never exports `handle_params/3` and so keeps all three LiveViews embeddable. That module first shipped in `phoenix_kit` 1.7.231, while the declared requirement still said 1.7.189 and the lock pinned 1.7.216 — a fresh `mix deps.get` resolved a core this module could not compile against. The floor moves to `~> 1.7.231`. Post-merge review of #34 (`dev_docs/pull_requests/2026/34-core-version-floor/CLAUDE_REVIEW.md`) verified the floor against core's history and fixed three documentation defects around it.
+
+### Added
+
+- **URL-backed list state** on `ProjectsLive`, `TasksLive` and `TemplatesLive` (`use PhoenixKitWeb.Live.UrlState, mode: :history`): search (`q`), sort field + direction (`sort` / `dir`), and — on Projects — the status filter (`status`). Deliberately *not* in the URL: `loaded_count` (a shared link would drag hundreds of rows), `visible_columns` (a stored per-user preference a link must not override), and the tasks List/Groups view mode (embedders preset it through the session, and a URL default would silently overwrite that on an embedded mount).
+
+### Changed
+
+- **Minimum `phoenix_kit` is now `~> 1.7.231`** — the release shipping `PhoenixKitWeb.Live.UrlState` and its `mode: :history` option. It supersedes the earlier floors (V125/V127/V128, 1.7.184 for the `Checkbox` attrs, 1.7.189 for `PhoenixKit.SchemaPrefix`). Bounded rather than open-ended: core minors are not assumed compatible, so a 1.8 core fails resolution here instead of surfacing as a compile error in a consumer's app.
+- **Dependency upgrades** — `phoenix_kit` → 1.7.232, plus transitive `etcher`, `leaf`, `mdex`, `oban`, `ranch`, `req`, `swoosh`, `tesla`.
+
+### Fixed
+
+- **`mix precommit` could not pass** — core 1.7.232 makes `igniter` an optional dependency, which drops it and seven transitive deps (`ex_ast`, `glob_ex`, `owl`, `rewrite`, `sourceror`, `spitfire`, `text_diff`) out of the resolved tree while leaving them stranded in `mix.lock`. The gate's `deps.unlock --check-unused` step aborted on them, so credo and dialyzer never ran. Lock pruned.
+- **The dependency comment in `mix.exs` mis-stated its own constraint** — it justified `~>` as excluding "a future 2.0" when `~> 1.7.231` in fact excludes 1.8.0, and its list of superseded floors had dropped 1.7.189 / `PhoenixKit.SchemaPrefix`, the very requirement being replaced.
+- **`AGENTS.md` documented the core floor as `~> 1.7.128` / `~> 1.7.121`** in two places, and carried a ⚠️ "Projects CI stays red until core releases V125" warning for a situation resolved a hundred-odd core releases ago. Both now reference the real floor; the release-ordering note is recast as the standing pattern for the next cross-repo schema change.
+
+## 0.19.1 - 2026-07-22
+
+**Migrate the four multilang forms onto `phoenix_kit_ai`'s bundled `ai_multilang_tabs`.** `AssignmentFormLive`, `ProjectFormLive`, `TaskFormLive`, and `TemplateFormLive` each replace a hand-rolled `<.multilang_tabs>` + sibling AI-translate button/progress/hint row with the single `<.ai_multilang_tabs>` component, dropping ~25 lines of duplicated markup. No behavior change; reviewed post-merge with no issues found (`dev_docs/pull_requests/2026/32-ai-multilang-tabs-migration/CLAUDE_REVIEW.md`).
+
+### Changed
+
+- **Multilang form tabs** now render via `phoenix_kit_ai`'s `<.ai_multilang_tabs>` instead of a hand-built tabs + AI-row pair, in `AssignmentFormLive`, `ProjectFormLive`, `TaskFormLive`, `TemplateFormLive`.
+
 ## 0.19.0 - 2026-07-20
 
 **Admin UI overhaul: shared list architecture, breadcrumb chrome, hybrid search.** Every list page (Projects / Tasks / Templates) now runs on one shared architecture (`Web.ListUi`): no in-content header row (create actions live in the admin breadcrumb + a list-foot add-row), optional-column dropdowns with batched lookups (Created by / Uses / Last used), recency-default sort, and a hybrid client/server search — the full set loads and filters client-side up to 100 rows, SQL `ilike` + pagination past that. The show page moved its identity into the site breadcrumb ("Admin Panel / Templates / ‹name›"), every title in the module is now a link, and the Tasks Groups view gained a responsive card grid with an icon-only List/Groups switcher in the toolbar. Rides several core additions not yet released to Hex (`BeamLabEU/phoenix_kit#650`) — the search-loading spinner and the Groups/List toggle silently no-op until that core version ships; see the review doc for detail. Closed out with a quality sweep (activity-logging error branches, dead-code removal, doc sync) and this release's own review (`dev_docs/pull_requests/2026/31-admin-ui-overhaul-list-architecture/CLAUDE_REVIEW.md`), which found and fixed three more issues on top.

@@ -5,6 +5,32 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  # Declared up here because the `use UrlState` below evaluates its options in
+  # the module body, so the whitelist has to exist by then.
+  @sort_fields ~w(position title inserted_at updated_at estimated_duration)a
+  @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
+
+  # Search and sort live in the query string so a filtered list is a real URL:
+  # shareable, reload-proof, and Back returns to the previous query instead of
+  # leaving the page.
+  #
+  # `mode: :history` rather than the default — this LiveView is embeddable via
+  # live_render/3 (dev_docs/embedding_audit.md, pinned by the tests in
+  # test/.../embedding_test.exs), and :patch would export handle_params/3,
+  # which is exactly what makes a LiveView un-embeddable.
+  #
+  # `view` is left as a plain mount assign, not a URL param — embedders can
+  # preset it via `live_render(... session: %{"view" => "groups"})`, and
+  # putting it in the URL would lose that preselection on embedded mounts where
+  # params arrive as :not_mounted_at_router.
+  use PhoenixKitWeb.Live.UrlState,
+    mode: :history,
+    params: [
+      search: [default: "", url_key: "q"],
+      sort_by: [default: :updated_at, cast: :atom, in: @sort_fields, url_key: "sort"],
+      sort_dir: [default: :desc, cast: :atom, in: [:asc, :desc], url_key: "dir"]
+    ]
+
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
@@ -67,15 +93,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         wrapper_class: wrapper_class,
         view: initial_view,
         pagination: pagination,
-        # Recency default — most recently edited tasks first; manual
-        # position order (and DnD) is one selector switch away.
-        sort_by: :updated_at,
-        sort_dir: :desc,
+        # Load-more pagination state. `loaded_count` is the current cap on
+        # visible rows, bumped by @per_batch on each "Load more" click.
+        # Reset to @per_batch in handle_url_state on every URL-state change.
+        # Both ignored when `pagination == "off"`.
         loaded_count: @per_batch,
         total_count: 0,
         filtered_count: 0,
         local_search?: true,
-        search: "",
         visible_columns:
           ListUi.read_visible_columns(@columns_key, @optional_columns, @default_columns),
         usage: %{},
@@ -96,6 +121,17 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     # real content. `handle_params/3` is intentionally absent — see
     # dev_docs/embedding_audit.md.
     {:ok, load_tasks(socket)}
+  end
+
+  # Called by UrlState whenever the query string moves — a search, a sort, or
+  # the browser's Back button. Resets the load-more cap so the new query
+  # starts at the first batch rather than keeping a stale deep page.
+  #
+  # Deliberately NOT the first load — :history mode has no handle_params to
+  # hang that on, so mount/3 still does it (see the module's docs).
+  @impl PhoenixKitWeb.Live.UrlState
+  def handle_url_state(_state, socket) do
+    socket |> assign(loaded_count: @per_batch) |> load_tasks()
   end
 
   # Loads only what the current view actually renders, so flipping
@@ -177,9 +213,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         )
     )
   end
-
-  @sort_fields ~w(position title inserted_at updated_at estimated_duration)a
-  @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
 
   defp sort_options do
     [
@@ -268,12 +301,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
      |> load_tasks()}
   end
 
-  # See TemplatesLive for the search / toggle_column contracts.
+  # The search box (core `<.search_toolbar>`, 300ms debounce). A new
+  # query resets the load-more cap via handle_url_state/2; ListUi.coerce_search
+  # guards forged map-shaped payloads. `replace: true` so Back walks queries,
+  # not individual keystrokes.
   def handle_event("search", params, socket) do
-    {:noreply,
-     socket
-     |> assign(search: ListUi.coerce_search(params), loaded_count: @per_batch)
-     |> load_tasks()}
+    {:noreply, push_url_state(socket, [search: ListUi.coerce_search(params)], replace: true)}
   end
 
   def handle_event("toggle_column", %{"col" => col}, socket) when col in @optional_columns do
@@ -396,11 +429,10 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     end
   end
 
-  # Sort change resets the load-more cap — see projects_live.
+  # Sort change pushes the new sort into the URL; handle_url_state/2 resets
+  # the load-more cap and reloads — see projects_live for the same pattern.
   defp apply_sort(socket, field, dir) do
-    socket
-    |> assign(sort_by: field, sort_dir: dir, loaded_count: @per_batch)
-    |> load_tasks()
+    push_url_state(socket, sort_by: field, sort_dir: dir)
   end
 
   defp sanitize_uuids(%{"uuids" => uuids}) when is_list(uuids) do
@@ -451,6 +483,10 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
+      <%!-- Carries the hook that keeps the address bar in step with the list.
+           Needed because this LiveView is embeddable and therefore cannot use
+           push_patch — see the `use UrlState` note at the top. --%>
+      <.url_state_sync mode={:history} id="tasks-list-url-state" />
       <%= if @view == "groups" do %>
         <% lang = L10n.current_content_lang() %>
 
