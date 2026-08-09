@@ -671,6 +671,22 @@ defmodule PhoenixKitProjects do
         live_view: {PhoenixKitProjects.Web.ProjectShowLive, :show}
       },
       %Tab{
+        id: :admin_projects_project_board,
+        label: "Board",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/:id/board",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        # The board was added as a tab without a route, so it was the one
+        # view you could not link anyone to: the URL stayed on the list and
+        # a reload dropped you back there. Same LiveView, different
+        # live_action, exactly like the gantt and calendar below.
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :board}
+      },
+      %Tab{
         id: :admin_projects_project_gantt,
         label: "Timeline",
         gettext_backend: PhoenixKitProjects.Gettext,

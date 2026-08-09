@@ -48,6 +48,9 @@ defmodule PhoenixKitProjects.Paths do
   @doc "Show page for a single project."
   @spec project(String.t()) :: String.t()
   def project(id), do: Routes.path("#{@base}/list/#{id}")
+  @doc "Kanban board view for a single project."
+  @spec project_board(String.t()) :: String.t()
+  def project_board(id), do: Routes.path("#{@base}/list/#{id}/board")
   @doc "Gantt/waterfall timeline view for a single project."
   @spec project_gantt(String.t()) :: String.t()
   def project_gantt(id), do: Routes.path("#{@base}/list/#{id}/gantt")

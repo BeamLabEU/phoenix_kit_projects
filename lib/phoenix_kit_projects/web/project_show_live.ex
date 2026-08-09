@@ -686,6 +686,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp review_detail(details, uuid),
     do: Map.get(details, uuid, %{images: [], submitted_by: nil})
 
+  # Cards the board cannot place. `status` is validated on write, so these
+  # are legacy or hand-edited rows — but filtering three known values meant
+  # they appeared in NO column and vanished without a word.
+  defp board_orphans(assignments),
+    do: Enum.count(assignments, &(&1.status not in ["todo", "in_progress", "done"]))
+
+  # From the FIELDS, never from `assignee_type/1` — that returns a
+  # translated label ("Person"/"Team"/"Dept"), so matching on it would pick
+  # the right icon in English and the fallback in every other language.
+  defp assignee_icon(%{assigned_team_uuid: uuid}) when is_binary(uuid), do: "hero-users"
+
+  defp assignee_icon(%{assigned_department_uuid: uuid}) when is_binary(uuid),
+    do: "hero-building-office"
+
+  defp assignee_icon(_assignment), do: "hero-user"
+
+  defp clamp_pct(pct) when is_integer(pct), do: pct |> max(0) |> min(100)
+  defp clamp_pct(_pct), do: 0
+
   defp matches_status?(_a, "all"), do: true
   # "Not finished", NOT "one of the two statuses I happened to think of".
   # A task carrying an out-of-band status — and this codebase deliberately
@@ -1185,6 +1204,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "remove_assignment" => :tasks,
     "reorder_assignments" => :tasks,
     "review_submission" => :tasks,
+    "board_move" => :view_board,
     "open_review" => :tasks,
     "close_review" => :tasks,
     "edit_duration" => :estimates,
@@ -1233,6 +1253,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # Placing a task in the plan is the same class of decision as
     # reordering one — it changes where the work sits, not what it is.
     "review_submission" => :edit_tasks,
+    # Dragging a card between columns IS a status change, so it answers to
+    # the same authorization as the buttons that do it — including the rule
+    # that an assignee may move their own task.
+    "board_move" => :update_status,
     "save_duration" => :edit_tasks,
     "remove_dependency" => :edit_tasks,
     "detach_subproject" => :edit_tasks,
@@ -1246,8 +1270,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # here (rather than passing nil) is what keeps "assignees can update
   # their own status" true through the interceptor.
   @record_param_events ~w(complete start_task reopen change_workflow_status
-                          update_progress toggle_tracking remove_assignment save_duration
-                          )
+                          update_progress toggle_tracking remove_assignment save_duration)
 
   @impl true
   def handle_event(event, params, socket) do
@@ -1291,7 +1314,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  defp authz_record("board_move", %{"moved_id" => uuid}, socket) when is_binary(uuid) do
+    Enum.find(socket.assigns[:assignments] || [], &(&1.uuid == uuid))
+  end
+
   defp authz_record(_event, _params, _socket), do: nil
+
+  defp delegate_board_move(socket, "todo", uuid),
+    do: gated_handle_event("reopen", %{"uuid" => uuid}, socket)
+
+  defp delegate_board_move(socket, "in_progress", uuid),
+    do: gated_handle_event("start_task", %{"uuid" => uuid}, socket)
+
+  defp delegate_board_move(socket, "done", uuid),
+    do: gated_handle_event("complete", %{"uuid" => uuid}, socket)
 
   # Lens changes are READS — they narrow what is drawn and write nothing —
   # so they are deliberately absent from @gated_events and @event_actions.
@@ -1300,6 +1336,53 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Every value is whitelisted in the guard rather than trusted: these
   # reach a comparison and an atom, and `String.to_existing_atom/1` on
   # unfiltered input is how a client picks the atom table apart.
+  # A card dropped into another column. Only the STATUS is written.
+  #
+  # `ordered_ids` arrives with it and is ignored: a column holds a partial
+  # view of the project, and renumbering `position` from it would shove
+  # every card the client could not see to the end of the plan. Ignoring it
+  # makes that corruption structurally impossible here rather than
+  # something a future filter could re-enable.
+  #
+  # `fromStatus` is ignored too — it is the client's account of where the
+  # card came from, and the server already knows.
+  defp gated_handle_event(
+         "board_move",
+         %{"moved_id" => uuid, "status" => status},
+         socket
+       )
+       when status in ["todo", "in_progress", "done"] do
+    case scoped_assignment(socket, uuid) do
+      nil ->
+        {:noreply, socket}
+
+      %{status: ^status} ->
+        # Reordering inside a column. The board reads `position` and does
+        # not own it, so there is nothing to write — the card snaps back to
+        # where the plan puts it.
+        {:noreply, push_event(socket, "sortable:flash", %{uuid: uuid, status: "ok"})}
+
+      _assignment ->
+        # Delegated to the very handlers the buttons use, rather than
+        # writing `status` directly. Completing also sets progress to 100,
+        # the actor and the timestamp; reopening clears all three. A naked
+        # status write would look identical on the board and quietly leave
+        # a finished task with no record of who finished it.
+        socket
+        |> delegate_board_move(status, uuid)
+        |> then(fn {:noreply, updated} ->
+          {:noreply, push_event(updated, "sortable:flash", %{uuid: uuid, status: "ok"})}
+        end)
+    end
+  end
+
+  # An out-of-vocabulary destination, or a payload missing its pieces. The
+  # columns can only emit the three, so this is a forged event: reload so
+  # the optimistic DOM move is undone.
+  defp gated_handle_event("board_move", _params, socket) do
+    {:noreply, load_assignments(socket)}
+  end
+
   defp gated_handle_event("open_review", _params, socket) do
     # Opens on the first one already expanded. With a single submission
     # waiting — the common case — that removes a click that told nobody
@@ -2254,6 +2337,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp tab_for_action(socket, _is_template) do
     case Map.get(socket.assigns, :live_action) do
+      :board -> :board
       :gantt -> :gantt
       :calendar -> :calendar
       _ -> :list
@@ -3813,6 +3897,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            later); every action goes through the same gated dispatcher as
            the list view. --%>
       <div :if={not @is_template and @fx.view_board} class={if(@active_tab != :board, do: "hidden")}>
+        <%!-- A card whose status is outside the vocabulary belongs in no
+             column, so the board simply dropped it — silently, which is the
+             worst way to lose a task. Named here and left to the list,
+             which renders it properly; dragging one in would coerce a value
+             we never wrote and cannot get back. --%>
+        <p :if={board_orphans(@assignments) > 0} class="text-xs opacity-60 mb-2">
+          {gettext("%{count} task(s) have a status this board does not show — open the List tab.",
+            count: board_orphans(@assignments)
+          )}
+        </p>
+
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
           <div
             :for={{status, title, tint} <- [
@@ -3828,57 +3923,136 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <span class="badge badge-ghost badge-sm">{length(column)}</span>
             </div>
             <p :if={column == []} class="text-xs opacity-40 px-1 py-2">{gettext("Nothing here.")}</p>
-            <div :for={a <- column} class="card bg-base-100 border border-base-200 shadow-sm">
-              <div class="card-body p-3 gap-2">
-                <.smart_link
-                  navigate={Paths.edit_assignment(a.project_uuid, a.uuid)}
-                  emit={
-                    {PhoenixKitProjects.Web.AssignmentFormLive,
-                     %{"live_action" => "edit", "project_id" => a.project_uuid, "id" => a.uuid}}
-                  }
-                  embed_mode={@embed_mode}
-                  class="text-sm font-medium link link-hover leading-snug"
-                >
-                  {Assignment.label(a, L10n.current_content_lang())}
-                </.smart_link>
-                <div class="flex flex-wrap items-center gap-1">
-                  <span
-                    :if={@fx.priorities and a.priority != "normal"}
-                    class={["badge badge-xs gap-1", priority_class(a.priority)]}
+
+            <%!-- One group across all three columns, so a card can be
+                 dragged between them. The DESTINATION's event and scope are
+                 what the hook sends, so every column names the same event
+                 and its own status, and the handler reads the status it
+                 landed in.
+
+                 `ordered_ids` arrives and is deliberately ignored: a
+                 column is a PARTIAL view of the project, and writing its
+                 order to `position` would renumber the whole plan from the
+                 few cards one column happened to hold. The board reads
+                 `position`; the list owns it. --%>
+            <div
+              id={"board-column-#{status}"}
+              class="flex flex-col gap-2"
+              phx-hook="SortableGrid"
+              data-sortable="true"
+              data-sortable-group={"board-#{@project.uuid}"}
+              data-sortable-event="board_move"
+              data-sortable-items=".sortable-item"
+              data-sortable-handle=".pk-drag-handle"
+              data-sortable-scope-status={status}
+            >
+              <div
+                :for={a <- column}
+                class="card bg-base-100 border border-base-200 shadow-sm overflow-hidden sortable-item"
+                data-id={a.uuid}
+              >
+                <div class="card-body p-3 gap-2">
+                  <div class="flex items-start gap-2">
+                    <span
+                      class="pk-drag-handle cursor-grab text-base-content/30 hover:text-base-content shrink-0 mt-0.5"
+                      title={gettext("Drag to another column")}
+                    >
+                      <.icon name="hero-bars-2" class="w-3.5 h-3.5" />
+                    </span>
+                    <.smart_link
+                      navigate={Paths.edit_assignment(a.project_uuid, a.uuid)}
+                      emit={
+                        {PhoenixKitProjects.Web.AssignmentFormLive,
+                         %{"live_action" => "edit", "project_id" => a.project_uuid, "id" => a.uuid}}
+                      }
+                      embed_mode={@embed_mode}
+                      class="text-sm font-medium link link-hover leading-snug min-w-0"
+                    >
+                      {Assignment.label(a, L10n.current_content_lang())}
+                    </.smart_link>
+                  </div>
+
+                  <div class="flex flex-wrap items-center gap-1">
+                    <span
+                      :if={@fx.priorities and a.priority != "normal"}
+                      class={["badge badge-xs gap-1", priority_class(a.priority)]}
+                    >
+                      <.icon name="hero-flag" class="w-3 h-3" /> {priority_label(a.priority)}
+                    </span>
+                    <span
+                      :for={label <- Enum.take(Map.get(@assignment_labels, a.uuid, []), 2)}
+                      :if={@fx.labels}
+                      class={["badge badge-xs", label.color]}
+                    >
+                      {label.name}
+                    </span>
+                    <span
+                      :if={@fx.labels and length(Map.get(@assignment_labels, a.uuid, [])) > 2}
+                      class="badge badge-ghost badge-xs"
+                    >
+                      +{length(Map.get(@assignment_labels, a.uuid, [])) - 2}
+                    </span>
+                  </div>
+
+                  <%!-- Ownership gets its own anchored row rather than a
+                       fifth badge in the pile: the eye learns one place to
+                       look. "Unassigned" is shown, not hidden — on a board
+                       that is the most actionable thing a card can say. --%>
+                  <div class="flex items-center justify-between gap-2">
+                    <% b_atype = assignee_type(a) %>
+                    <span
+                      :if={@fx.assignees and b_atype}
+                      class="inline-flex items-center gap-1 text-xs min-w-0 opacity-80"
+                    >
+                      <.icon name={assignee_icon(a)} class="w-3.5 h-3.5 shrink-0" />
+                      <span class="truncate">{assignee_label(a)}</span>
+                    </span>
+                    <span
+                      :if={@fx.assignees and is_nil(b_atype)}
+                      class="inline-flex items-center gap-1 text-xs text-warning/80"
+                    >
+                      <.icon name="hero-user-circle" class="w-3.5 h-3.5 shrink-0" />
+                      {gettext("Unassigned")}
+                    </span>
+
+                    <div class="ml-auto shrink-0">
+                      <%= cond do %>
+                        <% a.status == "todo" -> %>
+                          <button phx-click="start_task" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-warning btn-xs">
+                            {gettext("Start")}
+                          </button>
+                        <% a.status == "in_progress" -> %>
+                          <button phx-click="complete" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-success btn-xs">
+                            <.icon name="hero-check" class="w-3.5 h-3.5" />
+                          </button>
+                        <% a.status == "done" -> %>
+                          <button phx-click="reopen" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-ghost btn-xs">
+                            {gettext("Reopen")}
+                          </button>
+                        <% true -> %>
+                      <% end %>
+                    </div>
+                  </div>
+                </div>
+
+                <%!-- Reads as the bottom border filling up, without being a
+                     border — `border-color` carries theme and radius
+                     meaning, a fill strip is data.
+
+                     Rendered only when this task is actually tracked: an
+                     empty track says "0%" when the truth is "nobody is
+                     measuring", and a row of empty tracks teaches people to
+                     stop seeing them. A full bar outside the Done column is
+                     left looking finished on purpose — that contradiction
+                     is worth seeing, not smoothing over. --%>
+                <div :if={@fx.progress and a.track_progress} class="h-1 bg-base-300">
+                  <div
+                    class={[
+                      "h-full transition-all",
+                      if(a.status == "done", do: "bg-success", else: "bg-primary")
+                    ]}
+                    style={"width: #{clamp_pct(a.progress_pct)}%"}
                   >
-                    <.icon name="hero-flag" class="w-3 h-3" /> {priority_label(a.priority)}
-                  </span>
-                  <span
-                    :for={label <- Map.get(@assignment_labels, a.uuid, [])}
-                    :if={@fx.labels}
-                    class={["badge badge-xs", label.color]}
-                  >
-                    {label.name}
-                  </span>
-                  <% b_atype = assignee_type(a) %>
-                  <span :if={@fx.assignees and b_atype} class="badge badge-outline badge-xs gap-1">
-                    <.icon name="hero-user" class="w-3 h-3" /> {assignee_label(a)}
-                  </span>
-                  <% b_deps = Map.get(@deps_by_assignment, a.uuid, []) %>
-                  <span :if={@fx.dependencies and b_deps != []} class="badge badge-ghost badge-xs gap-1">
-                    <.icon name="hero-arrow-right-circle" class="w-3 h-3" /> {length(b_deps)}
-                  </span>
-                  <div class="ml-auto">
-                    <%= cond do %>
-                      <% a.status == "todo" -> %>
-                        <button phx-click="start_task" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-warning btn-xs">
-                          {gettext("Start")}
-                        </button>
-                      <% a.status == "in_progress" -> %>
-                        <button phx-click="complete" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-success btn-xs">
-                          <.icon name="hero-check" class="w-3.5 h-3.5" />
-                        </button>
-                      <% a.status == "done" -> %>
-                        <button phx-click="reopen" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-ghost btn-xs">
-                          {gettext("Reopen")}
-                        </button>
-                      <% true -> %>
-                    <% end %>
                   </div>
                 </div>
               </div>

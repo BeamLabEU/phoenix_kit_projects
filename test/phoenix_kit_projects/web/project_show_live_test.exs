@@ -1081,17 +1081,180 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       end
     end
 
-    # The uuids the LIST tab is drawing, in order. `sortable-item` rows are
-    # the list's own markup; the board tab renders its cards differently.
+    # The uuids the LIST tab is drawing, in order.
+    #
+    # Sliced to the timeline container first: the board tab renders every
+    # card into the same document (CSS-hidden) and its cards are ALSO
+    # `sortable-item`s now that they can be dragged between columns, so an
+    # unscoped scan counts each task twice.
     defp list_rows(html) do
-      Regex.scan(~r/sortable-item"[^>]*data-id="([^"]+)"/, html)
+      html
+      |> timeline_fragment()
+      |> then(&Regex.scan(~r/sortable-item"[^>]*data-id="([^"]+)"/, &1))
       |> Enum.map(fn [_, uuid] -> uuid end)
+    end
+
+    defp timeline_fragment(html) do
+      case :binary.match(html, "id=\"project-show-timeline\"") do
+        {start, _} ->
+          rest = binary_part(html, start, byte_size(html) - start)
+
+          case :binary.match(rest, "id=\"board-column-") do
+            {stop, _} -> binary_part(rest, 0, stop)
+            :nomatch -> rest
+          end
+
+        :nomatch ->
+          ""
+      end
     end
 
     defp ordered_uuids(project) do
       project.uuid
       |> Projects.list_assignments()
       |> Enum.map(& &1.uuid)
+    end
+  end
+
+  describe "the board" do
+    setup %{conn: conn} do
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Board #{n}", "start_mode" => "immediate"})
+
+      {:ok, task} = Projects.create_task(%{"title" => "Draggable #{n}"})
+
+      {:ok, a} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, conn: conn, project: project, a: a}
+    end
+
+    test "dragging to another column changes the status", %{conn: conn, project: project, a: a} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "in_progress",
+        "ordered_ids" => [a.uuid]
+      })
+
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
+    end
+
+    test "dropping in Done carries the same side effects as the button", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "done",
+        "ordered_ids" => [a.uuid]
+      })
+
+      done = Projects.get_assignment(a.uuid)
+
+      # A naked status write would look identical on the board and leave a
+      # finished task with no record of who finished it.
+      assert done.status == "done"
+      assert done.progress_pct == 100
+      refute is_nil(done.completed_at)
+    end
+
+    test "a drop never rewrites the plan's order", %{conn: conn, project: project, a: a} do
+      others =
+        for i <- 1..3 do
+          {:ok, t} =
+            Projects.create_task(%{"title" => "Other #{i}-#{System.unique_integer([:positive])}"})
+
+          {:ok, x} =
+            Projects.create_assignment(%{
+              "project_uuid" => project.uuid,
+              "task_uuid" => t.uuid,
+              "status" => "todo"
+            })
+
+          x
+        end
+
+      before = Enum.map(Projects.list_assignments(project.uuid), &{&1.uuid, &1.position})
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # A column is a PARTIAL view of the project. Renumbering `position`
+      # from it would shove every card the client could not see to the end
+      # of the plan — the same corruption the list view had to gate against,
+      # made structural by columns.
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "in_progress",
+        "ordered_ids" => [a.uuid]
+      })
+
+      after_positions = Enum.map(Projects.list_assignments(project.uuid), &{&1.uuid, &1.position})
+
+      assert after_positions == before
+      assert length(others) == 3
+    end
+
+    test "a forged destination status is refused", %{conn: conn, project: project, a: a} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "archived",
+        "ordered_ids" => [a.uuid]
+      })
+
+      assert Projects.get_assignment(a.uuid).status == "todo"
+    end
+
+    test "a card from another project cannot be moved from here", %{conn: conn, project: project} do
+      other = fixture_project(%{"name" => "Elsewhere #{System.unique_integer([:positive])}"})
+      {:ok, t} = Projects.create_task(%{"title" => "Theirs"})
+
+      {:ok, stranger} =
+        Projects.create_assignment(%{
+          "project_uuid" => other.uuid,
+          "task_uuid" => t.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{
+        "moved_id" => stranger.uuid,
+        "status" => "done",
+        "ordered_ids" => [stranger.uuid]
+      })
+
+      assert Projects.get_assignment(stranger.uuid).status == "todo"
+    end
+
+    test "a status the board cannot place is named, not silently dropped", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      {:ok, raw_uuid} = Ecto.UUID.dump(a.uuid)
+
+      SQL.query!(
+        Repo,
+        "UPDATE phoenix_kit_project_assignments SET status = $1 WHERE uuid = $2",
+        ["archived", raw_uuid]
+      )
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert html =~ "does not show"
     end
   end
 end
