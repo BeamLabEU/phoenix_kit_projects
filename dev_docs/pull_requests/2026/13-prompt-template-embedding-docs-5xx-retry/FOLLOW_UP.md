@@ -1,10 +1,12 @@
 # PR #13 — Follow-up
 
 PR is merged into `main` (merge commit `6907b1c`, version bump landed
-in `9f8f947` → 0.5.1). The post-merge review lives at the repo root
-as `REVIEW_FOLLOWUP_PR13.md` (placement set by the boss; per
-`feedback_reviewer_artifacts.md` it stays where it was put, this
-folder simply links to it).
+in `9f8f947` → 0.5.1). The post-merge review is `REVIEW.md` beside this
+file. It sat at the repo root as `REVIEW_FOLLOWUP_PR13.md` until
+2026-08-09, kept there on the strength of a
+`feedback_reviewer_artifacts.md` that no longer exists anywhere in the
+workspace; moved here on request, to the layout both AGENTS.md files
+specify.
 
 ## Pre-existing post-merge fixes (already on `main`)
 
@@ -24,7 +26,7 @@ test + cleanups") immediately after the merge:
 
 ## Fixed (Batch 1 — 2026-05-22)
 
-Picked up the four `REVIEW_FOLLOWUP_PR13.md` items the boss left for
+Picked up the four `REVIEW.md` items the boss left for
 a maintainer. Branch `followup-review-pr13-fixes` (local; not yet
 pushed):
 
@@ -123,6 +125,6 @@ None.
 
 ## See also
 
-- `/REVIEW_FOLLOWUP_PR13.md` (repo root) — the boss's original
+- `REVIEW.md` (beside this file) — the boss's original
   maintainer-action list. This document records the resolution of
   each L/N item.

@@ -6,8 +6,8 @@
 **Merge commit:** `fc053b1`
 **Author:** Max Don (mdon)
 **Size:** 142 files, +39,241 / −5,697
-**Phase:** post-merge deep review (Phase 1's surface pass lives in `phase1.md`, by a
-different agent — not amended here)
+**Phase:** post-merge deep review (Phase 1's surface pass is `PINCER_REVIEW.md`
+beside this file, by a different agent — not amended here)
 
 ---
 
