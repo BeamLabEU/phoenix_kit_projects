@@ -167,7 +167,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        list_status: "active",
        list_sort: :position,
        pending_reviews: [],
-       review_images: %{},
+       review_details: %{},
        review_open?: false,
        review_selected: nil,
        subproject_summaries: %{},
@@ -342,7 +342,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               list_status: "active",
               list_sort: :position,
               pending_reviews: [],
-              review_images: %{},
+              review_details: %{},
               review_open?: false,
               review_selected: nil,
               subproject_summaries: %{},
@@ -389,7 +389,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       # The not-found branch still renders the page shell, so every assign
       # the template reads has to exist here too.
       pending_reviews: [],
-      review_images: %{},
+      review_details: %{},
       review_open?: false,
       review_selected: nil,
       list_status: "active",
@@ -679,9 +679,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     assign(socket,
       pending_reviews: pending,
-      review_images: Map.new(pending, &{&1.uuid, Portal.review_images(&1.uuid)})
+      review_details: Map.new(pending, &{&1.uuid, Portal.review_details(&1.uuid)})
     )
   end
+
+  defp review_detail(details, uuid),
+    do: Map.get(details, uuid, %{images: [], submitted_by: nil})
 
   defp matches_status?(_a, "all"), do: true
   # "Not finished", NOT "one of the two statuses I happened to think of".
@@ -3050,7 +3053,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     type="button"
                     phx-click="select_review"
                     phx-value-uuid={a.uuid}
-                    class="flex items-start gap-2 min-w-0 text-left flex-1"
+                    class="flex items-start gap-2 min-w-0 text-left flex-1 cursor-pointer"
                     aria-expanded={to_string(@review_selected == a.uuid)}
                   >
                     <.icon
@@ -3068,9 +3071,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       </span>
                       <span class="text-xs opacity-60 flex items-center gap-2">
                         <.time_ago datetime={a.inserted_at} />
-                        <span :if={Map.get(@review_images, a.uuid, []) != []} class="flex items-center gap-1">
+                        <span :if={review_detail(@review_details, a.uuid).images != []} class="flex items-center gap-1">
                           <.icon name="hero-photo" class="w-3 h-3" />
-                          {length(Map.get(@review_images, a.uuid, []))}
+                          {length(review_detail(@review_details, a.uuid).images)}
                         </span>
                       </span>
                     </span>
@@ -3116,9 +3119,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     {gettext("No description was given.")}
                   </p>
 
-                  <div :if={Map.get(@review_images, a.uuid, []) != []} class="flex flex-wrap gap-2">
+                  <div :if={review_detail(@review_details, a.uuid).images != []} class="flex flex-wrap gap-2">
                     <a
-                      :for={image <- Map.get(@review_images, a.uuid, [])}
+                      :for={image <- review_detail(@review_details, a.uuid).images}
                       href={image.url}
                       target="_blank"
                       rel="noopener noreferrer nofollow"
@@ -3133,8 +3136,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     </a>
                   </div>
 
+                  <%!-- Only say "anonymous" when it is true. The portal
+                       takes submissions from signed-in people too, and
+                       telling a reviewer that a colleague's report came
+                       from nobody is worse than saying nothing. --%>
                   <p class="text-xs opacity-50">
-                    {gettext("Sent from the public board. Re-encoded on arrival; the sender is anonymous.")}
+                    <%= case review_detail(@review_details, a.uuid).submitted_by do %>
+                      <% nil -> %>
+                        {gettext("Sent anonymously from the public board. Images are re-encoded on arrival.")}
+                      <% name -> %>
+                        {gettext("Sent from the public board by %{name}. Images are re-encoded on arrival.",
+                          name: name
+                        )}
+                    <% end %>
                   </p>
                 </div>
               </div>

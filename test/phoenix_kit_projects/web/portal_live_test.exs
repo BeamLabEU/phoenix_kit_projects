@@ -262,6 +262,60 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
     end
   end
 
+  describe "who sent it" do
+    setup do
+      Extensions.Registry.refresh()
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Sender #{n}", "start_mode" => "immediate"})
+
+      {:ok, _} = Extensions.enable(project, "portal")
+
+      {:ok,
+       conn: Phoenix.ConnTest.build_conn(),
+       project: project,
+       portal: Portal.get_portal(project.uuid)}
+    end
+
+    test "a signed-in submitter is recorded and named", %{project: project, portal: portal} do
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "reporter-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      {:ok, :submitted} =
+        Portal.submit(
+          portal.slug,
+          %{"title" => "Signed-in report", "description" => "steps"},
+          %{
+            mounted_ms: System.monotonic_time(:millisecond) - 10_000,
+            viewer: fake_scope(user_uuid: user.uuid, permissions: [])
+          }
+        )
+
+      [assignment] = Projects.list_pending_reviews(project.uuid)
+
+      # Telling a reviewer that a colleague's report came from nobody is
+      # worse than saying nothing at all.
+      assert Portal.review_details(assignment.uuid).submitted_by ==
+               User.display_name(user)
+    end
+
+    test "a genuinely anonymous submitter stays anonymous", %{project: project, portal: portal} do
+      {:ok, :submitted} =
+        Portal.submit(
+          portal.slug,
+          %{"title" => "Anonymous report", "description" => "steps"},
+          %{mounted_ms: System.monotonic_time(:millisecond) - 10_000}
+        )
+
+      [assignment] = Projects.list_pending_reviews(project.uuid)
+      assert Portal.review_details(assignment.uuid).submitted_by == nil
+    end
+  end
+
   describe "staff see the attachments before they publish them" do
     setup do
       PhoenixKitProjects.Extensions.Registry.refresh()

@@ -24,6 +24,9 @@ defmodule PhoenixKitProjects.Schemas.PortalSubmission do
   schema "phoenix_kit_project_portal_submissions" do
     field(:email, :string)
     field(:ip_hash, :string)
+    # Who sent it, when they were signed in. NULL is genuinely anonymous —
+    # and only NULL should ever be reported as such.
+    field(:submitted_by_uuid, Ecto.UUID)
     # Storage uuids for the images that came with the report. Sanitised
     # before they got here — see PhoenixKit.Modules.Storage.ImageProcessor.
     field(:file_uuids, {:array, :string}, default: [])
@@ -36,7 +39,7 @@ defmodule PhoenixKitProjects.Schemas.PortalSubmission do
   @doc false
   def changeset(submission, attrs) do
     submission
-    |> cast(attrs, [:assignment_uuid, :email, :ip_hash, :file_uuids])
+    |> cast(attrs, [:assignment_uuid, :email, :ip_hash, :file_uuids, :submitted_by_uuid])
     |> validate_required([:assignment_uuid])
     |> validate_length(:email, max: 160)
     |> foreign_key_constraint(:assignment_uuid)

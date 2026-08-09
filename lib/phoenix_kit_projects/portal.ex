@@ -46,6 +46,7 @@ defmodule PhoenixKitProjects.Portal do
   alias PhoenixKit.Modules.Storage.URLSigner
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Users.RateLimiter
   alias PhoenixKitProjects.Activity
   alias PhoenixKitProjects.Extensions
@@ -1128,6 +1129,45 @@ defmodule PhoenixKitProjects.Portal do
   defp board_images(_portal, _assignment), do: []
 
   @doc """
+  What a reviewer needs to see about a pending submission, in one read.
+
+  Images and — when the person was signed in — who sent it. The dialog used
+  to state flatly that every sender was anonymous, which was false for
+  everyone who submitted while logged in, including colleagues.
+  """
+  @spec review_details(binary()) :: %{images: [map()], submitted_by: String.t() | nil}
+  def review_details(assignment_uuid) when is_binary(assignment_uuid) do
+    submission =
+      from(sub in PortalSubmission, where: sub.assignment_uuid == ^assignment_uuid, limit: 1)
+      |> RepoHelper.repo().one()
+
+    %{
+      images: submission_images(submission),
+      submitted_by: submitter_name(submission)
+    }
+  rescue
+    _ -> %{images: [], submitted_by: nil}
+  end
+
+  def review_details(_), do: %{images: [], submitted_by: nil}
+
+  defp submission_images(%PortalSubmission{file_uuids: uuids}) when is_list(uuids),
+    do: resolve_images(uuids)
+
+  defp submission_images(_), do: []
+
+  defp submitter_name(%PortalSubmission{submitted_by_uuid: uuid}) when is_binary(uuid) do
+    case Auth.get_users_by_uuids([uuid]) do
+      [user | _] -> User.display_name(user)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp submitter_name(_), do: nil
+
+  @doc """
   The images a stranger attached to this issue, for the STAFF review of it.
 
   Deliberately not `board_images/2`: that one is gated on the board already
@@ -1350,7 +1390,11 @@ defmodule PhoenixKitProjects.Portal do
                |> PortalSubmission.changeset(%{
                  assignment_uuid: assignment.uuid,
                  ip_hash: ip_hash(portal, meta[:peer_ip]),
-                 file_uuids: file_uuids
+                 file_uuids: file_uuids,
+                 # From the resolved viewer, never from the form: this is
+                 # the only claim about identity the record carries, and a
+                 # client that could set it could sign a report as anyone.
+                 submitted_by_uuid: viewer_uuid(meta[:viewer])
                })
                |> RepoHelper.repo().insert() do
           assignment

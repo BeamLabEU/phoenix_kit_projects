@@ -156,6 +156,11 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       ALTER TABLE #{p}phoenix_kit_project_assignments
         DROP COLUMN IF EXISTS sorted_at
       """)
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_portal_submissions
+        DROP COLUMN IF EXISTS submitted_by_uuid
+      """)
     end
 
     if target < 13 do
@@ -927,6 +932,19 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_pending_review_idx
       ON #{p}phoenix_kit_project_assignments (project_uuid)
       WHERE review_status <> 'accepted'
+    """)
+
+    # Who sent it, when we know. The portal accepts submissions from
+    # signed-in people as well as strangers, and it was throwing the
+    # signed-in half away — so a reviewer was told every submission came
+    # from nobody, including the ones from their own colleagues.
+    #
+    # NULL means genuinely anonymous. No FK: a deleted account should not
+    # take the record of what they reported with it, and the whole point of
+    # this table is to survive as the audit trail for a public intake.
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_portal_submissions
+    ADD COLUMN IF NOT EXISTS submitted_by_uuid UUID
     """)
   end
 
