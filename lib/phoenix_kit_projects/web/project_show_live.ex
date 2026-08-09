@@ -631,6 +631,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     assign(socket,
       visible_assignments: visible,
       assignment_counts: assignment_counts(all),
+      # Numbered against the WHOLE project, in its manual order — never
+      # against the rows on screen. A counter over the visible set renumbers
+      # the same task every time the lens moves, so "task 3" means one thing
+      # under Active and another under All, which makes the number useless
+      # for referring to anything. Under a filter the sequence shows gaps
+      # (3, 7, 12) and that is the honest reading: you are looking at part
+      # of a longer plan.
+      assignment_numbers: assignment_numbers(all),
       # ONE predicate for the connector rail AND the drag handles. They are
       # the same affordance at two weights — the line advertises that order
       # is real here, the handle acts on it — so showing either without the
@@ -639,6 +647,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       # position that ignores everything it cannot see.
       list_manual?: status == "all" and source == "all" and sort == :position
     )
+  end
+
+  # `list_assignments/1` already returns position order, so the index here
+  # IS the position rank — resolved once per load rather than per row.
+  defp assignment_numbers(all) do
+    all
+    |> Enum.with_index(1)
+    |> Map.new(fn {a, idx} -> {a.uuid, idx} end)
   end
 
   defp count_for(counts, "all"), do: counts.total
@@ -3229,15 +3245,37 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            holds 947 is not. The number is the honesty; the rows are just
            what you happen to be reading. --%>
       <div :if={@assignments != []} class="flex flex-wrap items-center gap-2 mb-4">
+        <%!-- Two groups, because these are not five slices of one pie.
+             "Active" CONTAINS "To do" and "In progress" (and anything else
+             not finished), and "All" contains everything — so putting all
+             five in one strip reads as a partition whose numbers refuse to
+             add up. Broad on the left, exact on the right; one selection
+             across both. --%>
+        <div class="join">
+          <button
+            :for={{key, label} <- [{"active", gettext("Active")}, {"all", gettext("All")}]}
+            type="button"
+            phx-click="list_filter_status"
+            phx-value-status={key}
+            class={[
+              "btn btn-sm join-item",
+              if(@list_status == key, do: "btn-primary", else: "btn-ghost")
+            ]}
+          >
+            {label}
+            <span class="badge badge-sm badge-ghost ml-1">
+              {count_for(@assignment_counts, key)}
+            </span>
+          </button>
+        </div>
+
         <div class="join">
           <button
             :for={
               {key, label} <- [
-                {"active", gettext("Active")},
                 {"todo", gettext("To do")},
                 {"in_progress", gettext("In progress")},
-                {"done", gettext("Done")},
-                {"all", gettext("All")}
+                {"done", gettext("Done")}
               ]
             }
             type="button"
@@ -3355,7 +3393,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             data-sortable-items=".sortable-item"
             data-sortable-handle=".pk-drag-handle"
           >
-            <%= for {a, idx} <- Enum.with_index(@visible_assignments) do %>
+            <%= for a <- @visible_assignments do %>
               <div class="relative flex gap-4 py-3 sortable-item" data-id={a.uuid}>
                 <%!-- Status dot on the timeline --%>
                 <div class="relative z-10 shrink-0 flex flex-col items-center">
@@ -3363,7 +3401,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <%= if a.status == "done" do %>
                       <.icon name="hero-check" class="w-5 h-5" />
                     <% else %>
-                      {idx + 1}
+                      {Map.get(@assignment_numbers, a.uuid)}
                     <% end %>
                   </div>
                 </div>
