@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.Schemas.PortalSubmission
 
   setup %{conn: conn} do
     PhoenixKitProjects.Extensions.Registry.refresh()
@@ -221,6 +222,81 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
       refute html =~ "/report"
       assert html =~ "Sign in to report an issue"
+    end
+  end
+
+  describe "the report form is one form" do
+    setup %{conn: conn} do
+      PhoenixKitProjects.Extensions.Registry.refresh()
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Form #{n}", "start_mode" => "immediate"})
+
+      {:ok, _} = Extensions.enable(project, "portal")
+      {:ok, conn: conn, portal: Portal.get_portal(project.uuid)}
+    end
+
+    test "no nested form, so nothing gets pushed out of it", %{conn: conn, portal: portal} do
+      # The upload component wraps itself in a <form> by default. Nested
+      # forms are invalid HTML and the browser closes the OUTER one at the
+      # inner tag — which moved the honeypot and the submit button outside
+      # the form entirely. Nothing looked wrong, and LiveViewTest did not
+      # catch it because it submits by form id rather than parsing HTML.
+      {:ok, _view, html} = live(conn, "/portal/#{portal.slug}/report")
+
+      start = :binary.match(html, "id=\"portal-submit-form\"") |> elem(0)
+      {close, _} = :binary.match(binary_part(html, start, byte_size(html) - start), "</form>")
+      form = binary_part(html, start, close)
+
+      refute form =~ "<form", "a nested form closes the outer one early"
+      assert form =~ "name=\"website\"", "the honeypot fell outside the form"
+      assert form =~ "Send report", "the submit button fell outside the form"
+      assert form =~ "type=\"file\"", "the upload input fell outside the form"
+    end
+  end
+
+  describe "staff see the attachments before they publish them" do
+    setup do
+      PhoenixKitProjects.Extensions.Registry.refresh()
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Triage #{n}", "start_mode" => "immediate"})
+
+      {:ok, _} = Extensions.enable(project, "portal")
+      task = fixture_task()
+
+      {:ok, assignment} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, project: project, assignment: assignment}
+    end
+
+    test "review_images returns the submitter's files regardless of board mode", %{
+      assignment: assignment
+    } do
+      # `board_images/2` is gated on the board ALREADY being public, which
+      # is backwards for triage: the reviewer decides whether to publish, so
+      # they must see the files while it is still unpublished. Before this
+      # existed, nobody ever looked at an anonymous upload — which made "a
+      # person approves it" false of exactly the part that can carry
+      # something harmful.
+      %PortalSubmission{}
+      |> PortalSubmission.changeset(%{
+        assignment_uuid: assignment.uuid,
+        file_uuids: [Ecto.UUID.generate()]
+      })
+      |> PhoenixKit.RepoHelper.repo().insert!()
+
+      # The uuid resolves to no storage row, so it drops out rather than
+      # rendering broken — the panel is still reached, which is the point.
+      assert Portal.review_images(assignment.uuid) == []
+      assert Portal.review_images("not-a-uuid") == []
     end
   end
 end

@@ -41,9 +41,17 @@ defmodule PhoenixKitProjects.Web.Routes do
           # Reporting gets its own page rather than a dialog. A submission
           # is a considered act — people write paragraphs and paste error
           # output — and a backdrop click that eats 300 words is a
-          # betrayal. It also has to exist as a real page for the no-JS
-          # path anyway, so a modal would be a second copy of an
+          # betrayal. A modal would also be a second copy of an
           # abuse-exposed form to keep in sync.
+          #
+          # This is a `live` route, so submitting still needs JS: the page
+          # renders and reads fine without it, but there is no plain POST
+          # endpoint behind the form, and `allow_upload` cannot work at all
+          # without the channel. An earlier comment here claimed this route
+          # WAS the no-JS path — it never was. A real fallback means a
+          # controller action doing its own honeypot/fill-time/rate-limit
+          # pass, which is a second abuse-exposed entry point; worth
+          # building deliberately, not worth implying we already have.
           live("/portal/:slug/report", PhoenixKitProjects.Web.PortalLive, :report)
         end
       end

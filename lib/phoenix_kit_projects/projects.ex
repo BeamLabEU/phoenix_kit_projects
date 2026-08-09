@@ -3330,6 +3330,10 @@ defmodule PhoenixKitProjects.Projects do
   @spec delete_assignment(Assignment.t()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t() | term()}
   def delete_assignment(%Assignment{child_project_uuid: nil} = a) do
+    # Before the row goes: the portal submission cascades with it, and
+    # once that is gone nothing points at the screenshots it carried.
+    PhoenixKitProjects.Portal.delete_attachments_for(a.uuid)
+
     with {:ok, deleted} <- repo().delete(a) do
       ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
         uuid: deleted.uuid,

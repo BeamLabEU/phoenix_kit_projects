@@ -171,28 +171,20 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   @impl true
   def handle_event("submit_issue", params, socket) do
-    # Consume BEFORE the submit: the temp files vanish when this callback
-    # returns, so they have to become storage rows first. A refusal here
-    # stops the whole report — a bug report that silently loses the
-    # screenshot it refers to is worse than one that says so.
-    case consume_screenshots(socket) do
-      {:ok, file_uuids} ->
-        do_submit(socket, params, file_uuids)
-
-      :error ->
-        {:noreply,
-         assign(socket, error: gettext("That image could not be read. PNG or JPEG, please."))}
-    end
+    do_submit(socket, params)
   end
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
-  defp do_submit(socket, params, file_uuids) do
+  defp do_submit(socket, params) do
     meta = %{
       peer_ip: socket.assigns.peer_ip,
       honeypot: params["website"],
       mounted_ms: socket.assigns.mounted_ms,
-      file_uuids: file_uuids,
+      # A thunk, not files. Portal.submit/3 calls it only after the
+      # honeypot, fill-time and rate-limit gates pass, so a caller who is
+      # about to be refused never costs an image re-encode.
+      attachments: fn -> take_screenshots(socket) end,
       # The submit policy is checked in the write path, which needs to know
       # who is asking.
       viewer: socket.assigns[:phoenix_kit_current_scope]
@@ -252,6 +244,32 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     """
   end
 
+  def render(%{live_action: :report, view: %{may_submit: false}} = assigns) do
+    # Reachable directly, so it answers the same question the board's
+    # button does rather than trusting that nobody typed the URL. The
+    # server refuses either way; drawing the form would just waste the
+    # reporter's paragraphs.
+    ~H"""
+    <div class="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-10">
+      <.robots mode={@view.access_mode} />
+
+      <.link navigate={board_path(@slug)} class="text-sm opacity-60 hover:opacity-100">
+        {gettext("← Back to %{project}", project: @view.project_name)}
+      </.link>
+
+      <.empty_state
+        icon="hero-lock-closed"
+        title={gettext("Reporting is closed here")}
+        description={
+          if @view.capabilities.submit,
+            do: gettext("This board takes reports from signed-in people."),
+            else: gettext("This board isn't taking new reports right now.")
+        }
+      />
+    </div>
+    """
+  end
+
   def render(%{live_action: :report} = assigns) do
     ~H"""
     <div class="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">
@@ -305,6 +323,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         <div>
           <.file_upload
             upload={@uploads.screenshot}
+            standalone={false}
             label={gettext("Screenshots (optional)")}
             icon="hero-photo"
             accept_description={gettext("PNG, JPEG, WebP or GIF")}
@@ -582,18 +601,27 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   defp current_user(%{phoenix_kit_current_scope: %{user: user}}), do: user
   defp current_user(_), do: nil
 
-  defp consume_screenshots(socket) do
+  defp take_screenshots(socket) do
     socket
     |> consume_uploaded_entries(:screenshot, fn %{path: path}, entry ->
-      {:ok, %{path: path, name: entry.client_name}}
+      # The path handed in here belongs to the upload channel, and returning
+      # `{:ok, _}` is precisely what tells LiveView to stop that channel —
+      # at which point Plug.Upload's monitor deletes the file. That deletion
+      # is asynchronous, so reading the path after this callback returns is
+      # a race: a quiet machine usually wins it and a loaded one does not,
+      # which shows up as a perfectly good PNG failing at random. Copy it
+      # while it is still ours; from here on the file is ours to remove too.
+      owned =
+        Path.join(System.tmp_dir!(), "pk-portal-in-#{System.unique_integer([:positive])}")
+
+      case File.cp(path, owned) do
+        :ok -> {:ok, %{path: owned, name: entry.client_name}}
+        {:error, _} -> {:ok, :unreadable}
+      end
     end)
-    |> Portal.store_attachments(socket.assigns.view && socket.assigns.view[:project_uuid])
-    |> case do
-      {:ok, uuids} -> {:ok, uuids}
-      {:error, _} -> :error
-    end
+    |> Enum.reject(&(&1 == :unreadable))
   rescue
-    _ -> :error
+    _ -> []
   end
 
   defp board_path(slug), do: Routes.path("/portal/#{slug}")

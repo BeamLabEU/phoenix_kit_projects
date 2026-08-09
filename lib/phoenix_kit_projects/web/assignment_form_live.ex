@@ -252,6 +252,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             if(kind == "subproject", do: Projects.available_projects_to_link(project), else: []),
           project: project,
           assignment: assignment,
+          portal_review_images: [],
           live_action: :new,
           task_mode: "existing",
           assign_type: "",
@@ -331,6 +332,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           link_options: [],
           project: project,
           assignment: assignment,
+          portal_review_images: PhoenixKitProjects.Portal.review_images(assignment.uuid),
           live_action: :edit,
           assign_type: assignee_kind(child),
           assignment_deps: Projects.list_dependencies(assignment.uuid),
@@ -366,6 +368,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           link_options: [],
           project: project,
           assignment: assignment,
+          portal_review_images: PhoenixKitProjects.Portal.review_images(assignment.uuid),
           live_action: :edit,
           task_mode: "existing",
           assign_type: assignee_kind(assignment),
@@ -2164,6 +2167,42 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               phx-click="toggle_portal_public"
               aria-label={gettext("Show on the public portal")}
             />
+          </div>
+
+          <%!-- What the stranger actually attached. This sits ABOVE the two
+               publish switches on purpose: the whole justification for
+               letting anonymous people upload files is that a person looks
+               at them first, and that was not true until this panel existed
+               — the text was reviewed here while the images went from an
+               unknown submitter straight onto an indexable page, seen by
+               nobody. Server-side re-encoding strips the payloads it can;
+               it cannot tell you what the picture is OF. --%>
+          <div
+            :if={@portal_review_images != []}
+            class="card-body border-t border-base-200 py-4"
+          >
+            <h3 class="text-sm font-semibold">{gettext("Attached by the submitter")}</h3>
+            <p class="text-xs opacity-60">
+              {gettext(
+                "Sent by an anonymous visitor and re-encoded on arrival. Look at them before publishing — publishing puts them on the open internet."
+              )}
+            </p>
+            <div class="mt-2 flex flex-wrap gap-3">
+              <a
+                :for={image <- @portal_review_images}
+                href={image.url}
+                target="_blank"
+                rel="noopener noreferrer nofollow"
+                class="block"
+              >
+                <img
+                  src={image.url}
+                  alt={gettext("Submitted attachment")}
+                  loading="lazy"
+                  class="h-28 w-28 rounded-lg border border-base-300 object-cover"
+                />
+              </a>
+            </div>
           </div>
 
         <%!-- The second, deliberate act. Only offered on a board that is

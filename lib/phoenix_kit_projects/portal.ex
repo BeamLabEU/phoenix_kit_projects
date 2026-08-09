@@ -424,16 +424,43 @@ defmodule PhoenixKitProjects.Portal do
         {:error, :invalid}
 
       true ->
-        Enum.reduce_while(files, {:ok, []}, fn file, {:ok, acc} ->
-          case store_one_attachment(file, owner) do
-            {:ok, uuid} -> {:cont, {:ok, acc ++ [uuid]}}
-            :error -> {:halt, {:error, :invalid}}
-          end
-        end)
+        try do
+          Enum.reduce_while(files, {:ok, []}, fn file, {:ok, acc} ->
+            case store_one_attachment(file, owner) do
+              {:ok, uuid} ->
+                {:cont, {:ok, acc ++ [uuid]}}
+
+              :error ->
+                # All-or-nothing has to mean it. Dropping `acc` on the floor
+                # leaves the files that already landed stored and referenced
+                # by nothing — an orphan per failed attempt, from a caller
+                # who needs no account to retry.
+                discard_stored(acc)
+                {:halt, {:error, :invalid}}
+            end
+          end)
+        after
+          # We copied these out of LiveView's ownership to win the race in
+          # `take_screenshots`, so nobody else will clean them up.
+          Enum.each(files, fn
+            %{path: path} -> File.rm(path)
+            _ -> :ok
+          end)
+        end
     end
   end
 
   def store_attachments(_files, _project_uuid), do: {:error, :invalid}
+
+  defp discard_stored(uuids) do
+    Enum.each(uuids, fn uuid ->
+      try do
+        Storage.delete_file(uuid)
+      rescue
+        _ -> :ok
+      end
+    end)
+  end
 
   defp project_owner_uuid(nil), do: nil
 
@@ -453,6 +480,19 @@ defmodule PhoenixKitProjects.Portal do
     sanitized =
       Path.join(System.tmp_dir!(), "pk-portal-#{System.unique_integer([:positive])}.jpg")
 
+    try do
+      do_store_attachment(path, name, owner_uuid, sanitized)
+    after
+      # The re-encoded copy is scratch space — storage takes its own — so
+      # leaving it behind fills /tmp one report at a time. `after` because
+      # the failure paths need cleaning up just as much as the happy one.
+      File.rm(sanitized)
+    end
+  end
+
+  defp store_one_attachment(_file, _owner), do: :error
+
+  defp do_store_attachment(path, name, owner_uuid, sanitized) do
     with {:ok, _} <- ImageProcessor.sanitize(path, sanitized, max_edge: 2000),
          %{size: size} when size > 0 and size <= @attachment_max_bytes <- File.stat!(sanitized),
          {:ok, %{uuid: uuid}} <-
@@ -468,11 +508,7 @@ defmodule PhoenixKitProjects.Portal do
     else
       _ -> :error
     end
-  after
-    :ok
   end
-
-  defp store_one_attachment(_file, _owner), do: :error
 
   # The uploader named this file. It reaches a Content-Disposition header
   # and a filesystem, so it gets flattened to something boring.
@@ -486,6 +522,42 @@ defmodule PhoenixKitProjects.Portal do
 
     if base in ["", ".", ".."], do: "screenshot.jpg", else: base
   end
+
+  @doc """
+  Deletes the images attached to an issue's submission.
+
+  Call before deleting the issue itself. The submission row cascades with
+  the assignment, but the storage rows do not — nothing points at them
+  once the submission is gone, so without this every rejected report
+  leaves its screenshots behind forever, owned by the project owner and
+  invisible to everyone.
+
+  Never blocks the delete: losing the issue matters more than reclaiming
+  a file, and an orphaned file is recoverable where a blocked delete is a
+  stuck queue.
+  """
+  @spec delete_attachments_for(binary()) :: :ok
+  def delete_attachments_for(assignment_uuid) when is_binary(assignment_uuid) do
+    from(sub in PortalSubmission, where: sub.assignment_uuid == ^assignment_uuid)
+    |> RepoHelper.repo().all()
+    |> Enum.flat_map(&(&1.file_uuids || []))
+    |> Enum.each(fn uuid ->
+      case Storage.get_file(uuid) do
+        %{} = file -> Storage.delete_file(file)
+        _ -> :ok
+      end
+    end)
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("[Portal] could not clean up attachments: #{Exception.message(e)}")
+      :ok
+  catch
+    :exit, _ -> :ok
+  end
+
+  def delete_attachments_for(_), do: :ok
 
   # ── Participation ───────────────────────────────────────────────
 
@@ -853,6 +925,34 @@ defmodule PhoenixKitProjects.Portal do
 
   defp board_images(_portal, _assignment), do: []
 
+  @doc """
+  The images a stranger attached to this issue, for the STAFF review of it.
+
+  Deliberately not `board_images/2`: that one is gated on the board already
+  being public, which is exactly backwards for triage. The person deciding
+  whether to publish has to see the files *before* they are published, and
+  until this existed nobody ever saw them at all — the text went through a
+  human and the images went straight from an anonymous stranger onto an
+  indexable page. "A person approves it" was the entire argument for
+  accepting anonymous uploads, so it has to be true of the part that can
+  actually carry something harmful.
+
+  Caller must have already checked the viewer may read the assignment.
+  """
+  @spec review_images(binary()) :: [map()]
+  def review_images(assignment_uuid) when is_binary(assignment_uuid) do
+    from(sub in PortalSubmission, where: sub.assignment_uuid == ^assignment_uuid, limit: 1)
+    |> RepoHelper.repo().one()
+    |> case do
+      %PortalSubmission{file_uuids: uuids} when is_list(uuids) -> resolve_images(uuids)
+      _ -> []
+    end
+  rescue
+    _ -> []
+  end
+
+  def review_images(_), do: []
+
   defp resolve_images(uuids) do
     Enum.flat_map(uuids, fn uuid ->
       case Storage.get_file(uuid) do
@@ -909,8 +1009,15 @@ defmodule PhoenixKitProjects.Portal do
          :ok <- check_honeypot(meta),
          :ok <- check_fill_time(meta),
          :ok <- check_rate(project.uuid, meta[:peer_ip]),
-         {:ok, title, description} <- validate_input(attrs) do
-      create_submission(portal, project, title, description, meta)
+         {:ok, title, description} <- validate_input(attrs),
+         # LAST, and deliberately so: taking the uploads is the only step
+         # here that costs CPU and disk, so it happens after the honeypot,
+         # the fill-time check and the rate limiter have all had their say.
+         # Consuming first meant a caller who was about to be rate-limited
+         # still got three images re-encoded and stored — and stored with
+         # no submission row to find them by.
+         {:ok, file_uuids} <- take_attachments(meta, project) do
+      create_submission(portal, project, title, description, meta, file_uuids)
     else
       {:error, :rate_limited} -> {:error, :rate_limited}
       {:error, :invalid} -> {:error, :invalid}
@@ -998,7 +1105,19 @@ defmodule PhoenixKitProjects.Portal do
   # ONE transaction for all four writes (final panel find: the unchecked
   # chain could orphan a task or silently drop the provenance row).
   # Broadcast + activity + fan-out happen AFTER commit.
-  defp create_submission(portal, project, title, description, meta) do
+  # The uploads arrive as a THUNK, not as files: the LiveView owns the
+  # temp files and can only hand them over from inside its own event
+  # callback, so this is what lets the cost be paid last.
+  defp take_attachments(meta, project) do
+    case Map.get(meta, :attachments) do
+      fun when is_function(fun, 0) -> fun.() |> store_attachments(project.uuid)
+      _ -> {:ok, []}
+    end
+  rescue
+    _ -> {:error, :invalid}
+  end
+
+  defp create_submission(portal, project, title, description, meta, file_uuids) do
     result =
       RepoHelper.repo().transaction(fn ->
         with {:ok, task} <-
@@ -1025,7 +1144,7 @@ defmodule PhoenixKitProjects.Portal do
                |> PortalSubmission.changeset(%{
                  assignment_uuid: assignment.uuid,
                  ip_hash: ip_hash(portal, meta[:peer_ip]),
-                 file_uuids: Map.get(meta, :file_uuids, [])
+                 file_uuids: file_uuids
                })
                |> RepoHelper.repo().insert() do
           assignment
