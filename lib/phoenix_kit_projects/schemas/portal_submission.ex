@@ -24,6 +24,9 @@ defmodule PhoenixKitProjects.Schemas.PortalSubmission do
   schema "phoenix_kit_project_portal_submissions" do
     field(:email, :string)
     field(:ip_hash, :string)
+    # Storage uuids for the images that came with the report. Sanitised
+    # before they got here — see PhoenixKit.Modules.Storage.ImageProcessor.
+    field(:file_uuids, {:array, :string}, default: [])
 
     belongs_to(:assignment, Assignment, foreign_key: :assignment_uuid, references: :uuid)
 
@@ -33,7 +36,7 @@ defmodule PhoenixKitProjects.Schemas.PortalSubmission do
   @doc false
   def changeset(submission, attrs) do
     submission
-    |> cast(attrs, [:assignment_uuid, :email, :ip_hash])
+    |> cast(attrs, [:assignment_uuid, :email, :ip_hash, :file_uuids])
     |> validate_required([:assignment_uuid])
     |> validate_length(:email, max: 160)
     |> foreign_key_constraint(:assignment_uuid)

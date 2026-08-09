@@ -41,6 +41,9 @@ defmodule PhoenixKitProjects.Portal do
 
   require Logger
 
+  alias PhoenixKit.Modules.Storage
+  alias PhoenixKit.Modules.Storage.ImageProcessor
+  alias PhoenixKit.Modules.Storage.URLSigner
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.RateLimiter
   alias PhoenixKitProjects.Activity
@@ -68,6 +71,10 @@ defmodule PhoenixKitProjects.Portal do
   # min-fill-time check; the form carries the mount monotonic time).
   # Overridable so the test env doesn't sleep through it.
   @min_fill_ms 3_000
+  # Three images, 5 MB each after re-encoding. A bug report needs a
+  # screenshot or three; the rest is someone else's storage bill.
+  @attachment_max_count 3
+  @attachment_max_bytes 5_000_000
   defp min_fill_ms,
     do: Application.get_env(:phoenix_kit_projects, :portal_min_fill_ms, @min_fill_ms)
 
@@ -370,6 +377,115 @@ defmodule PhoenixKitProjects.Portal do
   """
   @spec discussion_resource_type() :: String.t()
   def discussion_resource_type, do: "project_assignment"
+
+  @doc """
+  How many images one report may carry, and how large each may be.
+
+  Small on purpose. A bug report needs a screenshot or three, and every
+  megabyte past that is storage someone else is paying for on a page that
+  accepts writes from strangers.
+  """
+  @spec attachment_limits() :: %{count: pos_integer(), bytes: pos_integer()}
+  def attachment_limits, do: %{count: @attachment_max_count, bytes: @attachment_max_bytes}
+
+  @doc """
+  Turns uploaded temp files into storage uuids, or refuses.
+
+  Every file is RE-ENCODED before it is stored — what ends up on disk is
+  our encoder's output, not the uploader's bytes — so a polyglot, an EXIF
+  payload or a trailing archive does not survive the trip. Anything that
+  cannot be decoded as an image is refused whatever it was called.
+
+  All-or-nothing: if one file can't be processed the whole report is
+  refused, because a report that silently loses the screenshot it refers
+  to is worse than one that says so.
+  """
+  @spec store_attachments([%{path: String.t(), name: String.t()}], binary() | nil) ::
+          {:ok, [String.t()]} | {:error, :invalid}
+  def store_attachments(files, project_uuid \\ nil)
+
+  def store_attachments([], _project_uuid), do: {:ok, []}
+
+  def store_attachments(files, project_uuid) when is_list(files) do
+    # Core requires every file to have an owner (or to be a chunk of one),
+    # and that invariant is what keeps orphans from accumulating — so
+    # rather than weaken it, the file is attributed to the project's owner.
+    # That is also who it genuinely belongs to: it arrived on their portal,
+    # into their project, and their retention and quota should carry it.
+    # `metadata.source` records that a stranger produced it.
+    owner = project_owner_uuid(project_uuid)
+
+    cond do
+      length(files) > @attachment_max_count ->
+        {:error, :invalid}
+
+      is_nil(owner) ->
+        # No owner to hold it: refuse rather than invent one.
+        {:error, :invalid}
+
+      true ->
+        Enum.reduce_while(files, {:ok, []}, fn file, {:ok, acc} ->
+          case store_one_attachment(file, owner) do
+            {:ok, uuid} -> {:cont, {:ok, acc ++ [uuid]}}
+            :error -> {:halt, {:error, :invalid}}
+          end
+        end)
+    end
+  end
+
+  def store_attachments(_files, _project_uuid), do: {:error, :invalid}
+
+  defp project_owner_uuid(nil), do: nil
+
+  defp project_owner_uuid(project_uuid) do
+    from(m in PhoenixKitProjects.Schemas.ProjectMember,
+      where: m.project_uuid == ^project_uuid and m.role == "owner",
+      order_by: [asc: m.inserted_at],
+      limit: 1,
+      select: m.user_uuid
+    )
+    |> RepoHelper.repo().one()
+  rescue
+    _ -> nil
+  end
+
+  defp store_one_attachment(%{path: path, name: name}, owner_uuid) do
+    sanitized =
+      Path.join(System.tmp_dir!(), "pk-portal-#{System.unique_integer([:positive])}.jpg")
+
+    with {:ok, _} <- ImageProcessor.sanitize(path, sanitized, max_edge: 2000),
+         %{size: size} when size > 0 and size <= @attachment_max_bytes <- File.stat!(sanitized),
+         {:ok, %{uuid: uuid}} <-
+           Storage.store_file(sanitized,
+             filename: safe_filename(name),
+             # The type we PRODUCED, never the one that was claimed.
+             content_type: "image/jpeg",
+             size_bytes: size,
+             user_uuid: owner_uuid,
+             metadata: %{"source" => "portal_submission"}
+           ) do
+      {:ok, uuid}
+    else
+      _ -> :error
+    end
+  after
+    :ok
+  end
+
+  defp store_one_attachment(_file, _owner), do: :error
+
+  # The uploader named this file. It reaches a Content-Disposition header
+  # and a filesystem, so it gets flattened to something boring.
+  defp safe_filename(name) do
+    base =
+      name
+      |> Kernel.to_string()
+      |> Path.basename()
+      |> String.replace(~r/[^A-Za-z0-9._-]/, "-")
+      |> String.slice(0, 60)
+
+    if base in ["", ".", ".."], do: "screenshot.jpg", else: base
+  end
 
   # ── Participation ───────────────────────────────────────────────
 
@@ -705,6 +821,10 @@ defmodule PhoenixKitProjects.Portal do
          # prevent, arriving through a side door. Putting a task on a
          # PUBLIC board is the deliberate act that also publishes its text.
          description: board_description(portal, assignment, lang),
+         # Only on a public board, for the same reason the description is:
+         # a screenshot attached to a report is content, and publishing a
+         # task to the open web is the act that publishes its content.
+         images: board_images(portal, assignment),
          status: assignment.status,
          status_label: AssignmentStatusBadge.label(assignment.status),
          inserted_at: assignment.inserted_at,
@@ -715,6 +835,33 @@ defmodule PhoenixKitProjects.Portal do
     end
   rescue
     _ -> :error
+  end
+
+  # Signed URLs for the sanitised images, or none. Resolved through the
+  # storage module so a file deleted by retention simply drops out rather
+  # than rendering a broken image.
+  defp board_images(%PortalRow{access_mode: "public"}, assignment) do
+    from(sub in PortalSubmission, where: sub.assignment_uuid == ^assignment.uuid, limit: 1)
+    |> RepoHelper.repo().one()
+    |> case do
+      %PortalSubmission{file_uuids: uuids} when is_list(uuids) -> resolve_images(uuids)
+      _ -> []
+    end
+  rescue
+    _ -> []
+  end
+
+  defp board_images(_portal, _assignment), do: []
+
+  defp resolve_images(uuids) do
+    Enum.flat_map(uuids, fn uuid ->
+      case Storage.get_file(uuid) do
+        %{uuid: _} -> [%{uuid: uuid, url: URLSigner.signed_url(uuid, "original")}]
+        _ -> []
+      end
+    end)
+  rescue
+    _ -> []
   end
 
   defp board_description(%PortalRow{access_mode: "public"}, assignment, lang),
@@ -877,7 +1024,8 @@ defmodule PhoenixKitProjects.Portal do
                %PortalSubmission{}
                |> PortalSubmission.changeset(%{
                  assignment_uuid: assignment.uuid,
-                 ip_hash: ip_hash(portal, meta[:peer_ip])
+                 ip_hash: ip_hash(portal, meta[:peer_ip]),
+                 file_uuids: Map.get(meta, :file_uuids, [])
                })
                |> RepoHelper.repo().insert() do
           assignment

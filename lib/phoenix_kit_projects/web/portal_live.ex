@@ -16,7 +16,13 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   use Phoenix.LiveView
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import PhoenixKitWeb.Components.Core.EmptyState
+  import PhoenixKitWeb.Components.Core.FileUpload, only: [file_upload: 1]
+  import PhoenixKitWeb.Components.Core.Input, only: [input: 1]
   import PhoenixKitWeb.Components.Core.MentionText
+  import PhoenixKitWeb.Components.Core.StatusDot
+  import PhoenixKitWeb.Components.Core.Textarea, only: [textarea: 1]
+  import PhoenixKitWeb.Components.Core.TimeDisplay, only: [time_ago: 1]
 
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Portal
@@ -45,6 +51,14 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         status_filter: "all",
         # The min-fill-time anchor (panel: bots submit instantly).
         mounted_ms: System.monotonic_time(:millisecond)
+      )
+      |> allow_upload(:screenshot,
+        # Images only, and the count/size caps the context enforces again
+        # on the way in. LiveView's checks are a courtesy to the person
+        # uploading; Portal.store_attachments/1 is the control.
+        accept: ~w(.png .jpg .jpeg .webp .gif),
+        max_entries: Portal.attachment_limits().count,
+        max_file_size: Portal.attachment_limits().bytes
       )
       |> load_view()
 
@@ -157,10 +171,28 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   @impl true
   def handle_event("submit_issue", params, socket) do
+    # Consume BEFORE the submit: the temp files vanish when this callback
+    # returns, so they have to become storage rows first. A refusal here
+    # stops the whole report — a bug report that silently loses the
+    # screenshot it refers to is worse than one that says so.
+    case consume_screenshots(socket) do
+      {:ok, file_uuids} ->
+        do_submit(socket, params, file_uuids)
+
+      :error ->
+        {:noreply,
+         assign(socket, error: gettext("That image could not be read. PNG or JPEG, please."))}
+    end
+  end
+
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp do_submit(socket, params, file_uuids) do
     meta = %{
       peer_ip: socket.assigns.peer_ip,
       honeypot: params["website"],
       mounted_ms: socket.assigns.mounted_ms,
+      file_uuids: file_uuids,
       # The submit policy is checked in the write path, which needs to know
       # who is asking.
       viewer: socket.assigns[:phoenix_kit_current_scope]
@@ -187,8 +219,6 @@ defmodule PhoenixKitProjects.Web.PortalLive do
          assign(socket, error: gettext("Could not submit — check the form and try again."))}
     end
   end
-
-  def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # ── Render ────────────────────────────────────────────────────────
 
@@ -244,37 +274,48 @@ defmodule PhoenixKitProjects.Web.PortalLive do
       <div :if={@error} class="alert alert-error text-sm">{@error}</div>
 
       <form id="portal-submit-form" phx-submit="submit_issue" class="flex flex-col gap-4">
-        <label class="form-control">
-          <span class="label-text mb-1 font-medium">{gettext("What happened?")}</span>
-          <input
-            type="text"
-            name="title"
-            required
-            maxlength="200"
-            autocomplete="off"
-            placeholder={gettext("A short summary")}
-            class="input input-bordered w-full"
-          />
-        </label>
+        <.input
+          type="text"
+          name="title"
+          value=""
+          label={gettext("What happened?")}
+          placeholder={gettext("A short summary")}
+          required
+          maxlength="200"
+          autocomplete="off"
+        />
 
-        <label class="form-control">
-          <span class="label-text mb-1 font-medium">{gettext("Details")}</span>
-          <textarea
+        <div>
+          <.textarea
             name="description"
+            value=""
+            label={gettext("Details")}
             rows="8"
             maxlength="5000"
             placeholder={gettext("What you did, what you expected, and what happened instead.")}
-            class="textarea textarea-bordered w-full"
-          ></textarea>
-          <%!-- No upload on the anonymous path. An unauthenticated upload
-               to a public domain is a malware and illegal-content host with
-               someone else's reputation attached, and nothing submitted
-               here is published without review anyway — so it is pure risk
-               for a deferred, staff-mediated reward. --%>
-          <span class="label-text-alt mt-1 opacity-60">
-            {gettext("Have a screenshot? Say so here and the team will follow up.")}
-          </span>
-        </label>
+          />
+        </div>
+
+        <%!-- Screenshots. Accepting a file from a stranger is defensible
+             here for two reasons that have to hold together: every image
+             is RE-ENCODED before storage, so what lands on disk is our
+             encoder's output rather than the uploader's bytes; and nothing
+             submitted reaches the public board until a person publishes
+             it. Neither alone would be enough. --%>
+        <div>
+          <.file_upload
+            upload={@uploads.screenshot}
+            label={gettext("Screenshots (optional)")}
+            icon="hero-photo"
+            accept_description={gettext("PNG, JPEG, WebP or GIF")}
+            max_size_description={
+              gettext("up to %{count} images, %{size} MB each",
+                count: Portal.attachment_limits().count,
+                size: div(Portal.attachment_limits().bytes, 1_000_000)
+              )
+            }
+          />
+        </div>
 
         <%!-- The honeypot. Hidden from people, irresistible to the bots
              that fill every field they find. --%>
@@ -311,7 +352,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         <%!-- Meta above the title (the eyebrow pattern). It is most of what
              separates a designed page from a scaffolded one. --%>
         <div class="flex flex-wrap items-center gap-2 text-sm">
-          <.status_dot status={@issue.status} label={@issue.status_label} />
+          <.status_dot variant={status_variant(@issue.status)} label={@issue.status_label} />
           <span class="opacity-40">·</span>
           <span class="opacity-60">
             {gettext("Opened %{when}", when: short_date(@issue.inserted_at))}
@@ -322,6 +363,26 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
       <div :if={@issue.description} class="prose prose-sm max-w-none opacity-90">
         <.mention_text text={@issue.description} scope={@phoenix_kit_current_scope} />
+      </div>
+
+      <%!-- Screenshots that came with the report. `loading="lazy"` and a
+           bounded height so a tall screenshot doesn't push the discussion
+           off the page. --%>
+      <div :if={@issue[:images] not in [nil, []]} class="flex flex-wrap gap-3">
+        <a
+          :for={image <- @issue.images}
+          href={image.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="block overflow-hidden rounded-box border border-base-200 transition-colors hover:border-primary/40"
+        >
+          <img
+            src={image.url}
+            alt={gettext("Screenshot attached to this report")}
+            loading="lazy"
+            class="max-h-56 w-auto object-contain"
+          />
+        </a>
       </div>
 
       <div class="divider my-0"></div>
@@ -396,13 +457,18 @@ defmodule PhoenixKitProjects.Web.PortalLive do
       </div>
 
       <section :if={@view.capabilities.list} class="flex flex-col">
-        <p :if={@view.issues == []} class="py-8 text-center text-sm opacity-60">
-          {gettext("Nothing published yet.")}
-        </p>
+        <.empty_state
+          :if={@view.issues == []}
+          icon="hero-inbox"
+          title={gettext("Nothing published yet")}
+          description={gettext("Issues appear here once the team publishes them.")}
+        />
 
-        <p :if={@view.issues != [] and visible_issues(@view, @status_filter) == []} class="py-8 text-center text-sm opacity-60">
-          {gettext("No issues in this view.")}
-        </p>
+        <.empty_state
+          :if={@view.issues != [] and visible_issues(@view, @status_filter) == []}
+          icon="hero-funnel"
+          title={gettext("No issues in this view")}
+        />
 
         <%!-- Rows, not cards. Issue titles are text, and text wants rows:
              at six issues cards waste the viewport, at three hundred they
@@ -412,11 +478,16 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           navigate={issue_path(@slug, issue.uuid)}
           class="group flex items-center gap-3 border-b border-base-200 py-3 transition-colors hover:bg-base-200/40"
         >
-          <.status_dot status={issue.status} label={issue.status_label} compact />
+          <.status_dot
+            variant={status_variant(issue.status)}
+            label={issue.status_label}
+            size={:sm}
+            class="w-28 shrink-0 text-xs opacity-70"
+          />
           <span class="min-w-0 flex-1 truncate font-medium group-hover:text-primary">
             {issue.title}
           </span>
-          <span class="shrink-0 text-xs opacity-50">{short_date(issue.updated_at)}</span>
+          <.time_ago datetime={issue.updated_at} class="shrink-0 text-xs opacity-50" />
         </.link>
       </section>
     </div>
@@ -436,25 +507,12 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     """
   end
 
-  attr(:status, :string, required: true)
-  attr(:label, :string, required: true)
-  attr(:compact, :boolean, default: false)
-
-  # A small coloured dot and a word, not a pill. A badge on every row of a
-  # list IS the scaffold look; the dot reads as designed and takes a third
-  # of the space.
-  defp status_dot(assigns) do
-    ~H"""
-    <span class={["inline-flex shrink-0 items-center gap-1.5", @compact && "w-28"]}>
-      <span class={["h-2 w-2 shrink-0 rounded-full", status_colour(@status)]}></span>
-      <span class={["truncate", @compact && "text-xs opacity-70"]}>{@label}</span>
-    </span>
-    """
-  end
-
-  defp status_colour("done"), do: "bg-success"
-  defp status_colour("in_progress"), do: "bg-warning"
-  defp status_colour(_), do: "bg-info"
+  # Core's `status_dot` does this, and a second implementation of a dot
+  # plus a label is exactly the kind of thing that drifts. This maps the
+  # assignment vocabulary onto its semantic variants and stops there.
+  defp status_variant("done"), do: :success
+  defp status_variant("in_progress"), do: :warning
+  defp status_variant(_), do: :info
 
   # Filters are derived from what is actually on the board, so a board with
   # nothing in progress doesn't offer an empty tab.
@@ -523,6 +581,20 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   defp current_user(%{phoenix_kit_current_scope: %{user: user}}), do: user
   defp current_user(_), do: nil
+
+  defp consume_screenshots(socket) do
+    socket
+    |> consume_uploaded_entries(:screenshot, fn %{path: path}, entry ->
+      {:ok, %{path: path, name: entry.client_name}}
+    end)
+    |> Portal.store_attachments(socket.assigns.view && socket.assigns.view[:project_uuid])
+    |> case do
+      {:ok, uuids} -> {:ok, uuids}
+      {:error, _} -> :error
+    end
+  rescue
+    _ -> :error
+  end
 
   defp board_path(slug), do: Routes.path("/portal/#{slug}")
   defp board_path(slug, "all"), do: board_path(slug)

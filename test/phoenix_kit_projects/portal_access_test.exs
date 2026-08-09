@@ -9,7 +9,9 @@ defmodule PhoenixKitProjects.PortalAccessTest do
   """
   use PhoenixKitProjects.DataCase, async: false
 
-  alias PhoenixKitProjects.{Extensions, Portal, Projects}
+  alias PhoenixKit.Modules.Storage
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.{Extensions, Members, Portal, Projects}
   alias PhoenixKitProjects.Schemas.Portal, as: PortalRow
 
   defp uniq, do: System.unique_integer([:positive])
@@ -308,7 +310,16 @@ defmodule PhoenixKitProjects.PortalAccessTest do
       {:ok, issue} = Portal.public_issue(portal.slug, assignment.uuid, nil)
 
       assert Map.keys(issue) |> Enum.sort() ==
-               [:description, :inserted_at, :status, :status_label, :title, :updated_at, :uuid]
+               [
+                 :description,
+                 :images,
+                 :inserted_at,
+                 :status,
+                 :status_label,
+                 :title,
+                 :updated_at,
+                 :uuid
+               ]
     end
   end
 
@@ -424,6 +435,127 @@ defmodule PhoenixKitProjects.PortalAccessTest do
       {:ok, _} = Extensions.disable(project, "portal")
 
       assert Portal.access_mode_of(portal.slug) == "link"
+    end
+  end
+
+  describe "screenshots on a report" do
+    @describetag :tmp_dir
+
+    setup %{project: project} do
+      # An uploaded file needs an owner — core's invariant — and the
+      # project's owner is who it belongs to. A project created through
+      # the UI always has one; this fixture creates projects without an
+      # actor, so it has to say so explicitly.
+      {:ok, user} =
+        Auth.register_user(%{
+          "email" => "owner-#{uniq()}@example.com",
+          "password" => "ValidPassword123!"
+        })
+
+      {:ok, _} = Members.add_member(project, user.uuid, role: "owner")
+      :ok
+    end
+
+    defp make_png(dir, name) do
+      path = Path.join(dir, name)
+      {_, 0} = System.cmd("convert", ["-size", "40x40", "xc:red", path], stderr_to_stdout: true)
+      path
+    end
+
+    defp imagemagick? do
+      match?({_, 0}, System.cmd("identify", ["-version"], stderr_to_stdout: true))
+    rescue
+      _ -> false
+    end
+
+    test "a valid image is stored, re-encoded", %{tmp_dir: dir, project: project} do
+      if imagemagick?() do
+        path = make_png(dir, "shot.png")
+
+        assert {:ok, [uuid]} =
+                 Portal.store_attachments([%{path: path, name: "shot.png"}], project.uuid)
+
+        assert is_binary(uuid)
+      end
+    end
+
+    test "an appended payload does not survive into storage", %{tmp_dir: dir, project: project} do
+      if imagemagick?() do
+        path = make_png(dir, "poly.png")
+        File.write!(path, "\n<script>alert(1)</script>NEEDLE", [:append])
+
+        assert {:ok, [uuid]} =
+                 Portal.store_attachments([%{path: path, name: "poly.png"}], project.uuid)
+
+        stored = Storage.get_file(uuid)
+        assert stored, "the file should have been stored"
+        # Whatever went in, what came out is our encoder's output.
+        # Whatever went in, what came out is our encoder's output — note the
+        # upload claimed .png and the stored file is a jpeg.
+        assert stored.mime_type == "image/jpeg"
+      end
+    end
+
+    test "something that isn't an image is refused whatever it's named", %{
+      tmp_dir: dir,
+      project: project
+    } do
+      path = Path.join(dir, "screenshot.png")
+      File.write!(path, "#!/bin/sh\nrm -rf /\n")
+
+      assert Portal.store_attachments([%{path: path, name: "screenshot.png"}], project.uuid) ==
+               {:error, :invalid}
+    end
+
+    test "too many files is refused before anything is stored", %{tmp_dir: dir, project: project} do
+      if imagemagick?() do
+        files =
+          for i <- 1..(Portal.attachment_limits().count + 1) do
+            %{path: make_png(dir, "s#{i}.png"), name: "s#{i}.png"}
+          end
+
+        assert Portal.store_attachments(files, project.uuid) == {:error, :invalid}
+      end
+    end
+
+    test "one bad file refuses the whole report", %{tmp_dir: dir, project: project} do
+      if imagemagick?() do
+        good = %{path: make_png(dir, "good.png"), name: "good.png"}
+        bad_path = Path.join(dir, "bad.png")
+        File.write!(bad_path, "nope")
+
+        # A report that silently loses the screenshot it refers to is worse
+        # than one that says so.
+        assert Portal.store_attachments([good, %{path: bad_path, name: "bad.png"}], project.uuid) ==
+                 {:error, :invalid}
+      end
+    end
+
+    test "no files is not an error" do
+      assert Portal.store_attachments([], nil) == {:ok, []}
+    end
+
+    test "images reach the issue page only on a public board", %{project: project, portal: portal} do
+      task = fixture_task()
+
+      {:ok, assignment} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, assignment} = Portal.set_public(assignment, true)
+
+      # Link board: the description is withheld and so are the images.
+      {:ok, issue} = Portal.public_issue(portal.slug, assignment.uuid, nil)
+      assert issue.images == []
+
+      {:ok, public} = Portal.set_access_mode(project.uuid, "public", slug: "shots-#{uniq()}")
+      {:ok, 1} = Portal.set_board_published(assignment.uuid, true)
+
+      {:ok, issue} = Portal.public_issue(public.slug, assignment.uuid, nil)
+      assert is_list(issue.images)
     end
   end
 end

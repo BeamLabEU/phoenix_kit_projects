@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 12
+  @current_version 13
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -109,6 +109,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v10_portal(p)
     v11_subject_grants(p, prefix)
     v12_public_board(p)
+    v13_submission_attachments(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -133,6 +134,13 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 13 do
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_portal_submissions
+        DROP COLUMN IF EXISTS file_uuids
+      """)
+    end
 
     if target < 12 do
       # Dropping access_mode returns every portal to secret-link semantics,
@@ -170,6 +178,12 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS source")
     end
 
+    down_early(p, target)
+  end
+
+  # V1..V8. Split from the newer half purely so neither function grows an
+  # unreadable number of branches as the chain lengthens.
+  defp down_early(p, target) do
     if target < 8 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_invoiced_entries")
     end
@@ -826,6 +840,20 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # admin flipped a switch. A task reaches a PUBLIC board only by being
   # explicitly published to it — a second, deliberate act — so switching a
   # portal to `public` exposes nothing by itself.
+  # V13: images attached to an anonymous submission.
+  #
+  # The uuids point at core storage rows. No foreign key: storage is
+  # core's table and a portal submission has no business constraining it,
+  # and a file deleted by a retention job must not take the submission
+  # with it — the reference simply stops resolving, which is what the
+  # render path already handles for every other resource.
+  defp v13_submission_attachments(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_portal_submissions
+    ADD COLUMN IF NOT EXISTS file_uuids JSONB NOT NULL DEFAULT '[]'
+    """)
+  end
+
   defp v12_public_board(p) do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_portals
