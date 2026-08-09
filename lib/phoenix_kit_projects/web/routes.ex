@@ -38,6 +38,13 @@ defmodule PhoenixKitProjects.Web.Routes do
           # not a secret — everything on this page is already visible to
           # whoever can reach the board.
           live("/portal/:slug/i/:issue", PhoenixKitProjects.Web.PortalLive, :issue)
+          # Reporting gets its own page rather than a dialog. A submission
+          # is a considered act — people write paragraphs and paste error
+          # output — and a backdrop click that eats 300 words is a
+          # betrayal. It also has to exist as a real page for the no-JS
+          # path anyway, so a modal would be a second copy of an
+          # abuse-exposed form to keep in sync.
+          live("/portal/:slug/report", PhoenixKitProjects.Web.PortalLive, :report)
         end
       end
     end

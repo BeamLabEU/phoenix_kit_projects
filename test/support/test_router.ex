@@ -66,6 +66,7 @@ defmodule PhoenixKitProjects.Test.Router do
       on_mount: [{PhoenixKitProjects.Test.Hooks, :assign_scope}] do
       live("/portal/:slug", PortalLive, :show)
       live("/portal/:slug/i/:issue", PortalLive, :issue)
+      live("/portal/:slug/report", PortalLive, :report)
     end
   end
 

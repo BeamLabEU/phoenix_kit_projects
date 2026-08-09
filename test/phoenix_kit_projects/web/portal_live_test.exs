@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
   import Ecto.Query
 
+  alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.Projects
@@ -47,23 +48,25 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
   test "anonymous submission through the LV creates the issue",
        %{conn: conn, project: project, portal: portal} do
-    {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
+    {:ok, view, _html} = live(conn, "/portal/#{portal.slug}/report")
 
-    html =
-      view
-      |> form("#portal-submit-form", %{
-        "title" => "From the page",
-        "description" => "Steps to reproduce"
-      })
-      |> render_submit()
+    view
+    |> form("#portal-submit-form", %{
+      "title" => "From the page",
+      "description" => "Steps to reproduce"
+    })
+    |> render_submit()
 
-    assert html =~ "Thank you"
+    # A redirect back to the board, which is also what stops the browser's
+    # back button re-posting the report.
+    # The path carries the locale prefix Routes.path/1 applies.
+    assert_redirect(view, Routes.path("/portal/#{portal.slug}"))
     assert PhoenixKit.RepoHelper.repo().exists?(portal_issue_query(project.uuid))
   end
 
   test "a filled honeypot shows the generic failure, creates nothing",
        %{conn: conn, project: project, portal: portal} do
-    {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
+    {:ok, view, _html} = live(conn, "/portal/#{portal.slug}/report")
 
     html =
       view
@@ -132,7 +135,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
     test "renders the issue", %{conn: conn, portal: portal, assignment: assignment} do
       {:ok, _view, html} = live(conn, issue_path(portal, assignment))
 
-      assert html =~ "Discussion" or html =~ "Sign in to take part"
+      assert html =~ "Discussion"
     end
 
     test "an anonymous reader is told how to take part, not given a box", %{
@@ -145,7 +148,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
       # page 500'd the first time it was wired.
       {:ok, _view, html} = live(conn, issue_path(portal, assignment))
 
-      assert html =~ "Sign in to take part"
+      assert html =~ "Only signed-in people can reply"
     end
 
     test "an unpublished issue falls back to the board rather than erroring", %{
@@ -200,9 +203,10 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
        conn: conn, project: project, portal: PhoenixKitProjects.Portal.get_portal(project.uuid)}
     end
 
-    test "anyone-submits shows the form", %{conn: conn, portal: portal} do
+    test "anyone-submits offers the report link", %{conn: conn, portal: portal} do
       {:ok, _view, html} = live(conn, "/portal/#{portal.slug}")
-      assert html =~ "submit_issue"
+      assert html =~ "Report an issue"
+      assert html =~ "/report"
     end
 
     test "members-only hides it from an anonymous visitor and says why", %{
@@ -215,7 +219,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
       {:ok, _view, html} = live(conn, "/portal/#{portal.slug}")
 
-      refute html =~ "submit_issue"
+      refute html =~ "/report"
       assert html =~ "Sign in to report an issue"
     end
   end

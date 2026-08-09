@@ -16,6 +16,8 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   use Phoenix.LiveView
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import PhoenixKitWeb.Components.Core.MentionText
+
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
@@ -40,6 +42,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         error: nil,
         issue: nil,
         issue_uuid: nil,
+        status_filter: "all",
         # The min-fill-time anchor (panel: bots submit instantly).
         mounted_ms: System.monotonic_time(:millisecond)
       )
@@ -105,28 +108,28 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   # Reading a discussion follows the board: whoever can see the issue can
   # see what has been said about it. WRITING is the thing that is gated.
-  defp discussion_readable?(view), do: view.capabilities.list
-
-  defp issue_path(slug, uuid), do: Routes.path("/portal/#{slug}/i/#{uuid}")
-
-  # nil, never false: the comments component reads `current_user.uuid`, and
-  # `false && user` hands it a boolean that dies on the first field access.
-  defp commenter(%{view: %{may_comment: true}} = assigns), do: current_user(assigns)
-  defp commenter(_assigns), do: nil
-
-  defp current_user(%{phoenix_kit_current_scope: %{user: user}}), do: user
-  defp current_user(_), do: nil
-
-  @impl true
-  def handle_params(params, _uri, socket) do
-    {:noreply, socket |> assign(issue_uuid: params["issue"]) |> load_issue()}
-  end
 
   # The issue page is the board page plus one record. Loading it here
   # rather than in mount keeps the board's own resolve untouched, and a
   # missing/unpublished issue degrades to the board rather than to an
   # error: the reader followed a link to something that is no longer
   # published, and the board is the useful place to land.
+  @impl true
+  def handle_params(params, _uri, socket) do
+    {:noreply,
+     socket
+     |> assign(
+       issue_uuid: params["issue"],
+       status_filter: status_filter(params["status"])
+     )
+     |> load_issue()}
+  end
+
+  # Whitelisted, never echoed back raw: the value reaches a class attribute
+  # and a comparison, and anything outside the vocabulary is simply "all".
+  defp status_filter(status) when status in ["todo", "in_progress", "done"], do: status
+  defp status_filter(_), do: "all"
+
   defp load_issue(%{assigns: %{issue_uuid: nil}} = socket), do: assign(socket, issue: nil)
 
   defp load_issue(socket) do
@@ -165,7 +168,15 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
     case Portal.submit(socket.assigns.slug, params, meta) do
       {:ok, :submitted} ->
-        {:noreply, socket |> assign(submitted: true, error: nil) |> load_view()}
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           gettext(
+             "Thanks — your report is with the team. It will appear here once they publish it."
+           )
+         )
+         |> push_navigate(to: board_path(socket.assigns.slug))}
 
       {:error, :rate_limited} ->
         {:noreply,
@@ -211,145 +222,310 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     """
   end
 
-  def render(assigns) do
+  def render(%{live_action: :report} = assigns) do
     ~H"""
-    <div class="mx-auto flex max-w-3xl flex-col gap-8 px-4 py-10">
-      <%!-- A public board WANTS to be found; that is the difference between
-           it and a capability link. The response header says the same
-           thing — this is the belt to its suspender. --%>
-      <meta
-        name="robots"
-        content={if @view.access_mode == "public", do: "index, follow", else: "noindex, nofollow"}
-      />
+    <div class="mx-auto flex max-w-2xl flex-col gap-6 px-4 py-10">
+      <.robots mode={@view.access_mode} />
 
-      <header class="flex flex-col gap-1">
-        <h1 class="text-2xl font-bold">{@view.project_name}</h1>
-        <p :if={@view.capabilities.status} class="text-sm opacity-60">
-          {status_line(@view)}
+      <.link navigate={board_path(@slug)} class="text-sm opacity-60 hover:opacity-100">
+        {gettext("← Back to %{project}", project: @view.project_name)}
+      </.link>
+
+      <div>
+        <h1 class="text-2xl font-bold">{gettext("Report an issue")}</h1>
+        <%!-- Above the fold, not in fine print under the button. Everything
+             submitted here is invisible until a person publishes it, and a
+             reporter who doesn't know that submits again, and again. --%>
+        <p class="mt-2 text-sm opacity-70">
+          {gettext("Your report goes to the team for review. It won't appear on the public board until someone there publishes it.")}
         </p>
+      </div>
+
+      <div :if={@error} class="alert alert-error text-sm">{@error}</div>
+
+      <form id="portal-submit-form" phx-submit="submit_issue" class="flex flex-col gap-4">
+        <label class="form-control">
+          <span class="label-text mb-1 font-medium">{gettext("What happened?")}</span>
+          <input
+            type="text"
+            name="title"
+            required
+            maxlength="200"
+            autocomplete="off"
+            placeholder={gettext("A short summary")}
+            class="input input-bordered w-full"
+          />
+        </label>
+
+        <label class="form-control">
+          <span class="label-text mb-1 font-medium">{gettext("Details")}</span>
+          <textarea
+            name="description"
+            rows="8"
+            maxlength="5000"
+            placeholder={gettext("What you did, what you expected, and what happened instead.")}
+            class="textarea textarea-bordered w-full"
+          ></textarea>
+          <%!-- No upload on the anonymous path. An unauthenticated upload
+               to a public domain is a malware and illegal-content host with
+               someone else's reputation attached, and nothing submitted
+               here is published without review anyway — so it is pure risk
+               for a deferred, staff-mediated reward. --%>
+          <span class="label-text-alt mt-1 opacity-60">
+            {gettext("Have a screenshot? Say so here and the team will follow up.")}
+          </span>
+        </label>
+
+        <%!-- The honeypot. Hidden from people, irresistible to the bots
+             that fill every field they find. --%>
+        <div class="hidden" aria-hidden="true">
+          <label>
+            {gettext("Website")}
+            <input type="text" name="website" tabindex="-1" autocomplete="off" />
+          </label>
+        </div>
+
+        <div class="flex items-center justify-end gap-2">
+          <.link navigate={board_path(@slug)} class="btn btn-ghost btn-sm">
+            {gettext("Cancel")}
+          </.link>
+          <button type="submit" class="btn btn-primary" phx-disable-with={gettext("Sending…")}>
+            {gettext("Send report")}
+          </button>
+        </div>
+      </form>
+    </div>
+    """
+  end
+
+  def render(%{live_action: :issue, issue: issue} = assigns) when not is_nil(issue) do
+    ~H"""
+    <div class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">
+      <.robots mode={@view.access_mode} />
+
+      <.link navigate={board_path(@slug)} class="text-sm opacity-60 hover:opacity-100">
+        {gettext("← %{project}", project: @view.project_name)}
+      </.link>
+
+      <header class="flex flex-col gap-2">
+        <%!-- Meta above the title (the eyebrow pattern). It is most of what
+             separates a designed page from a scaffolded one. --%>
+        <div class="flex flex-wrap items-center gap-2 text-sm">
+          <.status_dot status={@issue.status} label={@issue.status_label} />
+          <span class="opacity-40">·</span>
+          <span class="opacity-60">
+            {gettext("Opened %{when}", when: short_date(@issue.inserted_at))}
+          </span>
+        </div>
+        <h1 class="text-2xl font-bold leading-snug">{@issue.title}</h1>
       </header>
 
-      <%!-- Status summary --%>
-      <section :if={@view.capabilities.status and @view.issues != []} class="flex flex-wrap gap-2">
-        <span
-          :for={{status_label, count} <- summarize(@view)}
-          class="badge badge-ghost badge-lg gap-1"
+      <div :if={@issue.description} class="prose prose-sm max-w-none opacity-90">
+        <.mention_text text={@issue.description} scope={@phoenix_kit_current_scope} />
+      </div>
+
+      <div class="divider my-0"></div>
+
+      <section class="flex flex-col gap-3">
+        <h2 class="text-lg font-semibold">{gettext("Discussion")}</h2>
+
+        <.live_component
+          module={PhoenixKitComments.Web.CommentsComponent}
+          id={"portal-issue-#{@issue.uuid}"}
+          resource_type={Portal.discussion_resource_type()}
+          resource_uuid={@issue.uuid}
+          current_user={commenter(assigns)}
+          enabled={@view.may_comment}
+          show_title={false}
+          rich_text={false}
+        />
+
+        <%!-- Not a disabled textarea: a greyed-out box reads as broken
+             rather than as a rule. --%>
+        <p
+          :if={not @view.may_comment}
+          class="rounded-box bg-base-200 px-4 py-3 text-center text-sm opacity-70"
         >
-          {status_label}: {count}
-        </span>
-      </section>
-
-      <%!-- One issue and its discussion. Shown INSTEAD of nothing rather
-           than instead of the board: the reader keeps the context they
-           arrived in. --%>
-      <section :if={@issue} class="flex flex-col gap-4 rounded-lg border border-base-200 p-4">
-        <div class="flex flex-col gap-1">
-          <div class="flex flex-wrap items-center gap-2">
-            <h2 class="text-lg font-semibold">{@issue.title}</h2>
-            <span class="badge badge-ghost badge-sm">{@issue.status_label}</span>
-          </div>
-          <p :if={@issue.description} class="text-sm opacity-70">{@issue.description}</p>
-        </div>
-
-        <%!-- Discussion. `may_comment` is resolved server-side for THIS
-             viewer, so the page never offers a box the server would
-             refuse to accept from. --%>
-        <div :if={@view.may_comment or discussion_readable?(@view)} class="border-t border-base-200 pt-3">
-          <.live_component
-            module={PhoenixKitComments.Web.CommentsComponent}
-            id={"portal-issue-#{@issue.uuid}"}
-            resource_type={Portal.discussion_resource_type()}
-            resource_uuid={@issue.uuid}
-            current_user={commenter(assigns)}
-            enabled={@view.may_comment}
-            title={gettext("Discussion")}
-            rich_text={false}
-          />
-        </div>
-
-        <p :if={not @view.may_comment} class="text-xs opacity-60">
-          {gettext("Sign in to take part in this discussion.")}
+          {gettext("Only signed-in people can reply here.")}
         </p>
-      </section>
-
-      <p
-        :if={@view.capabilities.submit and not @view.may_submit}
-        class="text-sm opacity-60"
-      >
-        {gettext("Sign in to report an issue here.")}
-      </p>
-
-      <%!-- Public issue list --%>
-      <section :if={@view.capabilities.list} class="flex flex-col gap-2">
-        <h2 class="text-lg font-semibold">{gettext("Issues")}</h2>
-        <p :if={@view.issues == []} class="text-sm opacity-60">
-          {gettext("Nothing published yet.")}
-        </p>
-        <div :if={@view.issues != []} class="divide-y divide-base-200 rounded-lg border border-base-200">
-          <div :for={issue <- @view.issues} class="flex items-center gap-3 px-3 py-2">
-            <.link
-              patch={issue_path(@slug, issue.uuid)}
-              class="min-w-0 flex-1 truncate text-sm hover:underline"
-            >{issue.title}</.link>
-            <span class="badge badge-ghost badge-sm shrink-0">{issue.status_label}</span>
-          </div>
-        </div>
-      </section>
-
-      <%!-- Submission form --%>
-      <%!-- `may_submit` (capability AND policy), not the capability alone:
-           a form the server will refuse is worse than no form. --%>
-      <section :if={@view.may_submit} class="flex flex-col gap-3">
-        <h2 class="text-lg font-semibold">{gettext("Report an issue")}</h2>
-
-        <div :if={@submitted} class="alert alert-success text-sm">
-          {gettext("Thank you — your issue has been submitted.")}
-        </div>
-
-        <form :if={not @submitted} id="portal-submit-form" phx-submit="submit_issue" class="flex flex-col gap-3">
-          <div :if={@error} class="alert alert-warning text-sm">{@error}</div>
-
-          <label class="form-control">
-            <span class="label-text mb-1">{gettext("Title")}</span>
-            <input
-              type="text"
-              name="title"
-              required
-              maxlength="200"
-              class="input input-bordered"
-            />
-          </label>
-
-          <label class="form-control">
-            <span class="label-text mb-1">{gettext("Description")}</span>
-            <textarea name="description" rows="5" maxlength="5000" class="textarea textarea-bordered"></textarea>
-          </label>
-
-          <%!-- Honeypot: invisible to humans, irresistible to bots. --%>
-          <div aria-hidden="true" style="position:absolute; left:-9999px;" tabindex="-1">
-            <label>Website <input type="text" name="website" tabindex="-1" autocomplete="off" /></label>
-          </div>
-
-          <button type="submit" class="btn btn-primary self-start" phx-disable-with={gettext("Submitting…")}>
-            {gettext("Submit")}
-          </button>
-        </form>
       </section>
     </div>
     """
   end
 
-  defp status_line(view) do
-    cond do
-      view.completed_at -> gettext("Completed")
-      view.started_at -> gettext("In progress")
-      true -> gettext("Not started")
+  def render(assigns) do
+    ~H"""
+    <div class="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-10">
+      <.robots mode={@view.access_mode} />
+
+      <%!-- A masthead, not a bare heading. The name, what this board is
+           for, and one freshness signal — that timestamp does more for
+           perceived quality than any amount of restyling. --%>
+      <header class="flex flex-wrap items-start justify-between gap-4">
+        <div class="min-w-0">
+          <h1 class="text-3xl font-bold">{@view.project_name}</h1>
+          <p class="mt-1 text-sm opacity-60">
+            {gettext("Public issue board")}
+            <span :if={last_activity(@view)}>
+              <span class="opacity-40">·</span>
+              {gettext("updated %{when}", when: last_activity(@view))}
+            </span>
+          </p>
+        </div>
+        <.link :if={@view.may_submit} navigate={report_path(@slug)} class="btn btn-primary btn-sm">
+          {gettext("Report an issue")}
+        </.link>
+      </header>
+
+      <p :if={@view.capabilities.submit and not @view.may_submit} class="text-sm opacity-60">
+        {gettext("Sign in to report an issue here.")}
+      </p>
+
+      <%!-- Real links, not JS tabs: server-rendered, crawlable, and they
+           work with scripting off. They also replace the old "To do: 3"
+           chip row, which read like debug output. --%>
+      <div :if={@view.capabilities.list and @view.issues != []} class="join">
+        <.link
+          :for={{key, label, count} <- status_filters(@view)}
+          patch={board_path(@slug, key)}
+          class={["btn btn-sm join-item", @status_filter == key && "btn-active"]}
+        >
+          {label}
+          <span class="opacity-50">{count}</span>
+        </.link>
+      </div>
+
+      <section :if={@view.capabilities.list} class="flex flex-col">
+        <p :if={@view.issues == []} class="py-8 text-center text-sm opacity-60">
+          {gettext("Nothing published yet.")}
+        </p>
+
+        <p :if={@view.issues != [] and visible_issues(@view, @status_filter) == []} class="py-8 text-center text-sm opacity-60">
+          {gettext("No issues in this view.")}
+        </p>
+
+        <%!-- Rows, not cards. Issue titles are text, and text wants rows:
+             at six issues cards waste the viewport, at three hundred they
+             are mush. --%>
+        <.link
+          :for={issue <- visible_issues(@view, @status_filter)}
+          navigate={issue_path(@slug, issue.uuid)}
+          class="group flex items-center gap-3 border-b border-base-200 py-3 transition-colors hover:bg-base-200/40"
+        >
+          <.status_dot status={issue.status} label={issue.status_label} compact />
+          <span class="min-w-0 flex-1 truncate font-medium group-hover:text-primary">
+            {issue.title}
+          </span>
+          <span class="shrink-0 text-xs opacity-50">{short_date(issue.updated_at)}</span>
+        </.link>
+      </section>
+    </div>
+    """
+  end
+
+  # ── Presentation ──────────────────────────────────────────────────
+
+  attr(:mode, :string, required: true)
+
+  defp robots(assigns) do
+    ~H"""
+    <meta
+      name="robots"
+      content={if @mode == "public", do: "index, follow", else: "noindex, nofollow"}
+    />
+    """
+  end
+
+  attr(:status, :string, required: true)
+  attr(:label, :string, required: true)
+  attr(:compact, :boolean, default: false)
+
+  # A small coloured dot and a word, not a pill. A badge on every row of a
+  # list IS the scaffold look; the dot reads as designed and takes a third
+  # of the space.
+  defp status_dot(assigns) do
+    ~H"""
+    <span class={["inline-flex shrink-0 items-center gap-1.5", @compact && "w-28"]}>
+      <span class={["h-2 w-2 shrink-0 rounded-full", status_colour(@status)]}></span>
+      <span class={["truncate", @compact && "text-xs opacity-70"]}>{@label}</span>
+    </span>
+    """
+  end
+
+  defp status_colour("done"), do: "bg-success"
+  defp status_colour("in_progress"), do: "bg-warning"
+  defp status_colour(_), do: "bg-info"
+
+  # Filters are derived from what is actually on the board, so a board with
+  # nothing in progress doesn't offer an empty tab.
+  defp status_filters(view) do
+    counts = Enum.frequencies_by(view.issues, & &1.status)
+
+    [{"all", gettext("All"), length(view.issues)}]
+    |> Kernel.++(
+      for {status, label} <- [
+            {"todo", gettext("Open")},
+            {"in_progress", gettext("In progress")},
+            {"done", gettext("Done")}
+          ],
+          Map.has_key?(counts, status),
+          do: {status, label, Map.fetch!(counts, status)}
+    )
+  end
+
+  defp visible_issues(view, "all"), do: view.issues
+  defp visible_issues(view, status), do: Enum.filter(view.issues, &(&1.status == status))
+
+  # The freshest thing on the board. Deliberately absent when nothing has
+  # moved in a while: a stale "updated 4 months ago" advertises neglect,
+  # where saying nothing simply doesn't make the claim.
+  defp last_activity(view) do
+    case view.issues do
+      [] ->
+        nil
+
+      issues ->
+        latest = issues |> Enum.map(& &1.updated_at) |> Enum.max(DateTime)
+
+        if DateTime.diff(DateTime.utc_now(), latest, :day) <= 60,
+          do: relative_time(latest),
+          else: nil
     end
   end
 
-  defp summarize(view) do
-    view.issues
-    |> Enum.frequencies_by(& &1.status_label)
-    |> Enum.sort_by(&elem(&1, 1), :desc)
+  defp relative_time(dt) do
+    days = DateTime.diff(DateTime.utc_now(), dt, :day)
+
+    cond do
+      days <= 0 ->
+        gettext("today")
+
+      days == 1 ->
+        gettext("yesterday")
+
+      days < 30 ->
+        ngettext("%{count} day ago", "%{count} days ago", days, count: days)
+
+      true ->
+        ngettext("%{count} month ago", "%{count} months ago", div(days, 30), count: div(days, 30))
+    end
   end
+
+  defp short_date(nil), do: ""
+  defp short_date(dt), do: Calendar.strftime(dt, "%-d %b %Y")
+
+  defp issue_path(slug, uuid), do: Routes.path("/portal/#{slug}/i/#{uuid}")
+
+  # nil, never false: the comments component reads `current_user.uuid`, and
+  # `false && user` hands it a boolean that dies on the first field access.
+  defp commenter(%{view: %{may_comment: true}} = assigns), do: current_user(assigns)
+  defp commenter(_assigns), do: nil
+
+  defp current_user(%{phoenix_kit_current_scope: %{user: user}}), do: user
+  defp current_user(_), do: nil
+
+  defp board_path(slug), do: Routes.path("/portal/#{slug}")
+  defp board_path(slug, "all"), do: board_path(slug)
+  defp board_path(slug, status), do: Routes.path("/portal/#{slug}?status=#{status}")
+  defp report_path(slug), do: Routes.path("/portal/#{slug}/report")
 end
