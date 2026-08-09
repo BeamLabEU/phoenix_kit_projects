@@ -358,4 +358,62 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
              "the check matched everything, which would protect real orphans forever"
     end
   end
+  describe "the discussion composer" do
+    setup %{conn: conn} do
+      Extensions.Registry.refresh()
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Composer #{n}", "start_mode" => "immediate"})
+
+      {:ok, _} = Extensions.enable(project, "portal")
+      task = fixture_task()
+
+      {:ok, assignment} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, assignment} = Portal.set_public(assignment, true)
+      {:ok, _} = Portal.set_participation(project.uuid, %{"comment_access" => "members"})
+
+      {:ok, user} =
+        PhoenixKit.Users.Auth.register_user(%{
+          email: "composer-#{n}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid, permissions: []))
+
+      {:ok,
+       conn: conn, portal: Portal.get_portal(project.uuid), assignment: assignment, user: user}
+    end
+
+    test "a signed-in reader can open it without crashing the page", %{
+      conn: conn,
+      portal: portal,
+      assignment: assignment
+    } do
+      # Opening the composer renders `composer_form/1`, a function component
+      # in the comments module. Anything it reads has to come off `ctx` —
+      # a bare `@mentions_on` there resolves against the component's OWN
+      # assigns, which do not have it, and the render raises KeyError.
+      #
+      # This only reproduces with PHOENIX_KIT_COMMENTS_PATH pointed at the
+      # local checkout: against the published pin the composer has no
+      # mentions wiring at all, which is precisely why the suite stayed
+      # green while the browser 500'd.
+      {:ok, view, html} = live(conn, "/portal/#{portal.slug}/i/#{assignment.uuid}")
+      assert html =~ "Write comment"
+
+      opened =
+        view
+        |> element("button[phx-click=open_composer]")
+        |> render_click()
+
+      assert opened =~ "Post Comment"
+    end
+  end
 end
