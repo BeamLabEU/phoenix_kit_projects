@@ -56,6 +56,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Labels,
     Ledger,
     Paths,
+    Portal,
     Projects,
     Statuses
   }
@@ -71,6 +72,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # template's bare calls resolve. See PhoenixKitProjects.Web.Helpers.
   import PhoenixKitProjects.Web.Helpers,
     only: [assignee_label: 1, task_counts_weekends?: 2, assignment_hours: 2]
+
+  import PhoenixKitWeb.Components.Core.TimeDisplay, only: [time_ago: 1]
 
   require Logger
 
@@ -162,8 +165,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        # finished work, and opening it on the finished work is what made
        # people scroll to find anything live.
        list_status: "active",
-       list_source: "all",
        list_sort: :position,
+       pending_reviews: [],
+       review_open?: false,
        subproject_summaries: %{},
        subproject_child_tasks: %{},
        ledger_totals: nil,
@@ -334,8 +338,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # first expand).
               expanded_subprojects: MapSet.new(),
               list_status: "active",
-              list_source: "all",
               list_sort: :position,
+              pending_reviews: [],
+              review_open?: false,
               subproject_summaries: %{},
               subproject_child_tasks: %{},
               # Work-ledger state (Step 10): totals strip + per-task logged
@@ -377,6 +382,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       ext_mounted: MapSet.new(),
       health: nil,
       health_modal_open: false,
+      # The not-found branch still renders the page shell, so every assign
+      # the template reads has to exist here too.
+      pending_reviews: [],
+      review_open?: false,
+      list_status: "active",
+      list_sort: :position,
       is_template: false,
       wrapper_class: @default_wrapper_class,
       router_mounted?: false,
@@ -607,6 +618,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       subproject_summaries: subproject_summaries,
       subproject_child_tasks: subproject_child_tasks
     )
+    |> assign(pending_reviews: Projects.list_pending_reviews(project_uuid))
     |> apply_list_lens()
   end
 
@@ -620,12 +632,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp apply_list_lens(socket) do
     all = socket.assigns[:assignments] || []
     status = socket.assigns[:list_status] || "active"
-    source = socket.assigns[:list_source] || "all"
     sort = socket.assigns[:list_sort] || :position
 
     visible =
       all
-      |> Enum.filter(&(matches_status?(&1, status) and matches_source?(&1, source)))
+      |> Enum.filter(&matches_status?(&1, status))
       |> sort_list(sort)
 
     assign(socket,
@@ -645,7 +656,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       # other is a lie. It also closes a known trap: dropping a card
       # "between" two visible rows while others are hidden writes a
       # position that ignores everything it cannot see.
-      list_manual?: status == "all" and source == "all" and sort == :position
+      list_manual?: status == "all" and sort == :position
     )
   end
 
@@ -657,6 +668,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> Map.new(fn {a, idx} -> {a.uuid, idx} end)
   end
 
+  defp review_images(assignment), do: Portal.review_images(assignment.uuid)
+
   defp matches_status?(_a, "all"), do: true
   # "Not finished", NOT "one of the two statuses I happened to think of".
   # A task carrying an out-of-band status — and this codebase deliberately
@@ -666,10 +679,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp matches_status?(a, "active"), do: a.status != "done"
   defp matches_status?(a, "done"), do: a.status == "done"
   defp matches_status?(_a, _status), do: true
-
-  defp matches_source?(_a, "all"), do: true
-  defp matches_source?(a, "portal"), do: is_nil(a.sorted_at)
-  defp matches_source?(a, "internal"), do: not is_nil(a.sorted_at)
 
   defp sort_list(assignments, :position), do: assignments
 
@@ -685,12 +694,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     %{
       total: length(all),
       active: Enum.count(all, &(&1.status != "done")),
-      done: Enum.count(all, &(&1.status == "done")),
-      # Arrived, and nobody has placed it. A real state now rather than a
-      # guess from "came from the portal and hasn't been started" — which
-      # described where a task came from, could only be cleared by starting
-      # the work, and left the word promising an action that did not exist.
-      portal_new: Enum.count(all, &is_nil(&1.sorted_at))
+      done: Enum.count(all, &(&1.status == "done"))
     }
   end
 
@@ -965,14 +969,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   icon="hero-pencil"
                   label={gettext("Edit")}
                 />
-                <.table_row_menu_button
-                  :if={is_nil(@a.sorted_at)}
-                  phx-click="mark_sorted"
-                  phx-value-uuid={@a.uuid}
-                  phx-disable-with={gettext("Sorting…")}
-                  icon="hero-inbox-arrow-down"
-                  label={gettext("Mark as sorted")}
-                />
                 <.table_row_menu_divider />
                 <.table_row_menu_button
                   phx-click="remove_assignment"
@@ -1172,7 +1168,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "reopen" => :tasks,
     "remove_assignment" => :tasks,
     "reorder_assignments" => :tasks,
-    "mark_sorted" => :tasks,
+    "review_submission" => :tasks,
+    "open_review" => :tasks,
+    "close_review" => :tasks,
     "edit_duration" => :estimates,
     "save_duration" => :estimates,
     "update_progress" => :progress,
@@ -1218,7 +1216,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "reorder_assignments" => :edit_tasks,
     # Placing a task in the plan is the same class of decision as
     # reordering one — it changes where the work sits, not what it is.
-    "mark_sorted" => :edit_tasks,
+    "review_submission" => :edit_tasks,
     "save_duration" => :edit_tasks,
     "remove_dependency" => :edit_tasks,
     "detach_subproject" => :edit_tasks,
@@ -1233,7 +1231,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # their own status" true through the interceptor.
   @record_param_events ~w(complete start_task reopen change_workflow_status
                           update_progress toggle_tracking remove_assignment save_duration
-                          mark_sorted)
+                          )
 
   @impl true
   def handle_event(event, params, socket) do
@@ -1286,25 +1284,38 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Every value is whitelisted in the guard rather than trusted: these
   # reach a comparison and an atom, and `String.to_existing_atom/1` on
   # unfiltered input is how a client picks the atom table apart.
-  defp gated_handle_event("mark_sorted", %{"uuid" => uuid}, socket) do
-    case scoped_assignment(socket, uuid) do
-      nil ->
-        {:noreply, socket}
+  defp gated_handle_event("open_review", _params, socket) do
+    {:noreply, assign(socket, review_open?: true)}
+  end
 
-      assignment ->
-        Projects.mark_sorted(assignment.uuid, actor_uuid: Activity.actor_uuid(socket))
-        {:noreply, load_assignments(socket)}
+  defp gated_handle_event("close_review", _params, socket) do
+    {:noreply, assign(socket, review_open?: false)}
+  end
+
+  defp gated_handle_event("review_submission", %{"uuid" => uuid, "decision" => decision}, socket)
+       when decision in ["accepted", "rejected"] do
+    # Scoped to THIS project's queue rather than looked up by uuid alone:
+    # the uuid arrives from the client, and `list_assignments/1` no longer
+    # contains pending rows, so `scoped_assignment/2` cannot vouch for it.
+    pending = socket.assigns[:pending_reviews] || []
+
+    if Enum.any?(pending, &(&1.uuid == uuid)) do
+      Projects.review_assignment(uuid, String.to_existing_atom(decision),
+        actor_uuid: Activity.actor_uuid(socket)
+      )
+
+      socket = load_assignments(socket)
+
+      # Close on the last one rather than leaving an empty dialog open.
+      {:noreply, assign(socket, review_open?: socket.assigns.pending_reviews != [])}
+    else
+      {:noreply, socket}
     end
   end
 
   defp gated_handle_event("list_filter_status", %{"tab" => status}, socket)
        when status in ["active", "done", "all"] do
     {:noreply, socket |> assign(list_status: status) |> apply_list_lens()}
-  end
-
-  defp gated_handle_event("list_filter_source", %{"source" => source}, socket)
-       when source in ["all", "portal", "internal"] do
-    {:noreply, socket |> assign(list_source: source) |> apply_list_lens()}
   end
 
   defp gated_handle_event("list_sort", %{"sort" => sort}, socket)
@@ -1922,10 +1933,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            actor_uuid: Activity.actor_uuid(socket)
          ) do
       :ok ->
-        # Placing a card in the order is the act the queue was waiting for,
-        # so nobody should have to say it twice via the menu.
-        Projects.mark_sorted_many(ordered_ids)
-
         {:noreply,
          socket
          |> push_event("sortable:flash", %{uuid: moved_id, status: "ok"})
@@ -2987,6 +2994,94 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            this page. Renders nothing until one is clicked. --%>
       <.access_request_dialog request={assigns[:pk_access_request]} />
 
+      <%!-- Review queue. A stranger's submission is a request, not work —
+           so the decision happens here, in one place, with the text and the
+           images the person actually sent. Accepting is what turns it into
+           a task; until then it is in no list, no board and no count. --%>
+      <%= if @review_open? and @pending_reviews != [] do %>
+        <dialog open class="modal modal-open" phx-window-keydown="close_review" phx-key="Escape">
+          <div class="modal-box max-w-2xl">
+            <h3 class="font-bold text-lg">{gettext("Submissions to review")}</h3>
+            <p class="text-sm text-base-content/70 mt-1">
+              {gettext("Sent from the public board. Accepting adds it to the project; rejecting keeps a record and shows nobody.")}
+            </p>
+
+            <div class="flex flex-col gap-3 mt-4 max-h-[60vh] overflow-y-auto">
+              <div
+                :for={a <- @pending_reviews}
+                class="rounded-box border border-base-200 p-3 flex flex-col gap-2"
+              >
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <p class="font-medium break-words">
+                      {TaskSchema.localized_title(a.task, L10n.current_content_lang())}
+                    </p>
+                    <p class="text-xs opacity-60">
+                      <.time_ago datetime={a.inserted_at} />
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      phx-click="review_submission"
+                      phx-value-uuid={a.uuid}
+                      phx-value-decision="accepted"
+                      phx-disable-with={gettext("Accepting…")}
+                      class="btn btn-success btn-xs"
+                    >
+                      <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("Accept")}
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="review_submission"
+                      phx-value-uuid={a.uuid}
+                      phx-value-decision="rejected"
+                      phx-disable-with={gettext("Rejecting…")}
+                      data-confirm={gettext("Reject this submission?")}
+                      class="btn btn-ghost btn-xs"
+                    >
+                      {gettext("Reject")}
+                    </button>
+                  </div>
+                </div>
+
+                <p :if={a.description not in [nil, ""]} class="text-sm whitespace-pre-wrap break-words opacity-80">
+                  {a.description}
+                </p>
+
+                <%!-- The images the stranger attached. The decision to let
+                     something onto a public page has to be taken with the
+                     payload in view, not just its title. --%>
+                <div :if={review_images(a) != []} class="flex flex-wrap gap-2">
+                  <a
+                    :for={image <- review_images(a)}
+                    href={image.url}
+                    target="_blank"
+                    rel="noopener noreferrer nofollow"
+                  >
+                    <img
+                      src={image.url}
+                      alt={gettext("Submitted attachment")}
+                      loading="lazy"
+                      class="h-20 w-20 rounded-lg border border-base-300 object-cover"
+                    />
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div class="modal-action">
+              <button type="button" phx-click="close_review" class="btn btn-ghost btn-sm">
+                {gettext("Close")}
+              </button>
+            </div>
+          </div>
+          <form method="dialog" class="modal-backdrop">
+            <button type="button" phx-click="close_review">close</button>
+          </form>
+        </dialog>
+      <% end %>
+
       <%!-- Health modal --%>
       <%= if @health_modal_open do %>
         <dialog open class="modal modal-open" phx-window-keydown="close_health_modal" phx-key="Escape">
@@ -3282,35 +3377,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           ]}
         />
 
-        <%!-- A second, independent axis: it narrows whichever status lens
-             is selected rather than replacing it, so it is deliberately
-             outside the strip above and styled as a toggle.
-
-             "Unsorted", not "New" — new is a moment and stops being true
-             on its own, whereas these are submissions nobody has placed in
-             the plan yet, which stays true until somebody acts. They also
-             land at the very bottom of the manual order, because new
-             assignments append, so this chip is how they get found at all. --%>
+        <%!-- Not a filter. Public submissions are not in the list at all —
+             they are requests nobody has agreed to yet, and mixing them
+             into the plan meant every count, filter and drag treated a
+             stranger's message as work. This opens the decision instead. --%>
         <button
-          :if={@assignment_counts.portal_new > 0}
+          :if={@pending_reviews != []}
           type="button"
-          phx-click="list_filter_source"
-          phx-value-source={if(@list_source == "portal", do: "all", else: "portal")}
-          class={[
-            "btn btn-sm gap-1",
-            if(@list_source == "portal", do: "btn-info", else: "btn-outline")
-          ]}
-          title={
-            gettext("Submitted from the public board and not started yet — nobody has placed these in the plan.")
-          }
-          aria-pressed={to_string(@list_source == "portal")}
+          phx-click="open_review"
+          class="btn btn-sm btn-info gap-1"
         >
-          <.icon
-            name={if(@list_source == "portal", do: "hero-funnel-solid", else: "hero-funnel")}
-            class="w-4 h-4"
-          />
-          {gettext("Unsorted")}
-          <span class="badge badge-sm">{@assignment_counts.portal_new}</span>
+          <.icon name="hero-inbox-arrow-down" class="w-4 h-4" />
+          {gettext("Review submissions")}
+          <span class="badge badge-sm">{length(@pending_reviews)}</span>
         </button>
 
         <div class="ml-auto flex items-center gap-2">

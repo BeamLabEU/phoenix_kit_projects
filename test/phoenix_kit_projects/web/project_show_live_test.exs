@@ -874,58 +874,88 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert number_for(all, active.uuid) == "2"
     end
 
-    test "unsorted is a state a person can clear, not a guess about provenance", %{
+    test "a submission is not in the project until somebody accepts it", %{
       conn: conn,
       project: project
     } do
-      # Created in the admin: whoever added it decided it belongs here, so
-      # it is placed on arrival and never enters the queue.
-      placed = task_named(project, "Planned #{System.unique_integer([:positive])}", "todo")
-      refute is_nil(Projects.get_assignment(placed.uuid).sorted_at)
-
-      # Arrived from outside: nobody inside has looked at it yet.
-      inbound = task_named(project, "Inbound #{System.unique_integer([:positive])}", "todo")
+      # A stranger's request is not work. Until a person agrees to it, it
+      # must be in no list, no count and no lens — mixing it into the plan
+      # was what made every filter and drag treat a message as a task.
+      pending = task_named(project, "Please fix #{System.unique_integer([:positive])}", "todo")
 
       {:ok, _} =
-        inbound
-        |> Ecto.Changeset.change(sorted_at: nil, source: "portal")
+        pending
+        |> Ecto.Changeset.change(review_status: "pending", source: "portal")
         |> Repo.update()
 
       {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      assert html =~ "Unsorted"
 
-      only_unsorted =
-        view |> element("button[phx-value-source=portal]") |> render_click()
+      refute pending.uuid in list_rows(html)
+      assert html =~ "Review submissions"
 
-      assert list_rows(only_unsorted) == [inbound.uuid]
+      # Even with every lens wide open it stays out — it is not a filtered
+      # task, it is not a task.
+      all = view |> element("button[phx-value-tab=all]") |> render_click()
+      refute pending.uuid in list_rows(all)
 
-      # The action the menu was missing. Sorting is a decision of its own —
-      # it must not require starting the work.
-      view
-      |> element(~s(button[phx-click="mark_sorted"][phx-value-uuid="#{inbound.uuid}"]))
-      |> render_click()
+      view |> element(~s(button[phx-click="open_review"])) |> render_click()
 
-      refute is_nil(Projects.get_assignment(inbound.uuid).sorted_at)
-      assert Projects.get_assignment(inbound.uuid).status == "todo"
+      accepted =
+        view
+        |> element(
+          ~s(button[phx-click="review_submission"][phx-value-uuid="#{pending.uuid}"][phx-value-decision="accepted"])
+        )
+        |> render_click()
+
+      assert pending.uuid in list_rows(accepted)
+      assert Projects.get_assignment(pending.uuid).review_status == "accepted"
     end
 
-    test "dragging a task into place sorts it, without anyone saying so twice", %{
-      conn: conn,
-      project: project,
-      done: done,
-      active: active
-    } do
-      {:ok, _} = active |> Ecto.Changeset.change(sorted_at: nil) |> Repo.update()
+    test "rejecting keeps the record and shows it to nobody", %{conn: conn, project: project} do
+      pending = task_named(project, "Spam #{System.unique_integer([:positive])}", "todo")
+
+      {:ok, _} =
+        pending
+        |> Ecto.Changeset.change(review_status: "pending", source: "portal")
+        |> Repo.update()
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
-      view |> element("button[phx-value-tab=all]") |> render_click()
 
-      render_hook(view, "reorder_assignments", %{
-        "ordered_ids" => [active.uuid, done.uuid],
-        "moved_id" => active.uuid
+      view |> element(~s(button[phx-click="open_review"])) |> render_click()
+
+      view
+      |> element(
+        ~s(button[phx-click="review_submission"][phx-value-uuid="#{pending.uuid}"][phx-value-decision="rejected"])
+      )
+      |> render_click()
+
+      all = view |> element("button[phx-value-tab=all]") |> render_click()
+      refute pending.uuid in list_rows(all)
+
+      # Kept, not deleted: a public intake has to be able to answer what
+      # strangers sent and what was done about it.
+      assert Projects.get_assignment(pending.uuid).review_status == "rejected"
+    end
+
+    test "a forged uuid cannot be reviewed through this project's queue", %{
+      conn: conn,
+      project: project
+    } do
+      other = fixture_project(%{"name" => "Other #{System.unique_integer([:positive])}"})
+      stranger = task_named(other, "Not yours", "todo")
+
+      {:ok, _} =
+        stranger |> Ecto.Changeset.change(review_status: "pending") |> Repo.update()
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "review_submission", %{
+        "uuid" => stranger.uuid,
+        "decision" => "accepted"
       })
 
-      refute is_nil(Projects.get_assignment(active.uuid).sorted_at)
+      assert Projects.get_assignment(stranger.uuid).review_status == "pending",
+             "a submission from another project was decided from this page"
     end
 
     test "the rail and the drag handles are gone under a lens", %{conn: conn, project: project} do

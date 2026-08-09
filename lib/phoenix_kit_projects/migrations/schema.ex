@@ -110,7 +110,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v11_subject_grants(p, prefix)
     v12_public_board(p)
     v13_submission_attachments(p)
-    v14_sorted_at(p)
+    v14_review_status(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -137,8 +137,21 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # down-path (the projects convention for data migrations).
 
     if target < 14 do
+      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_pending_review_idx")
       execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_unsorted_idx")
 
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_assignments
+        DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_review_status_check
+      """)
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_assignments
+        DROP COLUMN IF EXISTS review_status
+      """)
+
+      # Also clears `sorted_at` from the superseded cut described above, so
+      # a workspace that ran it lands on the same schema as one that did not.
       execute("""
       ALTER TABLE #{p}phoenix_kit_project_assignments
         DROP COLUMN IF EXISTS sorted_at
@@ -857,37 +870,63 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # and a file deleted by a retention job must not take the submission
   # with it — the reference simply stops resolving, which is what the
   # render path already handles for every other resource.
-  # When a human decided where this task belongs — NULL until they do.
+  # Whether staff have ACCEPTED this into the project.
   #
-  # "Unsorted" used to mean "arrived from the public board and nobody has
-  # started it", which described where a task came from rather than any
-  # state of it, and left the word promising an action that did not exist:
-  # the only way to stop being unsorted was to start the work. Sorting and
-  # starting are different decisions, and a triage queue has to survive
-  # somebody triaging without picking the task up.
+  # Replaces V14's `sorted_at`, which asked the wrong question. A public
+  # submission is not an internal task that happens to be in the wrong
+  # place — it is a request from a stranger that nobody has agreed to yet,
+  # and until somebody does it should not be sitting in the plan being
+  # counted, filtered and dragged alongside real work.
   #
-  # Backfilled to `inserted_at` for everything that already exists EXCEPT
-  # portal submissions. Anything created inside the admin was placed by the
-  # person who created it; the inbound pile is exactly what nobody has
-  # looked at yet, and that is the queue this column exists to hold.
-  defp v14_sorted_at(p) do
+  # `accepted` is the default so every existing row and every task created
+  # inside the admin keeps behaving exactly as before; only the portal
+  # opens anything in `pending`. `rejected` rows are kept rather than
+  # deleted: a stranger's submission and the decision taken on it are the
+  # audit trail for a public intake.
+  defp v14_review_status(p) do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_assignments
-    ADD COLUMN IF NOT EXISTS sorted_at TIMESTAMPTZ
+    ADD COLUMN IF NOT EXISTS review_status VARCHAR(16) NOT NULL DEFAULT 'accepted'
     """)
 
+    # Anything from the portal that was never published to a board and
+    # never started is, by definition, a request nobody acted on. Published
+    # or in-progress rows were accepted by whoever did that, so they keep
+    # the default and no project wakes up with a queue full of work it has
+    # already been doing.
     execute("""
     UPDATE #{p}phoenix_kit_project_assignments
-    SET sorted_at = inserted_at
-    WHERE sorted_at IS NULL AND (source IS NULL OR source <> 'portal')
+    SET review_status = 'pending'
+    WHERE source = 'portal' AND public = false AND status = 'todo'
     """)
 
-    # The unsorted queue is a small slice of a big table, and it is read on
-    # every hub load to draw the count.
+    # An earlier cut of this version added `sorted_at` and never left this
+    # workspace. Dropped here rather than in a version of its own: the
+    # question it asked ("has somebody placed this?") was the wrong one, and
+    # two half-states are worse than one.
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_unsorted_idx")
+
     execute("""
-    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_unsorted_idx
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    DROP COLUMN IF EXISTS sorted_at
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_review_status_check
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD CONSTRAINT phoenix_kit_project_assignments_review_status_check
+    CHECK (review_status IN ('pending', 'accepted', 'rejected'))
+    """)
+
+    # The review queue is a small slice read on every hub load.
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_pending_review_idx
       ON #{p}phoenix_kit_project_assignments (project_uuid)
-      WHERE sorted_at IS NULL
+      WHERE review_status <> 'accepted'
     """)
   end
 

@@ -2543,45 +2543,54 @@ defmodule PhoenixKitProjects.Projects do
   @spec list_assignments(uuid()) :: [Assignment.t()]
   def list_assignments(project_uuid) do
     Assignment
-    |> where([a], a.project_uuid == ^project_uuid)
+    |> where([a], a.project_uuid == ^project_uuid and a.review_status == "accepted")
     |> order_by([a], asc: a.position, asc: a.inserted_at)
     |> preload(^@assignment_preloads)
     |> repo().all()
   end
 
-  defp maybe_mark_sorted(changeset, false), do: changeset
-
-  defp maybe_mark_sorted(changeset, _sorted) do
-    Ecto.Changeset.put_change(changeset, :sorted_at, DateTime.utc_now(:second))
+  defp maybe_pending_review(changeset, :pending) do
+    Ecto.Changeset.put_change(changeset, :review_status, "pending")
   end
 
-  @doc """
-  Marks a task as placed in the plan — what "sorting" actually IS.
+  defp maybe_pending_review(changeset, _accepted), do: changeset
 
-  Idempotent, and never un-sorts: the queue is a list of things nobody has
-  looked at, so a second decision is not a different one.
+  @doc """
+  Accepts or rejects a submission that is waiting on a decision.
+
+  Only ever moves a row OUT of `pending`: accepting an accepted task is a
+  no-op, and nothing here can push accepted work back into the queue, which
+  would make a decision somebody already took look undecided.
+
+  Rejected rows are kept rather than deleted. A public intake needs to be
+  able to answer "what did strangers send us, and what did we do about it",
+  and a deleted row answers neither.
   """
-  @spec mark_sorted(uuid(), keyword()) :: {:ok, Assignment.t()} | {:error, term()}
-  def mark_sorted(assignment_uuid, opts \\ []) when is_binary(assignment_uuid) do
+  @spec review_assignment(uuid(), :accepted | :rejected, keyword()) ::
+          {:ok, Assignment.t()} | {:error, term()}
+  def review_assignment(assignment_uuid, decision, opts \\ [])
+      when is_binary(assignment_uuid) and decision in [:accepted, :rejected] do
     case repo().get(Assignment, assignment_uuid) do
       nil ->
         {:error, :not_found}
 
-      %Assignment{sorted_at: %DateTime{}} = already ->
-        {:ok, already}
-
-      assignment ->
+      %Assignment{review_status: "pending"} = assignment ->
         assignment
-        |> Ecto.Changeset.change(sorted_at: DateTime.utc_now(:second))
+        |> Ecto.Changeset.change(review_status: Atom.to_string(decision))
         |> repo().update()
         |> case do
           {:ok, updated} ->
             log_activity(%{
-              action: "projects.assignment_sorted",
+              action: "projects.submission_#{decision}",
               actor_uuid: Keyword.get(opts, :actor_uuid),
               resource_type: "assignment",
               resource_uuid: updated.uuid,
               metadata: %{"project_uuid" => updated.project_uuid}
+            })
+
+            ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+              uuid: updated.uuid,
+              project_uuid: updated.project_uuid
             })
 
             {:ok, updated}
@@ -2589,24 +2598,26 @@ defmodule PhoenixKitProjects.Projects do
           error ->
             error
         end
+
+      already ->
+        {:ok, already}
     end
   end
 
   @doc """
-  Marks several as placed at once — the drag handler's path.
+  Submissions still awaiting a decision, newest first.
 
-  Dragging a task into position IS placing it, so a reorder that touches an
-  unsorted task takes it out of the queue without anyone having to say so
-  twice.
+  Separate from `list_assignments/1` on purpose: these are not tasks yet,
+  so nothing that draws the project should be able to pick them up by
+  accident.
   """
-  @spec mark_sorted_many([uuid()]) :: :ok
-  def mark_sorted_many([]), do: :ok
-
-  def mark_sorted_many(uuids) when is_list(uuids) do
-    from(a in Assignment, where: a.uuid in ^uuids and is_nil(a.sorted_at))
-    |> repo().update_all(set: [sorted_at: DateTime.utc_now(:second)])
-
-    :ok
+  @spec list_pending_reviews(uuid()) :: [Assignment.t()]
+  def list_pending_reviews(project_uuid) when is_binary(project_uuid) do
+    Assignment
+    |> where([a], a.project_uuid == ^project_uuid and a.review_status == "pending")
+    |> order_by([a], desc: a.inserted_at)
+    |> preload(^@assignment_preloads)
+    |> repo().all()
   end
 
   @doc "Fetches an assignment by uuid with related records preloaded, or `nil` if not found."
@@ -2665,7 +2676,7 @@ defmodule PhoenixKitProjects.Projects do
     with {:ok, a} <-
            %Assignment{}
            |> Assignment.changeset(attrs)
-           |> maybe_mark_sorted(Keyword.get(opts, :sorted, true))
+           |> maybe_pending_review(Keyword.get(opts, :review, :accepted))
            |> repo().insert() do
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_created, %{

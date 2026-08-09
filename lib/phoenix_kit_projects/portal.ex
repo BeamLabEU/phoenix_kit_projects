@@ -1336,9 +1336,10 @@ defmodule PhoenixKitProjects.Portal do
                    "status" => "todo"
                  },
                  broadcast: false,
-                 # The whole point of the triage queue: this arrived from
-                 # outside and nobody inside has decided where it belongs.
-                 sorted: false
+                 # A stranger asking for something, not work anybody has
+                 # agreed to. It stays out of the plan — out of the list,
+                 # the board, the counts — until a person decides.
+                 review: :pending
                ),
              {:ok, assignment} <-
                assignment

@@ -90,10 +90,12 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     # older, narrower promise. Nil = not on a public board.
     field(:board_published_at, :utc_datetime)
     field(:source, :string, default: "internal")
-    # When a human decided where this belongs. NULL is the triage queue:
-    # it arrived, and nobody has placed it yet. Distinct from `status`,
-    # because sorting a task and starting it are different decisions.
-    field(:sorted_at, :utc_datetime)
+    # Whether staff have accepted this into the project. "pending" is a
+    # request from a stranger that nobody has agreed to yet — it is NOT
+    # work, so it stays out of the plan, the counts and every view until
+    # somebody decides. Distinct from `status`, which describes work that
+    # has already been accepted.
+    field(:review_status, :string, default: "accepted")
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
