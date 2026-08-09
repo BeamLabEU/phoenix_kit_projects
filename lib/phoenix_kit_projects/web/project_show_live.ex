@@ -158,6 +158,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        current_status: nil,
        status_options: [],
        expanded_subprojects: MapSet.new(),
+       # The list lens. "active" by default: a mature project is mostly
+       # finished work, and opening it on the finished work is what made
+       # people scroll to find anything live.
+       list_status: "active",
+       list_source: "all",
+       list_sort: :position,
        subproject_summaries: %{},
        subproject_child_tasks: %{},
        ledger_totals: nil,
@@ -327,6 +333,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # filled lazily (summaries in load_assignments, child tasks on
               # first expand).
               expanded_subprojects: MapSet.new(),
+              list_status: "active",
+              list_source: "all",
+              list_sort: :position,
               subproject_summaries: %{},
               subproject_child_tasks: %{},
               # Work-ledger state (Step 10): totals strip + per-task logged
@@ -531,6 +540,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply, socket}
   end
 
+  # The FULL set stays on the socket: kanban, gantt and calendar all read
+  # `@assignments` and every one of them needs the whole project. The list
+  # tab reads `@visible_assignments`, which is this set through the current
+  # lens — so filtering the list can never quietly shrink the other three.
   defp load_assignments(socket) do
     project_uuid = socket.assigns.project.uuid
     assignments = Projects.list_assignments(project_uuid)
@@ -583,7 +596,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     progress_total = max(total - empty_subs, 0)
 
-    assign(socket,
+    socket
+    |> assign(
       assignments: assignments,
       deps_by_assignment: deps_by_assignment,
       total_tasks: total,
@@ -593,6 +607,82 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       subproject_summaries: subproject_summaries,
       subproject_child_tasks: subproject_child_tasks
     )
+    |> apply_list_lens()
+  end
+
+  # ── The list lens ───────────────────────────────────────────────────
+  #
+  # Counts come from the FULL set and are always rendered, whatever the
+  # lens hides. Hiding rows is not dishonest; hiding the number is. A dev
+  # who opens a mature project and sees 47 active tasks beside a chip
+  # reading "Done 900" understands the shape of it — which is precisely
+  # what scrolling past 900 finished cards never told them.
+  defp apply_list_lens(socket) do
+    all = socket.assigns[:assignments] || []
+    status = socket.assigns[:list_status] || "active"
+    source = socket.assigns[:list_source] || "all"
+    sort = socket.assigns[:list_sort] || :position
+
+    visible =
+      all
+      |> Enum.filter(&(matches_status?(&1, status) and matches_source?(&1, source)))
+      |> sort_list(sort)
+
+    assign(socket,
+      visible_assignments: visible,
+      assignment_counts: assignment_counts(all),
+      # ONE predicate for the connector rail AND the drag handles. They are
+      # the same affordance at two weights — the line advertises that order
+      # is real here, the handle acts on it — so showing either without the
+      # other is a lie. It also closes a known trap: dropping a card
+      # "between" two visible rows while others are hidden writes a
+      # position that ignores everything it cannot see.
+      list_manual?: status == "all" and source == "all" and sort == :position
+    )
+  end
+
+  defp count_for(counts, "all"), do: counts.total
+  defp count_for(counts, "active"), do: counts.active
+  defp count_for(counts, "todo"), do: counts.todo
+  defp count_for(counts, "in_progress"), do: counts.in_progress
+  defp count_for(counts, "done"), do: counts.done
+  defp count_for(_counts, _key), do: 0
+
+  defp matches_status?(_a, "all"), do: true
+  # "Not finished", NOT "one of the two statuses I happened to think of".
+  # A task carrying an out-of-band status — and this codebase deliberately
+  # renders a fallback badge for exactly that — fell through every bucket
+  # and disappeared from the default view entirely. A lens that hides rows
+  # has to fail toward showing too many.
+  defp matches_status?(a, "active"), do: a.status != "done"
+  defp matches_status?(a, status), do: a.status == status
+
+  defp matches_source?(_a, "all"), do: true
+  defp matches_source?(a, "portal"), do: a.source == "portal"
+  defp matches_source?(a, "internal"), do: a.source != "portal"
+
+  defp sort_list(assignments, :position), do: assignments
+
+  defp sort_list(assignments, :newest),
+    do: Enum.sort_by(assignments, & &1.inserted_at, {:desc, DateTime})
+
+  defp sort_list(assignments, :recent),
+    do: Enum.sort_by(assignments, & &1.updated_at, {:desc, DateTime})
+
+  defp sort_list(assignments, _), do: assignments
+
+  defp assignment_counts(all) do
+    %{
+      total: length(all),
+      active: Enum.count(all, &(&1.status != "done")),
+      todo: Enum.count(all, &(&1.status == "todo")),
+      in_progress: Enum.count(all, &(&1.status == "in_progress")),
+      done: Enum.count(all, &(&1.status == "done")),
+      # Untriaged inbound: submitted from the public board and not yet
+      # picked up. This is the number that was buried at the bottom of the
+      # list, because new assignments append.
+      portal_new: Enum.count(all, &(&1.source == "portal" and &1.status == "todo"))
+    }
   end
 
   # `%{linking_assignment_uuid => child_summary}` for every sub-project row.
@@ -832,6 +922,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <button phx-click="reopen" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Reopening…")} class="btn btn-ghost btn-xs">
                       {gettext("Reopen")}
                     </button>
+                  <% true -> %>
+                    <%!-- A status outside the vocabulary. The changeset
+                         refuses to write one, so this is legacy or
+                         hand-edited data — and until now it raised
+                         CondClauseError and took the whole project page
+                         down rather than the one row. The status badge
+                         already has a fallback; the actions need one too,
+                         and there is no honest action to offer for a state
+                         we do not model. --%>
                 <% end %>
               <% end %>
 
@@ -1157,6 +1256,31 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   defp authz_record(_event, _params, _socket), do: nil
+
+  # Lens changes are READS — they narrow what is drawn and write nothing —
+  # so they are deliberately absent from @gated_events and @event_actions.
+  # Whoever may see the list may narrow it.
+  #
+  # Every value is whitelisted in the guard rather than trusted: these
+  # reach a comparison and an atom, and `String.to_existing_atom/1` on
+  # unfiltered input is how a client picks the atom table apart.
+  defp gated_handle_event("list_filter_status", %{"status" => status}, socket)
+       when status in ["all", "active", "todo", "in_progress", "done"] do
+    {:noreply, socket |> assign(list_status: status) |> apply_list_lens()}
+  end
+
+  defp gated_handle_event("list_filter_source", %{"source" => source}, socket)
+       when source in ["all", "portal", "internal"] do
+    {:noreply, socket |> assign(list_source: source) |> apply_list_lens()}
+  end
+
+  defp gated_handle_event("list_sort", %{"sort" => sort}, socket)
+       when sort in ["position", "newest", "recent"] do
+    {:noreply,
+     socket
+     |> assign(list_sort: String.to_existing_atom(sort))
+     |> apply_list_lens()}
+  end
 
   defp gated_handle_event("switch_tab", %{"tab" => tab} = params, socket) do
     active = resolve_switch_target(tab, socket)
@@ -1736,6 +1860,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # `sortable:flash` back so the dragged card flashes green/red. This
   # session reloads explicitly (immediate feedback); OTHER open views
   # (and gantt charts) reload off the `:assignment_reordered` broadcast.
+  # Refused unless the list is showing everything, in manual order. The drag
+  # handles are already hidden under a lens, but hiding a control has never
+  # been the control — and this one is worth guarding twice, because the
+  # damage is silent: `ordered_ids` carries only the rows the client could
+  # SEE, so accepting it under a filter rewrites `position` for the whole
+  # project from a partial list and there is nothing afterwards to say the
+  # order used to mean something.
+  defp gated_handle_event(
+         "reorder_assignments",
+         _params,
+         %{assigns: %{list_manual?: false}} = socket
+       ) do
+    {:noreply,
+     put_flash(
+       socket,
+       :error,
+       gettext("Show all tasks in manual order before reordering them.")
+     )}
+  end
+
   defp gated_handle_event("reorder_assignments", %{"ordered_ids" => ordered_ids} = params, socket)
        when is_list(ordered_ids) do
     moved_id = params["moved_id"]
@@ -3079,6 +3223,99 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- List tab --%>
       <div class={if(@active_tab != :list, do: "hidden")}>
       <%!-- Timeline --%>
+      <%!-- The lens bar. Every count is drawn from the FULL set and every
+           one of them is a link into its own slice: filtering the list is
+           fine, but a project that quietly looks like 47 tasks when it
+           holds 947 is not. The number is the honesty; the rows are just
+           what you happen to be reading. --%>
+      <div :if={@assignments != []} class="flex flex-wrap items-center gap-2 mb-4">
+        <div class="join">
+          <button
+            :for={
+              {key, label} <- [
+                {"active", gettext("Active")},
+                {"todo", gettext("To do")},
+                {"in_progress", gettext("In progress")},
+                {"done", gettext("Done")},
+                {"all", gettext("All")}
+              ]
+            }
+            type="button"
+            phx-click="list_filter_status"
+            phx-value-status={key}
+            class={[
+              "btn btn-sm join-item",
+              if(@list_status == key, do: "btn-primary", else: "btn-ghost")
+            ]}
+          >
+            {label}
+            <span class="badge badge-sm badge-ghost ml-1">
+              {count_for(@assignment_counts, key)}
+            </span>
+          </button>
+        </div>
+
+        <%!-- Untriaged inbound. New assignments append, so on a busy board
+             this is exactly the pile that sat at the very bottom of the
+             page — the thing nobody scrolled far enough to find. --%>
+        <button
+          :if={@assignment_counts.portal_new > 0}
+          type="button"
+          phx-click="list_filter_source"
+          phx-value-source={if(@list_source == "portal", do: "all", else: "portal")}
+          class={[
+            "btn btn-sm",
+            if(@list_source == "portal", do: "btn-info", else: "btn-info btn-outline")
+          ]}
+        >
+          <.icon name="hero-inbox-arrow-down" class="w-4 h-4" />
+          {gettext("New from the public board")}
+          <span class="badge badge-sm">{@assignment_counts.portal_new}</span>
+        </button>
+
+        <div class="ml-auto flex items-center gap-2">
+          <select
+            class="select select-sm select-bordered"
+            phx-change="list_sort"
+            name="sort"
+            aria-label={gettext("Sort tasks")}
+          >
+            <option value="position" selected={@list_sort == :position}>
+              {gettext("Manual order")}
+            </option>
+            <option value="newest" selected={@list_sort == :newest}>{gettext("Newest first")}</option>
+            <option value="recent" selected={@list_sort == :recent}>
+              {gettext("Recently updated")}
+            </option>
+          </select>
+
+          <%!-- Says why the handles vanished. A control that disappears
+               without explanation reads as a bug. --%>
+          <span
+            :if={not @list_manual?}
+            class="text-xs opacity-60"
+            title={gettext("Reordering writes an order for the whole project, so it needs the whole project in view.")}
+          >
+            {gettext("Reordering off")}
+          </span>
+        </div>
+      </div>
+
+      <%= if @assignments != [] and @visible_assignments == [] do %>
+        <.empty_state icon="hero-funnel" title={gettext("Nothing matches this filter.")}>
+          <:cta>
+            <button
+              type="button"
+              phx-click="list_filter_status"
+              phx-value-status="all"
+              class="link link-primary text-sm"
+            >
+              {gettext("Show all %{count} tasks", count: @assignment_counts.total)}
+            </button>
+          </:cta>
+        </.empty_state>
+      <% end %>
+
       <%= if @assignments == [] do %>
         <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks in this project yet.")}>
           <:cta>
@@ -3093,9 +3330,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           </:cta>
         </.empty_state>
       <% else %>
-        <div class="relative">
-          <%!-- Vertical connector line --%>
-          <div class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"></div>
+        <div :if={@visible_assignments != []} class="relative">
+          <%!-- The connector rail claims "these form a sequence, and where a
+               card sits in it means something". Under any lens that claim
+               is false — the rows are a slice, and the numbers beside them
+               would count the slice rather than the plan. So it renders
+               only in the one state where it is true, on the same predicate
+               that decides whether cards can be dragged at all. --%>
+          <div :if={@list_manual?} class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"></div>
 
           <%!-- SortableGrid hook lives on the inner flex container —
                the absolute-positioned vertical line is a sibling
@@ -3107,13 +3349,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <div
             id="project-show-timeline"
             class="flex flex-col gap-0"
-            phx-hook="SortableGrid"
-            data-sortable="true"
+            phx-hook={if @list_manual?, do: "SortableGrid"}
+            data-sortable={to_string(@list_manual?)}
             data-sortable-event="reorder_assignments"
             data-sortable-items=".sortable-item"
             data-sortable-handle=".pk-drag-handle"
           >
-            <%= for {a, idx} <- Enum.with_index(@assignments) do %>
+            <%= for {a, idx} <- Enum.with_index(@visible_assignments) do %>
               <div class="relative flex gap-4 py-3 sortable-item" data-id={a.uuid}>
                 <%!-- Status dot on the timeline --%>
                 <div class="relative z-10 shrink-0 flex flex-col items-center">
@@ -3340,7 +3582,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <.task_body
                       a={a}
                       scope={@phoenix_kit_current_scope}
-                      draggable={true}
+                      draggable={@list_manual?}
                       is_template={@is_template}
                       project={@project}
                       fx={@fx}

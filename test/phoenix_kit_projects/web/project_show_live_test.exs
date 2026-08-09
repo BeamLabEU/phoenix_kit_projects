@@ -14,6 +14,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias Ecto.Adapters.SQL
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Test.Repo
@@ -769,6 +770,153 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       # the task count lives only in its title tooltip — not a visible "N/M done"
       # label (which the merge intentionally removed).
       assert html =~ ~r/class="w-full bg-base-300 h-1\.5"\s+title="[^"]*done"/
+    end
+  end
+
+  describe "the list lens" do
+    setup %{conn: conn} do
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{
+          "name" => "Lens #{n}",
+          "start_mode" => "immediate"
+        })
+
+      done = task_named(project, "Finished thing #{n}", "done")
+      active = task_named(project, "Live thing #{n}", "todo")
+
+      {:ok, conn: conn, project: project, done: done, active: active}
+    end
+
+    defp task_named(project, title, status) do
+      {:ok, task} = Projects.create_task(%{"title" => title})
+
+      {:ok, assignment} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => status
+        })
+
+      assignment
+    end
+
+    test "opens on active work, and says how much it is not showing", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # Scoped to the list itself: the board tab renders every assignment
+      # into the same document (hidden by CSS), so asserting on the whole
+      # page proves nothing about what the list is showing.
+      assert list_rows(html) == [active.uuid]
+
+      refute done.uuid in list_rows(html),
+             "a mature project opened on its finished work, which is what buried the live tasks"
+
+      # Hiding rows is fine; hiding the number is not. The done count has to
+      # stay on the page or the project silently looks smaller than it is.
+      assert html =~ "Done"
+    end
+
+    test "a task with an out-of-band status is never silently hidden", %{
+      conn: conn,
+      project: project
+    } do
+      # "Active" means NOT FINISHED, not "one of the two statuses I thought
+      # of". This codebase renders a fallback badge for out-of-band statuses
+      # on purpose, and the first cut of this filter made every one of them
+      # vanish from the default view.
+      # The changeset validates the vocabulary, so an out-of-band status can
+      # only arrive by a raw write or from legacy data — which is exactly
+      # the case the rendering fallback exists for.
+      odd = task_named(project, "Odd status #{System.unique_integer([:positive])}", "todo")
+      {:ok, raw_uuid} = Ecto.UUID.dump(odd.uuid)
+
+      SQL.query!(
+        Repo,
+        "UPDATE phoenix_kit_project_assignments SET status = $1 WHERE uuid = $2",
+        ["archived", raw_uuid]
+      )
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      assert odd.uuid in list_rows(html)
+    end
+
+    test "the rail and the drag handles are gone under a lens", %{conn: conn, project: project} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      # Default is "active" — a filter — so neither may render.
+      assert html =~ ~s(data-sortable="false")
+      refute html =~ "bottom-0 w-0.5"
+
+      # Showing everything in manual order brings both back together: they
+      # are one affordance, and either without the other is a lie.
+      manual = view |> element("button[phx-value-status=all]") |> render_click()
+
+      assert manual =~ ~s(data-sortable="true")
+      assert manual =~ "bottom-0 w-0.5"
+      assert manual =~ "pk-drag-handle"
+    end
+
+    test "reordering is refused under a lens, not merely hidden", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      before = ordered_uuids(project)
+
+      # A forged event carrying only the rows the client could SEE. Accepting
+      # it rewrites `position` for the whole project from a partial list, and
+      # nothing afterwards says the order used to mean something.
+      html =
+        render_hook(view, "reorder_assignments", %{
+          "ordered_ids" => [active.uuid],
+          "moved_id" => active.uuid
+        })
+
+      assert html =~ "manual order"
+      assert ordered_uuids(project) == before
+      assert done.uuid in before
+    end
+
+    test "reordering works once everything is in view", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      view |> element("button[phx-value-status=all]") |> render_click()
+
+      render_hook(view, "reorder_assignments", %{
+        "ordered_ids" => [active.uuid, done.uuid],
+        "moved_id" => active.uuid
+      })
+
+      assert ordered_uuids(project) == [active.uuid, done.uuid]
+    end
+
+    # The uuids the LIST tab is drawing, in order. `sortable-item` rows are
+    # the list's own markup; the board tab renders its cards differently.
+    defp list_rows(html) do
+      Regex.scan(~r/sortable-item"[^>]*data-id="([^"]+)"/, html)
+      |> Enum.map(fn [_, uuid] -> uuid end)
+    end
+
+    defp ordered_uuids(project) do
+      project.uuid
+      |> Projects.list_assignments()
+      |> Enum.map(& &1.uuid)
     end
   end
 end
