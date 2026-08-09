@@ -1320,6 +1320,43 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp authz_record(_event, _params, _socket), do: nil
 
+  # Honour the drop position without ever renumbering from what the client
+  # could see.
+  #
+  # The column's `ordered_ids` is a PARTIAL list, so writing it as positions
+  # would shove every card in the other columns to the end of the plan. Only
+  # ONE thing is taken from it — which card the moved one now sits before —
+  # and the new order is then rebuilt from the server's complete list. Every
+  # card the client never saw keeps its relative place; exactly one moves.
+  defp reposition_from_drop(socket, uuid, ordered_ids) when is_list(ordered_ids) do
+    project_uuid = socket.assigns.project.uuid
+    all = Enum.map(socket.assigns[:assignments] || [], & &1.uuid)
+
+    with idx when is_integer(idx) <- Enum.find_index(ordered_ids, &(&1 == uuid)),
+         rest <- Enum.reject(all, &(&1 == uuid)),
+         true <- uuid in all do
+      # The card it was dropped ABOVE. Looked up in the server's own list,
+      # so a uuid the client invented simply is not found and the move
+      # falls through to "leave the order alone".
+      anchor = ordered_ids |> Enum.drop(idx + 1) |> Enum.find(&(&1 in rest))
+
+      reordered =
+        case anchor && Enum.find_index(rest, &(&1 == anchor)) do
+          nil -> rest ++ [uuid]
+          at -> List.insert_at(rest, at, uuid)
+        end
+
+      Projects.reorder_assignments(project_uuid, reordered,
+        actor_uuid: Activity.actor_uuid(socket),
+        broadcast: false
+      )
+    else
+      _ -> :ok
+    end
+  end
+
+  defp reposition_from_drop(_socket, _uuid, _ordered_ids), do: :ok
+
   defp delegate_board_move(socket, "todo", uuid),
     do: gated_handle_event("reopen", %{"uuid" => uuid}, socket)
 
@@ -1348,7 +1385,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # card came from, and the server already knows.
   defp gated_handle_event(
          "board_move",
-         %{"moved_id" => uuid, "status" => status},
+         %{"moved_id" => uuid, "status" => status} = params,
          socket
        )
        when status in ["todo", "in_progress", "done"] do
@@ -1356,23 +1393,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       nil ->
         {:noreply, socket}
 
-      %{status: ^status} ->
-        # Reordering inside a column. The board reads `position` and does
-        # not own it, so there is nothing to write — the card snaps back to
-        # where the plan puts it.
-        {:noreply, push_event(socket, "sortable:flash", %{uuid: uuid, status: "ok"})}
+      assignment ->
+        # Status first, through the very handlers the buttons use rather
+        # than a naked `status` write: completing also sets progress to
+        # 100, the actor and the timestamp; reopening clears all three.
+        {:noreply, socket} =
+          if assignment.status == status do
+            {:noreply, socket}
+          else
+            delegate_board_move(socket, status, uuid)
+          end
 
-      _assignment ->
-        # Delegated to the very handlers the buttons use, rather than
-        # writing `status` directly. Completing also sets progress to 100,
-        # the actor and the timestamp; reopening clears all three. A naked
-        # status write would look identical on the board and quietly leave
-        # a finished task with no record of who finished it.
-        socket
-        |> delegate_board_move(status, uuid)
-        |> then(fn {:noreply, updated} ->
-          {:noreply, push_event(updated, "sortable:flash", %{uuid: uuid, status: "ok"})}
-        end)
+        # Then WHERE it was dropped. The card landing somewhere other than
+        # where it was let go reads as a bug, whatever the data model says.
+        reposition_from_drop(socket, uuid, params["ordered_ids"])
+
+        {:noreply,
+         socket
+         |> push_event("sortable:flash", %{uuid: uuid, status: "ok"})
+         |> load_assignments()}
     end
   end
 

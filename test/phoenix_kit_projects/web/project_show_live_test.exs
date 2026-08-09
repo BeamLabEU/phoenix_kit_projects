@@ -1169,7 +1169,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       refute is_nil(done.completed_at)
     end
 
-    test "a drop never rewrites the plan's order", %{conn: conn, project: project, a: a} do
+    test "a drop lands where it was dropped, without disturbing anyone else", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
       others =
         for i <- 1..3 do
           {:ok, t} =
@@ -1185,24 +1189,45 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
           x
         end
 
-      before = Enum.map(Projects.list_assignments(project.uuid), &{&1.uuid, &1.position})
+      [o1, o2, o3] = others
 
+      # Move `a` to In progress, dropped ABOVE o2 in that column's order.
+      # o2 is in a different column here, which is the point: the client's
+      # list is partial, and only the insertion point may be taken from it.
       {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
 
-      # A column is a PARTIAL view of the project. Renumbering `position`
-      # from it would shove every card the client could not see to the end
-      # of the plan — the same corruption the list view had to gate against,
-      # made structural by columns.
       render_hook(view, "board_move", %{
         "moved_id" => a.uuid,
         "status" => "in_progress",
-        "ordered_ids" => [a.uuid]
+        "ordered_ids" => [a.uuid, o2.uuid]
       })
 
-      after_positions = Enum.map(Projects.list_assignments(project.uuid), &{&1.uuid, &1.position})
+      order = Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid)
 
-      assert after_positions == before
-      assert length(others) == 3
+      # It sits where it was let go...
+      assert Enum.find_index(order, &(&1 == a.uuid)) ==
+               Enum.find_index(order, &(&1 == o2.uuid)) - 1
+
+      # ...and every card the client never sent keeps its relative order.
+      # Renumbering from the column's partial list would have thrown these
+      # to the end of the plan.
+      untouched = Enum.filter(order, &(&1 in [o1.uuid, o2.uuid, o3.uuid]))
+      assert untouched == [o1.uuid, o2.uuid, o3.uuid]
+    end
+
+    test "a drop with no ordered_ids leaves the plan alone", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      before = Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid)
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+
+      render_hook(view, "board_move", %{"moved_id" => a.uuid, "status" => "done"})
+
+      assert Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid) == before
+      assert Projects.get_assignment(a.uuid).status == "done"
     end
 
     test "a forged destination status is refused", %{conn: conn, project: project, a: a} do
