@@ -23,6 +23,8 @@ defmodule PhoenixKitProjects.Schemas.ProjectStatus do
 
   import Ecto.Changeset
 
+  alias PhoenixKit.Utils.Slug
+
   alias PhoenixKitProjects.Schemas.Project
 
   @primary_key {:uuid, UUIDv7, autogenerate: true}
@@ -102,12 +104,10 @@ defmodule PhoenixKitProjects.Schemas.ProjectStatus do
   (`[a-z0-9]` runs joined by single hyphens, no leading/trailing hyphen).
   """
   @spec slugify(String.t()) :: String.t()
-  def slugify(value) when is_binary(value) do
-    value
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9]+/u, "-")
-    |> String.trim("-")
-  end
+  # Core's rule, not a local copy. The pipeline this replaced deleted every
+  # non-ASCII character, so a Cyrillic or Greek name produced an EMPTY slug and
+  # German lost its umlauts. Slug.slugify/2 romanizes instead.
+  def slugify(value) when is_binary(value), do: Slug.slugify(value)
 
   @doc "Colour for this status, read from the `data` JSONB (`nil` if unset)."
   @spec color(t()) :: String.t() | nil
