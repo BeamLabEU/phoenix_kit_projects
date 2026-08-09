@@ -770,7 +770,50 @@ GitHub Actions run on push and PRs: formatting check, `credo --strict`, `dialyze
 
 ### PR Reviews
 
-PR review files go in `dev_docs/pull_requests/{year}/{pr_number}-{slug}/` with `{AGENT}_REVIEW.md` naming (e.g., `CLAUDE_REVIEW.md`). See the root `phoenix_kit/AGENTS.md` section on PR reviews for the authoritative directory layout.
+Everything about one PR lives in **one folder**:
+
+```
+dev_docs/pull_requests/{year}/{pr_number}-{slug}/
+```
+
+`{pr_number}` is the bare PR number — `35-public-portal-review-queue`, not
+`projects35-…`. The path is already scoped to this repo, so a module prefix
+adds nothing and breaks the numeric sort. `{slug}` is short, lowercase and
+hyphenated, describing the change rather than the review.
+
+**Nothing review-shaped belongs at the repo root.** Two files have had to be
+moved back out of it; if a folder is the wrong home for something, fix the
+folder rather than leaving the file outside the convention.
+
+Files inside the folder, all optional except the review itself:
+
+| File | What it is |
+| --- | --- |
+| `{AGENT}_REVIEW.md` | One agent's review. `CLAUDE_REVIEW.md` for me. Siblings also carry `PINCER_`, `MISTRAL_`, `KIMI_`, `GLM_`, `CODEX_`, `GROK_`, `ZAI_`. |
+| `REVIEW.md` | A review with no agent behind it — a human's, or an unattributed one. |
+| `AGGREGATED_REVIEW.md` | A synthesis across several agents' reviews, sitting beside the originals rather than replacing them. |
+| `FOLLOW_UP.md` | How every finding was resolved, or explicitly skipped with the rationale. One per folder, not per agent. |
+| `README.md` | The PR's own summary — what changed and why. See `dev_docs/pull_requests/TEMPLATE.md` in the sibling repos for the shape. Not a review. |
+
+**One file per agent, and never write into another agent's.** Several reviews
+of the same PR coexist by design — that is the whole point of the `{AGENT}_`
+prefix. Add your own file; if you disagree with another review, say so in
+yours. Correcting a claim in someone else's file destroys the record of who
+thought what.
+
+**Name a review for its author, not its stage.** `phase1.md` tells a later
+reader nothing about who wrote it or whether to trust it; `PINCER_REVIEW.md`
+does. Put the phase in the document's heading instead.
+
+Work that never was a PR still gets a folder here, keyed to whatever *does*
+identify it: a commit sha (`0e84bab-multilang-data-form-flattening`, in
+`phoenix_kit_entities`), or a plain name whose first paragraph states that it
+is not a PR folder — `post-session-quality-sweep/` is the local example.
+
+Commit the review folder. An uncommitted review is one `git clean` from gone.
+
+The root `phoenix_kit/AGENTS.md` states the same rule in one line; this section
+is the long form of it, not a competing convention.
 
 Severity levels for review findings:
 
