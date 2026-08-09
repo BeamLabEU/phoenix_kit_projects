@@ -10,8 +10,10 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
   alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Extensions
+  alias PhoenixKitProjects.Members
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.PortalLinks
   alias PhoenixKitProjects.Projects
@@ -633,6 +635,171 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
       # The board page has no discussion, so there is no set of people the
       # page has already revealed.
       assert Portal.mention_candidates(:user, "", portal, viewer: scope_for(user)) == []
+    end
+  end
+
+  describe "speaking for the project" do
+    setup do
+      Extensions.Registry.refresh()
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Voice #{n}", "start_mode" => "immediate"})
+
+      {:ok, _} = Extensions.enable(project, "portal")
+
+      {:ok, member} =
+        Auth.register_user(%{
+          email: "member-#{n}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      {:ok, outsider} =
+        Auth.register_user(%{
+          email: "outsider-#{n}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      {:ok, _} = Members.add_member(project, member.uuid, role: "member")
+
+      {:ok,
+       project: project,
+       portal: Portal.get_portal(project.uuid),
+       member: member,
+       outsider: outsider}
+    end
+
+    defp scope(user), do: fake_scope(user_uuid: user.uuid, permissions: [])
+
+    test "offered to a member, and checked by default on a public board", %{
+      project: project,
+      member: member
+    } do
+      {:ok, _} = Portal.set_access_mode(project.uuid, "public")
+      portal = Portal.get_portal(project.uuid)
+
+      assert %{label: label, default_on: true, verify: verify} =
+               Portal.comment_attribution(portal, project, scope(member))
+
+      assert label == project.name
+      assert verify.(member.uuid)
+    end
+
+    test "never offered on a link board", %{project: project, portal: portal, member: member} do
+      # The slug IS the grant on a link board, so a project-signed comment
+      # would tell every link-holder who is affiliated with the project —
+      # the one thing a capability URL must not reveal.
+      assert portal.access_mode == "link"
+      assert Portal.comment_attribution(portal, project, scope(member)) == nil
+    end
+
+    test "never offered to a non-member", %{project: project, member: member, outsider: outsider} do
+      {:ok, _} = Portal.set_access_mode(project.uuid, "public")
+      portal = Portal.get_portal(project.uuid)
+
+      assert Portal.comment_attribution(portal, project, scope(outsider)) == nil
+      assert Portal.comment_attribution(portal, project, nil) == nil
+
+      # And the verifier itself refuses them, which is what the comments
+      # component re-asks at submit.
+      %{verify: verify} = Portal.comment_attribution(portal, project, scope(member))
+      refute verify.(outsider.uuid)
+    end
+
+    test "a viewer-role member is not a voice", %{project: project, outsider: outsider} do
+      # Read-only. Someone who cannot change the project should not be able
+      # to speak as it, and `Authz.roles/0` keeps `:viewer` distinct for
+      # exactly this kind of question.
+      {:ok, _} = Members.add_member(project, outsider.uuid, role: "viewer")
+      {:ok, _} = Portal.set_access_mode(project.uuid, "public")
+      portal = Portal.get_portal(project.uuid)
+
+      assert Portal.comment_attribution(portal, project, scope(outsider)) == nil
+    end
+
+    test "the verifier reflects membership revoked after the composer rendered", %{
+      project: project,
+      member: member
+    } do
+      {:ok, _} = Portal.set_access_mode(project.uuid, "public")
+      portal = Portal.get_portal(project.uuid)
+
+      %{verify: verify} = Portal.comment_attribution(portal, project, scope(member))
+      assert verify.(member.uuid)
+
+      {:ok, _} = Members.remove_member(project.uuid, member.uuid)
+
+      refute verify.(member.uuid),
+             "a removed member kept speaking for the project by leaving a tab open"
+    end
+
+    test "posting as the project still records who wrote it", %{
+      project: project,
+      member: member
+    } do
+      # The boss's constraint: the public sees the project, and internally
+      # we never lose the author.
+      {:ok, comment} =
+        PhoenixKitComments.create_comment(
+          Portal.discussion_resource_type(),
+          Ecto.UUID.generate(),
+          member.uuid,
+          %{
+            content: "We are on it",
+            attribution: %{
+              mode: "project",
+              label: project.name,
+              project_uuid: project.uuid
+            }
+          }
+        )
+
+      assert comment.attribution_mode == "project"
+      assert comment.author_display_name == project.name
+      assert comment.attributed_project_uuid == project.uuid
+      assert comment.user_uuid == member.uuid, "the actual author was lost"
+    end
+
+    test "a personal comment freezes the name the reader saw", %{member: member} do
+      {:ok, comment} =
+        PhoenixKitComments.create_comment(
+          Portal.discussion_resource_type(),
+          Ecto.UUID.generate(),
+          member.uuid,
+          %{
+            content: "Speaking for myself",
+            attribution: %{
+              mode: "personal",
+              label: User.display_name(member)
+            }
+          }
+        )
+
+      assert comment.attribution_mode == "personal"
+      assert comment.author_display_name == User.display_name(member)
+      refute comment.author_display_name == member.email
+      assert comment.attributed_project_uuid == nil
+    end
+
+    test "attribution cannot be forged through the comment attrs", %{member: member} do
+      # These are not in `cast/3`. A client that could set them could sign a
+      # comment as anyone.
+      {:ok, comment} =
+        PhoenixKitComments.create_comment(
+          Portal.discussion_resource_type(),
+          Ecto.UUID.generate(),
+          member.uuid,
+          %{
+            content: "nice try",
+            attribution_mode: "project",
+            author_display_name: "Totally Legit Inc",
+            attributed_label: "Totally Legit Inc"
+          }
+        )
+
+      assert comment.attribution_mode == nil
+      assert comment.author_display_name == nil
+      assert comment.attributed_label == nil
     end
   end
 end

@@ -77,6 +77,10 @@ defmodule PhoenixKitProjects.Portal do
   # screenshot or three; the rest is someone else's storage bill.
   # A typeahead is a menu, not a report: eight is plenty to choose from
   # and short enough that nobody reads it as a directory listing.
+  # `Authz.roles/0` is the frozen enum and `role_of/2` answers with ATOMS.
+  # `:viewer` is excluded deliberately: a read-only role is not a voice, and
+  # someone who cannot change the project should not be able to speak as it.
+  @project_voice_roles [:owner, :manager, :member]
   @mention_limit 8
   @attachment_max_count 3
   @attachment_max_bytes 5_000_000
@@ -382,6 +386,58 @@ defmodule PhoenixKitProjects.Portal do
   """
   @spec discussion_resource_type() :: String.t()
   def discussion_resource_type, do: "project_assignment"
+
+  @doc """
+  Lets a project member sign a portal comment with the project's name
+  instead of their own — or returns nil, which is what most people get.
+
+  Someone answering on their employer's board may be speaking personally or
+  on the project's behalf, and those are different acts. Offering the
+  choice also gives an affiliated person who does not want their own name
+  on an indexed page a legitimate way to take part.
+
+  **Deliberately not offered on a `link` board.** The slug is the grant
+  there, so a project-signed comment tells everyone holding the link who is
+  affiliated with the project — the one thing a capability URL is not
+  supposed to reveal. `public` boards are already open, and `members`
+  boards face people who signed in.
+
+  The `verify` function is re-run by the comments component at submit,
+  because the composer may have been rendered long before the send and
+  membership can be revoked in between.
+
+  Defaults to CHECKED on a public board: someone replying on a company's
+  open issue tracker is usually doing it as the company, and the safe
+  option should also be the lazy one.
+  """
+  @spec comment_attribution(PortalRow.t(), map(), term()) :: map() | nil
+  def comment_attribution(%PortalRow{access_mode: mode} = portal, project, viewer)
+      when mode in ["public", "members"] do
+    project_uuid = portal.project_uuid
+    label = project_label(project)
+    speaks? = fn user_uuid -> Members.role_of(project_uuid, user_uuid) in @project_voice_roles end
+
+    with uuid when is_binary(uuid) <- viewer_uuid(viewer),
+         true <- is_binary(label),
+         true <- speaks?.(uuid) do
+      %{
+        project_uuid: project_uuid,
+        label: label,
+        default_on: mode == "public",
+        verify: speaks?
+      }
+    else
+      _ -> nil
+    end
+  end
+
+  def comment_attribution(_portal, _project, _viewer), do: nil
+
+  defp project_label(%{name: name}) when is_binary(name) and name != "", do: name
+  defp project_label(_), do: nil
+
+  defp viewer_uuid(%{user: %{uuid: uuid}}) when is_binary(uuid), do: uuid
+  defp viewer_uuid(_), do: nil
 
   @doc """
   Typeahead candidates for the composer on a PUBLIC portal page.

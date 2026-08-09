@@ -78,6 +78,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
      assign(socket,
        view: nil,
        portal: nil,
+       project_attribution: nil,
        slug: nil,
        submitted: false,
        error: nil,
@@ -104,17 +105,24 @@ defmodule PhoenixKitProjects.Web.PortalLive do
               # Re-set on every load_view, so a rotation or a mode change
               # replaces it rather than leaving a stale grant behind.
               portal: portal,
+              project_attribution: Portal.comment_attribution(portal, project, viewer),
               view: Map.put(view, :project_uuid, project.uuid),
               page_title: view.project_name
             )
 
           :error ->
-            assign(socket, portal: nil, view: nil, page_title: gettext("Not found"))
+            assign(socket,
+              portal: nil,
+              project_attribution: nil,
+              view: nil,
+              page_title: gettext("Not found")
+            )
         end
 
       :error ->
         assign(socket,
           portal: nil,
+          project_attribution: nil,
           view: nil,
           page_title: gettext("Not found"),
           needs_sign_in: needs_sign_in?(socket, viewer)
@@ -483,6 +491,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           show_title={false}
           rich_text={false}
           withhold_mention_titles
+          project_attribution={@project_attribution}
         />
 
         <%!-- Not a disabled textarea: a greyed-out box reads as broken
