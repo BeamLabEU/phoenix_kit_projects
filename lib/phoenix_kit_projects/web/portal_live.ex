@@ -24,6 +24,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   import PhoenixKitWeb.Components.Core.Textarea, only: [textarea: 1]
   import PhoenixKitWeb.Components.Core.TimeDisplay, only: [time_ago: 1]
 
+  alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
@@ -74,7 +75,14 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   def mount(_params, _session, socket) do
     {:ok,
-     assign(socket, view: nil, slug: nil, submitted: false, error: nil, needs_sign_in: false)}
+     assign(socket,
+       view: nil,
+       portal: nil,
+       slug: nil,
+       submitted: false,
+       error: nil,
+       needs_sign_in: false
+     )}
   end
 
   defp load_view(socket) do
@@ -85,20 +93,28 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     viewer = socket.assigns[:phoenix_kit_current_scope]
 
     case Portal.resolve(socket.assigns.slug, viewer) do
-      {:ok, _portal, project} ->
+      {:ok, portal, project} ->
         case Portal.public_view(socket.assigns.slug, viewer) do
           {:ok, view} ->
             assign(socket,
+              # The row itself, not just its uuid: the mention typeahead
+              # scopes off the portal (access mode decides which issues are
+              # listed at all), and re-resolving inside the event handler
+              # would be a second doorway to keep in step with this one.
+              # Re-set on every load_view, so a rotation or a mode change
+              # replaces it rather than leaving a stale grant behind.
+              portal: portal,
               view: Map.put(view, :project_uuid, project.uuid),
               page_title: view.project_name
             )
 
           :error ->
-            assign(socket, view: nil, page_title: gettext("Not found"))
+            assign(socket, portal: nil, view: nil, page_title: gettext("Not found"))
         end
 
       :error ->
         assign(socket,
+          portal: nil,
           view: nil,
           page_title: gettext("Not found"),
           needs_sign_in: needs_sign_in?(socket, viewer)
@@ -172,6 +188,49 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   @impl true
   def handle_event("submit_issue", params, socket) do
     do_submit(socket, params)
+  end
+
+  # The portal does NOT `use PhoenixKit.Mentions.Live`. That glue's search
+  # spans everything the VIEWER may see, which on a public page is the
+  # wrong axis entirely: a staff member reading this board could pick an
+  # internal task and publish its title to the open web. It also injects
+  # the request-access dialog, which has no meaning here — there is nobody
+  # to ask on behalf of an anonymous reader.
+  #
+  # Without this clause the events fell to the catch-all below and were
+  # silently swallowed, which is why typing `@` or `#` did nothing at all.
+  def handle_event("pk_mention_search", params, socket) do
+    kind = if params["kind"] == "user", do: :user, else: :resource
+
+    results =
+      case socket.assigns[:portal] do
+        nil ->
+          []
+
+        portal ->
+          Portal.mention_candidates(kind, params["query"] || "", portal,
+            viewer: socket.assigns[:phoenix_kit_current_scope],
+            issue_uuid: socket.assigns[:issue_uuid]
+          )
+      end
+      |> Enum.map(fn candidate ->
+        # Built HERE, never by the client. A record whose title contains a
+        # `|` or `]` would otherwise be concatenated into an unparseable
+        # token, and a client that builds tokens is a client that can forge
+        # one pointing anywhere it likes.
+        case Token.to_string(
+               candidate.kind,
+               candidate.type,
+               candidate.uuid,
+               candidate.title
+             ) do
+          {:ok, token} -> Map.put(candidate, :token, token)
+          :error -> nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    {:reply, %{results: results, seq: params["seq"]}, socket}
   end
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
@@ -381,7 +440,12 @@ defmodule PhoenixKitProjects.Web.PortalLive do
       </header>
 
       <div :if={@issue.description} class="prose prose-sm max-w-none opacity-90">
-        <.mention_text text={@issue.description} scope={@phoenix_kit_current_scope} />
+        <.mention_text
+          text={@issue.description}
+          scope={@phoenix_kit_current_scope}
+          allow_request={false}
+          withhold_titles
+        />
       </div>
 
       <%!-- Screenshots that came with the report. `loading="lazy"` and a
@@ -418,6 +482,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           enabled={@view.may_comment}
           show_title={false}
           rich_text={false}
+          withhold_mention_titles
         />
 
         <%!-- Not a disabled textarea: a greyed-out box reads as broken

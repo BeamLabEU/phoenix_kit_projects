@@ -45,11 +45,13 @@ defmodule PhoenixKitProjects.Portal do
   alias PhoenixKit.Modules.Storage.ImageProcessor
   alias PhoenixKit.Modules.Storage.URLSigner
   alias PhoenixKit.RepoHelper
+  alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.RateLimiter
   alias PhoenixKitProjects.Activity
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Features
   alias PhoenixKitProjects.Members
+  alias PhoenixKitProjects.PortalLinks
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Assignment
@@ -73,6 +75,9 @@ defmodule PhoenixKitProjects.Portal do
   @min_fill_ms 3_000
   # Three images, 5 MB each after re-encoding. A bug report needs a
   # screenshot or three; the rest is someone else's storage bill.
+  # A typeahead is a menu, not a report: eight is plenty to choose from
+  # and short enough that nobody reads it as a directory listing.
+  @mention_limit 8
   @attachment_max_count 3
   @attachment_max_bytes 5_000_000
   defp min_fill_ms,
@@ -377,6 +382,147 @@ defmodule PhoenixKitProjects.Portal do
   """
   @spec discussion_resource_type() :: String.t()
   def discussion_resource_type, do: "project_assignment"
+
+  @doc """
+  Typeahead candidates for the composer on a PUBLIC portal page.
+
+  The rule this encodes: **a mention may only name something the page
+  already shows.** Nothing here discloses anything a reader could not
+  already have read by scrolling, which is what makes it safe to offer the
+  menu to an outsider at all.
+
+    * `#` — issues listed on THIS board, via the very same
+      `issues_query/1` the board renders from. Sharing the query is the
+      point: a typeahead with its own copy of the scoping rule is a
+      typeahead that will eventually disagree with the page and offer a
+      title that was never published.
+    * `@` — people who have already COMMENTED on this issue. Their names
+      are on the page. The site's user directory is not, and the ordinary
+      `Mentions.search/3` would hand it to anyone with a comment box.
+      Deliberately per-ISSUE, not per-board: board-wide would reveal that
+      somebody took part in a discussion the reader has not opened.
+
+  Refuses outright for a viewer who may not comment. The composer is
+  already hidden from them, but a hidden control is not a control — this
+  is reachable by anyone who can send a LiveView event.
+  """
+  @spec mention_candidates(:user | :resource, String.t(), PortalRow.t(), term()) :: [map()]
+  def mention_candidates(kind, query, portal, opts \\ [])
+
+  def mention_candidates(kind, query, %PortalRow{} = portal, opts)
+      when kind in [:user, :resource] and is_binary(query) do
+    viewer = Keyword.get(opts, :viewer)
+    issue_uuid = Keyword.get(opts, :issue_uuid)
+
+    with %{} = project <- Projects.get_project(portal.project_uuid),
+         true <- may_comment?(portal, project, viewer) do
+      do_mention_candidates(kind, String.trim(query), portal, issue_uuid)
+    else
+      _ -> []
+    end
+  rescue
+    _ -> []
+  end
+
+  def mention_candidates(_kind, _query, _portal, _opts), do: []
+
+  defp do_mention_candidates(:resource, query, portal, _issue_uuid) do
+    portal
+    |> issues_query()
+    |> RepoHelper.repo().all()
+    |> decorate_issues()
+    |> Enum.filter(&matches?(&1.title, query))
+    |> Enum.take(@mention_limit)
+    |> Enum.map(fn issue ->
+      %{
+        kind: :resource,
+        type: PortalLinks.type_key(),
+        uuid: issue.uuid,
+        title: issue.title,
+        subtitle: issue.status_label
+      }
+    end)
+  end
+
+  defp do_mention_candidates(:user, _query, _portal, nil), do: []
+
+  defp do_mention_candidates(:user, query, portal, issue_uuid) do
+    # The issue has to belong to THIS board. `PortalLive` already nils a
+    # uuid its own resolve refused, so the page could never reach here with
+    # a foreign one — but a context function that trusts its caller to have
+    # checked is one refactor away from being the leak, and an external
+    # reviewer read this exact path as "point the URL at someone else's
+    # issue and read back who commented on it". Checking here costs one
+    # query and makes that reading wrong no matter who calls.
+    if on_this_board?(portal, issue_uuid) do
+      commenters_for(query, issue_uuid)
+    else
+      []
+    end
+  end
+
+  defp on_this_board?(portal, issue_uuid) do
+    portal
+    |> issues_query()
+    |> where([a], a.uuid == ^issue_uuid)
+    |> RepoHelper.repo().exists?()
+  rescue
+    _ -> false
+  end
+
+  defp commenters_for(query, issue_uuid) do
+    issue_uuid
+    |> commenter_uuids()
+    |> Auth.get_users_by_uuids()
+    |> Enum.filter(fn user ->
+      matches?(display_name(user), query) or matches?(user.email, query)
+    end)
+    |> Enum.take(@mention_limit)
+    |> Enum.map(fn user ->
+      %{
+        kind: :user,
+        type: "user",
+        uuid: user.uuid,
+        title: display_name(user),
+        # NOT the email. It is not on the page, and a typeahead that prints
+        # it turns "who is in this thread" into an address harvest.
+        subtitle: nil
+      }
+    end)
+  end
+
+  # Everyone who has actually posted in this discussion. Anonymous readers
+  # cannot comment, so every uuid here belongs to a real signed-in account
+  # whose name the page has already rendered next to their words.
+  defp commenter_uuids(issue_uuid) do
+    discussion_resource_type()
+    |> PhoenixKitComments.list_comments(issue_uuid)
+    |> Enum.map(fn comment -> Map.get(comment, :user_uuid) end)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  rescue
+    _ -> []
+  end
+
+  defp display_name(user) do
+    [Map.get(user, :first_name), Map.get(user, :last_name)]
+    |> Enum.reject(&(is_nil(&1) or &1 == ""))
+    |> Enum.join(" ")
+    |> case do
+      "" -> Map.get(user, :email) || "User"
+      name -> name
+    end
+  end
+
+  # An empty query lists the first few rather than nothing: on a board with
+  # six issues, typing `#` and being shown them all is the whole feature.
+  defp matches?(_subject, ""), do: true
+
+  defp matches?(subject, query) when is_binary(subject) do
+    String.contains?(String.downcase(subject), String.downcase(query))
+  end
+
+  defp matches?(_subject, _query), do: false
 
   @doc """
   How many images one report may carry, and how large each may be.

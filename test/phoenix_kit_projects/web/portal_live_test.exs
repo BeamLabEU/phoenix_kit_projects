@@ -9,11 +9,14 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
   import Ecto.Query
 
   alias PhoenixKit.Modules.Storage
+  alias PhoenixKit.Users.Auth
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Portal
+  alias PhoenixKitProjects.PortalLinks
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Schemas.PortalSubmission
+  alias PhoenixKitProjects.Web.PortalLive
 
   setup %{conn: conn} do
     PhoenixKitProjects.Extensions.Registry.refresh()
@@ -358,6 +361,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
              "the check matched everything, which would protect real orphans forever"
     end
   end
+
   describe "the discussion composer" do
     setup %{conn: conn} do
       Extensions.Registry.refresh()
@@ -380,7 +384,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
       {:ok, _} = Portal.set_participation(project.uuid, %{"comment_access" => "members"})
 
       {:ok, user} =
-        PhoenixKit.Users.Auth.register_user(%{
+        Auth.register_user(%{
           email: "composer-#{n}@example.com",
           password: "ValidPassword123!"
         })
@@ -414,6 +418,221 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
         |> render_click()
 
       assert opened =~ "Post Comment"
+    end
+  end
+
+  describe "the mention typeahead names only what the page already shows" do
+    setup do
+      Extensions.Registry.refresh()
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Mentions #{n}", "start_mode" => "immediate"})
+
+      {:ok, _} = Extensions.enable(project, "portal")
+      {:ok, _} = Portal.set_participation(project.uuid, %{"comment_access" => "members"})
+
+      published = published_issue(project, "Published issue #{n}")
+      {:ok, hidden_task} = Projects.create_task(%{"title" => "Internal only #{n}"})
+
+      {:ok, hidden} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => hidden_task.uuid
+        })
+
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "mentioner-#{n}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      {:ok,
+       project: project,
+       portal: Portal.get_portal(project.uuid),
+       published: published,
+       hidden: hidden,
+       user: user}
+    end
+
+    defp published_issue(project, title) do
+      {:ok, task} = Projects.create_task(%{"title" => title})
+
+      {:ok, assignment} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, assignment} = Portal.set_public(assignment, true)
+      assignment
+    end
+
+    defp scope_for(user), do: fake_scope(user_uuid: user.uuid, permissions: [])
+
+    test "# offers published issues and never an unpublished one", %{
+      portal: portal,
+      published: published,
+      hidden: hidden,
+      user: user
+    } do
+      results = Portal.mention_candidates(:resource, "", portal, viewer: scope_for(user))
+      uuids = Enum.map(results, & &1.uuid)
+
+      assert published.uuid in uuids
+
+      refute hidden.uuid in uuids,
+             "an unpublished issue was offered — picking it publishes its title"
+    end
+
+    test "# offers nothing from another project's board", %{portal: portal, user: user} do
+      other = fixture_project(%{"name" => "Other #{System.unique_integer([:positive])}"})
+      {:ok, _} = Extensions.enable(other, "portal")
+      stranger = published_issue(other, "Someone else's issue")
+
+      results = Portal.mention_candidates(:resource, "", portal, viewer: scope_for(user))
+
+      refute stranger.uuid in Enum.map(results, & &1.uuid),
+             "a different board's issue leaked into this board's typeahead"
+    end
+
+    test "@ offers only people who have commented on THIS issue", %{
+      portal: portal,
+      published: published,
+      user: user
+    } do
+      {:ok, other} =
+        Auth.register_user(%{
+          email: "silent-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      # `other` exists in the directory but has said nothing here. The
+      # global Mentions.search would hand them over; this must not.
+      assert Portal.mention_candidates(:user, "", portal,
+               viewer: scope_for(user),
+               issue_uuid: published.uuid
+             ) == []
+
+      {:ok, _} =
+        PhoenixKitComments.create_comment(
+          Portal.discussion_resource_type(),
+          published.uuid,
+          user.uuid,
+          %{content: "I can reproduce this"}
+        )
+
+      uuids =
+        Portal.mention_candidates(:user, "", portal,
+          viewer: scope_for(user),
+          issue_uuid: published.uuid
+        )
+        |> Enum.map(& &1.uuid)
+
+      assert user.uuid in uuids
+      refute other.uuid in uuids, "a user who never commented was offered"
+    end
+
+    test "un-publishing an issue kills the mentions that named it", %{
+      project: project,
+      published: published
+    } do
+      {:ok, _} = Portal.set_access_mode(project.uuid, "public")
+      {:ok, _} = Portal.set_board_published(published.uuid, true)
+
+      assert %{} = PortalLinks.resolve_comment_resources([published.uuid])[published.uuid]
+
+      # Un-publishing clears `board_published_at` and deliberately LEAVES
+      # `public` true. Matching on `public` alone meant an issue pulled off
+      # the open-web board kept its live title inside every discussion that
+      # had linked it — still resolving, still linking, still current.
+      {:ok, _} = Portal.set_board_published(published.uuid, false)
+
+      assert PortalLinks.resolve_comment_resources([published.uuid]) == %{}
+      assert PortalLinks.visible_resource_uuids([published.uuid], scope: nil) == []
+    end
+
+    test "a viewer who may not comment gets nothing at all", %{
+      portal: portal,
+      published: published
+    } do
+      # The composer is hidden from an anonymous reader, but hiding a
+      # control has never been the control — this is reachable by anyone
+      # who can send a LiveView event.
+      assert Portal.mention_candidates(:resource, "", portal, viewer: nil) == []
+
+      assert Portal.mention_candidates(:user, "", portal,
+               viewer: nil,
+               issue_uuid: published.uuid
+             ) == []
+    end
+
+    test "the LiveView answers the typeahead instead of swallowing it", %{
+      portal: portal,
+      published: published,
+      user: user
+    } do
+      # The hook pushes to the LIVEVIEW, not the component. PortalLive had
+      # no clause for it, so the event fell through to the catch-all
+      # `handle_event(_, _, socket)` and was silently discarded — the menu
+      # simply never appeared, with nothing in the log to say why. A
+      # {:noreply, _} here means that regression is back.
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: %{},
+          portal: portal,
+          issue_uuid: published.uuid,
+          phoenix_kit_current_scope: fake_scope(user_uuid: user.uuid, permissions: [])
+        }
+      }
+
+      assert {:reply, %{results: results, seq: 7}, _socket} =
+               PortalLive.handle_event(
+                 "pk_mention_search",
+                 %{"kind" => "resource", "query" => "", "seq" => 7},
+                 socket
+               )
+
+      assert Enum.any?(results, &(&1.uuid == published.uuid))
+
+      # Every result carries a server-built token; a nil one would mean the
+      # client had to assemble it, which is how a forged mention gets in.
+      assert Enum.all?(results, &is_binary(&1.token))
+    end
+
+    test "a foreign issue uuid in the URL cannot harvest its commenters", %{
+      portal: portal,
+      user: user
+    } do
+      # A reviewer flagged this as critical: point the URL at an issue that
+      # belongs to somebody else and read back who has commented on it.
+      # `handle_params` runs the uuid through `Portal.public_issue/3` first
+      # and nils it when that refuses, so the handler never sees it — but
+      # "the code looks like it validates" is not evidence, so: evidence.
+      other = fixture_project(%{"name" => "Foreign #{System.unique_integer([:positive])}"})
+      {:ok, _} = Extensions.enable(other, "portal")
+      secret = published_issue(other, "Someone else's issue")
+
+      {:ok, _} =
+        PhoenixKitComments.create_comment(
+          Portal.discussion_resource_type(),
+          secret.uuid,
+          user.uuid,
+          %{content: "internal chatter"}
+        )
+
+      # Straight at the context, i.e. assuming the uuid DID get through.
+      assert Portal.mention_candidates(:user, "", portal,
+               viewer: fake_scope(user_uuid: user.uuid, permissions: []),
+               issue_uuid: secret.uuid
+             ) == []
+    end
+
+    test "@ with no issue in scope offers nobody", %{portal: portal, user: user} do
+      # The board page has no discussion, so there is no set of people the
+      # page has already revealed.
+      assert Portal.mention_candidates(:user, "", portal, viewer: scope_for(user)) == []
     end
   end
 end
