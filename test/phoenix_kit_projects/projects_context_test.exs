@@ -303,6 +303,61 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
     end
   end
 
+  describe "pending submissions stay out of the measurements" do
+    # `list_assignments/1` drops them, but the aggregates read the table
+    # directly. A stranger's unreviewed report used to add a `todo` to the
+    # dashboard breakdown, inflate the projects list's task column and drag
+    # the progress average down before anybody had agreed to it — "out of
+    # the plan, the counts and every view" has to hold where the plan is
+    # MEASURED, not only where it is listed.
+    setup do
+      project = fixture_project()
+      task = fixture_task()
+      base = %{"project_uuid" => project.uuid, "task_uuid" => task.uuid}
+
+      {:ok, accepted} = Projects.create_assignment(Map.put(base, "status", "in_progress"))
+      {:ok, _} = Projects.update_assignment_status(accepted, %{"progress_pct" => 100})
+
+      {:ok, pending} =
+        Projects.create_assignment(Map.put(base, "status", "todo"), review: :pending)
+
+      {:ok, project: project, task: task, accepted: accepted, pending: pending}
+    end
+
+    test "project_summaries/1 counts and progress ignore them", ctx do
+      [summary] = Projects.project_summaries([ctx.project])
+
+      assert summary.total == 1, "a pending submission was counted as a task"
+      assert summary.progress_pct == 100, "a pending submission dragged the average down"
+    end
+
+    test "assignment_counts_for_projects/1 ignores them", ctx do
+      assert Projects.assignment_counts_for_projects([ctx.project.uuid]) ==
+               %{ctx.project.uuid => 1}
+    end
+
+    test "task_usage/1 ignores them", ctx do
+      assert Projects.task_usage([ctx.task.uuid])[ctx.task.uuid].count == 1
+    end
+
+    test "available_dependencies/2 never offers one", ctx do
+      offered = Projects.available_dependencies(ctx.project.uuid, ctx.accepted.uuid)
+
+      refute ctx.pending.uuid in Enum.map(offered, & &1.uuid),
+             "an unreviewed submission was offered as a dependency"
+    end
+
+    test "accepting it puts it back in every count", ctx do
+      {:ok, _} = Projects.review_assignment(ctx.pending.uuid, :accepted)
+
+      [summary] = Projects.project_summaries([ctx.project])
+      assert summary.total == 2
+
+      assert Projects.assignment_counts_for_projects([ctx.project.uuid]) ==
+               %{ctx.project.uuid => 2}
+    end
+  end
+
   describe "list_assignments_for_user/1" do
     test "returns [] for an unknown user_uuid (Staff lookup miss)" do
       # `Staff.get_person_by_user_uuid/2` returns nil for an unknown

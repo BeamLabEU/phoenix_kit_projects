@@ -78,12 +78,36 @@ defmodule PhoenixKitProjects.MixProject do
   defp pk_dep(app, requirement, opts \\ []) do
     env_var = String.upcase(Atom.to_string(app)) <> "_PATH"
 
-    case System.get_env(env_var) do
-      nil when opts == [] -> {app, requirement}
-      nil -> {app, requirement, opts}
-      path -> {app, [path: path, override: true] ++ opts}
+    cond do
+      dropped_dep?(app) ->
+        nil
+
+      path = System.get_env(env_var) ->
+        {app, [path: path, override: true] ++ opts}
+
+      opts == [] ->
+        {app, requirement}
+
+      true ->
+        {app, requirement, opts}
     end
   end
+
+  # The staff-optional seam's compile gate, which until now did not exist.
+  #
+  # AGENTS.md, this file's own dep comment, `People`'s and the seam test's
+  # docstrings all describe `WITHOUT_STAFF=1 mix deps.get && WITHOUT_STAFF=1
+  # mix compile --warnings-as-errors` as the check that no stray
+  # `PhoenixKitStaff.*` reference sneaks back in. Nothing read the variable,
+  # so the "gate" compiled WITH staff installed and passed unconditionally —
+  # which is how two direct references to the optional package's schemas
+  # (`Grants`, `ProjectMembersLive`) got in and silently broke group grants
+  # on staff-less installs. `optional: true` governs a CONSUMER's dependency
+  # closure; it does not remove the dep from our own build.
+  defp dropped_dep?(:phoenix_kit_staff),
+    do: System.get_env("WITHOUT_STAFF") in ["1", "true"]
+
+  defp dropped_dep?(_app), do: false
 
   defp deps do
     [
@@ -166,6 +190,10 @@ defmodule PhoenixKitProjects.MixProject do
       # `render(view) =~ "..."`, etc. Test-only.
       {:lazy_html, ">= 0.1.0", only: :test}
     ]
+    # `pk_dep/3` answers nil for a dep the environment drops (see
+    # `dropped_dep?/1`), so the list is compacted rather than each call site
+    # growing a conditional.
+    |> Enum.reject(&is_nil/1)
   end
 
   defp package do

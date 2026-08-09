@@ -21,6 +21,12 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   alias PhoenixKit.Users.Roles
   alias PhoenixKitProjects.Activity
   alias PhoenixKitProjects.{Authz, Extensions, Features, Grants, L10n, Members, Paths, Projects}
+  # Shadow schemas over the core-owned staff tables, not the optional
+  # package's — see the same note in `PhoenixKitProjects.Grants`. Here the
+  # symptom was milder but the same shape: without the staff package the
+  # grant rows rendered with no team or department NAME, and the picker
+  # offered no groups to grant to at all.
+  alias PhoenixKitProjects.People
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
@@ -167,8 +173,8 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
     _ -> nil
   end
 
-  defp subject_label("team", uuid), do: staff_name(PhoenixKitStaff.Schemas.Team, uuid)
-  defp subject_label("department", uuid), do: staff_name(PhoenixKitStaff.Schemas.Department, uuid)
+  defp subject_label("team", uuid), do: staff_name(People.Team, uuid)
+  defp subject_label("department", uuid), do: staff_name(People.Department, uuid)
   defp subject_label(_type, _uuid), do: nil
 
   defp staff_name(schema, uuid) do
@@ -186,8 +192,8 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   # without the staff package simply offers site roles.
   defp subject_options do
     [
-      {"team", gettext("Teams"), staff_options(PhoenixKitStaff.Schemas.Team)},
-      {"department", gettext("Departments"), staff_options(PhoenixKitStaff.Schemas.Department)},
+      {"team", gettext("Teams"), staff_options(People.Team)},
+      {"department", gettext("Departments"), staff_options(People.Department)},
       {"role", gettext("Site roles"), role_options()}
     ]
     |> Enum.reject(fn {_kind, _label, options} -> options == [] end)

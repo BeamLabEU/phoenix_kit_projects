@@ -43,6 +43,16 @@ defmodule PhoenixKitProjects.Grants do
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Roles
   alias PhoenixKitProjects.Activity
+  # SHADOW schemas over the core-owned staff tables (core V100), NOT
+  # `PhoenixKitStaff.Schemas.*`. Those tables exist on every install; the
+  # staff PACKAGE is only the admin surface and is optional. Reaching for
+  # the package's schemas meant every query here raised into its own
+  # `rescue` wherever staff wasn't installed — so team and department
+  # grants silently granted nothing, on data that was sitting right there.
+  # A grant that quietly evaporates is worse than one that errors.
+  alias PhoenixKitProjects.People
+  alias PhoenixKitProjects.People.Team
+  alias PhoenixKitProjects.People.TeamMembership
   alias PhoenixKitProjects.PubSub
   alias PhoenixKitProjects.Schemas.ProjectSubjectGrant
 
@@ -216,7 +226,7 @@ defmodule PhoenixKitProjects.Grants do
 
   def subject_reach("team", team_uuid) when is_binary(team_uuid) do
     RepoHelper.repo().aggregate(
-      from(tm in PhoenixKitStaff.Schemas.TeamMembership, where: tm.team_uuid == ^team_uuid),
+      from(tm in TeamMembership, where: tm.team_uuid == ^team_uuid),
       :count
     )
   rescue
@@ -226,7 +236,7 @@ defmodule PhoenixKitProjects.Grants do
   def subject_reach("department", dept_uuid) when is_binary(dept_uuid) do
     team_uuids =
       RepoHelper.repo().all(
-        from(t in PhoenixKitStaff.Schemas.Team,
+        from(t in Team,
           where: t.department_uuid == ^dept_uuid,
           select: t.uuid
         )
@@ -236,7 +246,7 @@ defmodule PhoenixKitProjects.Grants do
       0
     else
       RepoHelper.repo().aggregate(
-        from(tm in PhoenixKitStaff.Schemas.TeamMembership, where: tm.team_uuid in ^team_uuids),
+        from(tm in TeamMembership, where: tm.team_uuid in ^team_uuids),
         :count
       )
     end
@@ -316,15 +326,19 @@ defmodule PhoenixKitProjects.Grants do
   defp role_uuid_for_name(_), do: nil
 
   defp staff_subjects(user_uuid) do
-    with true <- Code.ensure_loaded?(PhoenixKitStaff.Staff),
-         person when not is_nil(person) <-
-           PhoenixKitStaff.Staff.get_person_by_user_uuid(user_uuid) do
-      teams = team_uuids(person.uuid)
-      departments = department_uuids(person, teams)
+    # The ONE doorway (`People`), not the optional package: the person row
+    # is core-owned data, and gating on `Code.ensure_loaded?(PhoenixKitStaff)`
+    # made "the admin UI for people isn't installed" mean "this person is on
+    # no team" — which silently revoked every team and department grant.
+    case People.get_person_by_user_uuid(user_uuid, preload: []) do
+      nil ->
+        []
 
-      Enum.map(teams, &{"team", &1}) ++ Enum.map(departments, &{"department", &1})
-    else
-      _ -> []
+      person ->
+        teams = team_uuids(person.uuid)
+        departments = department_uuids(person, teams)
+
+        Enum.map(teams, &{"team", &1}) ++ Enum.map(departments, &{"department", &1})
     end
   rescue
     _ -> []
@@ -332,7 +346,7 @@ defmodule PhoenixKitProjects.Grants do
 
   defp team_uuids(person_uuid) do
     RepoHelper.repo().all(
-      from(tm in PhoenixKitStaff.Schemas.TeamMembership,
+      from(tm in TeamMembership,
         where: tm.staff_person_uuid == ^person_uuid,
         select: tm.team_uuid
       )
@@ -349,7 +363,7 @@ defmodule PhoenixKitProjects.Grants do
         []
       else
         RepoHelper.repo().all(
-          from(t in PhoenixKitStaff.Schemas.Team,
+          from(t in Team,
             where: t.uuid in ^team_uuids and not is_nil(t.department_uuid),
             select: t.department_uuid
           )

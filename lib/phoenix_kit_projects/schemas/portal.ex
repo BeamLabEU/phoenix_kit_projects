@@ -136,6 +136,14 @@ defmodule PhoenixKitProjects.Schemas.Portal do
       |> String.trim("-")
       |> String.slice(0, 48)
 
-    if base in ["" | reserved_slugs()], do: "board-#{:rand.uniform(9999)}", else: base
+    # CSPRNG even though this is only a suggestion the admin edits: a slug
+    # is the one field here that can end up being an access grant, and
+    # `:rand` is seeded per-process and reproducible. One source for slug
+    # bytes is cheaper to keep true than a rule about which callers matter.
+    if base in ["" | reserved_slugs()], do: "board-#{random_suffix()}", else: base
+  end
+
+  defp random_suffix do
+    2 |> :crypto.strong_rand_bytes() |> :binary.decode_unsigned()
   end
 end

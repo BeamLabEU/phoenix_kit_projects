@@ -1261,7 +1261,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "remove_dependency" => :edit_tasks,
     "detach_subproject" => :edit_tasks,
     "archive_project" => :archive_project,
-    "unarchive_project" => :archive_project
+    "unarchive_project" => :archive_project,
+    # Starting is a container-level act, not work: it stamps `started_at`,
+    # cements the status catalog into local rows and switches the project's
+    # derived state for everyone. It sat in @gated_events with no entry here,
+    # so the lifecycle FLAG was the only thing between a viewer and starting
+    # somebody else's project. Same floor as archiving — the other
+    # irreversible thing that happens to the container rather than to a task.
+    "confirm_start_project" => :edit_settings
   }
 
   # Task-scoped events carry the task's uuid, and the task is what makes

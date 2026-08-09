@@ -208,8 +208,41 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     |> assign_status_init(%Project{})
   end
 
-  defp apply_action(socket, :new, %{"project_id" => project_id} = params) do
+  # The write gate this form never had.
+  #
+  # `ProjectShowLive` gates :view and `ProjectFormLive(:edit)` gates
+  # :edit_settings, both because the module permission stopped meaning
+  # "administer every project" — but this form, the one that actually
+  # CREATES and EDITS a project's tasks, kept riding the route alone. So
+  # anyone who could reach the module could open
+  # `/admin/projects/list/<any-uuid>/assignments/new` and write into a
+  # private project they belong to nothing of, with the project's own
+  # create/edit floors never consulted.
+  #
+  # Templates are exempt for the same reason `template_or_viewable?/2`
+  # exempts them: library objects have no membership rows for a per-project
+  # resolution to work against.
+  #
+  # A refusal returns nil so the caller's existing not-found branch handles
+  # it — the refusal has to be shaped exactly like "no such project",
+  # because existence is itself information.
+  defp permitted_project(socket, project_id, action) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
     case Projects.get_project(project_id) do
+      %Project{is_template: true} = template ->
+        if PhoenixKitProjects.Authz.can_use_templates?(scope), do: template
+
+      %Project{} = project ->
+        if PhoenixKitProjects.Authz.can?(scope, project, action), do: project
+
+      other ->
+        other
+    end
+  end
+
+  defp apply_action(socket, :new, %{"project_id" => project_id} = params) do
+    case permitted_project(socket, project_id, :create_tasks) do
       nil ->
         # In navigate mode, `close_or_navigate` push-navigates and the LV is
         # replaced before render. In emit mode it broadcasts `:closed` but
@@ -287,7 +320,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp apply_action(socket, :edit, %{"project_id" => project_id, "id" => id}) do
-    project = Projects.get_project(project_id)
+    project = permitted_project(socket, project_id, :edit_tasks)
     assignment = Projects.get_assignment(id)
 
     # The assignment is re-scoped to the project named in the params. These

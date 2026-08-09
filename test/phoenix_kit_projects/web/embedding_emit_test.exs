@@ -57,6 +57,13 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
     Map.merge(%{"id" => project.uuid, "current_user_uuid" => actor_uuid}, extra)
   end
 
+  # Same bridge for the assignment form, which keys on `project_id` and
+  # resolves :create_tasks / :edit_tasks from the passed identity.
+  defp form_session(project, actor_uuid, extra \\ %{}) do
+    {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+    Map.merge(%{"project_id" => project.uuid, "current_user_uuid" => actor_uuid}, extra)
+  end
+
   # ─────────────────────────────────────────────────────────────────
   # OverviewLive
   # ─────────────────────────────────────────────────────────────────
@@ -597,22 +604,49 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
   # ─────────────────────────────────────────────────────────────────
 
   describe "AssignmentFormLive emit mode (:new)" do
-    test "mounts with project_id from session", %{conn: conn} do
+    test "mounts with project_id from session", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project(%{"name" => "Emit Host"})
       topic = unique_topic()
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.AssignmentFormLive,
-          session: %{
-            "mode" => "emit",
-            "pubsub_topic" => topic,
-            "project_id" => project.uuid,
-            "frame_ref" => 0
-          }
+          session:
+            form_session(project, actor_uuid, %{
+              "mode" => "emit",
+              "pubsub_topic" => topic,
+              "frame_ref" => 0
+            })
         )
 
       assert html =~ "Add task to Emit Host"
       assert html =~ ~s(phx-click="cancel")
+    end
+
+    test "a viewer the project won't let write emits :closed, same as not-found", %{conn: conn} do
+      # The refusal has to travel the emit path too: in emit mode the host
+      # holds the modal open until it hears :closed, so a gate that only
+      # push-navigates would leave a dead form on screen.
+      project = fixture_project()
+      topic = unique_topic()
+      ProjectsPubSub.subscribe(topic)
+
+      {:ok, stranger} =
+        Auth.register_user(%{
+          "email" => "emit-form-stranger-#{System.unique_integer([:positive])}@example.com",
+          "password" => "EmitPass123!"
+        })
+
+      live_isolated(conn, PhoenixKitProjects.Web.AssignmentFormLive,
+        session: %{
+          "mode" => "emit",
+          "pubsub_topic" => topic,
+          "project_id" => project.uuid,
+          "current_user_uuid" => stranger.uuid,
+          "frame_ref" => 31
+        }
+      )
+
+      assert_receive {:projects, :closed, %{frame_ref: 31}}, 500
     end
 
     test "missing project emits :closed (not push_navigate)", %{conn: conn} do
@@ -632,19 +666,19 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       assert_receive {:projects, :closed, %{frame_ref: 14}}, 500
     end
 
-    test "clicking Cancel emits :closed", %{conn: conn} do
+    test "clicking Cancel emits :closed", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.AssignmentFormLive,
-          session: %{
-            "mode" => "emit",
-            "pubsub_topic" => topic,
-            "project_id" => project.uuid,
-            "frame_ref" => 22
-          }
+          session:
+            form_session(project, actor_uuid, %{
+              "mode" => "emit",
+              "pubsub_topic" => topic,
+              "frame_ref" => 22
+            })
         )
 
       view |> element("button[phx-click=cancel]") |> render_click()

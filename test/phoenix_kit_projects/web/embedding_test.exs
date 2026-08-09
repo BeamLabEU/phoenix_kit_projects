@@ -744,24 +744,60 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   end
 
   describe "AssignmentFormLive embed (:new)" do
-    test "mounts via live_isolated with project_id in session", %{conn: conn} do
+    # The form WRITES, so the embedded viewer has to be someone the project
+    # lets write — same reason `ProjectShowLive` gates :view above. An
+    # off-router mount runs no admin on_mount, so the host bridges identity
+    # with `current_user_uuid` and the form resolves :create_tasks from it.
+    setup %{actor_uuid: actor_uuid} do
       project = fixture_project(%{"name" => "Embed Host"})
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
+      {:ok, project: project}
+    end
 
+    test "mounts via live_isolated with project_id in session", %{
+      conn: conn,
+      project: project,
+      actor_uuid: actor_uuid
+    } do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.AssignmentFormLive,
-          session: %{"project_id" => project.uuid}
+          session: %{"project_id" => project.uuid, "current_user_uuid" => actor_uuid}
         )
 
       assert html =~ "Add task to Embed Host"
     end
 
-    test "wrapper_class override replaces the default", %{conn: conn} do
-      project = fixture_project()
+    test "a stranger embedding the form is refused, shaped as not-found", %{
+      conn: conn,
+      project: project
+    } do
+      # Reachable by anyone who can send a mount: the form used to load for
+      # any module-reacher on any project uuid, floors unconsulted.
+      {:ok, other} =
+        Auth.register_user(%{
+          "email" => "embed-form-stranger-#{System.unique_integer([:positive])}@example.com",
+          "password" => "StrangerPass123!"
+        })
 
+      assert {:error, {:live_redirect, %{flash: %{"error" => flash}}}} =
+               live_isolated(conn, PhoenixKitProjects.Web.AssignmentFormLive,
+                 session: %{"project_id" => project.uuid, "current_user_uuid" => other.uuid}
+               )
+
+      # Indistinguishable from a missing project: existence is information.
+      assert flash =~ "not found"
+    end
+
+    test "wrapper_class override replaces the default", %{
+      conn: conn,
+      project: project,
+      actor_uuid: actor_uuid
+    } do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.AssignmentFormLive,
           session: %{
             "project_id" => project.uuid,
+            "current_user_uuid" => actor_uuid,
             "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"
           }
         )
@@ -770,13 +806,17 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       refute html =~ "max-w-xl"
     end
 
-    test "missing project flashes + navigates to embed redirect_to override", %{conn: conn} do
+    test "missing project flashes + navigates to embed redirect_to override", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       bogus = Ecto.UUID.generate()
 
       result =
         live_isolated(conn, PhoenixKitProjects.Web.AssignmentFormLive,
           session: %{
             "project_id" => bogus,
+            "current_user_uuid" => actor_uuid,
             "redirect_to" => "/host/dashboard"
           }
         )
@@ -786,8 +826,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   end
 
   describe "AssignmentFormLive embed (:edit)" do
-    test "edits an existing assignment when project_id + id are passed via session", %{conn: conn} do
+    test "edits an existing assignment when project_id + id are passed via session", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
       project = fixture_project(%{"start_mode" => "immediate"})
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
       task = fixture_task()
 
       {:ok, assignment} =
@@ -802,6 +846,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           session: %{
             "live_action" => "edit",
             "project_id" => project.uuid,
+            "current_user_uuid" => actor_uuid,
             "id" => assignment.uuid
           }
         )

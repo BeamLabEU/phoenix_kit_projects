@@ -96,6 +96,32 @@ defmodule PhoenixKitProjects.Web.HubPermissionEnforcementTest do
              "a viewer archived the project"
     end
 
+    test "a viewer cannot start the project — the lifecycle flag is not a permission", ctx do
+      # `confirm_start_project` sat in the FEATURE table and nowhere in the
+      # permission one, so having the lifecycle flag on was the whole check:
+      # any viewer could stamp `started_at` and cement the status catalog on
+      # somebody else's project.
+      refute Projects.get_project(ctx.project.uuid).started_at
+
+      {:ok, lv, _} =
+        ctx.conn |> put_test_scope(ctx.viewer) |> live(show_path(ctx.project))
+
+      render_click(lv, "confirm_start_project", %{"start_at" => "2026-08-09T10:00"})
+
+      refute Projects.get_project(ctx.project.uuid).started_at,
+             "a viewer started the project"
+    end
+
+    test "the owner still starts it — the deny isn't blanket", ctx do
+      {:ok, lv, _} =
+        ctx.conn |> put_test_scope(ctx.owner) |> live(show_path(ctx.project))
+
+      render_click(lv, "confirm_start_project", %{"start_at" => "2026-08-09T10:00"})
+
+      assert Projects.get_project(ctx.project.uuid).started_at,
+             "the owner was blocked from starting their own project"
+    end
+
     test "a viewer cannot remove a task when the floor says managers", ctx do
       {:ok, project} = Authz.set_overrides(ctx.project, %{"delete_tasks" => "managers"})
 
@@ -106,6 +132,61 @@ defmodule PhoenixKitProjects.Web.HubPermissionEnforcementTest do
 
       assert Projects.get_assignment(ctx.assignment.uuid),
              "a viewer deleted a task the floor reserved for managers"
+    end
+  end
+
+  describe "the add/edit task form answers the same question the hub does" do
+    # The form is its own ROUTE. The hub refusing to show the "Add task"
+    # link is not a control — `/list/<uuid>/assignments/new` is one URL
+    # away, and it used to load for anyone holding the module permission,
+    # on any project, with the project's floors never consulted.
+    setup do
+      {:ok, user} =
+        Auth.register_user(%{
+          "email" => "outsider-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ActorPass123!"
+        })
+
+      # Holds "projects" (may enter the module) and nothing else — the
+      # contractor shape the permission split exists to make possible.
+      {:ok, outsider: fake_scope(user_uuid: user.uuid, permissions: ["projects"])}
+    end
+
+    test "a non-member cannot open the add-task form", ctx do
+      assert {:error, {:live_redirect, %{flash: %{"error" => flash}}}} =
+               ctx.conn
+               |> put_test_scope(ctx.outsider)
+               |> live("#{show_path(ctx.project)}/assignments/new")
+
+      # Shaped like not-found: existence is information.
+      assert flash =~ "not found"
+    end
+
+    test "a non-member cannot open the edit form for an existing task", ctx do
+      assert {:error, {:live_redirect, %{flash: %{"error" => flash}}}} =
+               ctx.conn
+               |> put_test_scope(ctx.outsider)
+               |> live("#{show_path(ctx.project)}/assignments/#{ctx.assignment.uuid}/edit")
+
+      assert flash =~ "not found"
+    end
+
+    test "a member the floor allows still opens it — the deny isn't blanket", ctx do
+      {:ok, lv, _} =
+        ctx.conn
+        |> put_test_scope(ctx.viewer)
+        |> live("#{show_path(ctx.project)}/assignments/new")
+
+      assert render(lv) =~ "Add task"
+    end
+
+    test "a viewer cannot open it when the floor says managers", ctx do
+      {:ok, project} = Authz.set_overrides(ctx.project, %{"create_tasks" => "managers"})
+
+      assert {:error, {:live_redirect, _}} =
+               ctx.conn
+               |> put_test_scope(ctx.viewer)
+               |> live("#{show_path(project)}/assignments/new")
     end
   end
 

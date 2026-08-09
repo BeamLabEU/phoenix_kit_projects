@@ -922,6 +922,16 @@ defmodule PhoenixKitProjects.Projects do
   # listing/bucket/count excludes it. `not in subquery` is self-correcting: if
   # the linking assignment ever disappears, the project re-surfaces at the top
   # level on its own rather than orphaning.
+  # A submission waiting on a decision is a REQUEST, not work — see
+  # `review_assignment/3`. `list_assignments/1` already drops them, but the
+  # aggregates read the table directly, so without this a stranger's
+  # unreviewed report lands in a project's task count, adds a `todo` to the
+  # dashboard breakdown and drags the progress average down before anybody
+  # agreed to it. The rule is "out of the plan, the counts and every view
+  # until somebody decides", so it has to hold everywhere the plan is
+  # measured, not only where it is listed.
+  defp accepted_only(q), do: where(q, [a], a.review_status == "accepted")
+
   defp exclude_subprojects(q) do
     children =
       from(a in Assignment, where: not is_nil(a.child_project_uuid), select: a.child_project_uuid)
@@ -1433,6 +1443,7 @@ defmodule PhoenixKitProjects.Projects do
       group_by: a.project_uuid,
       select: {a.project_uuid, count(a.uuid)}
     )
+    |> accepted_only()
     |> repo().all()
     |> Map.new()
   end
@@ -1500,6 +1511,7 @@ defmodule PhoenixKitProjects.Projects do
       group_by: a.task_uuid,
       select: {a.task_uuid, count(a.uuid), max(a.inserted_at)}
     )
+    |> accepted_only()
     |> repo().all()
     |> Map.new(fn {task_uuid, count, last_used} ->
       {task_uuid, %{count: count, last_used: last_used}}
@@ -1655,6 +1667,7 @@ defmodule PhoenixKitProjects.Projects do
       group_by: a.status,
       select: {a.status, count(a.uuid)}
     )
+    |> accepted_only()
     |> repo().all()
     |> Map.new()
   end
@@ -1725,6 +1738,7 @@ defmodule PhoenixKitProjects.Projects do
         group_by: [a.project_uuid, a.status],
         select: {a.project_uuid, a.status, count(a.uuid)}
       )
+      |> accepted_only()
       |> repo().all()
       |> Enum.reduce(%{}, fn {project_uuid, status, n}, acc ->
         Map.update(acc, project_uuid, %{status => n}, fn inner ->
@@ -1743,6 +1757,7 @@ defmodule PhoenixKitProjects.Projects do
         group_by: a.project_uuid,
         select: {a.project_uuid, sum(a.progress_pct)}
       )
+      |> accepted_only()
       |> repo().all()
       |> Map.new()
 
@@ -1950,6 +1965,7 @@ defmodule PhoenixKitProjects.Projects do
         t.estimated_duration_unit
       }
     )
+    |> accepted_only()
     |> repo().all()
     |> Enum.reduce(%{}, fn {puuid, a_dur, a_unit, a_cw, t_dur, t_unit}, acc ->
       project = Map.get(projects_by_uuid, puuid)
@@ -3679,6 +3695,7 @@ defmodule PhoenixKitProjects.Projects do
       preload: [:task, :child_project],
       order_by: [asc: a.position, asc: a.inserted_at]
     )
+    |> accepted_only()
     |> repo().all()
   end
 
