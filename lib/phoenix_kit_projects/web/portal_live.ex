@@ -16,6 +16,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   use Phoenix.LiveView
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
 
@@ -37,6 +38,8 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         peer_ip: peer_ip,
         submitted: false,
         error: nil,
+        issue: nil,
+        issue_uuid: nil,
         # The min-fill-time anchor (panel: bots submit instantly).
         mounted_ms: System.monotonic_time(:millisecond)
       )
@@ -97,6 +100,45 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   defp viewer_uuid(%{user: %{uuid: uuid}}) when is_binary(uuid), do: uuid
   defp viewer_uuid(_), do: nil
 
+  # Reading a discussion follows the board: whoever can see the issue can
+  # see what has been said about it. WRITING is the thing that is gated.
+  defp discussion_readable?(view), do: view.capabilities.list
+
+  defp issue_path(slug, uuid), do: Routes.path("/portal/#{slug}/i/#{uuid}")
+
+  # nil, never false: the comments component reads `current_user.uuid`, and
+  # `false && user` hands it a boolean that dies on the first field access.
+  defp commenter(%{view: %{may_comment: true}} = assigns), do: current_user(assigns)
+  defp commenter(_assigns), do: nil
+
+  defp current_user(%{phoenix_kit_current_scope: %{user: user}}), do: user
+  defp current_user(_), do: nil
+
+  @impl true
+  def handle_params(params, _uri, socket) do
+    {:noreply, socket |> assign(issue_uuid: params["issue"]) |> load_issue()}
+  end
+
+  # The issue page is the board page plus one record. Loading it here
+  # rather than in mount keeps the board's own resolve untouched, and a
+  # missing/unpublished issue degrades to the board rather than to an
+  # error: the reader followed a link to something that is no longer
+  # published, and the board is the useful place to land.
+  defp load_issue(%{assigns: %{issue_uuid: nil}} = socket), do: assign(socket, issue: nil)
+
+  defp load_issue(socket) do
+    viewer = socket.assigns[:phoenix_kit_current_scope]
+
+    case Portal.public_issue(socket.assigns.slug, socket.assigns.issue_uuid, viewer) do
+      {:ok, issue} -> assign(socket, issue: issue)
+      :error -> assign(socket, issue: nil, issue_uuid: nil)
+    end
+  end
+
+  # Comments re-render the page they live on.
+  @impl true
+  def handle_info({:comments_updated, _payload}, socket), do: {:noreply, socket}
+
   # Rotation / re-configuration while mounted: re-resolve; a dead slug
   # downgrades to the uniform unavailable state on the spot.
   @impl true
@@ -149,7 +191,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
       <p :if={@needs_sign_in} class="text-sm opacity-60">
         {gettext("This board is open to signed-in users.")}
       </p>
-      <a :if={@needs_sign_in} href={PhoenixKit.Utils.Routes.path("/users/log-in")} class="btn btn-primary btn-sm">
+      <a :if={@needs_sign_in} href={Routes.path("/users/log-in")} class="btn btn-primary btn-sm">
         {gettext("Sign in")}
       </a>
 
@@ -189,6 +231,39 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         </span>
       </section>
 
+      <%!-- One issue and its discussion. Shown INSTEAD of nothing rather
+           than instead of the board: the reader keeps the context they
+           arrived in. --%>
+      <section :if={@issue} class="flex flex-col gap-4 rounded-lg border border-base-200 p-4">
+        <div class="flex flex-col gap-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-lg font-semibold">{@issue.title}</h2>
+            <span class="badge badge-ghost badge-sm">{@issue.status_label}</span>
+          </div>
+          <p :if={@issue.description} class="text-sm opacity-70">{@issue.description}</p>
+        </div>
+
+        <%!-- Discussion. `may_comment` is resolved server-side for THIS
+             viewer, so the page never offers a box the server would
+             refuse to accept from. --%>
+        <div :if={@view.may_comment or discussion_readable?(@view)} class="border-t border-base-200 pt-3">
+          <.live_component
+            module={PhoenixKitComments.Web.CommentsComponent}
+            id={"portal-issue-#{@issue.uuid}"}
+            resource_type="project_assignment"
+            resource_uuid={@issue.uuid}
+            current_user={commenter(assigns)}
+            enabled={@view.may_comment}
+            title={gettext("Discussion")}
+            rich_text={false}
+          />
+        </div>
+
+        <p :if={not @view.may_comment} class="text-xs opacity-60">
+          {gettext("Sign in to take part in this discussion.")}
+        </p>
+      </section>
+
       <%!-- Public issue list --%>
       <section :if={@view.capabilities.list} class="flex flex-col gap-2">
         <h2 class="text-lg font-semibold">{gettext("Issues")}</h2>
@@ -197,7 +272,10 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         </p>
         <div :if={@view.issues != []} class="divide-y divide-base-200 rounded-lg border border-base-200">
           <div :for={issue <- @view.issues} class="flex items-center gap-3 px-3 py-2">
-            <span class="min-w-0 flex-1 truncate text-sm">{issue.title}</span>
+            <.link
+              patch={issue_path(@slug, issue.uuid)}
+              class="min-w-0 flex-1 truncate text-sm hover:underline"
+            >{issue.title}</.link>
             <span class="badge badge-ghost badge-sm shrink-0">{issue.status_label}</span>
           </div>
         </div>

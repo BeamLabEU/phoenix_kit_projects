@@ -320,11 +320,13 @@ defmodule PhoenixKitProjects.Portal do
 
     Enum.map(rows, fn a ->
       %{
-        # No uuid. It was here for a per-issue discussion page that isn't
-        # built yet, and an internal identifier is not something to publish
-        # speculatively — when issues get public addresses they should get
-        # per-board numbers, the way every issue tracker does, not the
-        # database's primary keys.
+        # The uuid is an ADDRESS here, not a leak: it links to a page whose
+        # entire contents are already visible to whoever can see this list,
+        # and without it the discussion page is unreachable from the board.
+        # Per-board numbers would read better and are what a mature tracker
+        # does; they need a column, a backfill and a uniqueness story, so
+        # they are a later nicety rather than a blocker.
+        uuid: a.uuid,
         title: Assignment.label(a, lang) || "Issue",
         status: a.status,
         status_label: AssignmentStatusBadge.label(a.status),
@@ -582,6 +584,52 @@ defmodule PhoenixKitProjects.Portal do
             error
         end
     end
+  end
+
+  @doc """
+  ONE public issue, or `:error`.
+
+  Goes through the same doorway as the list: resolve the slug, check the
+  list capability, and scope from the portal row. An issue that isn't
+  published to this board is indistinguishable from one that doesn't
+  exist — the uniform failure that stops the page being an oracle.
+
+  Returns the issue DTO plus its `uuid`, which the LIST deliberately omits:
+  here it is the thing being addressed, and the reader already has it in
+  their URL bar.
+  """
+  @spec public_issue(String.t(), String.t(), term()) :: {:ok, map()} | :error
+  def public_issue(slug, issue_uuid, viewer \\ nil) do
+    with {:ok, portal, project} <- resolve(slug, viewer),
+         true <- capability?(project, :list),
+         %Assignment{} = assignment <- find_public_issue(portal, issue_uuid) do
+      lang = PhoenixKitProjects.L10n.current_content_lang()
+
+      {:ok,
+       %{
+         uuid: assignment.uuid,
+         title: Assignment.label(assignment, lang) || "Issue",
+         description: Assignment.localized_description(assignment, lang),
+         status: assignment.status,
+         status_label: AssignmentStatusBadge.label(assignment.status),
+         inserted_at: assignment.inserted_at,
+         updated_at: assignment.updated_at
+       }}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  # The same mode split the list uses: a public board shows only what was
+  # published TO it, everything else keeps the original `public` rule.
+  defp find_public_issue(%PortalRow{} = portal, issue_uuid) do
+    portal
+    |> issues_query()
+    |> where([a], a.uuid == ^issue_uuid)
+    |> exclude(:limit)
+    |> RepoHelper.repo().one()
   end
 
   # ── Submission ──────────────────────────────────────────────────

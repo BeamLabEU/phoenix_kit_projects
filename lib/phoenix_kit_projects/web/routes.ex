@@ -32,6 +32,12 @@ defmodule PhoenixKitProjects.Web.Routes do
         live_session :pk_projects_portal,
           on_mount: [{PhoenixKitWeb.Users.Auth, :phoenix_kit_mount_current_scope}] do
           live("/portal/:slug", PhoenixKitProjects.Web.PortalLive, :show)
+          # One issue, with its discussion. Addressed by uuid rather than a
+          # per-board number: numbering is a nicety that needs its own
+          # column, backfill and uniqueness story, and the identifier is
+          # not a secret — everything on this page is already visible to
+          # whoever can reach the board.
+          live("/portal/:slug/i/:issue", PhoenixKitProjects.Web.PortalLive, :issue)
         end
       end
     end

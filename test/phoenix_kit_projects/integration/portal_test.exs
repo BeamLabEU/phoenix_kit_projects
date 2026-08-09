@@ -138,7 +138,7 @@ defmodule PhoenixKitProjects.Integration.PortalTest do
              |> Enum.flat_map(&Map.keys/1)
              |> Enum.uniq()
              |> Enum.sort() ==
-               [:inserted_at, :status, :status_label, :title, :updated_at]
+               [:inserted_at, :status, :status_label, :title, :updated_at, :uuid]
     end
 
     test "the list capability off empties issues but keeps the page", %{

@@ -225,4 +225,69 @@ defmodule PhoenixKitProjects.PortalAccessTest do
       assert Map.keys(link_view) == Map.keys(public_view)
     end
   end
+
+  describe "one issue and its discussion" do
+    setup %{project: project} do
+      task = fixture_task()
+
+      {:ok, assignment} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, assignment} = Portal.set_public(assignment, true)
+      {:ok, assignment: assignment}
+    end
+
+    test "a published issue is fetchable by uuid", %{portal: portal, assignment: assignment} do
+      assert {:ok, issue} = Portal.public_issue(portal.slug, assignment.uuid, nil)
+      assert issue.uuid == assignment.uuid
+      assert is_binary(issue.title)
+    end
+
+    test "an issue that isn't public is indistinguishable from one that doesn't exist", %{
+      portal: portal,
+      assignment: assignment
+    } do
+      {:ok, _} = Portal.set_public(assignment, false)
+
+      assert Portal.public_issue(portal.slug, assignment.uuid, nil) == :error
+      assert Portal.public_issue(portal.slug, Ecto.UUID.generate(), nil) == :error
+    end
+
+    test "on a public board it must be published to the BOARD, not merely public", %{
+      project: project,
+      assignment: assignment
+    } do
+      {:ok, public} = Portal.set_access_mode(project.uuid, "public", slug: "issues-#{uniq()}")
+
+      # Same guard as the list: `public` was a promise to link-holders.
+      assert Portal.public_issue(public.slug, assignment.uuid, nil) == :error
+
+      {:ok, 1} = Portal.set_board_published(assignment.uuid, true)
+      assert {:ok, _} = Portal.public_issue(public.slug, assignment.uuid, nil)
+    end
+
+    test "a members board refuses an anonymous reader the issue too", %{
+      project: project,
+      assignment: assignment
+    } do
+      {:ok, members} = Portal.set_access_mode(project.uuid, "members")
+
+      assert Portal.public_issue(members.slug, assignment.uuid, nil) == :error
+      assert {:ok, _} = Portal.public_issue(members.slug, assignment.uuid, signed_in())
+    end
+
+    test "the issue DTO carries exactly what the page needs", %{
+      portal: portal,
+      assignment: assignment
+    } do
+      {:ok, issue} = Portal.public_issue(portal.slug, assignment.uuid, nil)
+
+      assert Map.keys(issue) |> Enum.sort() ==
+               [:description, :inserted_at, :status, :status_label, :title, :updated_at, :uuid]
+    end
+  end
 end

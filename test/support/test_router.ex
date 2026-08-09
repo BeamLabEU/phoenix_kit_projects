@@ -56,12 +56,16 @@ defmodule PhoenixKitProjects.Test.Router do
   end
 
   # The PUBLIC portal — production mounts it via the module's
-  # route_module/0 (`Web.Routes.generate/1`), no auth, no scope hook.
+  # route_module/0 (`Web.Routes.generate/1`). The scope hook is mirrored
+  # here because a `members` board asks whether the visitor is signed in,
+  # and without it every portal test would look anonymous.
   scope "/", PhoenixKitProjects.Web do
     pipe_through(:browser)
 
-    live_session :projects_portal_test do
+    live_session :projects_portal_test,
+      on_mount: [{PhoenixKitProjects.Test.Hooks, :assign_scope}] do
       live("/portal/:slug", PortalLive, :show)
+      live("/portal/:slug/i/:issue", PortalLive, :issue)
     end
   end
 

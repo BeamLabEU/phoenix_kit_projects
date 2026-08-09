@@ -98,4 +98,66 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
       where: a.project_uuid == ^project_uuid and a.source == "portal"
     )
   end
+
+  describe "an issue page" do
+    setup %{conn: conn} do
+      PhoenixKitProjects.Extensions.Registry.refresh()
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        PhoenixKitProjects.Projects.create_project(%{
+          "name" => "Board #{n}",
+          "start_mode" => "immediate"
+        })
+
+      {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "portal")
+      task = fixture_task()
+
+      {:ok, assignment} =
+        PhoenixKitProjects.Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, assignment} = PhoenixKitProjects.Portal.set_public(assignment, true)
+      portal = PhoenixKitProjects.Portal.get_portal(project.uuid)
+
+      {:ok, conn: conn, project: project, portal: portal, assignment: assignment}
+    end
+
+    defp issue_path(portal, assignment),
+      do: "/portal/#{portal.slug}/i/#{assignment.uuid}"
+
+    test "renders the issue", %{conn: conn, portal: portal, assignment: assignment} do
+      {:ok, _view, html} = live(conn, issue_path(portal, assignment))
+
+      assert html =~ "Discussion" or html =~ "Sign in to take part"
+    end
+
+    test "an anonymous reader is told how to take part, not given a box", %{
+      conn: conn,
+      portal: portal,
+      assignment: assignment
+    } do
+      # The composer must never render for someone the server would refuse:
+      # `false` where the comments component expects a user is also how this
+      # page 500'd the first time it was wired.
+      {:ok, _view, html} = live(conn, issue_path(portal, assignment))
+
+      assert html =~ "Sign in to take part"
+    end
+
+    test "an unpublished issue falls back to the board rather than erroring", %{
+      conn: conn,
+      portal: portal,
+      assignment: assignment
+    } do
+      {:ok, _} = PhoenixKitProjects.Portal.set_public(assignment, false)
+
+      {:ok, _view, html} = live(conn, issue_path(portal, assignment))
+
+      refute html =~ "Discussion"
+    end
+  end
 end
