@@ -107,7 +107,8 @@ defmodule PhoenixKitProjects.Schemas.ProjectStatus do
   # Core's rule, not a local copy. The pipeline this replaced deleted every
   # non-ASCII character, so a Cyrillic or Greek name produced an EMPTY slug and
   # German lost its umlauts. Slug.slugify/2 romanizes instead.
-  def slugify(value) when is_binary(value), do: Slug.slugify(value)
+  def slugify(value) when is_binary(value),
+    do: Slug.slugify(value, transliterate: true)
 
   @doc "Colour for this status, read from the `data` JSONB (`nil` if unset)."
   @spec color(t()) :: String.t() | nil
