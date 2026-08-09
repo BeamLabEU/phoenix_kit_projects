@@ -2136,6 +2136,63 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </div>
         </div>
 
+        <%!-- Portal visibility. Inside the form so the page reads in
+             order — fields, then who can see this, then Save. It used to
+             sit after the closing tag, which put two switches BELOW the
+             Save button and made the page look like it had ended and
+             then carried on.
+
+             Still immediate writes, not form params: each input carries
+             `phx-click` and deliberately NO `name`, so nothing here is
+             ever cast from the submitted params. `public` and
+             `board_published_at` are server-set only — do not name them. --%>
+        <div
+          :if={@live_action == :edit and portal_enabled?(@project)}
+          class="card bg-base-100 shadow"
+        >
+          <div class="card-body flex-row items-center justify-between gap-3 py-4">
+            <div class="min-w-0">
+              <h3 class="text-sm font-semibold">{gettext("Public portal")}</h3>
+              <p class="text-xs opacity-60">
+              {gettext("Show this issue (title and status only) on the project's public page.")}
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              class="toggle toggle-primary"
+              checked={@assignment.public == true}
+              phx-click="toggle_portal_public"
+              aria-label={gettext("Show on the public portal")}
+            />
+          </div>
+
+        <%!-- The second, deliberate act. Only offered on a board that is
+             actually public and for an issue already visible to
+             link-holders: "on the open web" is a bigger decision than "on
+             the private link", and the design's whole blast-radius guard
+             depends on it being taken one issue at a time. Without this
+             control the guard has no product path and a public board stays
+             empty forever. --%>
+          <div
+            :if={@assignment.public == true and public_board?(@project)}
+            class="card-body flex-row items-center justify-between gap-3 border-t border-base-200 py-4"
+          >
+            <div class="min-w-0">
+              <h3 class="text-sm font-semibold">{gettext("Publish to the public board")}</h3>
+              <p class="text-xs opacity-60">
+              {gettext("This board is on the open internet and can be indexed by search engines. The issue's description is shown too.")}
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              class="toggle toggle-warning"
+              checked={@assignment.board_published_at != nil}
+              phx-click="toggle_board_published"
+              aria-label={gettext("Publish to the public board")}
+            />
+          </div>
+        </div>
+
         <div class="flex justify-end gap-2 mt-2">
           <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
             {gettext("Cancel")}
@@ -2147,56 +2204,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
       </.form>
-
-      <%!-- Portal visibility — OUTSIDE the form (its own immediate-write
-      event, never a cast param: `public` is server-set only). Edit mode,
-      portal extension on. --%>
-      <div
-        :if={@live_action == :edit and portal_enabled?(@project)}
-        class="card bg-base-100 shadow"
-      >
-        <div class="card-body flex-row items-center justify-between gap-3 py-4">
-          <div class="min-w-0">
-            <h3 class="text-sm font-semibold">{gettext("Public portal")}</h3>
-            <p class="text-xs opacity-60">
-              {gettext("Show this issue (title and status only) on the project's public page.")}
-            </p>
-          </div>
-          <input
-            type="checkbox"
-            class="toggle toggle-primary"
-            checked={@assignment.public == true}
-            phx-click="toggle_portal_public"
-            aria-label={gettext("Show on the public portal")}
-          />
-        </div>
-
-        <%!-- The second, deliberate act. Only offered on a board that is
-             actually public and for an issue already visible to
-             link-holders: "on the open web" is a bigger decision than "on
-             the private link", and the design's whole blast-radius guard
-             depends on it being taken one issue at a time. Without this
-             control the guard has no product path and a public board stays
-             empty forever. --%>
-        <div
-          :if={@assignment.public == true and public_board?(@project)}
-          class="card-body flex-row items-center justify-between gap-3 border-t border-base-200 py-4"
-        >
-          <div class="min-w-0">
-            <h3 class="text-sm font-semibold">{gettext("Publish to the public board")}</h3>
-            <p class="text-xs opacity-60">
-              {gettext("This board is on the open internet and can be indexed by search engines. The issue's description is shown too.")}
-            </p>
-          </div>
-          <input
-            type="checkbox"
-            class="toggle toggle-warning"
-            checked={@assignment.board_published_at != nil}
-            phx-click="toggle_board_published"
-            aria-label={gettext("Publish to the public board")}
-          />
-        </div>
-      </div>
       <% end %>
     </div>
     """

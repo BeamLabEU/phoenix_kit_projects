@@ -344,5 +344,22 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
                |> put_test_scope(scope)
                |> live("/en/admin/projects/list/#{project.uuid}/edit")
     end
+
+    test "Save is the LAST thing on the edit page, after the modules panel", %{conn: conn} do
+      # Embedding the modules panel put a whole card below the Save button,
+      # which reads as the page having ended and then carried on — the same
+      # complaint the assignment form's portal switches drew.
+      conn = put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!()))
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Order #{uniq()}", "start_mode" => "immediate"})
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+
+      modules_at = :binary.match(html, "Presets:") |> elem(0)
+      save_at = :binary.match(html, "phx-disable-with") |> elem(0)
+
+      assert modules_at < save_at, "Save renders before the modules panel"
+    end
   end
 end

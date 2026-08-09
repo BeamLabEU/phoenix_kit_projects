@@ -213,4 +213,41 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       assert html =~ "Could not remove dependency"
     end
   end
+
+  describe "the edit page reads in order" do
+    test "the portal switches come BEFORE the Save button, not after it", %{conn: conn} do
+      # They used to render after the closing form tag, which put two
+      # switches below Save and made the page look like it had ended and
+      # then carried on.
+      PhoenixKitProjects.Extensions.Registry.refresh()
+
+      {:ok, project} =
+        PhoenixKitProjects.Projects.create_project(%{
+          "name" => "Order #{System.unique_integer([:positive])}",
+          "start_mode" => "immediate"
+        })
+
+      {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "portal")
+      task = fixture_task()
+
+      {:ok, assignment} =
+        PhoenixKitProjects.Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, _view, html} =
+        live(
+          conn,
+          "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+        )
+
+      portal_at = :binary.match(html, "toggle_portal_public") |> elem(0)
+      save_at = :binary.match(html, "phx-disable-with") |> elem(0)
+
+      assert portal_at < save_at,
+             "the portal switch renders after the Save button"
+    end
+  end
 end

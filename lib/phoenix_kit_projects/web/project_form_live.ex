@@ -2526,19 +2526,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               locked={Statuses.started?(@project)}
             />
 
-            <div class="flex justify-end gap-2 mt-2">
-              <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
-                {gettext("Cancel")}
-              </button>
-              <button
-                type="submit"
-                phx-disable-with={gettext("Saving…")}
-                disabled={@ai_in_flight != []}
-                class="btn btn-primary btn-sm"
-              >
-                <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
-              </button>
-            </div>
           </div>
         </div>
 
@@ -2573,6 +2560,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               }
             )}
           </div>
+        </div>
+
+        <%!-- Last, so the page reads in order: what the project is called,
+             how it behaves, what it can do — then Save. The modules panel
+             above writes immediately and needs no Save of its own; this
+             button belongs to the fields, and putting it before the panel
+             made the page look like it had ended and then carried on. --%>
+        <%!-- :edit only. The creation form has its own action row further
+             up; without this guard the new-project page renders two. --%>
+        <div :if={@live_action == :edit} class="flex justify-end gap-2">
+          <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+            {gettext("Cancel")}
+          </button>
+          <button
+            type="submit"
+            phx-disable-with={gettext("Saving…")}
+            disabled={@ai_in_flight != []}
+            class="btn btn-primary btn-sm"
+          >
+            {gettext("Save")}
+          </button>
         </div>
       </.form>
 
