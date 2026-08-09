@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
   import Ecto.Query
 
+  alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Portal
@@ -297,6 +298,64 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
       # rendering broken — the panel is still reached, which is the point.
       assert Portal.review_images(assignment.uuid) == []
       assert Portal.review_images("not-a-uuid") == []
+    end
+
+    test "a published issue's images are not seen as orphans", %{assignment: assignment} do
+      # `file_uuids` is a JSONB array, not an FK column, so core's orphan
+      # detector cannot see the reference by joining — and what it cannot
+      # see, it deletes. Every PUBLISHED board image would have looked
+      # unreferenced and been handed to DeleteOrphanedFileJob. Core now
+      # carries a containment check for this table; this test is what
+      # proves the SQL actually matches, which a hand-written fragment
+      # over a JSONB column does not do by inspection.
+      repo = PhoenixKit.RepoHelper.repo()
+      # phoenix_kit_files_user_or_parent_check: every file has an owner or
+      # is a chunk of one. Portal attachments are attributed to the project
+      # owner for exactly this reason.
+      owner_uuid = embed_user_uuid!()
+
+      file =
+        repo.insert!(%Storage.File{
+          original_file_name: "shot.jpg",
+          file_name: "shot.jpg",
+          file_path: "portal/shot.jpg",
+          mime_type: "image/jpeg",
+          file_type: "image",
+          ext: "jpg",
+          user_uuid: owner_uuid,
+          file_checksum: Base.encode16(:crypto.strong_rand_bytes(16), case: :lower),
+          user_file_checksum: Base.encode16(:crypto.strong_rand_bytes(16), case: :lower),
+          size: 1234,
+          status: "ready"
+        })
+
+      %PortalSubmission{}
+      |> PortalSubmission.changeset(%{
+        assignment_uuid: assignment.uuid,
+        file_uuids: [file.uuid]
+      })
+      |> repo.insert!()
+
+      refute Storage.file_orphaned?(file.uuid),
+             "a referenced portal attachment was reported orphaned — the prune job would delete a live board image"
+
+      unreferenced =
+        repo.insert!(%Storage.File{
+          original_file_name: "loose.jpg",
+          file_name: "loose.jpg",
+          file_path: "portal/loose.jpg",
+          mime_type: "image/jpeg",
+          file_type: "image",
+          ext: "jpg",
+          user_uuid: owner_uuid,
+          file_checksum: Base.encode16(:crypto.strong_rand_bytes(16), case: :lower),
+          user_file_checksum: Base.encode16(:crypto.strong_rand_bytes(16), case: :lower),
+          size: 1234,
+          status: "ready"
+        })
+
+      assert Storage.file_orphaned?(unreferenced.uuid),
+             "the check matched everything, which would protect real orphans forever"
     end
   end
 end
