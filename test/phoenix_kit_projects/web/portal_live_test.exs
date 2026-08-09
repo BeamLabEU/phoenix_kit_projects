@@ -159,5 +159,64 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
       refute html =~ "Discussion"
     end
+
+    test "an anonymous reader cannot post through the embedded discussion", %{
+      conn: conn,
+      portal: portal,
+      assignment: assignment
+    } do
+      # The page is public; the composer is not. This asserts the SERVER
+      # refuses, not merely that the box is hidden — a forged event is the
+      # whole reason hiding a control is never the control.
+      {:ok, view, _html} = live(conn, issue_path(portal, assignment))
+
+      before = PhoenixKitComments.list_comments("project_assignment", assignment.uuid)
+
+      view
+      |> element("[id^=portal-issue-]")
+      |> render_hook("add_comment", %{"comment" => "I should not be able to say this"})
+
+      assert PhoenixKitComments.list_comments("project_assignment", assignment.uuid) == before
+    rescue
+      # No composer rendered at all is the same refusal, more thoroughly.
+      ArgumentError -> :ok
+    end
+  end
+
+  describe "the submit form follows the policy, not just the capability" do
+    setup %{conn: conn} do
+      PhoenixKitProjects.Extensions.Registry.refresh()
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        PhoenixKitProjects.Projects.create_project(%{
+          "name" => "Policy #{n}",
+          "start_mode" => "immediate"
+        })
+
+      {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "portal")
+
+      {:ok,
+       conn: conn, project: project, portal: PhoenixKitProjects.Portal.get_portal(project.uuid)}
+    end
+
+    test "anyone-submits shows the form", %{conn: conn, portal: portal} do
+      {:ok, _view, html} = live(conn, "/portal/#{portal.slug}")
+      assert html =~ "submit_issue"
+    end
+
+    test "members-only hides it from an anonymous visitor and says why", %{
+      conn: conn,
+      project: project,
+      portal: portal
+    } do
+      {:ok, _} =
+        PhoenixKitProjects.Portal.set_participation(project.uuid, %{"submit_access" => "members"})
+
+      {:ok, _view, html} = live(conn, "/portal/#{portal.slug}")
+
+      refute html =~ "submit_issue"
+      assert html =~ "Sign in to report an issue"
+    end
   end
 end

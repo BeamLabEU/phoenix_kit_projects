@@ -255,60 +255,17 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   end
 
   def handle_event("set_portal_access_mode", %{"mode" => mode}, socket) do
-    project = socket.assigns.project
-
-    # `publish_existing: false` is not a default to be lazy about — it IS
-    # the guard. Tasks flagged `public` were flagged for whoever holds the
-    # link; putting them on the open web is a separate decision, taken
-    # per task afterwards.
-    case PhoenixKitProjects.Portal.set_access_mode(project.uuid, mode,
-           actor_uuid: Activity.actor_uuid(socket),
-           slug: suggested_slug(mode, project)
-         ) do
-      {:ok, _portal} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, access_mode_flash(mode))
-         |> reload()}
-
-      {:error, _} ->
-        {:noreply,
-         put_flash(socket, :error, gettext("Could not change who can reach the portal."))}
-    end
+    with_authz(socket, fn ->
+      do_set_access_mode(socket, mode)
+    end)
   end
 
   def handle_event("set_portal_slug", %{"slug" => slug}, socket) do
-    case PhoenixKitProjects.Portal.set_access_mode(socket.assigns.project.uuid, "public",
-           slug: String.trim(slug),
-           actor_uuid: Activity.actor_uuid(socket)
-         ) do
-      {:ok, _portal} ->
-        {:noreply, socket |> put_flash(:info, gettext("Board address updated.")) |> reload()}
-
-      {:error, _} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext(
-             "That address is taken or not allowed — lowercase letters, numbers and hyphens."
-           )
-         )}
-    end
+    with_authz(socket, fn -> do_set_slug(socket, slug) end)
   end
 
   def handle_event("set_portal_participation", params, socket) do
-    case PhoenixKitProjects.Portal.set_participation(
-           socket.assigns.project.uuid,
-           Map.take(params, ["submit_access", "comment_access"]),
-           actor_uuid: Activity.actor_uuid(socket)
-         ) do
-      {:ok, _} ->
-        {:noreply, socket |> put_flash(:info, gettext("Participation updated.")) |> reload()}
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, gettext("Could not update participation."))}
-    end
+    with_authz(socket, fn -> do_set_participation(socket, params) end)
   end
 
   def handle_event("rotate_portal_link", _params, socket) do
@@ -400,6 +357,63 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   end
 
   # Events re-check authorization — this page writes configuration.
+  defp do_set_access_mode(socket, mode) do
+    project = socket.assigns.project
+
+    # `publish_existing: false` is not a default to be lazy about — it IS
+    # the guard. Tasks flagged `public` were flagged for whoever holds the
+    # link; putting them on the open web is a separate decision, taken
+    # per task afterwards.
+    case PhoenixKitProjects.Portal.set_access_mode(project.uuid, mode,
+           actor_uuid: Activity.actor_uuid(socket),
+           slug: suggested_slug(mode, project)
+         ) do
+      {:ok, _portal} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, access_mode_flash(mode))
+         |> reload()}
+
+      {:error, _} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not change who can reach the portal."))}
+    end
+  end
+
+  defp do_set_slug(socket, slug) do
+    case PhoenixKitProjects.Portal.set_access_mode(socket.assigns.project.uuid, "public",
+           slug: String.trim(slug),
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, _portal} ->
+        {:noreply, socket |> put_flash(:info, gettext("Board address updated.")) |> reload()}
+
+      {:error, _} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext(
+             "That address is taken or not allowed — lowercase letters, numbers and hyphens."
+           )
+         )}
+    end
+  end
+
+  defp do_set_participation(socket, params) do
+    case PhoenixKitProjects.Portal.set_participation(
+           socket.assigns.project.uuid,
+           Map.take(params, ["submit_access", "comment_access"]),
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, _} ->
+        {:noreply, socket |> put_flash(:info, gettext("Participation updated.")) |> reload()}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not update participation."))}
+    end
+  end
+
   defp with_authz(socket, fun) do
     if socket.assigns.project && allowed?(socket, socket.assigns.project) do
       fun.()

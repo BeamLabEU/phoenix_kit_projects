@@ -153,6 +153,27 @@ defmodule PhoenixKitProjects.PortalAccessTest do
       assert length(view.issues) == 1
     end
 
+    test "leaving public resets the board, so coming back is a fresh decision", %{
+      project: project,
+      assignment: assignment
+    } do
+      {:ok, _} =
+        Portal.set_access_mode(project.uuid, "public",
+          slug: "first-run-#{uniq()}",
+          publish_existing: true
+        )
+
+      # Going private is usually a reaction to a problem. Coming back must
+      # not silently restore what was on the board before.
+      {:ok, _} = Portal.set_access_mode(project.uuid, "link")
+      {:ok, again} = Portal.set_access_mode(project.uuid, "public", slug: "second-run-#{uniq()}")
+
+      {:ok, view} = Portal.public_view(again.slug, nil)
+      assert view.issues == []
+
+      assert Projects.get_assignment(assignment.uuid).board_published_at == nil
+    end
+
     test "a task can be put on the board and taken off again", %{
       project: project,
       assignment: assignment
@@ -288,6 +309,121 @@ defmodule PhoenixKitProjects.PortalAccessTest do
 
       assert Map.keys(issue) |> Enum.sort() ==
                [:description, :inserted_at, :status, :status_label, :title, :updated_at, :uuid]
+    end
+  end
+
+  describe "findings from the review panel" do
+    setup %{project: project} do
+      task = fixture_task()
+
+      {:ok, assignment} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo",
+          "description" => "Internal note nobody outside should read"
+        })
+
+      {:ok, assignment} = Portal.set_public(assignment, true)
+      {:ok, assignment: assignment}
+    end
+
+    test "the submit policy is enforced in the WRITE path, not just the UI", %{
+      project: project,
+      portal: portal
+    } do
+      {:ok, _} = Portal.set_participation(project.uuid, %{"submit_access" => "members"})
+
+      meta = %{peer_ip: {127, 0, 0, 1}, honeypot: nil, mounted_ms: -60_000, viewer: nil}
+      attrs = %{"title" => "Forged", "description" => "via a hidden form"}
+
+      # A hidden form is a courtesy; this is the control.
+      assert Portal.submit(portal.slug, attrs, meta) == :error
+    end
+
+    test "a task description is NOT exposed on a link portal", %{
+      portal: portal,
+      assignment: assignment
+    } do
+      # The portal has never shown descriptions in any mode. Adding them to
+      # every existing link portal on deploy would be retroactive exposure
+      # arriving through a side door.
+      {:ok, issue} = Portal.public_issue(portal.slug, assignment.uuid, nil)
+
+      refute issue.description
+    end
+
+    test "...but a task published to a PUBLIC board shows its text", %{
+      project: project,
+      assignment: assignment
+    } do
+      {:ok, public} = Portal.set_access_mode(project.uuid, "public", slug: "desc-#{uniq()}")
+      {:ok, 1} = Portal.set_board_published(assignment.uuid, true)
+
+      {:ok, issue} = Portal.public_issue(public.slug, assignment.uuid, nil)
+      assert issue.description =~ "Internal note"
+    end
+
+    test "a disabled portal stops answering what its mode was", %{
+      project: project,
+      portal: portal
+    } do
+      # Otherwise a members board's "Sign in to view" page confirms the slug
+      # exists, which is exactly the oracle the uniform failure prevents.
+      {:ok, _} = Portal.set_access_mode(project.uuid, "members")
+      {:ok, _} = Extensions.disable(project, "portal")
+
+      assert Portal.access_mode_of(portal.slug) == "link"
+    end
+
+    test "a capability slug cannot be hand-set through the API", %{project: project} do
+      # 16 CSPRNG bytes is the mandate; "aaaaaaaaaaaaaaaa" satisfies a
+      # length check and nothing else.
+      assert {:error, _} =
+               Portal.set_access_mode(project.uuid, "link", slug: "aaaaaaaaaaaaaaaa")
+    end
+
+    test "going public without a chosen slug still produces a valid one", %{project: project} do
+      # The fallback used to generate url-base64, which the public-slug
+      # validator rejects — so the documented path failed every time.
+      assert {:ok, portal} = Portal.set_access_mode(project.uuid, "public")
+      assert portal.access_mode == "public"
+      assert portal.slug =~ ~r/\A[a-z0-9]+(?:-[a-z0-9]+)*\z/
+    end
+
+    test "publishing to the board implies public", %{assignment: assignment} do
+      {:ok, _} = Portal.set_public(assignment, false)
+      {:ok, 1} = Portal.set_board_published(assignment.uuid, true)
+
+      reloaded = Projects.get_assignment(assignment.uuid)
+      assert reloaded.public
+      assert reloaded.board_published_at
+    end
+
+    test "the portal's discussion namespace is not the admin's" do
+      # Staff notes live on resource_type "assignment" (the hub's comments
+      # drawer); the public board uses its own. If these ever converge,
+      # every internal note ever written lands on a public page.
+      assert Portal.discussion_resource_type() != "assignment"
+      assert Portal.discussion_resource_type() != "project"
+    end
+  end
+
+  describe "the anonymous failure page tells you nothing" do
+    test "a real members board looks exactly like an unknown slug", %{project: project} do
+      # Otherwise any candidate URL becomes an existence probe: unknown
+      # said \"unavailable\", real said \"sign in\".
+      {:ok, members} = Portal.set_access_mode(project.uuid, "members")
+
+      assert Portal.resolve(members.slug, nil) == :error
+      assert Portal.resolve("no-such-slug-at-all", nil) == :error
+    end
+
+    test "and a disabled portal does too", %{project: project, portal: portal} do
+      {:ok, _} = Portal.set_access_mode(project.uuid, "members")
+      {:ok, _} = Extensions.disable(project, "portal")
+
+      assert Portal.access_mode_of(portal.slug) == "link"
     end
   end
 end

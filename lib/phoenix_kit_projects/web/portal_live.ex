@@ -89,13 +89,16 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     end
   end
 
-  # Only for a portal that is genuinely `members` and a visitor who is
-  # genuinely anonymous. Everything else keeps the uniform "unavailable"
-  # answer, so the page never becomes an oracle for which slugs exist.
-  defp needs_sign_in?(socket, viewer) do
-    is_nil(viewer_uuid(viewer)) and
-      Portal.access_mode_of(socket.assigns.slug) == "members"
-  end
+  # Whether to OFFER a sign-in link — and deliberately not a question about
+  # this slug at all.
+  #
+  # Asking "is this particular slug a members board?" made the answer an
+  # existence probe: an unknown slug said "unavailable" while a real
+  # members board said "sign in", so any candidate URL could be tested.
+  # Anonymous visitors now see the same page and the same offer whatever
+  # the slug was, which costs a signed-out reader nothing and tells an
+  # attacker nothing.
+  defp needs_sign_in?(_socket, viewer), do: is_nil(viewer_uuid(viewer))
 
   defp viewer_uuid(%{user: %{uuid: uuid}}) when is_binary(uuid), do: uuid
   defp viewer_uuid(_), do: nil
@@ -154,7 +157,10 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     meta = %{
       peer_ip: socket.assigns.peer_ip,
       honeypot: params["website"],
-      mounted_ms: socket.assigns.mounted_ms
+      mounted_ms: socket.assigns.mounted_ms,
+      # The submit policy is checked in the write path, which needs to know
+      # who is asking.
+      viewer: socket.assigns[:phoenix_kit_current_scope]
     }
 
     case Portal.submit(socket.assigns.slug, params, meta) do
@@ -187,18 +193,20 @@ defmodule PhoenixKitProjects.Web.PortalLive do
       <%!-- A members board tells an anonymous visitor what to do about it.
            Every other failure keeps the uniform wording, so the page can't
            be used to discover which slugs exist. --%>
-      <h1 :if={@needs_sign_in} class="text-xl font-semibold">{gettext("Sign in to view this board")}</h1>
-      <p :if={@needs_sign_in} class="text-sm opacity-60">
-        {gettext("This board is open to signed-in users.")}
-      </p>
-      <a :if={@needs_sign_in} href={Routes.path("/users/log-in")} class="btn btn-primary btn-sm">
-        {gettext("Sign in")}
-      </a>
-
-      <h1 :if={not @needs_sign_in} class="text-xl font-semibold">{gettext("This page is unavailable")}</h1>
-      <p :if={not @needs_sign_in} class="text-sm opacity-60">
+      <%!-- One wording for every failure. Naming the reason — wrong slug,
+           rotated link, portal off, signed out — is what turns this page
+           into a probe for which slugs are real. --%>
+      <h1 class="text-xl font-semibold">{gettext("This page is unavailable")}</h1>
+      <p class="text-sm opacity-60">
         {gettext("The link may have been rotated or the portal turned off.")}
       </p>
+      <a
+        :if={@needs_sign_in}
+        href={Routes.path("/users/log-in")}
+        class="btn btn-ghost btn-sm"
+      >
+        {gettext("Some boards need you to sign in")}
+      </a>
     </div>
     """
   end
@@ -250,7 +258,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           <.live_component
             module={PhoenixKitComments.Web.CommentsComponent}
             id={"portal-issue-#{@issue.uuid}"}
-            resource_type="project_assignment"
+            resource_type={Portal.discussion_resource_type()}
             resource_uuid={@issue.uuid}
             current_user={commenter(assigns)}
             enabled={@view.may_comment}
@@ -263,6 +271,13 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           {gettext("Sign in to take part in this discussion.")}
         </p>
       </section>
+
+      <p
+        :if={@view.capabilities.submit and not @view.may_submit}
+        class="text-sm opacity-60"
+      >
+        {gettext("Sign in to report an issue here.")}
+      </p>
 
       <%!-- Public issue list --%>
       <section :if={@view.capabilities.list} class="flex flex-col gap-2">
@@ -282,7 +297,9 @@ defmodule PhoenixKitProjects.Web.PortalLive do
       </section>
 
       <%!-- Submission form --%>
-      <section :if={@view.capabilities.submit} class="flex flex-col gap-3">
+      <%!-- `may_submit` (capability AND policy), not the capability alone:
+           a form the server will refuse is worse than no form. --%>
+      <section :if={@view.may_submit} class="flex flex-col gap-3">
         <h2 class="text-lg font-semibold">{gettext("Report an issue")}</h2>
 
         <div :if={@submitted} class="alert alert-success text-sm">

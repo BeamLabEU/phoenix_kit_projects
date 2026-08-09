@@ -667,6 +667,44 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # Portal visibility flip — immediate write, never a form param. Gated
   # explicitly on :edit_tasks (a PUBLIC-exposure change gets the strict
   # shape even though this LV otherwise trusts its mount gate).
+  def handle_event("toggle_board_published", _params, socket) do
+    assignment = socket.assigns[:assignment]
+    project = socket.assigns[:project]
+    actor = socket.assigns[:phoenix_kit_current_scope] || Activity.actor_uuid(socket)
+    publish? = is_map(assignment) and is_nil(assignment.board_published_at)
+
+    # Same guard chain as the link-holder toggle beside it: publishing to
+    # the OPEN WEB cannot be an easier action than publishing to the link.
+    with %Assignment{uuid: uuid} when is_binary(uuid) <- assignment,
+         true <- public_board?(project),
+         true <- actor != nil and PhoenixKitProjects.Authz.can?(actor, project, :edit_tasks),
+         {:ok, _} <- PhoenixKitProjects.Portal.set_board_published(uuid, publish?) do
+      Activity.log(
+        if(publish?,
+          do: "projects.issue_board_published",
+          else: "projects.issue_board_unpublished"
+        ),
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: assignment.uuid,
+        metadata: %{"project_uuid" => assignment.project_uuid}
+      )
+
+      {:noreply,
+       socket
+       |> assign(assignment: Projects.get_assignment(assignment.uuid))
+       |> put_flash(
+         :info,
+         if(publish?,
+           do: gettext("Published to the public board."),
+           else: gettext("Removed from the public board.")
+         )
+       )}
+    else
+      _ -> {:noreply, put_flash(socket, :error, gettext("Could not change that."))}
+    end
+  end
+
   def handle_event("toggle_portal_public", _params, socket) do
     assignment = socket.assigns[:assignment]
     project = socket.assigns[:project]
@@ -2132,10 +2170,45 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             aria-label={gettext("Show on the public portal")}
           />
         </div>
+
+        <%!-- The second, deliberate act. Only offered on a board that is
+             actually public and for an issue already visible to
+             link-holders: "on the open web" is a bigger decision than "on
+             the private link", and the design's whole blast-radius guard
+             depends on it being taken one issue at a time. Without this
+             control the guard has no product path and a public board stays
+             empty forever. --%>
+        <div
+          :if={@assignment.public == true and public_board?(@project)}
+          class="card-body flex-row items-center justify-between gap-3 border-t border-base-200 py-4"
+        >
+          <div class="min-w-0">
+            <h3 class="text-sm font-semibold">{gettext("Publish to the public board")}</h3>
+            <p class="text-xs opacity-60">
+              {gettext("This board is on the open internet and can be indexed by search engines. The issue's description is shown too.")}
+            </p>
+          </div>
+          <input
+            type="checkbox"
+            class="toggle toggle-warning"
+            checked={@assignment.board_published_at != nil}
+            phx-click="toggle_board_published"
+            aria-label={gettext("Publish to the public board")}
+          />
+        </div>
       </div>
       <% end %>
     </div>
     """
+  end
+
+  defp public_board?(project) do
+    case PhoenixKitProjects.Portal.get_portal(project.uuid) do
+      %{access_mode: "public"} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   defp portal_enabled?(project) do

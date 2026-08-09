@@ -152,10 +152,7 @@ defmodule PhoenixKitProjects.Portal do
   def resolve(slug, viewer \\ nil)
 
   def resolve(slug, viewer) when is_binary(slug) and byte_size(slug) in 3..64 do
-    with %PortalRow{} = portal <- RepoHelper.repo().get_by(PortalRow, slug: slug),
-         %{} = project <- Projects.get_project(portal.project_uuid),
-         true <- project.is_template == false,
-         true <- Extensions.enabled?(project, @ext_key),
+    with {:ok, portal, project} <- resolvable_row(slug),
          true <- mode_admits?(portal, viewer) do
       {:ok, portal, project}
     else
@@ -166,6 +163,24 @@ defmodule PhoenixKitProjects.Portal do
   end
 
   def resolve(_, _), do: :error
+
+  # Everything that makes a slug real, EXCEPT who the mode lets in. Shared
+  # so the header/oracle path can ask "is this a live portal?" without
+  # answering "may this particular visitor enter?".
+  defp resolvable_row(slug) when is_binary(slug) and byte_size(slug) in 3..64 do
+    with %PortalRow{} = portal <- RepoHelper.repo().get_by(PortalRow, slug: slug),
+         %{} = project <- Projects.get_project(portal.project_uuid),
+         true <- project.is_template == false,
+         true <- Extensions.enabled?(project, @ext_key) do
+      {:ok, portal, project}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp resolvable_row(_), do: :error
 
   # Who the mode lets through the door. `link` asks nothing beyond holding
   # the slug — that IS the grant. `members` asks for any signed-in site
@@ -192,9 +207,17 @@ defmodule PhoenixKitProjects.Portal do
   """
   @spec access_mode_of(String.t()) :: String.t()
   def access_mode_of(slug) when is_binary(slug) do
-    case RepoHelper.repo().get_by(PortalRow, slug: slug) do
-      %PortalRow{access_mode: mode} when mode in ["link", "members", "public"] -> mode
-      _ -> "link"
+    # Through the same checks `resolve/2` makes, minus the mode admission
+    # itself. A bare row lookup would answer "members" for a portal whose
+    # extension is switched off, and the sign-in page that answer produces
+    # would confirm the slug exists — breaking the uniform-failure rule the
+    # portal's whole error story rests on.
+    case resolvable_row(slug) do
+      {:ok, %PortalRow{access_mode: mode}, _project} when mode in ["link", "members", "public"] ->
+        mode
+
+      _ ->
+        "link"
     end
   rescue
     _ -> "link"
@@ -336,6 +359,18 @@ defmodule PhoenixKitProjects.Portal do
     end)
   end
 
+  @doc """
+  The comments namespace a PUBLIC board discussion lives in.
+
+  Deliberately NOT the `"assignment"` type the admin hub uses for staff
+  discussion on the same task. They are two conversations about one piece
+  of work: one internal, one with the outside world. If these two strings
+  ever converge, every internal note staff have written lands on a public
+  page — so the value is named here rather than typed into a template.
+  """
+  @spec discussion_resource_type() :: String.t()
+  def discussion_resource_type, do: "project_assignment"
+
   # ── Participation ───────────────────────────────────────────────
 
   @doc """
@@ -448,6 +483,13 @@ defmodule PhoenixKitProjects.Portal do
       nil ->
         {:ok, portal}
 
+      _slug when portal.access_mode != "public" ->
+        # Renaming is a public-board affordance. A capability slug is 16
+        # CSPRNG bytes by mandate, and letting a caller hand-set one is how
+        # "aaaaaaaaaaaaaaaa" becomes a project's access grant — the UI does
+        # not offer it, but the context API is one forged event away.
+        {:error, :slug_not_settable}
+
       slug ->
         # A RENAME, not a mode change. It still goes through the changeset,
         # because an early "nothing changed" return here is how an invalid
@@ -457,6 +499,11 @@ defmodule PhoenixKitProjects.Portal do
     end
   end
 
+  # The portal row is updated FIRST, then the board contents. Both failure
+  # directions are safe that way: a failed publish leaves a public board
+  # that is empty, and a failed switch leaves board flags that only the
+  # public query reads. The reverse order could leave tasks exposed on a
+  # board whose mode never changed.
   defp do_set_access_mode(portal, mode, opts) do
     slug = slug_for_mode(portal, mode, opts)
 
@@ -466,6 +513,7 @@ defmodule PhoenixKitProjects.Portal do
     |> case do
       {:ok, updated} ->
         maybe_publish_existing(updated, mode, opts)
+        maybe_clear_board(portal, mode)
 
         Activity.log("projects.portal_access_mode_changed",
           actor_uuid: Keyword.get(opts, :actor_uuid),
@@ -507,11 +555,21 @@ defmodule PhoenixKitProjects.Portal do
     end
   end
 
-  defp slug_for_mode(_portal, "public", opts) do
-    Keyword.get(opts, :slug) || PortalRow.generate_slug()
+  defp slug_for_mode(portal, "public", opts) do
+    # NOT generate_slug/0: that is url-base64 (mixed case, underscores) and
+    # the public-slug validator rejects it, so the documented
+    # "public without an explicit slug" path failed every time.
+    Keyword.get(opts, :slug) || suggested_public_slug(portal)
   end
 
   defp slug_for_mode(_portal, _mode, _opts), do: PortalRow.generate_slug()
+
+  defp suggested_public_slug(%PortalRow{project_uuid: project_uuid}) do
+    case Projects.get_project(project_uuid) do
+      %{name: name} -> PortalRow.suggest_public_slug(name)
+      _ -> "board-#{System.unique_integer([:positive])}"
+    end
+  end
 
   defp maybe_publish_existing(portal, "public", opts) do
     if Keyword.get(opts, :publish_existing, false) do
@@ -530,6 +588,28 @@ defmodule PhoenixKitProjects.Portal do
 
   defp maybe_publish_existing(_portal, _mode, _opts), do: :ok
 
+  # LEAVING public resets what was published to the board.
+  #
+  # Without this, public -> link -> public silently re-exposes everything
+  # from the first public period: the second switch would look like the
+  # careful, publishes-nothing default and quietly restore twenty issues.
+  # Going private is usually a reaction to a problem, so coming back has to
+  # be a fresh decision — the same rule as everywhere else here, that
+  # exposure is something someone does rather than something that happens.
+  defp maybe_clear_board(%PortalRow{access_mode: "public"} = portal, mode)
+       when mode != "public" do
+    from(a in Assignment,
+      where: a.project_uuid == ^portal.project_uuid and not is_nil(a.board_published_at)
+    )
+    |> RepoHelper.repo().update_all(set: [board_published_at: nil])
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp maybe_clear_board(_portal, _mode), do: :ok
+
   @doc """
   Puts one task on the public board, or takes it off.
 
@@ -542,9 +622,17 @@ defmodule PhoenixKitProjects.Portal do
     value =
       if published?, do: DateTime.utc_now() |> DateTime.truncate(:second), else: nil
 
+    # Publishing to the board implies `public`: the board query requires
+    # both, so setting one without the other is silently inert, and an
+    # invariant that only holds by luck is one a later query will break.
+    sets =
+      if published?,
+        do: [board_published_at: value, public: true],
+        else: [board_published_at: nil]
+
     {count, _} =
       from(a in Assignment, where: a.uuid == ^assignment_uuid)
-      |> RepoHelper.repo().update_all(set: [board_published_at: value])
+      |> RepoHelper.repo().update_all(set: sets)
 
     {:ok, count}
   rescue
@@ -603,13 +691,20 @@ defmodule PhoenixKitProjects.Portal do
     with {:ok, portal, project} <- resolve(slug, viewer),
          true <- capability?(project, :list),
          %Assignment{} = assignment <- find_public_issue(portal, issue_uuid) do
+      _ = portal
       lang = PhoenixKitProjects.L10n.current_content_lang()
 
       {:ok,
        %{
          uuid: assignment.uuid,
          title: Assignment.label(assignment, lang) || "Issue",
-         description: Assignment.localized_description(assignment, lang),
+         # ONLY on a public board. The portal has never shown a task's
+         # description in any mode, and staff wrote them for an audience of
+         # themselves; adding them to every existing link portal on deploy
+         # would be exactly the retroactive exposure this design exists to
+         # prevent, arriving through a side door. Putting a task on a
+         # PUBLIC board is the deliberate act that also publishes its text.
+         description: board_description(portal, assignment, lang),
          status: assignment.status,
          status_label: AssignmentStatusBadge.label(assignment.status),
          inserted_at: assignment.inserted_at,
@@ -621,6 +716,11 @@ defmodule PhoenixKitProjects.Portal do
   rescue
     _ -> :error
   end
+
+  defp board_description(%PortalRow{access_mode: "public"}, assignment, lang),
+    do: Assignment.localized_description(assignment, lang)
+
+  defp board_description(_portal, _assignment, _lang), do: nil
 
   # The same mode split the list uses: a public board shows only what was
   # published TO it, everything else keeps the original `public` rule.
@@ -651,8 +751,14 @@ defmodule PhoenixKitProjects.Portal do
   @spec submit(term(), map(), map()) ::
           {:ok, :submitted} | {:error, :rate_limited} | {:error, :invalid} | :error
   def submit(slug, attrs, meta) when is_map(attrs) and is_map(meta) do
-    with {:ok, portal, project} <- resolve(slug),
-         true <- capability?(project, :submit) || :error,
+    viewer = Map.get(meta, :viewer)
+
+    with {:ok, portal, project} <- resolve(slug, viewer),
+         # BOTH gates, here in the write path. `may_submit?` is also what
+         # the page uses to decide whether to draw the form, but a hidden
+         # form is a courtesy — this is the control. Without it, setting
+         # submission to "signed-in users" changed the UI and nothing else.
+         true <- may_submit?(portal, project, viewer) || :error,
          :ok <- check_honeypot(meta),
          :ok <- check_fill_time(meta),
          :ok <- check_rate(project.uuid, meta[:peer_ip]),
