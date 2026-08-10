@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.21.0 - 2026-08-10
+
+### Changed
+
+- **⚠️ Requires `phoenix_kit ~> 2.0`.** The core pin moved to `~> 2.0`, so this
+  release no longer resolves against core 1.7.
+
+  Core 2.0.0 squashes the migration chain into a single `V135` baseline and makes
+  V135 the chain's floor: `mix ecto.migrate` now *refuses* on a database below it
+  rather than migrating. Check `mix phoenix_kit.status` **before** upgrading. A
+  host below V135 must install `phoenix_kit 1.7.236` — the migration bridge, the
+  last release carrying the full pre-squash chain — migrate until the reported
+  version is at least V135, and only then move to 2.0.
+
+  This package does not call migration internals, so the change is the pin
+  itself.
+
+- Sibling pins raised in step, each to that package's first release requiring
+  core 2.0: `phoenix_kit_ai` → `~> 0.18`, `phoenix_kit_staff` → `~> 0.8`,
+  `phoenix_kit_comments` → `~> 0.3`, `phoenix_kit_entities` → `~> 0.3`.
+  `phoenix_kit_comments` 0.3.0 is a **security release**; see its CHANGELOG.
+- `AITranslateBinding.source_fields/2` gains `@impl true`. The annotation was
+  deliberately omitted while the callback existed only in an unreleased
+  `phoenix_kit_ai` — annotating a callback the pinned behaviour does not declare
+  warns just as loudly. ai **0.18.0** adds `source_fields/2` to the `FormBinding`
+  behaviour for its new VALUE MODE, and the pin here is now `~> 0.18`, so the
+  annotation is correct and its absence is what fails
+  `--warnings-as-errors`.
+
+### Fixed
+
+- **Cyrillic or Greek status names produced an empty slug (PR #36).**
+  `ProjectStatus.slugify/1` delegated to core without `transliterate: true`,
+  which defaulted to `false` on the core this module was pinned to — after which
+  the `[^a-z0-9]+` pass deleted every non-ASCII character. (Under core 2.0 the
+  option is accepted-and-ignored because romanization is always on, so the
+  argument is now redundant rather than load-bearing.)
+
 ## 0.20.0 - 2026-08-06
 
 **List state lives in the URL, and the core floor finally names what the module actually needs.** Search, status filter and sort on Projects / Tasks / Templates are now query-string state, so a filtered list is a real link — shareable, reload-proof, and Back returns to the previous query instead of leaving the page. They get there via core's `PhoenixKitWeb.Live.UrlState` in `mode: :history`, which never exports `handle_params/3` and so keeps all three LiveViews embeddable. That module first shipped in `phoenix_kit` 1.7.231, while the declared requirement still said 1.7.189 and the lock pinned 1.7.216 — a fresh `mix deps.get` resolved a core this module could not compile against. The floor moves to `~> 1.7.231`. Post-merge review of #34 (`dev_docs/pull_requests/2026/34-core-version-floor/CLAUDE_REVIEW.md`) verified the floor against core's history and fixed three documentation defects around it.

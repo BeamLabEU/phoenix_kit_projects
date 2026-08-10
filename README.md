@@ -25,7 +25,7 @@ A [PhoenixKit](https://github.com/BeamLabEU/phoenix_kit) plugin for **project + 
 Add to your parent PhoenixKit app's `mix.exs`:
 
 ```elixir
-{:phoenix_kit_projects, "~> 0.5"},
+{:phoenix_kit_projects, "~> 0.21"},
 # Optional — the people admin UI (assignee data works without it):
 {:phoenix_kit_staff, "~> 0.1"}
 ```

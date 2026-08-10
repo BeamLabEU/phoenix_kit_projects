@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.20.0"
+  @version "0.21.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -128,13 +128,13 @@ defmodule PhoenixKitProjects.MixProject do
       # should fail resolution here, where the fix is a deliberate re-pin,
       # rather than as a compile error in a consumer's app. Re-pin explicitly
       # when core ships 1.8.
-      pk_dep(:phoenix_kit, "~> 1.7.231"),
+      pk_dep(:phoenix_kit, "~> 2.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move
       # (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`);
       # 0.3.0 predates it and won't compile against this module.
-      pk_dep(:phoenix_kit_ai, "~> 0.4"),
+      pk_dep(:phoenix_kit_ai, "~> 0.18"),
       # 0.3 is the floor: `Assignees` calls
       # `PhoenixKitStaff.Schemas.Person.display_name/1`, which staff first
       # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
@@ -148,18 +148,18 @@ defmodule PhoenixKitProjects.MixProject do
       #
       # The 0.3 floor above still applies whenever staff IS present: making a
       # dependency optional does not make an older release safe.
-      pk_dep(:phoenix_kit_staff, "~> 0.3", optional: true),
+      pk_dep(:phoenix_kit_staff, "~> 0.8", optional: true),
       # 0.2.6 is the floor: `ProjectShowLive` does `use
       # PhoenixKitComments.Embed`, first published in that release. `~> 0.2`
       # admitted 0.2.0–0.2.5, where that `use` site fails to compile.
-      pk_dep(:phoenix_kit_comments, "~> 0.2.6"),
+      pk_dep(:phoenix_kit_comments, "~> 0.3"),
 
       # Optional: the entities module is the source/catalog for project
       # workflow statuses. `optional: true` keeps it out of host closures
       # (PhoenixKitProjects.Statuses degrades gracefully when it's absent —
       # mirrors the AI-translation pattern) while making it loadable in this
       # package's own compile + test build.
-      pk_dep(:phoenix_kit_entities, "~> 0.2", optional: true),
+      pk_dep(:phoenix_kit_entities, "~> 0.3", optional: true),
 
       # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
       # for polymorphic assignee FKs (team / department / person).

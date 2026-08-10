@@ -50,10 +50,17 @@ defmodule PhoenixKitProjects.AITranslateBinding do
   # VALUE MODE source (the glue's unsaved-form path): the primary-language
   # text straight from the live changeset. Exporting this is what turns
   # the AI button ON at :new — translations fold into the changeset and
-  # persist with the create. NO `@impl`: the callback ships in an
-  # unreleased phoenix_kit_ai (the release-gating convention — the Hex
-  # pin's behaviour doesn't declare it yet; the glue discovers it by
-  # `function_exported?/3` either way).
+  # persist with the create.
+  #
+  # `@impl true` as of phoenix_kit_ai 0.18.0, which is the release that added
+  # `source_fields/2` to the `FormBinding` behaviour as an optional callback.
+  # It was deliberately omitted while the callback existed only in an
+  # unreleased ai — the pinned behaviour did not declare it, so annotating it
+  # would have warned. The pin is now `~> 0.18`, so the annotation is correct
+  # and its absence is what warns. (The glue discovers this by
+  # `function_exported?/3` either way; `@impl` only affects compile-time
+  # checking.)
+  @impl true
   def source_fields(resource_type, assigns) do
     changeset = assigns.form.source
 
