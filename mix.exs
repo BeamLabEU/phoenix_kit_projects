@@ -200,7 +200,16 @@ defmodule PhoenixKitProjects.MixProject do
     [
       licenses: ["MIT"],
       links: %{"GitHub" => @source_url},
-      files: ~w(lib priv .formatter.exs mix.exs README.md CHANGELOG.md LICENSE)
+      files: ~w(lib priv .formatter.exs mix.exs README.md CHANGELOG.md LICENSE),
+      # `priv/media/` is RUNTIME OUTPUT — the Storage module's default local
+      # bucket writes uploads there, and a test run fills it (93 files / ~850K
+      # at the time of writing). Gitignoring it is not enough: Hex resolves
+      # `files:` against the WORKING DIRECTORY, not git, so an ignored-but-
+      # present directory still ships. The published 0.21.1 is clean only
+      # because the directory happened to be empty at publish time — run the
+      # suite before publishing and it would not have been.
+      # (phoenix_kit_entities shipped exactly this way for several releases.)
+      exclude_patterns: ["priv/media/"]
     ]
   end
 

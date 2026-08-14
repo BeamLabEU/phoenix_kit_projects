@@ -29,3 +29,6 @@ priv/plts/
 
 # Test-run Storage bucket output (store_file's default local bucket lands here)
 /priv/media/
+
+# ExUnit @tag :tmp_dir scratch directories — recreated per run, never fixtures.
+/tmp/
