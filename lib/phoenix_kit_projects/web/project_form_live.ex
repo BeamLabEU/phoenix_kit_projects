@@ -1906,7 +1906,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             pick_event="participant_pick"
             staged_event="participant_staged"
             placeholder={gettext("Search people, teams, departments…")}
-            class="input input-bordered input-sm w-full"
+            class="input input-sm w-full"
             searching_label={gettext("Searching…")}
             more_label={gettext("Load more")}
             no_matches_label={gettext("No matches")}

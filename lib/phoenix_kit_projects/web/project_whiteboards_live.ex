@@ -331,20 +331,20 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
               <div class="modal-box max-w-sm">
                 <h3 class="font-bold text-lg">{gettext("New whiteboard")}</h3>
                 <form phx-submit="create_board" class="flex flex-col gap-3 mt-4">
-                  <label class="form-control">
-                    <span class="label-text text-xs opacity-70 mb-1">{gettext("Name")}</span>
+                  <label class="fieldset">
+                    <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Name")}</span>
                     <input
                       type="text"
                       name="name"
                       required
                       maxlength="160"
-                      class="input input-bordered input-sm"
+                      class="input input-sm"
                       placeholder={gettext("e.g. Sprint sketches")}
                     />
                   </label>
-                  <label class="form-control">
-                    <span class="label-text text-xs opacity-70 mb-1">{gettext("Size")}</span>
-                    <select name="size" class="select select-bordered select-sm">
+                  <label class="fieldset">
+                    <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Size")}</span>
+                    <select name="size" class="select select-sm">
                       <option :for={{key, label} <- size_options()} value={key}>{label}</option>
                     </select>
                   </label>

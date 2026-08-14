@@ -442,19 +442,19 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
           phx-change="validate_add"
           class="flex flex-wrap items-end gap-2"
         >
-          <label class="form-control grow max-w-xs">
-            <span class="label-text text-xs opacity-70 mb-1">{gettext("Email")}</span>
+          <label class="fieldset grow max-w-xs">
+            <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Email")}</span>
             <input
               type="email"
               name="email"
               value={@add_email}
               placeholder={gettext("person@example.com")}
-              class="input input-bordered input-sm"
+              class="input input-sm"
               required
             />
           </label>
-          <label class="form-control w-36">
-            <span class="label-text text-xs opacity-70 mb-1">{gettext("Role")}</span>
+          <label class="fieldset w-36">
+            <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Role")}</span>
             <.role_select name="role" value={@add_role} />
           </label>
           <button type="submit" class="btn btn-primary btn-sm" phx-disable-with={gettext("Adding…")}>
@@ -511,9 +511,9 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                    exactly one enabled; an optgroup needs neither, and the
                    value carries its own kind so the server never has to
                    trust a separate type field. --%>
-              <label class="form-control grow max-w-sm">
-                <span class="label-text text-xs opacity-70 mb-1">{gettext("Group")}</span>
-                <label class="select select-bordered select-sm">
+              <label class="fieldset grow max-w-sm">
+                <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Group")}</span>
+                <label class="select select-sm">
                   <select name="subject">
                     <option value="">{gettext("Choose a team, department, or role…")}</option>
                     <optgroup :for={{kind, label, options} <- @subject_options} label={label}>
@@ -525,9 +525,9 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                 </label>
               </label>
 
-              <label class="form-control w-36">
-                <span class="label-text text-xs opacity-70 mb-1">{gettext("Role")}</span>
-                <label class="select select-bordered select-sm">
+              <label class="fieldset w-36">
+                <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Role")}</span>
+                <label class="select select-sm">
                   <select name="role">
                     <option value="viewer">{gettext("Viewer")}</option>
                     <option value="member">{gettext("Member")}</option>
@@ -633,7 +633,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
 
   defp role_select(assigns) do
     ~H"""
-    <label class="select select-bordered select-sm">
+    <label class="select select-sm">
       <select name={@name}>
         <option value="owner" selected={@value == "owner"}>{gettext("Owner")}</option>
         <option value="manager" selected={@value == "manager"}>{gettext("Manager")}</option>

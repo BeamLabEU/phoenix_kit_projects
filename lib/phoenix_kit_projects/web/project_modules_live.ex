@@ -634,13 +634,13 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   phx-submit="set_portal_slug"
                   class="flex flex-wrap items-end gap-2"
                 >
-                  <label class="form-control grow max-w-xs">
-                    <span class="label-text text-xs opacity-70 mb-1">{gettext("Board address")}</span>
+                  <label class="fieldset grow max-w-xs">
+                    <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Board address")}</span>
                     <input
                       type="text"
                       name="slug"
                       value={@portal.slug}
-                      class="input input-bordered input-sm font-mono"
+                      class="input input-sm font-mono"
                     />
                   </label>
                   <button type="submit" class="btn btn-sm">{gettext("Rename")}</button>
@@ -651,9 +651,9 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                     {gettext("Who can take part")}
                   </h4>
                   <form phx-change="set_portal_participation" class="flex flex-wrap gap-3">
-                    <label class="form-control">
-                      <span class="label-text text-xs opacity-70 mb-1">{gettext("Submit issues")}</span>
-                      <select name="submit_access" class="select select-bordered select-sm">
+                    <label class="fieldset">
+                      <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Submit issues")}</span>
+                      <select name="submit_access" class="select select-sm">
                         <option
                           :for={{value, label} <- participation_choices()}
                           value={value}
@@ -661,9 +661,9 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                         >{label}</option>
                       </select>
                     </label>
-                    <label class="form-control">
-                      <span class="label-text text-xs opacity-70 mb-1">{gettext("Comment")}</span>
-                      <select name="comment_access" class="select select-bordered select-sm">
+                    <label class="fieldset">
+                      <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Comment")}</span>
+                      <select name="comment_access" class="select select-sm">
                         <option
                           :for={{value, label} <- participation_choices()}
                           value={value}
@@ -744,20 +744,20 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           </div>
 
           <form phx-submit="add_label" class="flex items-end gap-2">
-            <label class="form-control flex-1 max-w-52">
-              <span class="label-text text-xs opacity-70 mb-1">{gettext("New label")}</span>
+            <label class="fieldset flex-1 max-w-52">
+              <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("New label")}</span>
               <input
                 type="text"
                 name="name"
                 required
                 maxlength="60"
-                class="input input-bordered input-sm"
+                class="input input-sm"
                 placeholder={gettext("e.g. frontend")}
               />
             </label>
-            <label class="form-control w-40">
-              <span class="label-text text-xs opacity-70 mb-1">{gettext("Color")}</span>
-              <select name="color" class="select select-bordered select-sm">
+            <label class="fieldset w-40">
+              <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Color")}</span>
+              <select name="color" class="select select-sm">
                 <option :for={color <- @label_colors} value={color}>
                   {String.replace_prefix(color, "badge-", "")}
                 </option>

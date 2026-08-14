@@ -443,33 +443,33 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
             <div class="modal-box max-w-md">
               <h3 class="font-bold text-lg">{gettext("New event")}</h3>
               <form phx-submit="create_event" class="flex flex-col gap-3 mt-4">
-                <label class="form-control">
-                  <span class="label-text text-xs opacity-70 mb-1">{gettext("Title")}</span>
+                <label class="fieldset">
+                  <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Title")}</span>
                   <input
                     type="text"
                     name="title"
                     required
                     maxlength="200"
-                    class="input input-bordered input-sm"
+                    class="input input-sm"
                     placeholder={gettext("e.g. Sprint review")}
                   />
                 </label>
                 <div class="flex items-center gap-2">
-                  <label class="form-control flex-1">
-                    <span class="label-text text-xs opacity-70 mb-1">{gettext("Date")}</span>
+                  <label class="fieldset flex-1">
+                    <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Date")}</span>
                     <input
                       type="date"
                       name="date"
                       required
                       value={@modal_date && Date.to_iso8601(@modal_date)}
-                      class="input input-bordered input-sm"
+                      class="input input-sm"
                     />
                   </label>
-                  <label class="form-control flex-1">
-                    <span class="label-text text-xs opacity-70 mb-1">
+                  <label class="fieldset flex-1">
+                    <span class="fieldset-legend text-xs opacity-70 mb-1">
                       {gettext("End date (optional)")}
                     </span>
-                    <input type="date" name="end_date" class="input input-bordered input-sm" />
+                    <input type="date" name="end_date" class="input input-sm" />
                   </label>
                 </div>
                 <label class="flex items-center gap-2 cursor-pointer">
@@ -483,33 +483,33 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
                   <span class="text-sm">{gettext("All day")}</span>
                 </label>
                 <div class="flex items-center gap-2">
-                  <label class="form-control flex-1">
-                    <span class="label-text text-xs opacity-70 mb-1">
+                  <label class="fieldset flex-1">
+                    <span class="fieldset-legend text-xs opacity-70 mb-1">
                       {gettext("Start time (UTC)")}
                     </span>
-                    <input type="time" name="start_time" class="input input-bordered input-sm" />
+                    <input type="time" name="start_time" class="input input-sm" />
                   </label>
-                  <label class="form-control flex-1">
-                    <span class="label-text text-xs opacity-70 mb-1">
+                  <label class="fieldset flex-1">
+                    <span class="fieldset-legend text-xs opacity-70 mb-1">
                       {gettext("End time (UTC)")}
                     </span>
-                    <input type="time" name="end_time" class="input input-bordered input-sm" />
+                    <input type="time" name="end_time" class="input input-sm" />
                   </label>
                 </div>
-                <label class="form-control">
-                  <span class="label-text text-xs opacity-70 mb-1">{gettext("Location (optional)")}</span>
+                <label class="fieldset">
+                  <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Location (optional)")}</span>
                   <input
                     type="text"
                     name="location"
                     maxlength="200"
-                    class="input input-bordered input-sm"
+                    class="input input-sm"
                   />
                 </label>
-                <label class="form-control">
-                  <span class="label-text text-xs opacity-70 mb-1">
+                <label class="fieldset">
+                  <span class="fieldset-legend text-xs opacity-70 mb-1">
                     {gettext("Description (optional)")}
                   </span>
-                  <textarea name="description" rows="2" class="textarea textarea-bordered textarea-sm"></textarea>
+                  <textarea name="description" rows="2" class="textarea textarea-sm"></textarea>
                 </label>
                 <div class="modal-action">
                   <button type="button" phx-click="close_new_event" class="btn btn-ghost btn-sm">

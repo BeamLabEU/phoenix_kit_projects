@@ -3321,12 +3321,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   <span class="text-sm font-medium">{health_label(status)}</span>
                 </label>
               </div>
-              <label class="form-control">
-                <span class="label-text text-xs opacity-70 mb-1">{gettext("Note (optional)")}</span>
+              <label class="fieldset">
+                <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Note (optional)")}</span>
                 <textarea
                   name="note"
                   rows="2"
-                  class="textarea textarea-bordered textarea-sm"
+                  class="textarea textarea-sm"
                   placeholder={gettext("What's behind this call?")}
                 >{@health && @health["note"]}</textarea>
               </label>
@@ -3360,19 +3360,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </p>
             <form phx-submit="save_work_entry" class="flex flex-col gap-3 mt-4">
               <div class="flex items-center gap-2">
-                <label class="form-control flex-1">
-                  <span class="label-text text-xs opacity-70 mb-1">{gettext("Hours")}</span>
+                <label class="fieldset flex-1">
+                  <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Hours")}</span>
                   <input
                     type="number"
                     name="hours"
                     min="0"
                     step="1"
                     value="0"
-                    class="input input-bordered input-sm"
+                    class="input input-sm"
                   />
                 </label>
-                <label class="form-control flex-1">
-                  <span class="label-text text-xs opacity-70 mb-1">{gettext("Minutes")}</span>
+                <label class="fieldset flex-1">
+                  <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Minutes")}</span>
                   <input
                     type="number"
                     name="minutes"
@@ -3380,16 +3380,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     max="59"
                     step="1"
                     value="30"
-                    class="input input-bordered input-sm"
+                    class="input input-sm"
                   />
                 </label>
               </div>
-              <label class="form-control">
-                <span class="label-text text-xs opacity-70 mb-1">{gettext("Note (optional)")}</span>
+              <label class="fieldset">
+                <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Note (optional)")}</span>
                 <input
                   type="text"
                   name="note"
-                  class="input input-bordered input-sm"
+                  class="input input-sm"
                   placeholder={gettext("What was the time spent on?")}
                 />
               </label>
@@ -3608,7 +3608,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         <div class="ml-auto flex items-center gap-2">
           <select
-            class="select select-sm select-bordered"
+            class="select select-sm"
             phx-change="list_sort"
             name="sort"
             aria-label={gettext("Sort tasks")}

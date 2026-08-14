@@ -724,7 +724,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                       required
                       maxlength="60"
                       placeholder={gettext("Save current as…")}
-                      class="input input-bordered input-xs flex-1"
+                      class="input input-xs flex-1"
                     />
                     <button type="submit" class="btn btn-primary btn-xs">{gettext("Save")}</button>
                   </form>

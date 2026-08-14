@@ -100,7 +100,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
             pick_event="assignee_pick"
             staged_event="assignee_staged"
             placeholder={gettext("Add person…")}
-            class="input input-bordered input-sm w-full"
+            class="input input-sm w-full"
             searching_label={gettext("Searching…")}
             more_label={gettext("Load more")}
             loading_more_label={gettext("Loading…")}

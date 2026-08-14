@@ -1987,8 +1987,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <%!-- Labels: plain checkboxes over the PROJECT's registry (managed
                  in the Modules panel); selection replaces the join rows on
                  save. Renders only when the flag is on AND labels exist. --%>
-            <div :if={@fx.labels and @project_labels != []} class="form-control">
-              <span class="label-text text-sm font-medium mb-1">{gettext("Labels")}</span>
+            <div :if={@fx.labels and @project_labels != []} class="fieldset">
+              <span class="fieldset-legend text-sm font-medium mb-1">{gettext("Labels")}</span>
               <div class="flex flex-wrap gap-2">
                 <label
                   :for={label <- @project_labels}
