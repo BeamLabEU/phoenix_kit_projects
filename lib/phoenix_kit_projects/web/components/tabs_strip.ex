@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.Web.Components.TabsStrip do
   @moduledoc """
-  daisyUI `tabs tabs-boxed` segment switcher driven by the active
+  daisyUI `tabs tabs-box` segment switcher driven by the active
   value + a list of `{value, label, icon}` tuples. Used in
   `AssignmentFormLive` ("From library" / "Create new") and ready
   for reuse anywhere a small set of mutually-exclusive panes shares
@@ -44,7 +44,7 @@ defmodule PhoenixKitProjects.Web.Components.TabsStrip do
 
   def tabs_strip(assigns) do
     ~H"""
-    <div role="tablist" class="tabs tabs-boxed">
+    <div role="tablist" class="tabs tabs-box">
       <button
         :for={{value, label, icon} <- @tabs}
         type="button"
