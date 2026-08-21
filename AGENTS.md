@@ -477,7 +477,6 @@ lib/phoenix_kit_projects/
     │   ├── smart_link.ex                    # `<.smart_link>` — navigate-vs-emit-aware link
     │   ├── smart_menu_link.ex               # `<.smart_menu_link>` — row-menu variant of the above
     │   ├── stat_tile.ex                     # `<.stat_tile>` — compact "label + big number" card
-    │   ├── tabs_strip.ex                    # `<.tabs_strip>` — daisyUI tabs-box switcher
     │   ├── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
     │   └── workflow_status_fields.ex        # `<.workflow_status_fields>` — status source + pick (locks at start)
     ├── list_ui.ex                            # Shared list-page plumbing: column-visibility persistence, search coercion, client-search haystacks
@@ -1128,7 +1127,7 @@ the tier + sort helpers read it like the old flat summary.
   `update_project/2` (edit). **No bespoke inline dependency picker, no modal** —
   a sub-project's dependencies live on its add/edit page like any task's.
 - **Create new vs. nest existing** — on `:new` the sub-project form shows a
-  `<.tabs_strip event="set_sp_mode">` ("Create new" / "Nest existing"). "Nest
+  `<.nav_tabs on_change="set_sp_mode">` ("Create new" / "Nest existing"). "Nest
   existing" swaps the create-new fields for a single `link_child_uuid` picker of
   `available_projects_to_link/1` (standalone, same `is_template`, not the parent
   or an ancestor); submit routes to `link_subproject/2` instead of

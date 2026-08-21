@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.21.2 - 2026-08-21
+
+### Changed
+
+- **`AssignmentFormLive` uses core's `<.nav_tabs>`** for the
+  create-new / from-library (and nest-existing) switchers. The local
+  `TabsStrip` is deleted; its `phx-value-value` payload — and the native
+  `value=` workaround LiveView's `extractMeta` required — go with it.
+  Handlers and tests match on `tab` (#38).
+
 ## 0.21.1 - 2026-08-11
 
 ### Changed
