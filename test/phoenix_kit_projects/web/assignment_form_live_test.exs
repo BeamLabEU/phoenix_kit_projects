@@ -94,7 +94,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       # `new_task_title` input appears in the DOM. `form/3` only binds
       # fields currently rendered, so without this step the title input
       # doesn't exist (and the hidden's allowed value mismatches).
-      _ = view |> element("button[phx-value-value='new']") |> render_click()
+      _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
       html =
         view
@@ -115,7 +115,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
 
-      _ = view |> element("button[phx-value-value='new']") |> render_click()
+      _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
       title = "Inline-#{System.unique_integer([:positive])}"
 

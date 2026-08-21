@@ -477,7 +477,7 @@ lib/phoenix_kit_projects/
     │   ├── smart_link.ex                    # `<.smart_link>` — navigate-vs-emit-aware link
     │   ├── smart_menu_link.ex               # `<.smart_menu_link>` — row-menu variant of the above
     │   ├── stat_tile.ex                     # `<.stat_tile>` — compact "label + big number" card
-    │   ├── tabs_strip.ex                    # `<.tabs_strip>` — daisyUI tabs-boxed switcher
+    │   ├── tabs_strip.ex                    # `<.tabs_strip>` — daisyUI tabs-box switcher
     │   ├── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
     │   └── workflow_status_fields.ex        # `<.workflow_status_fields>` — status source + pick (locks at start)
     ├── list_ui.ex                            # Shared list-page plumbing: column-visibility persistence, search coercion, client-search haystacks
