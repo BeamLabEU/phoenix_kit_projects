@@ -50,7 +50,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
         live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
 
       # New UI: tabs (Create new / From library) replaced the dropdown.
-      _ = view |> element("button[phx-value-value='new']") |> render_click()
+      _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
       _ =
         view
