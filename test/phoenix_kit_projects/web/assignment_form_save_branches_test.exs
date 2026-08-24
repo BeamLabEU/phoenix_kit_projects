@@ -48,7 +48,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
 
-      _ = view |> element("button[phx-value-value='new']") |> render_click()
+      _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
       html =
         view

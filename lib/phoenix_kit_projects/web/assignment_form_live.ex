@@ -553,7 +553,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # the hidden form input picks up the new value on the next
   # `phx-change` so `validate`/`save` see it via params (no separate
   # socket-assign read path needed).
-  def handle_event("set_task_mode", %{"value" => mode}, socket)
+  def handle_event("set_task_mode", %{"tab" => mode}, socket)
       when mode in ~w(existing new) do
     {:noreply, assign(socket, task_mode: mode)}
   end
@@ -769,7 +769,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # Feature-gated: sub-project mode is unreachable when the flag is off
   # (kind resolution already forces "task"), but a stale client could still
   # emit the event — refuse it the same way.
-  def handle_event("set_sp_mode", %{"value" => mode}, socket)
+  def handle_event("set_sp_mode", %{"tab" => mode}, socket)
       when mode in ~w(new existing) do
     if socket.assigns.fx.subprojects do
       do_set_sp_mode(mode, socket)
@@ -1674,13 +1674,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <%!-- On :new a sub-project can either be created fresh or an existing
                standalone project can be nested in place (V127). On :edit only
                the create-new fields exist (you're editing the child itself). --%>
-          <.tabs_strip
+          <%!-- Was a module-local TabsStrip duplicating core's <.nav_tabs>.
+               Its payload key was `value`, which needed a native value=
+               attribute to work around LiveView's extractMeta overwriting
+               meta.value with a button's own empty .value — the component
+               standardises on `tab` and the hack goes away with it. --%>
+          <.nav_tabs
             :if={@live_action == :new}
-            event="set_sp_mode"
-            active={@sp_mode}
+            on_change="set_sp_mode"
+            active_tab={@sp_mode}
             tabs={[
-              {"new", gettext("Create new"), "hero-plus"},
-              {"existing", gettext("Nest existing"), "hero-rectangle-stack"}
+              %{id: "new", label: gettext("Create new"), icon: "hero-plus"},
+              %{id: "existing", label: gettext("Nest existing"), icon: "hero-rectangle-stack"}
             ]}
           />
 
@@ -1851,12 +1856,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                    data so existing `validate`/`save` handlers don't
                    need to special-case socket reads. --%>
               <input type="hidden" name="task_mode" value={@task_mode} />
-              <.tabs_strip
-                event="set_task_mode"
-                active={@task_mode}
+              <.nav_tabs
+                on_change="set_task_mode"
+                active_tab={@task_mode}
                 tabs={[
-                  {"existing", gettext("From library"), "hero-rectangle-stack"},
-                  {"new", gettext("Create new"), "hero-plus"}
+                  %{id: "existing", label: gettext("From library"), icon: "hero-rectangle-stack"},
+                  %{id: "new", label: gettext("Create new"), icon: "hero-plus"}
                 ]}
               />
 
