@@ -16,11 +16,11 @@ defmodule PhoenixKitProjects.Web.Widgets.RunningWidget do
   require Logger
 
   import PhoenixKitProjects.Web.Components.RunningCard
-  import PhoenixKitProjects.Web.Components.TierPill
   import PhoenixKitProjects.Web.Widgets.Helpers
 
   alias PhoenixKitProjects.{L10n, Paths, Projects, RunningTiers}
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.TierPill
 
   @default_limit 6
 
@@ -118,7 +118,14 @@ defmodule PhoenixKitProjects.Web.Widgets.RunningWidget do
                 >
                   {Project.localized_name(s.project, @lang)}
                 </.link>
-                <span class="shrink-0" style={fit_text(8, "20cqh", 11)}><.tier_pill tier={s.tier} /></span>
+                <%!-- The tier as self-fitting text (a daisyUI badge has a
+                     fixed height and would not follow the slot). --%>
+                <span
+                  class={["shrink-0 rounded-full px-[0.6em] py-[0.1em] font-medium leading-tight", tier_class(s.tier)]}
+                  style={fit_text(8, "22cqh", 11)}
+                >
+                  {tier_label(s.tier)}
+                </span>
               </div>
               <div class="pk-slot-meta mt-[2cqh] flex items-center gap-2">
                 <progress
@@ -149,6 +156,13 @@ defmodule PhoenixKitProjects.Web.Widgets.RunningWidget do
 
   defp title(true), do: gettext("Late projects")
   defp title(false), do: gettext("Running projects")
+
+  defp tier_class(:late), do: "bg-error/15 text-error"
+  defp tier_class(:near_done), do: "bg-success/15 text-success"
+  defp tier_class(:on_track), do: "bg-info/10 text-info"
+  defp tier_class(:empty), do: "bg-base-200 text-base-content/50"
+
+  defp tier_label(tier), do: elem(TierPill.pill_attrs(tier), 2)
 
   defp progress_class(:late), do: "progress-error"
   defp progress_class(:near_done), do: "progress-success"
