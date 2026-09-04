@@ -233,12 +233,13 @@ defmodule PhoenixKitProjects.DashboardWidgets do
         module_key: "projects",
         component: UpcomingWidget,
         category: "Projects",
-        default_size: %{w: 16, h: 8},
-        min_size: %{w: 8, h: 6},
+        # Same box as Deadlines — both are six-slot lists under a header.
+        default_size: %{w: 16, h: 12},
+        min_size: %{w: 8, h: 8},
         refresh_interval: 30_000,
         views: [
-          %{key: "upcoming", name: "Upcoming (setup + scheduled)", min_size: %{w: 8, h: 6}},
-          %{key: "completed", name: "Recently completed", min_size: %{w: 8, h: 6}}
+          %{key: "upcoming", name: "Upcoming (setup + scheduled)", min_size: %{w: 8, h: 8}},
+          %{key: "completed", name: "Recently completed", min_size: %{w: 8, h: 8}}
         ],
         settings_schema: [@limit_field]
       },
