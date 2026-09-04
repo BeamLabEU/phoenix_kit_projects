@@ -1039,12 +1039,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp create_task_and_assign(socket, attrs, title) do
     project = socket.assigns.project
 
+    # "Save as reusable template in the task library" had been rendered and
+    # tracked since the first commit but never read by any save — every
+    # new task went into the library. It now means what it says: unticked
+    # = a one-off task (`ad_hoc`, V15), exactly what the quick-add composer
+    # creates.
     task_attrs =
       %{
         "title" => title,
         "description" => attrs["description"],
         "estimated_duration" => attrs["estimated_duration"],
-        "estimated_duration_unit" => attrs["estimated_duration_unit"]
+        "estimated_duration_unit" => attrs["estimated_duration_unit"],
+        "ad_hoc" => not socket.assigns.save_as_template
       }
       |> maybe_add_default_assignee(attrs)
 

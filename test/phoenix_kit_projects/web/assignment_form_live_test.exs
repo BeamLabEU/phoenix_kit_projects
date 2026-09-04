@@ -10,6 +10,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.Schemas.Assignment
 
   setup %{conn: conn} do
     scope = fake_scope()
@@ -137,6 +138,42 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
         actor_uuid: actor_uuid,
         metadata_has: %{"new_task" => title}
       )
+
+      # The library checkbox was ticked (its default): a reusable task.
+      assert title in Enum.map(Projects.list_tasks(), & &1.title)
+    end
+
+    test "unticking 'save as reusable template' makes a one-off task", %{conn: conn} do
+      project = fixture_project()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+      _ = view |> element("button[phx-value-tab='new']") |> render_click()
+      title = "Oneoff-#{System.unique_integer([:positive])}"
+
+      # Core's checkbox carries a hidden "false" twin, so an unticked box
+      # reaches `validate` as "false" (the assign is read at save time).
+      _ =
+        view
+        |> form("#assignment-form",
+          assignment: %{status: "todo"},
+          task_mode: "new",
+          new_task_title: title,
+          save_as_template: "false"
+        )
+        |> render_change()
+
+      {:error, {:live_redirect, _}} =
+        view
+        |> form("#assignment-form",
+          assignment: %{status: "todo"},
+          task_mode: "new",
+          new_task_title: title,
+          save_as_template: "false"
+        )
+        |> render_submit()
+
+      refute title in Enum.map(Projects.list_tasks(), & &1.title)
+      assert title in Enum.map(Projects.list_tasks(ad_hoc: :only), & &1.title)
+      assert title in Enum.map(Projects.list_assignments(project.uuid), &Assignment.label/1)
     end
   end
 
