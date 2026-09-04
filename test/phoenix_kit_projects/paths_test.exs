@@ -61,7 +61,7 @@ defmodule PhoenixKitProjects.PathsTest do
 
   describe "Projects paths" do
     test "projects/0" do
-      assert Paths.projects() == "#{@prefix}/list"
+      assert Paths.projects() == @prefix
     end
 
     test "new_project/0" do

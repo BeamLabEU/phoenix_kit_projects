@@ -17,7 +17,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
   describe "empty dashboard" do
     test "mount renders the heading + empty-state copy", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
       assert html =~ "Projects"
       # The "Active projects" header was renamed to "Running" with
       # the prioritized-tier rework.
@@ -33,7 +33,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       now = DateTime.utc_now() |> DateTime.truncate(:second)
       _ = PhoenixKitProjects.Projects.start_project(project)
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
       assert html =~ project.name
 
       _ = now
@@ -42,7 +42,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
   describe "PubSub reactivity" do
     test "broadcasts on `:projects:all` trigger a dashboard reload", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
 
       # Send a recognized broadcast — the LV should re-fetch and re-render.
       send(view.pid, {:projects, :task_created, %{uuid: Ecto.UUID.generate()}})
@@ -59,7 +59,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       _ = fixture_project()
       _ = fixture_template()
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
 
       assert html =~ "Tasks todo"
       assert html =~ "Tasks in progress"
@@ -75,7 +75,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
           "scheduled_start_date" => DateTime.utc_now() |> DateTime.to_iso8601()
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
       # `relative_day(0)` returns gettext("today")
       assert html =~ "today" or html =~ "Started"
     end
@@ -89,7 +89,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
           "scheduled_start_date" => DateTime.to_iso8601(tomorrow)
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
       assert html =~ "tomorrow" or html =~ "Scheduled"
     end
 
@@ -102,7 +102,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
           "scheduled_start_date" => DateTime.to_iso8601(five_days)
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
       assert html =~ "days" or html =~ "Scheduled"
     end
 
@@ -115,14 +115,14 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
           "scheduled_start_date" => DateTime.to_iso8601(far)
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
       assert html =~ "weeks" or html =~ "Scheduled"
     end
 
     test "active immediate-mode project shows up in setup section", %{conn: conn} do
       _ = fixture_project(%{"start_mode" => "immediate"})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
       # The setup section renders when there's at least one un-started
       # immediate-mode project.
       assert html =~ "Active projects" or html =~ "setup" or html =~ "tasks"
@@ -149,7 +149,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       assert {:completed, _} =
                PhoenixKitProjects.Projects.recompute_project_completion(project.uuid)
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
       assert html =~ project.name or html =~ "Recently"
     end
   end
@@ -215,7 +215,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "the Tasks-calendar tab opens the tasks grid", %{conn: conn} do
       {_project, [a | _]} = calendar_fixture(2)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       html = open_calendar_tab(view)
 
       # All three view tabs render; the tasks grid shows the task titles.
@@ -228,7 +228,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "the Projects-calendar tab flips the mode (both grids stay mounted)", %{conn: conn} do
       {_project, _} = calendar_fixture(1)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
 
       html = render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
@@ -256,7 +256,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       # between 00:05 and 00:15 UTC.
       {_project, _} = late_calendar_fixture()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
 
       # Default: synced with the Projects-mode overdue look.
@@ -321,7 +321,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
       {:ok, _} =
         Projects.create_assignment(%{"project_uuid" => ontrack.uuid, "task_uuid" => task.uuid})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
       html = render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
 
@@ -366,7 +366,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "a day with more tasks than the cap shows the +N more link", %{conn: conn} do
       {_project, _assignments} = calendar_fixture(8)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       html = open_calendar_tab(view)
 
       assert html =~ "cal-more-link"
@@ -376,7 +376,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "a day-cell click fills the whole-day popup with every task that day", %{conn: conn} do
       {_project, assignments} = calendar_fixture(8)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
 
       send(view.pid, {:calendar_day_click, Date.utc_today()})
@@ -391,7 +391,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "the +N more click fills the same popup; closing clears it", %{conn: conn} do
       {_project, [a | _]} = calendar_fixture(6)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
 
       send(view.pid, {:calendar_day_more, Date.utc_today()})
@@ -407,7 +407,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "an empty day's popup says nothing is scheduled", %{conn: conn} do
       {_project, _} = calendar_fixture(1)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
 
       send(view.pid, {:calendar_day_click, Date.add(Date.utc_today(), 300)})
@@ -418,7 +418,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "a popup row click opens the project", %{conn: conn} do
       {project, _} = calendar_fixture(1)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
 
       render_click(view, "day_popup_open_project", %{"uuid" => project.uuid})
@@ -428,7 +428,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "a task chip click opens the owning project", %{conn: conn} do
       {project, [a | _]} = calendar_fixture(1)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
 
       send(view.pid, {:calendar_open_task, a.uuid})
@@ -438,7 +438,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "an unknown task id on chip click is a no-op", %{conn: conn} do
       {_project, _} = calendar_fixture(1)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
 
       send(view.pid, {:calendar_open_task, Ecto.UUID.generate()})
@@ -449,7 +449,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "Projects-mode popup rows carry the project's span", %{conn: conn} do
       {project, _} = calendar_fixture(1)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
       render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
 
@@ -462,7 +462,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     test "a Projects-mode bar click opens the project", %{conn: conn} do
       {project, _} = calendar_fixture(1)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       open_calendar_tab(view)
       render_click(view, "switch_overview_tab", %{"tab" => "projects_calendar"})
 
@@ -538,7 +538,7 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
     defp mount_with_user(conn, user) do
       scope = fake_scope(user_uuid: user.uuid)
       conn = put_test_scope(conn, scope)
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
       render_click(view, "switch_overview_tab", %{"tab" => "tasks_calendar"})
       view
     end

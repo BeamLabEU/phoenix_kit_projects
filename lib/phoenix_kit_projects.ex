@@ -481,6 +481,12 @@ defmodule PhoenixKitProjects do
     ]
   end
 
+  # Paths reach the matcher normalised (URL prefix + locale stripped, no
+  # trailing slash): the landing itself, or anything under `list/`. A
+  # function, not a module attribute — a compiled Regex holds a reference
+  # and cannot be injected into a function body.
+  defp projects_list_match, do: {:regex, ~r{^/admin/projects(/list(/.*)?)?$}}
+
   @impl PhoenixKit.Module
   def admin_tabs do
     parent = [
@@ -498,24 +504,33 @@ defmodule PhoenixKitProjects do
         group: :admin_modules,
         subtab_display: :when_active,
         highlight_with_subtabs: false,
-        live_view: {PhoenixKitProjects.Web.OverviewLive, :index}
+        # The landing page IS the project list (boss, 2026-09-04): the
+        # module's dashboard moved to `phoenix_kit_dashboards` as widgets
+        # (see `DashboardWidgets`). `OverviewLive` stays as an embeddable
+        # LiveView for host apps (dev_docs/embedding_emit.md) but has no
+        # admin route any more.
+        live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
       }
     ]
 
     visible_subtabs = [
       %Tab{
-        id: :admin_projects_overview,
-        label: "Overview",
+        id: :admin_projects_list,
+        label: "Projects",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        icon: "hero-home",
+        icon: "hero-clipboard-document-list",
         path: "projects",
         priority: 661,
         level: :admin,
         permission: module_key(),
-        match: :exact,
+        # Lit on the landing page AND on every project page under
+        # `list/…`, without claiming Tasks/Templates. Tabs match
+        # independently (no longest-prefix arbitration), so a plain
+        # `:prefix` on `projects` would light this one everywhere.
+        match: projects_list_match(),
         parent: :admin_projects,
-        live_view: {PhoenixKitProjects.Web.OverviewLive, :index}
+        live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
       },
       %Tab{
         id: :admin_projects_templates,
@@ -544,24 +559,29 @@ defmodule PhoenixKitProjects do
         match: :prefix,
         parent: :admin_projects,
         live_view: {PhoenixKitProjects.Web.TasksLive, :index}
-      },
-      %Tab{
-        id: :admin_projects_list,
-        label: "Projects",
-        gettext_backend: PhoenixKitProjects.Gettext,
-        gettext_domain: "default",
-        icon: "hero-clipboard-document-list",
-        path: "projects/list",
-        priority: 664,
-        level: :admin,
-        permission: module_key(),
-        match: :prefix,
-        parent: :admin_projects,
-        live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
       }
     ]
 
     hidden_subtabs = [
+      # The list used to live at `projects/list` (still the parent segment
+      # of every project page). The bare path redirects to the landing so
+      # old bookmarks and pre-2026-09 embeds' `redirect_to` values land
+      # on the list instead of a 404. `:exact` — the `list/:id/…` pages
+      # below must keep their own tabs lit.
+      %Tab{
+        id: :admin_projects_list_legacy,
+        label: "Projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list",
+        priority: 664,
+        level: :admin,
+        permission: module_key(),
+        match: :exact,
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ListRedirectLive, :index}
+      },
       %Tab{
         id: :admin_projects_files,
         label: "Project Files",

@@ -35,7 +35,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:error, {:live_redirect, %{to: redirect_to, flash: flash}}} =
         live(conn, "/en/admin/projects/list/#{bogus}/assignments/new")
 
-      assert redirect_to =~ "/list"
+      assert redirect_to == PhoenixKitProjects.Paths.projects()
       assert flash["error"] =~ "Project not found"
     end
 

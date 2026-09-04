@@ -5,7 +5,11 @@ defmodule PhoenixKitProjects.Paths do
 
   @base "/admin/projects"
 
-  @doc "Projects dashboard root."
+  @doc """
+  The module's landing page — the project list (since 2026-09; it used to be
+  the Overview dashboard, which now lives in `phoenix_kit_dashboards` as
+  widgets). Same value as `projects/0`.
+  """
   @spec index() :: String.t()
   def index, do: Routes.path(@base)
 
@@ -39,9 +43,12 @@ defmodule PhoenixKitProjects.Paths do
   def edit_template(id), do: Routes.path("#{@base}/templates/#{id}/edit")
 
   # Projects
-  @doc "Projects (non-template) index."
+  @doc """
+  Projects (non-template) index — the landing page. The old `#{@base}/list`
+  address redirects here; project pages keep `list/:id/…` as their prefix.
+  """
   @spec projects() :: String.t()
-  def projects, do: Routes.path("#{@base}/list")
+  def projects, do: Routes.path(@base)
   @doc "New-project form."
   @spec new_project() :: String.t()
   def new_project, do: Routes.path("#{@base}/list/new")

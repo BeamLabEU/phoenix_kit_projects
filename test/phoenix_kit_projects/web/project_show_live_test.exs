@@ -85,7 +85,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       {:error, {:live_redirect, %{to: redirect_to, flash: flash}}} =
         live(conn, "/en/admin/projects/list/#{bogus}")
 
-      assert redirect_to =~ "/list"
+      assert redirect_to == PhoenixKitProjects.Paths.projects()
       assert flash["error"] =~ "Project not found"
     end
   end
@@ -548,7 +548,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       # on `Routes.admin_path/2` conditional on the site-wide
       # `default_language_no_prefix` setting (default `false`), so the
       # canonical primary-admin shape is back to `/en/admin/...`.
-      assert_redirect(view, "/en/admin/projects/list")
+      assert_redirect(view, "/en/admin/projects")
     end
   end
 

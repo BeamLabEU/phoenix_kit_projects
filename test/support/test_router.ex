@@ -28,13 +28,20 @@ defmodule PhoenixKitProjects.Test.Router do
     live_session :projects_test,
       layout: {PhoenixKitProjects.Test.Layouts, :app},
       on_mount: {PhoenixKitProjects.Test.Hooks, :assign_scope} do
-      live("/", OverviewLive, :index)
+      # The landing page is the project list; the old bare `/list` only
+      # redirects there (project pages keep `list/:id/…`).
+      live("/", ProjectsLive, :index)
+      live("/list", ListRedirectLive, :index)
+      # `OverviewLive` has NO admin route in production any more (the
+      # dashboard moved to phoenix_kit_dashboards as widgets) but stays an
+      # embeddable LiveView for host apps — this test-only path keeps its
+      # suite driving it through `live/2`.
+      live("/overview", OverviewLive, :index)
 
       live("/tasks", TasksLive, :index)
       live("/tasks/new", TaskFormLive, :new)
       live("/tasks/:id/edit", TaskFormLive, :edit)
 
-      live("/list", ProjectsLive, :index)
       live("/list/new", ProjectFormLive, :new)
       live("/list/:id", ProjectShowLive, :show)
       live("/list/:id/gantt", ProjectShowLive, :gantt)
