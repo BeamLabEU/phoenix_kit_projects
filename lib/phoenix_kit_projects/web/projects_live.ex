@@ -593,15 +593,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             allow_delete={false}
             reorder_gate={if @sort_by == :position, do: :always, else: :multi}
           >
+            <%!-- Control order follows the kit's other lists (catalogue,
+                 core's table toolbar): search + data filters on the LEFT,
+                 the view tools (sort, Columns) on the RIGHT after the
+                 selection actions. --%>
             <:leading>
-              <.sort_selector
-                sort_by={@sort_by}
-                sort_dir={@sort_dir}
-                options={sort_options()}
-                manual_field={:position}
-              />
-              {status_filter_control(assigns)}
-              <ListUi.columns_control options={column_options()} visible={@visible_columns} />
               <.search_toolbar
                 value={@search}
                 on_submit="search"
@@ -609,7 +605,17 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 placeholder={gettext("Search projects...")}
                 class="w-48"
               />
+              {status_filter_control(assigns)}
             </:leading>
+            <:trailing>
+              <.sort_selector
+                sort_by={@sort_by}
+                sort_dir={@sort_dir}
+                options={sort_options()}
+                manual_field={:position}
+              />
+              <ListUi.columns_control options={column_options()} visible={@visible_columns} />
+            </:trailing>
           </.bulk_actions_toolbar>
 
           {render_projects_table(assigns, draggable?, lang)}

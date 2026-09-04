@@ -726,14 +726,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                 allow_delete={false}
                 reorder_gate={if @sort_by == :position, do: :always, else: :multi}
               >
+                <%!-- Control order follows the kit's other lists (catalogue,
+                     core's table toolbar): search on the LEFT, the view
+                     tools (sort, Columns, view switcher) on the RIGHT after
+                     the selection actions. --%>
                 <:leading>
-                  <.sort_selector
-                    sort_by={@sort_by}
-                    sort_dir={@sort_dir}
-                    options={sort_options()}
-                    manual_field={:position}
-                  />
-                  <ListUi.columns_control options={column_options()} visible={@visible_columns} />
                   <.search_toolbar
                     value={@search}
                     on_submit="search"
@@ -742,9 +739,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                     class="w-48"
                   />
                 </:leading>
-                <%!-- Far right, apart from the filter/sort controls —
-                     it changes the VIEW, not the data. --%>
                 <:trailing>
+                  <.sort_selector
+                    sort_by={@sort_by}
+                    sort_dir={@sort_dir}
+                    options={sort_options()}
+                    manual_field={:position}
+                  />
+                  <ListUi.columns_control options={column_options()} visible={@visible_columns} />
                   {view_switcher(assigns)}
                 </:trailing>
               </.bulk_actions_toolbar>

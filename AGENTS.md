@@ -541,7 +541,12 @@ is the most complete reference):
 
 - **No in-content header row.** The create action is a "+" in the admin
   breadcrumb (core `page_action` assign: `%{icon, label, navigate}`) plus a
-  dashed full-width add-row at the list's foot. The show page likewise sets
+  dashed full-width add-row at the list's foot.
+- **Toolbar order** (core's `bulk_actions_toolbar`): search + data filters in
+  `:leading` (left), the view tools — sort selector, Columns, the Tasks view
+  switcher — in `:trailing` (right, after the contextual Reorder/Delete/Clear).
+  Same left/right split as the catalogue tables and core's `table_default`
+  toolbar row, so the kit's lists read alike (aligned 2026-09-05). The show page likewise sets
   `page_section`/`page_section_path` ("Admin Panel / Templates / ‹name›")
   instead of a back-link + h1 row — **embeds keep the full header**
   (`router_mounted?` gates it; embeds have no admin breadcrumb).

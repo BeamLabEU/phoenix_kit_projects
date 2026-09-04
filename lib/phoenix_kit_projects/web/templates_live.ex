@@ -485,14 +485,10 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             allow_delete={false}
             reorder_gate={if @sort_by == :position, do: :always, else: :multi}
           >
+            <%!-- Control order follows the kit's other lists (catalogue,
+                 core's table toolbar): search on the LEFT, the view tools
+                 (sort, Columns) on the RIGHT after the selection actions. --%>
             <:leading>
-              <.sort_selector
-                sort_by={@sort_by}
-                sort_dir={@sort_dir}
-                options={sort_options()}
-                manual_field={:position}
-              />
-              <ListUi.columns_control options={column_options()} visible={@visible_columns} />
               <%!-- on_submit is required, not optional: it selects the
                    component's <form> branch. The formless branch's
                    phx-change dies in LV's pushInput ("form events
@@ -506,6 +502,15 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
                 class="w-48"
               />
             </:leading>
+            <:trailing>
+              <.sort_selector
+                sort_by={@sort_by}
+                sort_dir={@sort_dir}
+                options={sort_options()}
+                manual_field={:position}
+              />
+              <ListUi.columns_control options={column_options()} visible={@visible_columns} />
+            </:trailing>
           </.bulk_actions_toolbar>
 
             {render_templates_table(assigns, draggable?, lang)}
