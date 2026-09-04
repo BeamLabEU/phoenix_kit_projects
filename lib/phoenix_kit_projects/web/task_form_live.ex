@@ -510,6 +510,18 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               </div>
             </div>
 
+            <%!-- One-off (V15): quick-added tasks start hidden from the
+                 library; unticking here is how one is promoted. Shown on
+                 edit only — a task created from this form IS a library
+                 task. --%>
+            <.checkbox
+              :if={@live_action == :edit}
+              field={@form[:ad_hoc]}
+              label={gettext("One-off task")}
+              title={gettext("Hidden from the task library and its pickers; the projects using it are unaffected.")}
+              class="checkbox-sm"
+            />
+
             <div class="divider text-xs text-base-content/50 my-1">{gettext("Default assignment (optional)")}</div>
 
             <.select

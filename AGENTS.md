@@ -4,12 +4,15 @@ Guidance for AI agents working on the `phoenix_kit_projects` plugin module.
 
 ## Project overview
 
-A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) with subtabs:
+A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) whose **landing page is the project list** (since 2026-09; the parent tab and the first subtab both render `ProjectsLive` at `/admin/projects` — the old bare `/admin/projects/list` redirects there, project pages keep `list/:id/…`), with subtabs:
 
-- **Overview** — active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker, plus a **"Late only" lens** in its toolbar — bars of late running projects only, same `summary.late` tier as the cards; count-badged, hidden at 0, kept while active). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions; **only RELEVANT people are offered** — someone at least one non-template assignment points at directly / via a team / via a department in their scope, and the per-project Calendar tab narrows that to its own rendered tree via `assignee_search_scope`) plus quick-adders for **Me** (hidden without a staff person) and **Unassigned** (a dashed chip with live count; hidden while the count is 0) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count; the whole funnel hides while the UNFILTERED walk has zero items — a fresh install has nothing to filter) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows; hidden while the raw walk has no late items, kept while active). The raw walk is cached in assigns; filter flips are in-memory
-- **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee)
-- **Projects** — list of projects (filterable by status)
+- **Projects** — list of projects (filterable by status). Its subtab matcher is a regex (landing OR `list/…`) because tabs match independently and a `:prefix` on `projects` would light it on Tasks/Templates too.
+- **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee). A **Library | One-off** lens (URL `lens=`) appears once one-off tasks exist — see "Quick-add" below.
 - **Templates** — reusable project templates cloned into real projects
+
+**The Overview dashboard has no admin route any more** — the boss wants module dashboards built in `phoenix_kit_dashboards` (this module feeds it widgets, see "Dashboard widgets"). `OverviewLive` is KEPT as an embeddable LiveView for host apps (the root view in `dev_docs/embedding_emit.md`); its tests mount it on a test-only `/overview` route. What it renders, for anyone porting the rest into widgets:
+
+- active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker, plus a **"Late only" lens** in its toolbar — bars of late running projects only, same `summary.late` tier as the cards; count-badged, hidden at 0, kept while active). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions; **only RELEVANT people are offered** — someone at least one non-template assignment points at directly / via a team / via a department in their scope, and the per-project Calendar tab narrows that to its own rendered tree via `assignee_search_scope`) plus quick-adders for **Me** (hidden without a staff person) and **Unassigned** (a dashed chip with live count; hidden while the count is 0) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count; the whole funnel hides while the UNFILTERED walk has zero items — a fresh install has nothing to filter) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows; hidden while the raw walk has no late items, kept while active). The raw walk is cached in assigns; filter flips are in-memory
 
 Plus hidden subtabs for project/task/template/assignment new/edit/show pages.
 
@@ -356,7 +359,7 @@ and the comments composer / activity actor work in every nested LV:
 
 ## Database
 
-Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`.
+Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`. The module's OWN chain (`Migrations.Schema`, marker `pkp_schema:<N>` on `phoenix_kit_projects`) is at **V15** (one-off tasks); add the next `vNN_*` step to `up/1` and its `if target < NN` block to `down/1`.
 
 ## Schedule math
 
@@ -587,6 +590,44 @@ additions** (`search_toolbar` form fix + spinner, `TableLocalSearch`,
 `page_action`/`page_section` forwarding, the toolbar `:trailing` slot) —
 until the next core release, run this module's checks with
 `PHOENIX_KIT_PATH=../phoenix_kit`, and bump the core floor at release.
+
+## Quick-add (Todoist-style task composer, V15)
+
+`Components.QuickAddComposer` sits at the foot of a real project's task
+list (not templates), OUTSIDE the sortable container: a dashed "Add a
+task" row → one title input. **Enter / Shift+Enter** add and keep it open,
+empty and focused; **Esc** closes (bound on the input, never the window);
+**Tab** lands on "More options", which opens the full `AssignmentFormLive`
+with the draft carried in `?title=` (or an emit-session `"title"`) —
+Todoist's "Tab opens the full editor" without hijacking Tab. Phoenix-first,
+no hook: a real `phx-submit` form (IME-safe, inputs read-only while in
+flight = no double add), the input's DOM id carries a `seq` the host bumps
+after every add so morphdom re-creates it empty and `phx-mounted={JS.focus()}`
+refocuses (a patch never overwrites the focused element's value — that is
+the only reliable clear), draft tracked via `phx-change`. Host state is one
+map, `@quick_add = %{open, seq, draft, error}`; events `quick_add_open /
+close / change / task` go through the show page's feature gate (`:tasks`)
+and authz (`:create_tasks`) maps like every other write.
+
+**The write** is `Projects.quick_add_assignment/3` →
+`create_task_with_assignment/3`: one transaction that locks the project row
+(`FOR UPDATE`, so concurrent adds never share a bottom `position`), inserts
+the library `Task`, inserts the `Assignment`. NOTHING else inside —
+broadcasts (`:task_created`, `:assignment_created`) fire after commit and
+the activity log stays with the LiveView (it knows the actor). The full
+form's "create new task" mode calls the same helper with its full attrs, so
+the two paths cannot drift.
+
+**One-off tasks.** An assignment has no title of its own — every ad-hoc
+add mints a library `Task` — so a composer would have filled the reusable
+library with "call the client" fifty times over. V15 adds
+`phoenix_kit_project_tasks.ad_hoc` (default false, indexed): quick-adds
+set it, and `list_tasks/1` + `count_tasks/1` take `ad_hoc: :exclude`
+(default — every library surface: list, grouped view, the assignment
+form's picker, the stat tile) `| :only | :all`. The Tasks page's lens
+lists them; "Add to library" (row menu, or the edit form's "One-off task"
+checkbox) promotes one — `projects.task_promoted` in the activity log. The
+assignments pointing at a one-off task are ordinary in every way.
 
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 

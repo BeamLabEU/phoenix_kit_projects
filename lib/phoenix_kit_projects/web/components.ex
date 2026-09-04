@@ -27,6 +27,7 @@ defmodule PhoenixKitProjects.Web.Components do
       import PhoenixKitProjects.Web.Components.SmartLink
       import PhoenixKitProjects.Web.Components.SmartMenuLink
       import PhoenixKitProjects.Web.Components.PopupHost
+      import PhoenixKitProjects.Web.Components.QuickAddComposer
       # Renders @ and # mentions inside any free text, resolved for the
       # viewer looking at it.
       import PhoenixKitWeb.Components.Core.MentionText

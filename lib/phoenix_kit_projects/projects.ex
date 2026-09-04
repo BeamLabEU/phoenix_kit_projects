@@ -96,6 +96,10 @@ defmodule PhoenixKitProjects.Projects do
   ordering. After a reorder, dragged tasks claim `1..N` and appear
   above any still-zero ones; among the still-zero tasks, creation
   order wins.
+
+  Options: `:search`, `:sort_by`/`:sort_dir`, `:limit`, and `:ad_hoc` —
+  `:exclude` (default: the reusable library only), `:only` (one-off tasks
+  minted by a project's quick-add) or `:all`.
   """
   @spec list_tasks(keyword()) :: [Task.t()]
   def list_tasks(opts \\ []) do
@@ -104,6 +108,7 @@ defmodule PhoenixKitProjects.Projects do
     limit_n = Keyword.get(opts, :limit)
 
     Task
+    |> filter_ad_hoc(Keyword.get(opts, :ad_hoc, :exclude))
     |> maybe_search_task(Keyword.get(opts, :search))
     |> task_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
@@ -270,9 +275,18 @@ defmodule PhoenixKitProjects.Projects do
   @spec count_tasks(keyword()) :: non_neg_integer()
   def count_tasks(opts \\ []) do
     Task
+    |> filter_ad_hoc(Keyword.get(opts, :ad_hoc, :exclude))
     |> maybe_search_task(Keyword.get(opts, :search))
     |> repo().aggregate(:count, :uuid)
   end
+
+  # One-off tasks (V15) are library rows only by storage: every library
+  # surface excludes them unless it asks. `:only` is the library page's
+  # "One-off" lens; `:all` is for code that must see every row (usage
+  # counts, deletes).
+  defp filter_ad_hoc(query, :exclude), do: where(query, [t], t.ad_hoc == false)
+  defp filter_ad_hoc(query, :only), do: where(query, [t], t.ad_hoc == true)
+  defp filter_ad_hoc(query, :all), do: query
 
   @doc """
   Returns `%{assignment_uuid => published_comment_count}` for the
@@ -2703,6 +2717,120 @@ defmodule PhoenixKitProjects.Projects do
 
       {:ok, a}
     end
+  end
+
+  @doc """
+  Creates a library task AND its assignment in `project_uuid` in one
+  transaction — the write behind "add a task that is not in the library
+  yet", whether it comes from the full form (a reusable library task) or
+  from a project's quick-add composer (a one-off, `ad_hoc: true` task).
+
+  Inside the transaction: the project row is locked (`FOR UPDATE`) so two
+  people adding at the same time cannot both claim the same bottom
+  `position`; the task is inserted; the assignment is inserted pointing at
+  it. NOTHING else — no broadcast, no activity log, so a rollback can never
+  leave a phantom event on someone else's screen or an audit line for a
+  row that does not exist. The `:task_created` / `:assignment_created`
+  broadcasts fire after commit; activity logging stays with the caller,
+  which knows the actor.
+
+  `assignment_attrs` may carry `"description"`, `"estimated_duration"`,
+  `"estimated_duration_unit"`, the assignee fields, `"status"`,
+  `"priority"`, `"position"`; `"project_uuid"` and `"task_uuid"` are set
+  here. Returns `{:ok, %{task: task, assignment: assignment}}`,
+  `{:error, :task | :assignment, changeset}` on validation failure, or
+  `{:error, :project, :not_found}`.
+  """
+  @spec create_task_with_assignment(uuid(), map(), map()) ::
+          {:ok, %{task: Task.t(), assignment: Assignment.t()}}
+          | {:error, :task | :assignment, Ecto.Changeset.t()}
+          | {:error, :project, :not_found}
+  def create_task_with_assignment(project_uuid, task_attrs, assignment_attrs \\ %{})
+      when is_binary(project_uuid) and is_map(task_attrs) and is_map(assignment_attrs) do
+    result =
+      repo().transaction(fn ->
+        # Serialises concurrent adds to ONE project (and only that one):
+        # the bottom position is read inside the lock, so no two adds can
+        # land on the same number. `next_assignment_position/1` is an
+        # unlocked max() everywhere else — good enough for a form page,
+        # not for a composer built to be hammered.
+        case repo().one(from(p in Project, where: p.uuid == ^project_uuid, lock: "FOR UPDATE")) do
+          nil ->
+            repo().rollback({:project, :not_found})
+
+          %Project{} ->
+            insert_task_then_assignment(project_uuid, task_attrs, assignment_attrs)
+        end
+      end)
+
+    case result do
+      {:ok, %{task: task, assignment: assignment} = created} ->
+        ProjectsPubSub.broadcast_task(:task_created, %{uuid: task.uuid, title: task.title})
+
+        ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+          uuid: assignment.uuid,
+          project_uuid: assignment.project_uuid
+        })
+
+        {:ok, created}
+
+      {:error, {step, reason}} ->
+        {:error, step, reason}
+    end
+  end
+
+  # The locked half of `create_task_with_assignment/3`. Either insert
+  # failing rolls the transaction back with `{step, changeset}`, so the
+  # bare `{:ok, _} =` matches never see an error tuple.
+  defp insert_task_then_assignment(project_uuid, task_attrs, assignment_attrs) do
+    task_attrs = put_default_position(stringify_keys(task_attrs), &next_task_position/0)
+    {:ok, task} = insert_or_rollback(:task, Task.changeset(%Task{}, task_attrs))
+
+    assignment_attrs =
+      assignment_attrs
+      |> stringify_keys()
+      |> Map.put("project_uuid", project_uuid)
+      |> Map.put("task_uuid", task.uuid)
+      |> put_default_position(fn -> next_assignment_position(project_uuid) end)
+
+    {:ok, assignment} =
+      insert_or_rollback(:assignment, Assignment.changeset(%Assignment{}, assignment_attrs))
+
+    %{task: task, assignment: assignment}
+  end
+
+  defp insert_or_rollback(step, changeset) do
+    case repo().insert(changeset) do
+      {:ok, record} -> {:ok, record}
+      {:error, cs} -> repo().rollback({step, cs})
+    end
+  end
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      {k, v} -> {k, v}
+    end)
+  end
+
+  @doc """
+  The quick-add composer's write: a **one-off** task (`ad_hoc: true`, so
+  it never shows in the library) titled `title`, assigned into
+  `project_uuid` at the bottom of the plan with the project's defaults.
+  Trims the title; a blank one is a `:task` changeset error like any other
+  validation failure. Broadcasts after commit, logs nothing — see
+  `create_task_with_assignment/3`.
+  """
+  @spec quick_add_assignment(uuid(), String.t(), keyword()) ::
+          {:ok, %{task: Task.t(), assignment: Assignment.t()}}
+          | {:error, :task | :assignment, Ecto.Changeset.t()}
+          | {:error, :project, :not_found}
+  def quick_add_assignment(project_uuid, title, _opts \\ []) when is_binary(title) do
+    create_task_with_assignment(
+      project_uuid,
+      %{"title" => String.trim(title), "ad_hoc" => true},
+      %{}
+    )
   end
 
   @doc """

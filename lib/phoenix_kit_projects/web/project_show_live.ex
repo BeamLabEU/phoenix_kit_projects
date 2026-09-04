@@ -83,6 +83,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Tight vertical rhythm for short client screens (matches the list pages).
   @default_wrapper_class "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
 
+  # Quick-add composer state (see `Components.QuickAddComposer`): `seq`
+  # bumps after every successful add so the input element is re-created
+  # empty and refocused; `draft` follows the input through phx-change so an
+  # error keeps the text and "More options" can carry it.
+  @quick_add_closed %{open: false, seq: 0, draft: "", error: nil}
+
   # Embedded entry: when nested via `live_render`, params arrives as
   # `:not_mounted_at_router` and `session` carries the project id (plus
   # any `wrapper_class` override). Delegate to the router clause so the
@@ -144,6 +150,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        active_tab: :list,
        gantt_mounted?: false,
        calendar_mounted?: false,
+       quick_add: @quick_add_closed,
        assignments: [],
        deps_by_assignment: %{},
        total_tasks: 0,
@@ -312,6 +319,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               active_tab: active_tab,
               gantt_mounted?: active_tab == :gantt,
               calendar_mounted?: active_tab == :calendar,
+              quick_add: @quick_add_closed,
               editing_duration_uuid: nil,
               start_modal_open: false,
               start_form: to_form(%{"start_at" => default_start_at_local()}),
@@ -406,6 +414,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       active_tab: :list,
       gantt_mounted?: false,
       calendar_mounted?: false,
+      quick_add: @quick_add_closed,
       assignments: [],
       deps_by_assignment: %{},
       total_tasks: 0,
@@ -1203,6 +1212,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "reopen" => :tasks,
     "remove_assignment" => :tasks,
     "reorder_assignments" => :tasks,
+    "quick_add_open" => :tasks,
+    "quick_add_task" => :tasks,
     "review_submission" => :tasks,
     "board_move" => :view_board,
     "open_review" => :tasks,
@@ -1250,6 +1261,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "toggle_tracking" => :update_status,
     "remove_assignment" => :delete_tasks,
     "reorder_assignments" => :edit_tasks,
+    # Adding a task through the composer is the same act as the full
+    # add-task page — same floor.
+    "quick_add_task" => :create_tasks,
     # Placing a task in the plan is the same class of decision as
     # reordering one — it changes where the work sits, not what it is.
     "review_submission" => :edit_tasks,
@@ -1636,6 +1650,72 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              |> assign(editing_duration_uuid: nil)
              |> put_flash(:error, error_summary(cs, gettext("Could not update duration.")))}
         end
+    end
+  end
+
+  # ── Quick-add composer ───────────────────────────────────────────
+  # State lives in `@quick_add` (see `Components.QuickAddComposer`).
+  # `quick_add_task` is gated (feature `:tasks`) AND authorized
+  # (`:create_tasks`) through the two maps above like every other write.
+
+  defp gated_handle_event("quick_add_open", _params, socket) do
+    {:noreply, update(socket, :quick_add, &%{&1 | open: true, seq: &1.seq + 1, error: nil})}
+  end
+
+  defp gated_handle_event("quick_add_close", _params, socket) do
+    {:noreply, assign(socket, quick_add: @quick_add_closed)}
+  end
+
+  defp gated_handle_event("quick_add_change", %{"title" => title}, socket)
+       when is_binary(title) do
+    {:noreply, update(socket, :quick_add, &%{&1 | draft: title})}
+  end
+
+  defp gated_handle_event("quick_add_change", _params, socket), do: {:noreply, socket}
+
+  defp gated_handle_event("quick_add_task", params, socket) do
+    title = params |> Map.get("title", "") |> String.trim()
+    project = socket.assigns.project
+
+    case Projects.quick_add_assignment(project.uuid, title) do
+      {:ok, %{task: task, assignment: assignment}} ->
+        Activity.log("projects.assignment_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: assignment.uuid,
+          metadata: %{"project" => project.name, "new_task" => task.title, "quick_add" => true}
+        )
+
+        # Reload now rather than waiting for our own broadcast, so the reply
+        # that clears the input already shows the row — no flicker. The
+        # broadcast reload that follows is a harmless repeat.
+        {:noreply,
+         socket
+         |> update(:quick_add, &%{&1 | seq: &1.seq + 1, draft: "", error: nil})
+         |> load_assignments()
+         |> load_labels()}
+
+      {:error, :task, _changeset} ->
+        {:noreply,
+         update(
+           socket,
+           :quick_add,
+           &%{&1 | draft: title, error: gettext("Give the task a title.")}
+         )}
+
+      {:error, _step, _reason} ->
+        Activity.log_failed("projects.assignment_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          metadata: %{"project" => project.name, "new_task" => title, "quick_add" => true}
+        )
+
+        {:noreply,
+         update(
+           socket,
+           :quick_add,
+           &%{&1 | draft: title, error: gettext("Could not add the task.")}
+         )}
     end
   end
 
@@ -3934,6 +4014,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           </div>
         </div>
       <% end %>
+
+      <%!-- Quick-add composer (Todoist-style). Deliberately OUTSIDE the
+           sortable container above: a drag or a patched row must never
+           remount the input. Real projects only — a template's tasks are
+           library tasks by design, and the composer mints one-off ones.
+           Feature-gated on render like the "Add task" button; the write
+           itself is authorized in the event maps. --%>
+      <.quick_add_composer
+        :if={@fx.tasks and not @is_template}
+        project_uuid={@project.uuid}
+        state={@quick_add}
+        embed_mode={@embed_mode}
+      />
       </div>
 
       <%!-- Gantt tab — rendered in every context (templates excepted),

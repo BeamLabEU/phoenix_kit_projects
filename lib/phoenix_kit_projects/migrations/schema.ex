@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 14
+  @current_version 15
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -111,6 +111,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v12_public_board(p)
     v13_submission_attachments(p)
     v14_review_status(p)
+    v15_ad_hoc_tasks(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -135,6 +136,15 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 15 do
+      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_tasks_ad_hoc_idx")
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_tasks
+        DROP COLUMN IF EXISTS ad_hoc
+      """)
+    end
 
     if target < 14 do
       execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_pending_review_idx")
@@ -945,6 +955,27 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_portal_submissions
     ADD COLUMN IF NOT EXISTS submitted_by_uuid UUID
+    """)
+  end
+
+  # V15 — one-off tasks. An assignment has no title of its own: adding an
+  # ad-hoc task to a project has always minted a library `Task` first, so a
+  # quick-add composer (Todoist-style, 2026-09) would fill the reusable
+  # library with "call the client" fifty times over. The flag keeps those
+  # rows out of every library surface (list, pickers, counts) by default
+  # while the assignment that points at them works exactly like any other.
+  # Promotion is a checkbox on the task form; nothing is ever deleted.
+  defp v15_ad_hoc_tasks(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_tasks
+    ADD COLUMN IF NOT EXISTS ad_hoc BOOLEAN NOT NULL DEFAULT false
+    """)
+
+    # The library list and pickers filter on it on every load; one-off
+    # rows are expected to outnumber library rows on a busy install.
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_tasks_ad_hoc_idx
+      ON #{p}phoenix_kit_project_tasks (ad_hoc)
     """)
   end
 

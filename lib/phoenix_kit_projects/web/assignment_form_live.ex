@@ -60,6 +60,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     {:ok, socket}
   end
 
+  defp prefill_title(params) do
+    case Map.get(params, "title") do
+      title when is_binary(title) -> title |> String.trim() |> String.slice(0, 255)
+      _ -> ""
+    end
+  end
+
   # The hub gate map for this form's project. Placeholder projects (the
   # not-found render window) fall back to catalog defaults.
   defp assign_fx(socket) do
@@ -287,10 +294,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           assignment: assignment,
           portal_review_images: [],
           live_action: :new,
-          task_mode: "existing",
+          # A `title` param (the quick-add composer's "More options", or an
+          # emit-session `"title"`) lands the form in "new task" mode with
+          # the typed title carried over — nothing is created until Save.
+          task_mode: if(prefill_title(params) == "", do: "existing", else: "new"),
           assign_type: "",
           selected_task_uuid: nil,
-          new_task_title: "",
+          new_task_title: prefill_title(params),
           save_as_template: true,
           assignment_deps: [],
           available_assignment_deps: [],
@@ -1021,7 +1031,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # Library task + assignment in ONE transaction
+  # (`Projects.create_task_with_assignment/3`) — the same write the
+  # quick-add composer uses, here with the form's full attrs and a
+  # reusable (not one-off) task. Nothing is broadcast or logged before
+  # the commit; on failure neither row exists.
   defp create_task_and_assign(socket, attrs, title) do
+    project = socket.assigns.project
+
     task_attrs =
       %{
         "title" => title,
@@ -1031,30 +1048,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       }
       |> maybe_add_default_assignee(attrs)
 
-    case Projects.create_task(task_attrs) do
-      {:ok, task} ->
-        create_assignment_for_new_task(socket, attrs, task, title)
-
-      {:error, _cs} ->
-        Activity.log_failed("projects.task_created",
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "task",
-          metadata: %{"project_uuid" => socket.assigns.project.uuid}
-        )
-
-        {:noreply,
-         put_flash(socket, :error, gettext("Could not create task. Title may already exist."))}
-    end
-  end
-
-  defp create_assignment_for_new_task(socket, attrs, task, title) do
-    assignment_attrs =
-      attrs
-      |> Map.put("task_uuid", task.uuid)
-      |> Map.put("project_uuid", socket.assigns.project.uuid)
-
-    case Projects.create_assignment(assignment_attrs) do
-      {:ok, assignment} ->
+    case Projects.create_task_with_assignment(project.uuid, task_attrs, attrs) do
+      {:ok, %{assignment: assignment}} ->
         apply_pending_labels(socket, assignment)
 
         {flash_kind, flash_msg} =
@@ -1068,7 +1063,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           resource_type: "assignment",
           resource_uuid: assignment.uuid,
           target_uuid: Activity.assignee_target_uuid(assignment),
-          metadata: %{"project" => socket.assigns.project.name, "new_task" => title}
+          metadata: %{"project" => project.name, "new_task" => title}
         )
 
         flush_pending_deps(socket, assignment)
@@ -1076,14 +1071,29 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply,
          socket
          |> put_flash(flash_kind, flash_msg)
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+         |> WebHelpers.navigate_after_save(Paths.project(project.uuid),
            kind: :assignment,
            record: assignment,
            action: :create
          )}
 
-      {:error, cs} ->
+      {:error, :task, _cs} ->
+        Activity.log_failed("projects.task_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          metadata: %{"project_uuid" => project.uuid}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not create task."))}
+
+      {:error, :assignment, cs} ->
         {:noreply, on_save_error(socket, cs)}
+
+      {:error, :project, :not_found} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Project not found."))
+         |> WebHelpers.close_or_navigate(Paths.projects())}
     end
   end
 

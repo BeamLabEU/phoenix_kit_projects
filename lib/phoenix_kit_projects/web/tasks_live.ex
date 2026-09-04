@@ -28,7 +28,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     params: [
       search: [default: "", url_key: "q"],
       sort_by: [default: :updated_at, cast: :atom, in: @sort_fields, url_key: "sort"],
-      sort_dir: [default: :desc, cast: :atom, in: [:asc, :desc], url_key: "dir"]
+      sort_dir: [default: :desc, cast: :atom, in: [:asc, :desc], url_key: "dir"],
+      # The library vs the one-off tasks that projects' quick-add composers
+      # mint (V15). The one-off lens exists so those rows can be found and
+      # promoted; every other library surface hides them.
+      lens: [default: :library, cast: :atom, in: [:library, :one_off], url_key: "lens"]
     ]
 
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
@@ -134,6 +138,9 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     socket |> assign(loaded_count: @per_batch) |> load_tasks()
   end
 
+  defp lens_filter(:one_off), do: :only
+  defp lens_filter(_), do: :exclude
+
   # Loads only what the current view actually renders, so flipping
   # between modes doesn't pay for the unused query each time.
   defp load_tasks(socket) do
@@ -165,12 +172,15 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   defp load_list_tasks(socket) do
     search = socket.assigns.search
-    total = Projects.count_tasks()
+    ad_hoc = lens_filter(socket.assigns[:lens])
+    one_off_count = Projects.count_tasks(ad_hoc: :only)
+    total = Projects.count_tasks(ad_hoc: ad_hoc)
     local_search? = total <= @local_search_threshold
 
     base_opts = [
       sort_by: socket.assigns.sort_by,
-      sort_dir: socket.assigns.sort_dir
+      sort_dir: socket.assigns.sort_dir,
+      ad_hoc: ad_hoc
     ]
 
     # Local mode: full set rendered, search narrowing is the client
@@ -199,8 +209,10 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       groups: [],
       standalone: [],
       total_count: total,
+      one_off_count: one_off_count,
       local_search?: local_search?,
-      filtered_count: if(local_search?, do: total, else: Projects.count_tasks(search: search)),
+      filtered_count:
+        if(local_search?, do: total, else: Projects.count_tasks(search: search, ad_hoc: ad_hoc)),
       usage:
         if("uses" in visible or "last_used" in visible,
           do: Projects.task_usage(uuids),
@@ -243,6 +255,47 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   def handle_event("set_view", _params, socket), do: {:noreply, socket}
+
+  def handle_event("set_lens", %{"lens" => lens}, socket) when lens in ["library", "one_off"] do
+    {:noreply, push_url_state(socket, lens: String.to_existing_atom(lens))}
+  end
+
+  def handle_event("set_lens", _params, socket), do: {:noreply, socket}
+
+  # "Add to library": a one-off task becomes an ordinary reusable one. The
+  # assignments pointing at it are untouched — only the library's view of
+  # the row changes.
+  def handle_event("promote_task", %{"uuid" => uuid}, socket) do
+    case Projects.get_task(uuid) do
+      %TaskSchema{ad_hoc: true} = task ->
+        case Projects.update_task(task, %{"ad_hoc" => false}) do
+          {:ok, promoted} ->
+            Activity.log("projects.task_promoted",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "task",
+              resource_uuid: promoted.uuid,
+              metadata: %{"title" => promoted.title}
+            )
+
+            socket = put_flash(socket, :info, gettext("Task added to the library."))
+
+            # Promoting the last one-off would leave the lens on an empty
+            # set (and the empty state hides the strip) — fall back to the
+            # library, where the promoted row now is.
+            if socket.assigns.lens == :one_off and Projects.count_tasks(ad_hoc: :only) == 0 do
+              {:noreply, push_url_state(socket, lens: :library)}
+            else
+              {:noreply, load_tasks(socket)}
+            end
+
+          {:error, _cs} ->
+            {:noreply, put_flash(socket, :error, gettext("Could not update the task."))}
+        end
+
+      _ ->
+        {:noreply, put_flash(socket, :error, gettext("Task not found."))}
+    end
+  end
 
   # See projects_live for the rationale on collapsing <2 uuids to :all.
   def handle_event("open_reorder_modal", params, socket) do
@@ -642,6 +695,41 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               data-local-search-enabled={to_string(@local_search?)}
               class="flex flex-col gap-2"
             >
+              <%!-- Library | One-off lens. Rendered only while one-off
+                   tasks exist (or the lens is already on them) — a fresh
+                   install has nothing to switch between. --%>
+              <div
+                :if={@one_off_count > 0 or @lens == :one_off}
+                class="flex flex-wrap items-center gap-1 text-sm"
+                role="tablist"
+                aria-label={gettext("Task library lens")}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={to_string(@lens == :library)}
+                  phx-click="set_lens"
+                  phx-value-lens="library"
+                  class={["btn btn-xs", if(@lens == :library, do: "btn-active", else: "btn-ghost")]}
+                >
+                  {gettext("Library")}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={to_string(@lens == :one_off)}
+                  phx-click="set_lens"
+                  phx-value-lens="one_off"
+                  class={["btn btn-xs gap-1", if(@lens == :one_off, do: "btn-active", else: "btn-ghost")]}
+                >
+                  {gettext("One-off")}
+                  <span class="badge badge-ghost badge-xs">{@one_off_count}</span>
+                </button>
+                <span :if={@lens == :one_off} class="text-xs text-base-content/50 ml-1">
+                  {gettext("Added from a project's quick-add; hidden from pickers until added to the library.")}
+                </span>
+              </div>
+
               <.bulk_actions_toolbar
                 on_open_reorder="open_reorder_modal"
                 reorder_dialog_id="reorder-modal"
@@ -862,6 +950,9 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             >
               {TaskSchema.localized_title(task, @lang)}
             </.smart_link>
+            <span :if={task.ad_hoc} class="badge badge-outline badge-xs ml-1 align-middle">
+              {gettext("one-off")}
+            </span>
             <% desc = TaskSchema.localized_description(task, @lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md font-normal">{desc}</div>
             <% deps = Map.get(@deps_by_task, task.uuid, []) %>
@@ -916,6 +1007,13 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                 embed_mode={@embed_mode}
                 icon="hero-pencil"
                 label={gettext("Edit")}
+              />
+              <.table_row_menu_button
+                :if={task.ad_hoc}
+                phx-click="promote_task"
+                phx-value-uuid={task.uuid}
+                icon="hero-bookmark"
+                label={gettext("Add to library")}
               />
               <.table_row_menu_divider />
               <.table_row_menu_button
