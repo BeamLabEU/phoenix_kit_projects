@@ -9,8 +9,7 @@ A PhoenixKit plugin module for project + task management. Implements `PhoenixKit
 - **Projects** — list of projects (filterable by status). Its subtab matcher is a regex (landing OR `list/…`) because tabs match independently and a `:prefix` on `projects` would light it on Tasks/Templates too.
 - **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee). A **Library | One-off** lens (URL `lens=`) appears once one-off tasks exist — see "Quick-add" below.
 - **Templates** — reusable project templates cloned into real projects
-
-**The Overview dashboard has no admin route any more** — the boss wants module dashboards built in `phoenix_kit_dashboards` (this module feeds it widgets, see "Dashboard widgets"). `OverviewLive` is KEPT as an embeddable LiveView for host apps (the root view in `dev_docs/embedding_emit.md`); its tests mount it on a test-only `/overview` route. What it renders, for anyone porting the rest into widgets:
+- **Overview** — the LAST subtab (`projects/overview`; the boss: "an overview and a dashboard are different things, both have their value"). Its pieces are also dashboards-module widgets (see "Dashboard widgets") for anyone who wants them on a `phoenix_kit_dashboards` board, and `OverviewLive` stays the embeddable root view for host apps (`dev_docs/embedding_emit.md`). What it renders:
 
 - active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker, plus a **"Late only" lens** in its toolbar — bars of late running projects only, same `summary.late` tier as the cards; count-badged, hidden at 0, kept while active). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions; **only RELEVANT people are offered** — someone at least one non-template assignment points at directly / via a team / via a department in their scope, and the per-project Calendar tab narrows that to its own rendered tree via `assignee_search_scope`) plus quick-adders for **Me** (hidden without a staff person) and **Unassigned** (a dashed chip with live count; hidden while the count is 0) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count; the whole funnel hides while the UNFILTERED walk has zero items — a fresh install has nothing to filter) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows; hidden while the raw walk has no late items, kept while active). The raw walk is cached in assigns; filter flips are in-memory
 
@@ -647,8 +646,8 @@ widgets: `projects.board` (all projects, coloured by status — grid/counts),
 projects by nearest weekend-aware `planned_end`, overdue flagged — built on
 `project_summaries/1`), `projects.status` / `projects.schedule` (one project's
 status / estimate — detailed/simple), `projects.tasks` (a project's ongoing
-tasks — detailed/compact), and — since the Overview page lost its admin route
-(2026-09) — the Overview's own pieces: `projects.running` (the Running list in
+tasks — detailed/compact), and (2026-09) the Overview's own pieces, so a
+dashboards-module board can carry them too: `projects.running` (the Running list in
 `RunningTiers` order with tier + progress; compact/cards; `late_only`),
 `projects.upcoming` (setup + scheduled / recently completed),
 `projects.calendar` (the Tasks/Projects calendar: the same
@@ -660,8 +659,8 @@ day popup or click-to-open: a widget is a LiveComponent, and the calendar's
 `on_*` callbacks message the parent LiveView — the dashboards host — so none
 are wired (nesting a LiveView instead was rejected by the panel: refresh ticks
 remount it, no socket for `live_render` in a component, no scope across the
-session boundary). With `projects.my_tasks` and `projects.workload` (the old
-stat tiles), a system-scope dashboard can stand in for the page. Every view
+session boundary). With `projects.my_tasks` and `projects.workload` (the
+stat tiles), a system-scope dashboard can mirror the page. Every view
 declares its own `min_size` (the improved dashboards widget API), and the
 shared frame renders **compact** at a single row so minimum boxes fit
 without scrollbars.

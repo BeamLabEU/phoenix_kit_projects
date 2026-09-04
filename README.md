@@ -14,7 +14,7 @@ A [PhoenixKit](https://github.com/BeamLabEU/phoenix_kit) plugin for **project + 
 - **Schedule math** — planned vs. projected end with velocity tracking; per-task `counts_weekends` override
 - **Timeline & Calendar views** — every project has List/Timeline/Calendar tabs over one shared schedule walk (`ScheduleLayout`)
 - **Quick-add** — a Todoist-style composer under a project's task list: Enter adds and keeps going, Esc closes, "More options" opens the full form with the title carried over; quick-added tasks are one-off (hidden from the library until promoted)
-- **Dashboards** — the module's landing page is the project list; its dashboard lives in `phoenix_kit_dashboards` through the widgets this module contributes
+- **Overview & dashboards** — the landing page is the project list, the Overview (running projects, calendar, my tasks) is the last subtab, and the same pieces are available as widgets for `phoenix_kit_dashboards` boards
 - **Assignee filters** — a Filters panel on both calendars: multi-person typeahead (DB-paged), Unassigned lens, personal-only and overdue-only refinements, with inherited team/department semantics (`Assignees`)
 - **Dashboard widgets** — seven widgets for `phoenix_kit_dashboards` (board, workload, my tasks, deadlines, per-project status/schedule/tasks), duck-typed and crash-isolated
 - **Mass-assignment guard** — `completed_by_uuid` / `completed_at` can only be set through the server-trusted `status_changeset/2`

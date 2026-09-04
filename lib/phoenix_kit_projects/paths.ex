@@ -7,11 +7,14 @@ defmodule PhoenixKitProjects.Paths do
 
   @doc """
   The module's landing page — the project list (since 2026-09; it used to be
-  the Overview dashboard, which now lives in `phoenix_kit_dashboards` as
-  widgets). Same value as `projects/0`.
+  the Overview). Same value as `projects/0`.
   """
   @spec index() :: String.t()
   def index, do: Routes.path(@base)
+
+  @doc "The Overview — the read-only picture of every project; the last subtab."
+  @spec overview() :: String.t()
+  def overview, do: Routes.path("#{@base}/overview")
 
   @doc "Projects settings page (global, under the core Settings area)."
   @spec settings() :: String.t()

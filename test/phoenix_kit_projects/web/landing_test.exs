@@ -35,11 +35,23 @@ defmodule PhoenixKitProjects.Web.LandingTest do
         flunk("no tab #{inspect(id)}")
     end
 
-    test "parent and Projects subtab land on the list; no Overview tab" do
+    test "parent and Projects subtab land on the list; the Overview is the last subtab" do
       assert {PhoenixKitProjects.Web.ProjectsLive, :index} = tab(:admin_projects).live_view
       assert {PhoenixKitProjects.Web.ProjectsLive, :index} = tab(:admin_projects_list).live_view
       assert tab(:admin_projects_list).path == "projects"
-      refute Enum.any?(PhoenixKitProjects.admin_tabs(), &(&1.id == :admin_projects_overview))
+
+      overview = tab(:admin_projects_overview)
+      assert overview.path == "projects/overview"
+      assert {PhoenixKitProjects.Web.OverviewLive, :index} = overview.live_view
+
+      visible =
+        PhoenixKitProjects.admin_tabs()
+        |> Enum.filter(&(&1.parent == :admin_projects and &1.visible != false))
+        |> Enum.sort_by(& &1.priority)
+        |> Enum.map(& &1.id)
+
+      assert List.last(visible) == :admin_projects_overview
+      assert hd(visible) == :admin_projects_list
 
       legacy = tab(:admin_projects_list_legacy)
       assert legacy.visible == false
@@ -57,6 +69,7 @@ defmodule PhoenixKitProjects.Web.LandingTest do
       assert Tab.matches_path?(t, "/admin/projects/list/0199-abc/gantt?tab=x")
 
       refute Tab.matches_path?(t, "/admin/projects/tasks")
+      refute Tab.matches_path?(t, "/admin/projects/overview")
       refute Tab.matches_path?(t, "/admin/projects/templates/0199-abc")
       refute Tab.matches_path?(t, "/admin/projectsx")
       refute Tab.matches_path?(t, "/admin/projects/listing")

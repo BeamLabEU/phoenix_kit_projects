@@ -504,11 +504,10 @@ defmodule PhoenixKitProjects do
         group: :admin_modules,
         subtab_display: :when_active,
         highlight_with_subtabs: false,
-        # The landing page IS the project list (boss, 2026-09-04): the
-        # module's dashboard moved to `phoenix_kit_dashboards` as widgets
-        # (see `DashboardWidgets`). `OverviewLive` stays as an embeddable
-        # LiveView for host apps (dev_docs/embedding_emit.md) but has no
-        # admin route any more.
+        # The landing page IS the project list (boss, 2026-09-04). The
+        # Overview keeps its own value next to a dashboards-module board
+        # (boss, 2026-09-05: "an overview and a dashboard are different
+        # things") — it lives on as the LAST subtab, at `projects/overview`.
         live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
       }
     ]
@@ -559,6 +558,23 @@ defmodule PhoenixKitProjects do
         match: :prefix,
         parent: :admin_projects,
         live_view: {PhoenixKitProjects.Web.TasksLive, :index}
+      },
+      # Last on purpose: the list is where the work is, the Overview is
+      # the read-only picture of it. Its pieces are also dashboards-module
+      # widgets (`DashboardWidgets`) for anyone who wants them on a board.
+      %Tab{
+        id: :admin_projects_overview,
+        label: "Overview",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-home",
+        path: "projects/overview",
+        priority: 664,
+        level: :admin,
+        permission: module_key(),
+        match: :prefix,
+        parent: :admin_projects,
+        live_view: {PhoenixKitProjects.Web.OverviewLive, :index}
       }
     ]
 
@@ -574,7 +590,7 @@ defmodule PhoenixKitProjects do
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
         path: "projects/list",
-        priority: 664,
+        priority: 665,
         level: :admin,
         permission: module_key(),
         match: :exact,

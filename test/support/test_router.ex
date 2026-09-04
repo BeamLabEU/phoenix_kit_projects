@@ -32,10 +32,8 @@ defmodule PhoenixKitProjects.Test.Router do
       # redirects there (project pages keep `list/:id/…`).
       live("/", ProjectsLive, :index)
       live("/list", ListRedirectLive, :index)
-      # `OverviewLive` has NO admin route in production any more (the
-      # dashboard moved to phoenix_kit_dashboards as widgets) but stays an
-      # embeddable LiveView for host apps — this test-only path keeps its
-      # suite driving it through `live/2`.
+      # The Overview is the last subtab (it also stays embeddable for host
+      # apps).
       live("/overview", OverviewLive, :index)
 
       live("/tasks", TasksLive, :index)
