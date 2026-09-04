@@ -13,6 +13,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     L10n,
     Paths,
     Projects,
+    RunningTiers,
     ScheduleLayout
   }
 
@@ -24,16 +25,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   require Logger
 
   # How many "Running" projects to show on the dashboard. The count
-  # badge on "View all →" reveals when the total exceeds this cap.
-  @running_display_limit 10
-  # Fallback "late" threshold (days since `started_at`) when a project
-  # has no estimated durations — without sum-of-durations we can't
-  # compute a real planned_end. Projects with durations use planned_end
-  # directly (started_at + total estimated hours), per the same logic
-  # the project show page uses.
-  @late_fallback_days 14
-  # Progress percentage (>=) for the "near done" tier on the dashboard.
-  @near_done_threshold_pct 75
+  # badge on "View all →" reveals when the total exceeds this cap. The
+  # tiering itself lives in `RunningTiers`, shared with the dashboard
+  # widget so both rank projects identically.
+  @running_display_limit RunningTiers.default_display_limit()
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
@@ -176,12 +171,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     all_summaries =
       active_projects
       |> Enum.map(&Projects.project_tree_summary/1)
-      |> Enum.map(fn s ->
-        tier = running_tier(s, now)
-        s |> Map.put(:tier, tier) |> Map.put(:late, tier == :late)
-      end)
+      |> Enum.map(&RunningTiers.tag(&1, now))
 
-    {top_summaries, total_active} = prioritize_running(all_summaries, today, now)
+    {top_summaries, total_active} =
+      RunningTiers.prioritize(all_summaries, today, now, @running_display_limit)
 
     # Read + assign the animation/marker config BEFORE the Tasks-mode build
     # below — apply_task_filter derives the late-marker class from it.
@@ -452,101 +445,6 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       "When a project runs past its planned end, that overdue stretch is marked with diagonal stripes — the longer the striped part, the more overdue the project."
     )
   end
-
-  # Sorts running-project summaries into four importance tiers and
-  # caps to @running_display_limit. Returns {capped_list, total_count}.
-  #
-  # Tier 0 ("late"):    started ≥ @late_threshold_days ago AND progress < 100.
-  #                     Within tier, oldest-started first (most stalled).
-  # Tier 1 ("near done"): progress ≥ @near_done_threshold_pct, not Tier 0.
-  #                     Within tier, highest progress first.
-  # Tier 2 ("rest"):    has tasks, not late, not near-done. Most-recently-started first.
-  # Tier 3 ("empty"):   total == 0 tasks. Sinks to the bottom regardless of age —
-  #                     these projects can't show meaningful progress and would
-  #                     otherwise outrank real work via the recency sort.
-  defp prioritize_running(summaries, today, now) do
-    sorted =
-      summaries
-      |> Enum.map(&{running_sort_key(&1, today, now), &1})
-      |> Enum.sort_by(fn {key, _} -> key end)
-      |> Enum.map(fn {_, s} -> s end)
-
-    {Enum.take(sorted, @running_display_limit), length(summaries)}
-  end
-
-  # Template-facing tier label for a summary row. Late = past
-  # `planned_end` (sum of estimated durations from started_at) with
-  # progress < 100. When a project has no durations we fall back to
-  # the 14-day age heuristic since there's no real budget to compare
-  # against.
-  defp running_tier(summary, now) do
-    %{project: project, progress_pct: pct, total: total, planned_end: planned_end} = summary
-
-    cond do
-      total == 0 ->
-        :empty
-
-      late?(planned_end, project, now, pct) ->
-        :late
-
-      pct >= @near_done_threshold_pct ->
-        :near_done
-
-      true ->
-        :on_track
-    end
-  end
-
-  defp late?(_planned_end, _project, _now, pct) when pct >= 100, do: false
-
-  defp late?(%DateTime{} = planned_end, _project, now, _pct),
-    do: DateTime.compare(now, planned_end) == :gt
-
-  defp late?(nil, %{started_at: %DateTime{} = started_at}, now, _pct),
-    do: DateTime.diff(now, started_at, :second) / 86_400 >= @late_fallback_days
-
-  defp late?(_, _, _, _), do: false
-
-  defp running_sort_key(summary, today, now) do
-    %{project: project, progress_pct: pct, total: total, tier: tier} = summary
-
-    days_running =
-      case project.started_at do
-        %DateTime{} = dt -> Date.diff(today, DateTime.to_date(dt))
-        _ -> 0
-      end
-
-    case tier do
-      :late ->
-        # Tier 0: most overdue first. Use seconds-past-planned_end when
-        # available, else fall back to age. Negated for ascending sort.
-        overdue_seconds = overdue_seconds(summary, now)
-        {0, -overdue_seconds, project.uuid}
-
-      :near_done ->
-        # Tier 1: highest progress first.
-        {1, -pct, project.uuid}
-
-      :on_track ->
-        # Tier 2: most-recently-started first.
-        {2, days_running, project.uuid}
-
-      :empty ->
-        # Tier 3: empty projects sink to the bottom.
-        _ = total
-        {3, days_running, project.uuid}
-    end
-  end
-
-  defp overdue_seconds(%{planned_end: %DateTime{} = planned_end}, now) do
-    DateTime.diff(now, planned_end, :second)
-  end
-
-  defp overdue_seconds(%{project: %{started_at: %DateTime{} = started_at}}, now) do
-    DateTime.diff(now, started_at, :second)
-  end
-
-  defp overdue_seconds(_, _now), do: 0
 
   # Running card tabs: List plus the two calendars (Tasks / Projects), the
   # modes promoted to first-class tabs. The calendar is lazy-mounted on first

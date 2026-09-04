@@ -9,10 +9,13 @@ defmodule PhoenixKitProjects.DashboardWidgetsTest do
 
   test "every widget definition is well-formed and its component is loadable" do
     widgets = DashboardWidgets.all()
-    assert length(widgets) == 7
+    assert length(widgets) == 10
 
     keys = Enum.map(widgets, & &1.key)
     assert "projects.board" in keys
+    assert "projects.running" in keys
+    assert "projects.upcoming" in keys
+    assert "projects.calendar" in keys
     assert "projects.status" in keys
     assert "projects.tasks" in keys
     assert "projects.schedule" in keys

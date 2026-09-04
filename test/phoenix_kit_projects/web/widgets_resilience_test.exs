@@ -16,12 +16,15 @@ defmodule PhoenixKitProjects.Web.WidgetsResilienceTest do
   import Phoenix.LiveViewTest, only: [render_component: 2]
 
   alias PhoenixKitProjects.Web.Widgets.{
+    CalendarWidget,
     DeadlinesWidget,
     MyTasksWidget,
     OngoingTasksWidget,
     ProjectsBoardWidget,
     ProjectScheduleWidget,
     ProjectStatusWidget,
+    RunningWidget,
+    UpcomingWidget,
     WorkloadWidget
   }
 
@@ -31,7 +34,10 @@ defmodule PhoenixKitProjects.Web.WidgetsResilienceTest do
     OngoingTasksWidget,
     ProjectsBoardWidget,
     ProjectScheduleWidget,
+    CalendarWidget,
     ProjectStatusWidget,
+    RunningWidget,
+    UpcomingWidget,
     WorkloadWidget
   ]
 

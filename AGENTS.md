@@ -631,7 +631,7 @@ assignments pointing at a one-off task are ordinary in every way.
 
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 
-Projects contributes seven widgets to the dashboards module via the duck-typed
+Projects contributes ten widgets to the dashboards module via the duck-typed
 `PhoenixKitProjects.phoenix_kit_widgets/0` (delegates to
 `PhoenixKitProjects.DashboardWidgets.all/0`) — a **one-way** contract: projects
 has no dependency on `phoenix_kit_dashboards`; its Registry discovers the
@@ -647,9 +647,24 @@ widgets: `projects.board` (all projects, coloured by status — grid/counts),
 projects by nearest weekend-aware `planned_end`, overdue flagged — built on
 `project_summaries/1`), `projects.status` / `projects.schedule` (one project's
 status / estimate — detailed/simple), `projects.tasks` (a project's ongoing
-tasks — detailed/compact). Every view declares its own `min_size` (the improved
-dashboards widget API), and the shared frame renders **compact** at a single
-row so minimum boxes fit without scrollbars.
+tasks — detailed/compact), and — since the Overview page lost its admin route
+(2026-09) — the Overview's own pieces: `projects.running` (the Running list in
+`RunningTiers` order with tier + progress; compact/cards; `late_only`),
+`projects.upcoming` (setup + scheduled / recently completed),
+`projects.calendar` (the Tasks/Projects calendar: the same
+`ScheduleLayout` walk + `CalendarDisplay` event builders + nested
+`PhoenixLiveCalendar.CalendarComponent`, which pages months on its own and
+keeps that across refresh ticks under its stable id; month/agenda;
+`mode`/`only_mine`/`late_only`). The calendar widget has NO assignee panel,
+day popup or click-to-open: a widget is a LiveComponent, and the calendar's
+`on_*` callbacks message the parent LiveView — the dashboards host — so none
+are wired (nesting a LiveView instead was rejected by the panel: refresh ticks
+remount it, no socket for `live_render` in a component, no scope across the
+session boundary). With `projects.my_tasks` and `projects.workload` (the old
+stat tiles), a system-scope dashboard can stand in for the page. Every view
+declares its own `min_size` (the improved dashboards widget API), and the
+shared frame renders **compact** at a single row so minimum boxes fit
+without scrollbars.
 
 Conventions for these widget components:
 - **Static root:** a stateful LiveComponent's `render/1` must return a single
