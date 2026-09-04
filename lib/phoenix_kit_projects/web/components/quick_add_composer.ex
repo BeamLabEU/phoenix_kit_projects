@@ -40,7 +40,9 @@ defmodule PhoenixKitProjects.Web.Components.QuickAddComposer do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitProjects.Web.Components.SmartLink
+  import PhoenixKitWeb.Components.Core.Button, only: [button: 1]
   import PhoenixKitWeb.Components.Core.Icon
+  import PhoenixKitWeb.Components.Core.Input, only: [input: 1]
 
   alias Phoenix.LiveView.JS
   alias PhoenixKitProjects.Paths
@@ -53,14 +55,19 @@ defmodule PhoenixKitProjects.Web.Components.QuickAddComposer do
   def quick_add_composer(assigns) do
     ~H"""
     <div id={@id} class="mt-2">
-      <button
+      <%!-- Core components throughout (button / input): the same look and
+           the same small fixes (feedback wrapper, error rendering) as every
+           other form in the kit. --%>
+      <.button
         :if={not @state.open}
         type="button"
+        variant="ghost"
+        size="sm"
         phx-click="quick_add_open"
-        class="btn btn-ghost btn-sm w-full justify-start border border-dashed border-base-300 text-base-content/60 hover:text-base-content hover:border-base-content/40"
+        class="w-full justify-start border border-dashed border-base-300 text-base-content/60 hover:text-base-content hover:border-base-content/40"
       >
         <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add a task")}
-      </button>
+      </.button>
 
       <form
         :if={@state.open}
@@ -69,12 +76,13 @@ defmodule PhoenixKitProjects.Web.Components.QuickAddComposer do
         phx-change="quick_add_change"
         class="flex flex-col gap-1"
       >
-        <div class="flex items-center gap-2">
-          <input
+        <div class="flex items-start gap-2">
+          <.input
             id={"#{@id}-title-#{@state.seq}"}
             type="text"
             name="title"
             value={@state.draft}
+            errors={List.wrap(@state.error)}
             placeholder={gettext("Task title — Enter adds it and keeps going")}
             aria-label={gettext("New task title")}
             autocomplete="off"
@@ -82,11 +90,12 @@ defmodule PhoenixKitProjects.Web.Components.QuickAddComposer do
             phx-keydown="quick_add_close"
             phx-key="Escape"
             phx-debounce="150"
-            class={["input input-sm input-bordered flex-1", @state.error && "input-error"]}
+            wrapper_class="flex-1"
+            class="input-sm"
           />
-          <button type="submit" class="btn btn-primary btn-sm" phx-disable-with={gettext("Adding…")}>
+          <.button type="submit" size="sm" phx-disable-with={gettext("Adding…")}>
             {gettext("Add")}
-          </button>
+          </.button>
           <.smart_link
             navigate={more_options_path(@project_uuid, @state.draft)}
             emit={
@@ -99,16 +108,17 @@ defmodule PhoenixKitProjects.Web.Components.QuickAddComposer do
           >
             {gettext("More options")}
           </.smart_link>
-          <button
+          <.button
             type="button"
+            variant="ghost"
+            size="sm"
             phx-click="quick_add_close"
-            class="btn btn-ghost btn-sm btn-square"
+            class="btn-square"
             aria-label={gettext("Close")}
           >
             <.icon name="hero-x-mark" class="w-4 h-4" />
-          </button>
+          </.button>
         </div>
-        <p :if={@state.error} class="text-xs text-error" role="alert">{@state.error}</p>
         <p :if={is_nil(@state.error)} class="text-xs text-base-content/50">
           {gettext("Enter adds and stays open · Esc closes · one-off tasks stay out of the library")}
         </p>

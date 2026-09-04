@@ -31,7 +31,7 @@ defmodule PhoenixKitProjects.Web.TasksOneOffLensTest do
     refute html =~ "Ring the supplier"
     assert html =~ "Task library lens"
 
-    html = view |> element("button[phx-value-lens=one_off]") |> render_click()
+    html = view |> element("[role=tab][phx-value-tab=one_off]") |> render_click()
     assert html =~ "Ring the supplier"
     refute html =~ "Reusable step"
     assert html =~ "one-off"

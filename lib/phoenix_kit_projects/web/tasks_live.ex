@@ -256,7 +256,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   def handle_event("set_view", _params, socket), do: {:noreply, socket}
 
-  def handle_event("set_lens", %{"lens" => lens}, socket) when lens in ["library", "one_off"] do
+  def handle_event("set_lens", %{"tab" => lens}, socket) when lens in ["library", "one_off"] do
     {:noreply, push_url_state(socket, lens: String.to_existing_atom(lens))}
   end
 
@@ -700,32 +700,20 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                    install has nothing to switch between. --%>
               <div
                 :if={@one_off_count > 0 or @lens == :one_off}
-                class="flex flex-wrap items-center gap-1 text-sm"
-                role="tablist"
+                class="flex flex-wrap items-center gap-2"
                 aria-label={gettext("Task library lens")}
               >
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={to_string(@lens == :library)}
-                  phx-click="set_lens"
-                  phx-value-lens="library"
-                  class={["btn btn-xs", if(@lens == :library, do: "btn-active", else: "btn-ghost")]}
-                >
-                  {gettext("Library")}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={to_string(@lens == :one_off)}
-                  phx-click="set_lens"
-                  phx-value-lens="one_off"
-                  class={["btn btn-xs gap-1", if(@lens == :one_off, do: "btn-active", else: "btn-ghost")]}
-                >
-                  {gettext("One-off")}
-                  <span class="badge badge-ghost badge-xs">{@one_off_count}</span>
-                </button>
-                <span :if={@lens == :one_off} class="text-xs text-base-content/50 ml-1">
+                <.nav_tabs
+                  active_tab={Atom.to_string(@lens)}
+                  on_change="set_lens"
+                  variant={:boxed}
+                  class="tabs-sm"
+                  tabs={[
+                    %{id: "library", label: gettext("Library")},
+                    %{id: "one_off", label: gettext("One-off"), badge: @one_off_count}
+                  ]}
+                />
+                <span :if={@lens == :one_off} class="text-xs text-base-content/50">
                   {gettext("Added from a project's quick-add; hidden from pickers until added to the library.")}
                 </span>
               </div>
