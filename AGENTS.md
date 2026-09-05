@@ -117,10 +117,19 @@ per enabled extension that contributes one (Events, Whiteboards, …) and
 **Comments** — the project's own thread, inline, switched by the project's
 *Discussions* extension (its existing per-project on/off) and the comments
 module being on. Each stands alone in an otherwise empty project — a
-project can be *only* a whiteboard or *only* a discussion. The header
-(title, workflow status, ⋮ menu) is the project, not a tab; Files /
-Members / Activity / Modules stay in the ⋮ menu as project chrome. A
-single top-level tab renders no strip; with nothing on at all the page
+project can be *only* a whiteboard or *only* a discussion. The header is
+the project, not a tab — and on the standalone page most of it is the SITE
+header: the breadcrumb carries the name, and core's
+`page_toolbar` (`{ProjectShowLive, :header_toolbar}`, a function component
+rendered with the LiveView's assigns; its events land in the LiveView)
+puts the workflow-status picker and the ⋮ menu beside it. What stays in
+the page is the project's face — Completed / Archived badges and the
+description — and with neither, nothing: the tabs start right under the
+site header (`header_face?/2`). The project's assignee is NOT shown on the
+page (Max, 2026-09-05: nothing acts on it; it lives on the edit form).
+Embedded mounts have no site header, so they keep the h1 and render the
+same toolbar component in the body. Files / Members / Activity stay in the
+⋮ menu as project chrome. A single top-level tab renders no strip; with nothing on at all the page
 shows the nothing-on empty state with a link to Modules. Templates keep
 the Tasks pane alone, without either strip.
 

@@ -527,13 +527,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         Repo.insert(%Person{user_uuid: actor_uuid, status: "active"})
 
       project = fixture_project(%{"assigned_person_uuid" => person.uuid})
-      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert html =~ "Person"
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       send(view.pid, {:projects, :project_updated, %{}})
 
-      # render/1 raises if the LV crashed re-rendering the assignee badge.
-      assert render(view) =~ "Person"
+      # The assignee chip is gone from the page (2026-09-05), but the
+      # reload path must still preload the assocs the page may deref —
+      # render/1 raises if the LV crashed re-rendering.
+      _ = render(view)
       assert Process.alive?(view.pid)
     end
 
@@ -1199,7 +1200,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       refute html =~ ~s(name="status_slug")
     end
 
-    test "the assignee chip says what it is and links to the team", %{conn: conn} do
+    test "the project's assignee is not on the page (it lives on the edit form)",
+         %{conn: conn} do
+      # Max, 2026-09-05: nothing on the page acts on it; a chip was noise.
       n = System.unique_integer([:positive])
       {:ok, dept} = Departments.create(%{"name" => "HDept-#{n}"})
       {:ok, team} = Teams.create(%{"name" => "Platform-#{n}", "department_uuid" => dept.uuid})
@@ -1207,10 +1210,60 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
-      assert html =~ "Assigned to"
-      assert html =~ "Platform-#{n}"
-      refute html =~ "Team: Platform-#{n}"
-      assert html =~ ~s(href="/en/admin/staff/teams/#{team.uuid}")
+      refute html =~ "Assigned to"
+      refute html =~ "Platform-#{n}"
+    end
+
+    test "the status picker + ⋮ sit in the site header on the standalone page", %{conn: conn} do
+      PhoenixKitProjects.StatusFixtures.seed_shared_status_entity!()
+      {:ok, project} = Projects.start_project(fixture_project(%{"start_mode" => "immediate"}))
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      # The toolbar is inside the test layout's breadcrumb block, i.e. in
+      # the site header — before the page body starts.
+      [crumbs_html] = Regex.run(~r/<div id="test-breadcrumb".*?<div id="test-flashes"/s, html)
+      assert crumbs_html =~ "data-page-toolbar"
+      assert crumbs_html =~ ~s(id="project-status-#{project.uuid}")
+      assert crumbs_html =~ ~s(id="project-header-menu-#{project.uuid}")
+      # Once, in the header — not again in the body.
+      assert length(Regex.scan(~r/id="project-header-menu-#{project.uuid}"/, html)) == 1
+
+      # Events from the header land in the LiveView like any other.
+      view
+      |> element("form[phx-change=change_workflow_status]")
+      |> render_change(%{"status_slug" => "backlog"})
+
+      assert Projects.get_project!(project.uuid).current_status_slug == "backlog"
+      assert render_click(view, "archive_project", %{}) =~ "Unarchive"
+    end
+
+    test "an embed keeps the status picker + ⋮ in its body (no site header)", %{
+      conn: conn,
+      actor_uuid: actor_uuid
+    } do
+      project = fixture_project()
+
+      {:ok, _view, html} =
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectShowLive,
+          session: embed_session(project, actor_uuid)
+        )
+
+      refute html =~ "data-page-toolbar"
+      assert html =~ ~s(id="project-header-menu-#{project.uuid}")
+    end
+
+    test "a plain project has no header block at all — the tabs start at the top",
+         %{conn: conn} do
+      project = fixture_project()
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      refute html =~ ~s(data-workflow-status-badge)
+      refute html =~ "Completed"
+      # Nothing renders between the page wrapper and the URL mirror that
+      # opens the tab area: no empty header box.
+      [_, before_tabs] =
+        Regex.run(~r/<div class="flex flex-col w-full[^"]*">(.*?)<div\s+id="project-url-/s, html)
+
+      assert String.trim(before_tabs) == "", "unexpected header markup: #{before_tabs}"
     end
   end
 

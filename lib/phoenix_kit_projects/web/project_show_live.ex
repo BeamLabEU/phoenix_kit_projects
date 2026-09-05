@@ -336,6 +336,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               page_section: gettext("Projects"),
               page_section_path: Paths.projects(),
               page_crumbs: Keyword.fetch!(Crumbs.above_project(project), :page_crumbs),
+              # The status picker + ⋮ sit in that header too, beside the name.
+              page_toolbar: {__MODULE__, :header_toolbar},
               statuses_available: statuses_available,
               status_options: status_options,
               current_status: current_status,
@@ -804,6 +806,113 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     [{"todo", gettext("To do"), "border-t-warning"}] ++
       if(middle?, do: [{"in_progress", gettext("In progress"), "border-t-info"}], else: []) ++
       [{"done", gettext("Done"), "border-t-success"}]
+  end
+
+  @doc """
+  The page's identity controls — the workflow-status picker and the ⋮ menu
+  (Edit, Members, Files, Activity, Set health, Archive). On the standalone
+  admin page core renders this in the site header next to the project's
+  name (`page_toolbar: {__MODULE__, :header_toolbar}`, the LiveView's own
+  assigns, events land here as usual); an embed has no site header, so its
+  body renders the same component under its h1. Never both — the form id
+  is unique either way.
+  """
+  def header_toolbar(assigns) do
+    ~H"""
+        <%!-- Inline workflow-status picker (the current value). The
+             status-list *source* is chosen on the new/edit form (and the
+             global default in Settings), not here. Hidden when no
+             statuses exist for the project's list. --%>
+        <form
+          :if={@fx.statuses and @statuses_available and @status_options != []}
+          id={"project-status-#{@project.uuid}"}
+          phx-change="change_workflow_status"
+          class="flex items-center"
+        >
+          <.select
+            name="status_slug"
+            value={@project.current_status_slug}
+            options={Enum.map(@status_options, &{&1.label, &1.slug})}
+            prompt={gettext("No status")}
+            class="select-sm"
+          />
+        </form>
+        <%!-- Edit + (Un)archive go into a kebab dropdown to match the
+             per-row action pattern used elsewhere in the module. --%>
+        <.table_row_menu id={"project-header-menu-#{@project.uuid}"}>
+          <.smart_menu_link
+            navigate={if @is_template, do: Paths.edit_template(@project.uuid), else: Paths.edit_project(@project.uuid)}
+            emit={
+              if @is_template,
+                do:
+                  {PhoenixKitProjects.Web.TemplateFormLive,
+                   %{"live_action" => "edit", "id" => @project.uuid}},
+                else:
+                  {PhoenixKitProjects.Web.ProjectFormLive,
+                   %{"live_action" => "edit", "id" => @project.uuid}}
+            }
+            embed_mode={@embed_mode}
+            icon="hero-pencil"
+            label={gettext("Edit")}
+          />
+          <.smart_menu_link
+            :if={not @is_template}
+            navigate={Paths.members(@project.uuid)}
+            emit={{PhoenixKitProjects.Web.ProjectMembersLive, %{"id" => @project.uuid}}}
+            embed_mode={@embed_mode}
+            popup={false}
+            icon="hero-users"
+            label={gettext("Members")}
+          />
+          <.smart_menu_link
+            :if={not @is_template and @fx_files}
+            navigate={Paths.files(@project.uuid)}
+            emit={{PhoenixKitProjects.Web.ProjectFilesLive, %{"id" => @project.uuid}}}
+            embed_mode={@embed_mode}
+            popup={false}
+            icon="hero-paper-clip"
+            label={gettext("Files")}
+          />
+          <.smart_menu_link
+            :if={not @is_template}
+            navigate={Paths.activity(@project.uuid)}
+            emit={{PhoenixKitProjects.Web.ProjectActivityLive, %{"id" => @project.uuid}}}
+            embed_mode={@embed_mode}
+            popup={false}
+            icon="hero-clock"
+            label={gettext("Activity")}
+          />
+          <%!-- Health is a judgment about whether the project is on
+               track to FINISH. A checklist has no finish, so the
+               question has no meaning — same reason its start bar is
+               gone. --%>
+          <.table_row_menu_button
+            :if={not @is_template and @fx.lifecycle}
+            phx-click="open_health_modal"
+            icon="hero-heart"
+            label={gettext("Set health")}
+          />
+          <%= if not @is_template do %>
+            <.table_row_menu_divider />
+            <%= if @project.archived_at do %>
+              <.table_row_menu_button
+                phx-click="unarchive_project"
+                phx-disable-with={gettext("Unarchiving…")}
+                icon="hero-arrow-uturn-left"
+                label={gettext("Unarchive")}
+              />
+            <% else %>
+              <.table_row_menu_button
+                phx-click="archive_project"
+                phx-disable-with={gettext("Archiving…")}
+                data-confirm={gettext("Archive this project? It will be hidden from the main lists but kept in the database.")}
+                icon="hero-archive-box"
+                label={gettext("Archive")}
+              />
+            <% end %>
+          <% end %>
+        </.table_row_menu>
+    """
   end
 
   defp assignee_icon(%{assigned_team_uuid: uuid}) when is_binary(uuid), do: "hero-users"
@@ -2677,6 +2786,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     assigns.fx.statuses and assigns.statuses_available and assigns.status_options != []
   end
 
+  # Does the standalone page's header have anything to show? Badges
+  # (Completed / Archived / the read-only status fallback) or a
+  # description. Without any, the header renders nothing at all rather
+  # than an empty box above the tabs.
+  defp header_face?(assigns, desc) do
+    not is_nil(desc) or not is_nil(assigns.project.completed_at) or
+      not is_nil(assigns.project.archived_at) or
+      (assigns.statuses_available and not workflow_select?(assigns))
+  end
+
   # ── Schedule calculation ─────────────────────────────────────────
 
   defp calculate_schedule(%{started_at: nil}, _), do: nil
@@ -3035,9 +3154,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     <div class={@wrapper_class}>
       <%!-- Header. The standalone admin page drops the back-link + h1 row —
            the site breadcrumb carries "Templates|Projects / <name>" (and the
-           way back). Embedded mounts have no admin breadcrumb, so they keep
-           the full original header. --%>
-      <div>
+           way back) and, beside it, the status picker + ⋮ (`page_toolbar`).
+           What is left here is the project's face: the lifecycle badges and
+           the description — and when it has neither, nothing: the tabs start
+           right under the site header. Embedded mounts have no admin
+           breadcrumb, so they keep the full original header. --%>
+      <% desc = Project.localized_description(@project, L10n.current_content_lang()) %>
+      <div :if={not @router_mounted? or header_face?(assigns, desc)}>
         <.smart_link
           :if={not @router_mounted?}
           navigate={if @is_template, do: Paths.templates(), else: Paths.projects()}
@@ -3084,141 +3207,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               status={@current_status}
             />
           </div>
-          <%!-- Description sits directly under the title, above the buttons —
-               title + subtitle as a stacked pair before the action row. --%>
-          <% desc = Project.localized_description(@project, L10n.current_content_lang()) %>
+          <%!-- Description sits directly under the title (embeds) or the
+               badges — the project's subtitle. --%>
           <p :if={desc} class="text-sm text-base-content/60">
             <.mention_text text={desc} scope={@phoenix_kit_current_scope} />
           </p>
-          <%!-- Assignee (V128) — who the project is assigned to. Reuses the same
-               assignee helpers the task rows use; a Project carries the same
-               polymorphic assignee fields. Says what it is ("Assigned to"),
-               names the kind through the icon + tooltip, and links to the
-               team / department / person page when the staff module is
-               there — a bare "Team: Platform" chip was inert and
-               unexplained (Max, 2026-09-05). --%>
-          <div :if={@fx.assignees and assignee_type(@project)} class="mt-0.5">
-            <% assignee_href = WebHelpers.assignee_path(@project) %>
-            <span class="inline-flex items-center gap-1 text-sm text-base-content/70">
-              <span>{gettext("Assigned to")}:</span>
-              <.link
-                :if={assignee_href}
-                navigate={assignee_href}
-                class="badge badge-outline badge-sm gap-1 link-hover"
-                title={assignee_type(@project)}
-              >
-                <.icon name={assignee_icon(@project)} class="w-3 h-3" />
-                {assignee_label(@project)}
-              </.link>
-              <span
-                :if={is_nil(assignee_href)}
-                class="badge badge-outline badge-sm gap-1"
-                title={assignee_type(@project)}
-              >
-                <.icon name={assignee_icon(@project)} class="w-3 h-3" />
-                {assignee_label(@project)}
-              </span>
-            </span>
-          </div>
-          <%!-- Action row — project-level only: the workflow status (once),
-               the ⋮ menu. Add task / Add sub-project moved into the Tasks
-               tab with everything else that is about tasks (the boss's
-               "each thing stands alone", 2026-09-05); Comments is a top
-               tab of its own now. `flex-wrap` keeps the row tidy on narrow
-               viewports. --%>
-          <div class="flex flex-wrap gap-2">
-            <%!-- Inline workflow-status picker (the current value). The
-                 status-list *source* is chosen on the new/edit form (and the
-                 global default in Settings), not here. Hidden when no
-                 statuses exist for the project's list. --%>
-            <form
-              :if={@fx.statuses and @statuses_available and @status_options != []}
-              phx-change="change_workflow_status"
-              class="flex items-center"
-            >
-              <.select
-                name="status_slug"
-                value={@project.current_status_slug}
-                options={Enum.map(@status_options, &{&1.label, &1.slug})}
-                prompt={gettext("No status")}
-                class="select-sm"
-              />
-            </form>
-            <%!-- Edit + (Un)archive go into a kebab dropdown to match the
-                 per-row action pattern used elsewhere in the module. --%>
-            <.table_row_menu id={"project-header-menu-#{@project.uuid}"}>
-              <.smart_menu_link
-                navigate={if @is_template, do: Paths.edit_template(@project.uuid), else: Paths.edit_project(@project.uuid)}
-                emit={
-                  if @is_template,
-                    do:
-                      {PhoenixKitProjects.Web.TemplateFormLive,
-                       %{"live_action" => "edit", "id" => @project.uuid}},
-                    else:
-                      {PhoenixKitProjects.Web.ProjectFormLive,
-                       %{"live_action" => "edit", "id" => @project.uuid}}
-                }
-                embed_mode={@embed_mode}
-                icon="hero-pencil"
-                label={gettext("Edit")}
-              />
-              <.smart_menu_link
-                :if={not @is_template}
-                navigate={Paths.members(@project.uuid)}
-                emit={{PhoenixKitProjects.Web.ProjectMembersLive, %{"id" => @project.uuid}}}
-                embed_mode={@embed_mode}
-                popup={false}
-                icon="hero-users"
-                label={gettext("Members")}
-              />
-              <.smart_menu_link
-                :if={not @is_template and @fx_files}
-                navigate={Paths.files(@project.uuid)}
-                emit={{PhoenixKitProjects.Web.ProjectFilesLive, %{"id" => @project.uuid}}}
-                embed_mode={@embed_mode}
-                popup={false}
-                icon="hero-paper-clip"
-                label={gettext("Files")}
-              />
-              <.smart_menu_link
-                :if={not @is_template}
-                navigate={Paths.activity(@project.uuid)}
-                emit={{PhoenixKitProjects.Web.ProjectActivityLive, %{"id" => @project.uuid}}}
-                embed_mode={@embed_mode}
-                popup={false}
-                icon="hero-clock"
-                label={gettext("Activity")}
-              />
-              <%!-- Health is a judgment about whether the project is on
-                   track to FINISH. A checklist has no finish, so the
-                   question has no meaning — same reason its start bar is
-                   gone. --%>
-              <.table_row_menu_button
-                :if={not @is_template and @fx.lifecycle}
-                phx-click="open_health_modal"
-                icon="hero-heart"
-                label={gettext("Set health")}
-              />
-              <%= if not @is_template do %>
-                <.table_row_menu_divider />
-                <%= if @project.archived_at do %>
-                  <.table_row_menu_button
-                    phx-click="unarchive_project"
-                    phx-disable-with={gettext("Unarchiving…")}
-                    icon="hero-arrow-uturn-left"
-                    label={gettext("Unarchive")}
-                  />
-                <% else %>
-                  <.table_row_menu_button
-                    phx-click="archive_project"
-                    phx-disable-with={gettext("Archiving…")}
-                    data-confirm={gettext("Archive this project? It will be hidden from the main lists but kept in the database.")}
-                    icon="hero-archive-box"
-                    label={gettext("Archive")}
-                  />
-                <% end %>
-              <% end %>
-            </.table_row_menu>
+          <%!-- The status picker + ⋮ live in the site header on the
+               standalone page (`page_toolbar`); an embed has no site header,
+               so it keeps them here under its own h1. --%>
+          <div :if={not @router_mounted?} class="flex flex-wrap gap-2">
+            {header_toolbar(assigns)}
           </div>
         </div>
       </div>
