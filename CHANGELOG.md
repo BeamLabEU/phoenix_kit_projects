@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.23.0 - 2026-09-05
+
+PR #41 — the per-item reads on the hot paths are batched. Twelve N+1s, the
+worst of them on surfaces that re-run on a timer.
+
+### Added
+
+- **`Projects.assignments_by_project/1`** — the accepted assignments of a set
+  of projects *and every sub-project beneath them*, as
+  `%{project_uuid => [Assignment.t()]}`: one `WHERE project_uuid IN (…)` read
+  per depth level rather than one per node. Filter, order and preloads are
+  identical to `list_assignments/1`, which is what makes it a drop-in base for
+  the tree walkers.
+- **`Projects.project_tree_summaries/1`** and **`ScheduleLayout.trees/1`** —
+  the plural forms of `project_tree_summary/1` and `tree/1`, built off that one
+  read. The singular forms delegate to them, so both shapes stay in step.
+- **`Features.flags/1`**, **`Extensions.enabled_map/1`**,
+  **`Grants.subject_reaches/1`**, **`Portal.review_details_for/1`**,
+  **`People.names_by_uuid/2`**, **`Attachments.download_urls/1`** — batched
+  forms of the per-item lookups the Modules panel, the members page, the review
+  queue and the files page were making in a loop.
+- **`Projects.max_subproject_depth/0`** — the depth bound the forest read and
+  both tree builders share, so the loader and the builders cannot disagree
+  about where to stop.
+- `Projects.list_all_dependencies/1` now also accepts a list of project uuids.
+- `test/support/query_counter.ex` — counts the statements a function runs, via
+  repo telemetry, so the new suites assert what actually matters: that the
+  count follows the depth, not the number of projects.
+
+### Changed
+
+- **The dashboard widgets and the Overview no longer re-run the per-project
+  N+1.** `RunningWidget` (every 15 s), `CalendarWidget` (every 60 s) and
+  `OverviewLive` walked `project_tree_summary/1` — and `ScheduleLayout.tree/1`
+  — once per project and recursively per sub-project. On a page that refreshes
+  on a tick, per connected viewer, that is the cost that matters.
+- **`Features.gates/1` resolves from one context read.** It was asking the
+  database per flag *and* per `requires` hop — 22 reads for the 16 gates, on
+  every project-page mount and every modules-changed broadcast.
+- Both tree builders now carry the set of projects on the path down to them, so
+  a cycle in bad data is skipped at the edge instead of recursing; and a node at
+  the depth cap is not built at all rather than read as falsely empty.
+
+### Fixed
+
+- `Projects.quick_add_assignment/3` documented itself as adding the task "with
+  the project's defaults". It sets the title and nothing else — the assignment
+  takes the schema's own defaults plus the computed bottom position. `opts` is
+  accepted and ignored; the doc now says so.
+- `RunningTiers.prioritize/4` hand-rolled a Schwartzian transform that
+  `Enum.sort_by/2` already performs.
+
 ## 0.22.0 - 2026-09-05
 
 PR #40 — the project page becomes top-level tabs, forms open as a drawer over
