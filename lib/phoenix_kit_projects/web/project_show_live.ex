@@ -158,61 +158,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
 
+    # The same placeholder set as the router clause's not-found branch,
+    # with the two assigns an embed resolves differently: it must not
+    # rewrite the host's URL, and its wrapper comes from the session.
+    # Kept as an override list rather than a second copy — the two were
+    # 49 identical keys that had to be edited in lockstep.
     {:ok,
      socket
      |> assign(
-       page_title: "",
-       project: %Project{},
-       fx: Features.default_gates(),
-       fx_files: true,
-       ext_tabs: [],
-       ext_mounted: MapSet.new(),
-       health: nil,
-       health_modal_open: false,
-       is_template: false,
-       wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
-       router_mounted?: false,
-       tab_url_sync?: false,
-       active_tab: :list,
-       gantt_mounted?: false,
-       calendar_mounted?: false,
-       assignments: [],
-       deps_by_assignment: %{},
-       total_tasks: 0,
-       done_tasks: 0,
-       progress_pct: 0,
-       schedule: nil,
-       editing_duration_uuid: nil,
-       start_modal_open: false,
-       start_form: to_form(%{"start_at" => default_start_at_local()}),
-       comments_resource: nil,
-       comments_enabled: false,
-       task_view: :list,
-       project_comment_count: 0,
-       assignment_comment_counts: %{},
-       statuses_available: false,
-       current_status: nil,
-       status_options: [],
-       expanded_subprojects: MapSet.new(),
-       # The list lens. "active" by default: a mature project is mostly
-       # finished work, and opening it on the finished work is what made
-       # people scroll to find anything live.
-       list_status: "active",
-       list_sort: :position,
-       list_controls: ListControls.read(),
-       list_controls?: false,
-       pending_reviews: [],
-       review_details: %{},
-       review_open?: false,
-       review_selected: nil,
-       subproject_summaries: %{},
-       subproject_child_tasks: %{},
-       ledger_totals: nil,
-       ledger_minutes: %{},
-       log_time_open: false,
-       log_time_uuid: nil,
-       assignment_labels: %{},
-       invoice_ready?: false
+       Keyword.merge(not_found_assigns(),
+         tab_url_sync?: false,
+         wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class)
+       )
      )
      |> put_flash(:error, gettext("Project not found."))
      |> WebHelpers.close_or_navigate(Paths.projects())}

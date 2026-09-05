@@ -167,9 +167,10 @@ defmodule PhoenixKitProjects.DashboardWidgets do
           %{key: "only_mine", type: :boolean, label: "Only my projects", default: false}
         ]
       },
-      # The Overview dashboard's pieces (the page lost its admin route in
-      # 2026-09 — the boss wants module dashboards assembled in the dashboards
-      # module): its Running list and its side column. Together with
+      # The Overview dashboard's pieces (the page stopped being the module's
+      # landing in 2026-09 — it keeps its route as the LAST subtab, and the
+      # boss wants module dashboards assembled in the dashboards module):
+      # its Running list and its side column. Together with
       # `projects.my_tasks`, `projects.workload` (the stat tiles) and
       # `projects.calendar`, a system dashboard can stand in for the page.
       %{

@@ -108,6 +108,9 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         loaded_count: @per_batch,
         total_count: 0,
         filtered_count: 0,
+        # Like its siblings above: the lens strip reads it, and only the
+        # flat-list load sets it — the Groups view's load never does.
+        one_off_count: 0,
         local_search?: true,
         visible_columns:
           ListUi.read_visible_columns(@columns_key, @optional_columns, @default_columns),
