@@ -775,6 +775,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
   describe "the list lens" do
     setup %{conn: conn} do
+      # These pin what the lens DOES; whether it shows at all is
+      # `ListControls` (auto hides it on a two-task project) — tested below.
+      PhoenixKitProjects.ListControls.put_mode("always")
       n = System.unique_integer([:positive])
 
       {:ok, project} =
@@ -1113,6 +1116,89 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       project.uuid
       |> Projects.list_assignments()
       |> Enum.map(& &1.uuid)
+    end
+  end
+
+  describe "the list controls (ListControls)" do
+    alias PhoenixKitProjects.ListControls
+
+    defp lens_project(done_count, active_count) do
+      n = System.unique_integer([:positive])
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Controls #{n}", "start_mode" => "immediate"})
+
+      for i <- 1..done_count//1, do: task_named(project, "Done #{n}-#{i}", "done")
+      for i <- 1..active_count//1, do: task_named(project, "Live #{n}-#{i}", "todo")
+      project
+    end
+
+    test "auto: a small project shows every task, no lens, no sort, and can be reordered",
+         %{conn: conn} do
+      project = lens_project(1, 1)
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      refute html =~ ~s(phx-click="list_filter_status")
+      refute html =~ ~s(phx-change="list_sort")
+      refute html =~ "Reordering off"
+      assert length(list_rows(html)) == 2
+      assert :sys.get_state(view.pid).socket.assigns.list_manual?
+    end
+
+    test "auto: the controls appear once both sides are populated and the threshold is met",
+         %{conn: conn} do
+      project = lens_project(1, 9)
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert html =~ ~s(phx-click="list_filter_status")
+      assert html =~ ~s(phx-change="list_sort")
+      # Opens on Active again: the done row is off screen, the count stays.
+      assert length(list_rows(html)) == 9
+      assert html =~ "Done"
+    end
+
+    test "auto: ten tasks all active is still nothing to filter", %{conn: conn} do
+      project = lens_project(0, 10)
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      refute html =~ ~s(phx-click="list_filter_status")
+      assert length(list_rows(html)) == 10
+    end
+
+    test "the threshold setting moves the line", %{conn: conn} do
+      ListControls.put_threshold(3)
+      project = lens_project(1, 2)
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert html =~ ~s(phx-click="list_filter_status")
+    end
+
+    test "never / always override the rule", %{conn: conn} do
+      ListControls.put_mode("never")
+      big = lens_project(3, 12)
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{big.uuid}")
+      refute html =~ ~s(phx-click="list_filter_status")
+      assert length(list_rows(html)) == 15
+
+      ListControls.put_mode("always")
+      small = lens_project(0, 1)
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{small.uuid}")
+      assert html =~ ~s(phx-click="list_filter_status")
+    end
+
+    test "settings are validated on the way in" do
+      ListControls.put_mode("sideways")
+      ListControls.put_threshold("lots")
+      assert ListControls.read() == %{mode: :auto, threshold: 10}
+
+      ListControls.put_threshold(0)
+      assert ListControls.read().threshold == 2
+
+      ListControls.put_threshold(9_999)
+      assert ListControls.read().threshold == 200
+
+      ListControls.reset()
+      assert ListControls.read() == %{mode: :auto, threshold: 10}
     end
   end
 

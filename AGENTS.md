@@ -763,6 +763,22 @@ disappears. The row lifecycle itself (`todo → in_progress → done`) is
 unchanged in the schema; the flag only removes the middle step from
 the UI and the event surface.
 
+**The task list's controls are conditional** (`ListControls`, Max
+2026-09-05: "no reason to show the filters without multiple statuses or
+under ten tasks — but controllable via the settings"). The Active /
+Done / All lens and the sort dropdown render only when
+`ListControls.show?/2` says so: mode `auto` (default) = the project has
+tasks on BOTH sides of the lens AND at least `threshold` (default 10)
+tasks; `always` / `never` override. Site-wide settings on
+`/admin/settings/projects` ("Task list controls"), keys
+`projects_list_controls_mode` / `_threshold`, validated on read. Under
+the rule `apply_list_lens/1` shows the whole project in manual order —
+which is exactly what drag-reordering needs, so small projects reorder
+by hand without the old "Reordering off" detour through the All lens.
+The "Review submissions" button is not a control and keeps its row
+whenever there is something to review. Tests that pin the lens itself
+set the mode to `always` first.
+
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 
 Projects contributes ten widgets to the dashboards module via the duck-typed

@@ -329,6 +329,36 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLiveTest do
       assert CalendarDisplay.read().max_multiday == 1
     end
 
+    test "the task list controls section persists and clamps its settings", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/en/admin/settings/projects")
+      assert html =~ "Task list controls"
+      assert has_element?(view, ~s(select[name="controls_mode"] option[value="auto"][selected]))
+
+      render_change(view, "set_list_controls", %{
+        "_target" => ["controls_mode"],
+        "controls_mode" => "never"
+      })
+
+      assert PhoenixKitProjects.ListControls.read().mode == :never
+      # The threshold only matters under auto.
+      assert has_element?(view, ~s(input[name="controls_threshold"][disabled]))
+
+      render_change(view, "set_list_controls", %{
+        "_target" => ["controls_mode"],
+        "controls_mode" => "auto"
+      })
+
+      render_change(view, "set_list_controls", %{
+        "_target" => ["controls_threshold"],
+        "controls_threshold" => "25"
+      })
+
+      assert PhoenixKitProjects.ListControls.read() == %{mode: :auto, threshold: 25}
+
+      render_click(view, "reset_list_controls", %{})
+      assert PhoenixKitProjects.ListControls.read() == %{mode: :auto, threshold: 10}
+    end
+
     test "the late-marking controls cascade from the marker type", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/en/admin/settings/projects")
 

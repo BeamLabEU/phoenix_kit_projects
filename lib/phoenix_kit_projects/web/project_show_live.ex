@@ -55,6 +55,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     L10n,
     Labels,
     Ledger,
+    ListControls,
     Paths,
     Portal,
     Projects,
@@ -196,6 +197,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        # people scroll to find anything live.
        list_status: "active",
        list_sort: :position,
+       list_controls: ListControls.read(),
+       list_controls?: false,
        pending_reviews: [],
        review_details: %{},
        review_open?: false,
@@ -377,6 +380,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               expanded_subprojects: MapSet.new(),
               list_status: "active",
               list_sort: :position,
+              list_controls: ListControls.read(),
+              list_controls?: false,
               pending_reviews: [],
               review_details: %{},
               review_open?: false,
@@ -430,6 +435,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       review_selected: nil,
       list_status: "active",
       list_sort: :position,
+      list_controls: ListControls.read(),
+      list_controls?: false,
       is_template: false,
       wrapper_class: @default_wrapper_class,
       router_mounted?: false,
@@ -674,8 +681,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # what scrolling past 900 finished cards never told them.
   defp apply_list_lens(socket) do
     all = socket.assigns[:assignments] || []
-    status = socket.assigns[:list_status] || "active"
-    sort = socket.assigns[:list_sort] || :position
+    counts = assignment_counts(all)
+
+    # The controls earn their row only when they can change what is on
+    # screen (`ListControls`). Without them the list is the whole
+    # project in manual order — the one arrangement drag-reordering
+    # needs — whatever lens or sort a wider day may have left behind.
+    controls? = ListControls.show?(socket.assigns[:list_controls] || ListControls.read(), counts)
+    status = if controls?, do: socket.assigns[:list_status] || "active", else: "all"
+    sort = if controls?, do: socket.assigns[:list_sort] || :position, else: :position
 
     visible =
       all
@@ -684,7 +698,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     assign(socket,
       visible_assignments: visible,
-      assignment_counts: assignment_counts(all),
+      assignment_counts: counts,
+      list_controls?: controls?,
       # Numbered against the WHOLE project, in its manual order — never
       # against the rows on screen. A counter over the visible set renumbers
       # the same task every time the lens moves, so "task 3" means one thing
@@ -3699,7 +3714,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            fine, but a project that quietly looks like 47 tasks when it
            holds 947 is not. The number is the honesty; the rows are just
            what you happen to be reading. --%>
-      <div :if={@assignments != []} class="flex flex-wrap items-center gap-2 mb-4">
+      <div
+        :if={@assignments != [] and (@list_controls? or @pending_reviews != [])}
+        class="flex flex-wrap items-center gap-2 mb-4"
+      >
         <%!-- Active and Done partition the project exactly — Active means
              "not done", so nothing is in both and nothing is in neither,
              including a row carrying a status we do not model. The earlier
@@ -3707,6 +3725,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              which looked like slices of one pie whose numbers then refused
              to add up, because Active contained the other two. --%>
         <.nav_tabs
+          :if={@list_controls?}
           active_tab={@list_status}
           on_change="list_filter_status"
           tabs={[
@@ -3731,7 +3750,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <span class="badge badge-sm">{length(@pending_reviews)}</span>
         </button>
 
-        <div class="ml-auto flex items-center gap-2">
+        <div :if={@list_controls?} class="ml-auto flex items-center gap-2">
           <select
             class="select select-sm"
             phx-change="list_sort"
