@@ -1151,6 +1151,50 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
   end
 
+  describe "the header (Max, 2026-09-05: one status, an explained assignee)" do
+    alias PhoenixKitProjects.Features
+    alias PhoenixKitProjects.Statuses
+    alias PhoenixKitStaff.{Departments, Teams}
+
+    test "the workflow status shows ONCE: the select when it can render, the badge otherwise",
+         %{conn: conn} do
+      PhoenixKitProjects.StatusFixtures.enable_entities!()
+      on_exit(&PhoenixKitProjects.StatusFixtures.disable_entities!/0)
+      actor = PhoenixKitProjects.StatusFixtures.ensure_actor!()
+
+      project = fixture_project(%{"start_mode" => "immediate"})
+      {:ok, project} = Statuses.ensure_project_status_entity(project, actor_uuid: actor)
+      :ok = Statuses.cement_project_statuses(project)
+      project = Projects.get_project(project.uuid)
+      slug = project |> Statuses.statuses_for() |> Enum.at(1) |> Map.fetch!(:slug)
+      {:ok, _} = Statuses.set_current_status(project, slug)
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      assert html =~ ~s(name="status_slug")
+      # The select shows the status; no badge repeats it above the description.
+      refute html =~ ~s(data-workflow-status-badge)
+
+      # Statuses flag off: no select, so the badge is the read-only fallback.
+      {:ok, project} = Features.set_flags(project, %{"statuses" => false})
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      refute html =~ ~s(name="status_slug")
+    end
+
+    test "the assignee chip says what it is and links to the team", %{conn: conn} do
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "HDept-#{n}"})
+      {:ok, team} = Teams.create(%{"name" => "Platform-#{n}", "department_uuid" => dept.uuid})
+      project = fixture_project(%{"assigned_team_uuid" => team.uuid})
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert html =~ "Assigned to"
+      assert html =~ "Platform-#{n}"
+      refute html =~ "Team: Platform-#{n}"
+      assert html =~ ~s(href="/en/admin/staff/teams/#{team.uuid}")
+    end
+  end
+
   describe "the list controls (ListControls)" do
     alias PhoenixKitProjects.ListControls
 

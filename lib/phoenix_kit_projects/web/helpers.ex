@@ -64,6 +64,36 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   @doc """
+  Where the assignee chip should link: the staff module's team / department /
+  person page when that module is installed and the assocs are loaded, else
+  `nil` (the chip stays plain text). Built with `apply/3` because
+  `:phoenix_kit_staff` is an optional dependency.
+  """
+  @spec assignee_path(
+          PhoenixKitProjects.Schemas.Assignment.t()
+          | PhoenixKitProjects.Schemas.Project.t()
+        ) :: String.t() | nil
+  def assignee_path(a) do
+    with true <- Code.ensure_loaded?(PhoenixKitStaff.Paths),
+         {fun, uuid} when is_binary(uuid) <- assignee_route(a) do
+      apply(PhoenixKitStaff.Paths, fun, [uuid])
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp assignee_route(a) do
+    cond do
+      a.assigned_person_uuid -> {:person, a.assigned_person_uuid}
+      a.assigned_team_uuid -> {:team, a.assigned_team_uuid}
+      a.assigned_department_uuid -> {:department, a.assigned_department_uuid}
+      true -> nil
+    end
+  end
+
+  @doc """
   Whether an assignment counts weekends — its own override, falling back to
   the project's setting. Delegates to `PhoenixKitProjects.ScheduleLayout`,
   where the schedule math lives; kept here so LV imports stay one-stop.

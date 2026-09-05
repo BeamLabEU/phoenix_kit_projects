@@ -2577,9 +2577,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     cond do
       a.assigned_person_uuid -> gettext("Person")
       a.assigned_team_uuid -> gettext("Team")
-      a.assigned_department_uuid -> gettext("Dept")
+      a.assigned_department_uuid -> gettext("Department")
       true -> nil
     end
+  end
+
+  # The action row's workflow-status select renders under exactly these
+  # conditions; the header badge yields to it (one status, not two).
+  defp workflow_select?(assigns) do
+    assigns.fx.statuses and assigns.statuses_available and assigns.status_options != []
   end
 
   # ── Schedule calculation ─────────────────────────────────────────
@@ -2978,9 +2984,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               </span>
             <% end %>
             <%!-- User-defined workflow status (entities-backed), alongside
-                 the computed lifecycle badges above. Renders nothing when
-                 unset or when the entities module is unavailable. --%>
-            <.workflow_status_badge :if={@statuses_available} status={@current_status} />
+                 the computed lifecycle badges above — but ONLY when the
+                 action row's status select is not there to show it: the
+                 same "In Progress" twice, as a badge and as the select's
+                 value, was the header's one visible defect (Max,
+                 2026-09-05). The select is the control; the badge is the
+                 read-only fallback (no list, or the statuses flag off). --%>
+            <.workflow_status_badge
+              :if={@statuses_available and not workflow_select?(assigns)}
+              status={@current_status}
+            />
           </div>
           <%!-- Description sits directly under the title, above the buttons —
                title + subtitle as a stacked pair before the action row. --%>
@@ -2990,11 +3003,32 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           </p>
           <%!-- Assignee (V128) — who the project is assigned to. Reuses the same
                assignee helpers the task rows use; a Project carries the same
-               polymorphic assignee fields. --%>
+               polymorphic assignee fields. Says what it is ("Assigned to"),
+               names the kind through the icon + tooltip, and links to the
+               team / department / person page when the staff module is
+               there — a bare "Team: Platform" chip was inert and
+               unexplained (Max, 2026-09-05). --%>
           <div :if={@fx.assignees and assignee_type(@project)} class="mt-0.5">
-            <span class="badge badge-outline badge-sm gap-1">
-              <.icon name="hero-user" class="w-3 h-3" />
-              {assignee_type(@project)}: {assignee_label(@project)}
+            <% assignee_href = WebHelpers.assignee_path(@project) %>
+            <span class="inline-flex items-center gap-1 text-sm text-base-content/70">
+              <span>{gettext("Assigned to")}:</span>
+              <.link
+                :if={assignee_href}
+                navigate={assignee_href}
+                class="badge badge-outline badge-sm gap-1 link-hover"
+                title={assignee_type(@project)}
+              >
+                <.icon name={assignee_icon(@project)} class="w-3 h-3" />
+                {assignee_label(@project)}
+              </.link>
+              <span
+                :if={is_nil(assignee_href)}
+                class="badge badge-outline badge-sm gap-1"
+                title={assignee_type(@project)}
+              >
+                <.icon name={assignee_icon(@project)} class="w-3 h-3" />
+                {assignee_label(@project)}
+              </span>
             </span>
           </div>
           <%!-- Action buttons. Separate row so a long title never crowds
