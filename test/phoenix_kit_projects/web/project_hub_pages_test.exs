@@ -221,6 +221,16 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks")
     end
 
+    test "a template never gets a Comments tab, even with Discussions on", %{conn: conn} do
+      template = fixture_template()
+      {:ok, view, html} = live(conn, "/en/admin/projects/templates/#{template.uuid}")
+      refute html =~ ~s(phx-value-tab="comments")
+      refute html =~ "pk-comments-body-comments-tab-project-"
+
+      html = render_click(view, "switch_tab", %{"tab" => "comments"})
+      refute html =~ "pk-comments-body-comments-tab-project-"
+    end
+
     test "a project that is ONLY a discussion lands on Comments with no strip",
          %{conn: conn, project: project} do
       {:ok, _} = Extensions.disable(project, "tasks")
@@ -319,6 +329,35 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       # No Tasks tab at all — none of the task chrome renders.
       refute html =~ ~s(phx-value-tab="tasks")
       refute html =~ "Add task"
+    end
+
+    test "tasks OFF: a forged 'tasks' / unknown / bad-extension switch stays on a real tab",
+         %{conn: conn, project: project} do
+      {:ok, _} = Extensions.disable(project, "tasks")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      assert html =~ "ext-tab-content"
+
+      # codex (2026-09-05): these used to resolve to :list, whose pane a
+      # tasks-off project does not render — a blank page.
+      for forged <- ["tasks", "board", "nonsense", "ext:evil:main"] do
+        html = render_click(view, "switch_tab", %{"tab" => forged})
+        assert html =~ "ext-tab-content", "#{forged} blanked the page"
+        assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/main")
+      end
+    end
+
+    test "turning tasks off while on the list moves the page to the extension tab",
+         %{conn: conn, project: project} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks")
+
+      {:ok, _} = Extensions.disable(project, "tasks")
+      send(view.pid, {:projects, :project_modules_changed, %{}})
+
+      html = render(view)
+      assert html =~ "ext-tab-content"
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/main")
+      refute html =~ ~s(phx-value-tab="tasks")
     end
 
     test "the extension tab sits in the top strip beside Tasks and deep-links by its key",

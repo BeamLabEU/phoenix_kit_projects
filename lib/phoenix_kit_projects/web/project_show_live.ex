@@ -299,7 +299,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           ext_tabs =
             ext_tabs_for(project, is_template, socket.assigns[:phoenix_kit_current_scope])
 
-          comments? = comments_available?() and Extensions.enabled?(project, "discussions")
+          # Templates keep the Tasks pane alone — no Comments tab, whatever
+          # the Discussions extension says.
+          comments? =
+            not is_template and comments_available?() and
+              Extensions.enabled?(project, "discussions")
 
           active_tab =
             socket
@@ -554,9 +558,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         socket.assigns[:phoenix_kit_current_scope]
       )
 
-    # Re-gate the active tab: a gated-off view falls to :list; an extension
-    # tab whose extension was just disabled falls to :list too.
-    comments? = comments_available?() and Extensions.enabled?(project, "discussions")
+    # Re-gate the active tab: a gated-off view, an extension tab whose
+    # extension was just disabled or a Comments tab that just lost
+    # Discussions all fall to the landing tab — which, with tasks off, is
+    # the first thing still on (never a pane the project no longer has).
+    comments? =
+      not socket.assigns.is_template and comments_available?() and
+        Extensions.enabled?(project, "discussions")
 
     active =
       case gate_tab(socket.assigns.active_tab, fx) do
@@ -564,16 +572,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         :comments -> if comments?, do: :comments, else: :list
         tab -> tab
       end
+      |> resolve_landing_tab(fx, ext_tabs, comments?)
 
     socket =
-      assign(socket,
+      socket
+      |> assign(
         project: project,
         fx: fx,
         fx_files: Extensions.enabled?(project, "files"),
         ext_tabs: ext_tabs,
-        comments_enabled: comments?,
-        active_tab: active
+        comments_enabled: comments?
       )
+      |> activate_tab(active)
 
     # Ledger visibility follows the flag: flipping it on mid-session must
     # populate the totals; flipping it off clears them.
@@ -1584,22 +1594,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   defp gated_handle_event("switch_tab", %{"tab" => tab}, socket) do
-    active = resolve_switch_target(tab, socket)
-
-    socket =
-      if is_binary(active),
-        do: assign(socket, ext_mounted: MapSet.put(socket.assigns.ext_mounted, active)),
-        else: socket
-
-    # The URL follows on its own: the tab strip carries the canonical
-    # address of the active tab in `data-url` and core's PkUrlMirror hook
-    # replaces the browser's (router mounts only — `@tab_url_sync?`).
-    {:noreply,
-     socket
-     |> assign(active_tab: active)
-     |> remember_task_view(active)
-     |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
-     |> assign(calendar_mounted?: socket.assigns.calendar_mounted? or active == :calendar)}
+    # The URL follows on its own: the page carries the canonical address
+    # of the active tab in `data-url` and core's PkUrlMirror hook replaces
+    # the browser's (router mounts only — `@tab_url_sync?`).
+    {:noreply, activate_tab(socket, resolve_switch_target(tab, socket))}
   end
 
   defp gated_handle_event("complete", %{"uuid" => uuid}, socket) do
@@ -2471,19 +2469,43 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # (stale DOM, forged payload) falls back to the list. Extension tab ids
   # are validated against the CURRENT ext_tabs set — an id for a
   # since-disabled extension falls back too.
-  defp resolve_switch_target(tab, socket) do
-    fx = socket.assigns.fx
+  # Make a (validated) tab the active one. Every nested surface is
+  # lazy-mounted the first time its tab opens and never unmounted — the
+  # extension LV, the gantt and the calendar each keep their state across
+  # switches. Shared by the switch event and the live re-gate, which used
+  # to skip the mount marks and land on an extension tab with no pane
+  # (codex, 2026-09-05).
+  defp activate_tab(socket, active) do
+    ext_mounted =
+      if is_binary(active),
+        do: MapSet.put(socket.assigns.ext_mounted, active),
+        else: socket.assigns.ext_mounted
 
-    case tab do
-      # The top-level Tasks tab reopens the task view the user last had.
-      "tasks" -> gate_tab(socket.assigns.task_view, fx)
-      "board" when :erlang.map_get(:view_board, fx) -> :board
-      "gantt" when :erlang.map_get(:view_timeline, fx) -> :gantt
-      "calendar" when :erlang.map_get(:view_calendar, fx) -> :calendar
-      "comments" when :erlang.map_get(:comments_enabled, socket.assigns) -> :comments
-      "ext:" <> _ -> if valid_ext_tab?(socket, tab), do: tab, else: :list
-      _ -> :list
-    end
+    socket
+    |> assign(active_tab: active, ext_mounted: ext_mounted)
+    |> remember_task_view(active)
+    |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
+    |> assign(calendar_mounted?: socket.assigns.calendar_mounted? or active == :calendar)
+  end
+
+  defp resolve_switch_target(tab, socket) do
+    %{fx: fx, ext_tabs: ext_tabs, comments_enabled: comments?} = socket.assigns
+
+    target =
+      case tab do
+        "tasks" -> gate_tab(socket.assigns.task_view, fx)
+        "board" when :erlang.map_get(:view_board, fx) -> :board
+        "gantt" when :erlang.map_get(:view_timeline, fx) -> :gantt
+        "calendar" when :erlang.map_get(:view_calendar, fx) -> :calendar
+        "comments" when comments? -> :comments
+        "ext:" <> _ -> if valid_ext_tab?(socket, tab), do: tab, else: :list
+        _ -> :list
+      end
+
+    # The same landing rule as mount (codex, 2026-09-05): with tasks off a
+    # forged "tasks" / unknown tab must land on the first thing that IS on,
+    # never on a :list whose pane the project does not render.
+    resolve_landing_tab(target, fx, ext_tabs, comments?)
   end
 
   # The task view that the Tasks top tab reopens: the last one shown.
@@ -3520,7 +3542,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- Nothing turned on at all: the one state where the page has no
            tab to show. Data is preserved — flipping anything on restores
            its tab. --%>
-      <%= if not @is_template and top_tabs == [] do %>
+      <%= if top_tabs == [] do %>
         <.empty_state icon="hero-squares-plus" title={gettext("Nothing is turned on for this project yet.")}>
           <:cta>
             <.smart_link
