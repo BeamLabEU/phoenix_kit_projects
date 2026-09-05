@@ -185,10 +185,27 @@ On the Overview page this cost was paid once per navigation. As a widget it is
 paid on every refresh tick, per connected dashboard viewer, forever. The
 queries are correctly viewer-scoped — this is load, not a leak.
 
-**Not fixed.** The honest fix is a batched summary query (one grouped read of
-assignments for a set of project uuids) feeding `project_tree_summary`, which
-is real work in the context layer and well outside a post-merge sweep. Recorded
-so the next person sizing a dashboard knows the cost is per-tick.
+**Not fixed here.** The honest fix is a batched summary query (one grouped read
+of assignments for a set of project uuids) feeding `project_tree_summary`,
+which is real work in the context layer and well outside a post-merge sweep.
+Recorded so the next person sizing a dashboard knows the cost is per-tick.
+
+**Resolved by PR #41** (`348caed`, "Batch the per-item reads on the hot paths"),
+which built exactly that and eleven more: `Projects.assignments_by_project/1`
+reads the whole forest with one `WHERE project_uuid IN (…)` per depth level,
+and `project_tree_summaries/1` / `ScheduleLayout.trees/1` build every node from
+that map. Both widgets and `OverviewLive` call the plural forms now, so the fix
+fires on the paths this finding named. Checked on re-review: the batched read is
+filter-, order- and preload-identical to `list_assignments/1`; its depth cap
+(`Projects.max_subproject_depth/0`) is the same bound the builders stop at, so a
+node at the cap is not built rather than read as falsely empty; and both
+builders carry a path set so a cycle in bad data terminates. #41 also caught an
+N+1 this review missed — `Features.gates/1` was asking the database per flag and
+per `requires` hop, 22 reads on every project-page mount and every
+modules-changed broadcast; `Features.context/1` now gathers it once.
+`test/support/query_counter.ex` locks the counts in by telemetry, and the new
+suites assert node-for-node and span-for-span equivalence with the singular
+forms. Gate green at `348caed`: 1511 tests, 0 failures.
 
 ### 6. NITPICK — `Projects.quick_add_assignment/3` takes an `_opts` it never reads
 
