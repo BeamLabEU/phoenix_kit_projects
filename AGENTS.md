@@ -779,6 +779,15 @@ The "Review submissions" button is not a control and keeps its row
 whenever there is something to review. Tests that pin the lens itself
 set the mode to `always` first.
 
+**The sequence rail means "these run one after another"** — the
+schedule is a sequential walk in drag order and the vertical line down
+the list is that walk. It draws only when the claim is true:
+`@list_manual?` (the whole plan, not a slice) AND `@fx.scheduling` (a
+checklist has no walk). Drag handles need only the first — a checklist
+is still reorderable. The numbers are positions in the project either
+way. (Max, 2026-09-05: "I thought the line meant the tasks are
+connected, and for a todo list it was off" — it does, and now it is.)
+
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 
 Projects contributes ten widgets to the dashboards module via the duck-typed

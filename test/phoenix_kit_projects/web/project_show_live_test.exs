@@ -1145,6 +1145,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert :sys.get_state(view.pid).socket.assigns.list_manual?
     end
 
+    test "the sequence rail draws only when there is a sequence (scheduling on)",
+         %{conn: conn} do
+      rail = ~s(class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300")
+      project = lens_project(0, 2)
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      assert html =~ rail
+      assert html =~ "pk-drag-handle"
+
+      # A checklist: no schedule walk, so no line — but still reorderable.
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(project, %{"scheduling" => false})
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      refute html =~ rail
+      assert html =~ "pk-drag-handle"
+    end
+
     test "auto: the controls appear once both sides are populated and the threshold is met",
          %{conn: conn} do
       project = lens_project(1, 9)

@@ -3808,13 +3808,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </.empty_state>
       <% else %>
         <div :if={@visible_assignments != []} class="relative">
-          <%!-- The connector rail claims "these form a sequence, and where a
-               card sits in it means something". Under any lens that claim
-               is false — the rows are a slice, and the numbers beside them
-               would count the slice rather than the plan. So it renders
-               only in the one state where it is true, on the same predicate
-               that decides whether cards can be dragged at all. --%>
-          <div :if={@list_manual?} class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"></div>
+          <%!-- The connector rail claims "these run one after another" —
+               the schedule is a sequential walk in drag order, and the line
+               is that walk drawn down the list. Two ways for the claim to
+               be false: under a lens the rows are a slice, not the plan;
+               and with scheduling OFF (a checklist) there is no walk at all,
+               only a list whose order is yours to arrange. So it renders
+               only when both hold. Dragging shares the first condition,
+               not the second — a checklist is still reorderable. --%>
+          <div
+            :if={@list_manual? and @fx.scheduling}
+            class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"
+          >
+          </div>
 
           <%!-- SortableGrid hook lives on the inner flex container —
                the absolute-positioned vertical line is a sibling
