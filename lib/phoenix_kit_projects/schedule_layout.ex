@@ -34,8 +34,6 @@ defmodule PhoenixKitProjects.ScheduleLayout do
 
   @type span :: %{start: NaiveDateTime.t(), end: NaiveDateTime.t()}
 
-  # Guards against pathological/corrupt nesting when flattening the tree.
-
   @doc """
   Flattens `project`'s assignment tree and computes each item's scheduled
   span. Returns `{items, layout}`: `items` in flattened tree order (each

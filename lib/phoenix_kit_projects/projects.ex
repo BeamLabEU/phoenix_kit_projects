@@ -2899,12 +2899,19 @@ defmodule PhoenixKitProjects.Projects do
 
   @doc """
   Adds a **one-off** task by title (`ad_hoc: true`, so it never shows in
-  the library) into `project_uuid` at the bottom of the plan with the
-  project's defaults — the by-title shortcut over
-  `create_task_with_assignment/3` for hosts and scripts (the add-task
-  sheet builds the full attrs itself). Trims the title; a blank one is a
-  `:task` changeset error like any other validation failure. Broadcasts
-  after commit, logs nothing — see `create_task_with_assignment/3`.
+  the library) into `project_uuid` at the bottom of the plan — the
+  by-title shortcut over `create_task_with_assignment/3` for hosts and
+  scripts (the add-task sheet builds the full attrs itself). Trims the
+  title; a blank one is a `:task` changeset error like any other
+  validation failure. Broadcasts after commit, logs nothing — see
+  `create_task_with_assignment/3`.
+
+  The title is ALL it sets. The assignment takes the schema's own defaults
+  (`status: "todo"`, `priority: "normal"`, `progress_pct: 0`) plus the
+  computed bottom position — no assignee, no estimate, and nothing read
+  off the project. `opts` is accepted for call compatibility and ignored;
+  a caller that needs any of the above wants
+  `create_task_with_assignment/3` directly.
   """
   @spec quick_add_assignment(uuid(), String.t(), keyword()) ::
           {:ok, %{task: Task.t(), assignment: Assignment.t()}}

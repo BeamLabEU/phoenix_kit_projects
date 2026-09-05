@@ -212,14 +212,23 @@ forms. Gate green at `348caed`: 1511 tests, 0 failures.
 The `@spec` promises `keyword()` and the doc says the task lands "with the
 project's defaults", but the body passes `%{}` as the assignment attrs and
 ignores `opts` entirely. Harmless (the add-task sheet builds its own attrs),
-but the docstring over-promises. Left as-is: narrowing a public signature is
-not a sweep-sized change.
+but the docstring over-promises.
+
+**Fixed the docstring, kept the signature.** `Assignment.changeset/2` is a plain
+cast + validate — nothing is read off the project — so the doc now says what
+actually happens: the title is all it sets, the assignment takes the schema's
+own defaults (`status: "todo"`, `priority: "normal"`, `progress_pct: 0`) plus
+the computed bottom position, and a caller needing more wants
+`create_task_with_assignment/3`. `opts` stays and is documented as accepted and
+ignored: arity 3 is published API since 0.22.0, and dropping it over a
+docstring would break callers for nothing.
 
 ### 7. NITPICK — `RunningTiers.prioritize/4` hand-rolls what `Enum.sort_by/2` does
 
 `Enum.map(&{sort_key(…), &1}) |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 1))`
 is a Schwartzian transform; `Enum.sort_by/2` already computes the key once per
-element. Left as-is — correct, just longer than it needs to be.
+element. **Fixed** — one `Enum.sort_by(summaries, &sort_key(&1, today, now))`.
+Same key, same stability, same order.
 
 ### 8. NITPICK — a comment in `DashboardWidgets` contradicted the route table
 

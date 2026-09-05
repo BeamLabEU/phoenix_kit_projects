@@ -47,11 +47,7 @@ defmodule PhoenixKitProjects.RunningTiers do
   """
   @spec prioritize([map()], Date.t(), DateTime.t(), pos_integer()) :: {[map()], non_neg_integer()}
   def prioritize(summaries, %Date{} = today, %DateTime{} = now, limit \\ @default_display_limit) do
-    sorted =
-      summaries
-      |> Enum.map(&{sort_key(&1, today, now), &1})
-      |> Enum.sort_by(fn {key, _} -> key end)
-      |> Enum.map(fn {_, s} -> s end)
+    sorted = Enum.sort_by(summaries, &sort_key(&1, today, now))
 
     {Enum.take(sorted, limit), length(summaries)}
   end
