@@ -29,7 +29,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
     {:ok, conn: conn, project: project, assignment: assignment}
   end
 
-  defp show_path(project), do: "/en/admin/projects/list/#{project.uuid}"
+  defp show_path(project), do: "/en/admin/projects/#{project.uuid}"
 
   describe "tasks extension off" do
     setup %{project: project} do
@@ -153,7 +153,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
          %{conn: conn, project: project} do
       {:ok, project} = Features.set_flags(project, %{"view_timeline" => false})
 
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/gantt")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}/gantt")
 
       # Timeline tab gone; Calendar still offered; the gantt did not mount.
       refute html =~ ~s(phx-value-tab="gantt")
@@ -187,7 +187,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
     test "deps card hidden; forged add refused", %{conn: conn, project: project, assignment: a} do
       {:ok, view, html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{a.uuid}/edit")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/#{a.uuid}/edit")
 
       refute html =~ "Add dependency"
 
@@ -217,7 +217,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       task = fixture_task(%{"title" => "Strip me #{System.unique_integer([:positive])}"})
 
       {:ok, view, html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       refute html =~ ~s(name="assign_type")
 
@@ -246,7 +246,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
     test "?kind=subproject falls back to the task form", %{conn: conn, project: project} do
       {:ok, _view, html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new?kind=subproject")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new?kind=subproject")
 
       assert html =~ "Add task to"
       refute html =~ "Nest existing"
@@ -384,7 +384,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
          %{conn: conn, project: project, assignment: assignment} do
       # ON (default): the form save persists priority.
       {:ok, view, _} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit")
 
       render_submit(view, "save", %{"assignment" => %{"priority" => "urgent"}})
       assert Projects.get_assignment(assignment.uuid).priority == "urgent"
@@ -393,7 +393,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       {:ok, project} = Features.set_flags(project, %{"priorities" => false})
 
       {:ok, view, html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit")
 
       refute html =~ "assignment[priority]"
       render_submit(view, "save", %{"assignment" => %{"priority" => "low"}})
@@ -408,7 +408,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       {:ok, project} = Features.set_flags(project, %{"labels" => false})
 
       # Panel events refuse.
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
       refute html =~ "add_label"
       html = render_submit(view, "add_label", %{"name" => "sneak", "color" => "badge-info"})
       assert html =~ "This feature is turned off for this project."
@@ -416,7 +416,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       # A form save with the flag off leaves existing joins untouched.
       {:ok, form_view, form_html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit")
 
       refute form_html =~ ~s(name="labels[]")
       render_submit(form_view, "save", %{"assignment" => %{"status" => "todo"}, "labels" => []})
@@ -432,7 +432,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
          %{conn: conn, project: project} do
       {:ok, label} = Labels.create(project, %{name: "newpath"})
 
-      {:ok, view, _} = live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       render_submit(view, "save", %{
         "assignment" => %{"status" => "todo"},
@@ -459,7 +459,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       :ok = Labels.set_assignment_labels(assignment, [a.uuid])
 
       {:ok, view, html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit")
 
       assert html =~ ~s(value="#{a.uuid}" checked)
 
@@ -475,12 +475,12 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
          %{conn: conn, project: project} do
       {:ok, project} = Features.set_flags(project, %{"statuses" => false})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
       refute html =~ "generate_default_statuses"
     end
 
     test "the new form offers archetype cards and applies the recipe on create", %{conn: conn} do
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, html} = live(conn, "/en/admin/projects/new")
 
       # The starting-point cards replaced the bare preset select.
       assert html =~ ~s(name="archetype")

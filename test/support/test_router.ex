@@ -28,35 +28,37 @@ defmodule PhoenixKitProjects.Test.Router do
     live_session :projects_test,
       layout: {PhoenixKitProjects.Test.Layouts, :app},
       on_mount: {PhoenixKitProjects.Test.Hooks, :assign_scope} do
-      # The landing page is the project list; the old bare `/list` only
-      # redirects there (project pages keep `list/:id/…`).
+      # Same shape and ORDER as the module's admin_tabs/0 (routes are emitted
+      # in that order and Phoenix matches in declaration order): the literal
+      # subtabs and the legacy redirects before `/:id`, `/new` before `/:id`.
       live("/", ProjectsLive, :index)
-      live("/list", ListRedirectLive, :index)
-      # The Overview is the last subtab (it also stays embeddable for host
-      # apps).
+      live("/templates", TemplatesLive, :index)
+      live("/tasks", TasksLive, :index)
       live("/overview", OverviewLive, :index)
 
-      live("/tasks", TasksLive, :index)
+      # Legacy `list/…` addresses redirect to the same path without the segment.
+      live("/list", ListRedirectLive, :index)
+      live("/list/*rest", ListRedirectLive, :index)
+
       live("/tasks/new", TaskFormLive, :new)
       live("/tasks/:id/edit", TaskFormLive, :edit)
 
-      live("/list/new", ProjectFormLive, :new)
-      live("/list/:id", ProjectShowLive, :show)
-      live("/list/:id/gantt", ProjectShowLive, :gantt)
-      live("/list/:id/calendar", ProjectShowLive, :calendar)
-      live("/list/:id/edit", ProjectFormLive, :edit)
-      live("/list/:id/modules", ProjectModulesLive, :edit)
-      live("/list/:id/members", ProjectMembersLive, :edit)
-      live("/list/:id/files", ProjectFilesLive, :edit)
-      live("/list/:id/activity", ProjectActivityLive, :index)
+      live("/new", ProjectFormLive, :new)
+      live("/:id", ProjectShowLive, :show)
+      live("/:id/gantt", ProjectShowLive, :gantt)
+      live("/:id/calendar", ProjectShowLive, :calendar)
+      live("/:id/edit", ProjectFormLive, :edit)
+      live("/:id/modules", ProjectModulesLive, :edit)
+      live("/:id/members", ProjectMembersLive, :edit)
+      live("/:id/files", ProjectFilesLive, :edit)
+      live("/:id/activity", ProjectActivityLive, :index)
 
-      live("/list/:project_id/assignments/new", AssignmentFormLive, :new)
-      live("/list/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)
-
-      live("/templates", TemplatesLive, :index)
       live("/templates/new", TemplateFormLive, :new)
       live("/templates/:id", ProjectShowLive, :show_template)
       live("/templates/:id/edit", TemplateFormLive, :edit)
+
+      live("/:project_id/assignments/new", AssignmentFormLive, :new)
+      live("/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)
     end
   end
 

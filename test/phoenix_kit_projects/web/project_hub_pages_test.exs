@@ -22,7 +22,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
   describe "Files page" do
     test "renders empty state; folder resolves lazily (none until needed)",
          %{conn: conn, project: project} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/files")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/files")
 
       assert html =~ "No files yet."
       assert Attachments.folder_uuid(project.uuid) == nil
@@ -30,7 +30,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
 
     test "open_picker ensures the folder; media_selected attaches + logs",
          %{conn: conn, project: project} do
-      {:ok, view, _} = live(conn, "/en/admin/projects/list/#{project.uuid}/files")
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/files")
 
       render_click(view, "open_picker", %{})
       assert folder_uuid = Attachments.folder_uuid(project.uuid)
@@ -73,7 +73,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       {:ok, _} = Extensions.disable(project, "files")
 
       {:error, {:live_redirect, %{to: to}}} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/files")
+        live(conn, "/en/admin/projects/#{project.uuid}/files")
 
       assert to =~ "/admin/projects"
     end
@@ -99,7 +99,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
         metadata: %{"marker" => "not-mine"}
       })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/activity")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/activity")
 
       assert html =~ "mine"
       refute html =~ "not-mine"
@@ -125,7 +125,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
          %{conn: conn, project: project} do
       {:ok, project} = Health.set(project, "concerned", "Two blockers")
 
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ "Concerned"
       assert html =~ "Two blockers"
@@ -171,10 +171,10 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
 
   describe "the discussions bridge (comments as a per-project toggle)" do
     test "disabling it hides the comments drawer trigger", %{conn: conn, project: project} do
-      {:ok, _view, html_on} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html_on} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       {:ok, _} = Extensions.disable(project, "discussions")
-      {:ok, _view, html_off} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html_off} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # With comments installed in the test env the trigger flips with the
       # toggle; without it both renders lack the trigger (still a valid pin
@@ -245,7 +245,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
 
     test "the tab appears in the strip and mounts its LV with the config",
          %{conn: conn, project: project} do
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ "Tab Ext"
 
@@ -256,7 +256,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
     end
 
     test "a forged ext tab id falls back to list", %{conn: conn, project: project} do
-      {:ok, view, _} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       html = render_click(view, "switch_tab", %{"tab" => "ext:evil:main"})
       refute html =~ "ext-tab-content"
@@ -266,7 +266,7 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
          %{conn: conn, project: project} do
       {:ok, _} = Extensions.disable(project, "tasks")
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ "ext-tab-content"
       refute html =~ "Tasks are turned off for this project."

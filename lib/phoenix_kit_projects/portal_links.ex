@@ -14,7 +14,7 @@ defmodule PhoenixKitProjects.PortalLinks do
 
   ## The link has to be the public one
 
-  `project_task` resolves to `/admin/projects/list/<project>`, which an
+  `project_task` resolves to `/admin/projects/<project>`, which an
   anonymous reader cannot open. Linking a portal issue to that page would
   render every `#` on a public board as a locked chip pointing at an admin
   URL. This resolves to `/portal/<slug>/i/<uuid>` — the page the reader is

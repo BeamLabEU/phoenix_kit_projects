@@ -482,10 +482,14 @@ defmodule PhoenixKitProjects do
   end
 
   # Paths reach the matcher normalised (URL prefix + locale stripped, no
-  # trailing slash): the landing itself, or anything under `list/`. A
-  # function, not a module attribute — a compiled Regex holds a reference
-  # and cannot be injected into a function body.
-  defp projects_list_match, do: {:regex, ~r{^/admin/projects(/list(/.*)?)?$}}
+  # trailing slash): the landing itself and every project page under it —
+  # i.e. anything under `projects` that is not one of the sibling subtabs
+  # (`tasks`, `templates`, `overview`). Legacy `list/…` addresses redirect
+  # before they render, so they need no match. A function, not a module
+  # attribute — a compiled Regex holds a reference and cannot be injected
+  # into a function body.
+  defp projects_list_match,
+    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|overview)(/|$))(/.*)?$}}
 
   @impl PhoenixKit.Module
   def admin_tabs do
@@ -523,8 +527,8 @@ defmodule PhoenixKitProjects do
         priority: 661,
         level: :admin,
         permission: module_key(),
-        # Lit on the landing page AND on every project page under
-        # `list/…`, without claiming Tasks/Templates. Tabs match
+        # Lit on the landing page AND on every project page under it,
+        # without claiming Tasks/Templates/Overview. Tabs match
         # independently (no longest-prefix arbitration), so a plain
         # `:prefix` on `projects` would light this one everywhere.
         match: projects_list_match(),
@@ -579,11 +583,13 @@ defmodule PhoenixKitProjects do
     ]
 
     hidden_subtabs = [
-      # The list used to live at `projects/list` (still the parent segment
-      # of every project page). The bare path redirects to the landing so
-      # old bookmarks and pre-2026-09 embeds' `redirect_to` values land
-      # on the list instead of a 404. `:exact` — the `list/:id/…` pages
-      # below must keep their own tabs lit.
+      # Legacy `projects/list/…` addresses (the list lived there until
+      # 2026-09, with every project page nested under it). Both tabs
+      # redirect to the same path without the segment, so bookmarks and
+      # older embeds' `redirect_to` values keep landing. Declared FIRST
+      # among the hidden tabs: routes are emitted in this order and Phoenix
+      # matches in declaration order, so the bare `projects/list` must be
+      # seen before `projects/:id` would swallow it as an id.
       %Tab{
         id: :admin_projects_list_legacy,
         label: "Projects",
@@ -599,11 +605,25 @@ defmodule PhoenixKitProjects do
         live_view: {PhoenixKitProjects.Web.ListRedirectLive, :index}
       },
       %Tab{
+        id: :admin_projects_list_legacy_glob,
+        label: "Projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/*rest",
+        priority: 666,
+        level: :admin,
+        permission: module_key(),
+        match: :exact,
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ListRedirectLive, :index}
+      },
+      %Tab{
         id: :admin_projects_files,
         label: "Project Files",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/files",
+        path: "projects/:id/files",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -615,7 +635,7 @@ defmodule PhoenixKitProjects do
         label: "Project Activity",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/activity",
+        path: "projects/:id/activity",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -627,7 +647,7 @@ defmodule PhoenixKitProjects do
         label: "Project Members",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/members",
+        path: "projects/:id/members",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -639,7 +659,7 @@ defmodule PhoenixKitProjects do
         label: "Project Modules",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/modules",
+        path: "projects/:id/modules",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -675,7 +695,7 @@ defmodule PhoenixKitProjects do
         label: "New Project",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/new",
+        path: "projects/new",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -687,7 +707,7 @@ defmodule PhoenixKitProjects do
         label: "Edit Project",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/edit",
+        path: "projects/:id/edit",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -699,7 +719,7 @@ defmodule PhoenixKitProjects do
         label: "Project",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id",
+        path: "projects/:id",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -711,7 +731,7 @@ defmodule PhoenixKitProjects do
         label: "Board",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/board",
+        path: "projects/:id/board",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -727,7 +747,7 @@ defmodule PhoenixKitProjects do
         label: "Timeline",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/gantt",
+        path: "projects/:id/gantt",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -741,7 +761,7 @@ defmodule PhoenixKitProjects do
         label: "Calendar",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/calendar",
+        path: "projects/:id/calendar",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -791,7 +811,7 @@ defmodule PhoenixKitProjects do
         label: "Add Task",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:project_id/assignments/new",
+        path: "projects/:project_id/assignments/new",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -803,7 +823,7 @@ defmodule PhoenixKitProjects do
         label: "Edit Assignment",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:project_id/assignments/:id/edit",
+        path: "projects/:project_id/assignments/:id/edit",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,

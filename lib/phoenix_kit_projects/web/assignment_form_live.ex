@@ -222,7 +222,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # "administer every project" — but this form, the one that actually
   # CREATES and EDITS a project's tasks, kept riding the route alone. So
   # anyone who could reach the module could open
-  # `/admin/projects/list/<any-uuid>/assignments/new` and write into a
+  # `/admin/projects/<any-uuid>/assignments/new` and write into a
   # private project they belong to nothing of, with the project's own
   # create/edit floors never consulted.
   #

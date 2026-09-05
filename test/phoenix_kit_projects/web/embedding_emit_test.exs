@@ -82,7 +82,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       # In emit mode, the action button is a <button phx-click="open_embed">,
       # never an <a href>.
       assert html =~ ~s(phx-click="open_embed")
-      refute html =~ ~s(href="/en/admin/projects/list/new")
+      refute html =~ ~s(href="/en/admin/projects/new")
     end
 
     test "raises when mode=emit but pubsub_topic is missing", %{conn: conn} do

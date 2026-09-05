@@ -14,7 +14,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
   end
 
   test "renders the panel: built-in tasks toggle, flags, presets", %{conn: conn, project: project} do
-    {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+    {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
     assert html =~ "Modules &amp; features"
     assert html =~ "Tasks"
@@ -23,7 +23,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
   end
 
   test "toggle_ext flips the tasks extension off and back", %{conn: conn, project: project} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
     assert Extensions.enabled?(project, "tasks")
 
@@ -35,7 +35,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
   end
 
   test "toggle_flag writes an explicit value", %{conn: conn, project: project} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
     assert Features.on?(project, "assignees")
     view |> element("input[phx-value-key='assignees'][phx-click='toggle_flag']") |> render_click()
@@ -45,7 +45,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
   test "dependency matrix disables dependents and explains", %{conn: conn, project: project} do
     {:ok, _} = Features.set_flags(project, %{"scheduling" => false})
 
-    {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+    {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
     # view_timeline's toggle is disabled with the explanation visible.
     assert html =~ "Requires:"
@@ -58,7 +58,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
   end
 
   test "apply_preset simple flips the feature set", %{conn: conn, project: project} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
     view |> element("button[phx-value-key='simple'][phx-click='apply_preset']") |> render_click()
 
@@ -72,14 +72,14 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
       |> put_test_scope(fake_scope(permissions: []))
 
     {:error, {:live_redirect, %{to: to}}} =
-      live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+      live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
     assert to =~ "/admin/projects"
   end
 
   test "unknown project bounces with a flash", %{conn: conn} do
     {:error, {:live_redirect, %{to: to}}} =
-      live(conn, "/en/admin/projects/list/#{Ecto.UUID.generate()}/modules")
+      live(conn, "/en/admin/projects/#{Ecto.UUID.generate()}/modules")
 
     assert to =~ "/admin/projects"
   end
@@ -120,7 +120,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
 
     test "renders a <select> with the provider's lazy options (and text for the rest)",
          %{conn: conn, project: project} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
       assert html =~ ~s(<select)
       assert html =~ "Board A"
@@ -130,7 +130,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
     end
 
     test "save_config round-trips the picked value", %{conn: conn, project: project} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
       view
       |> form("#ext-config-select_ext", %{"config" => %{"picked" => "uuid-b"}})
@@ -146,7 +146,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
          %{conn: conn, project: project} do
       {:ok, _} = Extensions.update_config(project, "select_ext", %{"picked" => "uuid-gone"})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/modules")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
 
       assert html =~ "uuid-gone"
       assert html =~ "Current value (unavailable)"

@@ -27,7 +27,7 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
     do: view |> form("#quick-add-form", %{"title" => title}) |> render_submit()
 
   test "starts closed as a dashed add-row, opens into a focused input", %{conn: conn, project: p} do
-    {:ok, view, html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+    {:ok, view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
     assert html =~ "Add a task"
     refute html =~ "quick-add-form"
@@ -45,7 +45,7 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
     lib = fixture_task(%{"title" => "From the library"})
     {:ok, _} = Projects.create_assignment(%{"project_uuid" => p.uuid, "task_uuid" => lib.uuid})
 
-    {:ok, view, _} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+    {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
     open(view)
 
     html = submit(view, "Order the worktop")
@@ -85,7 +85,7 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
 
   test "a blank title keeps the composer open with an inline error and adds nothing",
        %{conn: conn, project: p} do
-    {:ok, view, _} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+    {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
     open(view)
 
     html = submit(view, "   ")
@@ -95,7 +95,7 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
   end
 
   test "Esc and the close button both close it; the draft is dropped", %{conn: conn, project: p} do
-    {:ok, view, _} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+    {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
     open(view)
 
     view |> form("#quick-add-form", %{"title" => "half typed"}) |> render_change()
@@ -111,7 +111,7 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
 
   test "More options carries the draft into the full form without creating anything",
        %{conn: conn, project: p} do
-    {:ok, view, _} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+    {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
     open(view)
     html = view |> form("#quick-add-form", %{"title" => "Needs a duration"}) |> render_change()
 
@@ -119,7 +119,7 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
     assert Projects.list_assignments(p.uuid) == []
 
     {:ok, _form, form_html} =
-      live(conn, "/en/admin/projects/list/#{p.uuid}/assignments/new?title=Needs+a+duration")
+      live(conn, "/en/admin/projects/#{p.uuid}/assignments/new?title=Needs+a+duration")
 
     assert form_html =~ ~s(value="Needs a duration")
     assert form_html =~ ~s(name="task_mode" value="new")
@@ -133,7 +133,7 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
 
   test "is hidden and refused when the tasks feature is off", %{conn: conn, project: p} do
     {:ok, _} = Extensions.disable(p, "tasks")
-    {:ok, view, html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+    {:ok, view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
     refute html =~ ~s(id="quick-add")
     html = render_click(view, "quick_add_task", %{"title" => "Forged"})
@@ -160,7 +160,7 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
         fake_scope(user_uuid: u.uuid, email: u.email, roles: ["User"], permissions: ["projects"])
       )
 
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
     html = render_click(view, "quick_add_task", %{"title" => "Not mine to add"})
     assert html =~ "permission"

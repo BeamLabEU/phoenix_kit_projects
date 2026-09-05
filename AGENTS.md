@@ -4,9 +4,9 @@ Guidance for AI agents working on the `phoenix_kit_projects` plugin module.
 
 ## Project overview
 
-A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) whose **landing page is the project list** (since 2026-09; the parent tab and the first subtab both render `ProjectsLive` at `/admin/projects` — the old bare `/admin/projects/list` redirects there, project pages keep `list/:id/…`), with subtabs:
+A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) whose **landing page is the project list** (since 2026-09; the parent tab and the first subtab both render `ProjectsLive` at `/admin/projects`; project pages sit directly under it, `/admin/projects/:id/…`, and the old `list/…` addresses redirect), with subtabs:
 
-- **Projects** — list of projects (filterable by status). Its subtab matcher is a regex (landing OR `list/…`) because tabs match independently and a `:prefix` on `projects` would light it on Tasks/Templates too.
+- **Projects** — list of projects (filterable by status). Its subtab matcher is a regex (everything under `projects` except the `tasks`/`templates`/`overview` siblings) because tabs match independently and a `:prefix` on `projects` would light it on those too.
 - **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee). A **Library | One-off** lens (URL `lens=`) appears once one-off tasks exist — see "Quick-add" below.
 - **Templates** — reusable project templates cloned into real projects
 - **Overview** — the LAST subtab (`projects/overview`; the boss: "an overview and a dashboard are different things, both have their value"). Its pieces are also dashboards-module widgets (see "Dashboard widgets") for anyone who wants them on a `phoenix_kit_dashboards` board, and `OverviewLive` stays the embeddable root view for host apps (`dev_docs/embedding_emit.md`). What it renders:
@@ -109,7 +109,7 @@ flips; each nested LV lazy-mounts on first open and stays mounted. URL sync
 
 ### URL paths
 
-Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../new`, `.../:id`, `.../:id/edit`, `.../:id/gantt`, `.../:id/calendar`, and assignment routes like `list/:project_id/assignments/new`. Use `PhoenixKitProjects.Paths`.
+Under `/admin/projects/*`: the list is the landing page and project pages sit directly under it — `new`, `:id`, `:id/edit`, `:id/board|gantt|calendar|files|activity|members|modules`, `:project_id/assignments/new`, `:project_id/assignments/:id/edit` — beside the literal siblings `tasks` (+ `tasks/new`, `tasks/:id/edit`), `templates` (+ `templates/new|:id|:id/edit`) and `overview`. The pre-2026-09 `list/…` addresses (the list used to live there) redirect to the same path without the segment (`ListRedirectLive`, hidden `projects/list` + `projects/list/*rest` tabs). **Declaration order is route order**: `admin_tabs/0` lists the literal siblings and the legacy redirects before `:id`, and `new` before `:id` — `landing_test.exs` pins it. Use `PhoenixKitProjects.Paths`.
 
 ### Embedding LiveViews via `live_render`
 

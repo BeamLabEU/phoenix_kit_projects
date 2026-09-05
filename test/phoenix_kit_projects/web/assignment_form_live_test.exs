@@ -24,7 +24,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       _task = fixture_task()
 
       {:ok, _view, html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       assert html =~ "assignment-form"
       assert html =~ project.name
@@ -34,7 +34,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       bogus = Ecto.UUID.generate()
 
       {:error, {:live_redirect, %{to: redirect_to, flash: flash}}} =
-        live(conn, "/en/admin/projects/list/#{bogus}/assignments/new")
+        live(conn, "/en/admin/projects/#{bogus}/assignments/new")
 
       assert redirect_to == PhoenixKitProjects.Paths.projects()
       assert flash["error"] =~ "Project not found"
@@ -45,7 +45,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       task = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       _ =
         view
@@ -65,7 +65,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       task = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       {:error, {:live_redirect, %{to: redirect_to}}} =
         view
@@ -75,7 +75,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
         )
         |> render_submit()
 
-      assert redirect_to =~ "/list/#{project.uuid}"
+      assert redirect_to =~ "/projects/#{project.uuid}"
 
       assert_activity_logged("projects.assignment_created",
         actor_uuid: actor_uuid,
@@ -87,7 +87,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       project = fixture_project()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       # The dropdown was replaced with tabs — click the "Create new" tab
       # button so `@task_mode` flips to "new" server-side, the hidden
@@ -114,7 +114,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       project = fixture_project()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
@@ -145,7 +145,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
 
     test "unticking 'save as reusable template' makes a one-off task", %{conn: conn} do
       project = fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
       _ = view |> element("button[phx-value-tab='new']") |> render_click()
       title = "Oneoff-#{System.unique_integer([:positive])}"
 
@@ -196,7 +196,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:ok, _view, html} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit"
         )
 
       assert html =~ "assignment-form"
@@ -208,7 +208,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:error, {:live_redirect, %{flash: flash}}} =
         live(
           conn,
-          "/en/admin/projects/list/#{bogus_project}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{bogus_project}/assignments/#{assignment.uuid}/edit"
         )
 
       assert flash["error"] =~ "Project not found"
@@ -220,10 +220,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:error, {:live_redirect, %{to: redirect_to, flash: flash}}} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{bogus_assignment}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{bogus_assignment}/edit"
         )
 
-      assert redirect_to =~ "/list/#{project.uuid}"
+      assert redirect_to =~ "/projects/#{project.uuid}"
       assert flash["error"] =~ "Assignment not found"
     end
 
@@ -232,7 +232,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:ok, view, _html} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit"
         )
 
       # On :edit the form has no `task_mode` select — task is fixed

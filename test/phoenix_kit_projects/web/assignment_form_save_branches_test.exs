@@ -21,7 +21,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       project = fixture_project()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       # Blank task_uuid → assoc_constraint OR validate_required fires.
       html =
@@ -46,7 +46,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       project = fixture_project()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
@@ -83,7 +83,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       {:ok, view, _html} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit"
         )
 
       # Submitting an out-of-set status doesn't make it through `validate_inclusion`.
@@ -110,7 +110,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       task = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       {:error, {:live_redirect, _}} =
         view
@@ -134,7 +134,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       task = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       {:error, {:live_redirect, _}} =
         view

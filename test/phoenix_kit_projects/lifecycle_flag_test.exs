@@ -115,7 +115,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
     test "a checklist shows neither the start bar nor the effort readout", %{conn: conn} do
       project = checklist()
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       refute html =~ "Not started", "the hub still asked a checklist to be started"
       refute html =~ "Start project"
@@ -127,7 +127,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       {:ok, project} =
         Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ "Not started"
       assert html =~ "Logged:"
@@ -226,7 +226,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       conn = put_test_scope(conn, fake_scope())
       project = checklist()
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ "archive_project",
              "a checklist has no start bar, so archiving is its only way out"
@@ -238,7 +238,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       conn = put_test_scope(conn, fake_scope())
       project = checklist()
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       refute html =~ "open_health_modal",
              "health asks whether a project is on track to finish; this one has no finish"
@@ -250,7 +250,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       {:ok, project} =
         Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ "open_health_modal"
     end
@@ -259,7 +259,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       conn = put_test_scope(conn, fake_scope())
       project = checklist()
 
-      {:ok, view, _} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_click(view, "save_health", %{"status" => "at_risk", "note" => "forged"})
 
@@ -273,7 +273,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       {:ok, project} =
         Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       refute html =~ "Modules &amp; features",
              "it lives inside Edit now — changing what a project is IS editing it"
@@ -309,7 +309,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       {:ok, project} =
         Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
 
       assert html =~ "Modules &amp; features"
       assert html =~ "Presets:", "the embedded panel didn't render its contents"
@@ -342,7 +342,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       assert {:error, {:live_redirect, _}} =
                conn
                |> put_test_scope(scope)
-               |> live("/en/admin/projects/list/#{project.uuid}/edit")
+               |> live("/en/admin/projects/#{project.uuid}/edit")
     end
 
     test "Save is the LAST thing on the edit page, after the modules panel", %{conn: conn} do
@@ -354,7 +354,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       {:ok, project} =
         Projects.create_project(%{"name" => "Order #{uniq()}", "start_mode" => "immediate"})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
 
       modules_at = :binary.match(html, "Presets:") |> elem(0)
       save_at = :binary.match(html, "phx-disable-with") |> elem(0)

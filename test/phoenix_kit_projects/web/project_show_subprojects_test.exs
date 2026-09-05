@@ -24,7 +24,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
     {:ok, conn: conn}
   end
 
-  defp path(project), do: "/en/admin/projects/list/#{project.uuid}"
+  defp path(project), do: "/en/admin/projects/#{project.uuid}"
 
   test "an existing sub-project renders as a row with the child name + badge", %{conn: conn} do
     parent = fixture_project()
@@ -53,7 +53,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
     parent = fixture_project()
 
     {:ok, view, _html} =
-      live(conn, "/en/admin/projects/list/#{parent.uuid}/assignments/new?kind=subproject")
+      live(conn, "/en/admin/projects/#{parent.uuid}/assignments/new?kind=subproject")
 
     html =
       view
@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
 
     # Navigates back to the project on success.
     assert {:error, {:live_redirect, %{to: to}}} = html
-    assert to =~ "/list/#{parent.uuid}"
+    assert to == PhoenixKitProjects.Paths.project(parent.uuid)
 
     assert Enum.any?(Projects.list_assignments(parent.uuid), &(&1.child_project_uuid != nil))
   end

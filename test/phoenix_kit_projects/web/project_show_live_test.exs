@@ -53,7 +53,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     } do
       project = fixture_project()
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       # The standalone admin page pushes the name into the site
       # breadcrumb (page_title + a linked "Projects" section) — the body
       # renders no h1/name row. The test layout renders the fixture
@@ -75,7 +75,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
           "status" => "todo"
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert html =~ task.title
     end
 
@@ -83,7 +83,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       bogus = Ecto.UUID.generate()
 
       {:error, {:live_redirect, %{to: redirect_to, flash: flash}}} =
-        live(conn, "/en/admin/projects/list/#{bogus}")
+        live(conn, "/en/admin/projects/#{bogus}")
 
       assert redirect_to == PhoenixKitProjects.Paths.projects()
       assert flash["error"] =~ "Project not found"
@@ -174,7 +174,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "start_task sets status to in_progress + logs activity",
          %{conn: conn, project: project, assignment: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       _ = render_click(view, "start_task", %{"uuid" => a.uuid})
 
@@ -189,7 +189,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "complete sets status to done + logs activity",
          %{conn: conn, project: project, assignment: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       _ = render_click(view, "complete", %{"uuid" => a.uuid})
 
@@ -205,7 +205,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "reopen reverts done → todo + clears completion",
          %{conn: conn, project: project, assignment: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       _ = render_click(view, "complete", %{"uuid" => a.uuid})
       _ = render_click(view, "reopen", %{"uuid" => a.uuid})
@@ -223,7 +223,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "scoped_assignment guard: bogus uuid is silently ignored",
          %{conn: conn, project: project} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # Crafted uuid that doesn't belong to this project — must NOT raise.
       _ = render_click(view, "complete", %{"uuid" => Ecto.UUID.generate()})
@@ -244,7 +244,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
           "status" => "todo"
         })
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
       _ = render_click(view, "complete", %{"uuid" => other_assignment.uuid})
 
       # Other-project assignment must remain untouched.
@@ -275,14 +275,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       project: p,
       assignment: a
     } do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       html = render_click(view, "edit_duration", %{"uuid" => a.uuid})
       assert html =~ "phx-submit=\"save_duration\""
     end
 
     test "cancel_edit_duration clears the editing state", %{conn: conn, project: p, assignment: a} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ = render_click(view, "edit_duration", %{"uuid" => a.uuid})
       _ = render_click(view, "cancel_edit_duration", %{})
@@ -292,7 +292,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "save_duration persists + logs activity",
          %{conn: conn, project: p, assignment: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ = render_click(view, "edit_duration", %{"uuid" => a.uuid})
 
@@ -338,7 +338,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "remove_assignment deletes + logs",
          %{conn: conn, project: p, a1: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ = render_click(view, "remove_assignment", %{"uuid" => a.uuid})
 
@@ -354,7 +354,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
          %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project(%{"start_mode" => "immediate"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # Page button opens the modal — no DB write here.
       _ = render_click(view, "open_start_modal", %{})
@@ -389,7 +389,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         |> NaiveDateTime.truncate(:second)
         |> NaiveDateTime.to_iso8601()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       _ = render_click(view, "open_start_modal", %{})
       _ = render_click(view, "confirm_start_project", %{"start_at" => backdated})
@@ -401,7 +401,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "toggle_tracking flips track_progress + logs",
          %{conn: conn, project: p, a1: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ = render_click(view, "toggle_tracking", %{"uuid" => a.uuid})
 
@@ -416,7 +416,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "update_progress updates the progress_pct",
          %{conn: conn, project: p, a1: a} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       # update_progress uses phx-change on a form — drive it via render_change.
       _ =
@@ -433,7 +433,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
          %{conn: conn, project: p, a1: a1, a2: a2, actor_uuid: actor_uuid} do
       {:ok, _} = Projects.add_dependency(a1.uuid, a2.uuid)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ =
         render_click(view, "remove_dependency", %{
@@ -472,7 +472,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       {:ok, _} = Projects.add_dependency(b1.uuid, b2.uuid)
 
       # Crafted event from project p's LV must NOT touch the other project's edge.
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ =
         render_click(view, "remove_dependency", %{
@@ -492,7 +492,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "assignment_created/updated/deleted reload the timeline",
          %{conn: conn, project: p} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       send(view.pid, {:projects, :assignment_created, %{uuid: Ecto.UUID.generate()}})
       send(view.pid, {:projects, :assignment_updated, %{uuid: Ecto.UUID.generate()}})
@@ -507,7 +507,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
 
     test "project_updated reloads project + assignments", %{conn: conn, project: p} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       send(view.pid, {:projects, :project_updated, %{}})
       send(view.pid, {:projects, :project_completed, %{}})
@@ -527,7 +527,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         Repo.insert(%Person{user_uuid: actor_uuid, status: "active"})
 
       project = fixture_project(%{"assigned_person_uuid" => person.uuid})
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert html =~ "Person"
 
       send(view.pid, {:projects, :project_updated, %{}})
@@ -539,7 +539,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "project_deleted flashes + redirects to projects index",
          %{conn: conn, project: p} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       send(view.pid, {:projects, :project_deleted, %{}})
 
@@ -565,7 +565,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       project: p,
       actor_uuid: actor_uuid
     } do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       view
       |> element("form[phx-change=change_workflow_status]")
@@ -584,7 +584,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       conn: conn,
       project: p
     } do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       html =
         view
@@ -611,7 +611,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "the list route shows the tab bar but does NOT mount the gantt (lazy)", %{conn: conn} do
       project = started_project_for_tabs()
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ ~s(role="tablist")
       assert html =~ "Timeline"
@@ -623,7 +623,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "the /gantt route opens the gantt tab with the nested chart mounted", %{conn: conn} do
       project = started_project_for_tabs()
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/gantt")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}/gantt")
 
       assert html =~ ~s(role="tablist")
       # Same page, gantt tab active → the nested ProjectGanttLive is rendered.
@@ -637,7 +637,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "switch_tab mounts the gantt on first open, then keeps it mounted", %{conn: conn} do
       project = started_project_for_tabs()
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       refute html =~ "lg-wrap"
 
       render_click(view, "switch_tab", %{"tab" => "gantt"})
@@ -654,7 +654,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       conn: conn
     } do
       project = started_project_for_tabs()
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/calendar")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}/calendar")
 
       assert html =~ ~s(role="tablist")
       # Same page, calendar tab active → the nested ProjectCalendarLive is
@@ -668,7 +668,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "switch_tab mounts the calendar on first open, then keeps it mounted", %{conn: conn} do
       project = started_project_for_tabs()
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       refute html =~ "cal-container"
 
       render_click(view, "switch_tab", %{"tab" => "calendar"})
@@ -743,7 +743,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "switch_tab pushes the URL event; a history-sourced switch does not", %{conn: conn} do
       project = started_project_for_tabs()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_click(view, "switch_tab", %{"tab" => "gantt"})
       assert_push_event(view, "project_tab_url", %{tab: "gantt"})
@@ -756,7 +756,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
     test "the schedule summary and progress bar render as one fused card", %{conn: conn} do
       project = started_project_for_tabs()
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # The schedule line renders.
       assert html =~ "Remaining:"
@@ -808,7 +808,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       done: done,
       active: active
     } do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # Scoped to the list itself: the board tab renders every assignment
       # into the same document (hidden by CSS), so asserting on the whole
@@ -843,7 +843,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         ["archived", raw_uuid]
       )
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert odd.uuid in list_rows(html)
     end
@@ -861,7 +861,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       # render as "1" under the default lens and "2" under All — the same
       # task, two numbers, depending on what else you happened to be
       # looking at.
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # Under the default lens `active` is the only row on screen, so a
       # counter over the visible rows would call it 1.
@@ -888,7 +888,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         |> Ecto.Changeset.change(review_status: "pending", source: "portal")
         |> Repo.update()
 
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       refute pending.uuid in list_rows(html)
       assert html =~ "Review submissions"
@@ -936,7 +936,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         |> Ecto.Changeset.change(inserted_at: ~U[2026-01-01 00:00:00Z])
         |> Repo.update()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
       opened = view |> element(~s(button[phx-click="open_review"])) |> render_click()
 
       assert opened =~ "Submissions to review"
@@ -973,7 +973,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         |> Ecto.Changeset.change(review_status: "pending", source: "portal")
         |> Repo.update()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       view |> element(~s(button[phx-click="open_review"])) |> render_click()
 
@@ -1001,7 +1001,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       {:ok, _} =
         stranger |> Ecto.Changeset.change(review_status: "pending") |> Repo.update()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_hook(view, "review_submission", %{
         "uuid" => stranger.uuid,
@@ -1013,7 +1013,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
 
     test "the rail and the drag handles are gone under a lens", %{conn: conn, project: project} do
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # Default is "active" — a filter — so neither may render.
       assert html =~ ~s(data-sortable="false")
@@ -1034,7 +1034,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       done: done,
       active: active
     } do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       before = ordered_uuids(project)
 
@@ -1058,7 +1058,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       done: done,
       active: active
     } do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       view |> element("button[phx-value-tab=all]") |> render_click()
 
@@ -1136,7 +1136,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
 
     test "dragging to another column changes the status", %{conn: conn, project: project, a: a} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_hook(view, "board_move", %{
         "moved_id" => a.uuid,
@@ -1152,7 +1152,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       project: project,
       a: a
     } do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_hook(view, "board_move", %{
         "moved_id" => a.uuid,
@@ -1194,7 +1194,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       # Move `a` to In progress, dropped ABOVE o2 in that column's order.
       # o2 is in a different column here, which is the point: the client's
       # list is partial, and only the insertion point may be taken from it.
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_hook(view, "board_move", %{
         "moved_id" => a.uuid,
@@ -1222,7 +1222,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     } do
       before = Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid)
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_hook(view, "board_move", %{"moved_id" => a.uuid, "status" => "done"})
 
@@ -1231,7 +1231,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     end
 
     test "a forged destination status is refused", %{conn: conn, project: project, a: a} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_hook(view, "board_move", %{
         "moved_id" => a.uuid,
@@ -1253,7 +1253,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
           "status" => "todo"
         })
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       render_hook(view, "board_move", %{
         "moved_id" => stranger.uuid,
@@ -1277,7 +1277,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         ["archived", raw_uuid]
       )
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ "does not show"
     end

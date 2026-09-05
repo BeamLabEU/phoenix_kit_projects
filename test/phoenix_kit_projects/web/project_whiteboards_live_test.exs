@@ -80,7 +80,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
   describe "show-page integration" do
     test "the tab appears only when the whiteboards extension is enabled",
          %{conn: conn, project: project} do
-      path = "/en/admin/projects/list/#{project.uuid}"
+      path = "/en/admin/projects/#{project.uuid}"
 
       {:ok, _view, html} = live(conn, path)
       refute html =~ "Whiteboards"

@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.TasksOneOffLensTest do
     fixture_task(%{"title" => "Offered"})
     {:ok, _} = Projects.quick_add_assignment(p.uuid, "Not offered")
 
-    {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{p.uuid}/assignments/new")
+    {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}/assignments/new")
     [select] = Regex.run(~r/<select[^>]*name="assignment\[task_uuid\]"[^>]*>.*?<\/select>/s, html)
     assert select =~ "Offered"
     refute select =~ "Not offered"

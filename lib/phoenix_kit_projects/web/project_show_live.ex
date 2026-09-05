@@ -251,10 +251,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           wrapper_class = Map.get(session, "wrapper_class", @default_wrapper_class)
 
           # Which tab the page opens on, straight from the route's live_action
-          # (`/list/:id/gantt` → `:gantt`, everything else → `:list`). Server-side
+          # (`/:id/gantt` → `:gantt`, everything else → `:list`). Server-side
           # so a direct/bookmarked `/gantt` load renders the gantt before any JS.
           # Templates have no tabs/gantt (both are `not @is_template`), so a template
-          # uuid reached via the `/list/:id/gantt` route falls back to the list —
+          # uuid reached via the `/:id/gantt` route falls back to the list —
           # otherwise both the list and the gantt would render hidden (blank page).
           # The hub gate map (@fx): tasks extension + per-project feature
           # flags, one resolved lookup for every render/event guard below.
