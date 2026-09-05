@@ -1005,6 +1005,25 @@ Release checklist:
     produced (its guesses have been wrong every time: "Off — no task
     list" → "no late marker"). The sweep found 219 empty msgstrs per
     locale that every count had called complete.
+- **No per-item reads on a hot path.** A page mount, a PubSub re-render,
+  a dashboard widget's refresh tick — anything that runs per viewer and
+  again on every change — must not map a list through a function that
+  queries per element (the boss's #40 review: two widgets re-ran the
+  Overview's per-node walk every 15 s, per viewer). The grouped forms to
+  reach for, each with a `test/phoenix_kit_projects/batched_*_test.exs`
+  pinning "the count does not grow with the input" through
+  `PhoenixKitProjects.QueryCounter`: `Projects.assignments_by_project/1`
+  (a whole sub-project forest, one read per depth level; feeds
+  `project_tree_summaries/1` and `ScheduleLayout.trees/1`),
+  `Projects.list_all_dependencies/1` on a LIST, `Extensions.enabled_map/1`
+  + `Features.gates/1` / `flags/1` (one context read — `gates/1` used to
+  cost 22 statements per project-page mount), `Portal.review_details_for/1`,
+  `Attachments.download_urls/1`, `Grants.subject_reaches/1`. Ecto preloads
+  are statements too, so assert N-independence, never an exact count.
+  Known and left (low weight, one-off or a handful of rows):
+  `Web.Crumbs`' per-ancestor `Authz.can?` for non-admins,
+  `PortalLinks`' per-slug `Portal.resolve/2` in comment rendering,
+  `Grants.subject_reach("role", …)` per role (core has no batched form).
 - **LiveView layout**: `use PhoenixKitWeb, :live_view` (in `phoenix_kit_web.ex`) injects `layout: PhoenixKit.LayoutConfig.get_layout()` automatically. No need to wrap templates in `<PhoenixKitWeb.Components.LayoutWrapper.app_layout>` — that wrapper is for LiveViews served outside the admin live_session
 
 ## Pre-commit commands

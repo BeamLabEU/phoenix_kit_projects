@@ -99,7 +99,7 @@ defmodule PhoenixKitProjects.Features do
   """
   @spec on?(Project.t() | map() | binary(), String.t()) :: boolean()
   def on?(project_or_uuid, flag_key) when is_binary(flag_key) do
-    resolve(project_or_uuid, flag_key, [])
+    resolve(context(project_or_uuid), flag_key, [])
   rescue
     e ->
       Logger.warning("[Projects.Features] on? failed: #{Exception.message(e)}")
@@ -108,9 +108,22 @@ defmodule PhoenixKitProjects.Features do
     :exit, _ -> false
   end
 
+  # Everything a resolution reads, gathered ONCE: the project's effective
+  # extension map (one `list_rows/1` read) and its explicit flag values
+  # (on the struct; one read for a bare uuid). `gates/1` used to ask the
+  # database per flag and per `requires` hop — 22 reads for the 16 gates,
+  # on every project-page mount and every modules-changed broadcast (the
+  # 2026-09-05 N+1 audit).
+  defp context(project_or_uuid) do
+    %{
+      enabled: Extensions.enabled_map(project_uuid(project_or_uuid)),
+      features: settings_features(project_or_uuid)
+    }
+  end
+
   # `seen` is a plain list (not MapSet — dialyzer's opaqueness false
   # positive on literal MapSet construction; flag graphs are tiny anyway).
-  defp resolve(project_or_uuid, flag_key, seen) do
+  defp resolve(ctx, flag_key, seen) do
     # Cycle guard first: a requires-cycle in provider-declared data can
     # never resolve on (guard rather than loop).
     if flag_key in seen do
@@ -123,15 +136,15 @@ defmodule PhoenixKitProjects.Features do
         flag ->
           seen = [flag_key | seen]
 
-          Extensions.enabled?(project_uuid(project_or_uuid), flag.ext_key) and
-            Enum.all?(flag.requires, &resolve(project_or_uuid, &1, seen)) and
-            explicit_or_default(project_or_uuid, flag)
+          Map.get(ctx.enabled, flag.ext_key, false) and
+            Enum.all?(flag.requires, &resolve(ctx, &1, seen)) and
+            explicit_or_default(ctx, flag)
       end
     end
   end
 
-  defp explicit_or_default(project_or_uuid, flag) do
-    case Map.get(settings_features(project_or_uuid), flag.key) do
+  defp explicit_or_default(ctx, flag) do
+    case Map.get(ctx.features, flag.key) do
       value when is_boolean(value) -> value
       _ -> flag.default
     end
@@ -163,17 +176,43 @@ defmodule PhoenixKitProjects.Features do
   ]
 
   @doc """
+  EVERY catalog flag resolved for one project, `%{flag_key => boolean}`
+  (string keys — built-in task flags and extension-owned ones alike),
+  from one context read. The batched form of `on?/2` for the surfaces
+  that show the whole catalog: the Modules & Features panel and the
+  permission floors, which asked per flag.
+  """
+  @spec flags(Project.t() | map() | binary()) :: %{String.t() => boolean()}
+  def flags(project_or_uuid) do
+    ctx = context(project_or_uuid)
+    Map.new(catalog(), fn {key, _flag} -> {key, resolve(ctx, key, [])} end)
+  rescue
+    e ->
+      Logger.warning("[Projects.Features] flags failed: #{Exception.message(e)}")
+      %{}
+  catch
+    :exit, _ -> %{}
+  end
+
+  @doc """
   The resolved gate map LiveViews assign as `@fx`: the `tasks` extension
   plus every built-in task flag, resolved for one project in one call.
   Rebuild it on `:project_features_changed` / `:project_modules_changed`.
   """
   @spec gates(Project.t() | map() | binary()) :: %{atom() => boolean()}
   def gates(project_or_uuid) do
-    base = %{tasks: Extensions.enabled?(project_or_uuid, "tasks")}
+    ctx = context(project_or_uuid)
+    base = %{tasks: Map.get(ctx.enabled, "tasks", false)}
 
     Enum.reduce(@task_gates, base, fn gate, acc ->
-      Map.put(acc, gate, on?(project_or_uuid, to_string(gate)))
+      Map.put(acc, gate, resolve(ctx, to_string(gate), []))
     end)
+  rescue
+    e ->
+      Logger.warning("[Projects.Features] gates failed: #{Exception.message(e)}")
+      Map.new([:tasks | @task_gates], &{&1, false})
+  catch
+    :exit, _ -> Map.new([:tasks | @task_gates], &{&1, false})
   end
 
   @doc """

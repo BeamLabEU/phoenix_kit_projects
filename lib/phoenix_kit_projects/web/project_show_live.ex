@@ -606,7 +606,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # parent-only and a child task's dependency badges never render.
     deps_by_assignment =
       [project_uuid | Enum.map(expanded_subs, & &1.child_project_uuid)]
-      |> Enum.flat_map(&Projects.list_all_dependencies/1)
+      |> Projects.list_all_dependencies()
       |> Enum.group_by(& &1.assignment_uuid)
 
     total = length(assignments)
@@ -625,8 +625,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # refreshed child task list so a change in the child reflects immediately.
     subproject_summaries = load_subproject_summaries(assignments)
 
+    # One grouped read for every expanded child (it was one per child, on
+    # every refresh) — the child's own descendants come along, unused here.
+    child_assignments =
+      Projects.assignments_by_project(Enum.map(expanded_subs, & &1.child_project_uuid))
+
     subproject_child_tasks =
-      Map.new(expanded_subs, fn a -> {a.uuid, Projects.list_assignments(a.child_project_uuid)} end)
+      Map.new(expanded_subs, fn a ->
+        {a.uuid, Map.get(child_assignments, a.child_project_uuid, [])}
+      end)
 
     # Mirror `Projects.project_summaries/1`: an EMPTY sub-project (its child has
     # no assignments of its own yet) is neutral in the progress average — keep
@@ -741,7 +748,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     assign(socket,
       pending_reviews: pending,
-      review_details: Map.new(pending, &{&1.uuid, Portal.review_details(&1.uuid)})
+      review_details: Portal.review_details_for(Enum.map(pending, & &1.uuid))
     )
   end
 

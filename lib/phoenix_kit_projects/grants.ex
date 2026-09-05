@@ -257,6 +257,71 @@ defmodule PhoenixKitProjects.Grants do
   def subject_reach(_type, _uuid), do: 0
 
   @doc """
+  `subject_reach/2` for every grant of a page in a fixed number of reads:
+  one grouped membership count for all the teams, one for all the
+  departments' teams, and — core has no batched form — one per DISTINCT
+  role.
+  `%{{subject_type, subject_uuid} => count}`, every input pair present.
+  The members page asked per grant, on every mount and members
+  broadcast (the 2026-09-05 N+1 audit).
+  """
+  @spec subject_reaches([%{subject_type: String.t(), subject_uuid: binary()}]) ::
+          %{{String.t(), binary()} => non_neg_integer()}
+  def subject_reaches(grants) when is_list(grants) do
+    by_type =
+      grants
+      |> Enum.map(&{&1.subject_type, &1.subject_uuid})
+      |> Enum.uniq()
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    team_counts = team_member_counts(Map.get(by_type, "team", []))
+    dept_counts = department_member_counts(Map.get(by_type, "department", []))
+    role_counts = Map.new(Map.get(by_type, "role", []), &{&1, subject_reach("role", &1)})
+
+    Map.new(grants, fn %{subject_type: type, subject_uuid: uuid} ->
+      count =
+        case type do
+          "team" -> Map.get(team_counts, uuid, 0)
+          "department" -> Map.get(dept_counts, uuid, 0)
+          "role" -> Map.get(role_counts, uuid, 0)
+          _ -> 0
+        end
+
+      {{type, uuid}, count}
+    end)
+  end
+
+  defp team_member_counts([]), do: %{}
+
+  defp team_member_counts(team_uuids) do
+    from(tm in TeamMembership,
+      where: tm.team_uuid in ^team_uuids,
+      group_by: tm.team_uuid,
+      select: {tm.team_uuid, count(tm.uuid)}
+    )
+    |> RepoHelper.repo().all()
+    |> Map.new()
+  rescue
+    _ -> %{}
+  end
+
+  defp department_member_counts([]), do: %{}
+
+  defp department_member_counts(dept_uuids) do
+    from(tm in TeamMembership,
+      join: t in Team,
+      on: t.uuid == tm.team_uuid,
+      where: t.department_uuid in ^dept_uuids,
+      group_by: t.department_uuid,
+      select: {t.department_uuid, count(tm.uuid)}
+    )
+    |> RepoHelper.repo().all()
+    |> Map.new()
+  rescue
+    _ -> %{}
+  end
+
+  @doc """
   Why does this person have access? Returns every matching grant as
   `{subject_type, subject_uuid, role}`, so a UI can explain that removing
   someone's direct membership will not revoke their team's access.

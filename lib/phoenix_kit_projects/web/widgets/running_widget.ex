@@ -61,9 +61,11 @@ defmodule PhoenixKitProjects.Web.Widgets.RunningWidget do
     now = DateTime.utc_now()
     today = DateTime.to_date(now)
 
+    # Batched: one assignments read per depth level for the whole forest —
+    # this runs on every refresh tick, per viewer (the #40 review).
     summaries =
       Projects.list_active_projects(viewer: viewer_for(scope))
-      |> Enum.map(&Projects.project_tree_summary/1)
+      |> Projects.project_tree_summaries()
       |> Enum.map(&RunningTiers.tag(&1, now))
       |> then(fn all -> if late_only?, do: Enum.filter(all, & &1.late), else: all end)
 

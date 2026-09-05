@@ -21,7 +21,7 @@ defmodule PhoenixKitProjects.Attachments do
   import Ecto.Query, warn: false
 
   alias PhoenixKit.Modules.Storage
-  alias PhoenixKit.Modules.Storage.{File, Folder, FolderLink}
+  alias PhoenixKit.Modules.Storage.{File, FileInstance, Folder, FolderLink, Manager, URLSigner}
 
   @list_limit 200
 
@@ -209,6 +209,42 @@ defmodule PhoenixKitProjects.Attachments do
   @spec download_url(File.t()) :: String.t() | nil
   def download_url(%File{} = file) do
     Storage.get_public_url(file)
+  rescue
+    _ -> nil
+  end
+
+  @doc """
+  `download_url/1` for a list of files in ONE file-instance read —
+  `%{file_uuid => url}`, a file with no original instance absent. The
+  Files page asked per row, twice (guard + href), on every render (the
+  2026-09-05 N+1 audit). Same URL rule as core's `get_public_url/1`: the
+  storage manager's public URL when it has one, else a signed URL.
+  """
+  @spec download_urls([File.t()]) :: %{binary() => String.t()}
+  def download_urls([]), do: %{}
+
+  def download_urls(files) when is_list(files) do
+    uuids = Enum.map(files, & &1.uuid)
+
+    from(fi in FileInstance,
+      where: fi.file_uuid in ^uuids and fi.variant_name == "original",
+      select: {fi.file_uuid, fi.file_name}
+    )
+    |> repo().all()
+    |> Enum.reduce(%{}, fn {file_uuid, path}, acc ->
+      case row_url(file_uuid, path) do
+        nil -> acc
+        url -> Map.put_new(acc, file_uuid, url)
+      end
+    end)
+  rescue
+    _ -> %{}
+  end
+
+  # The same rule as core's `get_public_url/1`, one row at a time so a
+  # file the manager cannot address loses its link alone.
+  defp row_url(file_uuid, path) do
+    Manager.public_url(path) || URLSigner.signed_url(file_uuid, "original", locale: :none)
   rescue
     _ -> nil
   end
