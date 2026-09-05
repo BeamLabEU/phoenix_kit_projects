@@ -438,7 +438,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       render_submit(view, "save", %{
         "assignment" => %{"status" => "todo"},
         "task_mode" => "new",
-        "new_task_title" => "Fresh task",
+        "task" => %{"title" => "Fresh task"},
         "labels" => [label.uuid]
       })
 

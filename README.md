@@ -4,11 +4,11 @@ A [PhoenixKit](https://github.com/BeamLabEU/phoenix_kit) plugin for **project + 
 
 ## Features
 
-- **Task library** — reusable task templates with description, estimated duration, default assignee
+- **Task library** — reusable tasks with description, estimated duration, default assignee ("template" is reserved for project templates)
 - **Projects** — containers with `immediate` or `scheduled` start mode, completion auto-detection
 - **Assignments** — task instances inside a project; editable independently of the template
 - **Dependencies** — per-project ("A must finish before B") with multi-hop cycle detection
-- **Template dependencies** — declared on the task template, auto-applied when both tasks are in the same project
+- **Default dependencies** — declared on the library task, auto-applied when both tasks are in the same project
 - **Templates** — project templates cloned into real projects inside a single transaction
 - **Polymorphic assignees** — team _or_ department _or_ person (at-most-one, enforced at DB + changeset layer)
 - **Schedule math** — planned vs. projected end with velocity tracking; per-task `counts_weekends` override

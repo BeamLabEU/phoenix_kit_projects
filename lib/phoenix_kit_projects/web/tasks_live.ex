@@ -1,5 +1,5 @@
 defmodule PhoenixKitProjects.Web.TasksLive do
-  @moduledoc "List reusable task templates."
+  @moduledoc "List the task library (reusable tasks) and the one-offs."
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext

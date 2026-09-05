@@ -7,7 +7,7 @@ Guidance for AI agents working on the `phoenix_kit_projects` plugin module.
 A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) whose **landing page is the project list** (since 2026-09; the parent tab and the first subtab both render `ProjectsLive` at `/admin/projects`; project pages sit directly under it, `/admin/projects/:id/…`, and the old `list/…` addresses redirect), with subtabs:
 
 - **Projects** — list of projects (filterable by status). Its subtab matcher is a regex (everything under `projects` except the `tasks`/`templates`/`overview` siblings) because tabs match independently and a `:prefix` on `projects` would light it on those too.
-- **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee). A **Library | One-off** lens (URL `lens=`) appears once one-off tasks exist — see "Quick-add" below.
+- **Tasks** — library of reusable tasks (title, description, duration, default dependencies, default assignee). The word "template" is reserved for PROJECT templates in user-facing copy — a library entry is just a task. A **Library | One-off** lens (URL `lens=`) appears once one-off tasks exist — see "Quick-add" below.
 - **Templates** — reusable project templates cloned into real projects
 - **Overview** — the LAST subtab (`projects/overview`; the boss: "an overview and a dashboard are different things, both have their value"). Its pieces are also dashboards-module widgets (see "Dashboard widgets") for anyone who wants them on a `phoenix_kit_dashboards` board, and `OverviewLive` stays the embeddable root view for host apps (`dev_docs/embedding_emit.md`). What it renders:
 
@@ -63,7 +63,7 @@ the env var instead.
 - **Project** — a container for assignments. Has start mode (`immediate` or `scheduled`), optional `counts_weekends` flag, `is_template` flag (templates are cloned into real projects), and completion tracking (`completed_at`)
 - **Assignment** — a task instance within a project. Copies description/duration from the template at creation, but is independently editable. Optionally assigned to a Department/Team/Person.
 - **Dependency** — "assignment A must finish before B" link, scoped to the same project
-- **TaskDependency** — default dependency between two task templates, auto-applied when both templates are in the same project
+- **TaskDependency** — default dependency between two library tasks, auto-applied when both are in the same project
 
 ### Schemas
 
@@ -725,6 +725,20 @@ form's picker, the stat tile) `| :only | :all`. The Tasks page's lens
 lists them; "Add to library" (row menu, or the edit form's "One-off task"
 checkbox) promotes one — `projects.task_promoted` in the activity log. The
 assignments pointing at a one-off task are ordinary in every way.
+
+**The full form follows the same defaults (2026-09-05, Max):** on `:new`,
+**Create new** is the first and default tab and "Add to the task library"
+is OFF — a one-off unless the user means it; **From library** is the
+second tab and is not rendered at all while the library is empty
+(`@task_options == []`). The Create-new title is a real `Task` changeset
+(`@task_form`, params `task[title]` / `task[translations][<lang>][title]`)
+rendered with `<.translatable_field>` under the language tabs next to the
+description, so a new task gets its title in every language like one
+made on the Tasks page; `save` merges the title's translations with the
+description's into the task row. The language strip is passed
+`class="pb-0"` because it sits inside the card body already — the default
+card padding made it a narrower box of its own. User-facing copy never
+says "template" for a task (the select is "Task", the back link "Tasks").
 
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 

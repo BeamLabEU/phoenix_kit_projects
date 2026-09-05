@@ -88,14 +88,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
 
     # Create-new mode, title typed: the form reports dirty → the drawer
     # stops closing on Esc/backdrop.
-    form |> element("button[phx-value-tab='new']") |> render_click()
     title = "Drawer task #{System.unique_integer([:positive])}"
 
     form
     |> form("#assignment-form",
       assignment: %{status: "todo"},
       task_mode: "new",
-      new_task_title: title
+      task: %{title: title}
     )
     |> render_change()
 
@@ -106,7 +105,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     |> form("#assignment-form",
       assignment: %{status: "todo"},
       task_mode: "new",
-      new_task_title: title
+      task: %{title: title}
     )
     |> render_submit()
 

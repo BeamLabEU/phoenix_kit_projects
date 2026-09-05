@@ -66,6 +66,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     {:ok, socket}
   end
 
+  # The Create-new title is a real `Task` changeset so it goes through the
+  # same `<.translatable_field>` as every other translatable column —
+  # `task[title]` on the primary tab, `task[translations][<lang>][title]`
+  # on the others. Nothing is inserted until Save.
+  defp new_task_form(attrs), do: to_form(Projects.change_task(%Task{}, attrs), as: :task)
+
   defp prefill_title(params) do
     case Map.get(params, "title") do
       title when is_binary(title) -> title |> String.trim() |> String.slice(0, 255)
@@ -204,11 +210,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       project: placeholder_project,
       assignment: placeholder_assignment,
       live_action: :new,
-      task_mode: "existing",
+      task_mode: "new",
       assign_type: "",
       selected_task_uuid: nil,
       new_task_title: "",
-      save_as_template: false,
+      task_form: new_task_form(%{}),
+      add_to_library: false,
       assignment_deps: [],
       available_assignment_deps: [],
       pending_dep_uuids: [],
@@ -309,11 +316,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           # A `title` param (the quick-add composer's "More options", or an
           # emit-session `"title"`) lands the form in "new task" mode with
           # the typed title carried over — nothing is created until Save.
-          task_mode: if(prefill_title(params) == "", do: "existing", else: "new"),
+          # Create new is the default (most tasks are one-offs — the
+          # composer's semantics); From library is the deliberate second
+          # choice. A `title` param (the quick-add composer's "More
+          # options", or an emit-session `"title"`) prefills the new task's
+          # title — nothing is created until Save.
+          task_mode: "new",
           assign_type: "",
           selected_task_uuid: nil,
           new_task_title: prefill_title(params),
-          save_as_template: true,
+          task_form: new_task_form(%{"title" => prefill_title(params)}),
+          add_to_library: false,
           assignment_deps: [],
           available_assignment_deps: [],
           # `:new` mode can't create real Dependency rows yet (no
@@ -396,10 +409,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             Projects.available_dependencies(project.uuid, assignment.uuid),
           pending_dep_uuids: [],
           pending_dep_options: [],
-          task_mode: "existing",
+          task_mode: "new",
           selected_task_uuid: nil,
           new_task_title: "",
-          save_as_template: false,
+          task_form: new_task_form(%{}),
+          add_to_library: false,
           closure_tree: nil,
           excluded_closure_uuids: MapSet.new()
         )
@@ -428,11 +442,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           assignment: assignment,
           portal_review_images: PhoenixKitProjects.Portal.review_images(assignment.uuid),
           live_action: :edit,
-          task_mode: "existing",
+          task_mode: "new",
           assign_type: assignee_kind(assignment),
           selected_task_uuid: assignment.task_uuid,
           new_task_title: "",
-          save_as_template: true,
+          task_form: new_task_form(%{}),
+          add_to_library: false,
           assignment_deps: Projects.list_dependencies(assignment.uuid),
           available_assignment_deps:
             Projects.available_dependencies(project.uuid, assignment.uuid),
@@ -644,8 +659,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def handle_event("validate", %{"assignment" => attrs} = params, socket) do
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
     task_mode = Map.get(params, "task_mode", socket.assigns.task_mode)
-    new_task_title = Map.get(params, "new_task_title", socket.assigns.new_task_title)
-    save_as_template = Map.get(params, "save_as_template", "true") == "true"
+
+    add_to_library =
+      case Map.get(params, "add_to_library") do
+        nil -> socket.assigns.add_to_library
+        value -> value == "true"
+      end
+
+    # The new task's title (+ translations) rides in `params["task"]`;
+    # absent when the library tab is showing (its inputs are not rendered).
+    task_form =
+      case Map.get(params, "task") do
+        %{} = task_params -> new_task_form(merge_task_attrs(task_params, socket))
+        _ -> socket.assigns.task_form
+      end
+
+    new_task_title = Ecto.Changeset.get_field(task_form.source, :title) || ""
 
     socket =
       if task_mode == "existing" && socket.assigns.live_action == :new do
@@ -671,7 +700,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
        assign_type: assign_type,
        task_mode: task_mode,
        new_task_title: new_task_title,
-       save_as_template: save_as_template
+       task_form: task_form,
+       add_to_library: add_to_library
      )
      |> WebHelpers.mark_dirty()}
   end
@@ -703,7 +733,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   def handle_event("save", %{"assignment" => attrs} = params, socket) do
     assign_type = Map.get(params, "assign_type", "")
-    task_mode = Map.get(params, "task_mode", "existing")
+    task_mode = Map.get(params, "task_mode", socket.assigns.task_mode)
+
+    socket =
+      case Map.get(params, "add_to_library") do
+        nil -> socket
+        value -> assign(socket, add_to_library: value == "true")
+      end
 
     # Save-time gate re-resolution (panel R3-4): the submit binds to the
     # CURRENT flags, not the mount-time snapshot a mid-edit toggle staled.
@@ -1047,10 +1083,26 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     WebHelpers.merge_translations_attrs(attrs, in_flight, Assignment.translatable_fields())
   end
 
+  # `@task_form` is always a changeset-backed form (mounted with one), so
+  # the in-flight record is the applied changeset — no fallback needed.
+  defp merge_task_attrs(attrs, socket) do
+    in_flight = Ecto.Changeset.apply_changes(socket.assigns.task_form.source)
+    WebHelpers.merge_translations_attrs(attrs, in_flight, Task.translatable_fields())
+  end
+
   defp save_with_new_task(socket, attrs, params) do
-    case params |> Map.get("new_task_title", "") |> String.trim() do
+    task_form =
+      case Map.get(params, "task") do
+        %{} = task_params -> new_task_form(merge_task_attrs(task_params, socket))
+        _ -> socket.assigns.task_form
+      end
+
+    socket = assign(socket, task_form: task_form)
+    task = Ecto.Changeset.apply_changes(task_form.source)
+
+    case String.trim(task.title || "") do
       "" -> {:noreply, put_flash(socket, :error, gettext("Task title is required."))}
-      title -> create_task_and_assign(socket, attrs, title)
+      title -> create_task_and_assign(socket, attrs, title, task.translations || %{})
     end
   end
 
@@ -1059,21 +1111,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # quick-add composer uses, here with the form's full attrs and a
   # reusable (not one-off) task. Nothing is broadcast or logged before
   # the commit; on failure neither row exists.
-  defp create_task_and_assign(socket, attrs, title) do
+  defp create_task_and_assign(socket, attrs, title, title_translations) do
     project = socket.assigns.project
 
-    # "Save as reusable template in the task library" had been rendered and
-    # tracked since the first commit but never read by any save — every
-    # new task went into the library. It now means what it says: unticked
-    # = a one-off task (`ad_hoc`, V15), exactly what the quick-add composer
-    # creates.
+    # "Add to the task library" (off by default — a one-off task, `ad_hoc`,
+    # V15, exactly what the quick-add composer creates; ticked = reusable
+    # from the library). The task's translations combine the title's own
+    # (typed under the language tabs) with the description's, which the
+    # assignment form collected under `assignment[translations]`.
     task_attrs =
       %{
         "title" => title,
         "description" => attrs["description"],
+        "translations" => task_translations(title_translations, attrs["translations"]),
         "estimated_duration" => attrs["estimated_duration"],
         "estimated_duration_unit" => attrs["estimated_duration_unit"],
-        "ad_hoc" => not socket.assigns.save_as_template
+        "ad_hoc" => not socket.assigns.add_to_library
       }
       |> maybe_add_default_assignee(attrs)
 
@@ -1124,6 +1177,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          |> put_flash(:error, gettext("Project not found."))
          |> WebHelpers.close_or_navigate(Paths.projects())}
     end
+  end
+
+  # `%{lang => %{"title" => …}}` from the title form merged with the
+  # description translations `%{lang => %{"description" => …}}`; empty
+  # languages dropped so the JSONB holds only real overrides.
+  defp task_translations(title_tr, description_tr) do
+    title_tr = if is_map(title_tr), do: title_tr, else: %{}
+    description_tr = if is_map(description_tr), do: description_tr, else: %{}
+
+    Map.merge(
+      Map.new(title_tr, fn {lang, fields} -> {lang, Map.take(fields || %{}, ["title"])} end),
+      Map.new(description_tr, fn {lang, fields} ->
+        {lang, Map.take(fields || %{}, ["description"])}
+      end),
+      fn _lang, a, b -> Map.merge(a, b) end
+    )
+    |> Enum.reject(fn {_lang, fields} -> fields == %{} end)
+    |> Map.new()
   end
 
   defp maybe_add_default_assignee(task_attrs, attrs) do
@@ -1909,19 +1980,23 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                    data so existing `validate`/`save` handlers don't
                    need to special-case socket reads. --%>
               <input type="hidden" name="task_mode" value={@task_mode} />
+              <%!-- Create new first and default; the library is the deliberate
+                   second choice — and no choice at all while it is empty
+                   (a new install sees one clean form, not a dead tab). --%>
               <.nav_tabs
+                :if={@task_options != []}
                 on_change="set_task_mode"
                 active_tab={@task_mode}
                 tabs={[
-                  %{id: "existing", label: gettext("From library"), icon: "hero-rectangle-stack"},
-                  %{id: "new", label: gettext("Create new"), icon: "hero-plus"}
+                  %{id: "new", label: gettext("Create new"), icon: "hero-plus"},
+                  %{id: "existing", label: gettext("From library"), icon: "hero-rectangle-stack"}
                 ]}
               />
 
               <%= if @task_mode == "existing" do %>
                 <.select
                   field={@form[:task_uuid]}
-                  label={gettext("Task template")}
+                  label={gettext("Task")}
                   options={@task_options}
                   prompt={gettext("Select task")}
                   required
@@ -1955,27 +2030,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     </ul>
                   </div>
                 <% end %>
-              <% else %>
-                <.input name="new_task_title" label={gettext("Task title")} value={@new_task_title} required />
+                <%!-- Separates the library pick from the details below; the
+                     Create-new title lives with the details (it is
+                     translatable like the description), so no divider there. --%>
+                <div class="divider text-xs text-base-content/50 my-1">{gettext("Details")}</div>
               <% end %>
-
-              <%!-- Separates task-selection from the details below (new form only;
-                   the edit form's task is already named in the page header). --%>
-              <div class="divider text-xs text-base-content/50 my-1">{gettext("Details")}</div>
             <% end %>
 
-            <%!-- `description` is the only translatable field: the language tabs
-                 sit above it and the field goes INSIDE the wrapper so a language
-                 switch shows the skeleton + cleanly re-mounts. The non-translatable
-                 fields below stay outside the wrapper (and keep their values). --%>
-            <%!-- Bundled tabs + AI row. No px on the row — it already sits
-              inside a padded card-body (the wrapper's px-6 default pairs with
-              the tabs' own card-body class, which this call keeps). --%>
+            <%!-- The translatable fields — the new task's title (Create new)
+                 and the description — sit under the language tabs and INSIDE
+                 the wrapper so a language switch shows the skeleton + cleanly
+                 re-mounts. The non-translatable fields below stay outside the
+                 wrapper (and keep their values). --%>
+            <%!-- Bundled tabs + AI row. Both without their own card padding:
+              this call already sits inside a padded card-body, so the strip
+              spans the fields' full width instead of an inset box of its own. --%>
             <.ai_multilang_tabs
               :if={@multilang_enabled}
               multilang_enabled={@multilang_enabled}
               language_tabs={@language_tabs}
               current_lang={@current_lang}
+              class="pb-0"
               ai_row_class="flex items-center gap-3 -mt-3"
               ai_translate={FormGlue.ai_translate_config(assigns)}
             />
@@ -1992,6 +2067,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   <div class="bg-base-content/15 rounded h-16 w-full animate-pulse"></div>
                 </div>
               </:skeleton>
+
+              <.translatable_field
+                :if={@live_action == :new and @task_mode == "new"}
+                field_name="title"
+                form_prefix="task"
+                changeset={@task_form.source}
+                schema_field={:title}
+                multilang_enabled={@multilang_enabled}
+                current_lang={@current_lang}
+                primary_language={@primary_language}
+                lang_data={WebHelpers.lang_data(@task_form, @current_lang)}
+                secondary_name={"task[translations][#{@current_lang}][title]"}
+                lang_data_key="title"
+                label={gettext("Task title")}
+                required
+              />
 
               <.translatable_field
                 field_name="description"
@@ -2114,9 +2205,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <%= if @live_action == :new and @task_mode == "new" do %>
               <div class="divider my-1"></div>
               <.checkbox
-                name="save_as_template"
-                checked={@save_as_template}
-                label={gettext("Save as reusable template in the task library")}
+                name="add_to_library"
+                checked={@add_to_library}
+                label={gettext("Add to the task library")}
                 class="checkbox-sm"
               />
             <% end %>

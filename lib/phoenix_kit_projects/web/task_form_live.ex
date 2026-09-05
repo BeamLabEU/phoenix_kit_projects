@@ -1,5 +1,5 @@
 defmodule PhoenixKitProjects.Web.TaskFormLive do
-  @moduledoc "Create or edit a reusable task template, including default dependencies."
+  @moduledoc "Create or edit a library task (reusable across projects), including default dependencies."
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
@@ -428,7 +428,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       <.page_header title={@heading}>
         <:back_link>
           <.link :if={@embed_mode == :navigate} navigate={Paths.tasks()} class="link link-hover text-sm">
-            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Task Library")}
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Tasks")}
           </.link>
           <button
             :if={@embed_mode != :navigate}
@@ -437,7 +437,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
             data-confirm={@dirty? && gettext("Discard your changes?")}
             class="link link-hover text-sm"
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Task Library")}
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Tasks")}
           </button>
         </:back_link>
       </.page_header>

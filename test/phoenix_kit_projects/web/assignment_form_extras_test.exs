@@ -31,6 +31,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
+
       _ =
         view
         |> form("#assignment-form",
@@ -50,7 +54,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       # New UI: tabs (Create new / From library) replaced the dropdown.
-      _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
       _ =
         view
@@ -66,6 +69,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       _ =
         view
@@ -86,6 +93,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
+
       _ =
         view
         |> form("#assignment-form",
@@ -104,6 +115,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       _ =
         view

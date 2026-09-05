@@ -20,8 +20,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
     test "invalid attrs re-render the form", %{conn: conn} do
       project = fixture_project()
 
+      # The library tab only exists once the library has an entry.
+
+      _ = fixture_task()
+
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       # Blank task_uuid → assoc_constraint OR validate_required fires.
       html =
@@ -48,8 +56,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
-      _ = view |> element("button[phx-value-tab='new']") |> render_click()
-
       html =
         view
         |> form("#assignment-form",
@@ -60,7 +66,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
             estimated_duration_unit: "hours"
           },
           task_mode: "new",
-          new_task_title: "   "
+          task: %{title: "   "}
         )
         |> render_submit()
 
@@ -112,6 +118,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
+
       {:error, {:live_redirect, _}} =
         view
         |> form("#assignment-form",
@@ -135,6 +145,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       {:error, {:live_redirect, _}} =
         view

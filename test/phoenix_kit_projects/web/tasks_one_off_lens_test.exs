@@ -62,7 +62,9 @@ defmodule PhoenixKitProjects.Web.TasksOneOffLensTest do
     fixture_task(%{"title" => "Offered"})
     {:ok, _} = Projects.quick_add_assignment(p.uuid, "Not offered")
 
-    {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}/assignments/new")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}/assignments/new")
+    # Create new is the default tab; the picker lives under From library.
+    html = view |> element("button[phx-value-tab='existing']") |> render_click()
     [select] = Regex.run(~r/<select[^>]*name="assignment\[task_uuid\]"[^>]*>.*?<\/select>/s, html)
     assert select =~ "Offered"
     refute select =~ "Not offered"
