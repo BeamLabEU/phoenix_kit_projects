@@ -78,7 +78,7 @@ defmodule PhoenixKitProjects.Web.HelpersEmbedTest do
       html =
         rendered_to_string(~H"""
         <.smart_menu_link
-          navigate="/admin/projects/list/abc"
+          navigate="/admin/projects/abc"
           emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => "abc"}}}
           embed_mode={:navigate}
           icon="hero-pencil"
@@ -87,7 +87,7 @@ defmodule PhoenixKitProjects.Web.HelpersEmbedTest do
         """)
 
       assert html =~ ~s(<a)
-      assert html =~ ~s(href="/admin/projects/list/abc")
+      assert html =~ ~s(href="/admin/projects/abc")
       assert html =~ ~s(>Edit</span>)
       refute html =~ ~s(phx-click="open_embed")
     end
@@ -98,7 +98,7 @@ defmodule PhoenixKitProjects.Web.HelpersEmbedTest do
       html =
         rendered_to_string(~H"""
         <.smart_menu_link
-          navigate="/admin/projects/list/abc"
+          navigate="/admin/projects/abc"
           emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => "abc"}}}
           embed_mode={:emit}
           icon="hero-pencil"
@@ -111,7 +111,7 @@ defmodule PhoenixKitProjects.Web.HelpersEmbedTest do
       assert html =~ ~s(phx-value-lv="Elixir.PhoenixKitProjects.Web.ProjectShowLive")
       assert html =~ ~s(phx-value-session=)
       assert html =~ ~s(>Edit</span>)
-      refute html =~ ~s(href="/admin/projects/list/abc")
+      refute html =~ ~s(href="/admin/projects/abc")
     end
   end
 

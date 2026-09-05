@@ -27,13 +27,21 @@ defmodule PhoenixKitProjects.Web.ListRedirectLive do
   end
 
   @doc false
-  # Pure, so the mapping is unit-testable: the FIRST `/projects/list`
-  # segment pair becomes `/projects`; everything else (prefix, locale,
-  # deeper segments, query) is untouched.
+  # Pure, so the mapping is unit-testable: the FIRST `/admin/projects/list`
+  # segment run becomes `/admin/projects`; everything else (URL prefix,
+  # locale, deeper segments, query) is untouched. Anchored on the `admin`
+  # segment too (codex, 2026-09-05): the kit's URL prefix is host-chosen,
+  # and a prefix that itself contained `/projects/list` would otherwise be
+  # the occurrence that gets rewritten.
   @spec strip_list_segment(String.t()) :: String.t()
   def strip_list_segment(uri) do
     %URI{path: path, query: query} = URI.parse(uri)
-    stripped = Regex.replace(~r{/projects/list(?=/|$)}, path || "/", "/projects", global: false)
+
+    stripped =
+      Regex.replace(~r{/admin/projects/list(?=/|$)}, path || "/", "/admin/projects",
+        global: false
+      )
+
     if query in [nil, ""], do: stripped, else: stripped <> "?" <> query
   end
 

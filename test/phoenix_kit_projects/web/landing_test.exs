@@ -60,6 +60,11 @@ defmodule PhoenixKitProjects.Web.LandingTest do
 
       assert ListRedirectLive.strip_list_segment("/admin/projects/listing") ==
                "/admin/projects/listing"
+
+      # A host URL prefix that happens to contain the pair is not the routed
+      # segment (codex, 2026-09-05).
+      assert ListRedirectLive.strip_list_segment("/projects/list/en/admin/projects/list/abc") ==
+               "/projects/list/en/admin/projects/abc"
     end
 
     test "the new project pages answer at their new addresses", %{conn: conn} do
