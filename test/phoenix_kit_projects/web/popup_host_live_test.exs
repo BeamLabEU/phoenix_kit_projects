@@ -662,6 +662,39 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       assert frame.session["current_user_uuid"] == uuid
     end
 
+    test "an :opened session cannot name the user or re-route the frame", %{conn: conn} do
+      topic = unique_topic()
+      host_uuid = Ecto.UUID.generate()
+      forged_uuid = Ecto.UUID.generate()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic, "current_user_uuid" => host_uuid}
+        )
+
+      # What a tampered `phx-value-session` would deliver.
+      ProjectsPubSub.broadcast_embed(topic, :opened, %{
+        lv: PhoenixKitProjects.Web.OverviewLive,
+        session: %{
+          "current_user_uuid" => forged_uuid,
+          "mode" => "navigate",
+          "pubsub_topic" => "someone-elses-topic",
+          "frame_ref" => 999,
+          "id" => "kept"
+        },
+        frame_ref: nil
+      })
+
+      _ = render(view)
+
+      [frame] = :sys.get_state(view.pid).socket.assigns.modal_stack
+      assert frame.session["current_user_uuid"] == host_uuid
+      assert frame.session["mode"] == "emit"
+      assert frame.session["pubsub_topic"] == topic
+      assert frame.session["frame_ref"] == frame.frame_ref
+      assert frame.session["id"] == "kept"
+    end
+
     test "an explicit child current_user_uuid wins over the host's (put_new)", %{conn: conn} do
       topic = unique_topic()
       host_uuid = Ecto.UUID.generate()
@@ -806,6 +839,23 @@ defmodule PhoenixKitProjects.Web.PopupHostDrawerTest do
     assert html =~ ~s(class="modal")
     refute html =~ "modal-end"
     assert html =~ "max-w-6xl"
+  end
+
+  test "every frame arms the client-side input guard", %{conn: conn} do
+    topic = "popup-guard-#{System.unique_integer([:positive])}"
+
+    {:ok, view, _} =
+      live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+        session: %{"pubsub_topic" => topic}
+      )
+
+    ProjectsPubSub.broadcast_embed(topic, :opened, %{
+      lv: PhoenixKitProjects.Web.OverviewLive,
+      session: %{},
+      frame_ref: nil
+    })
+
+    assert render(view) =~ ~s(data-close-guard="input")
   end
 
   test "a dirty frame stops being closeable until it is clean again", %{conn: conn} do

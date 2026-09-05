@@ -70,6 +70,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign_status_mode()
       |> assign_ai_translate()
       |> assign_cue_baseline()
+      |> assign(dirty?: false)
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -793,7 +794,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
      )
      |> track_creation_state(params)
      |> assign_form(cs)
-     |> assign_status_preview()}
+     |> assign_status_preview()
+     |> WebHelpers.mark_dirty()}
   end
 
   def handle_event("save", %{"project" => attrs} = params, socket) do
@@ -2058,14 +2060,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     <div class={@wrapper_class}>
       <.page_header title={@heading}>
         <:back_link>
-          <.smart_link
-            navigate={Paths.projects()}
-            emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
-            embed_mode={@embed_mode}
+          <.link :if={@embed_mode == :navigate} navigate={Paths.projects()} class="link link-hover text-sm">
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Projects")}
+          </.link>
+          <button
+            :if={@embed_mode != :navigate}
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
             class="link link-hover text-sm"
           >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Projects")}
-          </.smart_link>
+          </button>
         </:back_link>
       </.page_header>
 
@@ -2440,7 +2446,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </.accordion>
 
           <div class="flex justify-end gap-2">
-            <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+            <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
               {gettext("Cancel")}
             </button>
             <button type="submit" phx-disable-with={gettext("Creating…")} class="btn btn-primary btn-sm">
@@ -2577,7 +2588,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         <%!-- :edit only. The creation form has its own action row further
              up; without this guard the new-project page renders two. --%>
         <div :if={@live_action == :edit} class="flex justify-end gap-2">
-          <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+          <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
             {gettext("Cancel")}
           </button>
           <button

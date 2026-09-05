@@ -500,7 +500,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
      |> assign(day_popup: nil)
      |> WebHelpers.navigate_or_open(
        to: Paths.project(uuid),
-       open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => uuid}}
+       open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => uuid}},
+       popup: false
      )}
   end
 
@@ -515,7 +516,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     {:noreply,
      WebHelpers.navigate_or_open(socket,
        to: Paths.project(uuid),
-       open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => uuid}}
+       open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => uuid}},
+       popup: false
      )}
   end
 
@@ -528,7 +530,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         {:noreply,
          WebHelpers.navigate_or_open(socket,
            to: Paths.project(project_uuid),
-           open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => project_uuid}}
+           open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => project_uuid}},
+           popup: false
          )}
 
       _ ->

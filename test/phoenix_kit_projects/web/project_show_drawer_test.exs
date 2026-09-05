@@ -11,6 +11,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Members
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitProjects.Web.ProjectShowLive
 
@@ -140,13 +141,41 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     assert :sys.get_state(page.pid).socket.assigns.heading == "Add task"
   end
 
+  test "a tampered open_embed payload cannot name the user", %{conn: conn, project: p} do
+    {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+    topic = :sys.get_state(view.pid).socket.assigns.embed_pubsub_topic
+    ProjectsPubSub.subscribe(topic)
+
+    forged = Ecto.UUID.generate()
+
+    session =
+      Jason.encode!(%{
+        "live_action" => "new",
+        "project_id" => p.uuid,
+        "current_user_uuid" => forged,
+        "pubsub_topic" => "elsewhere",
+        "mode" => "navigate"
+      })
+
+    render_click(view, "open_embed", %{
+      "lv" => "Elixir.PhoenixKitProjects.Web.AssignmentFormLive",
+      "session" => session
+    })
+
+    assert_receive {:projects, :opened, %{session: emitted}}, 1_000
+    refute Map.has_key?(emitted, "current_user_uuid")
+    refute Map.has_key?(emitted, "pubsub_topic")
+    refute Map.has_key?(emitted, "mode")
+    assert emitted["project_id"] == p.uuid
+  end
+
   test "Cancel in the drawer closes it without saving", %{conn: conn, project: p} do
     {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
 
     {host, form, _} =
       open_drawer(view, p, "button[phx-value-lv$='AssignmentFormLive']", "Add task")
 
-    form |> element("button[phx-click=cancel]") |> render_click()
+    form |> element("button.btn[phx-click=cancel]") |> render_click()
     assert gone(host)
     assert Projects.list_assignments(p.uuid) == []
   end

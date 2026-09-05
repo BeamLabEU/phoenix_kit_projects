@@ -349,12 +349,34 @@ Esc/backdrop, stacked children) and renders requested LVs inside via
 | `"max_width"` | `6xl` centered, `2xl` as a drawer | any core `max_width` value (`sm` … `7xl`, `full`) |
 
 **Dirty frames.** A form that holds unsaved edits reports
-`{:projects, :dirty, %{frame_ref, dirty: true}}` (via
-`WebHelpers.notify_dirty/2`, a no-op outside emit mode); the host
-then renders that frame with `closeable: false`, so Esc and the
-backdrop do nothing and the form's own Cancel (which confirms) is the
-only way out. Clean again ⇒ closeable again. Refs that are no longer
-on the stack are ignored.
+`{:projects, :dirty, %{frame_ref, dirty: true}}` (`WebHelpers.mark_dirty/1`
+piped into every handler that changes what a save would write — the
+four form LVs do this; `notify_dirty/2` is a no-op outside emit mode);
+the host then renders that frame with `closeable: false`, so Esc and
+the backdrop do nothing and the form's own Cancel (which confirms
+via `data-confirm` from `@dirty?`) is the only way out. Every frame
+also arms core's `close_guard={:input}`, which makes the dialog
+non-closeable on the client from the first keystroke — covering the
+round trip and the forms' `phx-debounce` window. Clean again ⇒
+closeable again. Refs that are no longer on the stack are ignored.
+
+**Back inside a frame is Cancel.** The forms' header back link is a
+page link only in navigate mode; in a frame it is a `phx-click="cancel"`
+button (same confirm) — a frame must never push the list or project
+page as another frame.
+
+**Client-supplied sessions are sanitized.** The `phx-value-session`
+on an `open_embed` button is client-editable; `sanitize_session_overrides/1`
+drops the host-owned keys (`current_user_uuid`, `mode`, `pubsub_topic`,
+`frame_ref`) at both ends — the emitter's `open_embed` handler and
+`PopupHostLive` before it stamps the frame's session — so a crafted
+payload cannot open a form as another user or re-route its events.
+Never `put_new` an identity key from a wire session.
+
+**Programmatic navigation in popup mode.** `navigate_or_open/2` takes
+`popup: false` for page targets (a child project from the gantt or
+calendar); the default opens the target in the drawer, mirroring
+`<.smart_link popup={false}>`.
 
 **The project page hosts its own drawer** (`embed_mode: :popup`).
 `ProjectShowLive` mounted on the router flips `:navigate` to `:popup`,

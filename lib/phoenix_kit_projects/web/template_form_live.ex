@@ -44,6 +44,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       |> apply_action(live_action, resolved_params)
       |> assign_status_init()
       |> assign_ai_translate()
+      |> assign(dirty?: false)
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -155,7 +156,8 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
      socket
      |> assign_form(cs)
      |> assign(status_translation_mode: mode)
-     |> refresh_status_preview()}
+     |> refresh_status_preview()
+     |> WebHelpers.mark_dirty()}
   end
 
   # A template is a project, so it gets the same "Generate default" action (V125).
@@ -289,14 +291,18 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     <div class={@wrapper_class}>
       <.page_header title={@heading}>
         <:back_link>
-          <.smart_link
-            navigate={Paths.templates()}
-            emit={{PhoenixKitProjects.Web.TemplatesLive, %{}}}
-            embed_mode={@embed_mode}
+          <.link :if={@embed_mode == :navigate} navigate={Paths.templates()} class="link link-hover text-sm">
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Templates")}
+          </.link>
+          <button
+            :if={@embed_mode != :navigate}
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
             class="link link-hover text-sm"
           >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Templates")}
-          </.smart_link>
+          </button>
         </:back_link>
       </.page_header>
 
@@ -390,7 +396,12 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
             />
 
             <div class="flex justify-end gap-2 mt-2">
-              <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+              <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
                 {gettext("Cancel")}
               </button>
               <button

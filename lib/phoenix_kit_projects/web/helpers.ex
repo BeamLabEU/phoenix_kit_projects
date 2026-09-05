@@ -723,23 +723,27 @@ defmodule PhoenixKitProjects.Web.Helpers do
     * `:to` (string) — fallback path used in navigate mode
     * `:open` (`{module(), map()}`) — `{TargetLV, session_overrides}` used
       in emit mode
+    * `:popup` (boolean, default `true`) — in **popup** mode only: whether
+      this target belongs in the page's drawer. Forms do; a page target
+      (another project, a sub-page) passes `popup: false` and navigates,
+      the same split `<.smart_link popup={false}>` makes for links.
 
-  Both opts are required. In emit mode the open-target's module is
-  validated against `embeddable_lvs/0`; an unlisted module logs a
+  `:to` and `:open` are required. In emit mode the open-target's module
+  is validated against `embeddable_lvs/0`; an unlisted module logs a
   warning and is dropped (no broadcast, no navigation — caller's bug).
   """
   @spec navigate_or_open(Phoenix.LiveView.Socket.t(), keyword()) ::
           Phoenix.LiveView.Socket.t()
   def navigate_or_open(socket, opts) when is_list(opts) do
-    case socket.assigns[:embed_mode] do
-      mode when mode in [:emit, :popup] ->
-        {lv, session_overrides} = Keyword.fetch!(opts, :open)
-        emit_opened(socket, lv, session_overrides)
-        socket
+    mode = socket.assigns[:embed_mode]
 
-      _ ->
-        path = Keyword.fetch!(opts, :to)
-        Phoenix.LiveView.push_navigate(socket, to: path)
+    if mode == :emit or (mode == :popup and Keyword.get(opts, :popup, true)) do
+      {lv, session_overrides} = Keyword.fetch!(opts, :open)
+      emit_opened(socket, lv, session_overrides)
+      socket
+    else
+      path = Keyword.fetch!(opts, :to)
+      Phoenix.LiveView.push_navigate(socket, to: path)
     end
   end
 
@@ -802,6 +806,23 @@ defmodule PhoenixKitProjects.Web.Helpers do
     end
 
     socket
+  end
+
+  @doc """
+  Marks a form as holding unsaved edits: `dirty?` becomes true and the
+  host hears about it once (`notify_dirty/2`). Idempotent — pipe it into
+  every handler that changes what a save would write (validate, pending
+  dependency picks); later calls see `dirty?` already set and do nothing.
+  Mount with `dirty?: false`; render `data-confirm` from `@dirty?` on
+  Cancel and the header's back link.
+  """
+  @spec mark_dirty(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def mark_dirty(%{assigns: %{dirty?: true}} = socket), do: socket
+
+  def mark_dirty(socket) do
+    socket
+    |> Phoenix.Component.assign(dirty?: true)
+    |> notify_dirty(true)
   end
 
   @doc """
@@ -882,7 +903,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
       mode when mode in [:emit, :popup] ->
         with {:ok, lv} <- decode_embeddable_lv(lv_str),
              {:ok, session} <- decode_session(Map.get(params, "session")) do
-          emit_opened(socket, lv, session)
+          emit_opened(socket, lv, sanitize_session_overrides(session))
         else
           _ ->
             Logger.warning(
@@ -935,6 +956,26 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   def decode_embeddable_lv(_), do: :error
+
+  # Session keys the host owns. A session that came over the wire
+  # (`phx-value-session` on an `open_embed` button is client-editable)
+  # must never set identity or routing: `current_user_uuid` is what the
+  # embedded LV rebuilds its scope from, the other three route the
+  # frame's events.
+  @reserved_session_keys ~w(current_user_uuid mode pubsub_topic frame_ref)
+
+  @doc """
+  Drops the keys the host owns from a client-supplied session override.
+
+  Applied to every `:opened` payload at both ends — by the emitter's
+  `open_embed` handler and by `PopupHostLive` before it stamps the
+  frame's session — so a crafted button payload cannot open a form as
+  another user or point its events at another topic. Server-built
+  sessions (`root_view`, `:saved`'s `next`) do not pass through here.
+  """
+  @spec sanitize_session_overrides(map()) :: map()
+  def sanitize_session_overrides(session) when is_map(session),
+    do: Map.drop(session, @reserved_session_keys)
 
   @doc """
   Decodes the `phx-value-session` JSON blob produced by `<.smart_link>`.

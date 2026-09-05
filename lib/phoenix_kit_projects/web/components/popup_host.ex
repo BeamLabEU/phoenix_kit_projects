@@ -133,6 +133,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
         show={true}
         on_close={@on_close}
         closeable={Map.get(frame, :closeable, true)}
+        close_guard={:input}
         placement={@placement}
         max_width={@max_width}
         class={Enum.join(Enum.reject([@modal_box_class, "relative"], &is_nil/1), " ")}

@@ -242,8 +242,10 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # Threads the host's authenticated user uuid into the child LV's session
   # so embedded LVs can reconstruct the current user across the
   # `live_render` boundary (the `:phoenix_kit_ensure_admin` on_mount hook
-  # doesn't run for them). `put_new` so a child session that already
-  # carries an explicit uuid wins. See `WebHelpers.assign_embed_user/2`.
+  # doesn't run for them). `put_new` so a SERVER-built child session that
+  # already carries an explicit uuid (`root_view`, `:saved`'s `next`)
+  # wins; a client-supplied `:opened` session has had the key stripped
+  # before it gets here. See `WebHelpers.assign_embed_user/2`.
   defp maybe_put_current_user_uuid(session, uuid)
        when is_binary(uuid) and uuid != "" do
     Map.put_new(session, "current_user_uuid", uuid)
@@ -302,7 +304,10 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
         {:noreply, socket}
 
       true ->
-        {:noreply, push_frame(socket, lv, child_session)}
+        # The payload's session is whatever the button carried — never
+        # let it name the user or re-route the frame (defense in depth:
+        # the emitter strips the same keys).
+        {:noreply, push_frame(socket, lv, WebHelpers.sanitize_session_overrides(child_session))}
     end
   end
 

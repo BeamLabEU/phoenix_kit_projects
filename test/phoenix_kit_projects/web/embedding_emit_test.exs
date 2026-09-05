@@ -338,27 +338,31 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 9}
         )
 
-      view |> element("button[phx-click=cancel]") |> render_click()
+      view |> element("button.btn[phx-click=cancel]") |> render_click()
 
       assert_receive {:projects, :closed, %{frame_ref: 9}}, 500
     end
 
-    test "clicking 'Templates' back link emits :opened for TemplatesLive", %{conn: conn} do
+    test "the 'Templates' back link is the way out of the frame (:closed, not :opened)",
+         %{conn: conn} do
+      # A frame must never push the list page as ANOTHER frame — inside a
+      # host's popup or the page's drawer "back" closes the sheet.
       topic = unique_topic()
       ProjectsPubSub.subscribe(topic)
 
-      {:ok, view, _} =
+      {:ok, view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
         )
 
+      refute html =~ ~s(phx-click="open_embed")
+
       view
-      |> element("button[phx-click=open_embed]", "Templates")
+      |> element("button.link[phx-click=cancel]", "Templates")
       |> render_click()
 
-      assert_receive {:projects, :opened, payload}, 500
-      assert payload.lv == PhoenixKitProjects.Web.TemplatesLive
-      assert payload.session == %{}
+      assert_receive {:projects, :closed, %{frame_ref: 0}}, 500
+      refute_receive {:projects, :opened, _}, 100
     end
 
     test "submitting the form emits :saved with kind=:template, action=:create", %{conn: conn} do
@@ -443,7 +447,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 5}
         )
 
-      view |> element("button[phx-click=cancel]") |> render_click()
+      view |> element("button.btn[phx-click=cancel]") |> render_click()
 
       assert_receive {:projects, :closed, %{frame_ref: 5}}, 500
     end
@@ -593,7 +597,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
           session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 33}
         )
 
-      view |> element("button[phx-click=cancel]") |> render_click()
+      view |> element("button.btn[phx-click=cancel]") |> render_click()
 
       assert_receive {:projects, :closed, %{frame_ref: 33}}, 500
     end
@@ -682,7 +686,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
             })
         )
 
-      view |> element("button[phx-click=cancel]") |> render_click()
+      view |> element("button.btn[phx-click=cancel]") |> render_click()
 
       assert_receive {:projects, :closed, %{frame_ref: 22}}, 500
     end

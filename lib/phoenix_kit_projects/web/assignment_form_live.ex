@@ -66,17 +66,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     {:ok, socket}
   end
 
-  # The first change event marks the form dirty and tells the host once
-  # (`WebHelpers.notify_dirty/2` is a no-op outside emit mode). Idempotent:
-  # later changes see `dirty?` already true and do nothing.
-  defp mark_dirty(%{assigns: %{dirty?: true}} = socket), do: socket
-
-  defp mark_dirty(socket) do
-    socket
-    |> assign(dirty?: true)
-    |> WebHelpers.notify_dirty(true)
-  end
-
   defp prefill_title(params) do
     case Map.get(params, "title") do
       title when is_binary(title) -> title |> String.trim() |> String.slice(0, 255)
@@ -608,9 +597,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       when dep_uuid != "" do
     if socket.assigns.fx.dependencies do
       {:noreply,
-       update(socket, :pending_dep_uuids, fn current ->
+       socket
+       |> update(:pending_dep_uuids, fn current ->
          if dep_uuid in current, do: current, else: current ++ [dep_uuid]
-       end)}
+       end)
+       |> WebHelpers.mark_dirty()}
     else
       {:noreply,
        put_flash(socket, :error, gettext("This feature is turned off for this project."))}
@@ -620,7 +611,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def handle_event("add_pending_dep", _params, socket), do: {:noreply, socket}
 
   def handle_event("remove_pending_dep", %{"uuid" => dep_uuid}, socket) do
-    {:noreply, update(socket, :pending_dep_uuids, &List.delete(&1, dep_uuid))}
+    {:noreply,
+     socket |> update(:pending_dep_uuids, &List.delete(&1, dep_uuid)) |> WebHelpers.mark_dirty()}
   end
 
   # Closure-pull tree node toggle. The root task can't be excluded — it's
@@ -639,11 +631,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
       true ->
         {:noreply,
-         update(socket, :excluded_closure_uuids, fn excluded ->
+         socket
+         |> update(:excluded_closure_uuids, fn excluded ->
            if MapSet.member?(excluded, task_uuid),
              do: MapSet.delete(excluded, task_uuid),
              else: MapSet.put(excluded, task_uuid)
-         end)}
+         end)
+         |> WebHelpers.mark_dirty()}
     end
   end
 
@@ -679,7 +673,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
        new_task_title: new_task_title,
        save_as_template: save_as_template
      )
-     |> mark_dirty()}
+     |> WebHelpers.mark_dirty()}
   end
 
   # ── Dependency management (edit mode) ───────────────────────────
@@ -831,7 +825,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
        status_translation_mode: mode
      )
      |> refresh_status_preview()
-     |> mark_dirty()}
+     |> WebHelpers.mark_dirty()}
   end
 
   # "Link existing" mode renders no `subproject[...]` inputs, so the form's
@@ -1695,14 +1689,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     <div class={@wrapper_class}>
       <.page_header title={@heading}>
         <:back_link>
-          <.smart_link
+          <%!-- A page goes back to the project; inside a host's frame or the
+               page's drawer "back" is the way out of the sheet (a frame must
+               never push the project page as another frame). --%>
+          <.link
+            :if={@embed_mode == :navigate}
             navigate={Paths.project(@project.uuid)}
-            emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => @project.uuid}}}
-            embed_mode={@embed_mode}
             class="link link-hover text-sm"
           >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {@project.name}
-          </.smart_link>
+          </.link>
+          <button
+            :if={@embed_mode != :navigate}
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
+            class="link link-hover text-sm"
+          >
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {@project.name}
+          </button>
         </:back_link>
       </.page_header>
 

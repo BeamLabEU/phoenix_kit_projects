@@ -45,6 +45,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
       |> assign_ai_translate()
+      |> assign(dirty?: false)
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -197,7 +198,9 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     assign_type = Map.get(params, "default_assign_type", socket.assigns.assign_type)
     attrs = merge_attrs(attrs, socket)
     cs = Projects.change_task(socket.assigns.task, attrs)
-    {:noreply, socket |> assign(assign_type: assign_type) |> assign_form(cs)}
+
+    {:noreply,
+     socket |> assign(assign_type: assign_type) |> assign_form(cs) |> WebHelpers.mark_dirty()}
   end
 
   def handle_event("save", %{"task" => attrs} = params, socket) do
@@ -424,14 +427,18 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     <div class={@wrapper_class}>
       <.page_header title={@heading}>
         <:back_link>
-          <.smart_link
-            navigate={Paths.tasks()}
-            emit={{PhoenixKitProjects.Web.TasksLive, %{}}}
-            embed_mode={@embed_mode}
+          <.link :if={@embed_mode == :navigate} navigate={Paths.tasks()} class="link link-hover text-sm">
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Task Library")}
+          </.link>
+          <button
+            :if={@embed_mode != :navigate}
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
             class="link link-hover text-sm"
           >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Task Library")}
-          </.smart_link>
+          </button>
         </:back_link>
       </.page_header>
 
@@ -602,7 +609,12 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         <% end %>
 
         <div class="flex justify-end gap-2 mt-2">
-          <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+          <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
             {gettext("Cancel")}
           </button>
           <button
