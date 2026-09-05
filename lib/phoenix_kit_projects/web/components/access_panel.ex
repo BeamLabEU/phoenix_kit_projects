@@ -20,23 +20,31 @@ defmodule PhoenixKitProjects.Web.Components.AccessPanel do
   ## Conditional rows
 
   A project whose tasks are simple enough not to need comments shouldn't
-  be asked who may comment: the question is noise, and answering it
-  stores a floor for a capability that isn't there. `visible_actions/3`
-  filters against the same flags and extensions the rest of the module
-  toggles, so rows appear and disappear as those change.
+  be asked who may comment — and a project with no task list at all
+  shouldn't be asked who may create tasks: the question is noise, and
+  answering it stores a floor for a capability that isn't there.
+  `visible_actions/3` filters against the same flags and extensions the
+  rest of the module toggles, so rows appear and disappear as those change.
   """
 
   use Phoenix.Component
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   # What each floor DEPENDS on, keyed on the flags/extensions that provide
-  # the capability. Absent from this map = always relevant.
+  # the capability — ALL of a row's requirements must hold. Every task
+  # floor needs the task list itself (a project can be only its
+  # whiteboards since 2026-09-05; asking who may create tasks there is a
+  # question with no meaning — grok's find). Absent = always relevant.
   @requires %{
-    "assign_tasks" => {:flag, "assignees"},
-    "update_status" => {:flag, "statuses"},
-    "log_time" => {:flag, "ledger"},
-    "comment" => {:ext, "discussions"},
-    "upload_files" => {:ext, "files"}
+    "create_tasks" => [{:ext, "tasks"}],
+    "edit_tasks" => [{:ext, "tasks"}],
+    "delete_tasks" => [{:ext, "tasks"}],
+    "assign_tasks" => [{:ext, "tasks"}, {:flag, "assignees"}],
+    "update_status" => [{:ext, "tasks"}, {:flag, "statuses"}],
+    "log_time" => [{:ext, "tasks"}, {:flag, "ledger"}],
+    "set_health" => [{:ext, "tasks"}, {:flag, "lifecycle"}],
+    "comment" => [{:ext, "discussions"}],
+    "upload_files" => [{:ext, "files"}]
   }
 
   @doc """
@@ -50,17 +58,18 @@ defmodule PhoenixKitProjects.Web.Components.AccessPanel do
   @spec visible_actions([map()], map(), map()) :: [map()]
   def visible_actions(actions, flag_states, ext_states) do
     Enum.filter(actions, fn action ->
-      case Map.get(@requires, action.settings_key) do
+      @requires
+      |> Map.get(action.settings_key, [])
+      |> Enum.all?(fn
         {:flag, key} -> Map.get(flag_states, key, true) != false
         {:ext, key} -> Map.get(ext_states, key, false) == true
-        nil -> true
-      end
+      end)
     end)
   end
 
-  @doc "The capability a floor depends on, or nil when it always applies."
-  @spec requirement(String.t()) :: {:flag | :ext, String.t()} | nil
-  def requirement(settings_key), do: Map.get(@requires, settings_key)
+  @doc "The capabilities a floor depends on — `[]` when it always applies."
+  @spec requirements(String.t()) :: [{:flag | :ext, String.t()}]
+  def requirements(settings_key), do: Map.get(@requires, settings_key, [])
 
   attr(:authz_choices, :map, required: true)
   attr(:authz_actions, :list, required: true)

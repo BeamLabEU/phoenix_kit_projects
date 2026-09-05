@@ -61,6 +61,21 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       render_click(view, "remove_assignment", %{"uuid" => assignment.uuid})
       assert Projects.get_assignment(assignment.uuid)
     end
+
+    test "the add-task and edit-task pages refuse the project like a missing one",
+         %{conn: conn, project: project, assignment: assignment} do
+      # The show page hides every way in; the URL is the last door.
+      assert {:error, {:live_redirect, %{flash: %{"error" => msg}}}} =
+               live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      assert msg =~ "not found"
+
+      assert {:error, {:live_redirect, _}} =
+               live(
+                 conn,
+                 "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+               )
+    end
   end
 
   describe "statuses flag off" do

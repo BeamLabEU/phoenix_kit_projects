@@ -280,11 +280,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # Extensions grouped by the JOB they do — see Registry.categories/0.
   defp creation_ext_groups(ext_types) do
-    ext_types
-    |> Enum.reject(&(&1.key == "tasks"))
-    |> Extensions.Registry.group_by_category()
-  rescue
-    _ -> [{"more", "More", ext_types}]
+    addons = Enum.reject(ext_types, &(&1.key == "tasks"))
+
+    try do
+      Extensions.Registry.group_by_category(addons)
+    rescue
+      _ -> [{"more", "More", addons}]
+    end
   end
 
   # The actions a project may override, and the floors it resolves to with
@@ -1235,12 +1237,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       end)
       |> Enum.flat_map(fn {_ext_key, flags} -> flags end)
 
-    flags_to_pin =
-      (socket.assigns.flag_defs ++ enabled_ext_flags)
-      |> Enum.filter(fn flag ->
-        Map.get(socket.assigns.flag_states, flag.key, flag.default) != flag.default
-      end)
-      |> Map.new(fn flag -> {flag.key, Map.get(socket.assigns.flag_states, flag.key)} end)
+    flags_to_pin = flags_to_pin(socket.assigns, socket.assigns.flag_defs ++ enabled_ext_flags)
 
     best_effort("set_flags", fn ->
       if flags_to_pin != %{} do
@@ -1322,6 +1319,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end)
 
     :ok
+  end
+
+  # Which flags the create writes explicitly: those the user moved off the
+  # catalog default — and, when creating from a template, those the
+  # TEMPLATE pinned that the user moved back to the default. The clone
+  # carries the template's pins as its base layer, so a minimal diff
+  # against the catalog alone left such a pin standing against the form
+  # (codex, 2026-09-05); the form is the user's visible truth.
+  defp flags_to_pin(assigns, flag_defs) do
+    carried =
+      case assigns.template_preview do
+        %{features: %{} = features} -> features
+        _ -> %{}
+      end
+
+    flag_defs
+    |> Enum.filter(fn flag ->
+      state = Map.get(assigns.flag_states, flag.key, flag.default)
+      state != flag.default or (Map.has_key?(carried, flag.key) and carried[flag.key] != state)
+    end)
+    |> Map.new(fn flag -> {flag.key, Map.get(assigns.flag_states, flag.key)} end)
   end
 
   defp best_effort(label, fun) do
@@ -1577,7 +1595,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       if(not tasks?, do: gettext("No tasks")),
       if(ons != "", do: gettext("With: %{list}", list: ons)),
       if(tasks?, do: statuses_summary(assigns, flag_states)),
-      template_summary(assigns.template_preview)
+      if(tasks?, do: template_summary(assigns.template_preview))
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" · ")
@@ -2313,7 +2331,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <%!-- 3. The task-tracker's own shape. Grouped by what the flag
                DOES — one flat wall of 13 was the panel's example of the
                problem. Prerequisites stay inline on the flag they gate. --%>
-          <.accordion :if={@flag_defs != []} id="create-features" cue={true}>
+          <.accordion
+            :if={@flag_defs != [] or Enum.any?(@ext_types, &(&1.key == "tasks"))}
+            id="create-features"
+            cue={true}
+          >
             <:title>
               {gettext("Task features")}
               <span class="ml-2 text-xs font-normal opacity-50">{features_summary(assigns)}</span>

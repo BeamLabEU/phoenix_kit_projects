@@ -584,6 +584,69 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       assert html =~ ~s(id="authz-row-create_tasks")
     end
 
+    test "every task floor goes with the task list (grok, 2026-09-05)", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/new")
+
+      for row <- ~w(create_tasks edit_tasks delete_tasks assign_tasks set_health log_time) do
+        assert html =~ ~s(id="authz-row-#{row}")
+      end
+
+      html =
+        render_change(view, "validate", %{
+          "project" => %{"name" => ""},
+          "ext" => %{"tasks" => "false"}
+        })
+
+      for row <- ~w(create_tasks edit_tasks delete_tasks assign_tasks set_health log_time) do
+        refute html =~ ~s(id="authz-row-#{row}"), "#{row} floor shown with no task list"
+      end
+
+      # Floors that are not about tasks stay.
+      assert html =~ ~s(id="authz-row-upload_files")
+    end
+
+    test "a template pin moved back to the default on the form does not survive the clone",
+         %{conn: conn} do
+      # A template with assignees pinned OFF.
+      {:ok, template} =
+        Projects.create_project(%{
+          "name" => "Pinned #{System.unique_integer([:positive])}",
+          "is_template" => true,
+          "start_mode" => "immediate"
+        })
+
+      {:ok, template} = Features.set_flags(template, %{"assignees" => false})
+      assert Projects.get_project!(template.uuid).settings["features"]["assignees"] == false
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+      html =
+        render_change(view, "validate", %{
+          "project" => %{"name" => ""},
+          "template_uuid" => template.uuid
+        })
+
+      # The template's pin seeds the form: assignees shows OFF.
+      refute html =~ ~s(id="authz-row-assign_tasks")
+
+      # The user flips assignees back ON — the catalog default, which the
+      # minimal-diff pin used to skip, leaving the template's OFF in place.
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "template_uuid" => template.uuid,
+        "flag" => %{"assignees" => "true"}
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "Unpinned #{System.unique_integer([:positive])}"},
+        "template_uuid" => template.uuid
+      })
+
+      project = created("Unpinned")
+      assert project
+      assert Features.on?(project, "assignees"), "the template's pin survived the form"
+    end
+
     test "a flag-backed row follows its flag", %{conn: conn} do
       {:ok, view, html} = live(conn, "/en/admin/projects/new")
       assert html =~ ~s(id="authz-row-log_time")

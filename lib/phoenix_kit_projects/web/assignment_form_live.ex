@@ -259,7 +259,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         if PhoenixKitProjects.Authz.can_use_templates?(scope), do: template
 
       %Project{} = project ->
-        if PhoenixKitProjects.Authz.can?(scope, project, action), do: project
+        # The task list is a per-project extension now (a project can be
+        # only its whiteboards, 2026-09-05): with it off, the project has
+        # no tasks to add to or edit, however the page was reached — the
+        # show page hides every way in; this closes the URL.
+        if PhoenixKitProjects.Authz.can?(scope, project, action) and
+             PhoenixKitProjects.Extensions.enabled?(project, "tasks"),
+           do: project
 
       other ->
         other
