@@ -14,6 +14,7 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
 
   alias PhoenixKitProjects.{Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -45,12 +46,17 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
       {:ok,
        socket
        |> assign(
-         page_title:
-           gettext("%{name} · Activity",
-             name: Project.localized_name(project, L10n.current_content_lang())
-           ),
+         # Trail: Admin Panel / Projects / <parents…> / <project> / Activity —
+         # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
+         page_title: gettext("Activity"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
+         page_crumbs:
+           Crumbs.project(
+             project,
+             L10n.current_content_lang(),
+             socket.assigns[:phoenix_kit_current_scope]
+           ),
          project: project,
          page: 1,
          entries: [],

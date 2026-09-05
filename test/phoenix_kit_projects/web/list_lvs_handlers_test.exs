@@ -25,8 +25,6 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
-  alias PhoenixKitProjects.Web.ListUi
-
   alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKitProjects.Projects
 
@@ -43,7 +41,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       fixture_project(%{"name" => "B"})
       fixture_project(%{"name" => "A"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
 
       html = render_change(view, "sort_form", %{"sort_by" => "name"})
       # When sorted by name asc, "A" should render before "B" in the table body.
@@ -54,7 +52,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       fixture_project(%{"name" => "B"})
       fixture_project(%{"name" => "A"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       render_change(view, "sort_form", %{"sort_by" => "name"})
       html = render_change(view, "sort_form", %{"sort_dir" => "desc"})
       # name desc → "B" before "A"
@@ -65,7 +63,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       fixture_project(%{"name" => "B"})
       fixture_project(%{"name" => "A"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       render_change(view, "sort_form", %{"sort_by" => "name"})
       html = render_click(view, "toggle_sort", %{"by" => "name"})
       assert html =~ ~r/B[\s\S]*?A/
@@ -75,7 +73,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       fixture_project(%{"name" => "B"})
       fixture_project(%{"name" => "A"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       # First switch to name+desc, then toggle to inserted_at — should
       # snap back to :asc on the new field, not inherit :desc.
       render_change(view, "sort_form", %{"sort_by" => "name", "sort_dir" => "desc"})
@@ -86,14 +84,14 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
     test "toggle_sort ignores unknown field strings", %{conn: conn} do
       fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       # Should not crash; should return :noreply, socket.
       assert render_click(view, "toggle_sort", %{"by" => "drop_table"})
     end
 
     test "sort_form coerces unknown sort_by to current field", %{conn: conn} do
       fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       # Bogus field shouldn't crash, page should still render.
       assert render_change(view, "sort_form", %{"sort_by" => "evil_field"})
     end
@@ -110,7 +108,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
         |> PhoenixKit.RepoHelper.repo().update!()
       end
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       html = render_change(view, "sort_form", %{"sort_by" => "position"})
       assert html =~ ~s(data-sortable="true")
 
@@ -138,7 +136,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       end
 
       # Last-edited desc → P151..P102 visible; P101 is rank 51.
-      {:ok, view, html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, html} = live(conn, "/en/admin/projects")
       assert html =~ "P151"
       refute html =~ "P101"
 
@@ -151,7 +149,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     test "open_reorder_modal with 0 uuids opens with empty captured_uuids",
          %{conn: conn} do
       fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       html = render_click(view, "open_reorder_modal", %{})
       # Modal is now in the DOM (keep_in_dom + data-show flip).
       assert html =~ "reorder-modal"
@@ -162,7 +160,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     test "open_reorder_modal with 1 uuid collapses to :all (no single-row permute)",
          %{conn: conn} do
       p = fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       html = render_click(view, "open_reorder_modal", %{"uuids" => [p.uuid]})
       assert html =~ "Reorder all"
     end
@@ -170,14 +168,14 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     test "open_reorder_modal with 2+ uuids keeps the selection", %{conn: conn} do
       a = fixture_project()
       b = fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       html = render_click(view, "open_reorder_modal", %{"uuids" => [a.uuid, b.uuid]})
       assert html =~ "2 selected"
     end
 
     test "open_reorder_modal filters non-binary uuids", %{conn: conn} do
       p = fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       # Mix uuid + integer + map; only the uuid string should survive.
       html =
         render_click(view, "open_reorder_modal", %{
@@ -190,7 +188,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
     test "close_reorder_modal clears state", %{conn: conn} do
       fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       render_click(view, "open_reorder_modal", %{"uuids" => []})
       html = render_click(view, "close_reorder_modal", %{})
       # Modal still in DOM (keep_in_dom), but data-show flipped to "false".
@@ -204,7 +202,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       _b = fixture_project(%{"name" => "B"})
       _a = fixture_project(%{"name" => "A"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       render_click(view, "open_reorder_modal", %{})
 
       html = render_click(view, "apply_reorder", %{"strategy" => "name_asc"})
@@ -223,7 +221,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
     test "rejects an unknown strategy string with a fallback flash",
          %{conn: conn} do
       fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       render_click(view, "open_reorder_modal", %{})
 
       # A crafted payload mustn't reach `String.to_existing_atom` —
@@ -235,7 +233,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
 
     test "rejects an empty submit with a fallback flash", %{conn: conn} do
       fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       render_click(view, "open_reorder_modal", %{})
       html = render_click(view, "apply_reorder", %{})
       assert html =~ "Pick a strategy"
@@ -247,7 +245,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       b = fixture_project(%{"name" => "BB"})
       _c = fixture_project(%{"name" => "CC"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       render_click(view, "open_reorder_modal", %{"uuids" => [b.uuid, a.uuid]})
 
       html = render_click(view, "apply_reorder", %{"strategy" => "name_desc"})
@@ -260,7 +258,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       a = fixture_project(%{"name" => "A"})
       b = fixture_project(%{"name" => "B"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
 
       render_click(view, "reorder_projects", %{
         "ordered_ids" => [b.uuid, a.uuid],
@@ -282,7 +280,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       # only @per_batch (50) of the 151 rows load initially.
       for n <- 1..151, do: fixture_project(%{"name" => "P#{n}"})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       html = render_change(view, "sort_form", %{"sort_by" => "position"})
 
       # A load-more-truncated page is a sparse subset of positions —
@@ -302,50 +300,6 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       html = render_click(view, "load_more", %{})
       assert html =~ ~s(data-sortable="true")
       assert html =~ "pk-drag-handle"
-    end
-  end
-
-  describe "ProjectsLive — saved views (Step 19)" do
-    test "save / apply / delete round-trip with stale-state degradation", %{conn: conn} do
-      fixture_project(%{"name" => "Viewed"})
-      {:ok, view, _} = live(conn, "/en/admin/projects/list")
-
-      # Shape some state, save it as a named view.
-      render_change(view, "sort_form", %{"sort_by" => "name"})
-      render_click(view, "toggle_column", %{"col" => "created"})
-      html = render_submit(view, "save_view", %{"name" => "By name"})
-      assert html =~ "View saved."
-      assert html =~ "By name"
-
-      # Change state away, then apply the view — it restores.
-      render_change(view, "sort_form", %{"sort_by" => "updated_at"})
-      html = render_click(view, "apply_view", %{"name" => "By name"})
-      assert html =~ ~s(<option selected="" value="name">)
-
-      # A tampered stored view degrades to safe defaults instead of junk.
-      ListUi.save_view("projects_list_views", "Evil", %{
-        "sort_by" => "'; DROP TABLE--",
-        "sort_dir" => "sideways",
-        "status" => "no-such-status",
-        "columns" => ["created", "bogus"]
-      })
-
-      {:ok, view2, _} = live(conn, "/en/admin/projects/list")
-      html = render_click(view2, "apply_view", %{"name" => "Evil"})
-      # Falls back: sort stays a roster field, bogus column dropped.
-      refute html =~ "bogus"
-
-      # Delete removes it from the dropdown.
-      html = render_click(view2, "delete_view", %{"name" => "Evil"})
-      refute html =~ "Evil"
-      html = render_click(view2, "delete_view", %{"name" => "By name"})
-      assert html =~ "No saved views yet."
-    end
-
-    test "blank names are refused", %{conn: conn} do
-      {:ok, view, _} = live(conn, "/en/admin/projects/list")
-      html = render_submit(view, "save_view", %{"name" => "   "})
-      assert html =~ "Give the view a name."
     end
   end
 
@@ -570,7 +524,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       fixture_project(%{"name" => "Alpha rocket"})
       fixture_project(%{"name" => "Beta boat"})
 
-      {:ok, view, html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, html} = live(conn, "/en/admin/projects")
       assert html =~ ~s(phx-hook="TableLocalSearch")
       assert html =~ ~s(data-local-search-enabled="true")
 
@@ -601,7 +555,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
         resource_uuid: p.uuid
       )
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       render_click(view, "toggle_column", %{"col" => "tasks"})
       html = render_click(view, "toggle_column", %{"col" => "created_by"})
 

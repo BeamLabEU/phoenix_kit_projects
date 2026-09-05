@@ -49,7 +49,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
           session: %{"pubsub_topic" => topic}
         )
 
-      refute html =~ "modal-open"
+      refute html =~ "<dialog"
     end
 
     test "wrapper_class override replaces default", %{conn: conn} do
@@ -101,7 +101,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
           }
         )
 
-      refute html =~ "modal-open"
+      refute html =~ "<dialog"
     end
   end
 
@@ -114,7 +114,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
           session: %{"pubsub_topic" => topic}
         )
 
-      refute html_before =~ "modal-open"
+      refute html_before =~ "<dialog"
 
       ProjectsPubSub.broadcast_embed(topic, :opened, %{
         lv: PhoenixKitProjects.Web.OverviewLive,
@@ -122,8 +122,12 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
         frame_ref: nil
       })
 
+      # The frame is core's <.modal>: a PkDialog-driven <dialog> that
+      # carries its frame ref for the hook's close push.
       html_after = render(view)
-      assert html_after =~ "modal-open"
+      assert html_after =~ ~s(phx-hook="PkDialog")
+      assert html_after =~ ~s(data-close-event="close_top_modal")
+      assert html_after =~ ~r/phx-value-frame-ref="\d+"/
       assert html_after =~ "Projects"
     end
 
@@ -263,7 +267,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       end)
     end
 
-    test "with 2 frames stacked, only the top dialog carries phx-window-keydown",
+    test "with 2 frames stacked, every frame is its own PkDialog carrying its ref",
          %{conn: conn} do
       topic = unique_topic()
 
@@ -275,12 +279,12 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       push_n_frames(topic, view, 2)
       html = render(view)
 
-      # Exactly one dialog should carry the Escape window-keydown binding.
-      keydown_count =
-        Regex.scan(~r/phx-window-keydown="close_top_modal"/, html) |> length()
-
-      assert keydown_count == 1,
-             "expected exactly 1 dialog with phx-window-keydown, got #{keydown_count}"
+      # Esc/backdrop are the PkDialog hook's job now (it closes the TOP
+      # dialog of a stack and pushes `close_top_modal` with that dialog's
+      # `phx-value-frame-ref`); no window-level key binding remains.
+      refute html =~ "phx-window-keydown"
+      assert length(Regex.scan(~r/phx-hook="PkDialog"/, html)) == 2
+      assert length(Regex.scan(~r/phx-value-frame-ref="\d+"/, html)) == 2
     end
 
     test "close_top_modal with non-top frame-ref is a no-op", %{conn: conn} do
@@ -658,6 +662,39 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       assert frame.session["current_user_uuid"] == uuid
     end
 
+    test "an :opened session cannot name the user or re-route the frame", %{conn: conn} do
+      topic = unique_topic()
+      host_uuid = Ecto.UUID.generate()
+      forged_uuid = Ecto.UUID.generate()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic, "current_user_uuid" => host_uuid}
+        )
+
+      # What a tampered `phx-value-session` would deliver.
+      ProjectsPubSub.broadcast_embed(topic, :opened, %{
+        lv: PhoenixKitProjects.Web.OverviewLive,
+        session: %{
+          "current_user_uuid" => forged_uuid,
+          "mode" => "navigate",
+          "pubsub_topic" => "someone-elses-topic",
+          "frame_ref" => 999,
+          "id" => "kept"
+        },
+        frame_ref: nil
+      })
+
+      _ = render(view)
+
+      [frame] = :sys.get_state(view.pid).socket.assigns.modal_stack
+      assert frame.session["current_user_uuid"] == host_uuid
+      assert frame.session["mode"] == "emit"
+      assert frame.session["pubsub_topic"] == topic
+      assert frame.session["frame_ref"] == frame.frame_ref
+      assert frame.session["id"] == "kept"
+    end
+
     test "an explicit child current_user_uuid wins over the host's (put_new)", %{conn: conn} do
       topic = unique_topic()
       host_uuid = Ecto.UUID.generate()
@@ -746,5 +783,105 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
 
   defp unique_topic do
     "popup-host-test-#{System.unique_integer([:positive])}"
+  end
+end
+
+defmodule PhoenixKitProjects.Web.PopupHostDrawerTest do
+  @moduledoc """
+  The popup host's `placement` (the right-hand drawer) and the `:dirty`
+  contract: a frame whose form holds unsaved edits stops closing on
+  Esc/backdrop until it is clean again.
+  """
+
+  use PhoenixKitProjects.LiveCase, async: false
+
+  alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+
+  setup %{conn: conn} do
+    scope = fake_scope()
+    {:ok, conn: put_test_scope(conn, scope)}
+  end
+
+  defp topic, do: "test:popup:#{System.unique_integer([:positive])}"
+
+  defp open_frame(topic, view) do
+    ProjectsPubSub.broadcast_embed(topic, :opened, %{
+      lv: PhoenixKitProjects.Web.OverviewLive,
+      session: %{},
+      frame_ref: nil
+    })
+
+    html = render(view)
+    [_, ref] = Regex.run(~r/phx-value-frame-ref="(\d+)"/, html)
+    {String.to_integer(ref), html}
+  end
+
+  test "placement=end renders every frame as a drawer with the form width", %{conn: conn} do
+    t = topic()
+
+    {:ok, view, _} =
+      live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+        session: %{"pubsub_topic" => t, "placement" => "end"}
+      )
+
+    {_ref, html} = open_frame(t, view)
+    assert html =~ ~s(class="modal modal-end")
+    assert html =~ "max-w-2xl"
+  end
+
+  test "the default placement is the centered wide box", %{conn: conn} do
+    t = topic()
+
+    {:ok, view, _} =
+      live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive, session: %{"pubsub_topic" => t})
+
+    {_ref, html} = open_frame(t, view)
+    assert html =~ ~s(class="modal")
+    refute html =~ "modal-end"
+    assert html =~ "max-w-6xl"
+  end
+
+  test "every frame arms the client-side input guard", %{conn: conn} do
+    topic = "popup-guard-#{System.unique_integer([:positive])}"
+
+    {:ok, view, _} =
+      live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+        session: %{"pubsub_topic" => topic}
+      )
+
+    ProjectsPubSub.broadcast_embed(topic, :opened, %{
+      lv: PhoenixKitProjects.Web.OverviewLive,
+      session: %{},
+      frame_ref: nil
+    })
+
+    assert render(view) =~ ~s(data-close-guard="input")
+  end
+
+  test "a dirty frame stops being closeable until it is clean again", %{conn: conn} do
+    t = topic()
+
+    {:ok, view, _} =
+      live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+        session: %{"pubsub_topic" => t, "placement" => "end"}
+      )
+
+    {ref, html} = open_frame(t, view)
+    assert html =~ ~s(data-closeable="true")
+
+    ProjectsPubSub.broadcast_embed(t, :dirty, %{frame_ref: ref, dirty: true})
+    html = render(view)
+    assert html =~ ~s(data-closeable="false")
+
+    # A stale ref (a frame that is not on the stack) changes nothing.
+    ProjectsPubSub.broadcast_embed(t, :dirty, %{frame_ref: ref + 1000, dirty: false})
+    assert render(view) =~ ~s(data-closeable="false")
+
+    ProjectsPubSub.broadcast_embed(t, :dirty, %{frame_ref: ref, dirty: false})
+    assert render(view) =~ ~s(data-closeable="true")
+
+    # And the hook's close push (Esc / backdrop) still pops the frame by ref.
+    html = render_click(view, "close_top_modal", %{"frame-ref" => to_string(ref)})
+    refute html =~ "<dialog"
   end
 end

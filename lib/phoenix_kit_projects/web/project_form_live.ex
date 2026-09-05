@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Components.Core.ChangeCue
 
@@ -69,6 +70,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign_status_mode()
       |> assign_ai_translate()
       |> assign_cue_baseline()
+      |> assign(dirty?: false)
+      |> WebHelpers.keep_host_title()
 
     {:ok, socket}
   end
@@ -155,16 +158,20 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     )
   end
 
-  # Every AVAILABLE extension except tasks (whose on/off rides the
-  # preset; a task-less project is a Modules-panel edge case, not a
-  # creation-page decision).
+  # Every AVAILABLE extension, tasks included: since the project page
+  # became top-level tabs (2026-09-05) a task-less project is a
+  # first-class shape — a class that is only its whiteboards — so its
+  # on/off is a creation decision. Tasks renders as the first row of the
+  # Task features drawer rather than in the Extensions list (it is what
+  # that drawer configures); the reconciliation at save is the same.
   defp creation_ext_types do
     Extensions.list_types()
     |> Enum.filter(&Extensions.Registry.available?/1)
-    |> Enum.reject(&(&1.key == "tasks"))
   rescue
     _ -> []
   end
+
+  defp tasks_on?(assigns), do: Map.get(assigns.ext_states, "tasks", true)
 
   # Each kind reads ONLY its own field, so a submitted kind can never be
   # paired with another kind's uuid.
@@ -273,9 +280,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # Extensions grouped by the JOB they do — see Registry.categories/0.
   defp creation_ext_groups(ext_types) do
-    Extensions.Registry.group_by_category(ext_types)
-  rescue
-    _ -> [{"more", "More", ext_types}]
+    addons = Enum.reject(ext_types, &(&1.key == "tasks"))
+
+    try do
+      Extensions.Registry.group_by_category(addons)
+    rescue
+      _ -> [{"more", "More", addons}]
+    end
   end
 
   # The actions a project may override, and the floors it resolves to with
@@ -296,10 +307,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # findability complaint. Grouped by what the flag DOES, with a catch-all
   # so a provider-declared flag can never vanish from the form.
   @flag_groups [
-    {"work", "Working on tasks",
+    {"work", gettext_noop("Working on tasks"),
      ~w(assignees priorities labels subprojects dependencies statuses)},
-    {"time", "Time & progress", ~w(estimates progress scheduling ledger)},
-    {"views", "Views", ~w(view_board view_timeline view_calendar)}
+    {"time", gettext_noop("Time & progress"), ~w(estimates progress scheduling ledger)},
+    {"views", gettext_noop("Views"), ~w(view_board view_timeline view_calendar)}
   ]
 
   defp grouped_flag_defs(flag_defs) do
@@ -313,7 +324,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     case Enum.reject(flag_defs, &(&1.key in known)) do
       [] -> groups
-      rest -> groups ++ [{"more", "More", rest}]
+      rest -> groups ++ [{"more", gettext_noop("More"), rest}]
     end
   end
 
@@ -423,7 +434,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     project = %Project{}
 
     socket
+    |> assign(Crumbs.section())
     |> assign(
+      # Trail: Admin Panel / Projects / New project (see `Web.Crumbs`).
       page_title: gettext("New project"),
       project: project,
       live_action: :new,
@@ -469,7 +482,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
       project ->
         socket
+        |> assign(Crumbs.above_project(project, socket.assigns[:phoenix_kit_current_scope]))
         |> assign(
+          # Trail: Admin Panel / Projects / <parents…> / Edit <name> — the
+          # leaf names its object (core's Users convention).
           page_title:
             gettext("Edit %{name}",
               name: Project.localized_name(project, L10n.current_content_lang())
@@ -786,7 +802,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
      )
      |> track_creation_state(params)
      |> assign_form(cs)
-     |> assign_status_preview()}
+     |> assign_status_preview()
+     |> WebHelpers.mark_dirty()}
   end
 
   def handle_event("save", %{"project" => attrs} = params, socket) do
@@ -1220,12 +1237,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       end)
       |> Enum.flat_map(fn {_ext_key, flags} -> flags end)
 
-    flags_to_pin =
-      (socket.assigns.flag_defs ++ enabled_ext_flags)
-      |> Enum.filter(fn flag ->
-        Map.get(socket.assigns.flag_states, flag.key, flag.default) != flag.default
-      end)
-      |> Map.new(fn flag -> {flag.key, Map.get(socket.assigns.flag_states, flag.key)} end)
+    flags_to_pin = flags_to_pin(socket.assigns, socket.assigns.flag_defs ++ enabled_ext_flags)
 
     best_effort("set_flags", fn ->
       if flags_to_pin != %{} do
@@ -1307,6 +1319,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     end)
 
     :ok
+  end
+
+  # Which flags the create writes explicitly: those the user moved off the
+  # catalog default — and, when creating from a template, those the
+  # TEMPLATE pinned that the user moved back to the default. The clone
+  # carries the template's pins as its base layer, so a minimal diff
+  # against the catalog alone left such a pin standing against the form
+  # (codex, 2026-09-05); the form is the user's visible truth.
+  defp flags_to_pin(assigns, flag_defs) do
+    carried =
+      case assigns.template_preview do
+        %{features: %{} = features} -> features
+        _ -> %{}
+      end
+
+    flag_defs
+    |> Enum.filter(fn flag ->
+      state = Map.get(assigns.flag_states, flag.key, flag.default)
+      state != flag.default or (Map.has_key?(carried, flag.key) and carried[flag.key] != state)
+    end)
+    |> Map.new(fn flag -> {flag.key, Map.get(assigns.flag_states, flag.key)} end)
   end
 
   defp best_effort(label, fun) do
@@ -1518,15 +1551,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # ── Creation-page render helpers ─────────────────────────────────
 
-  # Archetype names/descriptions are catalog DATA (plain strings) —
-  # runtime-translated like the dashboards widget catalog.
-  defp translate_catalog_string(s) when is_binary(s),
-    do: Gettext.gettext(PhoenixKitProjects.Gettext, s)
-
-  defp translate_catalog_string(s), do: s
+  # Archetype names/descriptions, extension names, flag and group labels
+  # are catalog DATA (plain strings) — runtime-translated.
+  defp translate_catalog_string(s), do: WebHelpers.translate_catalog(s)
 
   defp ext_name(ext_types, key) do
-    Enum.find_value(ext_types, key, fn ext -> if ext.key == key, do: ext.name end)
+    Enum.find_value(ext_types, key, fn ext ->
+      if ext.key == key, do: WebHelpers.translate_catalog(ext.name)
+    end)
   end
 
   defp ext_config_value(configs, ext_key, field_key) do
@@ -1550,33 +1582,34 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         {a, false} -> translate_catalog_string(a.name)
       end
 
+    tasks? = Map.get(ext_states, "tasks", true)
+
     ons =
       assigns.ext_types
-      |> Enum.filter(&ext_states[&1.key])
-      |> Enum.map_join(", ", & &1.name)
-
-    statuses =
-      cond do
-        flag_states["statuses"] == false -> nil
-        assigns.form[:status_entity_uuid].value in [nil, ""] -> gettext("Statuses: site default")
-        true -> gettext("Statuses: custom set")
-      end
-
-    template =
-      case assigns.template_preview do
-        %{task_count: n} -> gettext("Template: %{count} tasks", count: n)
-        _ -> nil
-      end
+      |> Enum.filter(&(&1.key != "tasks" and ext_states[&1.key]))
+      |> Enum.map_join(", ", &translate_catalog_string(&1.name))
 
     [
       kind,
+      if(not tasks?, do: gettext("No tasks")),
       if(ons != "", do: gettext("With: %{list}", list: ons)),
-      statuses,
-      template
+      if(tasks?, do: statuses_summary(assigns, flag_states)),
+      if(tasks?, do: template_summary(assigns.template_preview))
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" · ")
   end
+
+  defp statuses_summary(assigns, flag_states) do
+    cond do
+      flag_states["statuses"] == false -> nil
+      assigns.form[:status_entity_uuid].value in [nil, ""] -> gettext("Statuses: site default")
+      true -> gettext("Statuses: custom set")
+    end
+  end
+
+  defp template_summary(%{task_count: n}), do: gettext("Template: %{count} tasks", count: n)
+  defp template_summary(_preview), do: nil
 
   # ── Collapsed-section summaries ─────────────────────────────────────
   #
@@ -1645,6 +1678,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     join_summary([invites, permissions])
   end
 
+  defp features_summary(%{ext_states: %{"tasks" => false}}), do: gettext("Off — no task list")
+
   defp features_summary(assigns) do
     changed =
       Enum.count(assigns.flag_defs, fn flag ->
@@ -1659,12 +1694,21 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp extensions_summary(assigns) do
-    on = Enum.filter(assigns.ext_types, &Map.get(assigns.ext_states, &1.key, false))
+    on =
+      Enum.filter(
+        assigns.ext_types,
+        &(&1.key != "tasks" and Map.get(assigns.ext_states, &1.key, false))
+      )
 
     case on do
-      [] -> gettext("None")
-      exts when length(exts) <= 2 -> Enum.map_join(exts, ", ", & &1.name)
-      [a, b | rest] -> "#{a.name}, #{b.name} +#{length(rest)}"
+      [] ->
+        gettext("None")
+
+      exts when length(exts) <= 2 ->
+        Enum.map_join(exts, ", ", &translate_catalog_string(&1.name))
+
+      [a, b | rest] ->
+        "#{translate_catalog_string(a.name)}, #{translate_catalog_string(b.name)} +#{length(rest)}"
     end
   end
 
@@ -1685,6 +1729,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp receipt_reveal_class("public_intake"),
     do: "hidden group-has-[[data-arch=public-intake]:checked]/kind:block"
+
+  defp receipt_reveal_class("space"),
+    do: "hidden group-has-[[data-arch=space]:checked]/kind:block"
 
   defp receipt_reveal_class(_), do: "hidden"
 
@@ -2049,16 +2096,20 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={@page_title}>
+      <.page_header title={@heading}>
         <:back_link>
-          <.smart_link
-            navigate={Paths.projects()}
-            emit={{PhoenixKitProjects.Web.ProjectsLive, %{}}}
-            embed_mode={@embed_mode}
+          <.link :if={@embed_mode == :navigate} navigate={Paths.projects()} class="link link-hover text-sm">
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Projects")}
+          </.link>
+          <button
+            :if={@embed_mode != :navigate}
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
             class="link link-hover text-sm"
           >
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Projects")}
-          </.smart_link>
+          </button>
         </:back_link>
       </.page_header>
 
@@ -2284,15 +2335,47 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <%!-- 3. The task-tracker's own shape. Grouped by what the flag
                DOES — one flat wall of 13 was the panel's example of the
                problem. Prerequisites stay inline on the flag they gate. --%>
-          <.accordion :if={@flag_defs != []} id="create-features" cue={true}>
+          <.accordion
+            :if={@flag_defs != [] or Enum.any?(@ext_types, &(&1.key == "tasks"))}
+            id="create-features"
+            cue={true}
+          >
             <:title>
               {gettext("Task features")}
               <span class="ml-2 text-xs font-normal opacity-50">{features_summary(assigns)}</span>
             </:title>
             <:content>
               <div class="flex flex-col gap-4">
-                <div :for={{group_key, group_label, flags} <- grouped_flag_defs(@flag_defs)} id={"create-flags-#{group_key}"}>
-                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
+                <%!-- The task list itself, first: off makes this a project
+                     with no Tasks tab — only the extension tabs it picks
+                     (the boss's "each thing stands alone", 2026-09-05).
+                     The flags below are what the list does, so they hide
+                     with it. --%>
+                <label id="ext-row-tasks" class="flex items-center justify-between gap-3 py-0.5">
+                  <span class="text-sm">
+                    <span class="flex items-center gap-2 font-medium">
+                      <.icon name="hero-clipboard-document-list" class="w-4 h-4 opacity-60" />
+                      {gettext("Tasks")}
+                    </span>
+                    <span class="block text-xs opacity-50">
+                      {gettext("A task list with its board, timeline and calendar. Off: a project made only of the tabs you pick below.")}
+                    </span>
+                  </span>
+                  <input type="hidden" name="ext[tasks]" value="false" />
+                  <input
+                    type="checkbox"
+                    name="ext[tasks]"
+                    value="true"
+                    checked={tasks_on?(assigns)}
+                    class="toggle toggle-sm"
+                  />
+                </label>
+                <div
+                  :for={{group_key, group_label, flags} <- grouped_flag_defs(@flag_defs)}
+                  :if={tasks_on?(assigns)}
+                  id={"create-flags-#{group_key}"}
+                >
+                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{translate_catalog_string(group_label)}</h3>
                   <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
                     <label
                       :for={flag <- flags}
@@ -2300,7 +2383,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       class="flex items-center justify-between gap-3 py-0.5"
                     >
                       <span class="text-sm">
-                        {flag.label}
+                        {translate_catalog_string(flag.label)}
                         <span :if={flag.requires != []} class="block text-xs opacity-40">
                           {gettext("Needs: %{list}", list: Enum.join(flag.requires, ", "))}
                         </span>
@@ -2334,7 +2417,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             <:content>
               <div class="flex flex-col gap-4">
                 <div :for={{group_key, group_label, exts} <- creation_ext_groups(@ext_types)} id={"create-exts-#{group_key}"}>
-                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
+                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{translate_catalog_string(group_label)}</h3>
                   <div class="flex flex-col gap-2">
                     <div
                       :for={ext <- exts}
@@ -2344,9 +2427,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       <label class="flex items-center justify-between gap-3">
                         <span class="min-w-0">
                           <span class="flex items-center gap-2 text-sm font-medium">
-                            <.icon name={ext.icon} class="w-4 h-4 opacity-60" /> {ext.name}
+                            <.icon name={ext.icon} class="w-4 h-4 opacity-60" /> {translate_catalog_string(ext.name)}
                           </span>
-                          <span :if={ext.description} class="block text-xs opacity-50">{ext.description}</span>
+                          <span :if={ext.description} class="block text-xs opacity-50">{translate_catalog_string(ext.description)}</span>
                         </span>
                         <input type="hidden" name={"ext[#{ext.key}]"} value="false" />
                         <%!-- data-ext-toggle, not a bare :checked, is what the
@@ -2378,7 +2461,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                           :for={flag <- Map.get(@ext_flag_defs, ext.key, [])}
                           class="flex items-center justify-between gap-3 py-0.5"
                         >
-                          <span class="text-sm">{flag.label}</span>
+                          <span class="text-sm">{translate_catalog_string(flag.label)}</span>
                           <input type="hidden" name={"flag[#{flag.key}]"} value="false" />
                           <input
                             type="checkbox"
@@ -2433,7 +2516,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </.accordion>
 
           <div class="flex justify-end gap-2">
-            <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+            <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
               {gettext("Cancel")}
             </button>
             <button type="submit" phx-disable-with={gettext("Creating…")} class="btn btn-primary btn-sm">
@@ -2570,7 +2658,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         <%!-- :edit only. The creation form has its own action row further
              up; without this guard the new-project page renders two. --%>
         <div :if={@live_action == :edit} class="flex justify-end gap-2">
-          <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+          <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
             {gettext("Cancel")}
           </button>
           <button

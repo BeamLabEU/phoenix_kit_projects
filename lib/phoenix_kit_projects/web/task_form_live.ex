@@ -1,5 +1,5 @@
 defmodule PhoenixKitProjects.Web.TaskFormLive do
-  @moduledoc "Create or edit a reusable task template, including default dependencies."
+  @moduledoc "Create or edit a library task (reusable across projects), including default dependencies."
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
@@ -13,6 +13,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Task
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   # Default wrapper class for the standalone admin page. Embedders can
@@ -44,6 +45,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       |> WebHelpers.attach_open_embed_hook()
       |> apply_action(live_action, resolved_params)
       |> assign_ai_translate()
+      |> assign(dirty?: false)
+      |> WebHelpers.keep_host_title()
 
     {:ok, socket}
   end
@@ -63,7 +66,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     task = %Task{}
 
     socket
+    |> assign(Crumbs.under(:tasks))
     |> assign(
+      # Trail: Admin Panel / Projects / Tasks / New task — "New" creates a
+      # standalone library record; a project's composer says "Add".
       page_title: gettext("New task"),
       task: task,
       live_action: :new,
@@ -107,6 +113,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           end
 
         socket
+        |> assign(Crumbs.under(:tasks))
         |> assign(
           page_title:
             gettext("Edit %{title}",
@@ -191,7 +198,9 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     assign_type = Map.get(params, "default_assign_type", socket.assigns.assign_type)
     attrs = merge_attrs(attrs, socket)
     cs = Projects.change_task(socket.assigns.task, attrs)
-    {:noreply, socket |> assign(assign_type: assign_type) |> assign_form(cs)}
+
+    {:noreply,
+     socket |> assign(assign_type: assign_type) |> assign_form(cs) |> WebHelpers.mark_dirty()}
   end
 
   def handle_event("save", %{"task" => attrs} = params, socket) do
@@ -416,16 +425,20 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={@page_title}>
+      <.page_header title={@heading}>
         <:back_link>
-          <.smart_link
-            navigate={Paths.tasks()}
-            emit={{PhoenixKitProjects.Web.TasksLive, %{}}}
-            embed_mode={@embed_mode}
+          <.link :if={@embed_mode == :navigate} navigate={Paths.tasks()} class="link link-hover text-sm">
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Tasks")}
+          </.link>
+          <button
+            :if={@embed_mode != :navigate}
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
             class="link link-hover text-sm"
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Task Library")}
-          </.smart_link>
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Tasks")}
+          </button>
         </:back_link>
       </.page_header>
 
@@ -510,6 +523,18 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               </div>
             </div>
 
+            <%!-- One-off (V15): quick-added tasks start hidden from the
+                 library; unticking here is how one is promoted. Shown on
+                 edit only — a task created from this form IS a library
+                 task. --%>
+            <.checkbox
+              :if={@live_action == :edit}
+              field={@form[:ad_hoc]}
+              label={gettext("One-off task")}
+              title={gettext("Hidden from the task library and its pickers; the projects using it are unaffected.")}
+              class="checkbox-sm"
+            />
+
             <div class="divider text-xs text-base-content/50 my-1">{gettext("Default assignment (optional)")}</div>
 
             <.select
@@ -584,7 +609,12 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
         <% end %>
 
         <div class="flex justify-end gap-2 mt-2">
-          <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+          <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
             {gettext("Cancel")}
           </button>
           <button

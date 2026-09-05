@@ -19,7 +19,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLiveTest do
     {:ok, conn: conn, project: project, user: user}
   end
 
-  defp path(project), do: "/en/admin/projects/list/#{project.uuid}/members"
+  defp path(project), do: "/en/admin/projects/#{project.uuid}/members"
 
   test "renders the empty state", %{conn: conn, project: project} do
     {:ok, _view, html} = live(conn, path(project))

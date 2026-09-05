@@ -63,7 +63,7 @@ defmodule PhoenixKitProjects.Web.OverviewMyTasksTest do
         "assigned_person_uuid" => person.uuid
       })
 
-    {:ok, _view, html} = live(conn, "/en/admin/projects")
+    {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
 
     # The my-tasks card renders when list_assignments_for_user is non-empty
     # — which fires status_label("todo") + status_label("in_progress")

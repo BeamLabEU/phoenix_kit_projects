@@ -4,12 +4,14 @@ Guidance for AI agents working on the `phoenix_kit_projects` plugin module.
 
 ## Project overview
 
-A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) with subtabs:
+A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) whose **landing page is the project list** (since 2026-09; the parent tab and the first subtab both render `ProjectsLive` at `/admin/projects`; project pages sit directly under it, `/admin/projects/:id/…`, and the old `list/…` addresses redirect), with subtabs:
 
-- **Overview** — active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker, plus a **"Late only" lens** in its toolbar — bars of late running projects only, same `summary.late` tier as the cards; count-badged, hidden at 0, kept while active). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions; **only RELEVANT people are offered** — someone at least one non-template assignment points at directly / via a team / via a department in their scope, and the per-project Calendar tab narrows that to its own rendered tree via `assignee_search_scope`) plus quick-adders for **Me** (hidden without a staff person) and **Unassigned** (a dashed chip with live count; hidden while the count is 0) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count; the whole funnel hides while the UNFILTERED walk has zero items — a fresh install has nothing to filter) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows; hidden while the raw walk has no late items, kept while active). The raw walk is cached in assigns; filter flips are in-memory
-- **Tasks** — library of reusable task templates (title, description, duration, default dependencies, default assignee)
-- **Projects** — list of projects (filterable by status)
+- **Projects** — list of projects (filterable by status). Its subtab matcher is a regex (everything under `projects` except the `tasks`/`templates`/`overview` siblings) because tabs match independently and a `:prefix` on `projects` would light it on those too.
+- **Tasks** — library of reusable tasks (title, description, duration, default dependencies, default assignee). The word "template" is reserved for PROJECT templates in user-facing copy — a library entry is just a task. A **Library | One-off** lens (URL `lens=`) appears once one-off tasks exist — see "Quick-add" below.
 - **Templates** — reusable project templates cloned into real projects
+- **Overview** — the LAST subtab (`projects/overview`; the boss: "an overview and a dashboard are different things, both have their value"). Its pieces are also dashboards-module widgets (see "Dashboard widgets") for anyone who wants them on a `phoenix_kit_dashboards` board, and `OverviewLive` stays the embeddable root view for host apps (`dev_docs/embedding_emit.md`). What it renders:
+
+- active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker, plus a **"Late only" lens** in its toolbar — bars of late running projects only, same `summary.late` tier as the cards; count-badged, hidden at 0, kept while active). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions; **only RELEVANT people are offered** — someone at least one non-template assignment points at directly / via a team / via a department in their scope, and the per-project Calendar tab narrows that to its own rendered tree via `assignee_search_scope`) plus quick-adders for **Me** (hidden without a staff person) and **Unassigned** (a dashed chip with live count; hidden while the count is 0) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count; the whole funnel hides while the UNFILTERED walk has zero items — a fresh install has nothing to filter) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows; hidden while the raw walk has no late items, kept while active). The raw walk is cached in assigns; filter flips are in-memory
 
 Plus hidden subtabs for project/task/template/assignment new/edit/show pages.
 
@@ -61,7 +63,7 @@ the env var instead.
 - **Project** — a container for assignments. Has start mode (`immediate` or `scheduled`), optional `counts_weekends` flag, `is_template` flag (templates are cloned into real projects), and completion tracking (`completed_at`)
 - **Assignment** — a task instance within a project. Copies description/duration from the template at creation, but is independently editable. Optionally assigned to a Department/Team/Person.
 - **Dependency** — "assignment A must finish before B" link, scoped to the same project
-- **TaskDependency** — default dependency between two task templates, auto-applied when both templates are in the same project
+- **TaskDependency** — default dependency between two library tasks, auto-applied when both are in the same project
 
 ### Schemas
 
@@ -102,12 +104,53 @@ DESCENDANT-aware — any subtree task belonging to the person keeps the bar); a 
 its subtree, click drills into the child; dates deliberately UTC-unshifted to
 match the Timeline, unlike the Overview calendar). Tabs are instant assign
 flips; each nested LV lazy-mounts on first open and stays mounted. URL sync
-(`/gantt` / `/calendar` suffix) is the `ProjectTabsUrl` host hook, opt-in via
+is the strip's `data-url` + core's `PkUrlMirror` hook, opt-in via
 `session["tab_url_sync"]` for embeds.
+
+### The project page's top-level tabs (2026-09-05)
+
+The show page is a set of **top-level tabs**, one per thing a project can
+be: **Tasks** (which holds the four task views List / Board / Timeline /
+Calendar behind its own, subordinate strip, plus the add actions, the
+lifecycle bar, health and the schedule / progress / effort card), one tab
+per enabled extension that contributes one (Events, Whiteboards, …) and
+**Comments** — the project's own thread, inline, switched by the project's
+*Discussions* extension (its existing per-project on/off) and the comments
+module being on. Each stands alone in an otherwise empty project — a
+project can be *only* a whiteboard or *only* a discussion. The header is
+the project, not a tab — and on the standalone page most of it is the SITE
+header: the breadcrumb carries the name, and core's
+`page_toolbar` (`{ProjectShowLive, :header_toolbar}`, a function component
+rendered with the LiveView's assigns; its events land in the LiveView)
+puts the workflow-status picker and the ⋮ menu beside it. What stays in
+the page is the project's face — Completed / Archived badges and the
+description — and with neither, nothing: the tabs start right under the
+site header (`header_face?/2`). The project's assignee is NOT shown on the
+page (Max, 2026-09-05: nothing acts on it; it lives on the edit form).
+Embedded mounts have no site header, so they keep the h1 and render the
+same toolbar component in the body. Files / Members / Activity stay in the
+⋮ menu as project chrome. A single top-level tab renders no strip; with nothing on at all the page
+shows the nothing-on empty state with a link to Modules. Templates keep
+the Tasks pane alone, without either strip.
+
+Resolution lives in `ProjectShowLive` (`tab_for_action/3` → `gate_tab/2` →
+`gate_comments_tab/2` → `resolve_landing_tab/4` at mount;
+`resolve_switch_target/2` on `switch_tab`), and every target is validated
+against the feature map / the contributed tab list — a forged event lands
+on the list. `top_tab_of/1` maps a task view to `:tasks`; switching back to
+Tasks reopens the view you left (`task_view`). Task-row comments keep the
+side drawer; only the project-level thread moved into the tab.
+
+Addresses (`Paths`): `:id/tasks`, `:id/tasks/board`, `:id/tasks/timeline`,
+`:id/tasks/calendar`, `:id/comments`, `:id/<extension tab key>` (the
+`projects/:id/:tab` catch-all, declared LAST — after `templates/*`, whose
+first segment would otherwise read as an id; extension tab keys must not
+reuse a literal sibling). The pre-2026-09 `:id/board|gantt|calendar` still
+open their view. `tab_url/3` is the canonical address a tab reports.
 
 ### URL paths
 
-Under `/admin/projects/*`: `tasks`, `list` (projects), `templates`, plus `.../new`, `.../:id`, `.../:id/edit`, `.../:id/gantt`, `.../:id/calendar`, and assignment routes like `list/:project_id/assignments/new`. Use `PhoenixKitProjects.Paths`.
+Under `/admin/projects/*`: the list is the landing page and project pages sit directly under it — `new`, `:id`, `:id/edit`, `:id/tasks`, `:id/tasks/board|timeline|calendar`, `:id/comments`, `:id/<extension tab>`, `:id/files|activity|members|modules` (and the legacy `:id/board|gantt|calendar`), `:project_id/assignments/new`, `:project_id/assignments/:id/edit` — beside the literal siblings `tasks` (+ `tasks/new`, `tasks/:id/edit`), `templates` (+ `templates/new|:id|:id/edit`) and `overview`. The pre-2026-09 `list/…` addresses (the list used to live there) redirect to the same path without the segment (`ListRedirectLive`, hidden `projects/list` + `projects/list/*rest` tabs). **Declaration order is route order**: `admin_tabs/0` lists the literal siblings and the legacy redirects before `:id`, and `new` before `:id` — `landing_test.exs` pins it. Use `PhoenixKitProjects.Paths`.
 
 ### Embedding LiveViews via `live_render`
 
@@ -252,15 +295,16 @@ Contract (all keys optional unless noted):
   the admin default. Lets the host close a modal, refresh state, etc.
   without yanking the user to `/admin/projects/...`.
 - `session["tab_url_sync"]` — `ProjectShowLive` only. Boolean,
-  **defaults `false`** in embeds. The List/Timeline/Calendar tab bar
-  renders in every embed (only templates stay list-only), but the
-  `ProjectTabsUrl` hook that mirrors the active tab onto the browser URL
-  (via `history.replaceState` — no history entries; back/forward return to
-  the previous page, and per-tab entries are impossible without
-  `handle_params/3`, which would block embedding) is **off by default** —
-  an embed must not rewrite the host's address bar. Pass `true` (a real
-  boolean, not `"true"`) only if the host mounts the show page as its own
-  full-page route and wants `/gantt` / `/calendar` deep-linking. The
+  **defaults `false`** in embeds. The tab strips render in every embed
+  (only templates stay tabless), but the URL mirror — a hidden element
+  carrying the active tab's canonical address in `data-url`, which core's
+  `PkUrlMirror` hook writes over the browser's via `history.replaceState`
+  (no history entries; back/forward return to the previous page, and
+  per-tab entries are impossible without `handle_params/3`, which would
+  block embedding) — is **off by default**: an embed must not rewrite the
+  host's address bar. Pass `true` (a real boolean, not `"true"`) only if
+  the host mounts the show page as its own full-page route and wants
+  `/tasks/board` / `/whiteboards` / `/comments` deep-linking. The
   router-mounted standalone admin page enables it implicitly.
 - `id:` opt on `live_render` should be unique per logical embed (e.g.
   include the resource UUID) so two embeddings of the same LV on one
@@ -298,8 +342,8 @@ PubSub broadcast on a host topic:
 
 | Key | Default | Required when | Notes |
 |---|---|---|---|
-| `"mode"` | `"navigate"` | — | `"emit"` switches all nav sites to broadcast |
-| `"pubsub_topic"` | `nil` | `mode == "emit"` | Host-supplied topic |
+| `"mode"` | `"navigate"` | — | `"emit"` switches all nav sites to broadcast; `"popup"` broadcasts only the sites that opt in (forms) and keeps page links |
+| `"pubsub_topic"` | `nil` | `mode in ["emit", "popup"]` | Host-supplied topic |
 | `"frame_ref"` | `nil` | inherited from PopupHost | Race-safe pop identity |
 | `"close_on"` | `["closed"]` | — | Subset of `["closed", "saved", "deleted"]` |
 
@@ -312,6 +356,7 @@ Event vocabulary (UI-intent verbs, disjoint from
 {:projects, :closed, %{frame_ref}}
 {:projects, :saved, %{kind, action, record, close, next, frame_ref}}
 {:projects, :deleted, %{kind, uuid, close, frame_ref}}
+{:projects, :dirty,   %{frame_ref, dirty}}          # form holds unsaved edits ⇒ host makes the frame un-closeable
 ```
 
 `record` on `:saved` is **`%{uuid: ...}` only**, never the full Ecto
@@ -335,8 +380,67 @@ edit_path)` flow).
 
 For zero-config popup UX, host mounts
 `PhoenixKitProjects.Web.PopupHostLive` once with an optional
-`root_view` session key — it subscribes, manages a daisyUI `<dialog>`
-modal stack, and renders requested LVs inside via `live_render`.
+`root_view` session key — it subscribes, manages a modal stack of
+core `<.modal>` dialogs (native `<dialog>` + `PkDialog`: top layer,
+Esc/backdrop, stacked children) and renders requested LVs inside via
+`live_render`. Two more session keys shape the frames:
+
+| Key | Default | Notes |
+|---|---|---|
+| `"placement"` | `"center"` | `"end"` renders every frame as a full-height right-hand sheet (a drawer) |
+| `"max_width"` | `6xl` centered, `2xl` as a drawer | any core `max_width` value (`sm` … `7xl`, `full`) |
+
+**Dirty frames.** A form that holds unsaved edits reports
+`{:projects, :dirty, %{frame_ref, dirty: true}}` (`WebHelpers.mark_dirty/1`
+piped into every handler that changes what a save would write — the
+four form LVs do this; `notify_dirty/2` is a no-op outside emit mode);
+the host then renders that frame with `closeable: false`, so Esc and
+the backdrop do nothing and the form's own Cancel (which confirms
+via `data-confirm` from `@dirty?`) is the only way out. Every frame
+also arms core's `close_guard={:input}`, which makes the dialog
+non-closeable on the client from the first keystroke — covering the
+round trip and the forms' `phx-debounce` window. Clean again ⇒
+closeable again. Refs that are no longer on the stack are ignored.
+
+**Back inside a frame is Cancel.** The forms' header back link is a
+page link only in navigate mode; in a frame it is a `phx-click="cancel"`
+button (same confirm) — a frame must never push the list or project
+page as another frame.
+
+**Client-supplied sessions are sanitized.** The `phx-value-session`
+on an `open_embed` button is client-editable; `sanitize_session_overrides/1`
+drops the host-owned keys (`current_user_uuid`, `mode`, `pubsub_topic`,
+`frame_ref`) at both ends — the emitter's `open_embed` handler and
+`PopupHostLive` before it stamps the frame's session — so a crafted
+payload cannot open a form as another user or re-route its events.
+Never `put_new` an identity key from a wire session.
+
+**Programmatic navigation in popup mode.** `navigate_or_open/2` takes
+`popup: false` for page targets (a child project from the gantt or
+calendar); the default opens the target in the drawer, mirroring
+`<.smart_link popup={false}>`.
+
+**The project page hosts its own drawer** (`embed_mode: :popup`).
+`ProjectShowLive` mounted on the router flips `:navigate` to `:popup`,
+generates a private topic (`projects:popup:<socket id>`) and renders a
+`PopupHostLive` child with `placement: "end"`. In `:popup` mode
+`<.smart_link>`/`<.smart_menu_link>` render the popup button by
+default; a link that must leave the page passes `popup={false}`
+(Files, Members, Modules, Activity, child projects do). Forms
+(`AssignmentFormLive` in every flavour, edit project/template) open in
+the sheet; a save pops it and the page's PubSub subscription refreshes
+the plan. A page embedded by a host keeps the host's own mode — the
+flip only happens on the router mount. Tests that drive the drawer
+need a REAL user in the page scope (`fake_scope(user_uuid:
+embed_user_uuid!())`): the sheet's form mounts off-router and rebuilds
+identity from the page's `current_user_uuid`; a synthetic uuid
+degrades it to anonymous and it closes itself.
+
+**Core gate:** the drawer relies on core's `<.modal placement={:end}>`,
+its `:rest` globals on the `<dialog>` and `PkDialog` forwarding the
+dialog's `phx-value-*` on close — all unreleased at the time of
+writing. The core PR ships first; the module's core floor bumps with
+its own PR.
 
 `PopupHostLive` also reads `session["current_user_uuid"]` (and
 `session["locale"]`) from its own session and **forwards** them into
@@ -356,7 +460,25 @@ and the comments composer / activity actor work in every nested LV:
 
 ## Database
 
-Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`.
+Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`. The module's OWN chain (`Migrations.Schema`, marker `pkp_schema:<N>` on `phoenix_kit_projects`) is at **V16** (file-less whiteboards); add the next `vNN_*` step to `up/1` and its `if target < NN` block to `down/1`.
+
+## Whiteboards (file-less since chain V16 / core V183)
+
+A board is its row (`phoenix_kit_project_whiteboards`); its shapes are core
+annotation rows anchored to the board — `target_type: "projects_whiteboard"`,
+`target_uuid: board.uuid` (`Whiteboards.target_type/0`) — and drawn by
+core's `MediaCanvasViewer` in **board mode** (`board={Whiteboards.viewer_board(board)}`:
+an empty, infinite Fresco canvas with the Etcher tools; no file, no
+Storage, no folder). The old **blank-background bridge** (a salted white
+PNG per board registered as a Storage file and drawn over as a photo)
+is gone from `create/3`. `file_uuid` is nullable: boards made by the
+bridge, and boards over a real image (`create_board_for_file/3`), keep
+their file and render through the file viewer exactly as before — the
+tab LV picks by `file_uuid`. Deleting a file-less board deletes its
+shapes (`PhoenixKit.Annotations.delete_for_target/2`); a file-backed
+board's shapes stay with the file. Core gate: V183 (`target_type` /
+`target_uuid` on annotations, the polymorphic `EtcherAdapter`, the
+viewer's `:board` assign) — unreleased, core PR first.
 
 ## Schedule math
 
@@ -539,8 +661,13 @@ is the most complete reference):
 
 - **No in-content header row.** The create action is a "+" in the admin
   breadcrumb (core `page_action` assign: `%{icon, label, navigate}`) plus a
-  dashed full-width add-row at the list's foot. The show page likewise sets
-  `page_section`/`page_section_path` ("Admin Panel / Templates / ‹name›")
+  dashed full-width add-row at the list's foot.
+- **Toolbar order** (core's `bulk_actions_toolbar`): search + data filters in
+  `:leading` (left), the view tools — sort selector, Columns, the Tasks view
+  switcher — in `:trailing` (right, after the contextual Reorder/Delete/Clear).
+  Same left/right split as the catalogue tables and core's `table_default`
+  toolbar row, so the kit's lists read alike (aligned 2026-09-05). The show page likewise sets
+  the header trail ("Admin Panel / Projects / ‹name›", see **Breadcrumbs**)
   instead of a back-link + h1 row — **embeds keep the full header**
   (`router_mounted?` gates it; embeds have no admin breadcrumb).
 - **Recency default sort** — `updated_at desc` ("Last edited"); Manual
@@ -588,9 +715,177 @@ additions** (`search_toolbar` form fix + spinner, `TableLocalSearch`,
 until the next core release, run this module's checks with
 `PHOENIX_KIT_PATH=../phoenix_kit`, and bump the core floor at release.
 
+## Breadcrumbs (the admin header trail)
+
+Every page sets core's `page_section` (+ `_path`), `page_crumbs` and
+`page_title` through `Web.Crumbs`, so the trail reads the same everywhere
+(panel round with codex/grok/zai, 2026-09-05, after the boss noticed
+"Admin Panel / Add task to Test"):
+
+| page | trail (linked crumbs in *italics*) |
+|---|---|
+| list · Tasks · Templates · Overview | *Projects* / Tasks |
+| project (any tab) | *Projects* / Test |
+| sub-project | *Projects* / *Parent* / Child |
+| Files / Members / Modules / Activity | *Projects* / *Test* / Files |
+| add task · add sub-project | *Projects* / *Test* / Add task |
+| edit a task in a project | *Projects* / *Test* / Edit ‹task› |
+| new / edit project | *Projects* / New project · *Projects* / Edit Test |
+| library task new / edit | *Projects* / *Tasks* / New task · Edit ‹task› |
+| template / new / edit | *Projects* / *Templates* / ‹name› · New template · Edit ‹name› |
+| settings | *Settings* / Project settings |
+
+Rules: the module tab is always the section, so nothing can read
+"Admin Panel / New project" again; crumb labels reuse the subtab labels
+verbatim (the list page titles are "Tasks"/"Templates" too — one name per
+place); sub-pages are crumbs, never a "Test · Files" title; "Add" attaches
+to the project crumb, "New" creates a standalone record; edit names its
+object (core's "Edit Jane Doe"); the List/Board/Timeline/Calendar tabs are
+views of one place and stay out of the trail; sub-projects show their
+ancestors (`Projects.parent_chain/1`, bounded to 8 hops). Known core limit,
+flagged by every seat: `page_title` is also the browser tab title, so a
+short leaf ("Files") makes a weak tab — a separate browser-title assign in
+core is the fix, not a fused title here. `breadcrumbs_test.exs` pins every
+row; the test layout renders `page_crumbs` as `data-crumb` anchors.
+
+## Quick-add (the "Add a task" row → the sheet, V15)
+
+`Components.QuickAddComposer` is the dashed "Add a task" row at the foot
+of a real project's task list (not templates), OUTSIDE the sortable
+container. Since 2026-09-05 it is the second way into the same
+right-hand sheet as the "Add task" button at the top (Max: "the add a
+task should both open the popup and inside there should we have that
+stuff setup"): a `<.smart_link>` into `AssignmentFormLive` in Create-new
+— a popup button in popup/emit mode, a link to the add page on a host in
+navigate mode. The keyboard loop lives in the form: **Enter** adds and
+closes (the browser's implicit submission presses the FIRST submit
+button, "Add"); **Shift+Enter** presses "Add & next" through core's
+`PkShiftEnter` hook on the title (`data-shift-enter-click`); the button
+carries `name="then" value="next"`, which LiveView sends as the
+submitter, and `save` reads it as `add_next?`. After a successful create
+with it set, `after_create/2` emits `:saved` with `close: false` (the
+frame stays, the page behind refreshes its list) and `reset_for_next/1`
+re-runs the `:new` mount keeping the user's tab and "add to library"
+choice, marks the form clean (`notify_dirty(false)` — Esc closes again)
+and bumps `form_seq`, which re-keys the title's wrapper so
+`phx-mounted={JS.focus(...)}` lands the cursor back in the title. The
+same mount focuses the title when the sheet opens. The inline input,
+its four `quick_add_*` events and the `@quick_add` state are gone.
+
+**The write** is `Projects.quick_add_assignment/3` →
+`create_task_with_assignment/3`: one transaction that locks the project row
+(`FOR UPDATE`, so concurrent adds never share a bottom `position`), inserts
+the library `Task`, inserts the `Assignment`. NOTHING else inside —
+broadcasts (`:task_created`, `:assignment_created`) fire after commit and
+the activity log stays with the LiveView (it knows the actor). The full
+form's "create new task" mode calls the same helper with its full attrs, so
+the two paths cannot drift.
+
+**One-off tasks.** An assignment has no title of its own — every ad-hoc
+add mints a library `Task` — so a composer would have filled the reusable
+library with "call the client" fifty times over. V15 adds
+`phoenix_kit_project_tasks.ad_hoc` (default false, indexed): quick-adds
+set it, and `list_tasks/1` + `count_tasks/1` take `ad_hoc: :exclude`
+(default — every library surface: list, grouped view, the assignment
+form's picker, the stat tile) `| :only | :all`. The Tasks page's lens
+lists them; "Add to library" (row menu, or the edit form's "One-off task"
+checkbox) promotes one — `projects.task_promoted` in the activity log. The
+assignments pointing at a one-off task are ordinary in every way.
+
+**The full form follows the same defaults (2026-09-05, Max):** on `:new`,
+**Create new** is the first and default tab and "Add to the task library"
+is OFF — a one-off unless the user means it; **From library** is the
+second tab and is not rendered at all while the library is empty
+(`@task_options == []`). The Create-new title is a real `Task` changeset
+(`@task_form`, params `task[title]` / `task[translations][<lang>][title]`)
+rendered with `<.translatable_field>` under the language tabs next to the
+description, so a new task gets its title in every language like one
+made on the Tasks page; `save` merges the title's translations with the
+description's into the task row. The language strip is passed
+`class="pb-0"` because it sits inside the card body already — the default
+card padding made it a narrower box of its own. User-facing copy never
+says "template" for a task (the select is "Task", the back link "Tasks").
+
+**The library is a per-project feature flag** (`library`, owned by the
+`tasks` extension, default on — `Features.gates/1` exposes it as
+`fx.library`). Off, the add-task form has no From-library tab and no
+"Add to the task library" box: every task is typed in place (a stale or
+forged switch/pick/promote is refused at the handler and at save time).
+The **Simple checklist** starting point turns it off through the
+`simple` preset; Team project, Client project and Public intake leave
+it on; the project's Modules & Features page flips it later like any
+flag. The Tasks page itself stays global — the flag is whether THIS
+project draws on the library, not whether the library exists.
+
+**The task list itself is a creation decision** (2026-09-05, with the
+top-level tabs): the New project form carries the `tasks` extension as
+the first row of the *Task features* drawer — off hides the flag rows,
+the receipt says "No tasks", the summary "Off — no task list" — and a
+fifth starting point, **Just a space** (`Archetypes` key `space`:
+`extensions_off: ~w(tasks discussions)`, preset `simple` for the day
+tasks come on), makes a project that is only the tabs it picks (a
+class that is only its whiteboards). Tasks is reconciled at save like
+every extension (`apply_creation_capabilities/2`); it is never listed
+among the add-ons (`creation_ext_groups/1`, `extensions_summary/1`).
+Discussions defaults on except for Simple checklist and Just a space.
+The card copy in `Archetypes` is catalog data translated at render
+time, so every literal is wrapped in `gettext_noop/1` — without it the
+extractor never saw the cards and no locale had them.
+
+**The in-progress step is a flag too** (`in_progress`, default on,
+`fx.in_progress`; the `simple` preset turns it off — "a checklist item
+is done or it is not"). Off: a to-do row offers Done directly (no
+Start; `start_task` is gated on this flag and refused), the add-task
+form's Status offers To do / Done, and the board drops its middle
+column — unless a row already sits in `in_progress` (legacy, or the
+flag flipped mid-flight): that row keeps its Done button, stays
+selectable in the form, and holds the column open, so nothing ever
+disappears. The row lifecycle itself (`todo → in_progress → done`) is
+unchanged in the schema; the flag only removes the middle step from
+the UI and the event surface.
+
+**The task list's controls are conditional** (`ListControls`, Max
+2026-09-05: "no reason to show the filters without multiple statuses or
+under ten tasks — but controllable via the settings"). The Active /
+Done / All lens and the sort dropdown render only when
+`ListControls.show?/2` says so: mode `auto` (default) = the project has
+tasks on BOTH sides of the lens AND at least `threshold` (default 10)
+tasks; `always` / `never` override. Site-wide settings on
+`/admin/settings/projects` ("Task list controls"), keys
+`projects_list_controls_mode` / `_threshold`, validated on read. Under
+the rule `apply_list_lens/1` shows the whole project in manual order —
+which is exactly what drag-reordering needs, so small projects reorder
+by hand without the old "Reordering off" detour through the All lens.
+The "Review submissions" button is not a control and keeps its row
+whenever there is something to review. Tests that pin the lens itself
+set the mode to `always` first.
+
+**The sequence rail means "these run one after another"** — the
+schedule is a sequential walk in drag order and the vertical line down
+the list is that walk. It draws only when the claim is true:
+`@list_manual?` (manual sort) AND `@list_whole?` (the All lens — a slice
+of the plan is not the walk) AND `@fx.scheduling` (a checklist has no
+walk). The numbers are positions in the project either way. (Max,
+2026-09-05: "I thought the line meant the tasks are connected, and for
+a todo list it was off" — it does, and now it is.)
+
+**Reordering works under a lens.** `list_manual?` is only "the manual
+sort is on screen" — under Newest/Recent a drop means nothing and the
+handles go with a "Reordering off" note. A drop under the Active or
+Done lens sends the rows the client could see; `merge_visible_order/2`
+folds that into the whole plan (the visible rows keep the SET of slots
+they occupied and take their new order within them, hidden rows stay
+put) before `Projects.reorder_assignments/3` writes every position.
+Upstream's August rule refused any drop while rows were hidden; Max hit
+it at ten tasks ("shouldn't it still work just fine?").
+
+**The lens and the sort share one frame:** the sort select and the
+note render in core `nav_tabs`'s `:trailing` slot, so the row reads as
+one bar, not two boxes.
+
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 
-Projects contributes seven widgets to the dashboards module via the duck-typed
+Projects contributes ten widgets to the dashboards module via the duck-typed
 `PhoenixKitProjects.phoenix_kit_widgets/0` (delegates to
 `PhoenixKitProjects.DashboardWidgets.all/0`) — a **one-way** contract: projects
 has no dependency on `phoenix_kit_dashboards`; its Registry discovers the
@@ -606,9 +901,24 @@ widgets: `projects.board` (all projects, coloured by status — grid/counts),
 projects by nearest weekend-aware `planned_end`, overdue flagged — built on
 `project_summaries/1`), `projects.status` / `projects.schedule` (one project's
 status / estimate — detailed/simple), `projects.tasks` (a project's ongoing
-tasks — detailed/compact). Every view declares its own `min_size` (the improved
-dashboards widget API), and the shared frame renders **compact** at a single
-row so minimum boxes fit without scrollbars.
+tasks — detailed/compact), and (2026-09) the Overview's own pieces, so a
+dashboards-module board can carry them too: `projects.running` (the Running list in
+`RunningTiers` order with tier + progress; compact/cards; `late_only`),
+`projects.upcoming` (setup + scheduled / recently completed),
+`projects.calendar` (the Tasks/Projects calendar: the same
+`ScheduleLayout` walk + `CalendarDisplay` event builders + nested
+`PhoenixLiveCalendar.CalendarComponent`, which pages months on its own and
+keeps that across refresh ticks under its stable id; month/agenda;
+`mode`/`only_mine`/`late_only`). The calendar widget has NO assignee panel,
+day popup or click-to-open: a widget is a LiveComponent, and the calendar's
+`on_*` callbacks message the parent LiveView — the dashboards host — so none
+are wired (nesting a LiveView instead was rejected by the panel: refresh ticks
+remount it, no socket for `live_render` in a component, no scope across the
+session boundary). With `projects.my_tasks` and `projects.workload` (the
+stat tiles), a system-scope dashboard can mirror the page. Every view
+declares its own `min_size` (the improved dashboards widget API), and the
+shared frame renders **compact** at a single row so minimum boxes fit
+without scrollbars.
 
 Conventions for these widget components:
 - **Static root:** a stateful LiveComponent's `render/1` must return a single
@@ -672,6 +982,29 @@ Release checklist:
     (process-global), so the `/ru/...` URL prefix translates both
     surfaces simultaneously.
   - See `dev_docs/i18n_triage.md` for the per-file bucket assignments.
+  - **Catalog DATA is translated at render, and registered where it is
+    declared.** Extension names/descriptions and flag labels
+    (`PhoenixKitProjects.phoenix_kit_project_extensions/0`), category
+    labels (`Extensions.Registry`), the form's flag groups and the
+    starting-point cards (`Archetypes`) are plain strings in maps — the
+    `gettext/1` macro cannot see them, so each literal is wrapped in
+    `gettext_noop/1` (registers the msgid, returns it unchanged) and every
+    render site goes through `Web.Helpers.translate_catalog/1` (the
+    runtime `Gettext.gettext/2`). Without the noop the string exists in
+    NO catalogue and every locale shows English while every count says
+    "complete" — the whole extension catalog and the starting-point cards
+    shipped that way until the 2026-09-05 sweep. A sibling module's
+    contributed strings pass through unless it registers them in THIS
+    backend. Dashboards widget catalog strings are the one exception:
+    `phoenix_kit_dashboards` translates provider strings through ITS OWN
+    backend, so ours cannot reach them until that helper honours a
+    provider backend (open, 2026-09-05).
+  - **Completeness is a code-vs-catalogue diff, never a count.** After
+    every extract/merge, diff the new msgids against the pre-merge `.po`
+    and fill them in all seven locales; review every `fuzzy` the merge
+    produced (its guesses have been wrong every time: "Off — no task
+    list" → "no late marker"). The sweep found 219 empty msgstrs per
+    locale that every count had called complete.
 - **LiveView layout**: `use PhoenixKitWeb, :live_view` (in `phoenix_kit_web.ex`) injects `layout: PhoenixKit.LayoutConfig.get_layout()` automatically. No need to wrap templates in `<PhoenixKitWeb.Components.LayoutWrapper.app_layout>` — that wrapper is for LiveViews served outside the admin live_session
 
 ## Pre-commit commands

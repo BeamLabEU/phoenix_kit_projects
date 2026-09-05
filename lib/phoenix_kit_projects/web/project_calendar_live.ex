@@ -260,7 +260,8 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       {:subproject, child_uuid} ->
         WebHelpers.navigate_or_open(socket,
           to: Paths.project(child_uuid),
-          open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child_uuid}}
+          open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child_uuid}},
+          popup: false
         )
 
       {:task, project_uuid} ->

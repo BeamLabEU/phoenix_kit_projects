@@ -26,7 +26,7 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
 
   attr(:node, :map, required: true)
   attr(:tier, :atom, required: true, values: [:late, :near_done, :on_track, :empty])
-  attr(:embed_mode, :atom, default: :navigate, values: [:navigate, :emit])
+  attr(:embed_mode, :atom, default: :navigate, values: [:navigate, :emit, :popup])
   attr(:lang, :string, default: nil)
 
   def running_card(assigns) do

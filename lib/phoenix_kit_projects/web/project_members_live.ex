@@ -30,6 +30,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -64,12 +65,17 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
       {:ok,
        socket
        |> assign(
-         page_title:
-           gettext("%{name} · Members",
-             name: Project.localized_name(project, L10n.current_content_lang())
-           ),
+         # Trail: Admin Panel / Projects / <parents…> / <project> / Members —
+         # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
+         page_title: gettext("Members"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
+         page_crumbs:
+           Crumbs.project(
+             project,
+             L10n.current_content_lang(),
+             socket.assigns[:phoenix_kit_current_scope]
+           ),
          project: project,
          add_email: "",
          add_role: "member"

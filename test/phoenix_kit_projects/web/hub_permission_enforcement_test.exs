@@ -60,7 +60,7 @@ defmodule PhoenixKitProjects.Web.HubPermissionEnforcementTest do
      task: task}
   end
 
-  defp show_path(project), do: "/en/admin/projects/list/#{project.uuid}"
+  defp show_path(project), do: "/en/admin/projects/#{project.uuid}"
 
   describe "work floors bind on the hub" do
     test "a viewer cannot complete a task when the floor says managers", ctx do

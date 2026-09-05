@@ -253,7 +253,8 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
     {:noreply,
      WebHelpers.navigate_or_open(socket,
        to: Paths.project(child_uuid),
-       open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child_uuid}}
+       open: {PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child_uuid}},
+       popup: false
      )}
   end
 

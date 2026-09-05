@@ -10,6 +10,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.Schemas.Assignment
 
   setup %{conn: conn} do
     scope = fake_scope()
@@ -23,7 +24,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       _task = fixture_task()
 
       {:ok, _view, html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       assert html =~ "assignment-form"
       assert html =~ project.name
@@ -33,9 +34,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       bogus = Ecto.UUID.generate()
 
       {:error, {:live_redirect, %{to: redirect_to, flash: flash}}} =
-        live(conn, "/en/admin/projects/list/#{bogus}/assignments/new")
+        live(conn, "/en/admin/projects/#{bogus}/assignments/new")
 
-      assert redirect_to =~ "/list"
+      assert redirect_to == PhoenixKitProjects.Paths.projects()
       assert flash["error"] =~ "Project not found"
     end
 
@@ -44,7 +45,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       task = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       _ =
         view
@@ -64,7 +69,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       task = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       {:error, {:live_redirect, %{to: redirect_to}}} =
         view
@@ -74,7 +83,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
         )
         |> render_submit()
 
-      assert redirect_to =~ "/list/#{project.uuid}"
+      assert redirect_to =~ "/projects/#{project.uuid}"
 
       assert_activity_logged("projects.assignment_created",
         actor_uuid: actor_uuid,
@@ -86,7 +95,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       project = fixture_project()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       # The dropdown was replaced with tabs — click the "Create new" tab
       # button so `@task_mode` flips to "new" server-side, the hidden
@@ -94,14 +103,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       # `new_task_title` input appears in the DOM. `form/3` only binds
       # fields currently rendered, so without this step the title input
       # doesn't exist (and the hidden's allowed value mismatches).
-      _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
       html =
         view
         |> form("#assignment-form",
           assignment: %{status: "todo"},
           task_mode: "new",
-          new_task_title: "   "
+          task: %{title: "   "}
         )
         |> render_submit()
 
@@ -113,9 +121,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       project = fixture_project()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
-
-      _ = view |> element("button[phx-value-tab='new']") |> render_click()
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       title = "Inline-#{System.unique_integer([:positive])}"
 
@@ -129,7 +135,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
             estimated_duration_unit: "hours"
           },
           task_mode: "new",
-          new_task_title: title
+          task: %{title: title}
         )
         |> render_submit()
 
@@ -137,6 +143,61 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
         actor_uuid: actor_uuid,
         metadata_has: %{"new_task" => title}
       )
+
+      # "Add to the task library" is OFF by default: a one-off task, the
+      # composer's semantics — out of the library, still a real task.
+      refute title in Enum.map(Projects.list_tasks(), & &1.title)
+      assert title in Enum.map(Projects.list_tasks(ad_hoc: :only), & &1.title)
+    end
+
+    test "ticking 'Add to the task library' makes a reusable task", %{conn: conn} do
+      project = fixture_project()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+      title = "Library-#{System.unique_integer([:positive])}"
+
+      {:error, {:live_redirect, _}} =
+        view
+        |> form("#assignment-form",
+          assignment: %{status: "todo"},
+          task_mode: "new",
+          task: %{title: title},
+          add_to_library: "true"
+        )
+        |> render_submit()
+
+      assert title in Enum.map(Projects.list_tasks(), & &1.title)
+    end
+
+    test "unticking 'Add to the task library' makes a one-off task", %{conn: conn} do
+      project = fixture_project()
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+      title = "Oneoff-#{System.unique_integer([:positive])}"
+
+      # Core's checkbox carries a hidden "false" twin, so an unticked box
+      # reaches `validate` as "false" (the assign is read at save time).
+      _ =
+        view
+        |> form("#assignment-form",
+          assignment: %{status: "todo"},
+          task_mode: "new",
+          task: %{title: title},
+          add_to_library: "false"
+        )
+        |> render_change()
+
+      {:error, {:live_redirect, _}} =
+        view
+        |> form("#assignment-form",
+          assignment: %{status: "todo"},
+          task_mode: "new",
+          task: %{title: title},
+          add_to_library: "false"
+        )
+        |> render_submit()
+
+      refute title in Enum.map(Projects.list_tasks(), & &1.title)
+      assert title in Enum.map(Projects.list_tasks(ad_hoc: :only), & &1.title)
+      assert title in Enum.map(Projects.list_assignments(project.uuid), &Assignment.label/1)
     end
   end
 
@@ -159,7 +220,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:ok, _view, html} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit"
         )
 
       assert html =~ "assignment-form"
@@ -171,7 +232,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:error, {:live_redirect, %{flash: flash}}} =
         live(
           conn,
-          "/en/admin/projects/list/#{bogus_project}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{bogus_project}/assignments/#{assignment.uuid}/edit"
         )
 
       assert flash["error"] =~ "Project not found"
@@ -183,10 +244,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:error, {:live_redirect, %{to: redirect_to, flash: flash}}} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{bogus_assignment}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{bogus_assignment}/edit"
         )
 
-      assert redirect_to =~ "/list/#{project.uuid}"
+      assert redirect_to =~ "/projects/#{project.uuid}"
       assert flash["error"] =~ "Assignment not found"
     end
 
@@ -195,7 +256,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
       {:ok, view, _html} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit"
         )
 
       # On :edit the form has no `task_mode` select — task is fixed

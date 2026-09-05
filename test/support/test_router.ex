@@ -28,30 +28,47 @@ defmodule PhoenixKitProjects.Test.Router do
     live_session :projects_test,
       layout: {PhoenixKitProjects.Test.Layouts, :app},
       on_mount: {PhoenixKitProjects.Test.Hooks, :assign_scope} do
-      live("/", OverviewLive, :index)
-
+      # Same shape and ORDER as the module's admin_tabs/0 (routes are emitted
+      # in that order and Phoenix matches in declaration order): the literal
+      # subtabs and the legacy redirects before `/:id`, `/new` before `/:id`.
+      live("/", ProjectsLive, :index)
+      live("/templates", TemplatesLive, :index)
       live("/tasks", TasksLive, :index)
+      live("/overview", OverviewLive, :index)
+
+      # Legacy `list/…` addresses redirect to the same path without the segment.
+      live("/list", ListRedirectLive, :index)
+      live("/list/*rest", ListRedirectLive, :index)
+
       live("/tasks/new", TaskFormLive, :new)
       live("/tasks/:id/edit", TaskFormLive, :edit)
 
-      live("/list", ProjectsLive, :index)
-      live("/list/new", ProjectFormLive, :new)
-      live("/list/:id", ProjectShowLive, :show)
-      live("/list/:id/gantt", ProjectShowLive, :gantt)
-      live("/list/:id/calendar", ProjectShowLive, :calendar)
-      live("/list/:id/edit", ProjectFormLive, :edit)
-      live("/list/:id/modules", ProjectModulesLive, :edit)
-      live("/list/:id/members", ProjectMembersLive, :edit)
-      live("/list/:id/files", ProjectFilesLive, :edit)
-      live("/list/:id/activity", ProjectActivityLive, :index)
+      live("/new", ProjectFormLive, :new)
+      live("/:id", ProjectShowLive, :show)
+      live("/:id/board", ProjectShowLive, :board)
+      live("/:id/gantt", ProjectShowLive, :gantt)
+      live("/:id/calendar", ProjectShowLive, :calendar)
+      live("/:id/edit", ProjectFormLive, :edit)
+      live("/:id/modules", ProjectModulesLive, :edit)
+      live("/:id/members", ProjectMembersLive, :edit)
+      live("/:id/files", ProjectFilesLive, :edit)
+      live("/:id/activity", ProjectActivityLive, :index)
+      # The project page's top-level tabs (the `:tab` catch-all is last, below).
+      live("/:id/tasks", ProjectShowLive, :tasks)
+      live("/:id/tasks/board", ProjectShowLive, :board)
+      live("/:id/tasks/timeline", ProjectShowLive, :gantt)
+      live("/:id/tasks/calendar", ProjectShowLive, :calendar)
+      live("/:id/comments", ProjectShowLive, :comments)
 
-      live("/list/:project_id/assignments/new", AssignmentFormLive, :new)
-      live("/list/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)
-
-      live("/templates", TemplatesLive, :index)
       live("/templates/new", TemplateFormLive, :new)
       live("/templates/:id", ProjectShowLive, :show_template)
       live("/templates/:id/edit", TemplateFormLive, :edit)
+
+      live("/:project_id/assignments/new", AssignmentFormLive, :new)
+      live("/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)
+
+      # Last: the extension-tab catch-all (mirrors the module's route order).
+      live("/:id/:tab", ProjectShowLive, :ext_tab)
     end
   end
 

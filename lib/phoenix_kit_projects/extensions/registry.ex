@@ -23,6 +23,8 @@ defmodule PhoenixKitProjects.Extensions.Registry do
   require Logger
 
   alias PhoenixKit.Users.Auth.Scope
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   alias PhoenixKitProjects.Extensions.Extension
 
   @pt_key {__MODULE__, :catalog}
@@ -76,12 +78,13 @@ defmodule PhoenixKitProjects.Extensions.Registry do
   # the catalog as it stands, so sibling modules opt in whenever they like
   # without a breaking contract change. Anything unrecognized lands in
   # "more" rather than disappearing.
+  # Labels are catalog data (see `Web.Helpers.translate_catalog/1`).
   @category_labels [
-    {"collaborate", "Working together"},
-    {"documents", "Files & documents"},
-    {"clients", "Clients & public access"},
-    {"data", "Data & dashboards"},
-    {"more", "More"}
+    {"collaborate", gettext_noop("Working together")},
+    {"documents", gettext_noop("Files & documents")},
+    {"clients", gettext_noop("Clients & public access")},
+    {"data", gettext_noop("Data & dashboards")},
+    {"more", gettext_noop("More")}
   ]
 
   @category_fallback %{

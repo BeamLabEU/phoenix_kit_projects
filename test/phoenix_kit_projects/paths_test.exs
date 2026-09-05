@@ -61,35 +61,39 @@ defmodule PhoenixKitProjects.PathsTest do
 
   describe "Projects paths" do
     test "projects/0" do
-      assert Paths.projects() == "#{@prefix}/list"
+      assert Paths.projects() == @prefix
     end
 
     test "new_project/0" do
-      assert Paths.new_project() == "#{@prefix}/list/new"
+      assert Paths.new_project() == "#{@prefix}/new"
     end
 
     test "project/1 interpolates the id" do
-      assert Paths.project("p-1") == "#{@prefix}/list/p-1"
+      assert Paths.project("p-1") == "#{@prefix}/p-1"
     end
 
     test "edit_project/1 interpolates the id" do
-      assert Paths.edit_project("p-1") == "#{@prefix}/list/p-1/edit"
+      assert Paths.edit_project("p-1") == "#{@prefix}/p-1/edit"
     end
 
-    test "project_gantt/1 and project_calendar/1 address the show page's tabs" do
-      assert Paths.project_gantt("p-1") == "#{@prefix}/list/p-1/gantt"
-      assert Paths.project_calendar("p-1") == "#{@prefix}/list/p-1/calendar"
+    test "the task views live under the Tasks tab; extensions by their key" do
+      assert Paths.project_tasks("p-1") == "#{@prefix}/p-1/tasks"
+      assert Paths.project_board("p-1") == "#{@prefix}/p-1/tasks/board"
+      assert Paths.project_gantt("p-1") == "#{@prefix}/p-1/tasks/timeline"
+      assert Paths.project_calendar("p-1") == "#{@prefix}/p-1/tasks/calendar"
+      assert Paths.project_comments("p-1") == "#{@prefix}/p-1/comments"
+      assert Paths.project_ext_tab("p-1", "whiteboards") == "#{@prefix}/p-1/whiteboards"
     end
   end
 
   describe "Assignment paths" do
     test "new_assignment/1 interpolates the project id" do
-      assert Paths.new_assignment("p-1") == "#{@prefix}/list/p-1/assignments/new"
+      assert Paths.new_assignment("p-1") == "#{@prefix}/p-1/assignments/new"
     end
 
     test "edit_assignment/2 interpolates project + assignment ids" do
       assert Paths.edit_assignment("p-1", "a-9") ==
-               "#{@prefix}/list/p-1/assignments/a-9/edit"
+               "#{@prefix}/p-1/assignments/a-9/edit"
     end
   end
 end

@@ -29,7 +29,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
         })
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       _ =
         view
@@ -47,10 +51,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       project = fixture_project()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       # New UI: tabs (Create new / From library) replaced the dropdown.
-      _ = view |> element("button[phx-value-tab='new']") |> render_click()
 
       _ =
         view
@@ -65,7 +68,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       _ = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       _ =
         view
@@ -84,7 +91,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       _ = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       _ =
         view
@@ -103,7 +114,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       _ = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       _ =
         view
@@ -144,7 +159,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
     test "add_assignment_dep with empty uuid is a no-op",
          %{conn: conn, project: p, a1: a1} do
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{p.uuid}/assignments/#{a1.uuid}/edit")
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
       _ =
         render_submit(view, "add_assignment_dep", %{"depends_on_uuid" => ""})
@@ -156,7 +171,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
     test "add_assignment_dep with a valid uuid adds the edge + logs activity",
          %{conn: conn, project: p, a1: a1, a2: a2, actor_uuid: actor_uuid} do
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{p.uuid}/assignments/#{a1.uuid}/edit")
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
       _ =
         render_submit(view, "add_assignment_dep", %{
@@ -174,7 +189,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
     test "add_assignment_dep on a self-edge (would cycle) flashes the error branch",
          %{conn: conn, project: p, a1: a1} do
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{p.uuid}/assignments/#{a1.uuid}/edit")
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
       # `Dependency.changeset/2` rejects assignment_uuid == depends_on_uuid;
       # the LV catches the {:error, _} return and flashes a generic
@@ -192,7 +207,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       {:ok, _} = Projects.add_dependency(a1.uuid, a2.uuid)
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{p.uuid}/assignments/#{a1.uuid}/edit")
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
       _ = render_click(view, "remove_assignment_dep", %{"uuid" => a2.uuid})
 
@@ -207,7 +222,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
     test "remove_assignment_dep on missing edge flashes",
          %{conn: conn, project: p, a1: a1, a2: a2} do
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{p.uuid}/assignments/#{a1.uuid}/edit")
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a1.uuid}/edit")
 
       html = render_click(view, "remove_assignment_dep", %{"uuid" => a2.uuid})
       assert html =~ "Could not remove dependency"
@@ -240,7 +255,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       {:ok, _view, html} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit"
         )
 
       portal_at = :binary.match(html, "toggle_portal_public") |> elem(0)

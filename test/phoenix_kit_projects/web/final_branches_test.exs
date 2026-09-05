@@ -33,7 +33,7 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
 
       {:ok, _} = PhoenixKitProjects.Projects.archive_project(hidden)
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list")
+      {:ok, _view, html} = live(conn, "/en/admin/projects")
 
       assert html =~ "setup"
     end
@@ -44,7 +44,7 @@ defmodule PhoenixKitProjects.Web.FinalBranchesTest do
       hidden = fixture_project(%{"name" => "Hidden-#{System.unique_integer([:positive])}"})
       {:ok, _} = PhoenixKitProjects.Projects.archive_project(hidden)
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list")
+      {:ok, _view, html} = live(conn, "/en/admin/projects")
 
       # The "Show" filter dropdown was removed when archived projects
       # got their own (unbuilt) dedicated view — the list LV now

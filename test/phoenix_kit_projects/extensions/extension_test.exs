@@ -82,6 +82,26 @@ defmodule PhoenixKitProjects.Extensions.ExtensionTest do
       assert [%{key: "ok"}] = ext.tabs
     end
 
+    test "a tab whose key is a project-page URL segment is dropped (it would deep-link elsewhere)" do
+      assert {:ok, ext} =
+               Extension.from_map(
+                 %{
+                   key: "t",
+                   name: "T",
+                   tabs: [
+                     %{key: "boards", label: "Boards", lv: FakeLive},
+                     %{key: "files", label: "Files", lv: FakeLive},
+                     %{key: "tasks", label: "Tasks", lv: FakeLive},
+                     %{key: "edit", label: "Edit", lv: FakeLive}
+                   ]
+                 },
+                 __MODULE__
+               )
+
+      assert [%{key: "boards"}] = ext.tabs
+      assert "comments" in Extension.reserved_tab_keys()
+    end
+
     test "invalid schema fields and flags are dropped" do
       assert {:ok, ext} =
                Extension.from_map(

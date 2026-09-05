@@ -51,13 +51,20 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
 
   attr(:embed_mode, :atom,
     default: :navigate,
-    values: [:navigate, :emit],
+    values: [:navigate, :emit, :popup],
     doc:
       "Socket's :embed_mode assign. Defaults to :navigate so LVs that haven't been " <>
         "converted yet (or that forget to pass it) get safe browser-navigation behaviour."
   )
 
   attr(:class, :any, default: nil)
+
+  attr(:popup, :boolean,
+    default: true,
+    doc:
+      "In `:popup` embed mode (a page hosting its own drawer) whether this link opens its target in that drawer (`true`, the shape for forms) or still navigates (`false` — a whole page, e.g. a child project or the Files page, is not drawer material)."
+  )
+
   attr(:rest, :global, include: ~w(title aria-label data-id))
 
   slot(:inner_block, required: true)
@@ -65,9 +72,12 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
   def smart_link(assigns) do
     {target_lv, session_overrides} = assigns.emit
 
+    opens_popup? = assigns.embed_mode == :emit or (assigns.embed_mode == :popup and assigns.popup)
+
     assigns =
       assigns
       |> assign(:lv_str, Atom.to_string(target_lv))
+      |> assign(:opens_popup?, opens_popup?)
       |> assign(
         :session_json,
         WebHelpers.encode_emit_session(session_overrides, __MODULE__, target_lv)
@@ -75,7 +85,7 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
 
     ~H"""
     <.link
-      :if={@embed_mode == :navigate}
+      :if={not @opens_popup?}
       navigate={@navigate}
       class={@class}
       {@rest}
@@ -83,7 +93,7 @@ defmodule PhoenixKitProjects.Web.Components.SmartLink do
       {render_slot(@inner_block)}
     </.link>
     <button
-      :if={@embed_mode == :emit}
+      :if={@opens_popup?}
       type="button"
       phx-click="open_embed"
       phx-value-lv={@lv_str}

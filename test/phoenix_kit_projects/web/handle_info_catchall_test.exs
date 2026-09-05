@@ -45,7 +45,7 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
 
   describe "OverviewLive" do
     test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/overview")
 
       log =
         capture_log([level: :debug], fn ->
@@ -60,7 +60,7 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
 
   describe "ProjectsLive" do
     test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
 
       log =
         capture_log([level: :debug], fn ->
@@ -104,7 +104,7 @@ defmodule PhoenixKitProjects.Web.HandleInfoCatchallTest do
     test "logs unexpected handle_info at debug", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
       {:ok, _} = PhoenixKitProjects.Members.add_member(project, actor_uuid, role: "member")
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       log =
         capture_log([level: :debug], fn ->

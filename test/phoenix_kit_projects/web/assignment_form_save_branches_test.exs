@@ -20,8 +20,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
     test "invalid attrs re-render the form", %{conn: conn} do
       project = fixture_project()
 
+      # The library tab only exists once the library has an entry.
+
+      _ = fixture_task()
+
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       # Blank task_uuid → assoc_constraint OR validate_required fires.
       html =
@@ -46,9 +54,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       project = fixture_project()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
-
-      _ = view |> element("button[phx-value-tab='new']") |> render_click()
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
       html =
         view
@@ -60,7 +66,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
             estimated_duration_unit: "hours"
           },
           task_mode: "new",
-          new_task_title: "   "
+          task: %{title: "   "}
         )
         |> render_submit()
 
@@ -83,7 +89,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       {:ok, view, _html} =
         live(
           conn,
-          "/en/admin/projects/list/#{project.uuid}/assignments/#{assignment.uuid}/edit"
+          "/en/admin/projects/#{project.uuid}/assignments/#{assignment.uuid}/edit"
         )
 
       # Submitting an out-of-set status doesn't make it through `validate_inclusion`.
@@ -110,7 +116,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       task = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       {:error, {:live_redirect, _}} =
         view
@@ -134,7 +144,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
       task = fixture_task()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/#{project.uuid}/assignments/new")
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      # Create new is the default tab; these cases pick from the library.
+
+      _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
       {:error, {:live_redirect, _}} =
         view

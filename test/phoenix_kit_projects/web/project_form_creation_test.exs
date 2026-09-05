@@ -45,7 +45,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
   end
 
   test "renders the multilang card, the archetype cards, and the receipt line", %{conn: conn} do
-    {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
     assert html =~ "Choose a starting point"
     assert html =~ "Public intake"
@@ -64,7 +64,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
   describe "who-can-do-what floors (the 2026-08-07 panel's permissions answer)" do
     test "the section renders the overridable floors, not a scheme editor", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
       assert html =~ "People &amp; permissions"
       assert html =~ "What they can do"
@@ -80,7 +80,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "taking the defaults stores nothing (the project keeps inheriting)", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_submit(view, "save", %{
         "project" => %{"name" => "AuthzDefault #{System.unique_integer([:positive])}"}
@@ -96,7 +96,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "a tightened floor is stored and enforced", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{
         "project" => %{"name" => ""},
@@ -144,7 +144,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "a crafted floor value is ignored rather than stored", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{
         "project" => %{"name" => ""},
@@ -164,7 +164,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
   describe "public exposure (the portal IS the visibility control)" do
     test "the portal's public capabilities render on the form, not just in Modules", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
       # Enabling the portal publishes a capability URL; what that URL
       # exposes is decided by these three, and every one defaults ON.
@@ -175,7 +175,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "the reveal keys on the extension toggle, not any checked descendant", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
       # The capability toggles inside the reveal are checked by default, so
       # a bare `group-has-[:checked]` made the block reveal ITSELF while the
@@ -187,7 +187,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "the permissions section warns once the portal is on", %{conn: conn} do
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, html} = live(conn, "/en/admin/projects/new")
       refute html =~ "without signing in"
 
       html =
@@ -200,7 +200,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "narrowing a public capability is pinned on create", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{
         "project" => %{"name" => ""},
@@ -229,7 +229,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "a disabled extension's flags are not pinned", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       # Portal stays OFF (default archetype); its flags are inert.
       render_change(view, "validate", %{
@@ -249,7 +249,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
   end
 
   test "the drawers are grouped, and each header carries its current answer", %{conn: conn} do
-    {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
     # Four intent-named sections replace the three grab-bags.
     assert html =~ ~s(id="create-start")
@@ -276,7 +276,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
   end
 
   test "an uncategorized extension still appears, under More", %{conn: conn} do
-    {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
     # ConfigProvider's cfg_ext declares no category and isn't in the
     # fallback map — it must not silently vanish from the form.
@@ -285,7 +285,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
   end
 
   test "the public_intake archetype enables the portal on create", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
     render_change(view, "validate", %{
       "project" => %{"name" => ""},
@@ -303,8 +303,68 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     assert PhoenixKitProjects.Portal.get_portal(project.uuid)
   end
 
+  test "the space archetype creates a project that is only its tabs", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+    html =
+      render_change(view, "validate", %{"project" => %{"name" => ""}, "archetype" => "space"})
+
+    # A second cycle, as in the browser: a switch cycle ignores toggle
+    # params (they reflect the pre-switch render).
+    render_change(view, "validate", %{
+      "project" => %{"name" => ""},
+      "archetype" => "space",
+      "ext" => %{"whiteboards" => "true"}
+    })
+
+    # The receipt says so, and the task flags are gone with the list.
+    assert html =~ "No tasks"
+    assert html =~ "Off — no task list"
+    assert html =~ ~s(id="ext-row-tasks")
+    refute html =~ ~s(id="flag-row-assignees")
+
+    render_submit(view, "save", %{
+      "project" => %{"name" => "Boards #{System.unique_integer([:positive])}"}
+    })
+
+    project = created("Boards")
+    assert project
+    refute Extensions.enabled?(project, "tasks")
+    refute Extensions.enabled?(project, "discussions")
+    assert Extensions.enabled?(project, "whiteboards")
+    # Not a tab: keeps its default.
+    assert Extensions.enabled?(project, "files")
+  end
+
+  test "tasks is a toggle on every card: a Team project can drop its list", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+    html =
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "archetype" => "standard",
+        "ext" => %{"tasks" => "false"}
+      })
+
+    assert html =~ "No tasks"
+    assert html =~ "Off — no task list"
+    # Tasks is not listed among the add-ons — it has its own row.
+    refute html =~ ~s(id="ext-row-tasks" class="flex items-center justify-between gap-3 rounded)
+
+    render_submit(view, "save", %{
+      "project" => %{"name" => "Listless #{System.unique_integer([:positive])}"}
+    })
+
+    project = created("Listless")
+    assert project
+    refute Extensions.enabled?(project, "tasks")
+    # The Team project's other defaults are untouched (Discussions too,
+    # but the comments module is not registered in this env).
+    assert Extensions.enabled?(project, "files")
+  end
+
   test "an explicit extension uncheck overrides the default (files off)", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
     render_change(view, "validate", %{
       "project" => %{"name" => ""},
@@ -318,12 +378,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     project = created("NoFiles")
     assert project
     refute Extensions.enabled?(project, "files")
-    # Untouched defaults stay on (tasks is not part of the checklist).
+    # Untouched defaults stay on (tasks has its own row, left on).
     assert Extensions.enabled?(project, "tasks")
   end
 
   test "extension overrides survive an archetype switch; flags soft-reset", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
     # Explicitly enable the config extension, then switch archetype.
     render_change(view, "validate", %{
@@ -346,7 +406,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
   end
 
   test "inert-unless-on: config applies only when the extension is checked", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
     render_change(view, "validate", %{
       "project" => %{"name" => ""},
@@ -383,7 +443,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       {:ok, dept} = Departments.create(%{"name" => "PickDept-#{n}"})
       {:ok, _team} = Teams.create(%{"name" => "PickTeam-#{n}", "department_uuid" => dept.uuid})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       # An empty query answers with a first page — the picker opens a list
       # on first click rather than waiting for typing.
@@ -415,7 +475,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
           })
       end
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_hook(view, "participant_search", %{"q" => "", "limit" => 8})
       assert_push_event(view, "participant_results", %{results: results})
@@ -434,7 +494,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       {:ok, dept_b} = Departments.create(%{"name" => "AddDeptB-#{n}"})
       {:ok, team} = Teams.create(%{"name" => "AddTeam-#{n}", "department_uuid" => dept_a.uuid})
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       pick_and_add(view, "department", dept_a.uuid, "AddDeptA-#{n}", "member")
       pick_and_add(view, "department", dept_b.uuid, "AddDeptB-#{n}", "viewer")
@@ -470,7 +530,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
           "employment_type" => "full_time"
         })
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
       pick_and_add(view, "person", invitee.uuid, invitee.email, "manager")
 
       render_submit(view, "save", %{
@@ -483,14 +543,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "submitting with nothing staged adds nobody", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       html = render_submit(view, "add_participant", %{"role" => "manager"})
       assert html =~ "Search for a person, team, or department"
     end
 
     test "a crafted kind is ignored rather than staged", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_hook(view, "participant_pick", %{
         "kind" => "wizard",
@@ -505,7 +565,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
   describe "permissions follow the enabled capabilities" do
     test "a row only appears when its capability will exist", %{conn: conn} do
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, html} = live(conn, "/en/admin/projects/new")
 
       # Files is on by default, so "Upload files" is offered...
       assert html =~ ~s(id="authz-row-upload_files")
@@ -524,8 +584,71 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       assert html =~ ~s(id="authz-row-create_tasks")
     end
 
+    test "every task floor goes with the task list (grok, 2026-09-05)", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/new")
+
+      for row <- ~w(create_tasks edit_tasks delete_tasks assign_tasks set_health log_time) do
+        assert html =~ ~s(id="authz-row-#{row}")
+      end
+
+      html =
+        render_change(view, "validate", %{
+          "project" => %{"name" => ""},
+          "ext" => %{"tasks" => "false"}
+        })
+
+      for row <- ~w(create_tasks edit_tasks delete_tasks assign_tasks set_health log_time) do
+        refute html =~ ~s(id="authz-row-#{row}"), "#{row} floor shown with no task list"
+      end
+
+      # Floors that are not about tasks stay.
+      assert html =~ ~s(id="authz-row-upload_files")
+    end
+
+    test "a template pin moved back to the default on the form does not survive the clone",
+         %{conn: conn} do
+      # A template with assignees pinned OFF.
+      {:ok, template} =
+        Projects.create_project(%{
+          "name" => "Pinned #{System.unique_integer([:positive])}",
+          "is_template" => true,
+          "start_mode" => "immediate"
+        })
+
+      {:ok, template} = Features.set_flags(template, %{"assignees" => false})
+      assert Projects.get_project!(template.uuid).settings["features"]["assignees"] == false
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+      html =
+        render_change(view, "validate", %{
+          "project" => %{"name" => ""},
+          "template_uuid" => template.uuid
+        })
+
+      # The template's pin seeds the form: assignees shows OFF.
+      refute html =~ ~s(id="authz-row-assign_tasks")
+
+      # The user flips assignees back ON — the catalog default, which the
+      # minimal-diff pin used to skip, leaving the template's OFF in place.
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "template_uuid" => template.uuid,
+        "flag" => %{"assignees" => "true"}
+      })
+
+      render_submit(view, "save", %{
+        "project" => %{"name" => "Unpinned #{System.unique_integer([:positive])}"},
+        "template_uuid" => template.uuid
+      })
+
+      project = created("Unpinned")
+      assert project
+      assert Features.on?(project, "assignees"), "the template's pin survived the form"
+    end
+
     test "a flag-backed row follows its flag", %{conn: conn} do
-      {:ok, view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, html} = live(conn, "/en/admin/projects/new")
       assert html =~ ~s(id="authz-row-log_time")
       assert html =~ ~s(id="authz-row-assign_tasks")
 
@@ -540,7 +663,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "a hidden row's floor is not stored", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       # Restrict uploads, THEN turn Files off.
       render_change(view, "validate", %{
@@ -565,7 +688,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
   describe "changed sections flash" do
     test "switching the starting point flashes the sections it rewrote", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{
         "project" => %{"name" => ""},
@@ -586,7 +709,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
     test "enabling an extension flashes the permissions drawer when a row appears",
          %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       # Off first (row goes), then on — the permissions drawer regains
       # "Upload files".
@@ -616,7 +739,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
     test "re-answering a floor doesn't flash the drawer it was answered in",
          %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{
         "project" => %{"name" => ""},
@@ -628,7 +751,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
     test "a row that DISAPPEARS still cues, via the section that held it",
          %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       # Turning Files off REMOVES the "Upload files" permission row. A
       # removed element can't be found, and neither can the section around
@@ -650,7 +773,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       # The mark means "there is something here you haven't seen", not "an
       # event happened". Flipping between presets used to leave every
       # section marked even when the state came back to the start.
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{
         "project" => %{"name" => ""},
@@ -672,7 +795,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "opening a section makes it the new baseline", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{
         "project" => %{"name" => ""},
@@ -697,7 +820,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "typing a name flashes nothing", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{"project" => %{"name" => "Just typing"}})
 
@@ -709,7 +832,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     alias PhoenixKitProjects.{Authz, Projects}
 
     test "the choice renders in the permissions section", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
       assert html =~ "Who can see it"
       assert html =~ "Just the people on it"
@@ -717,7 +840,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "private is the default and stores nothing", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_submit(view, "save", %{
         "project" => %{"name" => "VisDefault #{System.unique_integer([:positive])}"}
@@ -730,7 +853,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "everyone is stored and gives any viewer a seat", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_change(view, "validate", %{
         "project" => %{"name" => ""},
@@ -761,7 +884,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "a private project stays invisible to a stranger", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       render_submit(view, "save", %{
         "project" => %{"name" => "VisShut #{System.unique_integer([:positive])}"}
@@ -791,7 +914,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     {:ok, _} =
       Projects.create_assignment(%{"project_uuid" => template.uuid, "task_uuid" => task.uuid})
 
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
     # Selecting the template shows the preview + carried extension.
     html =
@@ -843,7 +966,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
   end
 
   test "a bogus template uuid does not kill checkbox tracking", %{conn: conn} do
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
     # Select a template uuid that doesn't resolve (deleted mid-session).
     render_change(view, "validate", %{
@@ -896,7 +1019,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
     {:ok, _} = Extensions.enable(template, "cfg_ext")
 
-    {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
     render_change(view, "validate", %{
       "project" => %{"name" => ""},
@@ -941,7 +1064,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     end
 
     test "default: template + start live inside the Start from accordion", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
       assert html =~ ~s(id="create-start")
       assert html =~ "From template (optional)"
@@ -955,7 +1078,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       {:ok, _} = Features.set_creation_top_blocks(["template", "start"])
       on_exit(fn -> Features.set_creation_top_blocks([]) end)
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
 
       assert html =~ ~s(id="create-top-template")
       assert html =~ ~s(id="create-top-start")

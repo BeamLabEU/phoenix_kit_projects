@@ -61,6 +61,7 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
     <span
       :if={@status}
       class={["badge badge-sm gap-1", @class, is_nil(workflow_color(@status)) && "badge-neutral"]}
+      data-workflow-status-badge
       style={workflow_style(@status)}
     >
       {@status.label}

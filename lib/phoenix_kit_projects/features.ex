@@ -144,6 +144,8 @@ defmodule PhoenixKitProjects.Features do
   # under suite orderings where gates/1 ran before anything else mentioned
   # :view_timeline (caught by the Step 5 full run).
   @task_gates [
+    :library,
+    :in_progress,
     :assignees,
     :estimates,
     :progress,
@@ -285,6 +287,13 @@ defmodule PhoenixKitProjects.Features do
         name: "Simple to-do list",
         description: "Just a task list — no start or finish, no tracking, no scheduling.",
         flags: %{
+          # A checklist is typed in place — no shared library to pick
+          # from or feed (Max, 2026-09-05: "for the checklist it's not
+          # needed"). The other starting points keep the default (on).
+          "library" => false,
+          # A checklist item is done or it is not — no "started" in between
+          # (Max, 2026-09-05).
+          "in_progress" => false,
           "assignees" => false,
           "priorities" => false,
           "labels" => false,
@@ -319,19 +328,11 @@ defmodule PhoenixKitProjects.Features do
         key: "full",
         name: "Full tracker",
         description: "Every task feature explicitly on.",
-        flags: %{
-          "assignees" => true,
-          "priorities" => true,
-          "labels" => true,
-          "estimates" => true,
-          "progress" => true,
-          "dependencies" => true,
-          "statuses" => true,
-          "scheduling" => true,
-          "subprojects" => true,
-          "view_timeline" => true,
-          "view_calendar" => true
-        }
+        # EVERY built-in flag, derived from the gate list rather than typed
+        # out: a hand-kept map missed lifecycle, ledger and view_board, so
+        # "Full" applied over "Simple" left three explicit falses standing
+        # (found seeding the boss's Test project at full power, 2026-09-05).
+        flags: Map.new(@task_gates, &{to_string(&1), true})
       }
     ]
   end

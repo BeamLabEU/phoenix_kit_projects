@@ -1,24 +1,26 @@
 defmodule PhoenixKitProjects.Whiteboards do
   @moduledoc """
   Project whiteboards (Step 11): freeform drawing boards on core's
-  Fresco/Etcher/annotations stack via the **blank-background bridge** —
-  core's annotation persistence anchors to a `phoenix_kit_files` row
-  (hard FK), so each board generates a solid-white PNG, registers it as
-  a Storage file in the project's folder, and lets core's
-  `MediaCanvasViewer` do everything else (drawing, annotation CRUD,
-  palettes). When core grows a file-less canvas the bridge shrinks to a
-  data migration; the board row (name/order/dimensions) is ours either
-  way.
+  Fresco/Etcher/annotations stack.
 
-  The blank PNG is generated in pure Elixir (no ImageMagick for the
-  base file) and **salted** with a `tEXt` chunk carrying a fresh uuid:
-  `Storage.store_file/2` dedups per-user by content checksum, so two
-  identical unsalted blanks would silently collide onto ONE file row —
-  and one shared annotation set.
+  Since core V183 an annotation can anchor to any `target_type` +
+  `target_uuid`, and Fresco renders a scene with zero images, so a board
+  is just its row: `create/3` inserts it and core's `MediaCanvasViewer`
+  draws it in board mode (`target_type: "projects_whiteboard"`,
+  `target_uuid: board.uuid`) on an empty, infinite canvas — no file, no
+  Storage, no folder. The **blank-background bridge** this module used
+  to run (a salted solid-white PNG per board, registered as a Storage
+  file, drawn over as if it were a photo — Max, 2026-09-05: "the dev
+  added support to the package so that hack wouldn't be needed") is
+  gone from the create path. Boards made by it keep their file and keep
+  working: a board WITH a `file_uuid` renders through the file viewer as
+  before, a board without one through board mode. `create_board_for_file/3`
+  (a board over a real image) still exists for the former shape.
 
-  Deleting a board deletes the ROW; the background file (with any
-  drawings baked into its annotations) stays in the project folder —
-  consistent with the hub's disable-hides-never-deletes philosophy.
+  Deleting a board deletes the ROW; a board's shapes go with it (the
+  annotations are keyed by its uuid), and a file-backed board's background
+  file stays in the project folder — consistent with the hub's
+  disable-hides-never-deletes philosophy.
   """
 
   import Ecto.Query
@@ -61,10 +63,10 @@ defmodule PhoenixKitProjects.Whiteboards do
   end
 
   @doc """
-  Creates a whiteboard end-to-end: blank background PNG → Storage file
-  (owned by the creating user) → dimensions stamped → filed into the
-  project folder → board row. `opts[:actor_uuid]` is REQUIRED — the
-  files table needs an owning user for non-system files.
+  Creates a whiteboard: one row, no file (chain V16 / core V183 — the
+  canvas is drawn from the board's dimensions and its shapes anchor to
+  `target_type/0` + the board's uuid). `opts[:actor_uuid]` is REQUIRED —
+  it is the board's creator and the actor on the activity row.
 
   Options: `:width`/`:height` (default 1920×1080, capped 8000).
   """
@@ -80,37 +82,41 @@ defmodule PhoenixKitProjects.Whiteboards do
         {:error, :actor_required}
 
       actor_uuid ->
-        # Validate the name BEFORE touching Storage: the background file
-        # used to be created first, so a whitespace name returned an
-        # error changeset AND left an orphaned file row + blob behind
-        # (panel round, Gemini).
-        with :ok <- validate_name(name),
-             {:ok, file} <- create_background_file(name, width, height, actor_uuid) do
-          # Dimensions drive the canvas extent; store_file/2 never
-          # populates them (that's ProcessFileJob's job on the upload
-          # path, which store_file doesn't enqueue).
-          _ = Storage.update_file(file, %{width: width, height: height})
-
-          project
-          |> create_board_for_file(file.uuid, %{
+        with :ok <- validate_name(name) do
+          insert_board(project, %{
             name: name,
             width: width,
             height: height,
             created_by_uuid: actor_uuid
           })
-          |> case do
-            {:ok, board} ->
-              {:ok, board}
-
-            {:error, _} = error ->
-              # Residual failures (project deleted mid-flight, unique
-              # race): don't leave the just-created background behind.
-              cleanup_background_file(file)
-              error
-          end
         end
     end
   end
+
+  # The target every one of this board's shapes anchors to (core V183).
+  @target_type "projects_whiteboard"
+
+  @doc "The `target_type` this module's boards anchor annotations to."
+  @spec target_type() :: String.t()
+  def target_type, do: @target_type
+
+  @doc """
+  The `:board` assign core's `MediaCanvasViewer` takes for a file-less
+  board: the target pair and the canvas extent. `nil` for a board that
+  still has a file — render that one through the file path.
+  """
+  @spec viewer_board(Whiteboard.t()) :: map() | nil
+  def viewer_board(%Whiteboard{file_uuid: nil} = board) do
+    %{
+      target_type: @target_type,
+      target_uuid: board.uuid,
+      width: board.width,
+      height: board.height,
+      background: nil
+    }
+  end
+
+  def viewer_board(_board), do: nil
 
   defp validate_name(name) do
     trimmed = String.trim(to_string(name))
@@ -122,15 +128,6 @@ defmodule PhoenixKitProjects.Whiteboards do
     end
   end
 
-  defp cleanup_background_file(file) do
-    Storage.delete_file(file)
-    :ok
-  rescue
-    _ -> :ok
-  catch
-    :exit, _ -> :ok
-  end
-
   @doc """
   The DB-side composition: board row for an EXISTING file + project-folder
   filing + activity/broadcast. Split from `create/3` so the row logic is
@@ -140,20 +137,26 @@ defmodule PhoenixKitProjects.Whiteboards do
   @spec create_board_for_file(map(), binary(), map()) ::
           {:ok, Whiteboard.t()} | {:error, term()}
   def create_board_for_file(project, file_uuid, attrs) do
+    insert_board(project, Map.put(attrs, :file_uuid, file_uuid))
+  end
+
+  # The row (+ filing, activity, broadcast). A file-backed board also gets
+  # its background filed in the project folder.
+  defp insert_board(project, attrs) do
     position = next_position(project.uuid)
+    file_uuid = Map.get(attrs, :file_uuid)
 
     %Whiteboard{}
     |> Whiteboard.changeset(
       attrs
       |> Map.put(:project_uuid, project.uuid)
-      |> Map.put(:file_uuid, file_uuid)
       |> Map.put_new(:position, position)
     )
     |> RepoHelper.repo().insert()
     |> case do
       {:ok, board} ->
         # Best-effort: the board renders fine from the root folder too.
-        Attachments.attach_files(project.uuid, [file_uuid])
+        if file_uuid, do: Attachments.attach_files(project.uuid, [file_uuid])
 
         Activity.log("projects.whiteboard_created",
           actor_uuid: board.created_by_uuid,
@@ -195,14 +198,38 @@ defmodule PhoenixKitProjects.Whiteboards do
   end
 
   @doc """
-  Deletes the board ROW. The background file — and the drawings living in
-  its annotation rows — stays in the project folder, still reachable from
-  the Files page as an annotated image.
+  Drops the shapes of every FILE-LESS board of a project — for the project
+  delete, whose `ON DELETE CASCADE` removes the board rows but cannot reach
+  core's annotations table (a file-less board's shapes have no FK to
+  anything; the sweep, 2026-09-05). Returns the number of shapes removed.
+  """
+  @spec delete_shapes_for_project(String.t()) :: non_neg_integer()
+  def delete_shapes_for_project(project_uuid) when is_binary(project_uuid) do
+    from(b in Whiteboard,
+      where: b.project_uuid == ^project_uuid and is_nil(b.file_uuid),
+      select: b.uuid
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.map(&PhoenixKit.Annotations.delete_for_target(@target_type, &1))
+    |> Enum.sum()
+  end
+
+  @doc """
+  Deletes the board row. A file-less board's shapes go with it (nothing
+  else holds them). A file-backed board's background file — and the
+  drawings living in its annotation rows — stays in the project folder,
+  still reachable from the Files page as an annotated image.
   """
   @spec delete(Whiteboard.t(), keyword()) :: :ok | {:error, term()}
   def delete(%Whiteboard{} = board, opts \\ []) do
     case RepoHelper.repo().delete(board) do
       {:ok, _} ->
+        # A file-less board's shapes are keyed by its uuid — nothing else
+        # holds them, so they go with it. A file-backed board's shapes
+        # belong to the file and stay, like the file does.
+        if is_nil(board.file_uuid),
+          do: PhoenixKit.Annotations.delete_for_target(@target_type, board.uuid)
+
         Activity.log("projects.whiteboard_deleted",
           actor_uuid: Keyword.get(opts, :actor_uuid),
           resource_type: "project",
@@ -258,87 +285,7 @@ defmodule PhoenixKitProjects.Whiteboards do
       nil
   end
 
-  # ── Blank background generation ────────────────────────────────────
-
-  @doc """
-  A solid-white truecolor PNG, salted with a `tEXt` chunk so every call
-  produces DISTINCT bytes (Storage dedups per-user by content checksum —
-  unsalted, every same-size board for one user would collide onto a
-  single file row sharing one annotation set). Pure Elixir; no
-  ImageMagick for the base file.
-  """
-  @spec blank_png(pos_integer(), pos_integer(), String.t()) :: binary()
-  def blank_png(width, height, salt) do
-    ihdr = <<width::32, height::32, 8, 2, 0, 0, 0>>
-    text = "Software" <> <<0>> <> "phoenix_kit_projects whiteboard #{salt}"
-
-    <<137, 80, 78, 71, 13, 10, 26, 10>> <>
-      png_chunk("IHDR", ihdr) <>
-      png_chunk("tEXt", text) <>
-      png_chunk("IDAT", deflate_rows(width, height)) <>
-      png_chunk("IEND", "")
-  end
-
-  # STREAMED deflate: one filter-0 white row fed `height` times through a
-  # zlib stream. The naive `:zlib.compress(:binary.copy(row, height))`
-  # materialized the whole raw raster first — ~192 MB at the 8000×8000
-  # API cap (panel round, Grok); this keeps memory at one row + the tiny
-  # compressed output.
-  defp deflate_rows(width, height) do
-    row = <<0>> <> :binary.copy(<<255, 255, 255>>, width)
-    z = :zlib.open()
-    :ok = :zlib.deflateInit(z)
-
-    try do
-      1..height
-      |> Enum.flat_map(fn i ->
-        :zlib.deflate(z, row, if(i == height, do: :finish, else: :none))
-      end)
-      |> IO.iodata_to_binary()
-    after
-      :zlib.close(z)
-    end
-  end
-
-  defp png_chunk(type, data) do
-    payload = type <> data
-    <<byte_size(data)::32, payload::binary, :erlang.crc32(payload)::32>>
-  end
-
-  defp create_background_file(name, width, height, actor_uuid) do
-    salt = Ecto.UUID.generate()
-    png = blank_png(width, height, salt)
-    filename = "whiteboard-#{slug(name)}-#{String.slice(salt, 0, 8)}.png"
-    tmp_path = Path.join(System.tmp_dir!(), "pkp-#{salt}.png")
-
-    try do
-      File.write!(tmp_path, png)
-
-      Storage.store_file(tmp_path,
-        filename: filename,
-        content_type: "image/png",
-        size_bytes: byte_size(png),
-        user_uuid: actor_uuid,
-        metadata: %{"source" => "projects_whiteboard"}
-      )
-    rescue
-      e -> {:error, Exception.message(e)}
-    after
-      File.rm(tmp_path)
-    end
-  end
-
-  defp slug(name) do
-    name
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9]+/, "-")
-    |> String.trim("-")
-    |> String.slice(0, 40)
-    |> case do
-      "" -> "board"
-      s -> s
-    end
-  end
+  # ── Dimensions ────────────────────────────────────
 
   defp normalize_dim(value, default) do
     case value do

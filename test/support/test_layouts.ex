@@ -39,6 +39,12 @@ defmodule PhoenixKitProjects.Test.Layouts do
       <span :if={assigns[:page_section]} data-crumb-section={assigns[:page_section]}>
         {assigns[:page_section]}
       </span>
+      <%!-- The linked middle of the trail (core's `page_crumbs`): one
+           anchor per crumb, in order, so tests can pin the whole trail
+           as "section / crumb / crumb / title". --%>
+      <a :for={crumb <- assigns[:page_crumbs] || []} data-crumb={crumb.label} href={crumb[:path]}>
+        {crumb.label}
+      </a>
       <a
         :if={assigns[:page_action]}
         data-crumb-action
@@ -47,6 +53,13 @@ defmodule PhoenixKitProjects.Test.Layouts do
       >
         {assigns[:page_action][:label]}
       </a>
+      <%!-- The page toolbar (core's `page_toolbar: {Module, :fun}`): the
+           real admin layout renders it beside the title with the LiveView's
+           assigns. Same bridge here, so a test can pin that the status
+           picker + ⋮ reach the header — and that events from there work. --%>
+      <span :if={assigns[:page_toolbar]} data-page-toolbar>
+        {PhoenixKitWeb.Components.LayoutWrapper.render_page_toolbar(assigns)}
+      </span>
     </div>
     <div id="test-flashes">
       <div :if={msg = Phoenix.Flash.get(@flash, :info)} id="flash-info" data-flash-kind="info">

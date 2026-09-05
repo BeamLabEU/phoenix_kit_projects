@@ -19,18 +19,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
 
   describe "new project (no template)" do
     test "mounts and renders the form", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
       assert html =~ "project-form"
       assert html =~ "New project"
     end
 
     test "submit button has phx-disable-with", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
       assert html =~ ~r/phx-disable-with=/
     end
 
     test "submit with blank name shows inline error", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       # `validate` deliberately does NOT stamp `:action` (suppresses
       # premature errors when the user toggles the start_mode radio
@@ -46,7 +46,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
     end
 
     test "save creates project and logs activity", %{conn: conn, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       name = "Proj-#{System.unique_integer([:positive])}"
 
@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
         )
         |> render_submit()
 
-      assert redirect_to =~ "/list/"
+      assert redirect_to =~ "/en/admin/projects/"
 
       assert_activity_logged("projects.project_created",
         actor_uuid: actor_uuid,
@@ -76,7 +76,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
       template = fixture_template()
 
       {:ok, _view, html} =
-        live(conn, "/en/admin/projects/list/new?template=#{template.uuid}")
+        live(conn, "/en/admin/projects/new?template=#{template.uuid}")
 
       assert html =~ template.name or html =~ "template"
     end
@@ -85,14 +85,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
   describe "edit project" do
     test "renders existing values", %{conn: conn} do
       project = fixture_project(%{"name" => "Existing-#{System.unique_integer([:positive])}"})
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
       assert html =~ project.name
     end
 
     test "save updates and logs activity", %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
 
       new_name = "Renamed-#{System.unique_integer([:positive])}"
 
@@ -119,16 +119,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
       bogus = Ecto.UUID.generate()
 
       {:error, {:live_redirect, %{to: redirect_to, flash: flash}}} =
-        live(conn, "/en/admin/projects/list/#{bogus}/edit")
+        live(conn, "/en/admin/projects/#{bogus}/edit")
 
-      assert redirect_to =~ "/list"
+      assert redirect_to == PhoenixKitProjects.Paths.projects()
       assert flash["error"] =~ "Project not found"
     end
   end
 
   describe "save errors are surfaced as flashes (not crashes)" do
     test "creating from a non-existent template shows :template_not_found flash", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       html =
         view
@@ -169,7 +169,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
       entity: entity
     } do
       project = fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
 
       {:error, {:live_redirect, _}} =
         view
@@ -199,7 +199,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
       project = fixture_project()
       before = count.()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
 
       html = view |> element("button", "Generate default") |> render_click()
 
@@ -212,7 +212,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
     test "a started project locks the source picker (frozen at start)", %{conn: conn} do
       {:ok, started} = Projects.start_project(fixture_project())
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{started.uuid}/edit")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{started.uuid}/edit")
 
       # The picker is disabled, the frozen hint shows, and "Generate default"
       # (which would switch the source) is gone.
@@ -229,7 +229,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
       {:ok, started} = Projects.start_project(fixture_project())
       refute started.status_entity_uuid
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{started.uuid}/edit")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{started.uuid}/edit")
 
       # The disabled picker can't be set through the form, so inject the field
       # as crafted extra submit params. The server-side `lock_status_source/2`
