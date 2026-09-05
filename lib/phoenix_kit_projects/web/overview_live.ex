@@ -173,7 +173,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     # capped/sorted slice feeds the cards; the full list feeds the calendar.
     all_summaries =
       active_projects
-      |> Enum.map(&Projects.project_tree_summary/1)
+      |> Projects.project_tree_summaries()
       |> Enum.map(&RunningTiers.tag(&1, now))
 
     {top_summaries, total_active} =
@@ -264,9 +264,8 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
     items_with_spans =
       (active ++ upcoming ++ completed)
       |> Enum.uniq_by(& &1.uuid)
-      |> Enum.flat_map(fn project ->
-        {items, layout} = ScheduleLayout.tree(project)
-
+      |> ScheduleLayout.trees()
+      |> Enum.flat_map(fn {items, layout} ->
         items
         |> Enum.reject(&Assignment.subproject?(&1.assignment))
         |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})

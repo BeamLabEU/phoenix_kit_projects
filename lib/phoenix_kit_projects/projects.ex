@@ -1861,6 +1861,16 @@ defmodule PhoenixKitProjects.Projects do
     |> Map.new(&{&1, true})
   end
 
+  # Depth cap for the forest: the loader reads this many levels and the
+  # builders stop constructing children at it — the linking guards keep
+  # the sub-project graph acyclic, but a walk over persisted data must
+  # not depend on it. `ScheduleLayout` applies the same bound.
+  @max_subproject_depth 32
+
+  @doc "How many levels of sub-projects the forest read and the tree builders descend."
+  @spec max_subproject_depth() :: pos_integer()
+  def max_subproject_depth, do: @max_subproject_depth
+
   @doc """
   Recursive **tree summary** for a project: its own task breakdown plus a nested
   summary for each embedded sub-project, all the way down (V127). Powers the
@@ -1885,20 +1895,51 @@ defmodule PhoenixKitProjects.Projects do
   progress average counts each real task (done = 100, else its slider) and each
   **non-empty** child's rolled progress — empty sub-projects are neutral.
 
-  One `list_assignments/1` per node; depth is bounded by the (acyclic) tree, so
-  it's fine for the handful of running projects on the dashboard.
+  One project: `project_tree_summaries/1` on a list of one. For several —
+  a dashboard's running projects on a refresh tick — use the plural: it
+  reads the whole forest's assignments in one query per depth level
+  instead of one per node (the boss's #40 review: the widgets re-ran the
+  Overview's N+1 on every tick, per viewer).
   """
   @spec project_tree_summary(Project.t()) :: map()
-  def project_tree_summary(%Project{} = project), do: build_tree_node(project)
+  def project_tree_summary(%Project{} = project) do
+    [node] = project_tree_summaries([project])
+    node
+  end
 
-  defp build_tree_node(%Project{} = project) do
-    assignments = list_assignments(project.uuid)
+  @doc """
+  `project_tree_summary/1` for a list of projects, batched: the assignments
+  of every project in the forest (the roots, their sub-projects, theirs, …)
+  are read with `assignments_by_project/1` — one grouped query per depth
+  level, bounded by `@max_subproject_depth` — and each node is built from
+  that map. Same node shape, same order as the input; a project that has
+  no assignments gets an empty node.
+  """
+  @spec project_tree_summaries([Project.t()]) :: [map()]
+  def project_tree_summaries(projects) when is_list(projects) do
+    by_project = assignments_by_project(Enum.map(projects, & &1.uuid))
+    Enum.map(projects, &build_tree_node(&1, by_project, 0, %{}))
+  end
+
+  # `depth` and `path` bound the recursion the same way the loader bounds
+  # its reads: a child at the depth cap is not built (its assignments were
+  # never loaded, so it would read as falsely empty — codex, 2026-09-05),
+  # and a project already on the path down to here is a cycle in bad
+  # data, not a child — skipped, never recursed into. (`path` is a plain
+  # map: dialyzer's opaqueness false positive on a literal MapSet.)
+  defp build_tree_node(%Project{} = project, by_project, depth, path) do
+    assignments = Map.get(by_project, project.uuid, [])
     {task_rows, link_rows} = Enum.split_with(assignments, &is_nil(&1.child_project_uuid))
+    path = Map.put(path, project.uuid, true)
 
     children =
-      link_rows
-      |> Enum.filter(& &1.child_project)
-      |> Enum.map(&build_tree_node(&1.child_project))
+      if depth + 1 < @max_subproject_depth do
+        link_rows
+        |> Enum.filter(&(&1.child_project && not Map.has_key?(path, &1.child_project_uuid)))
+        |> Enum.map(&build_tree_node(&1.child_project, by_project, depth + 1, path))
+      else
+        []
+      end
 
     total_hours = node_hours(project, assignments)
 
@@ -2581,6 +2622,45 @@ defmodule PhoenixKitProjects.Projects do
     |> order_by([a], asc: a.position, asc: a.inserted_at)
     |> preload(^@assignment_preloads)
     |> repo().all()
+  end
+
+  @doc """
+  The accepted assignments of a set of projects AND every sub-project
+  beneath them, as `%{project_uuid => [Assignment.t()]}` — each list in
+  `list_assignments/1` order with the same preloads. One `WHERE project_uuid
+  IN (…)` read per depth level: the roots, then the children the linking
+  rows name, then theirs, until a level names nothing new (or
+  #{@max_subproject_depth} levels). A project with no rows maps to `[]`.
+  The batched base the tree summaries and `ScheduleLayout.trees/1` read
+  from, so a dashboard of N projects costs O(depth) queries, not O(nodes).
+  """
+  @spec assignments_by_project([uuid()]) :: %{uuid() => [Assignment.t()]}
+  def assignments_by_project(project_uuids) when is_list(project_uuids) do
+    load_forest(Enum.uniq(project_uuids), %{}, @max_subproject_depth)
+  end
+
+  defp load_forest([], acc, _hops), do: acc
+  defp load_forest(_uuids, acc, 0), do: acc
+
+  defp load_forest(uuids, acc, hops) do
+    rows =
+      Assignment
+      |> where([a], a.project_uuid in ^uuids and a.review_status == "accepted")
+      |> order_by([a], asc: a.position, asc: a.inserted_at)
+      |> preload(^@assignment_preloads)
+      |> repo().all()
+
+    # Every asked-for uuid gets an entry, so a later lookup never re-queries.
+    grouped = Map.new(uuids, &{&1, []}) |> Map.merge(Enum.group_by(rows, & &1.project_uuid))
+    acc = Map.merge(acc, grouped)
+
+    next =
+      rows
+      |> Enum.map(& &1.child_project_uuid)
+      |> Enum.reject(&(is_nil(&1) or Map.has_key?(acc, &1)))
+      |> Enum.uniq()
+
+    load_forest(next, acc, hops - 1)
   end
 
   defp maybe_pending_review(changeset, :pending) do
@@ -3683,19 +3763,25 @@ defmodule PhoenixKitProjects.Projects do
     |> repo().all()
   end
 
-  @doc "All dependencies across every assignment in a project (used when cloning templates)."
-  @spec list_all_dependencies(uuid()) :: [Dependency.t()]
-  def list_all_dependencies(project_uuid) do
+  @doc """
+  All dependencies across every assignment in a project — or in a LIST of
+  projects, in one read (a project page with expanded sub-projects, the
+  gantt's whole rendered tree; each used to ask per project).
+  """
+  @spec list_all_dependencies(uuid() | [uuid()]) :: [Dependency.t()]
+  def list_all_dependencies(project_uuids) when is_list(project_uuids) do
     from(d in Dependency,
       join: a in Assignment,
       on: d.assignment_uuid == a.uuid,
-      where: a.project_uuid == ^project_uuid,
+      where: a.project_uuid in ^project_uuids,
       # `:child_project` alongside `:task` so a dependency whose target is a
       # sub-project (no task template, V127) can still render a label.
       preload: [depends_on: [:task, :child_project]]
     )
     |> repo().all()
   end
+
+  def list_all_dependencies(project_uuid), do: list_all_dependencies([project_uuid])
 
   @doc """
   Adds an assignment-level dependency and broadcasts `:dependency_added`.

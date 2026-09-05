@@ -90,12 +90,13 @@ defmodule PhoenixKitProjects.Web.Widgets.CalendarWidget do
       Projects.list_active_projects(viewer: viewer) ++
         Projects.list_upcoming_projects(viewer: viewer)
 
+    # Batched: the whole forest's assignments in one read per depth level
+    # (this runs every 60 s, per viewer — the #40 review).
     items =
       projects
       |> Enum.uniq_by(& &1.uuid)
-      |> Enum.flat_map(fn project ->
-        {items, layout} = ScheduleLayout.tree(project)
-
+      |> ScheduleLayout.trees()
+      |> Enum.flat_map(fn {items, layout} ->
         items
         |> Enum.reject(&Assignment.subproject?(&1.assignment))
         |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
@@ -125,7 +126,7 @@ defmodule PhoenixKitProjects.Web.Widgets.CalendarWidget do
 
     summaries =
       Projects.list_active_projects(viewer: viewer)
-      |> Enum.map(&Projects.project_tree_summary/1)
+      |> Projects.project_tree_summaries()
       |> Enum.map(&RunningTiers.tag(&1, now))
 
     {summaries, completed, upcoming} =

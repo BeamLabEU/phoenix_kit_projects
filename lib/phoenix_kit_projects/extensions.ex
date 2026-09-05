@@ -87,6 +87,43 @@ defmodule PhoenixKitProjects.Extensions do
   end
 
   @doc """
+  The effective enablement of EVERY catalog extension for a project — its
+  DEFAULT instance, which is what `enabled?/2` asks about; a named
+  instance is `enabled?/3`'s business — as `%{ext_key => boolean}`, from
+  ONE `list_rows/1` read: an explicit row wins, otherwise the catalog
+  default; an unavailable extension (its
+  module off) is `false` however its row reads — the same answer
+  `enabled?/3` gives per key, for the callers that need all of them at
+  once (`Features.gates/1`, the Modules panel, the members page: each
+  used to ask per extension, per flag, on every mount and broadcast).
+  """
+  @spec enabled_map(binary()) :: %{String.t() => boolean()}
+  def enabled_map(project_uuid) when is_binary(project_uuid) do
+    by_key =
+      project_uuid
+      |> list_rows()
+      |> Enum.filter(&(&1.instance_key == @default_instance))
+      |> Map.new(&{&1.ext_key, &1.enabled})
+
+    Map.new(Registry.list(), fn ext ->
+      enabled? =
+        Registry.available?(ext) and
+          case Map.get(by_key, ext.key) do
+            nil -> ext.default_enabled
+            value -> value
+          end
+
+      {ext.key, enabled?}
+    end)
+  rescue
+    e ->
+      Logger.warning("[Projects.Extensions] enabled_map failed: #{Exception.message(e)}")
+      %{}
+  catch
+    :exit, _ -> %{}
+  end
+
+  @doc """
   Whether one extension is effectively enabled for a project.
 
   Accepts a project struct or uuid. The intersection rule from the

@@ -35,7 +35,6 @@ defmodule PhoenixKitProjects.ScheduleLayout do
   @type span :: %{start: NaiveDateTime.t(), end: NaiveDateTime.t()}
 
   # Guards against pathological/corrupt nesting when flattening the tree.
-  @max_subproject_depth 32
 
   @doc """
   Flattens `project`'s assignment tree and computes each item's scheduled
@@ -51,7 +50,24 @@ defmodule PhoenixKitProjects.ScheduleLayout do
   """
   @spec tree(Project.t()) :: {[item()], %{String.t() => span()}}
   def tree(%Project{} = project) do
-    items = collect_items(project, nil, 0)
+    [result] = trees([project])
+    result
+  end
+
+  @doc """
+  `tree/1` for a list of projects, batched: the whole forest's assignments
+  come from one `Projects.assignments_by_project/1` read (one query per
+  depth level) instead of one `list_assignments/1` per node — the shape a
+  dashboard widget wants on a refresh tick. Results in input order.
+  """
+  @spec trees([Project.t()]) :: [{[item()], %{String.t() => span()}}]
+  def trees(projects) when is_list(projects) do
+    by_project = Projects.assignments_by_project(Enum.map(projects, & &1.uuid))
+    Enum.map(projects, &tree_from(&1, by_project))
+  end
+
+  defp tree_from(%Project{} = project, by_project) do
+    items = collect_items(project, nil, 0, by_project, %{})
 
     layout =
       PhoenixLiveGantt.Layout.sequential(items,
@@ -115,10 +131,17 @@ defmodule PhoenixKitProjects.ScheduleLayout do
   # Flattens the project tree into layout items, each carrying its owning
   # project and its linking-assignment parent (nil at top level). Sub-project
   # descendants ALWAYS appear so consumers can render or aggregate them;
-  # `@max_subproject_depth` guards against pathological/corrupt nesting.
-  defp collect_items(project, parent_uuid, depth) do
-    project.uuid
-    |> Projects.list_assignments()
+  # `Projects.max_subproject_depth/0` guards against pathological/corrupt nesting.
+  # `path` is the set of projects on the way down to here (a plain map —
+  # dialyzer's opaqueness false positive on a literal MapSet): a link back to
+  # one of them is a cycle in bad data, and descending would hand the
+  # layout the same item uuid twice with a parent chain that loops — the
+  # sequential walk then never terminates. Skipped, like the tree summary.
+  defp collect_items(project, parent_uuid, depth, by_project, path) do
+    path = Map.put(path, project.uuid, true)
+
+    by_project
+    |> Map.get(project.uuid, [])
     |> Enum.flat_map(fn a ->
       item = %{
         uuid: a.uuid,
@@ -129,16 +152,21 @@ defmodule PhoenixKitProjects.ScheduleLayout do
       }
 
       children =
-        if subproject_with_children?(a, depth),
-          do: collect_items(a.child_project, a.uuid, depth + 1),
+        if subproject_with_children?(a, depth, path),
+          do: collect_items(a.child_project, a.uuid, depth + 1, by_project, path),
           else: []
 
       [item | children]
     end)
   end
 
-  defp subproject_with_children?(%Assignment{} = a, depth) do
-    Assignment.subproject?(a) and not is_nil(a.child_project) and depth < @max_subproject_depth
+  # A child at the loader's depth cap is not collected — its assignments
+  # were never read, so it would show as an empty container (codex,
+  # 2026-09-05). Same convention as `Projects.project_tree_summaries/1`.
+  defp subproject_with_children?(%Assignment{} = a, depth, path) do
+    Assignment.subproject?(a) and not is_nil(a.child_project) and
+      depth + 1 < Projects.max_subproject_depth() and
+      not Map.has_key?(path, a.child_project_uuid)
   end
 
   # `PhoenixLiveGantt.Layout` `:advance` callback — move `cursor` forward by

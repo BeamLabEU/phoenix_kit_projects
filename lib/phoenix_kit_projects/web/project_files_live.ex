@@ -92,6 +92,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
      |> assign(
        project: nil,
        files: [],
+       download_urls: %{},
        show_picker: false,
        folder_uuid: nil,
        wrapper_class: socket.assigns[:wrapper_class] || @default_wrapper_class
@@ -102,8 +103,11 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
 
   defp scope(socket), do: socket.assigns[:phoenix_kit_current_scope]
 
+  # The download URLs resolve once per load, in one read — the rows used
+  # to ask per file, twice, on every render.
   defp load_files(socket) do
-    assign(socket, files: Attachments.list_files(socket.assigns.project.uuid))
+    files = Attachments.list_files(socket.assigns.project.uuid)
+    assign(socket, files: files, download_urls: Attachments.download_urls(files))
   end
 
   # ── Events ──────────────────────────────────────────────────────
@@ -241,8 +245,8 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
                   </div>
                 </div>
                 <a
-                  :if={Attachments.download_url(file)}
-                  href={Attachments.download_url(file)}
+                  :if={@download_urls[file.uuid]}
+                  href={@download_urls[file.uuid]}
                   target="_blank"
                   rel="noopener"
                   class="btn btn-ghost btn-xs btn-circle"

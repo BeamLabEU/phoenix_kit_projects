@@ -396,13 +396,12 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
 
   # A dependency is stored on the project that OWNS the dependent assignment, so
   # a sub-project task's dependencies live under the CHILD project, not the
-  # parent. `list_all_dependencies/1` is single-project; gather across every
-  # project in the rendered tree so arrows inside and between sub-projects draw —
-  # otherwise a project built entirely from sub-project tasks shows no
-  # connectors at all.
+  # parent. Gather across every project in the rendered tree, in one read, so
+  # arrows inside and between sub-projects draw — otherwise a project built
+  # entirely from sub-project tasks shows no connectors at all.
   defp tree_connectors(project_uuids) do
     project_uuids
-    |> Enum.flat_map(&Projects.list_all_dependencies/1)
+    |> Projects.list_all_dependencies()
     |> Enum.map(fn d -> %{from: d.depends_on_uuid, to: d.assignment_uuid} end)
   end
 

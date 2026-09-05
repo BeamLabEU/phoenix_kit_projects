@@ -147,10 +147,16 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
   # ── Data ────────────────────────────────────────────────────────
 
+  # Three reads for the whole panel — the rows, the effective extension
+  # map and the resolved flag map — where it used to ask per extension
+  # and per flag (~30 reads) on every mount, toggle and broadcast (the
+  # 2026-09-05 N+1 audit).
   defp load_panel(socket) do
     project = socket.assigns.project
     rows = Extensions.list_rows(project.uuid)
     row_by_key = Map.new(rows, &{{&1.ext_key, &1.instance_key}, &1})
+    enabled = Extensions.enabled_map(project.uuid)
+    on = Features.flags(project)
 
     extensions =
       Enum.map(Extensions.list_types(), fn ext ->
@@ -160,22 +166,20 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           ext: ext,
           row: row,
           available: Extensions.Registry.available?(ext),
-          enabled: Extensions.enabled?(project, ext.key)
+          enabled: Map.get(enabled, ext.key, false)
         }
       end)
 
     flag_groups =
       Features.catalog_by_extension()
-      |> Enum.filter(fn {ext, _flags} -> Extensions.enabled?(project, ext.key) end)
+      |> Enum.filter(fn {ext, _flags} -> Map.get(enabled, ext.key, false) end)
       |> Enum.map(fn {ext, flags} ->
         {ext,
          Enum.map(flags, fn flag ->
-           unmet = Enum.reject(flag.requires, &Features.on?(project, &1))
-
            %{
              flag: flag,
-             on: Features.on?(project, flag.key),
-             unmet_requires: unmet
+             on: Map.get(on, flag.key, false),
+             unmet_requires: Enum.reject(flag.requires, &Map.get(on, &1, false))
            }
          end)}
       end)
@@ -185,7 +189,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       flag_groups: flag_groups,
       presets: Features.presets(),
       labels: Labels.list_for_project(project.uuid),
-      labels_on: Features.on?(project, "labels"),
+      labels_on: Map.get(on, "labels", false),
       label_colors: Label.colors(),
       portal: PhoenixKitProjects.Portal.get_portal(project.uuid),
       board_exposure: PhoenixKitProjects.Portal.board_exposure_count(project.uuid)

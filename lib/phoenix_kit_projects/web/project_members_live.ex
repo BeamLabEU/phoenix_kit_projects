@@ -144,16 +144,14 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   # The same filtering the creation form does, resolved from what the
   # project actually has enabled: a floor for a capability this project
   # turned off is a question with no meaning.
+  # Two reads (the flag map, the extension map) where it was one per flag
+  # and one per extension — on every mount and members broadcast.
   defp relevant_authz_actions(project) do
-    flag_states =
-      Map.new(Features.catalog(), fn {key, _def} -> {key, Features.on?(project, key)} end)
-
-    ext_states =
-      Map.new(Extensions.list_types(), fn type ->
-        {type.key, Extensions.enabled?(project, type.key)}
-      end)
-
-    AccessPanel.visible_actions(Authz.overridable_actions(), flag_states, ext_states)
+    AccessPanel.visible_actions(
+      Authz.overridable_actions(),
+      Features.flags(project),
+      Extensions.enabled_map(project.uuid)
+    )
   end
 
   # A grant row carries only a subject uuid — it has no foreign key,
@@ -161,30 +159,43 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   # optional package. Resolve each to a display name here, and mark the
   # ones whose subject has since been deleted rather than hiding them: an
   # invisible grant that still resolves is worse than a labelled orphan.
+  # Labels in one read per subject type and reaches in a fixed number of
+  # grouped reads — it was two to four reads per grant, on every mount
+  # and members broadcast (the 2026-09-05 N+1 audit).
   defp decorate_grants(grants) do
+    labels = subject_labels(grants)
+    reaches = Grants.subject_reaches(grants)
+
     Enum.map(grants, fn grant ->
-      Map.merge(grant, %{
-        subject_label: subject_label(grant.subject_type, grant.subject_uuid),
-        reach: Grants.subject_reach(grant.subject_type, grant.subject_uuid)
-      })
+      key = {grant.subject_type, grant.subject_uuid}
+      Map.merge(grant, %{subject_label: Map.get(labels, key), reach: Map.get(reaches, key, 0)})
     end)
   end
 
-  defp subject_label("role", uuid) do
-    case Roles.get_role_by_uuid(uuid) do
-      %{name: name} -> name
-      _ -> nil
-    end
-  rescue
-    _ -> nil
+  defp subject_labels(grants) do
+    by_type =
+      grants
+      |> Enum.map(&{&1.subject_type, &1.subject_uuid})
+      |> Enum.uniq()
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+
+    teams = People.names_by_uuid(:team, Map.get(by_type, "team", []))
+    departments = People.names_by_uuid(:department, Map.get(by_type, "department", []))
+
+    %{}
+    |> Map.merge(Map.new(teams, fn {uuid, name} -> {{"team", uuid}, name} end))
+    |> Map.merge(Map.new(departments, fn {uuid, name} -> {{"department", uuid}, name} end))
+    |> Map.merge(role_names(Map.get(by_type, "role", [])))
   end
 
-  defp subject_label("team", uuid), do: staff_name(People.Team, uuid)
-  defp subject_label("department", uuid), do: staff_name(People.Department, uuid)
-  defp subject_label(_type, _uuid), do: nil
+  # Core has no batched role lookup; roles on a project are one or two, and
+  # one bad lookup must not blank the others.
+  defp role_names(uuids) do
+    Map.new(uuids, fn uuid -> {{"role", uuid}, role_name(uuid)} end)
+  end
 
-  defp staff_name(schema, uuid) do
-    case RepoHelper.repo().get(schema, uuid) do
+  defp role_name(uuid) do
+    case Roles.get_role_by_uuid(uuid) do
       %{name: name} -> name
       _ -> nil
     end

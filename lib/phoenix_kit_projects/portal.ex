@@ -1151,6 +1151,86 @@ defmodule PhoenixKitProjects.Portal do
 
   def review_details(_), do: %{images: [], submitted_by: nil}
 
+  @doc """
+  `review_details/1` for a LIST of assignments in three reads — the
+  submissions, the submitters, the files — where the project page asked
+  per pending review and then per attached file, on every refresh (the
+  2026-09-05 N+1 audit). `%{assignment_uuid => details}`; an assignment
+  with no submission maps to the empty details.
+  """
+  @spec review_details_for([binary()]) :: %{
+          binary() => %{images: [map()], submitted_by: String.t() | nil}
+        }
+  def review_details_for([]), do: %{}
+
+  def review_details_for(assignment_uuids) when is_list(assignment_uuids) do
+    submissions =
+      from(sub in PortalSubmission,
+        where: sub.assignment_uuid in ^assignment_uuids,
+        order_by: [asc: sub.inserted_at, asc: sub.uuid]
+      )
+      |> RepoHelper.repo().all()
+      # One submission per assignment — the EARLIEST (the per-assignment
+      # read took whichever row came first, unordered; this pins it).
+      |> Enum.reduce(%{}, fn sub, acc -> Map.put_new(acc, sub.assignment_uuid, sub) end)
+
+    names =
+      submissions
+      |> Map.values()
+      |> Enum.map(& &1.submitted_by_uuid)
+      |> Enum.filter(&is_binary/1)
+      |> Enum.uniq()
+      |> users_by_uuid()
+
+    files =
+      submissions
+      |> Map.values()
+      |> Enum.flat_map(&List.wrap(&1.file_uuids))
+      |> Enum.uniq()
+      |> files_by_uuid()
+
+    Map.new(assignment_uuids, fn uuid ->
+      case Map.get(submissions, uuid) do
+        %PortalSubmission{} = sub ->
+          images =
+            sub.file_uuids
+            |> List.wrap()
+            |> Enum.filter(&Map.has_key?(files, &1))
+            |> Enum.flat_map(&signed_image/1)
+
+          {uuid, %{images: images, submitted_by: Map.get(names, sub.submitted_by_uuid)}}
+
+        nil ->
+          {uuid, %{images: [], submitted_by: nil}}
+      end
+    end)
+  rescue
+    _ -> Map.new(assignment_uuids, &{&1, %{images: [], submitted_by: nil}})
+  end
+
+  # One image that will not sign drops out alone, not the whole review.
+  defp signed_image(uuid) do
+    [%{uuid: uuid, url: URLSigner.signed_url(uuid, "original")}]
+  rescue
+    _ -> []
+  end
+
+  defp users_by_uuid([]), do: %{}
+
+  defp users_by_uuid(uuids) do
+    uuids |> Auth.get_users_by_uuids() |> Map.new(&{&1.uuid, User.display_name(&1)})
+  rescue
+    _ -> %{}
+  end
+
+  defp files_by_uuid([]), do: %{}
+
+  defp files_by_uuid(uuids) do
+    uuids |> Storage.get_files() |> Map.new(&{&1.uuid, true})
+  rescue
+    _ -> %{}
+  end
+
   defp submission_images(%PortalSubmission{file_uuids: uuids}) when is_list(uuids),
     do: resolve_images(uuids)
 
