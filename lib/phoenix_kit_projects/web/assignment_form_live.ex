@@ -595,7 +595,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # socket-assign read path needed).
   def handle_event("set_task_mode", %{"tab" => mode}, socket)
       when mode in ~w(existing new) do
-    {:noreply, assign(socket, task_mode: mode)}
+    # The library tab only exists while the project's library flag is on;
+    # a stale or forged switch to it is ignored.
+    if mode == "existing" and not socket.assigns.fx.library do
+      {:noreply, socket}
+    else
+      {:noreply, assign(socket, task_mode: mode)}
+    end
   end
 
   # Pending-dep buffer for `:new` mode. The Dependency row can only be
@@ -733,18 +739,23 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   def handle_event("save", %{"assignment" => attrs} = params, socket) do
     assign_type = Map.get(params, "assign_type", "")
-    task_mode = Map.get(params, "task_mode", socket.assigns.task_mode)
-
-    socket =
-      case Map.get(params, "add_to_library") do
-        nil -> socket
-        value -> assign(socket, add_to_library: value == "true")
-      end
 
     # Save-time gate re-resolution (panel R3-4): the submit binds to the
     # CURRENT flags, not the mount-time snapshot a mid-edit toggle staled.
     fx = Features.gates(socket.assigns.project)
     socket = assign(socket, fx: fx)
+
+    # With the library off for this project, a submit can neither pick
+    # from it nor feed it — whatever the (stale or forged) params say.
+    task_mode =
+      if fx.library, do: Map.get(params, "task_mode", socket.assigns.task_mode), else: "new"
+
+    socket =
+      case {fx.library, Map.get(params, "add_to_library")} do
+        {false, _} -> assign(socket, add_to_library: false)
+        {true, nil} -> socket
+        {true, value} -> assign(socket, add_to_library: value == "true")
+      end
 
     # Labels ride a separate param (checkbox list) — captured only when
     # the flag is on at SAVE time, applied after the record write.
@@ -1984,7 +1995,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                    second choice — and no choice at all while it is empty
                    (a new install sees one clean form, not a dead tab). --%>
               <.nav_tabs
-                :if={@task_options != []}
+                :if={@fx.library and @task_options != []}
                 on_change="set_task_mode"
                 active_tab={@task_mode}
                 tabs={[
@@ -2062,6 +2073,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               fields_class=""
             >
               <:skeleton>
+                <%!-- Mirrors the fields the wrapper holds: the Create-new
+                     title (input height) above the description (textarea). --%>
+                <div :if={@live_action == :new and @task_mode == "new"} class="space-y-2 mb-3">
+                  <div class="bg-base-content/15 rounded h-4 w-20 animate-pulse"></div>
+                  <div class="bg-base-content/15 rounded h-10 w-full animate-pulse"></div>
+                </div>
                 <div class="space-y-2">
                   <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
                   <div class="bg-base-content/15 rounded h-16 w-full animate-pulse"></div>
@@ -2202,7 +2219,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <% end %>
             <% end %>
 
-            <%= if @live_action == :new and @task_mode == "new" do %>
+            <%= if @live_action == :new and @task_mode == "new" and @fx.library do %>
               <div class="divider my-1"></div>
               <.checkbox
                 name="add_to_library"

@@ -3770,7 +3770,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               embed_mode={@embed_mode}
               class="link link-primary text-sm"
             >
-              {gettext("Add one from the task library")}
+              {gettext("Add the first task")}
             </.smart_link>
           </:cta>
         </.empty_state>

@@ -365,6 +365,11 @@ defmodule PhoenixKitProjects do
         # (Features.on?/2 — a flag is dead while any requirement is off).
         # The "simple todo list" preset is these, explicitly false.
         feature_flags: [
+          # Whether this project draws on the shared task library: the
+          # "From library" tab and "Add to the task library" on the add-task
+          # form. Off, every task is a one-off typed in place — a checklist
+          # (the Simple preset turns it off; the others leave it on).
+          %{key: "library", label: "Task library", default: true},
           %{key: "assignees", label: "Assignees", default: true},
           %{key: "estimates", label: "Estimates & durations", default: true},
           %{key: "progress", label: "Progress tracking", default: true, requires: []},

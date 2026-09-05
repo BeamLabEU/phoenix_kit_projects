@@ -144,6 +144,7 @@ defmodule PhoenixKitProjects.Features do
   # under suite orderings where gates/1 ran before anything else mentioned
   # :view_timeline (caught by the Step 5 full run).
   @task_gates [
+    :library,
     :assignees,
     :estimates,
     :progress,
@@ -285,6 +286,10 @@ defmodule PhoenixKitProjects.Features do
         name: "Simple to-do list",
         description: "Just a task list — no start or finish, no tracking, no scheduling.",
         flags: %{
+          # A checklist is typed in place — no shared library to pick
+          # from or feed (Max, 2026-09-05: "for the checklist it's not
+          # needed"). The other starting points keep the default (on).
+          "library" => false,
           "assignees" => false,
           "priorities" => false,
           "labels" => false,
@@ -320,6 +325,7 @@ defmodule PhoenixKitProjects.Features do
         name: "Full tracker",
         description: "Every task feature explicitly on.",
         flags: %{
+          "library" => true,
           "assignees" => true,
           "priorities" => true,
           "labels" => true,

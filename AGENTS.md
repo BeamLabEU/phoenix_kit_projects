@@ -740,6 +740,17 @@ description's into the task row. The language strip is passed
 card padding made it a narrower box of its own. User-facing copy never
 says "template" for a task (the select is "Task", the back link "Tasks").
 
+**The library is a per-project feature flag** (`library`, owned by the
+`tasks` extension, default on — `Features.gates/1` exposes it as
+`fx.library`). Off, the add-task form has no From-library tab and no
+"Add to the task library" box: every task is typed in place (a stale or
+forged switch/pick/promote is refused at the handler and at save time).
+The **Simple checklist** starting point turns it off through the
+`simple` preset; Team project, Client project and Public intake leave
+it on; the project's Modules & Features page flips it later like any
+flag. The Tasks page itself stays global — the flag is whether THIS
+project draws on the library, not whether the library exists.
+
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 
 Projects contributes ten widgets to the dashboards module via the duck-typed

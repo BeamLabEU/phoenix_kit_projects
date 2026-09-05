@@ -71,6 +71,49 @@ defmodule PhoenixKitProjects.Web.AssignmentFormDefaultsTest do
     assert html =~ ">Task"
   end
 
+  describe "the project's Task library flag" do
+    alias PhoenixKitProjects.Features
+
+    test "off: no library tab, no checkbox, and a forged pick or promote is refused",
+         %{conn: conn, project: p} do
+      _ = fixture_task(%{"title" => "In the library"})
+      {:ok, p} = Features.set_flags(p, %{"library" => false})
+      {view, html} = new_form_html(conn, p)
+
+      refute html =~ ~s(phx-value-tab="existing")
+      refute html =~ "Add to the task library"
+      assert html =~ ~s(name="task[title]")
+
+      # A stale/forged tab switch stays on Create new.
+      html = render_click(view, "set_task_mode", %{"tab" => "existing"})
+      refute html =~ ~s(name="assignment[task_uuid]")
+
+      title = "Checklist-#{System.unique_integer([:positive])}"
+
+      # Smuggled params: neither the library pick nor "add to library" land.
+      render_submit(view, "save", %{
+        "assignment" => %{"status" => "todo"},
+        "task_mode" => "existing",
+        "add_to_library" => "true",
+        "task" => %{"title" => title}
+      })
+
+      [task] = Enum.filter(Projects.list_tasks(ad_hoc: :all), &(&1.title == title))
+      assert task.ad_hoc
+    end
+
+    test "the Simple checklist preset turns it off; Team project keeps it on" do
+      p = fixture_project()
+      assert Features.gates(p).library
+
+      {:ok, p} = Features.apply_preset(p, "simple")
+      refute Features.gates(p).library
+
+      {:ok, p} = Features.apply_preset(p, "full")
+      assert Features.gates(p).library
+    end
+  end
+
   test "the new task's title is translatable; its translations merge with the description's",
        %{conn: conn, project: p} do
     {view, _} = new_form_html(conn, p)
