@@ -300,8 +300,8 @@ PubSub broadcast on a host topic:
 
 | Key | Default | Required when | Notes |
 |---|---|---|---|
-| `"mode"` | `"navigate"` | — | `"emit"` switches all nav sites to broadcast |
-| `"pubsub_topic"` | `nil` | `mode == "emit"` | Host-supplied topic |
+| `"mode"` | `"navigate"` | — | `"emit"` switches all nav sites to broadcast; `"popup"` broadcasts only the sites that opt in (forms) and keeps page links |
+| `"pubsub_topic"` | `nil` | `mode in ["emit", "popup"]` | Host-supplied topic |
 | `"frame_ref"` | `nil` | inherited from PopupHost | Race-safe pop identity |
 | `"close_on"` | `["closed"]` | — | Subset of `["closed", "saved", "deleted"]` |
 
@@ -314,6 +314,7 @@ Event vocabulary (UI-intent verbs, disjoint from
 {:projects, :closed, %{frame_ref}}
 {:projects, :saved, %{kind, action, record, close, next, frame_ref}}
 {:projects, :deleted, %{kind, uuid, close, frame_ref}}
+{:projects, :dirty,   %{frame_ref, dirty}}          # form holds unsaved edits ⇒ host makes the frame un-closeable
 ```
 
 `record` on `:saved` is **`%{uuid: ...}` only**, never the full Ecto
@@ -337,8 +338,45 @@ edit_path)` flow).
 
 For zero-config popup UX, host mounts
 `PhoenixKitProjects.Web.PopupHostLive` once with an optional
-`root_view` session key — it subscribes, manages a daisyUI `<dialog>`
-modal stack, and renders requested LVs inside via `live_render`.
+`root_view` session key — it subscribes, manages a modal stack of
+core `<.modal>` dialogs (native `<dialog>` + `PkDialog`: top layer,
+Esc/backdrop, stacked children) and renders requested LVs inside via
+`live_render`. Two more session keys shape the frames:
+
+| Key | Default | Notes |
+|---|---|---|
+| `"placement"` | `"center"` | `"end"` renders every frame as a full-height right-hand sheet (a drawer) |
+| `"max_width"` | `6xl` centered, `2xl` as a drawer | any core `max_width` value (`sm` … `7xl`, `full`) |
+
+**Dirty frames.** A form that holds unsaved edits reports
+`{:projects, :dirty, %{frame_ref, dirty: true}}` (via
+`WebHelpers.notify_dirty/2`, a no-op outside emit mode); the host
+then renders that frame with `closeable: false`, so Esc and the
+backdrop do nothing and the form's own Cancel (which confirms) is the
+only way out. Clean again ⇒ closeable again. Refs that are no longer
+on the stack are ignored.
+
+**The project page hosts its own drawer** (`embed_mode: :popup`).
+`ProjectShowLive` mounted on the router flips `:navigate` to `:popup`,
+generates a private topic (`projects:popup:<socket id>`) and renders a
+`PopupHostLive` child with `placement: "end"`. In `:popup` mode
+`<.smart_link>`/`<.smart_menu_link>` render the popup button by
+default; a link that must leave the page passes `popup={false}`
+(Files, Members, Modules, Activity, child projects do). Forms
+(`AssignmentFormLive` in every flavour, edit project/template) open in
+the sheet; a save pops it and the page's PubSub subscription refreshes
+the plan. A page embedded by a host keeps the host's own mode — the
+flip only happens on the router mount. Tests that drive the drawer
+need a REAL user in the page scope (`fake_scope(user_uuid:
+embed_user_uuid!())`): the sheet's form mounts off-router and rebuilds
+identity from the page's `current_user_uuid`; a synthetic uuid
+degrades it to anonymous and it closes itself.
+
+**Core gate:** the drawer relies on core's `<.modal placement={:end}>`,
+its `:rest` globals on the `<dialog>` and `PkDialog` forwarding the
+dialog's `phx-value-*` on close — all unreleased at the time of
+writing. The core PR ships first; the module's core floor bumps with
+its own PR.
 
 `PopupHostLive` also reads `session["current_user_uuid"]` (and
 `session["locale"]`) from its own session and **forwards** them into

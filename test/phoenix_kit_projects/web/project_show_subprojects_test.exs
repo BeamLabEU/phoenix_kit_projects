@@ -43,10 +43,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
     parent = fixture_project()
     {:ok, _view, html} = live(conn, path(parent))
 
-    # The button is now a link to AssignmentFormLive's add page in sub-project
-    # mode (same page tasks use), not a bespoke modal.
+    # The button opens AssignmentFormLive in sub-project mode (the same
+    # form tasks use) in the page's drawer — a popup button carrying the
+    # form's session, not a page link and not a bespoke modal.
     assert html =~ "Add sub-project"
-    assert html =~ "assignments/new?kind=subproject"
+    assert html =~ ~s(phx-value-lv="Elixir.PhoenixKitProjects.Web.AssignmentFormLive")
+    assert html =~ "&quot;kind&quot;:&quot;subproject&quot;"
   end
 
   test "the add form in sub-project mode creates a sub-project", %{conn: conn} do

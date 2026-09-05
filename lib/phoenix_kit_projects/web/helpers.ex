@@ -520,9 +520,9 @@ defmodule PhoenixKitProjects.Web.Helpers do
     topic = Map.get(session, "pubsub_topic")
     frame_ref = decode_frame_ref(Map.get(session, "frame_ref"))
 
-    if mode == :emit and (not is_binary(topic) or topic == "") do
+    if mode in [:emit, :popup] and (not is_binary(topic) or topic == "") do
       raise ArgumentError,
-            "embed mode is \"emit\" but session[\"pubsub_topic\"] is missing or empty"
+            "embed mode is #{inspect(mode)} but session[\"pubsub_topic\"] is missing or empty"
     end
 
     if mode == :emit and is_binary(Map.get(session, "redirect_to", nil)) and
@@ -542,6 +542,13 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   defp decode_mode("emit"), do: :emit
   defp decode_mode(:emit), do: :emit
+  # `:popup` — a router-mounted page that hosts its OWN popup: page
+  # semantics everywhere (save/cancel/delete navigate), except that
+  # "open a form" broadcasts `:opened` on the page's popup topic, so forms
+  # open as a drawer over the page. Set by the page itself (the project
+  # show page) and inherited by its nested tabs through their session.
+  defp decode_mode("popup"), do: :popup
+  defp decode_mode(:popup), do: :popup
   defp decode_mode("navigate"), do: :navigate
   defp decode_mode(:navigate), do: :navigate
   defp decode_mode(nil), do: :navigate
@@ -725,7 +732,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
           Phoenix.LiveView.Socket.t()
   def navigate_or_open(socket, opts) when is_list(opts) do
     case socket.assigns[:embed_mode] do
-      :emit ->
+      mode when mode in [:emit, :popup] ->
         {lv, session_overrides} = Keyword.fetch!(opts, :open)
         emit_opened(socket, lv, session_overrides)
         socket
@@ -798,6 +805,25 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   @doc """
+  Tells the host whether this form holds unsaved edits.
+
+  In emit mode: broadcasts `{:projects, :dirty, %{frame_ref, dirty}}` on
+  the host topic; `PopupHostLive` makes the frame's dialog ignore Esc and
+  the backdrop while `dirty` is true, so a stray click never eats what
+  was typed — the form's own Cancel is the way out. In navigate mode:
+  no-op (a page has no dialog to guard). Idempotent per value: call it
+  on every transition, not on every keystroke.
+  """
+  @spec notify_dirty(Phoenix.LiveView.Socket.t(), boolean()) :: Phoenix.LiveView.Socket.t()
+  def notify_dirty(socket, dirty?) when is_boolean(dirty?) do
+    if socket.assigns[:embed_mode] == :emit do
+      do_broadcast(socket, :dirty, %{frame_ref: socket.assigns[:embed_frame_ref], dirty: dirty?})
+    end
+
+    socket
+  end
+
+  @doc """
   Attaches the shared `open_embed` event handler to the socket via
   `Phoenix.LiveView.attach_hook/4`. Call from every LV that uses
   `<.smart_link>` (the conventional entry point is to chain it after
@@ -831,7 +857,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
     # ...)`, so a fall-through would crash them. Halt + log in both modes;
     # only emit mode actually fires the broadcast.
     case socket.assigns[:embed_mode] do
-      :emit ->
+      mode when mode in [:emit, :popup] ->
         with {:ok, lv} <- decode_embeddable_lv(lv_str),
              {:ok, session} <- decode_session(Map.get(params, "session")) do
           emit_opened(socket, lv, session)

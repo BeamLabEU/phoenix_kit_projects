@@ -12,9 +12,12 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
   directly when you need full control (e.g. modal-stack alongside other
   host state).
 
-  Reuses the daisyUI modal pattern from `project_show_live.ex:1633-1662`
-  — `<dialog open class="modal modal-open">` + ESC handler +
-  modal-backdrop button.
+  Every frame is core's `<.modal>` (the `PkDialog` hook: native
+  `<dialog>` in the browser's top layer, Esc + backdrop close, stacked
+  dialogs closing top-first), so a popup here looks and behaves like every
+  other dialog in the kit. `placement` picks the classic centered box or
+  the **drawer** — a full-height sheet sliding in from the right, the
+  shape for a create/edit form opened over the page it belongs to.
 
   ## Slots
 
@@ -32,13 +35,15 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
       frame in response. Defaults to `"close_top_modal"`.
     * `:class` — outer wrapper class. Defaults to nil (no wrapping).
 
-  ## Z-index layering
+  ## Stacking and closing
 
-  Each frame's `<dialog>` gets `z-[N]` where N starts at 60 and increments
-  by 10 per stack depth. The dialogs open via the `open` attribute (not
-  `showModal()`), so they are NOT in the browser top layer and must outrank
-  the admin shell's fixed header (`z-50`) explicitly — same reasoning as
-  the project drawer's `z-[60]`/`z-[70]`. Stack cap at 5 frames matches
+  Frames open through `showModal()`, so the browser's top layer stacks
+  them in open order — no z-index bookkeeping. Esc and the backdrop push
+  `on_close` with the dialog's `phx-value-frame-ref`, which the host
+  matches against its top frame (`pop_if_top_matches/2`). A frame the
+  host marks `closeable: false` (a form that has been edited) ignores Esc
+  and the backdrop — the form's own Cancel is the way out, so a stray
+  click never eats what was typed. Stack cap at 5 frames matches
   `PopupHostLive`'s `@max_stack_depth`.
 
   ## Example
@@ -61,9 +66,22 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
   use Phoenix.Component
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import PhoenixKitWeb.Components.Core.Modal, only: [modal: 1]
+
   attr(:modal_stack, :list, required: true)
   attr(:on_close, :string, default: "close_top_modal")
   attr(:class, :string, default: nil)
+
+  attr(:placement, :atom,
+    default: :center,
+    values: [:center, :end],
+    doc: "`:center` — the classic box; `:end` — the drawer (full-height sheet on the right)."
+  )
+
+  attr(:max_width, :string,
+    default: "6xl",
+    doc: "core `<.modal>` `max_width` for every frame (`\"2xl\"` suits a form drawer)."
+  )
 
   attr(:modal_box_class, :string,
     default: "w-11/12 max-w-6xl",
@@ -85,14 +103,6 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
   end
 
   def popup_host(assigns) do
-    top_frame_ref =
-      case List.last(assigns.modal_stack) do
-        %{frame_ref: ref} -> ref
-        _ -> nil
-      end
-
-    assigns = assign(assigns, :top_frame_ref, top_frame_ref)
-
     ~H"""
     <%!--
       Keyframes for the per-frame loading spinner overlay. Inlined here
@@ -114,45 +124,35 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
     </style>
     <div class={@class}>
       {render_slot(@inner_block)}
-      <dialog
-        :for={{frame, depth} <- Enum.with_index(@modal_stack)}
-        open
-        class="modal modal-open"
-        style={"z-index: #{60 + depth * 10}"}
-        phx-window-keydown={frame.frame_ref == @top_frame_ref && @on_close}
-        phx-key={frame.frame_ref == @top_frame_ref && "Escape"}
+      <%!-- One core modal per frame. The id carries the frame ref so a
+           frame keeps its dialog (and the browser's open state) across
+           re-renders while frames above it come and go. --%>
+      <.modal
+        :for={frame <- @modal_stack}
+        id={"popup-host-frame-#{frame.frame_ref}"}
+        show={true}
+        on_close={@on_close}
+        closeable={Map.get(frame, :closeable, true)}
+        placement={@placement}
+        max_width={@max_width}
+        class={Enum.join(Enum.reject([@modal_box_class, "relative"], &is_nil/1), " ")}
         phx-value-frame-ref={frame.frame_ref}
         data-frame-ref={frame.frame_ref}
       >
-        <div class={["modal-box", @modal_box_class, "relative"]}>
-          <%!--
-            Loading overlay — visible immediately when the dialog mounts,
-            fades out after ~400ms. The embedded LV's `live_render` dead
-            render happens synchronously with the parent's re-render, so
-            real content is already underneath; the spinner is purely a
-            transitional cue so the popup doesn't appear blank during
-            its fade-in. Behind the spinner the LV's content is being
-            composited, then the spinner's `animation: forwards` keeps
-            it invisible without us having to react to a "child mounted"
-            event.
-
-            `pointer-events-none` so the overlay never blocks clicks
-            even before its opacity is 0. `z-10` keeps it above the
-            child LV's content during the fade.
-          --%>
-          <div class="popup-host-frame-spinner absolute inset-0 z-10 flex items-center justify-center bg-base-100/85 rounded-2xl pointer-events-none">
-            <span class="loading loading-spinner loading-lg text-primary" />
-          </div>
-          {render_slot(@frame, frame)}
+        <%!--
+          Loading overlay — visible immediately when the dialog mounts,
+          fades out after ~400ms. The embedded LV's `live_render` dead
+          render happens synchronously with the parent's re-render, so
+          real content is already underneath; the spinner is purely a
+          transitional cue so the popup doesn't appear blank during
+          its fade-in. `pointer-events-none` so the overlay never blocks
+          clicks even before its opacity is 0.
+        --%>
+        <div class="popup-host-frame-spinner absolute inset-0 z-10 flex items-center justify-center bg-base-100/85 rounded-2xl pointer-events-none">
+          <span class="loading loading-spinner loading-lg text-primary" />
         </div>
-        <button
-          type="button"
-          phx-click={@on_close}
-          phx-value-frame-ref={frame.frame_ref}
-          class="modal-backdrop"
-          aria-label={gettext("Close")}
-        ></button>
-      </dialog>
+        {render_slot(@frame, frame)}
+      </.modal>
     </div>
     """
   end

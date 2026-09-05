@@ -91,6 +91,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # error keeps the text and "More options" can carry it.
   @quick_add_closed %{open: false, seq: 0, draft: "", error: nil}
 
+  # A router-mounted page hosts its OWN drawer for forms: `:popup` embed
+  # mode keeps page semantics everywhere (save/cancel navigate, the URL is
+  # ours) but routes "open a form" to `PopupHostLive` rendered at the foot
+  # of this page (see `render/1`), which shows it as a right-hand sheet
+  # over the plan. The topic is per LiveView instance, so two tabs of the
+  # same project never cross. An embed (`live_render`) never gets here —
+  # its clause restores the session's own mode right after.
+  defp assign_popup_mode(%{assigns: %{embed_mode: :navigate}} = socket) do
+    assign(socket,
+      embed_mode: :popup,
+      embed_pubsub_topic: "projects:popup:#{socket.id}",
+      embed_frame_ref: nil
+    )
+  end
+
+  defp assign_popup_mode(socket), do: socket
+
   # Embedded entry: when nested via `live_render`, params arrives as
   # `:not_mounted_at_router` and `session` carries the project id (plus
   # any `wrapper_class` override). Delegate to the router clause so the
@@ -109,7 +126,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:ok, socket} = mount(%{"id" => id}, session, socket)
 
     {:ok,
-     assign(socket,
+     socket
+     # The router clause switched to `:popup` mode (its own drawer); an
+     # embed follows its session instead — `navigate` or the host's `emit`.
+     |> WebHelpers.assign_embed_state(session)
+     |> assign(
        router_mounted?: false,
        gantt_mounted?: false,
        calendar_mounted?: false,
@@ -205,6 +226,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     socket =
       socket
       |> WebHelpers.assign_embed_state(session)
+      |> assign_popup_mode()
       |> WebHelpers.assign_embed_user(session)
 
     # `get_project/1` stays in mount/3 because the not-found path
@@ -3080,6 +3102,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 navigate={Paths.members(@project.uuid)}
                 emit={{PhoenixKitProjects.Web.ProjectMembersLive, %{"id" => @project.uuid}}}
                 embed_mode={@embed_mode}
+                popup={false}
                 icon="hero-users"
                 label={gettext("Members")}
               />
@@ -3088,6 +3111,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 navigate={Paths.files(@project.uuid)}
                 emit={{PhoenixKitProjects.Web.ProjectFilesLive, %{"id" => @project.uuid}}}
                 embed_mode={@embed_mode}
+                popup={false}
                 icon="hero-paper-clip"
                 label={gettext("Files")}
               />
@@ -3096,6 +3120,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 navigate={Paths.activity(@project.uuid)}
                 emit={{PhoenixKitProjects.Web.ProjectActivityLive, %{"id" => @project.uuid}}}
                 embed_mode={@embed_mode}
+                popup={false}
                 icon="hero-clock"
                 label={gettext("Activity")}
               />
@@ -3644,6 +3669,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               navigate={Paths.modules(@project.uuid)}
               emit={{PhoenixKitProjects.Web.ProjectModulesLive, %{"id" => @project.uuid}}}
               embed_mode={@embed_mode}
+              popup={false}
               class="link link-primary text-sm"
             >
               {gettext("Manage this project's modules & features")}
@@ -3821,6 +3847,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             navigate={Paths.project(child.uuid)}
                             emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child.uuid}}}
                             embed_mode={@embed_mode}
+                            popup={false}
                             class="font-medium truncate min-w-0 link link-hover"
                           >
                             {Project.localized_name(child, sp_lang)}
@@ -3832,6 +3859,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             navigate={Paths.project(child.uuid)}
                             emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child.uuid}}}
                             embed_mode={@embed_mode}
+                            popup={false}
                             class="btn btn-ghost btn-xs gap-1"
                           >
                             <.icon name="hero-arrow-top-right-on-square" class="w-3.5 h-3.5" /> {gettext("Open")}
@@ -3841,6 +3869,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                               navigate={Paths.project(child.uuid)}
                               emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child.uuid}}}
                               embed_mode={@embed_mode}
+                              popup={false}
                               icon="hero-arrow-top-right-on-square"
                               label={gettext("Open sub-project")}
                             />
@@ -3955,6 +3984,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                     navigate={Paths.project(ct.child_project.uuid)}
                                     emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => ct.child_project.uuid}}}
                                     embed_mode={@embed_mode}
+                                    popup={false}
                                     class="truncate flex-1 hover:underline"
                                   >
                                     {Project.localized_name(ct.child_project, sp_lang)}
@@ -4396,6 +4426,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             />
           </div>
         </aside>
+      <% end %>
+
+      <%!-- The page's own drawer host (`:popup` mode — a router mount; an
+           embed emits to its host's popup instead). Every "Add task" /
+           "Edit" / "More options" on this page opens the form here as a
+           right-hand sheet over the plan; saves close it and the list
+           reloads through the content broadcast it already listens to. --%>
+      <%= if @embed_mode == :popup and is_binary(@project.uuid) do %>
+        {live_render(@socket, PhoenixKitProjects.Web.PopupHostLive,
+          id: "project-popup-#{@project.uuid}",
+          session: %{
+            "pubsub_topic" => @embed_pubsub_topic,
+            "placement" => "end",
+            "wrapper_class" => "contents",
+            "locale" => L10n.current_content_lang(),
+            "current_user_uuid" =>
+              assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
+          })}
       <% end %>
     </div>
     """

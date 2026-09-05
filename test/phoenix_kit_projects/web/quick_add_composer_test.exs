@@ -115,7 +115,9 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
     open(view)
     html = view |> form("#quick-add-form", %{"title" => "Needs a duration"}) |> render_change()
 
-    assert html =~ "title=Needs+a+duration"
+    # The draft rides along in the popup button's session (the drawer test
+    # opens it end to end); the route below still accepts it for deep links.
+    assert html =~ "&quot;title&quot;:&quot;Needs a duration&quot;"
     assert Projects.list_assignments(p.uuid) == []
 
     {:ok, _form, form_html} =

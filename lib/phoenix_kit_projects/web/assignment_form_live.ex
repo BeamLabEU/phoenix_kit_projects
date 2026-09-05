@@ -57,8 +57,23 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
       |> assign_ai_translate()
+      # Unsaved edits? Flipped by the first change event; the host's
+      # dialog (emit mode) stops closing on Esc/backdrop while true and
+      # Cancel asks first. See `mark_dirty/1`.
+      |> assign(dirty?: false)
 
     {:ok, socket}
+  end
+
+  # The first change event marks the form dirty and tells the host once
+  # (`WebHelpers.notify_dirty/2` is a no-op outside emit mode). Idempotent:
+  # later changes see `dirty?` already true and do nothing.
+  defp mark_dirty(%{assigns: %{dirty?: true}} = socket), do: socket
+
+  defp mark_dirty(socket) do
+    socket
+    |> assign(dirty?: true)
+    |> WebHelpers.notify_dirty(true)
   end
 
   defp prefill_title(params) do
@@ -656,12 +671,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       end
 
     {:noreply,
-     assign(socket,
+     socket
+     |> assign(
        assign_type: assign_type,
        task_mode: task_mode,
        new_task_title: new_task_title,
        save_as_template: save_as_template
-     )}
+     )
+     |> mark_dirty()}
   end
 
   # ── Dependency management (edit mode) ───────────────────────────
@@ -812,7 +829,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
        assign_type: assign_type,
        status_translation_mode: mode
      )
-     |> refresh_status_preview()}
+     |> refresh_status_preview()
+     |> mark_dirty()}
   end
 
   # "Link existing" mode renders no `subproject[...]` inputs, so the form's
@@ -1847,14 +1865,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <% end %>
 
           <div class="flex gap-2">
-            <.smart_link
-              navigate={Paths.project(@project.uuid)}
-              emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => @project.uuid}}}
-              embed_mode={@embed_mode}
+            <%!-- The same `cancel` as the task form: in a drawer it closes
+                 the frame, on the page it navigates back. (It used to be a
+                 link that, in emit mode, opened the project as a NEW frame.) --%>
+            <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
               class="btn btn-ghost"
             >
               {gettext("Cancel")}
-            </.smart_link>
+            </button>
             <button
               type="submit"
               phx-disable-with={gettext("Saving…")}
@@ -2297,7 +2318,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         </div>
 
         <div class="flex justify-end gap-2 mt-2">
-          <button type="button" phx-click="cancel" class="btn btn-ghost btn-sm">
+          <button
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
+            class="btn btn-ghost btn-sm"
+          >
             {gettext("Cancel")}
           </button>
           <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">

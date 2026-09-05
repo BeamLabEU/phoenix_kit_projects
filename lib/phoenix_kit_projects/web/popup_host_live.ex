@@ -37,11 +37,16 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   - `"max_stack_depth"` (optional) — positive integer in `1..20`
     overriding the default 5-frame cap. Values outside that band are
     clamped to the default with a logged warning.
-  - `"modal_box_class"` (optional) — daisyUI `modal-box` sizing
-    overrides. Defaults to `"w-11/12 max-w-6xl"` (91% viewport,
-    capped at 72rem). Pass a different size class (`"max-w-4xl"`,
-    `"max-w-7xl"`, etc.) if a host page wants a narrower or wider
-    modal.
+  - `"placement"` (optional) — `"center"` (default) or `"end"`: the
+    **drawer** — every frame is a full-height sheet sliding in from the
+    right edge (core `<.modal placement={:end}>`), the shape for a
+    create/edit form opened over the page it belongs to. The admin's
+    project page uses it for its task forms.
+  - `"max_width"` (optional) — core `<.modal>` `max_width` for every
+    frame: `"6xl"` by default for the centered box, `"2xl"` by default
+    for the drawer.
+  - `"modal_box_class"` (optional) — extra classes on every frame's
+    `modal-box` (a host that wants a specific width or padding).
 
   ## Example: dashboard root view (`OverviewLive`)
 
@@ -129,6 +134,8 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     host_current_user_uuid = Map.get(session, "current_user_uuid")
     max_stack_depth = decode_max_stack_depth(Map.get(session, "max_stack_depth"))
     modal_box_class = Map.get(session, "modal_box_class")
+    placement = decode_placement(Map.get(session, "placement"))
+    max_width = decode_max_width(Map.get(session, "max_width"), placement)
 
     if connected?(socket), do: ProjectsPubSub.subscribe(topic)
 
@@ -143,10 +150,21 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
        wrapper_class: wrapper_class,
        max_stack_depth: max_stack_depth,
        modal_box_class: modal_box_class,
+       placement: placement,
+       max_width: max_width,
        modal_stack: [],
        root_view: root_view
      )}
   end
+
+  defp decode_placement("end"), do: :end
+  defp decode_placement(_), do: :center
+
+  @max_widths ~w(sm md lg xl 2xl 3xl 4xl 5xl 6xl 7xl full)
+
+  defp decode_max_width(w, _placement) when w in @max_widths, do: w
+  defp decode_max_width(_, :end), do: "2xl"
+  defp decode_max_width(_, :center), do: "6xl"
 
   # Validate the host-supplied stack-depth cap. Anything outside the
   # `1..@absolute_max_stack_depth` band is treated as a misconfiguration
@@ -295,6 +313,22 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     Logger.warning("[PopupHostLive] dropping malformed :opened payload: #{inspect(payload)}")
 
     {:noreply, socket}
+  end
+
+  # A form inside a frame reports whether it holds unsaved edits. While it
+  # does, the frame's dialog ignores Esc and the backdrop (`closeable:
+  # false`): a stray click must never eat a typed description — the
+  # form's own Cancel (which confirms) is the way out. Clean again ⇒
+  # closeable again. Stale refs (a popped frame) are ignored.
+  def handle_info({:projects, :dirty, %{frame_ref: ref, dirty: dirty?}}, socket)
+      when is_boolean(dirty?) do
+    stack =
+      Enum.map(socket.assigns.modal_stack, fn
+        %{frame_ref: ^ref} = frame -> Map.put(frame, :closeable, not dirty?)
+        frame -> frame
+      end)
+
+    {:noreply, assign(socket, modal_stack: stack)}
   end
 
   def handle_info({:projects, :closed, %{frame_ref: ref}}, socket) do
@@ -492,7 +526,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
       modal_stack={@modal_stack}
       on_close="close_top_modal"
       class={@wrapper_class}
-      modal_box_class={@modal_box_class || "w-11/12 max-w-6xl"}
+      placement={@placement}
+      max_width={@max_width}
+      modal_box_class={@modal_box_class}
     >
       <%= if @root_view do %>
         {Phoenix.Component.live_render(@socket, @root_view.lv,
