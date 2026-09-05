@@ -54,39 +54,6 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
     file
   end
 
-  describe "blank_png/3" do
-    test "produces a valid solid PNG with the requested dimensions" do
-      png = Whiteboards.blank_png(320, 200, "salt-a")
-
-      # PNG signature + IHDR dimensions.
-      assert <<137, 80, 78, 71, 13, 10, 26, 10, _len::32, "IHDR", w::32, h::32, _::binary>> = png
-      assert {w, h} == {320, 200}
-    end
-
-    # Pins the streamed-deflate refactor (panel round, Grok: the naive
-    # compress materialized the full raster — ~192 MB at the 8000 cap).
-    test "the streamed IDAT inflates back to the exact raw raster" do
-      png = Whiteboards.blank_png(50, 40, "s")
-
-      # Walk the chunks to the IDAT payload.
-      <<_sig::binary-size(8), rest::binary>> = png
-      idat = find_chunk(rest, "IDAT")
-
-      raw = :zlib.uncompress(idat)
-      # height × (1 filter byte + width × 3 channels), all white.
-      assert byte_size(raw) == 40 * (1 + 50 * 3)
-      assert raw == :binary.copy(<<0>> <> :binary.copy(<<255, 255, 255>>, 50), 40)
-    end
-
-    test "distinct salts produce distinct bytes (the Storage dedup trap)" do
-      a = Whiteboards.blank_png(320, 200, "salt-a")
-      b = Whiteboards.blank_png(320, 200, "salt-b")
-
-      assert byte_size(a) == byte_size(b)
-      refute a == b
-    end
-  end
-
   describe "create_board_for_file/3" do
     test "board row + project-folder filing + activity", %{project: project, user: user} do
       file = fixture_file(user)
@@ -142,53 +109,70 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
     end
   end
 
-  describe "create/3 (full bridge)" do
+  describe "create/3 (file-less, core V183)" do
     test "requires an actor", %{project: project} do
       assert {:error, :actor_required} = Whiteboards.create(project, "Board")
     end
 
-    test "creates the background file + board end-to-end",
+    test "creates just the row — no file, no Storage, no folder entry",
          %{project: project, user: user} do
+      before_count = user_file_count(user)
+
       assert {:ok, board} =
-               Whiteboards.create(project, "Full bridge",
+               Whiteboards.create(project, "Island layout",
                  actor_uuid: user.uuid,
                  width: 640,
                  height: 480
                )
 
-      file = Storage.get_file(board.file_uuid)
-      assert file.mime_type == "image/png"
-      # Dimensions are stamped explicitly (store_file never sets them) —
-      # without this the canvas silently falls back to 1000×1000.
-      assert {file.width, file.height} == {640, 480}
-      assert Enum.any?(Attachments.list_files(project.uuid), &(&1.uuid == file.uuid))
-      assert Whiteboards.viewer_file(file.uuid).urls["original"]
+      assert board.file_uuid == nil
+      assert {board.width, board.height} == {640, 480}
+      assert user_file_count(user) == before_count
+      assert Attachments.list_files(project.uuid) == []
+      assert_activity_logged("projects.whiteboard_created", resource_uuid: project.uuid)
     end
 
-    # Panel round (Gemini HIGH): the background file was created BEFORE the
-    # name was validated — a whitespace name returned {:error, changeset}
-    # and left an orphaned file row + stored blob behind.
-    test "a bad name creates NO orphan background file", %{project: project, user: user} do
-      before_count = user_file_count(user)
+    test "hands the viewer a board target, and a file-backed board a file", %{
+      project: project,
+      user: user
+    } do
+      {:ok, board} = Whiteboards.create(project, "Sketch", actor_uuid: user.uuid)
 
+      assert Whiteboards.viewer_board(board) == %{
+               target_type: "projects_whiteboard",
+               target_uuid: board.uuid,
+               width: 1920,
+               height: 1080,
+               background: nil
+             }
+
+      file = fixture_file(user)
+      {:ok, over_image} = Whiteboards.create_board_for_file(project, file.uuid, %{name: "Photo"})
+      assert Whiteboards.viewer_board(over_image) == nil
+    end
+
+    test "a bad name is refused", %{project: project, user: user} do
       assert {:error, _} = Whiteboards.create(project, "   ", actor_uuid: user.uuid)
 
       assert {:error, _} =
                Whiteboards.create(project, String.duplicate("x", 200), actor_uuid: user.uuid)
 
       assert Whiteboards.list_for_project(project.uuid) == []
-      assert user_file_count(user) == before_count
     end
 
-    test "two same-size boards get DISTINCT background files (salt beats dedup)",
-         %{project: project, user: user} do
-      # Storage dedups per-user by content checksum: identical unsalted
-      # blanks would collide onto ONE file row sharing one annotation set.
-      {:ok, a} = Whiteboards.create(project, "Board A", actor_uuid: user.uuid)
-      {:ok, b} = Whiteboards.create(project, "Board B", actor_uuid: user.uuid)
+    test "deleting a file-less board takes its shapes with it", %{project: project, user: user} do
+      {:ok, board} = Whiteboards.create(project, "Doomed", actor_uuid: user.uuid)
 
-      refute a.file_uuid == b.file_uuid
-      assert length(Whiteboards.list_for_project(project.uuid)) == 2
+      {:ok, _} =
+        PhoenixKit.Annotations.create(%{
+          target_type: Whiteboards.target_type(),
+          target_uuid: board.uuid,
+          kind: "line",
+          geometry: %{"path" => [[0, 0], [1, 1]]}
+        })
+
+      assert :ok = Whiteboards.delete(board, actor_uuid: user.uuid)
+      assert PhoenixKit.Annotations.list_for_target(Whiteboards.target_type(), board.uuid) == []
     end
   end
 
@@ -222,11 +206,6 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
       assert Enum.any?(Attachments.list_files(project.uuid), &(&1.uuid == file.uuid))
       assert_activity_logged("projects.whiteboard_deleted", resource_uuid: project.uuid)
     end
-  end
-
-  defp find_chunk(<<len::32, type::binary-size(4), rest::binary>>, wanted) do
-    <<data::binary-size(len), _crc::32, tail::binary>> = rest
-    if type == wanted, do: data, else: find_chunk(tail, wanted)
   end
 
   defp user_file_count(user) do

@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 15
+  @current_version 16
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -112,6 +112,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v13_submission_attachments(p)
     v14_review_status(p)
     v15_ad_hoc_tasks(p)
+    v16_fileless_whiteboards(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -136,6 +137,16 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 16 do
+      # Boards without a file have no home in the old shape.
+      execute("DELETE FROM #{p}phoenix_kit_project_whiteboards WHERE file_uuid IS NULL")
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_whiteboards
+        ALTER COLUMN file_uuid SET NOT NULL
+      """)
+    end
 
     if target < 15 do
       execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_tasks_ad_hoc_idx")
@@ -965,6 +976,21 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # rows out of every library surface (list, pickers, counts) by default
   # while the assignment that points at them works exactly like any other.
   # Promotion is a checkbox on the task form; nothing is ever deleted.
+  # V16 — whiteboards without a background file. Core V183 lets an
+  # annotation anchor to any `target_type` + `target_uuid`, and Fresco
+  # renders a scene with zero images, so a board no longer needs the
+  # salted white PNG the bridge used to mint: `file_uuid` goes nullable
+  # and a new board is drawn on an empty canvas. Boards created before
+  # (and boards over a real image via `create_board_for_file/3`) keep
+  # their file and keep working exactly as they did — the two shapes
+  # coexist; the LV picks the viewer by whether a file is there.
+  defp v16_fileless_whiteboards(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_whiteboards
+      ALTER COLUMN file_uuid DROP NOT NULL
+    """)
+  end
+
   defp v15_ad_hoc_tasks(p) do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_tasks

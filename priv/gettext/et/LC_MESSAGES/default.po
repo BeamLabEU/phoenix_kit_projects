@@ -255,7 +255,7 @@ msgstr "Määramine uuendatud."
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3423
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3490
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4339
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:353
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:373
 #: lib/phoenix_kit_projects/web/task_form_live.ex:618
 #: lib/phoenix_kit_projects/web/template_form_live.ex:405
 #, elixir-autogen, elixir-format
@@ -270,7 +270,7 @@ msgstr "Tühista"
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3506
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4351
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4400
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:369
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:389
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr "Sulge"
@@ -408,7 +408,7 @@ msgid "Counts weekends (e.g. deliveries, external processes)"
 msgstr "Loendab nädalavahetused (nt tarned, välised protsessid)"
 
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2458
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:360
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:380
 #: lib/phoenix_kit_projects/web/task_form_live.ex:626
 #: lib/phoenix_kit_projects/web/template_form_live.ex:413
 #, elixir-autogen, elixir-format
@@ -692,7 +692,7 @@ msgid "My tasks"
 msgstr "Minu ülesanded"
 
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2030
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:335
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:355
 #: lib/phoenix_kit_projects/web/projects_live.ex:264
 #: lib/phoenix_kit_projects/web/projects_live.ex:712
 #: lib/phoenix_kit_projects/web/template_form_live.ex:354
@@ -882,7 +882,7 @@ msgstr "Projektide nimekiri muutus; palun proovi uuesti."
 #: lib/phoenix_kit_projects/web/project_show_live.ex:208
 #: lib/phoenix_kit_projects/web/project_show_live.ex:240
 #: lib/phoenix_kit_projects/web/project_show_live.ex:402
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:235
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:243
 #: lib/phoenix_kit_projects/web/projects_live.ex:463
 #: lib/phoenix_kit_projects/web/projects_live.ex:478
 #, elixir-autogen, elixir-format
@@ -3303,7 +3303,7 @@ msgstr "Lisan…"
 msgid "All day"
 msgstr "Kogu päev"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:240
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:248
 #, elixir-autogen, elixir-format
 msgid "All whiteboards"
 msgstr "Kõik valgetahvlid"
@@ -3353,11 +3353,6 @@ msgstr "Eelseadistuse rakendamine ebaõnnestus."
 msgid "Could not change the role."
 msgstr "Rolli muutmine ebaõnnestus."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:133
-#, elixir-autogen, elixir-format
-msgid "Could not create the whiteboard — is the Storage module set up?"
-msgstr "Valgetahvli loomine ebaõnnestus — kas failihoidla moodul on seadistatud?"
-
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2829
 #, elixir-autogen, elixir-format
 msgid "Could not log the time."
@@ -3403,13 +3398,13 @@ msgstr "Tervise uuendamine ebaõnnestus."
 msgid "Could not update the module."
 msgstr "Mooduli uuendamine ebaõnnestus."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:288
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:308
 #, elixir-autogen, elixir-format
 msgid "Create the first one"
 msgstr "Loo esimene"
 
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2457
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:357
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:377
 #, elixir-autogen, elixir-format
 msgid "Creating…"
 msgstr "Loon…"
@@ -3496,7 +3491,7 @@ msgstr "Failid lisatud."
 msgid "Files are turned off for this project."
 msgstr "Failid on selle projekti jaoks välja lülitatud."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:267
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:287
 #, elixir-autogen, elixir-format
 msgid "Freeform boards — draw, mark up, and pin images with the annotation tools."
 msgstr "Vabas vormis tahvlid — joonista, märgi ja kinnita pilte märkuste tööriistadega."
@@ -3506,7 +3501,7 @@ msgstr "Vabas vormis tahvlid — joonista, märgi ja kinnita pilte märkuste tö
 msgid "Give the event a title (up to 200 characters)."
 msgstr "Anna sündmusele pealkiri (kuni 200 tähemärki)."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:123
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "Give the whiteboard a name (up to 160 characters)."
 msgstr "Anna valgetahvlile nimi (kuni 160 tähemärki)."
@@ -3594,8 +3589,8 @@ msgstr "Moodulid ja funktsioonid"
 msgid "New event"
 msgstr "Uus sündmus"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:275
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:332
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:295
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:352
 #, elixir-autogen, elixir-format
 msgid "New whiteboard"
 msgstr "Uus valgetahvel"
@@ -3625,7 +3620,7 @@ msgstr "Faile veel pole."
 msgid "No members yet — the project is visible to admins only."
 msgstr "Liikmeid veel pole — projekt on nähtav ainult administraatoritele."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:280
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:300
 #, elixir-autogen, elixir-format
 msgid "No whiteboards yet."
 msgstr "Valgetahvleid veel pole."
@@ -3701,7 +3696,7 @@ msgstr "Eelmine kuu"
 msgid "Project health"
 msgstr "Projekti tervis"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:317
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:337
 #, elixir-autogen, elixir-format
 msgid "Remove \"%{name}\"? The drawing stays in the project files."
 msgstr "Kas eemaldada \"%{name}\"? Joonistus jääb projekti failidesse alles."
@@ -3726,7 +3721,7 @@ msgstr "Kas eemaldada see fail projektist?"
 msgid "Remove this member from the project?"
 msgstr "Kas eemaldada see liige projektist?"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:319
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:339
 #, elixir-autogen, elixir-format
 msgid "Remove whiteboard"
 msgstr "Eemalda valgetahvel"
@@ -3747,12 +3742,12 @@ msgstr "Roll"
 msgid "Set health"
 msgstr "Määra tervis"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:103
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:107
 #, elixir-autogen, elixir-format
 msgid "Sign in to create a whiteboard."
 msgstr "Valgetahvli loomiseks logi sisse."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:346
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:366
 #, elixir-autogen, elixir-format
 msgid "Size"
 msgstr "Suurus"
@@ -3782,7 +3777,7 @@ msgstr "Mallidel liikmeid pole."
 msgid "That task is no longer in this project."
 msgstr "Seda ülesannet pole enam selles projektis."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:261
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:281
 #, elixir-autogen, elixir-format
 msgid "The background file for this whiteboard is missing."
 msgstr "Selle valgetahvli taustafail on puudu."
@@ -3850,7 +3845,7 @@ msgstr "Millele aeg kulus?"
 msgid "What's behind this call?"
 msgstr "Mis on selle hinnangu taga?"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:160
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:164
 #, elixir-autogen, elixir-format
 msgid "Whiteboard removed."
 msgstr "Valgetahvel eemaldatud."
@@ -3865,7 +3860,7 @@ msgstr "Kes projektis %{name} töötavad ja mida nad teha saavad."
 msgid "You don't have permission to change events."
 msgstr "Sul pole õigust sündmusi muuta."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:100
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:104
 #, elixir-autogen, elixir-format
 msgid "You don't have permission to change whiteboards."
 msgstr "Sul pole õigust valgetahvleid muuta."
@@ -3918,7 +3913,7 @@ msgstr "sisseehitatud"
 msgid "e.g. Sprint review"
 msgstr "nt sprindi ülevaatus"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:342
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:362
 #, elixir-autogen, elixir-format
 msgid "e.g. Sprint sketches"
 msgstr "nt sprindi visandid"
@@ -5273,3 +5268,8 @@ msgstr "Lohistamine muudab käsitsi järjekorda — reastamiseks lülita sortimi
 #, elixir-autogen, elixir-format
 msgid "Switch the sort back to Manual order before reordering tasks."
 msgstr "Lülita sortimine tagasi „Käsitsi järjekorrale“, enne kui ülesandeid ümber järjestad."
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:137
+#, elixir-autogen, elixir-format
+msgid "Could not create the whiteboard."
+msgstr "Tahvlit ei õnnestunud luua."

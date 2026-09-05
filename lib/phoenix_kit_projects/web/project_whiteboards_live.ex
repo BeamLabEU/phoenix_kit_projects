@@ -5,10 +5,13 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   contract (see `PhoenixKitHelloWorld.Web.ProjectHelloTabLive` for the
   contract reference). Mounts off-router only; no `handle_params/3`.
 
-  Drawing itself is core's `MediaCanvasViewer` LiveComponent over the
-  board's background file — annotation persistence, palettes, and tools
-  all live there; this LV only manages board rows and hands the component
-  a curated file map (`Whiteboards.viewer_file/1`).
+  Drawing itself is core's `MediaCanvasViewer` LiveComponent — annotation
+  persistence, palettes, and tools all live there; this LV only manages
+  board rows and hands the component either a **board** (a file-less
+  board since V16: `Whiteboards.viewer_board/1`, drawn on an empty
+  canvas with shapes anchored to the board's uuid) or a curated file map
+  (`Whiteboards.viewer_file/1`, for a board over a real image or one made
+  by the old white-PNG bridge).
 
   Authorization: the hub renders extension tabs inside surfaces it has
   already authorized (the admin show page / an authorized host embed), and
@@ -62,6 +65,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
        boards: (project && Whiteboards.list_for_project(project.uuid)) || [],
        selected: nil,
        viewer_file: nil,
+       viewer_board: nil,
        new_modal_open: false
      )}
   end
@@ -130,7 +134,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
              put_flash(
                socket,
                :error,
-               gettext("Could not create the whiteboard — is the Storage module set up?")
+               gettext("Could not create the whiteboard.")
              )}
         end
     end
@@ -141,7 +145,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   end
 
   def handle_event("close_board", _params, socket) do
-    {:noreply, assign(socket, selected: nil, viewer_file: nil)}
+    {:noreply, assign(socket, selected: nil, viewer_file: nil, viewer_board: nil)}
   end
 
   def handle_event("delete_board", %{"uuid" => uuid}, socket) do
@@ -154,7 +158,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
 
       socket =
         if selected && selected.uuid == uuid,
-          do: assign(socket, selected: nil, viewer_file: nil),
+          do: assign(socket, selected: nil, viewer_file: nil, viewer_board: nil),
           else: socket
 
       {:noreply, socket |> reload_boards() |> put_flash(:info, gettext("Whiteboard removed."))}
@@ -190,7 +194,11 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
         socket
 
       board ->
-        assign(socket, selected: board, viewer_file: Whiteboards.viewer_file(board.file_uuid))
+        assign(socket,
+          selected: board,
+          viewer_board: Whiteboards.viewer_board(board),
+          viewer_file: if(board.file_uuid, do: Whiteboards.viewer_file(board.file_uuid))
+        )
     end
   end
 
@@ -245,21 +253,33 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
             </span>
           </div>
 
-          <%= if @viewer_file do %>
-            <div class="h-[70vh] min-h-[420px] rounded-lg overflow-hidden border border-base-200 bg-base-200/40">
-              <.live_component
-                module={MediaCanvasViewer}
-                id={"project-whiteboard-canvas-#{@selected.file_uuid}"}
-                file={@viewer_file}
-                current_user={@current_user}
-                parent_id={"project-whiteboards-#{@project.uuid}"}
-                viewer_only={true}
-              />
-            </div>
-          <% else %>
-            <div class="alert alert-warning text-sm">
-              {gettext("The background file for this whiteboard is missing.")}
-            </div>
+          <%= cond do %>
+            <% @viewer_board -> %>
+              <div class="h-[70vh] min-h-[420px] rounded-lg overflow-hidden border border-base-200 bg-base-200/40">
+                <.live_component
+                  module={MediaCanvasViewer}
+                  id={"project-whiteboard-canvas-#{@selected.uuid}"}
+                  board={@viewer_board}
+                  current_user={@current_user}
+                  parent_id={"project-whiteboards-#{@project.uuid}"}
+                  viewer_only={true}
+                />
+              </div>
+            <% @viewer_file -> %>
+              <div class="h-[70vh] min-h-[420px] rounded-lg overflow-hidden border border-base-200 bg-base-200/40">
+                <.live_component
+                  module={MediaCanvasViewer}
+                  id={"project-whiteboard-canvas-#{@selected.file_uuid}"}
+                  file={@viewer_file}
+                  current_user={@current_user}
+                  parent_id={"project-whiteboards-#{@project.uuid}"}
+                  viewer_only={true}
+                />
+              </div>
+            <% true -> %>
+              <div class="alert alert-warning text-sm">
+                {gettext("The background file for this whiteboard is missing.")}
+              </div>
           <% end %>
         <% true -> %>
           <div class="flex items-center justify-between gap-2">

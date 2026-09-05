@@ -255,7 +255,7 @@ msgstr "Assegnazione aggiornata."
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3423
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3490
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4339
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:353
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:373
 #: lib/phoenix_kit_projects/web/task_form_live.ex:618
 #: lib/phoenix_kit_projects/web/template_form_live.ex:405
 #, elixir-autogen, elixir-format
@@ -270,7 +270,7 @@ msgstr "Annulla"
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3506
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4351
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4400
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:369
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:389
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr "Chiudi"
@@ -408,7 +408,7 @@ msgid "Counts weekends (e.g. deliveries, external processes)"
 msgstr "Conta i fine settimana (es. consegne, processi esterni)"
 
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2458
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:360
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:380
 #: lib/phoenix_kit_projects/web/task_form_live.ex:626
 #: lib/phoenix_kit_projects/web/template_form_live.ex:413
 #, elixir-autogen, elixir-format
@@ -692,7 +692,7 @@ msgid "My tasks"
 msgstr "Le mie attività"
 
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2030
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:335
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:355
 #: lib/phoenix_kit_projects/web/projects_live.ex:264
 #: lib/phoenix_kit_projects/web/projects_live.ex:712
 #: lib/phoenix_kit_projects/web/template_form_live.ex:354
@@ -882,7 +882,7 @@ msgstr "L'elenco dei progetti è cambiato; riprova."
 #: lib/phoenix_kit_projects/web/project_show_live.ex:208
 #: lib/phoenix_kit_projects/web/project_show_live.ex:240
 #: lib/phoenix_kit_projects/web/project_show_live.ex:402
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:235
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:243
 #: lib/phoenix_kit_projects/web/projects_live.ex:463
 #: lib/phoenix_kit_projects/web/projects_live.ex:478
 #, elixir-autogen, elixir-format
@@ -3303,7 +3303,7 @@ msgstr "Aggiunta…"
 msgid "All day"
 msgstr "Tutto il giorno"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:240
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:248
 #, elixir-autogen, elixir-format
 msgid "All whiteboards"
 msgstr "Tutte le lavagne"
@@ -3353,11 +3353,6 @@ msgstr "Impossibile applicare il preset."
 msgid "Could not change the role."
 msgstr "Impossibile cambiare il ruolo."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:133
-#, elixir-autogen, elixir-format
-msgid "Could not create the whiteboard — is the Storage module set up?"
-msgstr "Impossibile creare la lavagna — il modulo di archiviazione è configurato?"
-
 #: lib/phoenix_kit_projects/web/project_show_live.ex:2829
 #, elixir-autogen, elixir-format
 msgid "Could not log the time."
@@ -3403,13 +3398,13 @@ msgstr "Impossibile aggiornare lo stato di salute."
 msgid "Could not update the module."
 msgstr "Impossibile aggiornare il modulo."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:288
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:308
 #, elixir-autogen, elixir-format
 msgid "Create the first one"
 msgstr "Crea la prima"
 
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2457
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:357
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:377
 #, elixir-autogen, elixir-format
 msgid "Creating…"
 msgstr "Creazione…"
@@ -3496,7 +3491,7 @@ msgstr "File aggiunti."
 msgid "Files are turned off for this project."
 msgstr "I file sono disattivati per questo progetto."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:267
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:287
 #, elixir-autogen, elixir-format
 msgid "Freeform boards — draw, mark up, and pin images with the annotation tools."
 msgstr "Lavagne a forma libera — disegna, evidenzia e appunta immagini con gli strumenti di annotazione."
@@ -3506,7 +3501,7 @@ msgstr "Lavagne a forma libera — disegna, evidenzia e appunta immagini con gli
 msgid "Give the event a title (up to 200 characters)."
 msgstr "Dai un titolo all'evento (fino a 200 caratteri)."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:123
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "Give the whiteboard a name (up to 160 characters)."
 msgstr "Dai un nome alla lavagna (fino a 160 caratteri)."
@@ -3594,8 +3589,8 @@ msgstr "Moduli e funzionalità"
 msgid "New event"
 msgstr "Nuovo evento"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:275
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:332
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:295
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:352
 #, elixir-autogen, elixir-format
 msgid "New whiteboard"
 msgstr "Nuova lavagna"
@@ -3625,7 +3620,7 @@ msgstr "Ancora nessun file."
 msgid "No members yet — the project is visible to admins only."
 msgstr "Ancora nessun membro — il progetto è visibile solo agli amministratori."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:280
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:300
 #, elixir-autogen, elixir-format
 msgid "No whiteboards yet."
 msgstr "Ancora nessuna lavagna."
@@ -3701,7 +3696,7 @@ msgstr "Mese precedente"
 msgid "Project health"
 msgstr "Salute del progetto"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:317
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:337
 #, elixir-autogen, elixir-format
 msgid "Remove \"%{name}\"? The drawing stays in the project files."
 msgstr "Rimuovere \"%{name}\"? Il disegno resta nei file del progetto."
@@ -3726,7 +3721,7 @@ msgstr "Rimuovere questo file dal progetto?"
 msgid "Remove this member from the project?"
 msgstr "Rimuovere questo membro dal progetto?"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:319
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:339
 #, elixir-autogen, elixir-format
 msgid "Remove whiteboard"
 msgstr "Rimuovi lavagna"
@@ -3747,12 +3742,12 @@ msgstr "Ruolo"
 msgid "Set health"
 msgstr "Imposta stato di salute"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:103
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:107
 #, elixir-autogen, elixir-format
 msgid "Sign in to create a whiteboard."
 msgstr "Accedi per creare una lavagna."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:346
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:366
 #, elixir-autogen, elixir-format
 msgid "Size"
 msgstr "Dimensione"
@@ -3782,7 +3777,7 @@ msgstr "I modelli non hanno membri."
 msgid "That task is no longer in this project."
 msgstr "Quell'attività non è più in questo progetto."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:261
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:281
 #, elixir-autogen, elixir-format
 msgid "The background file for this whiteboard is missing."
 msgstr "Manca il file di sfondo di questa lavagna."
@@ -3850,7 +3845,7 @@ msgstr "Su cosa è stato speso il tempo?"
 msgid "What's behind this call?"
 msgstr "Cosa c'è dietro questa valutazione?"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:160
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:164
 #, elixir-autogen, elixir-format
 msgid "Whiteboard removed."
 msgstr "Lavagna rimossa."
@@ -3865,7 +3860,7 @@ msgstr "Chi lavora in %{name} e cosa può fare."
 msgid "You don't have permission to change events."
 msgstr "Non hai il permesso di modificare gli eventi."
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:100
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:104
 #, elixir-autogen, elixir-format
 msgid "You don't have permission to change whiteboards."
 msgstr "Non hai il permesso di modificare le lavagne."
@@ -3918,7 +3913,7 @@ msgstr "integrato"
 msgid "e.g. Sprint review"
 msgstr "es. revisione dello sprint"
 
-#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:342
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:362
 #, elixir-autogen, elixir-format
 msgid "e.g. Sprint sketches"
 msgstr "es. schizzi dello sprint"
@@ -5273,3 +5268,8 @@ msgstr "Il trascinamento riordina l'ordine manuale: rimetti l'ordinamento su «O
 #, elixir-autogen, elixir-format
 msgid "Switch the sort back to Manual order before reordering tasks."
 msgstr "Rimetti l'ordinamento su «Ordine manuale» prima di riordinare le attività."
+
+#: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:137
+#, elixir-autogen, elixir-format
+msgid "Could not create the whiteboard."
+msgstr "Impossibile creare la lavagna."

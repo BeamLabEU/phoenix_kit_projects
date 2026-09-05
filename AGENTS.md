@@ -418,7 +418,25 @@ and the comments composer / activity actor work in every nested LV:
 
 ## Database
 
-Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`. The module's OWN chain (`Migrations.Schema`, marker `pkp_schema:<N>` on `phoenix_kit_projects`) is at **V15** (one-off tasks); add the next `vNN_*` step to `up/1` and its `if target < NN` block to `down/1`.
+Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`. The module's OWN chain (`Migrations.Schema`, marker `pkp_schema:<N>` on `phoenix_kit_projects`) is at **V16** (file-less whiteboards); add the next `vNN_*` step to `up/1` and its `if target < NN` block to `down/1`.
+
+## Whiteboards (file-less since chain V16 / core V183)
+
+A board is its row (`phoenix_kit_project_whiteboards`); its shapes are core
+annotation rows anchored to the board — `target_type: "projects_whiteboard"`,
+`target_uuid: board.uuid` (`Whiteboards.target_type/0`) — and drawn by
+core's `MediaCanvasViewer` in **board mode** (`board={Whiteboards.viewer_board(board)}`:
+an empty, infinite Fresco canvas with the Etcher tools; no file, no
+Storage, no folder). The old **blank-background bridge** (a salted white
+PNG per board registered as a Storage file and drawn over as a photo)
+is gone from `create/3`. `file_uuid` is nullable: boards made by the
+bridge, and boards over a real image (`create_board_for_file/3`), keep
+their file and render through the file viewer exactly as before — the
+tab LV picks by `file_uuid`. Deleting a file-less board deletes its
+shapes (`PhoenixKit.Annotations.delete_for_target/2`); a file-backed
+board's shapes stay with the file. Core gate: V183 (`target_type` /
+`target_uuid` on annotations, the polymorphic `EtcherAdapter`, the
+viewer's `:board` assign) — unreleased, core PR first.
 
 ## Schedule math
 

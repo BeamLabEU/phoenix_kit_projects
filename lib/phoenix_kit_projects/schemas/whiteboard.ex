@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Schemas.Whiteboard do
       :position,
       :created_by_uuid
     ])
-    |> validate_required([:project_uuid, :file_uuid, :name])
+    |> validate_required([:project_uuid, :name])
     |> update_change(:name, &String.trim/1)
     |> validate_length(:name, min: 1, max: 160)
     |> validate_number(:width, greater_than: 0, less_than_or_equal_to: 8000)

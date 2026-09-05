@@ -150,9 +150,14 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
 
       assert [board] = Whiteboards.list_for_project(project.uuid)
       assert board.name == "Fresh board"
-      # Auto-selected into the canvas branch with the LC mounted.
+      # File-less (core V183): no background file, the viewer mounts in
+      # board mode over an empty infinite canvas keyed by the board itself.
+      assert board.file_uuid == nil
       assert html =~ "All whiteboards"
-      assert html =~ "project-whiteboard-canvas-#{board.file_uuid}"
+      assert html =~ "project-whiteboard-canvas-#{board.uuid}"
+      assert html =~ ~s(id="media-zoom-#{board.uuid}")
+      assert html =~ ~s(data-infinite-canvas="true")
+      refute html =~ "background file for this whiteboard is missing"
     end
 
     test "create without a session user is refused", %{conn: conn, project: project} do
