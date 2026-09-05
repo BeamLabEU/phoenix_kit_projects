@@ -2833,6 +2833,44 @@ defmodule PhoenixKitProjects.Projects do
     )
   end
 
+  @max_parent_depth 8
+
+  @doc """
+  The ancestors of a sub-project, ROOT FIRST — the projects whose plans
+  embed it, walking up through the linking assignments
+  (`child_project_uuid`, unique per child, so a project has at most one
+  parent). A top-level project has none. Used for the admin header's
+  breadcrumb trail (`Projects / Parent / Child`).
+
+  Bounded to #{@max_parent_depth} hops: the linking guards keep the
+  parent graph acyclic, but a walk over persisted data should never be
+  able to spin regardless.
+  """
+  @spec parent_chain(uuid()) :: [Project.t()]
+  def parent_chain(project_uuid) when is_binary(project_uuid) do
+    do_parent_chain(project_uuid, [], @max_parent_depth)
+  end
+
+  defp do_parent_chain(_uuid, acc, 0), do: acc
+
+  defp do_parent_chain(uuid, acc, hops) do
+    parent =
+      repo().one(
+        from(a in Assignment,
+          join: p in Project,
+          on: p.uuid == a.project_uuid,
+          where: a.child_project_uuid == ^uuid,
+          select: p,
+          limit: 1
+        )
+      )
+
+    case parent do
+      nil -> acc
+      %Project{} = p -> do_parent_chain(p.uuid, [p | acc], hops - 1)
+    end
+  end
+
   @doc """
   Adds a **sub-project** to `parent_project_uuid`: creates a fresh child
   project (named via `child_attrs`) and links it into the parent's timeline as

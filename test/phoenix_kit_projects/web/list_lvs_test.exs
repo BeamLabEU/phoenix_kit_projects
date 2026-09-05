@@ -99,7 +99,7 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
       # The test layout renders these fixture consumers — see
       # test/support/test_layouts.ex. Core's admin layout is the real
       # consumer (breadcrumb "+" button); this pins the producer half.
-      assert html =~ ~s(data-page-title="Project Templates")
+      assert html =~ ~s(data-page-title="Templates")
       assert html =~ ~r{data-crumb-action[^>]*href="[^"]*templates/new"}
     end
 

@@ -618,7 +618,8 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
             })
         )
 
-      assert html =~ "Add task to Emit Host"
+      assert html =~ ">Add task<"
+      assert html =~ "Emit Host"
       assert html =~ ~s(phx-click="cancel")
     end
 

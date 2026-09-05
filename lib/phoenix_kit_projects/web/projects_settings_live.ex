@@ -16,6 +16,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Activity
   alias PhoenixKitProjects.CalendarDisplay
   alias PhoenixKitProjects.GanttDisplay
@@ -45,7 +46,11 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     {:ok,
      socket
      |> assign(
+       # Trail: Admin Panel / Settings / Project settings — this page lives
+       # under the site's Settings area, not the Projects tab.
        page_title: gettext("Project settings"),
+       page_section: gettext("Settings"),
+       page_section_path: Routes.path("/admin/settings"),
        wrapper_class: wrapper_class,
        statuses_available: available?,
        status_entities: if(available?, do: Statuses.list_status_source_entities(), else: []),

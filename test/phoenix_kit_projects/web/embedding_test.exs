@@ -764,7 +764,8 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           session: %{"project_id" => project.uuid, "current_user_uuid" => actor_uuid}
         )
 
-      assert html =~ "Add task to Embed Host"
+      assert html =~ ">Add task<"
+      assert html =~ "Embed Host"
     end
 
     test "a stranger embedding the form is refused, shaped as not-found", %{
@@ -853,7 +854,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
 
       # Title references the assignment's task (falls back to "Edit assignment"
       # only when the task can't be resolved).
-      assert html =~ "Edit task:"
+      assert html =~ "Edit #{task.title}"
     end
   end
 end

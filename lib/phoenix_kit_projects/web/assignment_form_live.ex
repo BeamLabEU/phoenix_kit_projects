@@ -23,6 +23,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   alias PhoenixKitProjects.{Activity, Features, L10n, Labels, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   # Default wrapper class for the standalone admin page. Embedders can
@@ -274,12 +275,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         assignment = %Assignment{project_uuid: project.uuid}
         existing_assignments = Projects.list_assignments(project.uuid)
 
+        # Trail: Admin Panel / Projects / <parents…> / <project> / Add task —
+        # the project is the linked crumb, so the leaf no longer repeats
+        # its name ("Add task to Test" was the boss's example of a trail
+        # that had lost its way; see `Web.Crumbs`). "Add" because the task
+        # is attached to the project; the library's form says "New".
         title =
           if kind == "subproject",
-            do: gettext("Add sub-project to %{name}", name: project.name),
-            else: gettext("Add task to %{name}", name: project.name)
+            do: gettext("Add sub-project"),
+            else: gettext("Add task")
 
         socket
+        |> assign(Crumbs.under_project(project))
         |> assign(
           page_title: title,
           kind: kind,
@@ -364,6 +371,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         child = Projects.get_project_with_assignee(child_uuid) || %Project{}
 
         socket
+        |> assign(Crumbs.under_project(project))
         |> assign(
           page_title:
             gettext("Edit %{name}",
@@ -399,10 +407,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           assignment.task && Task.localized_title(assignment.task, L10n.current_content_lang())
 
         socket
+        |> assign(Crumbs.under_project(project))
         |> assign(
+          # "Edit <task>" under the project crumb — the leaf names its object.
           page_title:
             if(task_name,
-              do: gettext("Edit task: %{name}", name: task_name),
+              do: gettext("Edit %{name}", name: task_name),
               else: gettext("Edit assignment")
             ),
           kind: "task",

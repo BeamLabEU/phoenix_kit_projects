@@ -27,6 +27,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Label
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -63,12 +64,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       {:ok,
        socket
        |> assign(
-         page_title:
-           gettext("%{name} · Modules",
-             name: Project.localized_name(project, L10n.current_content_lang())
-           ),
+         # Trail: Admin Panel / Projects / <parents…> / <project> / Modules —
+         # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
+         page_title: gettext("Modules"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
+         page_crumbs: Crumbs.project(project, L10n.current_content_lang()),
          project: project
        )
        |> load_panel()}

@@ -61,6 +61,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Statuses
   }
 
+  alias PhoenixKitProjects.Web.Crumbs
+
   alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
@@ -289,11 +291,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             socket
             |> assign(
               page_title: Project.localized_name(project, lang),
-              # Breadcrumb section ("Admin Panel / Templates / <name>") —
-              # the in-content back-link + h1 row is gone; the site header
-              # carries both the name and the way back to the list.
-              page_section: if(is_template, do: gettext("Templates"), else: gettext("Projects")),
-              page_section_path: if(is_template, do: Paths.templates(), else: Paths.projects()),
+              # Trail: "Admin Panel / Projects / <parents…> / <name>" (a
+              # template: "… / Projects / Templates / <name>") — the
+              # in-content back-link + h1 row is gone; the site header
+              # carries both the name and the way back. The List/Board/
+              # Timeline/Calendar tabs are views of this one place and never
+              # appear in it (see `Web.Crumbs`).
+              page_section: gettext("Projects"),
+              page_section_path: Paths.projects(),
+              page_crumbs: Keyword.fetch!(Crumbs.above_project(project), :page_crumbs),
               statuses_available: statuses_available,
               status_options: status_options,
               current_status: current_status,

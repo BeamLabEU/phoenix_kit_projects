@@ -11,6 +11,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   # Default wrapper class for the standalone admin page. Embedders can
@@ -85,6 +86,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
     project = %Project{is_template: true}
 
     socket
+    |> assign(Crumbs.under(:templates))
     |> assign(page_title: gettext("New template"), project: project, live_action: :new)
     |> assign_form(Projects.change_project(project))
   end
@@ -107,6 +109,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
 
       project ->
         socket
+        |> assign(Crumbs.under(:templates))
         |> assign(
           page_title:
             gettext("Edit %{name}",

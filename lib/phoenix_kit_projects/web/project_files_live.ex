@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
   alias PhoenixKitProjects.{Attachments, Authz, Extensions, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Live.Components.MediaSelectorModal
 
@@ -54,12 +55,12 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
       {:ok,
        socket
        |> assign(
-         page_title:
-           gettext("%{name} · Files",
-             name: Project.localized_name(project, L10n.current_content_lang())
-           ),
+         # Trail: Admin Panel / Projects / <parents…> / <project> / Files —
+         # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
+         page_title: gettext("Files"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
+         page_crumbs: Crumbs.project(project, L10n.current_content_lang()),
          project: project,
          show_picker: false,
          folder_uuid: Attachments.folder_uuid(project.uuid)

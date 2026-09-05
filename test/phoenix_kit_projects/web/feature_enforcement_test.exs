@@ -248,7 +248,8 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       {:ok, _view, html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new?kind=subproject")
 
-      assert html =~ "Add task to"
+      assert html =~ "Add task"
+      refute html =~ "Add sub-project"
       refute html =~ "Nest existing"
     end
 

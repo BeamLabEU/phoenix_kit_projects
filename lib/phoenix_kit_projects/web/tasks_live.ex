@@ -86,7 +86,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     socket =
       socket
       |> assign(
-        page_title: gettext("Task Library"),
+        # Trail: Admin Panel / Projects / Tasks — the crumb reuses the subtab
+        # label, so the trail mirrors the sidebar (see `Web.Crumbs`).
+        page_title: gettext("Tasks"),
+        page_section: gettext("Projects"),
+        page_section_path: Paths.projects(),
         # The create action lives in the admin breadcrumb (+ the
         # add-row under the list) — no in-content header row.
         page_action: %{

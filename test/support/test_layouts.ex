@@ -39,6 +39,12 @@ defmodule PhoenixKitProjects.Test.Layouts do
       <span :if={assigns[:page_section]} data-crumb-section={assigns[:page_section]}>
         {assigns[:page_section]}
       </span>
+      <%!-- The linked middle of the trail (core's `page_crumbs`): one
+           anchor per crumb, in order, so tests can pin the whole trail
+           as "section / crumb / crumb / title". --%>
+      <a :for={crumb <- assigns[:page_crumbs] || []} data-crumb={crumb.label} href={crumb[:path]}>
+        {crumb.label}
+      </a>
       <a
         :if={assigns[:page_action]}
         data-crumb-action

@@ -547,7 +547,7 @@ is the most complete reference):
   switcher — in `:trailing` (right, after the contextual Reorder/Delete/Clear).
   Same left/right split as the catalogue tables and core's `table_default`
   toolbar row, so the kit's lists read alike (aligned 2026-09-05). The show page likewise sets
-  `page_section`/`page_section_path` ("Admin Panel / Templates / ‹name›")
+  the header trail ("Admin Panel / Projects / ‹name›", see **Breadcrumbs**)
   instead of a back-link + h1 row — **embeds keep the full header**
   (`router_mounted?` gates it; embeds have no admin breadcrumb).
 - **Recency default sort** — `updated_at desc` ("Last edited"); Manual
@@ -594,6 +594,39 @@ additions** (`search_toolbar` form fix + spinner, `TableLocalSearch`,
 `page_action`/`page_section` forwarding, the toolbar `:trailing` slot) —
 until the next core release, run this module's checks with
 `PHOENIX_KIT_PATH=../phoenix_kit`, and bump the core floor at release.
+
+## Breadcrumbs (the admin header trail)
+
+Every page sets core's `page_section` (+ `_path`), `page_crumbs` and
+`page_title` through `Web.Crumbs`, so the trail reads the same everywhere
+(panel round with codex/grok/zai, 2026-09-05, after the boss noticed
+"Admin Panel / Add task to Test"):
+
+| page | trail (linked crumbs in *italics*) |
+|---|---|
+| list · Tasks · Templates · Overview | *Projects* / Tasks |
+| project (any tab) | *Projects* / Test |
+| sub-project | *Projects* / *Parent* / Child |
+| Files / Members / Modules / Activity | *Projects* / *Test* / Files |
+| add task · add sub-project | *Projects* / *Test* / Add task |
+| edit a task in a project | *Projects* / *Test* / Edit ‹task› |
+| new / edit project | *Projects* / New project · *Projects* / Edit Test |
+| library task new / edit | *Projects* / *Tasks* / New task · Edit ‹task› |
+| template / new / edit | *Projects* / *Templates* / ‹name› · New template · Edit ‹name› |
+| settings | *Settings* / Project settings |
+
+Rules: the module tab is always the section, so nothing can read
+"Admin Panel / New project" again; crumb labels reuse the subtab labels
+verbatim (the list page titles are "Tasks"/"Templates" too — one name per
+place); sub-pages are crumbs, never a "Test · Files" title; "Add" attaches
+to the project crumb, "New" creates a standalone record; edit names its
+object (core's "Edit Jane Doe"); the List/Board/Timeline/Calendar tabs are
+views of one place and stay out of the trail; sub-projects show their
+ancestors (`Projects.parent_chain/1`, bounded to 8 hops). Known core limit,
+flagged by every seat: `page_title` is also the browser tab title, so a
+short leaf ("Files") makes a weak tab — a separate browser-title assign in
+core is the fix, not a fused title here. `breadcrumbs_test.exs` pins every
+row; the test layout renders `page_crumbs` as `data-crumb` anchors.
 
 ## Quick-add (Todoist-style task composer, V15)
 

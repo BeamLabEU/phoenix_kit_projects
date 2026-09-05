@@ -86,7 +86,10 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
     socket =
       socket
       |> assign(
-        page_title: gettext("Project Templates"),
+        # Trail: Admin Panel / Projects / Templates (see `Web.Crumbs`).
+        page_title: gettext("Templates"),
+        page_section: gettext("Projects"),
+        page_section_path: Paths.projects(),
         # The primary create action lives in the admin header's
         # breadcrumb row (core `page_action`) + a dashed add-row under
         # the list — no in-content header row at all (short screens).

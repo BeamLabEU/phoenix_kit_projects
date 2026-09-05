@@ -13,6 +13,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Task
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   # Default wrapper class for the standalone admin page. Embedders can
@@ -63,7 +64,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     task = %Task{}
 
     socket
+    |> assign(Crumbs.under(:tasks))
     |> assign(
+      # Trail: Admin Panel / Projects / Tasks / New task — "New" creates a
+      # standalone library record; a project's composer says "Add".
       page_title: gettext("New task"),
       task: task,
       live_action: :new,
@@ -107,6 +111,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           end
 
         socket
+        |> assign(Crumbs.under(:tasks))
         |> assign(
           page_title:
             gettext("Edit %{title}",

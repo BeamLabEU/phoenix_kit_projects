@@ -66,7 +66,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
         # embeds on one host page to the first match. socket.id is stable
         # across the dead render and the join, so ids match on hydration.
         sfx: socket.id,
-        page_title: gettext("Projects"),
+        # Trail: Admin Panel / Projects / Overview (see `Web.Crumbs`).
+        page_title: gettext("Overview"),
+        page_section: gettext("Projects"),
+        page_section_path: Paths.projects(),
         wrapper_class: wrapper_class,
         task_count: 0,
         project_count: 0,

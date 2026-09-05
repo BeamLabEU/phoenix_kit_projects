@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Components.Core.ChangeCue
 
@@ -423,7 +424,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     project = %Project{}
 
     socket
+    |> assign(Crumbs.section())
     |> assign(
+      # Trail: Admin Panel / Projects / New project (see `Web.Crumbs`).
       page_title: gettext("New project"),
       project: project,
       live_action: :new,
@@ -469,7 +472,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
       project ->
         socket
+        |> assign(Crumbs.above_project(project))
         |> assign(
+          # Trail: Admin Panel / Projects / <parents…> / Edit <name> — the
+          # leaf names its object (core's Users convention).
           page_title:
             gettext("Edit %{name}",
               name: Project.localized_name(project, L10n.current_content_lang())
