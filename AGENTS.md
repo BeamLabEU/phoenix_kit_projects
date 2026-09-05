@@ -688,23 +688,29 @@ short leaf ("Files") makes a weak tab — a separate browser-title assign in
 core is the fix, not a fused title here. `breadcrumbs_test.exs` pins every
 row; the test layout renders `page_crumbs` as `data-crumb` anchors.
 
-## Quick-add (Todoist-style task composer, V15)
+## Quick-add (the "Add a task" row → the sheet, V15)
 
-`Components.QuickAddComposer` sits at the foot of a real project's task
-list (not templates), OUTSIDE the sortable container: a dashed "Add a
-task" row → one title input. **Enter / Shift+Enter** add and keep it open,
-empty and focused; **Esc** closes (bound on the input, never the window);
-**Tab** lands on "More options", which opens the full `AssignmentFormLive`
-with the draft carried in `?title=` (or an emit-session `"title"`) —
-Todoist's "Tab opens the full editor" without hijacking Tab. Phoenix-first,
-no hook: a real `phx-submit` form (IME-safe, inputs read-only while in
-flight = no double add), the input's DOM id carries a `seq` the host bumps
-after every add so morphdom re-creates it empty and `phx-mounted={JS.focus()}`
-refocuses (a patch never overwrites the focused element's value — that is
-the only reliable clear), draft tracked via `phx-change`. Host state is one
-map, `@quick_add = %{open, seq, draft, error}`; events `quick_add_open /
-close / change / task` go through the show page's feature gate (`:tasks`)
-and authz (`:create_tasks`) maps like every other write.
+`Components.QuickAddComposer` is the dashed "Add a task" row at the foot
+of a real project's task list (not templates), OUTSIDE the sortable
+container. Since 2026-09-05 it is the second way into the same
+right-hand sheet as the "Add task" button at the top (Max: "the add a
+task should both open the popup and inside there should we have that
+stuff setup"): a `<.smart_link>` into `AssignmentFormLive` in Create-new
+— a popup button in popup/emit mode, a link to the add page on a host in
+navigate mode. The keyboard loop lives in the form: **Enter** adds and
+closes (the browser's implicit submission presses the FIRST submit
+button, "Add"); **Shift+Enter** presses "Add & next" through core's
+`PkShiftEnter` hook on the title (`data-shift-enter-click`); the button
+carries `name="then" value="next"`, which LiveView sends as the
+submitter, and `save` reads it as `add_next?`. After a successful create
+with it set, `after_create/2` emits `:saved` with `close: false` (the
+frame stays, the page behind refreshes its list) and `reset_for_next/1`
+re-runs the `:new` mount keeping the user's tab and "add to library"
+choice, marks the form clean (`notify_dirty(false)` — Esc closes again)
+and bumps `form_seq`, which re-keys the title's wrapper so
+`phx-mounted={JS.focus(...)}` lands the cursor back in the title. The
+same mount focuses the title when the sheet opens. The inline input,
+its four `quick_add_*` events and the `@quick_add` state are gone.
 
 **The write** is `Projects.quick_add_assignment/3` →
 `create_task_with_assignment/3`: one transaction that locks the project row

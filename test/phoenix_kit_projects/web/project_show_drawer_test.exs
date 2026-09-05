@@ -179,15 +179,77 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     assert Projects.list_assignments(p.uuid) == []
   end
 
-  test "the composer's More options opens the drawer with the draft", %{conn: conn, project: p} do
+  test "the Add a task row opens the sheet with the cursor in the title", %{
+    conn: conn,
+    project: p
+  } do
     {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
-    view |> element("#quick-add button[phx-click=quick_add_open]") |> render_click()
-    view |> form("#quick-add-form", %{"title" => "Carried over"}) |> render_change()
 
     {_host, form, _} =
       open_drawer(view, p, "#quick-add button[phx-value-lv$='AssignmentFormLive']")
 
-    assert render(form) =~ ~s(value="Carried over")
+    html = render(form)
+    assert html =~ ~s(name="task[title]")
+    # The wrapper mounts focused and the title carries the Shift+Enter hook.
+    assert html =~ ~s(id="new-task-title-0")
+    assert html =~ ~s(phx-hook="PkShiftEnter")
+    assert html =~ ~s(data-shift-enter-click="#assignment-add-next")
+    assert html =~ ~s(id="assignment-add-next")
+    assert html =~ "Shift+Enter adds and starts the next"
+  end
+
+  test "Add & next adds the task, keeps the sheet open on a fresh clean form",
+       %{conn: conn, project: p} do
+    {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+    {host, form, _} =
+      open_drawer(view, p, "button[phx-value-lv$='AssignmentFormLive']", "Add task")
+
+    first = "First #{System.unique_integer([:positive])}"
+
+    form
+    |> form("#assignment-form",
+      assignment: %{status: "todo", description: "keep me out of the next one"},
+      task_mode: "new",
+      task: %{title: first}
+    )
+    |> render_change()
+
+    assert eventually(fn -> if render(host) =~ ~s(data-closeable="false"), do: true end)
+
+    # The "Add & next" submitter: LiveView sends its name/value with the submit.
+    form
+    |> form("#assignment-form",
+      assignment: %{status: "todo", description: "keep me out of the next one"},
+      task_mode: "new",
+      task: %{title: first}
+    )
+    |> render_submit(%{"then" => "next"})
+
+    # Created, and the page behind heard about it.
+    assert first in Enum.map(Projects.list_assignments(p.uuid), &Assignment.label/1)
+    assert eventually(fn -> if render(view) =~ first, do: true end)
+
+    # Still open, reset, re-keyed and clean: Esc may close it again.
+    html = render(form)
+    assert html =~ ~s(id="new-task-title-1")
+    refute html =~ "keep me out of the next one"
+    refute :sys.get_state(form.pid).socket.assigns.dirty?
+    assert eventually(fn -> if render(host) =~ ~s(data-closeable="true"), do: true end)
+
+    # Plain Add on the fresh form closes the sheet.
+    second = "Second #{System.unique_integer([:positive])}"
+
+    form
+    |> form("#assignment-form",
+      assignment: %{status: "todo"},
+      task_mode: "new",
+      task: %{title: second}
+    )
+    |> render_submit()
+
+    assert gone(host)
+    assert second in Enum.map(Projects.list_assignments(p.uuid), &Assignment.label/1)
   end
 
   test "an embedded project page keeps the session's own mode", %{conn: conn, project: p} do

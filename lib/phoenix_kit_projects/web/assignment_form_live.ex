@@ -18,6 +18,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   require Logger
 
+  alias Phoenix.LiveView.JS
   alias PhoenixKit.Mentions
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, Features, L10n, Labels, Paths, Projects, Statuses}
@@ -54,6 +55,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
+      # `form_seq` re-keys the title's wrapper after "Add & next" so a fresh
+      # element mounts and `phx-mounted` refocuses it; `add_next?` is the
+      # submit's intent (the "then=next" submitter), read at save time.
+      |> assign(form_seq: 0, add_next?: false)
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
       |> assign_ai_translate()
@@ -743,7 +748,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     # Save-time gate re-resolution (panel R3-4): the submit binds to the
     # CURRENT flags, not the mount-time snapshot a mid-edit toggle staled.
     fx = Features.gates(socket.assigns.project)
-    socket = assign(socket, fx: fx)
+    # "Add & next" (Shift+Enter, or the button — the submitter carries
+    # `then=next`): after a successful create the form resets for the next
+    # task instead of closing. Only a create can chain.
+    socket =
+      assign(socket,
+        fx: fx,
+        add_next?: socket.assigns.live_action == :new and Map.get(params, "then") == "next"
+      )
 
     # With the library off for this project, a submit can neither pick
     # from it nor feed it — whatever the (stale or forged) params say.
@@ -1089,6 +1101,59 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # A task was created. Plain Add hands over to the host / navigates;
+  # "Add & next" tells the host the record exists (`close: false` — the
+  # frame stays and the page behind refreshes its list) and resets this
+  # form for the next task, clean and focused.
+  defp after_create(socket, record) do
+    project = socket.assigns.project
+
+    if socket.assigns.add_next? do
+      socket
+      |> then(fn s ->
+        if s.assigns.embed_mode == :emit do
+          WebHelpers.navigate_after_save(s, Paths.project(project.uuid),
+            kind: :assignment,
+            record: record,
+            action: :create,
+            close: false
+          )
+        else
+          s
+        end
+      end)
+      |> reset_for_next()
+    else
+      WebHelpers.navigate_after_save(socket, Paths.project(project.uuid),
+        kind: :assignment,
+        record: record,
+        action: :create
+      )
+    end
+  end
+
+  # The same mount as a fresh :new page, keeping what the user chose for
+  # the run (library tab or Create new, the "add to library" box), then
+  # clean again: the host may close on Esc, and the re-keyed title
+  # wrapper mounts and refocuses.
+  defp reset_for_next(socket) do
+    %{project: project, kind: kind, task_mode: task_mode, add_to_library: to_library} =
+      socket.assigns
+
+    socket
+    |> apply_action(:new, %{"project_id" => project.uuid, "kind" => kind})
+    |> assign_fx()
+    |> assign_ai_translate()
+    |> assign(
+      task_mode: task_mode,
+      add_to_library: to_library,
+      dirty?: false,
+      form_seq: socket.assigns.form_seq + 1
+    )
+    |> WebHelpers.notify_dirty(false)
+    |> WebHelpers.keep_host_title()
+  end
+
   defp merge_attrs(attrs, socket) do
     in_flight = WebHelpers.in_flight_record(socket, :form, :assignment)
     WebHelpers.merge_translations_attrs(attrs, in_flight, Assignment.translatable_fields())
@@ -1161,14 +1226,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         flush_pending_deps(socket, assignment)
 
-        {:noreply,
-         socket
-         |> put_flash(flash_kind, flash_msg)
-         |> WebHelpers.navigate_after_save(Paths.project(project.uuid),
-           kind: :assignment,
-           record: assignment,
-           action: :create
-         )}
+        {:noreply, socket |> put_flash(flash_kind, flash_msg) |> after_create(assignment)}
 
       {:error, :task, _cs} ->
         Activity.log_failed("projects.task_created",
@@ -1346,14 +1404,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             n -> gettext("Task added with %{count} dependent task(s).", count: n)
           end
 
-        {:noreply,
-         socket
-         |> put_flash(:info, msg)
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
-           kind: :assignment,
-           record: root,
-           action: :create
-         )}
+        {:noreply, socket |> put_flash(:info, msg) |> after_create(root)}
 
       {:error, %Ecto.Changeset{} = cs} ->
         Activity.log_failed("projects.assignment_created",
@@ -1413,14 +1464,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         flush_pending_deps(socket, assignment)
 
-        {:noreply,
-         socket
-         |> put_flash(flash_kind, flash_msg)
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
-           kind: :assignment,
-           record: assignment,
-           action: :create
-         )}
+        {:noreply, socket |> put_flash(flash_kind, flash_msg) |> after_create(assignment)}
 
       {:error, cs} ->
         Activity.log_failed("projects.assignment_created",
@@ -2095,21 +2139,33 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 </div>
               </:skeleton>
 
-              <.translatable_field
+              <%!-- Re-keyed by `form_seq` so "Add & next" mounts a fresh
+                   wrapper and the cursor lands back in the title; the same
+                   mount focuses it when the sheet opens. Shift+Enter in the
+                   title presses "Add & next" (core's PkShiftEnter); plain
+                   Enter is the browser's own submit → "Add". --%>
+              <div
                 :if={@live_action == :new and @task_mode == "new"}
-                field_name="title"
-                form_prefix="task"
-                changeset={@task_form.source}
-                schema_field={:title}
-                multilang_enabled={@multilang_enabled}
-                current_lang={@current_lang}
-                primary_language={@primary_language}
-                lang_data={WebHelpers.lang_data(@task_form, @current_lang)}
-                secondary_name={"task[translations][#{@current_lang}][title]"}
-                lang_data_key="title"
-                label={gettext("Task title")}
-                required
-              />
+                id={"new-task-title-#{@form_seq}"}
+                phx-mounted={JS.focus(to: "#task_title")}
+              >
+                <.translatable_field
+                  field_name="title"
+                  form_prefix="task"
+                  changeset={@task_form.source}
+                  schema_field={:title}
+                  multilang_enabled={@multilang_enabled}
+                  current_lang={@current_lang}
+                  primary_language={@primary_language}
+                  lang_data={WebHelpers.lang_data(@task_form, @current_lang)}
+                  secondary_name={"task[translations][#{@current_lang}][title]"}
+                  lang_data_key="title"
+                  label={gettext("Task title")}
+                  required
+                  phx-hook="PkShiftEnter"
+                  data-shift-enter-click="#assignment-add-next"
+                />
+              </div>
 
               <.translatable_field
                 field_name="description"
@@ -2441,19 +2497,47 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </div>
         </div>
 
-        <div class="flex justify-end gap-2 mt-2">
+        <%!-- DOM order matters: the browser's implicit submission (Enter in
+             an input) presses the FIRST submit button, so "Add" comes before
+             "Add & next" in the markup and CSS `order` puts it last on
+             screen. "Add & next" carries `then=next`, which LiveView sends
+             as the submitter — Shift+Enter presses it through PkShiftEnter. --%>
+        <div class="flex flex-wrap items-center justify-end gap-2 mt-2">
           <button
             type="button"
             phx-click="cancel"
             data-confirm={@dirty? && gettext("Discard your changes?")}
-            class="btn btn-ghost btn-sm"
+            class="btn btn-ghost btn-sm order-1"
           >
             {gettext("Cancel")}
           </button>
-          <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-primary btn-sm">
+          <button
+            type="submit"
+            phx-disable-with={gettext("Saving…")}
+            class="btn btn-primary btn-sm order-3"
+          >
             <%= if @live_action == :new, do: gettext("Add"), else: gettext("Save") %>
           </button>
+          <button
+            :if={@live_action == :new}
+            type="submit"
+            id="assignment-add-next"
+            name="then"
+            value="next"
+            phx-disable-with={gettext("Saving…")}
+            title={gettext("Shift+Enter")}
+            class="btn btn-outline btn-sm order-2"
+          >
+            {gettext("Add & next")}
+          </button>
         </div>
+        <p :if={@live_action == :new} class="text-xs text-base-content/50 text-right">
+          <%= if @embed_mode == :navigate do %>
+            {gettext("Enter adds · Shift+Enter adds and starts the next")}
+          <% else %>
+            {gettext("Enter adds · Shift+Enter adds and starts the next · Esc closes")}
+          <% end %>
+        </p>
 
         <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
       </.form>
