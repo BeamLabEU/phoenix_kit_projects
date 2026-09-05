@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.22.0 - 2026-09-05
+
+PR #40 — the project page becomes top-level tabs, forms open as a drawer over
+it, and a task can be a one-off. **Needs phoenix_kit 2.14.2 or newer** (core
+V183). The `~> 2.0` requirement is unchanged and deliberately stays wide — a
+pin that excluded a core minor would break `mix deps.get` for hosts running
+this module beside a newer core — so the real floor is documented in `mix.exs`
+rather than encoded; on an older 2.x this release does not compile.
+
+### Added
+
+- **Top-level project tabs.** Tasks is one tab holding the list, board,
+  timeline and calendar views (`/:id/tasks[/board|timeline|calendar]`); every
+  enabled extension and Comments are its peers, served by a `projects/:id/:tab`
+  catch-all declared after every literal sibling. A tab the project has gated
+  off is never landed on — with Tasks itself off the page opens on the first
+  extension tab, or Comments, or the empty state, and a live change to the
+  Modules panel re-gates the open page.
+- **Forms as a right-hand drawer.** `PopupHost` renders core's
+  `<.modal placement={:end}>` per frame instead of a hand-rolled `<dialog>`, so
+  a create/edit form opens over the page it belongs to. A form with unsaved
+  input tells its host (`:dirty`), and the frame then refuses Esc and the
+  backdrop — its own Cancel, which confirms, is the way out.
+- **Quick-add and one-off tasks** (chain V15). Adding a task to a project no
+  longer mints a reusable library entry: `tasks.ad_hoc` keeps quick-added tasks
+  out of the library list, pickers and counts, and the library page grows a
+  Library / One-off lens with "Add to the library" promotion. Task and
+  assignment are written in one transaction under a project-row lock, so two
+  people adding at once cannot claim the same position.
+- **"Just a space"** — a fifth starting point on the new-project form for a
+  project with no task list at all, plus Tasks as an explicit toggle.
+- **The Overview's pieces as dashboard widgets** — `projects.running`,
+  `projects.upcoming` and `projects.calendar`, so a dashboards-module board can
+  stand in for the page. All three are viewer-scoped at the query.
+- **Site-configurable task-list controls** (`ListControls`, on
+  `/admin/settings/projects`): the lens and sort appear only when they can
+  change what is on screen, or always, or never.
+- **A real breadcrumb trail on every page** (`Web.Crumbs`), including a
+  sub-project's parent chain — with any ancestor the reader may not view left
+  out of it.
+
+### Changed
+
+- **The project list is the module's landing page.** The Overview keeps its
+  route as the last subtab. The `list` segment leaves project URLs; the old
+  `/admin/projects/list/…` addresses redirect to the same path without it.
+- **Whiteboards no longer need a background file** (chain V16, core V183). A
+  board is its row and its shapes are annotations anchored to it; the salted
+  white-PNG bridge is gone from the create path. Boards made by it, and boards
+  over a real image, keep their file and render exactly as before. Deleting a
+  project now also deletes its file-less boards' shapes, which no cascade could
+  reach.
+- **Every "who can X" floor for a task capability now requires the task list.**
+  A project that is only its whiteboards is not asked who may create tasks.
+- **The "Full tracker" preset is derived from the gate list** rather than typed
+  out — the hand-kept map had missed `lifecycle`, `ledger` and `view_board`, so
+  applying Full over Simple left three explicit falses standing.
+- Catalog strings — extension names and descriptions, feature-flag labels,
+  archetype copy — are registered with `gettext_noop/1` and translated at
+  render, so they stop rendering English in every locale.
+
+### Fixed
+
+- **A form opened in the drawer no longer steals the browser tab's title.**
+  LiveView applies every LV's `page_title`, nested ones included; an embedded
+  form now keeps its heading and leaves the tab to the page.
+- **A client-supplied embed session cannot name its own user or topic.**
+  `current_user_uuid`, `mode`, `pubsub_topic` and `frame_ref` are stripped from
+  every `:opened` payload at both ends, so a crafted `phx-value-session` cannot
+  open a form as someone else.
+- **A contributed tab requires its own module's permission.** The registry gate
+  existed but nothing consulted `module_key`, so any projects viewer could read
+  a sibling module's linked data through a tab.
+- **Whiteboard drawing is write-gated.** `can_write` reaches the canvas as
+  `can_annotate`; a reader without it sees every board locked. Board deletion
+  is identity-gated like creation.
+- `LiveCase.fake_scope/1` builds a real `%User{}` rather than a look-alike map.
+  `phoenix_kit_comments` 0.4.5 resolves the viewer's admin flag on every
+  `update/2` through core's `Roles.user_has_role_owner?/1`, which clauses on the
+  struct — the map crashed every page hosting the comments component.
+- `ProjectShowLive`'s embed-mount clause derives its placeholder assigns from
+  `not_found_assigns/0` instead of repeating all 49 of them, and `TasksLive`'s
+  `one_off_count` gets the mount default its three siblings already had.
+
 ## 0.21.2 - 2026-08-21
 
 ### Changed

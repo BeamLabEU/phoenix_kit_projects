@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.21.2"
+  @version "0.22.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -122,12 +122,22 @@ defmodule PhoenixKitProjects.MixProject do
       # 1.7.189 for `PhoenixKit.SchemaPrefix`, which every table-backed schema
       # in this module applies.
       #
-      # Bounded with `~>` rather than `>=` on purpose, matching the rest of the
-      # module ecosystem: this admits `>= 1.7.231 and < 1.8.0`. Core minors are
-      # NOT assumed compatible — a core that renames or drops any of the above
-      # should fail resolution here, where the fix is a deliberate re-pin,
-      # rather than as a compile error in a consumer's app. Re-pin explicitly
-      # when core ships 1.8.
+      # Bounded with a TWO-segment `~>` on purpose: `>= 2.0.0 and < 3.0.0`.
+      # Core majors are not assumed compatible, but core MINORS must be — a
+      # requirement that excludes one breaks `mix deps.get` outright for every
+      # host running this module beside a newer core, and the breakage lands
+      # only on consumers. `core_pin_conformance_test.exs` guards this; it is
+      # the reason a real floor is documented here rather than encoded.
+      #
+      # The real floor as of 0.22.0 is **2.14.2** — the release carrying core
+      # V183 (annotations anchored to `target_type` + `target_uuid` rather
+      # than a file), `<.modal>`'s `placement` / `close_guard`, and
+      # `<.nav_tabs>`' `:trailing` slot. Below it this module does not compile
+      # and `Whiteboards.delete/2` raises. Earlier floors it supersedes:
+      # 1.7.231 for `PhoenixKitWeb.Live.UrlState` (+ `mode: :history`),
+      # 1.7.189 for `PhoenixKit.SchemaPrefix`, 1.7.184 for the `<.checkbox>`
+      # attrs, and V125/V127/V128 for the workflow-status and project-assignee
+      # columns.
       pk_dep(:phoenix_kit, "~> 2.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
