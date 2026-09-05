@@ -83,10 +83,19 @@ $ PHOENIX_KIT_PATH=../phoenix_kit mix credo --strict     # 3058 mods/funs, no is
 $ PHOENIX_KIT_PATH=../phoenix_kit mix dialyzer           # Total errors: 7, Skipped: 7 — passed
 ```
 
-**Not fixed here — it cannot be.** AGENTS.md §"Cross-repo release ordering"
-already names the sequence: publish `phoenix_kit` 2.14.2 first, then raise
-this module's floor to it and release. Bumping the floor now would only move
-the failure from compile time to `deps.get`.
+**Not fixable here — and since resolved upstream.** AGENTS.md §"Cross-repo
+release ordering" names the sequence, and it happened: `phoenix_kit` **2.14.2
+was published to Hex during this review**. Re-resolved from Hex, the whole
+gate is green (see Gate), and 0.22.0 shipped on it.
+
+One thing this finding got wrong on the way through: the answer is *not* to
+raise the requirement. I tried `">= 2.14.2 and < 3.0.0"` and
+`core_pin_conformance_test.exs` rejected it — the `:phoenix_kit` requirement
+must stay a two-segment `~> 2.0` that admits every core 2.x, because a pin
+excluding a core minor makes `mix deps.get` unsolvable for any host running
+this module beside a newer core, and that breakage lands only on consumers.
+The pin is unchanged; the real floor is documented in `mix.exs` and the
+CHANGELOG instead. A good test to have been caught by.
 
 ### 2. BUG - HIGH — `mix test` is red on `main`: 5 failures, all from the dependency bump, not from this PR
 
@@ -258,11 +267,8 @@ reader knows the ground was covered:
 
 ## Gate
 
-Against the **released** core (`phoenix_kit` 2.14.1 on Hex): fails to compile
-— finding 1.
-
-Against `../phoenix_kit` (2.14.2, committed, unpublished), after the fixes in
-findings 2–4:
+Against **`phoenix_kit` 2.14.2 from Hex**, after the fixes in findings 2–4 and
+8 (the same results held against the local checkout before it was published):
 
 | step | result |
 | --- | --- |
@@ -272,9 +278,7 @@ findings 2–4:
 | `mix dialyzer` | passed (7 errors, 7 skipped by `.dialyzer_ignore.exs`) |
 | `mix test` | **1497 tests, 0 failures** (was 5 failures — finding 2) |
 
-## Not released
+## Released
 
-The version stayed at **0.21.2** and no CHANGELOG entry was added: PR #40 is a
-feature-sized release (0.22.0) that cannot be published until `phoenix_kit`
-2.14.2 is on Hex and this module's floor is raised to it. Publishing first
-would ship a package that does not compile against any released core.
+**0.22.0**, on `phoenix_kit` 2.14.2. Local and Hex were both at 0.21.2, so
+everything in PR #40 was unreleased; a feature-sized PR makes it a minor.
