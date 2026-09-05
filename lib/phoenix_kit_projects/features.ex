@@ -328,21 +328,11 @@ defmodule PhoenixKitProjects.Features do
         key: "full",
         name: "Full tracker",
         description: "Every task feature explicitly on.",
-        flags: %{
-          "library" => true,
-          "in_progress" => true,
-          "assignees" => true,
-          "priorities" => true,
-          "labels" => true,
-          "estimates" => true,
-          "progress" => true,
-          "dependencies" => true,
-          "statuses" => true,
-          "scheduling" => true,
-          "subprojects" => true,
-          "view_timeline" => true,
-          "view_calendar" => true
-        }
+        # EVERY built-in flag, derived from the gate list rather than typed
+        # out: a hand-kept map missed lifecycle, ledger and view_board, so
+        # "Full" applied over "Simple" left three explicit falses standing
+        # (found seeding the boss's Test project at full power, 2026-09-05).
+        flags: Map.new(@task_gates, &{to_string(&1), true})
       }
     ]
   end
