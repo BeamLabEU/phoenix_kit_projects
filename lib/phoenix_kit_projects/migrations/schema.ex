@@ -969,13 +969,6 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     """)
   end
 
-  # V15 — one-off tasks. An assignment has no title of its own: adding an
-  # ad-hoc task to a project has always minted a library `Task` first, so a
-  # quick-add composer (Todoist-style, 2026-09) would fill the reusable
-  # library with "call the client" fifty times over. The flag keeps those
-  # rows out of every library surface (list, pickers, counts) by default
-  # while the assignment that points at them works exactly like any other.
-  # Promotion is a checkbox on the task form; nothing is ever deleted.
   # V16 — whiteboards without a background file. Core V183 lets an
   # annotation anchor to any `target_type` + `target_uuid`, and Fresco
   # renders a scene with zero images, so a board no longer needs the
@@ -991,6 +984,13 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     """)
   end
 
+  # V15 — one-off tasks. An assignment has no title of its own: adding an
+  # ad-hoc task to a project has always minted a library `Task` first, so a
+  # quick-add composer (Todoist-style, 2026-09) would fill the reusable
+  # library with "call the client" fifty times over. The flag keeps those
+  # rows out of every library surface (list, pickers, counts) by default
+  # while the assignment that points at them works exactly like any other.
+  # Promotion is a checkbox on the task form; nothing is ever deleted.
   defp v15_ad_hoc_tasks(p) do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_tasks

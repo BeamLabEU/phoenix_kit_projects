@@ -231,6 +231,20 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       refute html =~ "pk-comments-body-comments-tab-project-"
     end
 
+    test "turning Discussions off while parked on Comments moves the page to Tasks",
+         %{conn: conn, project: project} do
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/comments")
+      assert render(view) =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
+
+      {:ok, _} = Extensions.disable(project, "discussions")
+      send(view.pid, {:projects, :project_modules_changed, %{}})
+
+      html = render(view)
+      refute html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
+      refute html =~ ~s(phx-value-tab="comments")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks")
+    end
+
     test "a project that is ONLY a discussion lands on Comments with no strip",
          %{conn: conn, project: project} do
       {:ok, _} = Extensions.disable(project, "tasks")
@@ -358,6 +372,20 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       assert html =~ "ext-tab-content"
       assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/main")
       refute html =~ ~s(phx-value-tab="tasks")
+    end
+
+    test "disabling the extension while parked ON its tab moves the page to Tasks",
+         %{conn: conn, project: project} do
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/main")
+      assert render(view) =~ "ext-tab-content"
+
+      {:ok, _} = Extensions.disable(project, "tab_ext")
+      send(view.pid, {:projects, :project_modules_changed, %{}})
+
+      html = render(view)
+      refute html =~ "ext-tab-content"
+      refute html =~ ~s(phx-value-tab="ext:tab_ext:main")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks")
     end
 
     test "the extension tab sits in the top strip beside Tasks and deep-links by its key",

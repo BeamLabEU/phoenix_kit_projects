@@ -18,11 +18,16 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   the tab session carries no scope — so, per the extension-tab contract,
   this LV scopes every query by the session's project and does not re-run
   `Authz` per event (same trust model as every contributed tab).
-  Board creation is additionally identity-gated: no `current_user_uuid`
-  in the session, no writes (the files table requires an owning user) —
-  and write-gated on the session's `"can_write"`, which the HOST
-  resolves from its scope against this extension's declared write action
-  (final panel: mutations must not ride the view-only trust model).
+  Board creation and deletion are identity-gated: no `current_user_uuid`
+  in the session, no writes (an unattributable actor on the activity row
+  is not an audit trail) — and write-gated on the session's `"can_write"`,
+  which the HOST resolves from its scope against this extension's
+  declared write action (final panel: mutations must not ride the
+  view-only trust model). `can_write` also reaches the canvas as
+  `can_annotate`: a viewer without it sees every board locked — no
+  drawing tools, no pencil, and core refuses its shape changes — since
+  the drawing surface is the third write, and it used to ride the same
+  view-only trust (the sweep, 2026-09-05).
 
   Phoenix-first: the board list, create, and delete all work without JS;
   the canvas needs core's Fresco/Etcher hooks (already shipped by
@@ -151,9 +156,13 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   def handle_event("delete_board", %{"uuid" => uuid}, socket) do
     %{project: project, current_user: user} = socket.assigns
 
+    # Same identity gate as create: a session whose user did not resolve
+    # must not destroy a board (and, file-less, its drawings) with a nil
+    # actor on the activity row.
     with true <- socket.assigns.can_write,
+         %{uuid: actor_uuid} <- user,
          %{} = board <- project && Whiteboards.get(project.uuid, uuid),
-         :ok <- Whiteboards.delete(board, actor_uuid: user && user.uuid) do
+         :ok <- Whiteboards.delete(board, actor_uuid: actor_uuid) do
       selected = socket.assigns.selected
 
       socket =
@@ -263,6 +272,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
                   current_user={@current_user}
                   parent_id={"project-whiteboards-#{@project.uuid}"}
                   viewer_only={true}
+                  can_annotate={@can_write}
                 />
               </div>
             <% @viewer_file -> %>
@@ -274,6 +284,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
                   current_user={@current_user}
                   parent_id={"project-whiteboards-#{@project.uuid}"}
                   viewer_only={true}
+                  can_annotate={@can_write}
                 />
               </div>
             <% true -> %>

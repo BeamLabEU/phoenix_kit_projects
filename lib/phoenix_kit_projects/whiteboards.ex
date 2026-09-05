@@ -63,10 +63,10 @@ defmodule PhoenixKitProjects.Whiteboards do
   end
 
   @doc """
-  Creates a whiteboard end-to-end: blank background PNG → Storage file
-  (owned by the creating user) → dimensions stamped → filed into the
-  project folder → board row. `opts[:actor_uuid]` is REQUIRED — the
-  files table needs an owning user for non-system files.
+  Creates a whiteboard: one row, no file (chain V16 / core V183 — the
+  canvas is drawn from the board's dimensions and its shapes anchor to
+  `target_type/0` + the board's uuid). `opts[:actor_uuid]` is REQUIRED —
+  it is the board's creator and the actor on the activity row.
 
   Options: `:width`/`:height` (default 1920×1080, capped 8000).
   """
@@ -198,9 +198,27 @@ defmodule PhoenixKitProjects.Whiteboards do
   end
 
   @doc """
-  Deletes the board ROW. The background file — and the drawings living in
-  its annotation rows — stays in the project folder, still reachable from
-  the Files page as an annotated image.
+  Drops the shapes of every FILE-LESS board of a project — for the project
+  delete, whose `ON DELETE CASCADE` removes the board rows but cannot reach
+  core's annotations table (a file-less board's shapes have no FK to
+  anything; the sweep, 2026-09-05). Returns the number of shapes removed.
+  """
+  @spec delete_shapes_for_project(String.t()) :: non_neg_integer()
+  def delete_shapes_for_project(project_uuid) when is_binary(project_uuid) do
+    from(b in Whiteboard,
+      where: b.project_uuid == ^project_uuid and is_nil(b.file_uuid),
+      select: b.uuid
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.map(&PhoenixKit.Annotations.delete_for_target(@target_type, &1))
+    |> Enum.sum()
+  end
+
+  @doc """
+  Deletes the board row. A file-less board's shapes go with it (nothing
+  else holds them). A file-backed board's background file — and the
+  drawings living in its annotation rows — stays in the project folder,
+  still reachable from the Files page as an annotated image.
   """
   @spec delete(Whiteboard.t(), keyword()) :: :ok | {:error, term()}
   def delete(%Whiteboard{} = board, opts \\ []) do
@@ -267,7 +285,7 @@ defmodule PhoenixKitProjects.Whiteboards do
       nil
   end
 
-  # ── Blank background generation ────────────────────────────────────
+  # ── Dimensions ────────────────────────────────────
 
   defp normalize_dim(value, default) do
     case value do

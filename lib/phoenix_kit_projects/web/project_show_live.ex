@@ -104,7 +104,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp assign_popup_mode(%{assigns: %{embed_mode: :navigate}} = socket) do
     assign(socket,
       embed_mode: :popup,
-      embed_pubsub_topic: "projects:popup:#{socket.id}",
+      embed_pubsub_topic: ProjectsPubSub.topic_popup(socket.id),
       embed_frame_ref: nil
     )
   end
@@ -306,9 +306,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               Extensions.enabled?(project, "discussions")
 
           active_tab =
-            socket
-            |> assign(ext_tab_slug: Map.get(params, "tab"))
-            |> tab_for_action(is_template, ext_tabs)
+            socket.assigns[:live_action]
+            |> tab_for_action(Map.get(params, "tab"), is_template, ext_tabs)
             |> gate_tab(fx)
             |> gate_comments_tab(comments?)
             |> resolve_landing_tab(fx, ext_tabs, comments?)
@@ -335,7 +334,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # appear in it (see `Web.Crumbs`).
               page_section: gettext("Projects"),
               page_section_path: Paths.projects(),
-              page_crumbs: Keyword.fetch!(Crumbs.above_project(project), :page_crumbs),
+              page_crumbs:
+                Keyword.fetch!(
+                  Crumbs.above_project(project, socket.assigns[:phoenix_kit_current_scope]),
+                  :page_crumbs
+                ),
               # The status picker + ⋮ sit in that header too, beside the name.
               page_toolbar: {__MODULE__, :header_toolbar},
               statuses_available: statuses_available,
@@ -2623,23 +2626,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp remember_task_view(socket, _tab), do: socket
 
-  # Which TOP-LEVEL tab a view belongs to: the four task views are Tasks;
-  # everything else (a contributed extension tab, Comments) is itself.
-  @doc false
+  @doc """
+  The TOP-LEVEL tab a view belongs to: the four task views (`:list`,
+  `:board`, `:gantt`, `:calendar`) are `:tasks`; everything else — a
+  contributed extension tab (`"ext:<ext>:<tab>"`), `:comments` — is itself.
+  """
+  @spec top_tab_of(atom() | String.t()) :: atom() | String.t()
   def top_tab_of(tab) when tab in [:list, :board, :gantt, :calendar], do: :tasks
   def top_tab_of(tab), do: tab
 
-  defp tab_for_action(_socket, true, _ext_tabs), do: :list
+  # The tab a route names: `live_action` + the `:tab` segment of the
+  # extension-tab catch-all. Templates never leave the list.
+  defp tab_for_action(_action, _slug, true, _ext_tabs), do: :list
 
-  defp tab_for_action(socket, _is_template, ext_tabs) do
-    case Map.get(socket.assigns, :live_action) do
+  defp tab_for_action(action, slug, _is_template, ext_tabs) do
+    case action do
       :board -> :board
       :gantt -> :gantt
       :calendar -> :calendar
       :comments -> :comments
       # `/projects/:id/<tab>` — a contributed extension tab by its key;
       # an unknown segment lands on the first tab like the bare page.
-      :ext_tab -> ext_tab_for_slug(ext_tabs, Map.get(socket.assigns, :ext_tab_slug)) || :list
+      :ext_tab -> ext_tab_for_slug(ext_tabs, slug) || :list
       _ -> :list
     end
   end
@@ -2653,11 +2661,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp ext_tab_for_slug(_ext_tabs, _slug), do: nil
 
-  # The canonical address of a tab — what the strip hands PkUrlMirror so
-  # the browser's URL follows the switch (router mounts only). The task
-  # views live under `/tasks`; an extension tab is `/<key>`; an unknown tab
-  # (can't happen after resolution) falls back to the bare page.
-  @doc false
+  @doc """
+  The canonical address of a tab — what the page hands core's `PkUrlMirror`
+  so the browser's URL follows a switch (router mounts only). The task
+  views live under `/tasks` (`/tasks/board|timeline|calendar`), Comments at
+  `/comments`, a contributed extension tab at `/<its key>`; an unknown tab
+  (unreachable after resolution) falls back to the bare project page.
+  """
+  @spec tab_url(atom() | String.t(), map(), [map()]) :: String.t()
   def tab_url(:list, project, _ext_tabs), do: Paths.project_tasks(project.uuid)
   def tab_url(:board, project, _ext_tabs), do: Paths.project_board(project.uuid)
   def tab_url(:gantt, project, _ext_tabs), do: Paths.project_gantt(project.uuid)
@@ -3564,7 +3575,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <div :if={@fx.tasks} class={["flex flex-col gap-4", top_tab != :tasks && "hidden"]}>
         <div :if={not @is_template} class="flex flex-wrap gap-2">
             <.smart_link
-              :if={@fx.tasks}
               navigate={Paths.new_assignment(@project.uuid)}
               emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
               embed_mode={@embed_mode}
@@ -3577,7 +3587,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                  assignee + dependencies. Template sub-projects deep-clone on
                  instantiation. --%>
             <.smart_link
-              :if={@fx.tasks and @fx.subprojects}
+              :if={@fx.subprojects}
               navigate={Paths.new_assignment(@project.uuid) <> "?kind=subproject"}
               emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid, "kind" => "subproject"}}}
               embed_mode={@embed_mode}
@@ -3834,20 +3844,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           ]}
         >
           <:trailing>
-            <select
-              class="select select-sm"
-              phx-change="list_sort"
-              name="sort"
-              aria-label={gettext("Sort tasks")}
-            >
-              <option value="position" selected={@list_sort == :position}>
-                {gettext("Manual order")}
-              </option>
-              <option value="newest" selected={@list_sort == :newest}>{gettext("Newest first")}</option>
-              <option value="recent" selected={@list_sort == :recent}>
-                {gettext("Recently updated")}
-              </option>
-            </select>
+            <%!-- A form, not a bare select: LiveView refuses a phx-change
+                 on an input outside a form ("form events require the
+                 input to be inside a form"), so the bare version changed
+                 the control and never the list. The sweep, 2026-09-05. --%>
+            <form id={"project-list-sort-#{@project.uuid}"} phx-change="list_sort">
+              <select class="select select-sm" name="sort" aria-label={gettext("Sort tasks")}>
+                <option value="position" selected={@list_sort == :position}>
+                  {gettext("Manual order")}
+                </option>
+                <option value="newest" selected={@list_sort == :newest}>
+                  {gettext("Newest first")}
+                </option>
+                <option value="recent" selected={@list_sort == :recent}>
+                  {gettext("Recently updated")}
+                </option>
+              </select>
+            </form>
 
             <%!-- Says why the handles vanished. A control that disappears
                  without explanation reads as a bug. --%>

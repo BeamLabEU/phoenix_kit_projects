@@ -51,7 +51,12 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
          page_title: gettext("Activity"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
-         page_crumbs: Crumbs.project(project, L10n.current_content_lang()),
+         page_crumbs:
+           Crumbs.project(
+             project,
+             L10n.current_content_lang(),
+             socket.assigns[:phoenix_kit_current_scope]
+           ),
          project: project,
          page: 1,
          entries: [],

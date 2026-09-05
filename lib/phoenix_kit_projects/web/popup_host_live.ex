@@ -16,7 +16,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
      stack and renders the target LV inside a `<dialog>` overlay.
   4. On `{:projects, :closed | :saved | :deleted, %{frame_ref: ref}}`
      — pops the top frame iff `ref` matches (race-safe against stale
-     events).
+     events). On `{:projects, :dirty, %{frame_ref: ref, dirty: bool}}`
+     — marks that frame non-closeable (Esc / backdrop confirm first)
+     while the form holds unsaved input.
   5. Generates a unique `frame_ref` per push and stamps it into the
      child LV's session along with `mode: "emit"` and the host topic,
      so the child's own emits flow back through this LV.

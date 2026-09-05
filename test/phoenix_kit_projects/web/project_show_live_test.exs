@@ -1051,7 +1051,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert all =~ "bottom-0 w-0.5"
 
       # A non-manual sort is the one thing that switches dragging off.
-      sorted = render_change(view, "list_sort", %{"sort" => "newest"})
+      # Through the FORM, as the browser does: a bare <select phx-change>
+      # never reaches the server (the sweep, 2026-09-05 — the sort control
+      # was dead in the browser while these tests pushed the event by hand).
+      sorted =
+        view
+        |> element("form[phx-change=list_sort]")
+        |> render_change(%{"sort" => "newest"})
+
       assert sorted =~ ~s(data-sortable="false")
       refute sorted =~ "bottom-0 w-0.5"
     end
@@ -1091,7 +1098,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
       before = ordered_uuids(project)
 
-      html = render_change(view, "list_sort", %{"sort" => "newest"})
+      html =
+        view
+        |> element("form[phx-change=list_sort]")
+        |> render_change(%{"sort" => "newest"})
+
       assert html =~ "Reordering off"
       # (The board's cards, CSS-hidden in the same document, keep their own
       # handles, so the sortable flag is the honest signal here.)

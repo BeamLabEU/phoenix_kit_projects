@@ -26,7 +26,7 @@ defmodule PhoenixKitProjects.Web.Crumbs do
 
   use Gettext, backend: PhoenixKitProjects.Gettext
 
-  alias PhoenixKitProjects.{L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Project
 
   @doc "The assigns every page of the module starts from: the Projects section."
@@ -42,26 +42,31 @@ defmodule PhoenixKitProjects.Web.Crumbs do
   def templates, do: %{label: gettext("Templates"), path: Paths.templates()}
 
   @doc """
-  A project (or template) as crumbs: its parent chain, root first, then
-  the project itself — every one linked. `lang` picks the localized name.
+  A project (or template) as crumbs: the ancestors the viewer may see,
+  root first, then the project itself — every one linked. `lang` picks
+  the localized name. `scope` is the viewer: an ancestor the viewer holds
+  no `:view` on is left out of the trail (its name is information about a
+  project this reader was refused — the module answers such a project as
+  "not found", and the trail must not say otherwise; the sweep, 2026-09-05).
+  A nil scope sees no ancestors.
   """
-  @spec project(Project.t(), String.t() | nil) :: [map()]
-  def project(%Project{is_template: true} = template, lang) do
+  @spec project(Project.t(), String.t() | nil, term()) :: [map()]
+  def project(%Project{is_template: true} = template, lang, _scope) do
     [
       templates(),
       %{label: Project.localized_name(template, lang), path: Paths.template(template.uuid)}
     ]
   end
 
-  def project(%Project{} = project, lang) do
-    (Projects.parent_chain(project.uuid) ++ [project])
+  def project(%Project{} = project, lang, scope) do
+    (viewable_chain(project, scope) ++ [project])
     |> Enum.map(&%{label: Project.localized_name(&1, lang), path: Paths.project(&1.uuid)})
   end
 
   @doc "Section + the project's crumbs, ready to `assign/2` before `page_title`."
-  @spec under_project(Project.t()) :: keyword()
-  def under_project(%Project{} = project) do
-    section() ++ [page_crumbs: project(project, L10n.current_content_lang())]
+  @spec under_project(Project.t(), term()) :: keyword()
+  def under_project(%Project{} = project, scope) do
+    section() ++ [page_crumbs: project(project, L10n.current_content_lang(), scope)]
   end
 
   @doc "Section + one subtab crumb (`:tasks` | `:templates`)."
@@ -70,18 +75,25 @@ defmodule PhoenixKitProjects.Web.Crumbs do
   def under(:templates), do: section() ++ [page_crumbs: [templates()]]
 
   @doc "Section + the project's crumbs MINUS the project itself (for the project page, whose title is the name)."
-  @spec above_project(Project.t()) :: keyword()
-  def above_project(%Project{is_template: true}), do: section() ++ [page_crumbs: [templates()]]
+  @spec above_project(Project.t(), term()) :: keyword()
+  def above_project(%Project{is_template: true}, _scope),
+    do: section() ++ [page_crumbs: [templates()]]
 
-  def above_project(%Project{} = project) do
+  def above_project(%Project{} = project, scope) do
     lang = L10n.current_content_lang()
 
     section() ++
       [
         page_crumbs:
-          project.uuid
-          |> Projects.parent_chain()
+          project
+          |> viewable_chain(scope)
           |> Enum.map(&%{label: Project.localized_name(&1, lang), path: Paths.project(&1.uuid)})
       ]
+  end
+
+  defp viewable_chain(%Project{uuid: uuid}, scope) do
+    uuid
+    |> Projects.parent_chain()
+    |> Enum.filter(&Authz.can?(scope, &1, :view))
   end
 end

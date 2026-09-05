@@ -67,10 +67,6 @@ defmodule PhoenixKitProjects.Web.Components.AccessPanel do
     end)
   end
 
-  @doc "The capabilities a floor depends on — `[]` when it always applies."
-  @spec requirements(String.t()) :: [{:flag | :ext, String.t()}]
-  def requirements(settings_key), do: Map.get(@requires, settings_key, [])
-
   attr(:authz_choices, :map, required: true)
   attr(:authz_actions, :list, required: true)
   attr(:visibility, :string, required: true)

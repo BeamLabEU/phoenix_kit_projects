@@ -6,7 +6,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
   frame's body rendering to the `:frame` slot the host provides.
 
   The host LV owns state — receiving `:opened` / `:closed` / `:saved` /
-  `:deleted` PubSub events, pushing/popping the stack, generating
+  `:deleted` / `:dirty` PubSub events, pushing/popping the stack, generating
   `frame_ref`s. See `PhoenixKitProjects.Web.PopupHostLive` for the
   opinionated wrapper that does this automatically. Use the component
   directly when you need full control (e.g. modal-stack alongside other

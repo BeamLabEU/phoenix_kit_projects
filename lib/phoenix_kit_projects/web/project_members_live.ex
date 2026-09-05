@@ -70,7 +70,12 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
          page_title: gettext("Members"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
-         page_crumbs: Crumbs.project(project, L10n.current_content_lang()),
+         page_crumbs:
+           Crumbs.project(
+             project,
+             L10n.current_content_lang(),
+             socket.assigns[:phoenix_kit_current_scope]
+           ),
          project: project,
          add_email: "",
          add_role: "member"

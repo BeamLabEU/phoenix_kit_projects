@@ -64,36 +64,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   @doc """
-  Where the assignee chip should link: the staff module's team / department /
-  person page when that module is installed and the assocs are loaded, else
-  `nil` (the chip stays plain text). Built with `apply/3` because
-  `:phoenix_kit_staff` is an optional dependency.
-  """
-  @spec assignee_path(
-          PhoenixKitProjects.Schemas.Assignment.t()
-          | PhoenixKitProjects.Schemas.Project.t()
-        ) :: String.t() | nil
-  def assignee_path(a) do
-    with true <- Code.ensure_loaded?(PhoenixKitStaff.Paths),
-         {fun, uuid} when is_binary(uuid) <- assignee_route(a) do
-      apply(PhoenixKitStaff.Paths, fun, [uuid])
-    else
-      _ -> nil
-    end
-  rescue
-    _ -> nil
-  end
-
-  defp assignee_route(a) do
-    cond do
-      a.assigned_person_uuid -> {:person, a.assigned_person_uuid}
-      a.assigned_team_uuid -> {:team, a.assigned_team_uuid}
-      a.assigned_department_uuid -> {:department, a.assigned_department_uuid}
-      true -> nil
-    end
-  end
-
-  @doc """
   Whether an assignment counts weekends — its own override, falling back to
   the project's setting. Delegates to `PhoenixKitProjects.ScheduleLayout`,
   where the schedule math lives; kept here so LV imports stay one-stop.
@@ -132,6 +102,22 @@ defmodule PhoenixKitProjects.Web.Helpers do
     PhoenixKitProjects.Web.TemplateFormLive,
     PhoenixKitProjects.Web.AssignmentFormLive
   ]
+
+  @doc """
+  Translates a CATALOG string — an extension's name or description, a
+  feature flag's label, a category or archetype label: plain data in the
+  descriptors, so the `gettext/1` macro cannot see it. The literals are
+  registered with `gettext_noop/1` where they are declared (the built-ins
+  in `PhoenixKitProjects`, `Extensions.Registry`, `Archetypes`), which is
+  what keeps them in the `.pot`; a sibling module's contributed string
+  passes through unchanged unless it happens to be a msgid here. `nil`
+  stays `nil`.
+  """
+  @spec translate_catalog(String.t() | nil) :: String.t() | nil
+  def translate_catalog(nil), do: nil
+
+  def translate_catalog(s) when is_binary(s),
+    do: Gettext.gettext(PhoenixKitProjects.Gettext, s)
 
   @doc "The canonical list of LVs eligible for embed-mode mounting."
   @spec embeddable_lvs() :: [module()]
@@ -531,17 +517,20 @@ defmodule PhoenixKitProjects.Web.Helpers do
   `wrapper_class` resolution.
 
   Session keys read:
-    * `"mode"` — `"navigate"` (default) or `"emit"`
-    * `"pubsub_topic"` — string; required when mode is `"emit"`
+    * `"mode"` — `"navigate"` (default), `"emit"`, or `"popup"` (the
+      router-mounted project page: it hosts its own `PopupHostLive` and
+      opens forms as frames over itself — links `emit` into that host)
+    * `"pubsub_topic"` — string; required when mode is `"emit"` or `"popup"`
     * `"frame_ref"` — opaque integer stamped by `PopupHostLive` (may be nil)
 
   Socket assigns produced:
-    * `:embed_mode` — `:navigate | :emit`
+    * `:embed_mode` — `:navigate | :emit | :popup`
     * `:embed_pubsub_topic` — string or nil
     * `:embed_frame_ref` — integer or nil
 
-  Raises `ArgumentError` if `mode == "emit"` but `pubsub_topic` is missing
-  — fail-fast at mount rather than silently no-op every later emit call.
+  Raises `ArgumentError` if the mode is `"emit"` or `"popup"` but
+  `pubsub_topic` is missing — fail-fast at mount rather than silently
+  no-op every later emit call.
   """
   @spec assign_embed_state(Phoenix.LiveView.Socket.t(), map()) ::
           Phoenix.LiveView.Socket.t()

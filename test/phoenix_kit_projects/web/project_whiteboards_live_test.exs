@@ -185,6 +185,44 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
       assert length(Whiteboards.list_for_project(project.uuid)) == 1
     end
 
+    test "a read-only viewer opens a board LOCKED: no tools, no pencil, shapes marked readonly",
+         %{conn: conn, project: project, user: user} do
+      {:ok, board} = Whiteboards.create(project, "Locked", actor_uuid: user.uuid)
+
+      {:ok, _} =
+        PhoenixKit.Annotations.create(%{
+          target_type: Whiteboards.target_type(),
+          target_uuid: board.uuid,
+          kind: "rectangle",
+          geometry: %{"x" => 1, "y" => 2, "w" => 3, "h" => 4}
+        })
+
+      # The sweep (2026-09-05): the canvas used to ignore can_write — a
+      # member who could not create a board could still draw on one and,
+      # through the sync, wipe everyone else's shapes.
+      {:ok, view, _} = mount_tab_readonly(conn, project, user)
+      html = render_click(view, "open_board", %{"uuid" => board.uuid})
+      assert html =~ "project-whiteboard-canvas-#{board.uuid}"
+      assert html =~ ~s(data-toolbar="false")
+      assert html =~ ~s(data-tools="[]")
+      assert html =~ "readonly"
+
+      # A writer gets the full surface.
+      {:ok, view, _} = mount_tab(conn, project, user)
+      html = render_click(view, "open_board", %{"uuid" => board.uuid})
+      refute html =~ ~s(data-toolbar="false")
+      refute html =~ "readonly"
+    end
+
+    test "delete without a session user is refused (no nil-actor destruction)",
+         %{conn: conn, project: project, user: user} do
+      {:ok, board} = Whiteboards.create(project, "Kept", actor_uuid: user.uuid)
+
+      {:ok, view, _} = mount_tab(conn, project, nil)
+      render_click(view, "delete_board", %{"uuid" => board.uuid})
+      assert length(Whiteboards.list_for_project(project.uuid)) == 1
+    end
+
     test "delete removes the board row", %{conn: conn, project: project, user: user} do
       file = fixture_file(user)
       {:ok, board} = Whiteboards.create_board_for_file(project, file.uuid, %{name: "Gone"})

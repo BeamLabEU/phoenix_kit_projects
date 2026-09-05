@@ -60,7 +60,12 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
          page_title: gettext("Files"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
-         page_crumbs: Crumbs.project(project, L10n.current_content_lang()),
+         page_crumbs:
+           Crumbs.project(
+             project,
+             L10n.current_content_lang(),
+             socket.assigns[:phoenix_kit_current_scope]
+           ),
          project: project,
          show_picker: false,
          folder_uuid: Attachments.folder_uuid(project.uuid)

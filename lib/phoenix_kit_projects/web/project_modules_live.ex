@@ -69,7 +69,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
          page_title: gettext("Modules"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
-         page_crumbs: Crumbs.project(project, L10n.current_content_lang()),
+         page_crumbs:
+           Crumbs.project(
+             project,
+             L10n.current_content_lang(),
+             socket.assigns[:phoenix_kit_current_scope]
+           ),
          project: project
        )
        |> load_panel()}
@@ -520,12 +525,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                 <.icon name={ext.icon} class="w-6 h-6 mt-0.5 shrink-0 opacity-70" />
                 <div class="min-w-0 grow">
                   <div class="flex items-center gap-2">
-                    <span class="font-semibold">{ext.name}</span>
+                    <span class="font-semibold">{WebHelpers.translate_catalog(ext.name)}</span>
                     <span :if={ext.source == PhoenixKitProjects and ext.key == "tasks"} class="badge badge-ghost badge-xs">
                       {gettext("built-in")}
                     </span>
                   </div>
-                  <p :if={ext.description} class="text-sm opacity-70">{ext.description}</p>
+                  <p :if={ext.description} class="text-sm opacity-70">{WebHelpers.translate_catalog(ext.description)}</p>
                   <p :if={not available} class="text-xs text-warning mt-1">
                     {gettext("Unavailable — enable the backing module in Admin › Modules first.")}
                   </p>
@@ -537,7 +542,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   disabled={not available}
                   phx-click="toggle_ext"
                   phx-value-key={ext.key}
-                  aria-label={gettext("Toggle %{name}", name: ext.name)}
+                  aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(ext.name))}
                 />
               </div>
 
@@ -687,7 +692,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           <h2 class="text-lg font-semibold">{gettext("Features")}</h2>
           <div :for={{ext, flags} <- @flag_groups} class="card border border-base-200 bg-base-100">
             <div class="card-body py-4 gap-2">
-              <h3 class="text-sm font-semibold opacity-70">{ext.name}</h3>
+              <h3 class="text-sm font-semibold opacity-70">{WebHelpers.translate_catalog(ext.name)}</h3>
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
                 <label
                   :for={%{flag: flag, on: on, unmet_requires: unmet} <- flags}
@@ -695,7 +700,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   title={requires_hint(unmet, @flag_groups)}
                 >
                   <span class="text-sm">
-                    {flag.label}
+                    {WebHelpers.translate_catalog(flag.label)}
                     <span :if={unmet != []} class="block text-xs text-warning">
                       {gettext("Requires: %{list}", list: requires_labels(unmet, @flag_groups))}
                     </span>
@@ -707,7 +712,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                     disabled={unmet != []}
                     phx-click="toggle_flag"
                     phx-value-key={flag.key}
-                    aria-label={gettext("Toggle %{name}", name: flag.label)}
+                    aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(flag.label))}
                   />
                 </label>
               </div>
@@ -783,7 +788,10 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
   defp requires_labels(unmet, flag_groups) do
     labels =
-      for {_ext, flags} <- flag_groups, %{flag: flag} <- flags, flag.key in unmet, do: flag.label
+      for {_ext, flags} <- flag_groups,
+          %{flag: flag} <- flags,
+          flag.key in unmet,
+          do: WebHelpers.translate_catalog(flag.label)
 
     case labels do
       [] -> Enum.join(unmet, ", ")

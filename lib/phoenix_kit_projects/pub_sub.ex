@@ -9,6 +9,9 @@ defmodule PhoenixKitProjects.PubSub do
     * `"projects:tasks"` — task library mutations
     * `"projects:templates"` — template project mutations
     * `"projects:project:<uuid>"` — updates scoped to one project
+    * `"projects:popup:<socket id>"` — a router-mounted project page's
+      private host topic for the forms it opens as frames over itself
+      (`topic_popup/1`); UI-intent verbs only, never content verbs
 
   ## Events
 
@@ -32,6 +35,14 @@ defmodule PhoenixKitProjects.PubSub do
   """
 
   alias PhoenixKit.PubSub.Manager
+
+  @doc """
+  The private host topic of one router-mounted project page: the forms it
+  opens as frames over itself emit their UI-intent verbs here. Per socket,
+  so two tabs of one project never cross.
+  """
+  @spec topic_popup(String.t()) :: String.t()
+  def topic_popup(socket_id) when is_binary(socket_id), do: "projects:popup:#{socket_id}"
 
   @doc "Topic for any project, template, task, or assignment mutation."
   @spec topic_all() :: String.t()
@@ -99,8 +110,10 @@ defmodule PhoenixKitProjects.PubSub do
   helpers in this module, the topic is NOT one of the canonical
   `projects:*` namespaces — it's caller-supplied and opaque to us.
 
-  UI-intent verbs (`:opened` / `:closed` / `:saved` / `:deleted`) are
-  deliberately distinct from the content verbs above
+  UI-intent verbs (`:opened` / `:closed` / `:saved` / `:deleted`, and
+  `:dirty` — `%{frame_ref:, dirty: boolean}`, a form telling its host
+  whether it holds unsaved input, so the host's frame can refuse a
+  careless close) are deliberately distinct from the content verbs above
   (`:project_created` etc.) so `handle_info` clauses subscribed to
   the canonical topics never collide with handlers subscribed to a
   host topic.

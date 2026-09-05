@@ -174,6 +174,25 @@ defmodule PhoenixKitProjects.Integration.WhiteboardsTest do
       assert :ok = Whiteboards.delete(board, actor_uuid: user.uuid)
       assert PhoenixKit.Annotations.list_for_target(Whiteboards.target_type(), board.uuid) == []
     end
+
+    test "deleting the PROJECT takes every file-less board's shapes with it",
+         %{project: project, user: user} do
+      # The sweep (2026-09-05): the boards cascade with the project, but a
+      # file-less board's shapes have no FK to anything — they were left
+      # behind in core's table forever.
+      {:ok, board} = Whiteboards.create(project, "Doomed too", actor_uuid: user.uuid)
+
+      {:ok, _} =
+        PhoenixKit.Annotations.create(%{
+          target_type: Whiteboards.target_type(),
+          target_uuid: board.uuid,
+          kind: "line",
+          geometry: %{"path" => [[0, 0], [1, 1]]}
+        })
+
+      assert {:ok, _} = PhoenixKitProjects.Projects.delete_project(project)
+      assert PhoenixKit.Annotations.list_for_target(Whiteboards.target_type(), board.uuid) == []
+    end
   end
 
   describe "rename/3 and delete/2" do

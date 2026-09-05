@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects do
   """
 
   use PhoenixKit.Module
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   # Single source of truth: read the version from mix.exs at compile time so
   # version/0 can't drift from @version on a release (baked in — no Mix at
@@ -342,12 +343,18 @@ defmodule PhoenixKitProjects do
   # unchanged — the hub's behavior-preserving default. Its feature flags land
   # with the Features layer (Step 3 of the 2026-08-05 plan); tabs stay native
   # on the show page until enforcement threading gates them.
+  # Names, descriptions and flag labels are catalog DATA, translated at
+  # render through `Web.Helpers.translate_catalog/1`; `gettext_noop/1`
+  # registers each literal so the extractor keeps it in the `.pot` — without
+  # it the whole catalog rendered English in every locale (the sweep,
+  # 2026-09-05).
   def phoenix_kit_project_extensions do
     [
       %{
         key: "tasks",
-        name: "Tasks",
-        description: "Task lists, dependencies, scheduling, Timeline and Calendar views",
+        name: gettext_noop("Tasks"),
+        description:
+          gettext_noop("Task lists, dependencies, scheduling, Timeline and Calendar views"),
         icon: "hero-clipboard-document-list",
         module_key: nil,
         default_enabled: true,
@@ -369,39 +376,49 @@ defmodule PhoenixKitProjects do
           # "From library" tab and "Add to the task library" on the add-task
           # form. Off, every task is a one-off typed in place — a checklist
           # (the Simple preset turns it off; the others leave it on).
-          %{key: "library", label: "Task library", default: true},
+          %{key: "library", label: gettext_noop("Task library"), default: true},
           # The task row's middle state. Off, a task goes straight from
           # to-do to done (one tick, no Start step) — a checklist. Rows
           # already in progress keep their Done button; the board keeps
           # its In-progress column only while one is there.
-          %{key: "in_progress", label: "In-progress step", default: true},
-          %{key: "assignees", label: "Assignees", default: true},
-          %{key: "estimates", label: "Estimates & durations", default: true},
-          %{key: "progress", label: "Progress tracking", default: true, requires: []},
-          %{key: "dependencies", label: "Dependencies", default: true},
-          %{key: "statuses", label: "Workflow statuses", default: true},
-          %{key: "scheduling", label: "Scheduling & ETA", default: true, requires: ["estimates"]},
-          %{key: "subprojects", label: "Sub-projects", default: true},
-          %{key: "priorities", label: "Priorities", default: true},
-          %{key: "labels", label: "Labels", default: true},
-          %{key: "ledger", label: "Work ledger", default: true},
+          %{key: "in_progress", label: gettext_noop("In-progress step"), default: true},
+          %{key: "assignees", label: gettext_noop("Assignees"), default: true},
+          %{key: "estimates", label: gettext_noop("Estimates & durations"), default: true},
+          %{
+            key: "progress",
+            label: gettext_noop("Progress tracking"),
+            default: true,
+            requires: []
+          },
+          %{key: "dependencies", label: gettext_noop("Dependencies"), default: true},
+          %{key: "statuses", label: gettext_noop("Workflow statuses"), default: true},
+          %{
+            key: "scheduling",
+            label: gettext_noop("Scheduling & ETA"),
+            default: true,
+            requires: ["estimates"]
+          },
+          %{key: "subprojects", label: gettext_noop("Sub-projects"), default: true},
+          %{key: "priorities", label: gettext_noop("Priorities"), default: true},
+          %{key: "labels", label: gettext_noop("Labels"), default: true},
+          %{key: "ledger", label: gettext_noop("Work ledger"), default: true},
           # Whether the project HAS a start and a finish. Off, it is just a
           # list of tasks that exists: no "start it" step, no completion, no
           # dashboard bucket asking when it begins. A shared checklist has
           # no beginning to name, and being asked to name one is the whole
           # complaint. Defaults on, like every flag here, so existing
           # projects are unchanged with no backfill.
-          %{key: "lifecycle", label: "Start & finish", default: true},
-          %{key: "view_board", label: "Board view", default: true},
+          %{key: "lifecycle", label: gettext_noop("Start & finish"), default: true},
+          %{key: "view_board", label: gettext_noop("Board view"), default: true},
           %{
             key: "view_timeline",
-            label: "Timeline view",
+            label: gettext_noop("Timeline view"),
             default: true,
             requires: ["scheduling"]
           },
           %{
             key: "view_calendar",
-            label: "Calendar view",
+            label: gettext_noop("Calendar view"),
             default: true,
             requires: ["scheduling"]
           }
@@ -409,8 +426,8 @@ defmodule PhoenixKitProjects do
       },
       %{
         key: "files",
-        name: "Files",
-        description: "Attach files to the project (core media library)",
+        name: gettext_noop("Files"),
+        description: gettext_noop("Attach files to the project (core media library)"),
         icon: "hero-paper-clip",
         module_key: nil,
         default_enabled: true,
@@ -422,8 +439,8 @@ defmodule PhoenixKitProjects do
       # opt-in capability, not part of the pre-hub surface.
       %{
         key: "whiteboards",
-        name: "Whiteboards",
-        description: "Freeform drawing boards on the core annotation canvas",
+        name: gettext_noop("Whiteboards"),
+        description: gettext_noop("Freeform drawing boards on the core annotation canvas"),
         icon: "hero-paint-brush",
         module_key: nil,
         default_enabled: false,
@@ -431,7 +448,7 @@ defmodule PhoenixKitProjects do
         tabs: [
           %{
             key: "boards",
-            label: "Whiteboards",
+            label: gettext_noop("Whiteboards"),
             icon: "hero-paint-brush",
             lv: PhoenixKitProjects.Web.ProjectWhiteboardsLive
           }
@@ -441,8 +458,8 @@ defmodule PhoenixKitProjects do
       # milestones, reviews — on their own calendar tab. Off by default.
       %{
         key: "events",
-        name: "Events",
-        description: "Meetings, milestones, and reviews on a project calendar",
+        name: gettext_noop("Events"),
+        description: gettext_noop("Meetings, milestones, and reviews on a project calendar"),
         icon: "hero-calendar-days",
         module_key: nil,
         default_enabled: false,
@@ -450,7 +467,7 @@ defmodule PhoenixKitProjects do
         tabs: [
           %{
             key: "events",
-            label: "Events",
+            label: gettext_noop("Events"),
             icon: "hero-calendar-days",
             lv: PhoenixKitProjects.Web.ProjectEventsLive
           }
@@ -462,8 +479,8 @@ defmodule PhoenixKitProjects do
       # own availability check still applies — this gate composes with it.
       %{
         key: "discussions",
-        name: "Discussions",
-        description: "Comment threads on the project and its tasks",
+        name: gettext_noop("Discussions"),
+        description: gettext_noop("Comment threads on the project and its tasks"),
         icon: "hero-chat-bubble-left-right",
         module_key: "comments",
         default_enabled: true,
@@ -475,17 +492,20 @@ defmodule PhoenixKitProjects do
       # (2026-08-06 design doc + the external security panel's findings).
       %{
         key: "portal",
-        name: "Public portal",
-        description: "Anonymous issue submission and a public status page behind a private link",
+        name: gettext_noop("Public portal"),
+        description:
+          gettext_noop(
+            "Anonymous issue submission and a public status page behind a private link"
+          ),
         icon: "hero-globe-alt",
         module_key: nil,
         default_enabled: false,
         permission_actions: [:edit_tasks],
         on_enable: {PhoenixKitProjects.Portal, :ensure_portal},
         feature_flags: [
-          %{key: "portal_submit", label: "Public issue submission", default: true},
-          %{key: "portal_list", label: "Public issue list", default: true},
-          %{key: "portal_status", label: "Public status summary", default: true}
+          %{key: "portal_submit", label: gettext_noop("Public issue submission"), default: true},
+          %{key: "portal_list", label: gettext_noop("Public issue list"), default: true},
+          %{key: "portal_status", label: gettext_noop("Public status summary"), default: true}
         ]
       }
     ]
@@ -845,8 +865,6 @@ defmodule PhoenixKitProjects do
         visible: false,
         live_view: {PhoenixKitProjects.Web.ProjectShowLive, :comments}
       },
-      # A contributed extension tab by its key (`/whiteboards`, `/events`,
-      # `/client`, …). LAST of the `projects/:id/<segment>` family on purpose:
       %Tab{
         id: :admin_projects_template_new,
         label: "New Template",

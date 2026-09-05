@@ -8,7 +8,8 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
-  alias PhoenixKitProjects.Projects
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.{Members, Projects}
 
   setup %{conn: conn} do
     scope = fake_scope()
@@ -117,5 +118,26 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
 
     {:ok, _, html} = live(conn, "/en/admin/projects/#{grandchild.uuid}/assignments/new")
     assert trail_labels(html) == ["Projects", "Parent", "Child", "Grandchild", "Add task"]
+  end
+
+  test "a member of the sub-project alone does not see the parents' names in the trail",
+       %{conn: conn} do
+    # The sweep (2026-09-05): the trail walked the parent chain with no
+    # :view check, naming projects the reader had been refused.
+    parent = fixture_project(%{"name" => "Secret parent"})
+    {:ok, %{child_project: child}} = Projects.create_subproject(parent.uuid, %{"name" => "Mine"})
+
+    {:ok, member} =
+      Auth.register_user(%{
+        "email" => "crumb-#{System.unique_integer([:positive])}@example.com",
+        "password" => "ActorPass123!"
+      })
+
+    {:ok, _} = Members.add_member(child, member.uuid, role: "viewer")
+    conn = put_test_scope(conn, fake_scope(user_uuid: member.uuid, permissions: ["projects"]))
+
+    {:ok, _, html} = live(conn, "/en/admin/projects/#{child.uuid}")
+    assert trail_labels(html) == ["Projects", "Mine"]
+    refute html =~ "Secret parent"
   end
 end

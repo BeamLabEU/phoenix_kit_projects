@@ -307,10 +307,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # findability complaint. Grouped by what the flag DOES, with a catch-all
   # so a provider-declared flag can never vanish from the form.
   @flag_groups [
-    {"work", "Working on tasks",
+    {"work", gettext_noop("Working on tasks"),
      ~w(assignees priorities labels subprojects dependencies statuses)},
-    {"time", "Time & progress", ~w(estimates progress scheduling ledger)},
-    {"views", "Views", ~w(view_board view_timeline view_calendar)}
+    {"time", gettext_noop("Time & progress"), ~w(estimates progress scheduling ledger)},
+    {"views", gettext_noop("Views"), ~w(view_board view_timeline view_calendar)}
   ]
 
   defp grouped_flag_defs(flag_defs) do
@@ -324,7 +324,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     case Enum.reject(flag_defs, &(&1.key in known)) do
       [] -> groups
-      rest -> groups ++ [{"more", "More", rest}]
+      rest -> groups ++ [{"more", gettext_noop("More"), rest}]
     end
   end
 
@@ -482,7 +482,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
       project ->
         socket
-        |> assign(Crumbs.above_project(project))
+        |> assign(Crumbs.above_project(project, socket.assigns[:phoenix_kit_current_scope]))
         |> assign(
           # Trail: Admin Panel / Projects / <parents…> / Edit <name> — the
           # leaf names its object (core's Users convention).
@@ -1551,15 +1551,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # ── Creation-page render helpers ─────────────────────────────────
 
-  # Archetype names/descriptions are catalog DATA (plain strings) —
-  # runtime-translated like the dashboards widget catalog.
-  defp translate_catalog_string(s) when is_binary(s),
-    do: Gettext.gettext(PhoenixKitProjects.Gettext, s)
-
-  defp translate_catalog_string(s), do: s
+  # Archetype names/descriptions, extension names, flag and group labels
+  # are catalog DATA (plain strings) — runtime-translated.
+  defp translate_catalog_string(s), do: WebHelpers.translate_catalog(s)
 
   defp ext_name(ext_types, key) do
-    Enum.find_value(ext_types, key, fn ext -> if ext.key == key, do: ext.name end)
+    Enum.find_value(ext_types, key, fn ext ->
+      if ext.key == key, do: WebHelpers.translate_catalog(ext.name)
+    end)
   end
 
   defp ext_config_value(configs, ext_key, field_key) do
@@ -1588,7 +1587,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     ons =
       assigns.ext_types
       |> Enum.filter(&(&1.key != "tasks" and ext_states[&1.key]))
-      |> Enum.map_join(", ", & &1.name)
+      |> Enum.map_join(", ", &translate_catalog_string(&1.name))
 
     [
       kind,
@@ -1702,9 +1701,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       )
 
     case on do
-      [] -> gettext("None")
-      exts when length(exts) <= 2 -> Enum.map_join(exts, ", ", & &1.name)
-      [a, b | rest] -> "#{a.name}, #{b.name} +#{length(rest)}"
+      [] ->
+        gettext("None")
+
+      exts when length(exts) <= 2 ->
+        Enum.map_join(exts, ", ", &translate_catalog_string(&1.name))
+
+      [a, b | rest] ->
+        "#{translate_catalog_string(a.name)}, #{translate_catalog_string(b.name)} +#{length(rest)}"
     end
   end
 
@@ -2371,7 +2375,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   :if={tasks_on?(assigns)}
                   id={"create-flags-#{group_key}"}
                 >
-                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
+                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{translate_catalog_string(group_label)}</h3>
                   <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
                     <label
                       :for={flag <- flags}
@@ -2379,7 +2383,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       class="flex items-center justify-between gap-3 py-0.5"
                     >
                       <span class="text-sm">
-                        {flag.label}
+                        {translate_catalog_string(flag.label)}
                         <span :if={flag.requires != []} class="block text-xs opacity-40">
                           {gettext("Needs: %{list}", list: Enum.join(flag.requires, ", "))}
                         </span>
@@ -2413,7 +2417,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             <:content>
               <div class="flex flex-col gap-4">
                 <div :for={{group_key, group_label, exts} <- creation_ext_groups(@ext_types)} id={"create-exts-#{group_key}"}>
-                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
+                  <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{translate_catalog_string(group_label)}</h3>
                   <div class="flex flex-col gap-2">
                     <div
                       :for={ext <- exts}
@@ -2423,9 +2427,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                       <label class="flex items-center justify-between gap-3">
                         <span class="min-w-0">
                           <span class="flex items-center gap-2 text-sm font-medium">
-                            <.icon name={ext.icon} class="w-4 h-4 opacity-60" /> {ext.name}
+                            <.icon name={ext.icon} class="w-4 h-4 opacity-60" /> {translate_catalog_string(ext.name)}
                           </span>
-                          <span :if={ext.description} class="block text-xs opacity-50">{ext.description}</span>
+                          <span :if={ext.description} class="block text-xs opacity-50">{translate_catalog_string(ext.description)}</span>
                         </span>
                         <input type="hidden" name={"ext[#{ext.key}]"} value="false" />
                         <%!-- data-ext-toggle, not a bare :checked, is what the
@@ -2457,7 +2461,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                           :for={flag <- Map.get(@ext_flag_defs, ext.key, [])}
                           class="flex items-center justify-between gap-3 py-0.5"
                         >
-                          <span class="text-sm">{flag.label}</span>
+                          <span class="text-sm">{translate_catalog_string(flag.label)}</span>
                           <input type="hidden" name={"flag[#{flag.key}]"} value="false" />
                           <input
                             type="checkbox"

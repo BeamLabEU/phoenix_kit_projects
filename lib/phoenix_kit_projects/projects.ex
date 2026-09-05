@@ -1194,6 +1194,10 @@ defmodule PhoenixKitProjects.Projects do
         )
       )
 
+    # Whiteboard shapes live in core's annotations table keyed by the
+    # board's uuid, with no FK — the cascade below cannot reach them.
+    _ = PhoenixKitProjects.Whiteboards.delete_shapes_for_project(project.uuid)
+
     deleted =
       case repo().delete(project) do
         {:ok, d} -> d
@@ -2814,12 +2818,13 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
-  The quick-add composer's write: a **one-off** task (`ad_hoc: true`, so
-  it never shows in the library) titled `title`, assigned into
-  `project_uuid` at the bottom of the plan with the project's defaults.
-  Trims the title; a blank one is a `:task` changeset error like any other
-  validation failure. Broadcasts after commit, logs nothing — see
-  `create_task_with_assignment/3`.
+  Adds a **one-off** task by title (`ad_hoc: true`, so it never shows in
+  the library) into `project_uuid` at the bottom of the plan with the
+  project's defaults — the by-title shortcut over
+  `create_task_with_assignment/3` for hosts and scripts (the add-task
+  sheet builds the full attrs itself). Trims the title; a blank one is a
+  `:task` changeset error like any other validation failure. Broadcasts
+  after commit, logs nothing — see `create_task_with_assignment/3`.
   """
   @spec quick_add_assignment(uuid(), String.t(), keyword()) ::
           {:ok, %{task: Task.t(), assignment: Assignment.t()}}

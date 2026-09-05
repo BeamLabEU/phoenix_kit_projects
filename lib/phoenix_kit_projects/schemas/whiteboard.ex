@@ -1,14 +1,14 @@
 defmodule PhoenixKitProjects.Schemas.Whiteboard do
   @moduledoc """
-  One project whiteboard (`phoenix_kit_project_whiteboards`, chain V5): a
-  named drawing surface = one core Storage file (the blank-background
-  bridge — see `PhoenixKitProjects.Whiteboards`) plus core annotation
-  rows anchored to that file by `PhoenixKitWeb.Components.MediaCanvasViewer`.
-
-  `width`/`height` are duplicated here from the background file so the
-  list UI can label board sizes without a Storage read. `file_uuid` is
-  unique — a board owns its background. `created_by_uuid` is FK-less
-  provenance (house convention; activity is the audit trail).
+  One project whiteboard (`phoenix_kit_project_whiteboards`, chain V5,
+  file-less since V16): a named drawing surface of `width` × `height`
+  canvas pixels whose shapes are core annotation rows anchored to
+  `PhoenixKitProjects.Whiteboards.target_type/0` + this row's uuid (core
+  V183), drawn by `PhoenixKitWeb.Components.MediaCanvasViewer` in board
+  mode. `file_uuid` is nil for such a board; it is set only on boards
+  from before V16, which keep their background file and its file-anchored
+  shapes (still unique — a board owned its background). `created_by_uuid`
+  is FK-less provenance (house convention; activity is the audit trail).
   """
 
   use Ecto.Schema

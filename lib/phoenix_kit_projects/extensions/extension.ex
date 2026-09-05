@@ -152,19 +152,32 @@ defmodule PhoenixKitProjects.Extensions.Extension do
 
   # ── Tabs ────────────────────────────────────────────────────────────
 
+  # A tab's key is also its URL segment (`/projects/:id/<key>`, the
+  # `projects/:id/:tab` catch-all — declared after every literal sibling
+  # route, so a key that reuses one would deep-link to the wrong page
+  # while the strip's data-url named this tab). Reserved, refused here.
+  @reserved_tab_keys ~w(edit files activity members modules board gantt calendar tasks comments new)
+
+  @doc "The URL segments a contributed tab key may not reuse."
+  @spec reserved_tab_keys() :: [String.t()]
+  def reserved_tab_keys, do: @reserved_tab_keys
+
   defp normalize_tabs(tabs, source) do
     Enum.flat_map(tabs, fn tab ->
       tab = if is_map(tab), do: Map.new(tab, fn {k, v} -> {to_atom_key(k), v} end), else: tab
 
       with true <- is_map(tab),
            true <- valid_key?(tab[:key]) and valid_key?(tab[:label]),
+           false <- to_string(tab[:key]) in @reserved_tab_keys,
            lv = tab[:lv],
            true <- is_atom(lv) and not is_nil(lv) and Code.ensure_loaded?(lv) do
         [%{key: to_string(tab[:key]), label: to_string(tab[:label]), icon: tab[:icon], lv: lv}]
       else
         _ ->
           Logger.warning(
-            "[Projects.Extensions] Dropping invalid tab #{inspect(tab)} from #{inspect(source)}"
+            "[Projects.Extensions] Dropping invalid tab #{inspect(tab)} from #{inspect(source)} " <>
+              "(a tab needs a key that is not a project-page URL segment " <>
+              "#{inspect(@reserved_tab_keys)}, a label and a loaded LiveView)"
           )
 
           []

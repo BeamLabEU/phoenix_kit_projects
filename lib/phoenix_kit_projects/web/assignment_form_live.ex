@@ -309,7 +309,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             else: gettext("Add task")
 
         socket
-        |> assign(Crumbs.under_project(project))
+        |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
         |> assign(
           page_title: title,
           kind: kind,
@@ -324,13 +324,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           assignment: assignment,
           portal_review_images: [],
           live_action: :new,
-          # A `title` param (the quick-add composer's "More options", or an
-          # emit-session `"title"`) lands the form in "new task" mode with
-          # the typed title carried over — nothing is created until Save.
-          # Create new is the default (most tasks are one-offs — the
-          # composer's semantics); From library is the deliberate second
-          # choice. A `title` param (the quick-add composer's "More
-          # options", or an emit-session `"title"`) prefills the new task's
+          # Create new is the default (most tasks are one-offs); From
+          # library is the deliberate second choice. A `title` param (an
+          # emit-session `"title"` from a host) prefills the new task's
           # title — nothing is created until Save.
           task_mode: "new",
           assign_type: "",
@@ -400,7 +396,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         child = Projects.get_project_with_assignee(child_uuid) || %Project{}
 
         socket
-        |> assign(Crumbs.under_project(project))
+        |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
         |> assign(
           page_title:
             gettext("Edit %{name}",
@@ -437,7 +433,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           assignment.task && Task.localized_title(assignment.task, L10n.current_content_lang())
 
         socket
-        |> assign(Crumbs.under_project(project))
+        |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
         |> assign(
           # "Edit <task>" under the project crumb — the leaf names its object.
           page_title:

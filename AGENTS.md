@@ -982,6 +982,29 @@ Release checklist:
     (process-global), so the `/ru/...` URL prefix translates both
     surfaces simultaneously.
   - See `dev_docs/i18n_triage.md` for the per-file bucket assignments.
+  - **Catalog DATA is translated at render, and registered where it is
+    declared.** Extension names/descriptions and flag labels
+    (`PhoenixKitProjects.phoenix_kit_project_extensions/0`), category
+    labels (`Extensions.Registry`), the form's flag groups and the
+    starting-point cards (`Archetypes`) are plain strings in maps — the
+    `gettext/1` macro cannot see them, so each literal is wrapped in
+    `gettext_noop/1` (registers the msgid, returns it unchanged) and every
+    render site goes through `Web.Helpers.translate_catalog/1` (the
+    runtime `Gettext.gettext/2`). Without the noop the string exists in
+    NO catalogue and every locale shows English while every count says
+    "complete" — the whole extension catalog and the starting-point cards
+    shipped that way until the 2026-09-05 sweep. A sibling module's
+    contributed strings pass through unless it registers them in THIS
+    backend. Dashboards widget catalog strings are the one exception:
+    `phoenix_kit_dashboards` translates provider strings through ITS OWN
+    backend, so ours cannot reach them until that helper honours a
+    provider backend (open, 2026-09-05).
+  - **Completeness is a code-vs-catalogue diff, never a count.** After
+    every extract/merge, diff the new msgids against the pre-merge `.po`
+    and fill them in all seven locales; review every `fuzzy` the merge
+    produced (its guesses have been wrong every time: "Off — no task
+    list" → "no late marker"). The sweep found 219 empty msgstrs per
+    locale that every count had called complete.
 - **LiveView layout**: `use PhoenixKitWeb, :live_view` (in `phoenix_kit_web.ex`) injects `layout: PhoenixKit.LayoutConfig.get_layout()` automatically. No need to wrap templates in `<PhoenixKitWeb.Components.LayoutWrapper.app_layout>` — that wrapper is for LiveViews served outside the admin live_session
 
 ## Pre-commit commands

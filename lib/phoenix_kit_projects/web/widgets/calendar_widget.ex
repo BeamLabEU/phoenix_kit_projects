@@ -62,13 +62,23 @@ defmodule PhoenixKitProjects.Web.Widgets.CalendarWidget do
       _ -> PhoenixKit.Settings.get_setting("time_zone", "0")
     end
   rescue
-    _ -> "0"
+    e ->
+      Logger.warning(
+        "[CalendarWidget] timezone lookup failed, using UTC: #{Exception.message(e)}"
+      )
+
+      "0"
   end
 
   defp local_today(offset) do
     DateTime.utc_now() |> PhoenixKit.Utils.Date.shift_to_offset(offset) |> DateTime.to_date()
   rescue
-    _ -> Date.utc_today()
+    e ->
+      Logger.warning(
+        "[CalendarWidget] offset #{inspect(offset)} rejected, using UTC today: #{Exception.message(e)}"
+      )
+
+      Date.utc_today()
   end
 
   # Viewer-scoped at the query, like every projects widget: a dashboard
