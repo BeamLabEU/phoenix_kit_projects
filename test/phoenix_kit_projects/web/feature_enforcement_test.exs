@@ -75,6 +75,72 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
     end
   end
 
+  describe "in-progress step off (a checklist)" do
+    setup %{conn: conn, project: project} do
+      {:ok, project} = Features.set_flags(project, %{"in_progress" => false})
+      # Completing records the actor (an FK), so the page needs a real user.
+      conn = put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!()))
+      {:ok, conn: conn, project: project}
+    end
+
+    test "a to-do row offers Done directly; a forged Start is refused",
+         %{conn: conn, project: project, assignment: a} do
+      {:ok, view, html} = live(conn, show_path(project))
+
+      refute html =~ ~s(phx-click="start_task")
+      assert html =~ ~s(phx-click="complete")
+
+      html = render_click(view, "start_task", %{"uuid" => a.uuid})
+      assert html =~ "This feature is turned off for this project."
+      assert Projects.get_assignment(a.uuid).status == "todo"
+
+      render_click(view, "complete", %{"uuid" => a.uuid})
+      assert Projects.get_assignment(a.uuid).status == "done"
+
+      # Reopen goes back to to-do — still no Start on offer.
+      html = render_click(view, "reopen", %{"uuid" => a.uuid})
+      assert Projects.get_assignment(a.uuid).status == "todo"
+      refute html =~ ~s(phx-click="start_task")
+    end
+
+    test "a row already in progress keeps its Done button and the board its column",
+         %{conn: conn, project: project, assignment: a} do
+      {:ok, _} = Projects.update_assignment_status(a, %{"status" => "in_progress"})
+      {:ok, view, html} = live(conn, show_path(project))
+
+      assert html =~ ~s(phx-click="complete")
+      refute html =~ ~s(phx-click="start_task")
+
+      html = render_click(view, "switch_tab", %{"tab" => "board"})
+      assert html =~ "In progress"
+      assert html =~ "md:grid-cols-3"
+    end
+
+    test "the board drops the middle column when nothing is in progress",
+         %{conn: conn, project: project} do
+      {:ok, view, _} = live(conn, show_path(project))
+      html = render_click(view, "switch_tab", %{"tab" => "board"})
+
+      refute html =~ "In progress"
+      assert html =~ "md:grid-cols-2"
+    end
+
+    test "the add-task form offers To do / Done only", %{conn: conn, project: project} do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
+
+      assert html =~ ~s(value="todo")
+      assert html =~ ~s(value="done")
+      refute html =~ ~s(value="in_progress")
+    end
+
+    test "the Simple preset turns the step off" do
+      p = fixture_project()
+      assert Features.gates(p).in_progress
+      {:ok, p} = Features.apply_preset(p, "simple")
+      refute Features.gates(p).in_progress
+    end
+  end
+
   describe "progress flag off" do
     setup %{project: project} do
       {:ok, project} = Features.set_flags(project, %{"progress" => false})

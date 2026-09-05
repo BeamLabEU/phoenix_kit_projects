@@ -145,6 +145,7 @@ defmodule PhoenixKitProjects.Features do
   # :view_timeline (caught by the Step 5 full run).
   @task_gates [
     :library,
+    :in_progress,
     :assignees,
     :estimates,
     :progress,
@@ -290,6 +291,9 @@ defmodule PhoenixKitProjects.Features do
           # from or feed (Max, 2026-09-05: "for the checklist it's not
           # needed"). The other starting points keep the default (on).
           "library" => false,
+          # A checklist item is done or it is not — no "started" in between
+          # (Max, 2026-09-05).
+          "in_progress" => false,
           "assignees" => false,
           "priorities" => false,
           "labels" => false,
@@ -326,6 +330,7 @@ defmodule PhoenixKitProjects.Features do
         description: "Every task feature explicitly on.",
         flags: %{
           "library" => true,
+          "in_progress" => true,
           "assignees" => true,
           "priorities" => true,
           "labels" => true,

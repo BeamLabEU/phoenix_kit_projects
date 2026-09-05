@@ -751,6 +751,18 @@ it on; the project's Modules & Features page flips it later like any
 flag. The Tasks page itself stays global — the flag is whether THIS
 project draws on the library, not whether the library exists.
 
+**The in-progress step is a flag too** (`in_progress`, default on,
+`fx.in_progress`; the `simple` preset turns it off — "a checklist item
+is done or it is not"). Off: a to-do row offers Done directly (no
+Start; `start_task` is gated on this flag and refused), the add-task
+form's Status offers To do / Done, and the board drops its middle
+column — unless a row already sits in `in_progress` (legacy, or the
+flag flipped mid-flight): that row keeps its Done button, stays
+selectable in the form, and holds the column open, so nothing ever
+disappears. The row lifecycle itself (`todo → in_progress → done`) is
+unchanged in the schema; the flag only removes the middle step from
+the UI and the event surface.
+
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 
 Projects contributes ten widgets to the dashboards module via the duck-typed

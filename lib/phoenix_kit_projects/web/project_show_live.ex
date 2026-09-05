@@ -732,6 +732,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # From the FIELDS, never from `assignee_type/1` — that returns a
   # translated label ("Person"/"Team"/"Dept"), so matching on it would pick
   # the right icon in English and the fallback in every other language.
+  # The board's columns. With the in-progress step off the middle column
+  # goes — unless a row still sits there (legacy or flipped mid-flight),
+  # so nothing ever disappears from the board.
+  defp board_columns(fx, assignments) do
+    middle? = fx.in_progress or Enum.any?(assignments, &(&1.status == "in_progress"))
+
+    [{"todo", gettext("To do"), "border-t-warning"}] ++
+      if(middle?, do: [{"in_progress", gettext("In progress"), "border-t-info"}], else: []) ++
+      [{"done", gettext("Done"), "border-t-success"}]
+  end
+
   defp assignee_icon(%{assigned_team_uuid: uuid}) when is_binary(uuid), do: "hero-users"
 
   defp assignee_icon(%{assigned_department_uuid: uuid}) when is_binary(uuid),
@@ -995,11 +1006,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <div class="flex items-center gap-1 shrink-0">
               <%= if not @is_template do %>
                 <%= cond do %>
-                  <% @a.status == "todo" -> %>
+                  <% @a.status == "todo" and @fx.in_progress -> %>
                     <button phx-click="start_task" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Starting…")} class="btn btn-warning btn-xs">
                       {gettext("Start")}
                     </button>
-                  <% @a.status == "in_progress" -> %>
+                  <% @a.status in ["todo", "in_progress"] -> %>
                     <button phx-click="complete" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Saving…")} class="btn btn-success btn-xs">
                       <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("Done")}
                     </button>
@@ -1236,7 +1247,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # the courtesy; THIS is the enforcement.
   @gated_events %{
     "complete" => :tasks,
-    "start_task" => :tasks,
+    # Owned by the in-progress flag (which itself needs the tasks
+    # extension): with the step off, Start is neither shown nor accepted.
+    "start_task" => :in_progress,
     "reopen" => :tasks,
     "remove_assignment" => :tasks,
     "reorder_assignments" => :tasks,
@@ -4083,13 +4096,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           )}
         </p>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+        <% board_columns = board_columns(@fx, @assignments) %>
+        <div class={[
+          "grid grid-cols-1 gap-4 items-start",
+          if(length(board_columns) == 3, do: "md:grid-cols-3", else: "md:grid-cols-2")
+        ]}>
           <div
-            :for={{status, title, tint} <- [
-              {"todo", gettext("To do"), "border-t-warning"},
-              {"in_progress", gettext("In progress"), "border-t-info"},
-              {"done", gettext("Done"), "border-t-success"}
-            ]}
+            :for={{status, title, tint} <- board_columns}
             class={["bg-base-200/50 rounded-lg border-t-4 p-3 flex flex-col gap-2 min-h-24", tint]}
           >
             <% column = Enum.filter(@assignments, &(&1.status == status)) %>
@@ -4192,11 +4205,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
                     <div class="ml-auto shrink-0">
                       <%= cond do %>
-                        <% a.status == "todo" -> %>
+                        <% a.status == "todo" and @fx.in_progress -> %>
                           <button phx-click="start_task" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-warning btn-xs">
                             {gettext("Start")}
                           </button>
-                        <% a.status == "in_progress" -> %>
+                        <% a.status in ["todo", "in_progress"] -> %>
                           <button phx-click="complete" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-success btn-xs">
                             <.icon name="hero-check" class="w-3.5 h-3.5" />
                           </button>

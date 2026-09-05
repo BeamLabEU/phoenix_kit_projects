@@ -1654,6 +1654,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     |> then(fn a -> if fx.priorities, do: a, else: Map.drop(a, ~w(priority)) end)
   end
 
+  # To do / In progress / Done — the middle one only with the in-progress
+  # step on, or for a row already there (it must stay selectable).
+  defp status_options(fx, assignment) do
+    middle? = fx.in_progress or match?(%{status: "in_progress"}, assignment)
+
+    [{gettext("To do"), "todo"}] ++
+      if(middle?, do: [{gettext("In progress"), "in_progress"}], else: []) ++
+      [{gettext("Done"), "done"}]
+  end
+
   defp priority_options do
     [
       {gettext("Urgent"), "urgent"},
@@ -2139,7 +2149,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <.select
               field={@form[:status]}
               label={gettext("Status")}
-              options={[{gettext("To do"), "todo"}, {gettext("In progress"), "in_progress"}, {gettext("Done"), "done"}]}
+              options={status_options(@fx, @assignment)}
             />
 
             <div :if={@fx.priorities} class="w-48">

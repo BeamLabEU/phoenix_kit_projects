@@ -370,6 +370,11 @@ defmodule PhoenixKitProjects do
           # form. Off, every task is a one-off typed in place — a checklist
           # (the Simple preset turns it off; the others leave it on).
           %{key: "library", label: "Task library", default: true},
+          # The task row's middle state. Off, a task goes straight from
+          # to-do to done (one tick, no Start step) — a checklist. Rows
+          # already in progress keep their Done button; the board keeps
+          # its In-progress column only while one is there.
+          %{key: "in_progress", label: "In-progress step", default: true},
           %{key: "assignees", label: "Assignees", default: true},
           %{key: "estimates", label: "Estimates & durations", default: true},
           %{key: "progress", label: "Progress tracking", default: true, requires: []},
