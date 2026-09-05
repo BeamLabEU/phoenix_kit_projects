@@ -290,12 +290,22 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
              "a shared checklist arrived with a Files page and a Comments button"
     end
 
-    test "the other archetypes suppress nothing" do
+    test "the other task archetypes suppress nothing" do
       for key <- ~w(standard client_hub public_intake),
           archetype = PhoenixKitProjects.Archetypes.get(key),
           archetype != nil do
         assert archetype.extensions_off == []
       end
+    end
+
+    test "the space archetype has no task list and no Comments tab (the boss, 2026-09-05)" do
+      archetype = PhoenixKitProjects.Archetypes.get("space")
+
+      assert "tasks" in archetype.extensions_off
+      assert "discussions" in archetype.extensions_off
+      # Files is a ⋮ page, not a tab — it keeps its default.
+      refute "files" in archetype.extensions_off
+      assert archetype.extensions == []
     end
   end
 

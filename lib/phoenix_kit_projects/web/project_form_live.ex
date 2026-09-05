@@ -158,16 +158,20 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     )
   end
 
-  # Every AVAILABLE extension except tasks (whose on/off rides the
-  # preset; a task-less project is a Modules-panel edge case, not a
-  # creation-page decision).
+  # Every AVAILABLE extension, tasks included: since the project page
+  # became top-level tabs (2026-09-05) a task-less project is a
+  # first-class shape — a class that is only its whiteboards — so its
+  # on/off is a creation decision. Tasks renders as the first row of the
+  # Task features drawer rather than in the Extensions list (it is what
+  # that drawer configures); the reconciliation at save is the same.
   defp creation_ext_types do
     Extensions.list_types()
     |> Enum.filter(&Extensions.Registry.available?/1)
-    |> Enum.reject(&(&1.key == "tasks"))
   rescue
     _ -> []
   end
+
+  defp tasks_on?(assigns), do: Map.get(assigns.ext_states, "tasks", true)
 
   # Each kind reads ONLY its own field, so a submitted kind can never be
   # paired with another kind's uuid.
@@ -276,7 +280,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # Extensions grouped by the JOB they do — see Registry.categories/0.
   defp creation_ext_groups(ext_types) do
-    Extensions.Registry.group_by_category(ext_types)
+    ext_types
+    |> Enum.reject(&(&1.key == "tasks"))
+    |> Extensions.Registry.group_by_category()
   rescue
     _ -> [{"more", "More", ext_types}]
   end
@@ -1559,33 +1565,34 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         {a, false} -> translate_catalog_string(a.name)
       end
 
+    tasks? = Map.get(ext_states, "tasks", true)
+
     ons =
       assigns.ext_types
-      |> Enum.filter(&ext_states[&1.key])
+      |> Enum.filter(&(&1.key != "tasks" and ext_states[&1.key]))
       |> Enum.map_join(", ", & &1.name)
-
-    statuses =
-      cond do
-        flag_states["statuses"] == false -> nil
-        assigns.form[:status_entity_uuid].value in [nil, ""] -> gettext("Statuses: site default")
-        true -> gettext("Statuses: custom set")
-      end
-
-    template =
-      case assigns.template_preview do
-        %{task_count: n} -> gettext("Template: %{count} tasks", count: n)
-        _ -> nil
-      end
 
     [
       kind,
+      if(not tasks?, do: gettext("No tasks")),
       if(ons != "", do: gettext("With: %{list}", list: ons)),
-      statuses,
-      template
+      if(tasks?, do: statuses_summary(assigns, flag_states)),
+      template_summary(assigns.template_preview)
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" · ")
   end
+
+  defp statuses_summary(assigns, flag_states) do
+    cond do
+      flag_states["statuses"] == false -> nil
+      assigns.form[:status_entity_uuid].value in [nil, ""] -> gettext("Statuses: site default")
+      true -> gettext("Statuses: custom set")
+    end
+  end
+
+  defp template_summary(%{task_count: n}), do: gettext("Template: %{count} tasks", count: n)
+  defp template_summary(_preview), do: nil
 
   # ── Collapsed-section summaries ─────────────────────────────────────
   #
@@ -1654,6 +1661,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     join_summary([invites, permissions])
   end
 
+  defp features_summary(%{ext_states: %{"tasks" => false}}), do: gettext("Off — no task list")
+
   defp features_summary(assigns) do
     changed =
       Enum.count(assigns.flag_defs, fn flag ->
@@ -1668,7 +1677,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   defp extensions_summary(assigns) do
-    on = Enum.filter(assigns.ext_types, &Map.get(assigns.ext_states, &1.key, false))
+    on =
+      Enum.filter(
+        assigns.ext_types,
+        &(&1.key != "tasks" and Map.get(assigns.ext_states, &1.key, false))
+      )
 
     case on do
       [] -> gettext("None")
@@ -1694,6 +1707,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp receipt_reveal_class("public_intake"),
     do: "hidden group-has-[[data-arch=public-intake]:checked]/kind:block"
+
+  defp receipt_reveal_class("space"),
+    do: "hidden group-has-[[data-arch=space]:checked]/kind:block"
 
   defp receipt_reveal_class(_), do: "hidden"
 
@@ -2304,7 +2320,35 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             </:title>
             <:content>
               <div class="flex flex-col gap-4">
-                <div :for={{group_key, group_label, flags} <- grouped_flag_defs(@flag_defs)} id={"create-flags-#{group_key}"}>
+                <%!-- The task list itself, first: off makes this a project
+                     with no Tasks tab — only the extension tabs it picks
+                     (the boss's "each thing stands alone", 2026-09-05).
+                     The flags below are what the list does, so they hide
+                     with it. --%>
+                <label id="ext-row-tasks" class="flex items-center justify-between gap-3 py-0.5">
+                  <span class="text-sm">
+                    <span class="flex items-center gap-2 font-medium">
+                      <.icon name="hero-clipboard-document-list" class="w-4 h-4 opacity-60" />
+                      {gettext("Tasks")}
+                    </span>
+                    <span class="block text-xs opacity-50">
+                      {gettext("A task list with its board, timeline and calendar. Off: a project made only of the tabs you pick below.")}
+                    </span>
+                  </span>
+                  <input type="hidden" name="ext[tasks]" value="false" />
+                  <input
+                    type="checkbox"
+                    name="ext[tasks]"
+                    value="true"
+                    checked={tasks_on?(assigns)}
+                    class="toggle toggle-sm"
+                  />
+                </label>
+                <div
+                  :for={{group_key, group_label, flags} <- grouped_flag_defs(@flag_defs)}
+                  :if={tasks_on?(assigns)}
+                  id={"create-flags-#{group_key}"}
+                >
                   <h3 class="mb-1 text-xs font-semibold uppercase opacity-50">{group_label}</h3>
                   <div class="grid grid-cols-1 gap-x-6 gap-y-1 sm:grid-cols-2">
                     <label

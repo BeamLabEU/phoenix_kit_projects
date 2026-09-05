@@ -817,6 +817,21 @@ it on; the project's Modules & Features page flips it later like any
 flag. The Tasks page itself stays global — the flag is whether THIS
 project draws on the library, not whether the library exists.
 
+**The task list itself is a creation decision** (2026-09-05, with the
+top-level tabs): the New project form carries the `tasks` extension as
+the first row of the *Task features* drawer — off hides the flag rows,
+the receipt says "No tasks", the summary "Off — no task list" — and a
+fifth starting point, **Just a space** (`Archetypes` key `space`:
+`extensions_off: ~w(tasks discussions)`, preset `simple` for the day
+tasks come on), makes a project that is only the tabs it picks (a
+class that is only its whiteboards). Tasks is reconciled at save like
+every extension (`apply_creation_capabilities/2`); it is never listed
+among the add-ons (`creation_ext_groups/1`, `extensions_summary/1`).
+Discussions defaults on except for Simple checklist and Just a space.
+The card copy in `Archetypes` is catalog data translated at render
+time, so every literal is wrapped in `gettext_noop/1` — without it the
+extractor never saw the cards and no locale had them.
+
 **The in-progress step is a flag too** (`in_progress`, default on,
 `fx.in_progress`; the `simple` preset turns it off — "a checklist item
 is done or it is not"). Off: a to-do row offers Done directly (no

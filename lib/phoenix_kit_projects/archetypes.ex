@@ -18,7 +18,15 @@ defmodule PhoenixKitProjects.Archetypes do
   The card list is fixed and small by design; per-site tuning happens
   through the site default preset (which picks the preselected card)
   and the post-create Modules & Features panel.
+
+  The card copy is catalog DATA, translated at render time with the
+  runtime `Gettext.gettext/2` — which the extractor cannot see, so every
+  literal here is wrapped in `gettext_noop/1` (registers the msgid,
+  returns it unchanged). Without that the cards existed in no
+  catalogue and rendered English in every locale (found 2026-09-05).
   """
+
+  use Gettext, backend: PhoenixKitProjects.Gettext
 
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Extensions.Registry
@@ -36,7 +44,9 @@ defmodule PhoenixKitProjects.Archetypes do
         }
 
   # The 2026-08-07 five-AI quorum spec: FOUR intent-named cards (the
-  # "Full tracker" density card folded into Customize), each with two
+  # "Full tracker" density card folded into Customize) — plus, since the
+  # project page became top-level tabs (2026-09-05), a fifth for a
+  # project with no task list at all. Each carries two
   # plain-language OUTCOME lines replacing the internal-vocabulary
   # chips. `requires_extensions: true` hides a card entirely when none
   # of its extension seeds is installed (Codex's rule — a Client card
@@ -44,9 +54,9 @@ defmodule PhoenixKitProjects.Archetypes do
   @archetypes [
     %{
       key: "quick_todo",
-      name: "Simple checklist",
-      description: "A shared checklist — no assignees, dates, or tracking.",
-      outcomes: ["Check off shared tasks", "No scheduling overhead"],
+      name: gettext_noop("Simple checklist"),
+      description: gettext_noop("A shared checklist — no assignees, dates, or tracking."),
+      outcomes: [gettext_noop("Check off shared tasks"), gettext_noop("No scheduling overhead")],
       icon: "hero-check-circle",
       preset: "simple",
       extensions: [],
@@ -59,9 +69,13 @@ defmodule PhoenixKitProjects.Archetypes do
     },
     %{
       key: "standard",
-      name: "Team project",
-      description: "Day-to-day team work with assignees, due dates, board and timeline views.",
-      outcomes: ["Assignees & due dates", "Board, list & timeline views"],
+      name: gettext_noop("Team project"),
+      description:
+        gettext_noop("Day-to-day team work with assignees, due dates, board and timeline views."),
+      outcomes: [
+        gettext_noop("Assignees & due dates"),
+        gettext_noop("Board, list & timeline views")
+      ],
       icon: "hero-view-columns",
       preset: "standard",
       extensions: [],
@@ -70,9 +84,10 @@ defmodule PhoenixKitProjects.Archetypes do
     },
     %{
       key: "client_hub",
-      name: "Client project",
-      description: "Work you deliver to a client — linked client, billable time, invoicing.",
-      outcomes: ["Linked client record", "Billable time & invoicing"],
+      name: gettext_noop("Client project"),
+      description:
+        gettext_noop("Work you deliver to a client — linked client, billable time, invoicing."),
+      outcomes: [gettext_noop("Linked client record"), gettext_noop("Billable time & invoicing")],
       icon: "hero-briefcase",
       preset: "full",
       extensions: ~w(crm_client billing_customer),
@@ -81,14 +96,36 @@ defmodule PhoenixKitProjects.Archetypes do
     },
     %{
       key: "public_intake",
-      name: "Public intake",
-      description: "Let outsiders submit requests through a private link; work stays internal.",
-      outcomes: ["Public submission form", "Internal triage board"],
+      name: gettext_noop("Public intake"),
+      description:
+        gettext_noop("Let outsiders submit requests through a private link; work stays internal."),
+      outcomes: [gettext_noop("Public submission form"), gettext_noop("Internal triage board")],
       icon: "hero-inbox-arrow-down",
       preset: "standard",
       extensions: ~w(portal),
       extensions_off: [],
       requires_extensions: true
+    },
+    %{
+      key: "space",
+      name: gettext_noop("Just a space"),
+      description:
+        gettext_noop("No task list — a home for whiteboards, events, sites or documents."),
+      outcomes: [
+        gettext_noop("Only the tabs you pick"),
+        gettext_noop("Nothing to start or finish")
+      ],
+      icon: "hero-squares-2x2",
+      # The flag bundle is moot with tasks off; `simple` so a space that
+      # later turns tasks on (Modules page) starts as a lean checklist.
+      preset: "simple",
+      extensions: [],
+      # The boss's "each thing stands alone" (2026-09-05): a class leader
+      # who only uses whiteboards gets a project that IS the whiteboards —
+      # no Tasks tab, no Comments tab unless asked for. The user picks the
+      # tabs below; anything default-on that is not a tab (Files) stays.
+      extensions_off: ~w(tasks discussions),
+      requires_extensions: false
     }
   ]
 

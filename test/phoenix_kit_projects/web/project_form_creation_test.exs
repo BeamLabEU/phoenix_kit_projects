@@ -303,6 +303,66 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     assert PhoenixKitProjects.Portal.get_portal(project.uuid)
   end
 
+  test "the space archetype creates a project that is only its tabs", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+    html =
+      render_change(view, "validate", %{"project" => %{"name" => ""}, "archetype" => "space"})
+
+    # A second cycle, as in the browser: a switch cycle ignores toggle
+    # params (they reflect the pre-switch render).
+    render_change(view, "validate", %{
+      "project" => %{"name" => ""},
+      "archetype" => "space",
+      "ext" => %{"whiteboards" => "true"}
+    })
+
+    # The receipt says so, and the task flags are gone with the list.
+    assert html =~ "No tasks"
+    assert html =~ "Off — no task list"
+    assert html =~ ~s(id="ext-row-tasks")
+    refute html =~ ~s(id="flag-row-assignees")
+
+    render_submit(view, "save", %{
+      "project" => %{"name" => "Boards #{System.unique_integer([:positive])}"}
+    })
+
+    project = created("Boards")
+    assert project
+    refute Extensions.enabled?(project, "tasks")
+    refute Extensions.enabled?(project, "discussions")
+    assert Extensions.enabled?(project, "whiteboards")
+    # Not a tab: keeps its default.
+    assert Extensions.enabled?(project, "files")
+  end
+
+  test "tasks is a toggle on every card: a Team project can drop its list", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+    html =
+      render_change(view, "validate", %{
+        "project" => %{"name" => ""},
+        "archetype" => "standard",
+        "ext" => %{"tasks" => "false"}
+      })
+
+    assert html =~ "No tasks"
+    assert html =~ "Off — no task list"
+    # Tasks is not listed among the add-ons — it has its own row.
+    refute html =~ ~s(id="ext-row-tasks" class="flex items-center justify-between gap-3 rounded)
+
+    render_submit(view, "save", %{
+      "project" => %{"name" => "Listless #{System.unique_integer([:positive])}"}
+    })
+
+    project = created("Listless")
+    assert project
+    refute Extensions.enabled?(project, "tasks")
+    # The Team project's other defaults are untouched (Discussions too,
+    # but the comments module is not registered in this env).
+    assert Extensions.enabled?(project, "files")
+  end
+
   test "an explicit extension uncheck overrides the default (files off)", %{conn: conn} do
     {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
@@ -318,7 +378,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     project = created("NoFiles")
     assert project
     refute Extensions.enabled?(project, "files")
-    # Untouched defaults stay on (tasks is not part of the checklist).
+    # Untouched defaults stay on (tasks has its own row, left on).
     assert Extensions.enabled?(project, "tasks")
   end
 
