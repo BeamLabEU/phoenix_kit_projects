@@ -788,11 +788,25 @@ set the mode to `always` first.
 **The sequence rail means "these run one after another"** — the
 schedule is a sequential walk in drag order and the vertical line down
 the list is that walk. It draws only when the claim is true:
-`@list_manual?` (the whole plan, not a slice) AND `@fx.scheduling` (a
-checklist has no walk). Drag handles need only the first — a checklist
-is still reorderable. The numbers are positions in the project either
-way. (Max, 2026-09-05: "I thought the line meant the tasks are
-connected, and for a todo list it was off" — it does, and now it is.)
+`@list_manual?` (manual sort) AND `@list_whole?` (the All lens — a slice
+of the plan is not the walk) AND `@fx.scheduling` (a checklist has no
+walk). The numbers are positions in the project either way. (Max,
+2026-09-05: "I thought the line meant the tasks are connected, and for
+a todo list it was off" — it does, and now it is.)
+
+**Reordering works under a lens.** `list_manual?` is only "the manual
+sort is on screen" — under Newest/Recent a drop means nothing and the
+handles go with a "Reordering off" note. A drop under the Active or
+Done lens sends the rows the client could see; `merge_visible_order/2`
+folds that into the whole plan (the visible rows keep the SET of slots
+they occupied and take their new order within them, hidden rows stay
+put) before `Projects.reorder_assignments/3` writes every position.
+Upstream's August rule refused any drop while rows were hidden; Max hit
+it at ten tasks ("shouldn't it still work just fine?").
+
+**The lens and the sort share one frame:** the sort select and the
+note render in core `nav_tabs`'s `:trailing` slot, so the row reads as
+one bar, not two boxes.
 
 ## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
 

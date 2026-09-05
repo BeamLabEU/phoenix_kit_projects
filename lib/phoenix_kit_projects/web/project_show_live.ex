@@ -699,14 +699,41 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       # (3, 7, 12) and that is the honest reading: you are looking at part
       # of a longer plan.
       assignment_numbers: assignment_numbers(all),
-      # ONE predicate for the connector rail AND the drag handles. They are
-      # the same affordance at two weights — the line advertises that order
-      # is real here, the handle acts on it — so showing either without the
-      # other is a lie. It also closes a known trap: dropping a card
-      # "between" two visible rows while others are hidden writes a
-      # position that ignores everything it cannot see.
-      list_manual?: status == "all" and sort == :position
+      # Dragging needs the MANUAL order on screen — under "Newest first" a
+      # drop would mean nothing — but not the whole project: a drop made
+      # under a lens is merged back into the full plan by
+      # `merge_visible_order/2` (the visible rows take their new order in
+      # the slots they already held; hidden rows keep theirs), so a
+      # filtered list reorders like any list app's. The sequence rail is
+      # the stricter one: it draws the schedule walk, and a slice of the
+      # plan is not the walk — `list_whole?` keeps it to the All lens.
+      list_manual?: sort == :position,
+      list_whole?: status == "all"
     )
+  end
+
+  # A drop under a lens: the rows the user could see, in their new order,
+  # folded back into the whole project's order. The visible rows keep the
+  # SET of slots they occupied and take the new order within them; every
+  # hidden row stays exactly where it was. A visible id the full order
+  # does not know (a concurrent change) is dropped; the context's scope
+  # check rejects anything that is not this project's anyway.
+  defp merge_visible_order(full_ids, visible_new_order) do
+    known = MapSet.new(full_ids)
+    visible_new_order = Enum.filter(visible_new_order, &MapSet.member?(known, &1))
+    visible_set = MapSet.new(visible_new_order)
+
+    {merged, _rest} =
+      Enum.map_reduce(full_ids, visible_new_order, fn id, queue ->
+        if MapSet.member?(visible_set, id) do
+          [next | rest] = queue
+          {next, rest}
+        else
+          {id, queue}
+        end
+      end)
+
+    merged
   end
 
   # `list_assignments/1` already returns position order, so the index here
@@ -2118,13 +2145,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # `sortable:flash` back so the dragged card flashes green/red. This
   # session reloads explicitly (immediate feedback); OTHER open views
   # (and gantt charts) reload off the `:assignment_reordered` broadcast.
-  # Refused unless the list is showing everything, in manual order. The drag
-  # handles are already hidden under a lens, but hiding a control has never
-  # been the control — and this one is worth guarding twice, because the
-  # damage is silent: `ordered_ids` carries only the rows the client could
-  # SEE, so accepting it under a filter rewrites `position` for the whole
-  # project from a partial list and there is nothing afterwards to say the
-  # order used to mean something.
+  # Refused unless the manual order is on screen: under "Newest first" a
+  # drop describes nothing. The drag handles are already hidden then, but
+  # hiding a control has never been the control. (A drop under a STATUS
+  # lens is fine — `merge_visible_order/2` folds it into the whole plan.)
   defp gated_handle_event(
          "reorder_assignments",
          _params,
@@ -2134,7 +2158,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
      put_flash(
        socket,
        :error,
-       gettext("Show all tasks in manual order before reordering them.")
+       gettext("Switch the sort back to Manual order before reordering tasks.")
      )}
   end
 
@@ -2143,7 +2167,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     moved_id = params["moved_id"]
     project_uuid = socket.assigns.project.uuid
 
-    case Projects.reorder_assignments(project_uuid, ordered_ids,
+    # The hook sends the rows on screen; the write wants the whole plan.
+    full_order = merge_visible_order(Enum.map(socket.assigns.assignments, & &1.uuid), ordered_ids)
+
+    case Projects.reorder_assignments(project_uuid, full_order,
            actor_uuid: Activity.actor_uuid(socket)
          ) do
       :ok ->
@@ -3646,6 +3673,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              strip listed Active AND To do AND In progress side by side,
              which looked like slices of one pie whose numbers then refused
              to add up, because Active contained the other two. --%>
+        <%!-- One frame for the lens AND the sort (core's `:trailing` slot):
+             two controls over the same list read as one bar, not two
+             unrelated boxes sharing a row (Max, 2026-09-05). --%>
         <.nav_tabs
           :if={@list_controls?}
           active_tab={@list_status}
@@ -3655,7 +3685,34 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             %{id: "done", label: gettext("Done"), badge: @assignment_counts.done},
             %{id: "all", label: gettext("All"), badge: @assignment_counts.total}
           ]}
-        />
+        >
+          <:trailing>
+            <select
+              class="select select-sm"
+              phx-change="list_sort"
+              name="sort"
+              aria-label={gettext("Sort tasks")}
+            >
+              <option value="position" selected={@list_sort == :position}>
+                {gettext("Manual order")}
+              </option>
+              <option value="newest" selected={@list_sort == :newest}>{gettext("Newest first")}</option>
+              <option value="recent" selected={@list_sort == :recent}>
+                {gettext("Recently updated")}
+              </option>
+            </select>
+
+            <%!-- Says why the handles vanished. A control that disappears
+                 without explanation reads as a bug. --%>
+            <span
+              :if={not @list_manual?}
+              class="text-xs opacity-60"
+              title={gettext("Dragging rearranges the manual order — switch the sort back to Manual order to reorder.")}
+            >
+              {gettext("Reordering off")}
+            </span>
+          </:trailing>
+        </.nav_tabs>
 
         <%!-- Not a filter. Public submissions are not in the list at all —
              they are requests nobody has agreed to yet, and mixing them
@@ -3672,32 +3729,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <span class="badge badge-sm">{length(@pending_reviews)}</span>
         </button>
 
-        <div :if={@list_controls?} class="ml-auto flex items-center gap-2">
-          <select
-            class="select select-sm"
-            phx-change="list_sort"
-            name="sort"
-            aria-label={gettext("Sort tasks")}
-          >
-            <option value="position" selected={@list_sort == :position}>
-              {gettext("Manual order")}
-            </option>
-            <option value="newest" selected={@list_sort == :newest}>{gettext("Newest first")}</option>
-            <option value="recent" selected={@list_sort == :recent}>
-              {gettext("Recently updated")}
-            </option>
-          </select>
-
-          <%!-- Says why the handles vanished. A control that disappears
-               without explanation reads as a bug. --%>
-          <span
-            :if={not @list_manual?}
-            class="text-xs opacity-60"
-            title={gettext("Reordering writes an order for the whole project, so it needs the whole project in view.")}
-          >
-            {gettext("Reordering off")}
-          </span>
-        </div>
       </div>
 
       <%= if @assignments != [] and @visible_assignments == [] do %>
@@ -3739,7 +3770,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                only when both hold. Dragging shares the first condition,
                not the second — a checklist is still reorderable. --%>
           <div
-            :if={@list_manual? and @fx.scheduling}
+            :if={@list_manual? and @list_whole? and @fx.scheduling}
             class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"
           >
           </div>

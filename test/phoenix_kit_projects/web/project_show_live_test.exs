@@ -1015,44 +1015,76 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
              "a submission from another project was decided from this page"
     end
 
-    test "the rail and the drag handles are gone under a lens", %{conn: conn, project: project} do
+    test "under a lens the handles stay and the rail goes; All brings the rail back",
+         %{conn: conn, project: project} do
       {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
-      # Default is "active" — a filter — so neither may render.
-      assert html =~ ~s(data-sortable="false")
+      # Default is "active" — a filter. Dragging still works (a drop is
+      # folded into the whole plan), but the rail draws the schedule walk
+      # and a slice of the plan is not the walk.
+      assert html =~ ~s(data-sortable="true")
+      assert html =~ ~s(class="pk-drag-handle)
       refute html =~ "bottom-0 w-0.5"
 
-      # Showing everything in manual order brings both back together: they
-      # are one affordance, and either without the other is a lie.
-      manual = view |> element("button[phx-value-tab=all]") |> render_click()
+      all = view |> element("button[phx-value-tab=all]") |> render_click()
+      assert all =~ ~s(data-sortable="true")
+      assert all =~ "bottom-0 w-0.5"
 
-      assert manual =~ ~s(data-sortable="true")
-      assert manual =~ "bottom-0 w-0.5"
-      assert manual =~ "pk-drag-handle"
+      # A non-manual sort is the one thing that switches dragging off.
+      sorted = render_change(view, "list_sort", %{"sort" => "newest"})
+      assert sorted =~ ~s(data-sortable="false")
+      refute sorted =~ "bottom-0 w-0.5"
     end
 
-    test "reordering is refused under a lens, not merely hidden", %{
+    test "reordering under a lens folds the visible order into the whole plan", %{
+      conn: conn,
+      project: project,
+      done: done,
+      active: active
+    } do
+      # Full order: [done, active, second]. The Active lens shows [active,
+      # second]; dragging `second` above `active` sends [second, active] —
+      # the two visible rows swap within their own slots and the hidden
+      # done row stays exactly where it was.
+      second = task_named(project, "Second live #{System.unique_integer([:positive])}", "todo")
+      assert ordered_uuids(project) == [done.uuid, active.uuid, second.uuid]
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      # Active lens, manual order: handles on, note off.
+      assert html =~ "pk-drag-handle"
+      refute html =~ "Reordering off"
+
+      render_hook(view, "reorder_assignments", %{
+        "ordered_ids" => [second.uuid, active.uuid],
+        "moved_id" => second.uuid
+      })
+
+      assert ordered_uuids(project) == [done.uuid, second.uuid, active.uuid]
+    end
+
+    test "reordering is refused under a non-manual sort, not merely hidden", %{
       conn: conn,
       project: project,
       done: done,
       active: active
     } do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
-
       before = ordered_uuids(project)
 
-      # A forged event carrying only the rows the client could SEE. Accepting
-      # it rewrites `position` for the whole project from a partial list, and
-      # nothing afterwards says the order used to mean something.
+      html = render_change(view, "list_sort", %{"sort" => "newest"})
+      assert html =~ "Reordering off"
+      # (The board's cards, CSS-hidden in the same document, keep their own
+      # handles, so the sortable flag is the honest signal here.)
+      assert html =~ ~s(data-sortable="false")
+
       html =
         render_hook(view, "reorder_assignments", %{
-          "ordered_ids" => [active.uuid],
+          "ordered_ids" => [active.uuid, done.uuid],
           "moved_id" => active.uuid
         })
 
-      assert html =~ "manual order"
+      assert html =~ "Manual order"
       assert ordered_uuids(project) == before
-      assert done.uuid in before
     end
 
     test "reordering works once everything is in view", %{
