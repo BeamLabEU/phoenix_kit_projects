@@ -19,7 +19,8 @@ defmodule PhoenixKitProjects.Extensions do
       `config_schema` keys — raw params never reach the JSONB.
     * **Effective enablement is an intersection**: a row with
       `enabled: true` counts only while the extension is in the catalog AND
-      its backing site module is enabled (`Registry.available?/1`) — a
+      its backing site module is enabled
+      (`PhoenixKitProjects.Extensions.Registry.available?/1`) — a
       site-level disable wins instantly without touching rows.
     * **Defaults**: a project with NO row for an extension falls back to the
       catalog's `default_enabled` (the built-in Tasks extension ships
