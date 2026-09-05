@@ -37,12 +37,17 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       :ok
     end
 
-    test "the task surface is replaced by the hub empty state", %{conn: conn, project: project} do
+    test "with nothing else on, the page shows the nothing-on empty state",
+         %{conn: conn, project: project} do
+      # Discussions is on by default but the comments MODULE is off in the
+      # test env, so this project has no tab at all.
       {:ok, _view, html} = live(conn, show_path(project))
 
-      assert html =~ "Tasks are turned off for this project."
+      assert html =~ "Nothing is turned on for this project yet."
+      assert html =~ "Manage this project"
       refute html =~ "Add task"
       refute html =~ "project-show-timeline"
+      refute html =~ ~s(role="tablist")
     end
 
     test "forged task events are refused and change nothing",

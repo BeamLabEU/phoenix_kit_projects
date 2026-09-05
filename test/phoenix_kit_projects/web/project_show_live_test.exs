@@ -671,8 +671,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       refute html =~ "cal-container"
 
-      render_click(view, "switch_tab", %{"tab" => "calendar"})
-      assert_push_event(view, "project_tab_url", %{tab: "calendar"})
+      html = render_click(view, "switch_tab", %{"tab" => "calendar"})
+      # The strip now carries the calendar's canonical address for PkUrlMirror.
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/calendar")
       calendar = find_live_child(view, "project-calendar-live-#{project.uuid}")
       assert render(calendar) =~ "cal-container"
 
@@ -712,10 +713,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
           session: embed_session(project, actor_uuid)
         )
 
-      render_click(view, "switch_tab", %{"tab" => "gantt"})
+      html = render_click(view, "switch_tab", %{"tab" => "gantt"})
       # URL sync defaults OFF in embeds: an embed must never rewrite the host
-      # page's address bar, so no `project_tab_url` push fires.
-      refute_push_event(view, "project_tab_url", %{})
+      # page's address bar, so the strip carries no address and no hook.
+      refute html =~ "data-url="
+      refute html =~ "PkUrlMirror"
     end
 
     test "an embed can opt into URL sync via session[\"tab_url_sync\"]", %{
@@ -729,8 +731,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
           session: embed_session(project, actor_uuid, %{"tab_url_sync" => true})
         )
 
-      render_click(view, "switch_tab", %{"tab" => "gantt"})
-      assert_push_event(view, "project_tab_url", %{tab: "gantt"})
+      html = render_click(view, "switch_tab", %{"tab" => "gantt"})
+      assert html =~ ~s(phx-hook="PkUrlMirror")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/timeline")
     end
 
     test "a template show page (router-mounted) renders no tabs — no template gantt route",
@@ -741,17 +744,33 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       refute html =~ ~s(role="tablist")
     end
 
-    test "switch_tab pushes the URL event; a history-sourced switch does not", %{conn: conn} do
+    test "the strip's data-url follows every switch (router mount)", %{conn: conn} do
       project = started_project_for_tabs()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      base = "/en/admin/projects/#{project.uuid}"
 
-      render_click(view, "switch_tab", %{"tab" => "gantt"})
-      assert_push_event(view, "project_tab_url", %{tab: "gantt"})
+      # The bare page is the list view, whose canonical address is `/tasks`.
+      assert html =~ ~s(phx-hook="PkUrlMirror")
+      assert html =~ ~s(data-url="#{base}/tasks")
 
-      # A switch that came FROM the URL (browser back/forward) must NOT push the
-      # URL again, or pushState/popstate would loop.
-      render_click(view, "switch_tab", %{"tab" => "list", "source" => "history"})
-      refute_push_event(view, "project_tab_url", %{})
+      assert render_click(view, "switch_tab", %{"tab" => "gantt"}) =~
+               ~s(data-url="#{base}/tasks/timeline")
+
+      assert render_click(view, "switch_tab", %{"tab" => "board"}) =~
+               ~s(data-url="#{base}/tasks/board")
+
+      assert render_click(view, "switch_tab", %{"tab" => "list"}) =~ ~s(data-url="#{base}/tasks")
+    end
+
+    test "the legacy /gantt and /calendar routes still open their view", %{conn: conn} do
+      project = started_project_for_tabs()
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/gantt")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/timeline")
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/tasks/board")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/board")
+      assert html =~ ~s(id="board-column-)
     end
 
     test "the schedule summary and progress bar render as one fused card", %{conn: conn} do

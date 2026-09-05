@@ -45,6 +45,7 @@ defmodule PhoenixKitProjects.Test.Router do
 
       live("/new", ProjectFormLive, :new)
       live("/:id", ProjectShowLive, :show)
+      live("/:id/board", ProjectShowLive, :board)
       live("/:id/gantt", ProjectShowLive, :gantt)
       live("/:id/calendar", ProjectShowLive, :calendar)
       live("/:id/edit", ProjectFormLive, :edit)
@@ -52,6 +53,12 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/:id/members", ProjectMembersLive, :edit)
       live("/:id/files", ProjectFilesLive, :edit)
       live("/:id/activity", ProjectActivityLive, :index)
+      # The project page's top-level tabs (the `:tab` catch-all is last, below).
+      live("/:id/tasks", ProjectShowLive, :tasks)
+      live("/:id/tasks/board", ProjectShowLive, :board)
+      live("/:id/tasks/timeline", ProjectShowLive, :gantt)
+      live("/:id/tasks/calendar", ProjectShowLive, :calendar)
+      live("/:id/comments", ProjectShowLive, :comments)
 
       live("/templates/new", TemplateFormLive, :new)
       live("/templates/:id", ProjectShowLive, :show_template)
@@ -59,6 +66,9 @@ defmodule PhoenixKitProjects.Test.Router do
 
       live("/:project_id/assignments/new", AssignmentFormLive, :new)
       live("/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)
+
+      # Last: the extension-tab catch-all (mirrors the module's route order).
+      live("/:id/:tab", ProjectShowLive, :ext_tab)
     end
   end
 

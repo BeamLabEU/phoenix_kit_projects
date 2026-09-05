@@ -104,12 +104,44 @@ DESCENDANT-aware — any subtree task belonging to the person keeps the bar); a 
 its subtree, click drills into the child; dates deliberately UTC-unshifted to
 match the Timeline, unlike the Overview calendar). Tabs are instant assign
 flips; each nested LV lazy-mounts on first open and stays mounted. URL sync
-(`/gantt` / `/calendar` suffix) is the `ProjectTabsUrl` host hook, opt-in via
+is the strip's `data-url` + core's `PkUrlMirror` hook, opt-in via
 `session["tab_url_sync"]` for embeds.
+
+### The project page's top-level tabs (2026-09-05)
+
+The show page is a set of **top-level tabs**, one per thing a project can
+be: **Tasks** (which holds the four task views List / Board / Timeline /
+Calendar behind its own, subordinate strip, plus the add actions, the
+lifecycle bar, health and the schedule / progress / effort card), one tab
+per enabled extension that contributes one (Events, Whiteboards, …) and
+**Comments** — the project's own thread, inline, switched by the project's
+*Discussions* extension (its existing per-project on/off) and the comments
+module being on. Each stands alone in an otherwise empty project — a
+project can be *only* a whiteboard or *only* a discussion. The header
+(title, workflow status, ⋮ menu) is the project, not a tab; Files /
+Members / Activity / Modules stay in the ⋮ menu as project chrome. A
+single top-level tab renders no strip; with nothing on at all the page
+shows the nothing-on empty state with a link to Modules. Templates keep
+the Tasks pane alone, without either strip.
+
+Resolution lives in `ProjectShowLive` (`tab_for_action/3` → `gate_tab/2` →
+`gate_comments_tab/2` → `resolve_landing_tab/4` at mount;
+`resolve_switch_target/2` on `switch_tab`), and every target is validated
+against the feature map / the contributed tab list — a forged event lands
+on the list. `top_tab_of/1` maps a task view to `:tasks`; switching back to
+Tasks reopens the view you left (`task_view`). Task-row comments keep the
+side drawer; only the project-level thread moved into the tab.
+
+Addresses (`Paths`): `:id/tasks`, `:id/tasks/board`, `:id/tasks/timeline`,
+`:id/tasks/calendar`, `:id/comments`, `:id/<extension tab key>` (the
+`projects/:id/:tab` catch-all, declared LAST — after `templates/*`, whose
+first segment would otherwise read as an id; extension tab keys must not
+reuse a literal sibling). The pre-2026-09 `:id/board|gantt|calendar` still
+open their view. `tab_url/3` is the canonical address a tab reports.
 
 ### URL paths
 
-Under `/admin/projects/*`: the list is the landing page and project pages sit directly under it — `new`, `:id`, `:id/edit`, `:id/board|gantt|calendar|files|activity|members|modules`, `:project_id/assignments/new`, `:project_id/assignments/:id/edit` — beside the literal siblings `tasks` (+ `tasks/new`, `tasks/:id/edit`), `templates` (+ `templates/new|:id|:id/edit`) and `overview`. The pre-2026-09 `list/…` addresses (the list used to live there) redirect to the same path without the segment (`ListRedirectLive`, hidden `projects/list` + `projects/list/*rest` tabs). **Declaration order is route order**: `admin_tabs/0` lists the literal siblings and the legacy redirects before `:id`, and `new` before `:id` — `landing_test.exs` pins it. Use `PhoenixKitProjects.Paths`.
+Under `/admin/projects/*`: the list is the landing page and project pages sit directly under it — `new`, `:id`, `:id/edit`, `:id/tasks`, `:id/tasks/board|timeline|calendar`, `:id/comments`, `:id/<extension tab>`, `:id/files|activity|members|modules` (and the legacy `:id/board|gantt|calendar`), `:project_id/assignments/new`, `:project_id/assignments/:id/edit` — beside the literal siblings `tasks` (+ `tasks/new`, `tasks/:id/edit`), `templates` (+ `templates/new|:id|:id/edit`) and `overview`. The pre-2026-09 `list/…` addresses (the list used to live there) redirect to the same path without the segment (`ListRedirectLive`, hidden `projects/list` + `projects/list/*rest` tabs). **Declaration order is route order**: `admin_tabs/0` lists the literal siblings and the legacy redirects before `:id`, and `new` before `:id` — `landing_test.exs` pins it. Use `PhoenixKitProjects.Paths`.
 
 ### Embedding LiveViews via `live_render`
 
@@ -254,15 +286,16 @@ Contract (all keys optional unless noted):
   the admin default. Lets the host close a modal, refresh state, etc.
   without yanking the user to `/admin/projects/...`.
 - `session["tab_url_sync"]` — `ProjectShowLive` only. Boolean,
-  **defaults `false`** in embeds. The List/Timeline/Calendar tab bar
-  renders in every embed (only templates stay list-only), but the
-  `ProjectTabsUrl` hook that mirrors the active tab onto the browser URL
-  (via `history.replaceState` — no history entries; back/forward return to
-  the previous page, and per-tab entries are impossible without
-  `handle_params/3`, which would block embedding) is **off by default** —
-  an embed must not rewrite the host's address bar. Pass `true` (a real
-  boolean, not `"true"`) only if the host mounts the show page as its own
-  full-page route and wants `/gantt` / `/calendar` deep-linking. The
+  **defaults `false`** in embeds. The tab strips render in every embed
+  (only templates stay tabless), but the URL mirror — a hidden element
+  carrying the active tab's canonical address in `data-url`, which core's
+  `PkUrlMirror` hook writes over the browser's via `history.replaceState`
+  (no history entries; back/forward return to the previous page, and
+  per-tab entries are impossible without `handle_params/3`, which would
+  block embedding) — is **off by default**: an embed must not rewrite the
+  host's address bar. Pass `true` (a real boolean, not `"true"`) only if
+  the host mounts the show page as its own full-page route and wants
+  `/tasks/board` / `/whiteboards` / `/comments` deep-linking. The
   router-mounted standalone admin page enables it implicitly.
 - `id:` opt on `live_render` should be unique per logical embed (e.g.
   include the resource UUID) so two embeddings of the same LV on one

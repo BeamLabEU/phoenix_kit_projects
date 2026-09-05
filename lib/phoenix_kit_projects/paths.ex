@@ -59,15 +59,24 @@ defmodule PhoenixKitProjects.Paths do
   @doc "Show page for a single project."
   @spec project(String.t()) :: String.t()
   def project(id), do: Routes.path("#{@base}/#{id}")
-  @doc "Kanban board view for a single project."
+  @doc "The Tasks tab of a project (its list view)."
+  @spec project_tasks(String.t()) :: String.t()
+  def project_tasks(id), do: Routes.path("#{@base}/#{id}/tasks")
+  @doc "Kanban board view for a single project (inside the Tasks tab)."
   @spec project_board(String.t()) :: String.t()
-  def project_board(id), do: Routes.path("#{@base}/#{id}/board")
-  @doc "Gantt/waterfall timeline view for a single project."
+  def project_board(id), do: Routes.path("#{@base}/#{id}/tasks/board")
+  @doc "Gantt/waterfall timeline view for a single project (inside the Tasks tab)."
   @spec project_gantt(String.t()) :: String.t()
-  def project_gantt(id), do: Routes.path("#{@base}/#{id}/gantt")
-  @doc "Month-calendar view for a single project."
+  def project_gantt(id), do: Routes.path("#{@base}/#{id}/tasks/timeline")
+  @doc "Month-calendar view for a single project (inside the Tasks tab)."
   @spec project_calendar(String.t()) :: String.t()
-  def project_calendar(id), do: Routes.path("#{@base}/#{id}/calendar")
+  def project_calendar(id), do: Routes.path("#{@base}/#{id}/tasks/calendar")
+  @doc "The Comments tab of a project."
+  @spec project_comments(String.t()) :: String.t()
+  def project_comments(id), do: Routes.path("#{@base}/#{id}/comments")
+  @doc "A contributed extension tab of a project, by the tab's key (`\"whiteboards\"`)."
+  @spec project_ext_tab(String.t(), String.t()) :: String.t()
+  def project_ext_tab(id, tab_key), do: Routes.path("#{@base}/#{id}/#{tab_key}")
   @doc "Edit form for a project."
   @spec edit_project(String.t()) :: String.t()
   def edit_project(id), do: Routes.path("#{@base}/#{id}/edit")

@@ -170,20 +170,66 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
   end
 
   describe "the discussions bridge (comments as a per-project toggle)" do
-    test "disabling it hides the comments drawer trigger", %{conn: conn, project: project} do
-      {:ok, _view, html_on} = live(conn, "/en/admin/projects/#{project.uuid}")
+    setup do
+      # The Comments tab needs the comments MODULE known to core's registry
+      # AND switched on (a system setting), as well as the project's
+      # Discussions extension (on by default). The test env starts no
+      # registry process, so seed its persistent_term directly.
+      registry_key = {PhoenixKit, :registered_modules}
+      before = :persistent_term.get(registry_key, [])
+      :persistent_term.put(registry_key, Enum.uniq(before ++ [PhoenixKitComments]))
+      PhoenixKitComments.enable_system()
+
+      on_exit(fn ->
+        PhoenixKitComments.disable_system()
+        :persistent_term.put(registry_key, before)
+      end)
+
+      :ok
+    end
+
+    test "the Comments tab shows the project thread inline; Discussions off removes it",
+         %{conn: conn, project: project} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      # The tab is in the top strip; the header no longer carries the trigger.
+      assert html =~ ~s(phx-value-tab="comments")
+      refute html =~ ~s(open_comments" phx-value-type="project")
+
+      html = render_click(view, "switch_tab", %{"tab" => "comments"})
+      assert html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/comments")
 
       {:ok, _} = Extensions.disable(project, "discussions")
-      {:ok, _view, html_off} = live(conn, "/en/admin/projects/#{project.uuid}")
+      {:ok, view, html_off} = live(conn, "/en/admin/projects/#{project.uuid}")
+      refute html_off =~ ~s(phx-value-tab="comments")
+      refute html_off =~ ~s(open_comments" phx-value-type="project")
 
-      # With comments installed in the test env the trigger flips with the
-      # toggle; without it both renders lack the trigger (still a valid pin
-      # of "off means off").
-      refute html_off =~ "open_comments\" phx-value-type=\"project\""
+      # A forged switch onto the missing tab lands on the list.
+      html = render_click(view, "switch_tab", %{"tab" => "comments"})
+      refute html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks")
+    end
 
-      if html_on =~ "open_comments" do
-        assert html_on != html_off
-      end
+    test "/comments deep-links onto the tab; with Discussions off it lands on the list",
+         %{conn: conn, project: project} do
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/comments")
+      assert html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
+
+      {:ok, _} = Extensions.disable(project, "discussions")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/comments")
+      refute html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks")
+    end
+
+    test "a project that is ONLY a discussion lands on Comments with no strip",
+         %{conn: conn, project: project} do
+      {:ok, _} = Extensions.disable(project, "tasks")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
+      # One tab → no strip; the address still names the tab.
+      refute html =~ ~s(phx-value-tab="comments")
+      refute html =~ "Add task"
     end
   end
 
@@ -269,7 +315,40 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       assert html =~ "ext-tab-content"
-      refute html =~ "Tasks are turned off for this project."
+      refute html =~ "Nothing is turned on for this project yet."
+      # No Tasks tab at all — none of the task chrome renders.
+      refute html =~ ~s(phx-value-tab="tasks")
+      refute html =~ "Add task"
+    end
+
+    test "the extension tab sits in the top strip beside Tasks and deep-links by its key",
+         %{conn: conn, project: project} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+      assert html =~ ~s(phx-value-tab="tasks")
+      assert html =~ ~s(phx-value-tab="ext:tab_ext:main")
+
+      html = render_click(view, "switch_tab", %{"tab" => "ext:tab_ext:main"})
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/main")
+
+      # `/projects/:id/<tab key>` opens the tab directly.
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/main")
+      assert html =~ "ext-tab-content"
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/main")
+
+      # An unknown segment lands on the first tab, like the bare page.
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/no-such-tab")
+      refute html =~ "ext-tab-content"
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks")
+    end
+
+    test "switching to Tasks reopens the task view you left", %{conn: conn, project: project} do
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/tasks/board")
+
+      html = render_click(view, "switch_tab", %{"tab" => "ext:tab_ext:main"})
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/main")
+
+      html = render_click(view, "switch_tab", %{"tab" => "tasks"})
+      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/board")
     end
   end
 

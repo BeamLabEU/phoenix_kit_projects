@@ -76,9 +76,13 @@ defmodule PhoenixKitProjects.PathsTest do
       assert Paths.edit_project("p-1") == "#{@prefix}/p-1/edit"
     end
 
-    test "project_gantt/1 and project_calendar/1 address the show page's tabs" do
-      assert Paths.project_gantt("p-1") == "#{@prefix}/p-1/gantt"
-      assert Paths.project_calendar("p-1") == "#{@prefix}/p-1/calendar"
+    test "the task views live under the Tasks tab; extensions by their key" do
+      assert Paths.project_tasks("p-1") == "#{@prefix}/p-1/tasks"
+      assert Paths.project_board("p-1") == "#{@prefix}/p-1/tasks/board"
+      assert Paths.project_gantt("p-1") == "#{@prefix}/p-1/tasks/timeline"
+      assert Paths.project_calendar("p-1") == "#{@prefix}/p-1/tasks/calendar"
+      assert Paths.project_comments("p-1") == "#{@prefix}/p-1/comments"
+      assert Paths.project_ext_tab("p-1", "whiteboards") == "#{@prefix}/p-1/whiteboards"
     end
   end
 

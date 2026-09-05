@@ -17,19 +17,27 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   themselves nested LVs when the show page is embedded — deliberate,
   server-rendered, so both views show even before any JS loads.
 
-  Keeping the URL in sync (the trailing `/gantt` / `/calendar` segment) is
+  The page is a set of TOP-LEVEL tabs — Tasks (List / Board / Timeline /
+  Calendar behind its own, subordinate strip), one per enabled extension
+  that contributes a tab (Events, Whiteboards, …) and Comments (the
+  project's own thread, switched by the Discussions extension). Each stands
+  alone in an otherwise empty project, so a project can be *only* a
+  whiteboard or *only* a discussion. The header stays: it is the project,
+  not a tab. Templates keep the Tasks tab alone, without the strip.
+
+  Keeping the URL in sync (`/tasks/board`, `/whiteboards`, `/comments`) is
   **optional and off by default**: it's only on when `@tab_url_sync?` is true,
   which the router-mounted standalone admin page sets (so its deep-linking
   keeps working) and an embed can opt into via `session["tab_url_sync"]`. When
-  on, the `ProjectTabsUrl` JS hook REPLACES the current URL on each switch —
-  deep links / copy / reload land on the right tab, while back/forward return
-  to the previous page. Deliberately no per-tab history entries: they'd need
-  this LV to export `handle_params/3` (which would block `live_render`
-  embedding), and LiveView's popstate handler treats foreign pushState entries
-  as live navigation — remounting and crashing on the missing callback. With
-  sync off the tabs still switch fully — they just never touch the host page's
-  URL (the right default for an embed, which must not rewrite the host's
-  address bar).
+  on, the strip carries the active tab's canonical address in `data-url` and
+  core's `PkUrlMirror` hook REPLACES the browser's URL with it on every
+  render — deep links / copy / reload land on the right tab, while
+  back/forward return to the previous page. Deliberately no per-tab history
+  entries: they'd need this LV to export `handle_params/3` (which would block
+  `live_render` embedding), and LiveView's popstate handler treats foreign
+  pushState entries as live navigation — remounting and crashing on the
+  missing callback. With sync off the tabs still switch fully — they just
+  never touch the host page's URL.
   """
 
   use PhoenixKitWeb, :live_view
@@ -179,6 +187,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        start_form: to_form(%{"start_at" => default_start_at_local()}),
        comments_resource: nil,
        comments_enabled: false,
+       task_view: :list,
        project_comment_count: 0,
        assignment_comment_counts: %{},
        statuses_available: false,
@@ -209,7 +218,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
      |> WebHelpers.close_or_navigate(Paths.projects())}
   end
 
-  def mount(%{"id" => id}, session, socket) do
+  def mount(%{"id" => id} = params, session, socket) do
     # Locale first so any error flashes / placeholders render in the
     # right language. Embed state second so the not-found path can
     # honor emit mode (broadcasting `:closed` instead of push_navigate).
@@ -290,10 +299,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           ext_tabs =
             ext_tabs_for(project, is_template, socket.assigns[:phoenix_kit_current_scope])
 
+          comments? = comments_available?() and Extensions.enabled?(project, "discussions")
+
           active_tab =
-            tab_for_action(socket, is_template)
+            socket
+            |> assign(ext_tab_slug: Map.get(params, "tab"))
+            |> tab_for_action(is_template, ext_tabs)
             |> gate_tab(fx)
-            |> resolve_landing_tab(fx, ext_tabs)
+            |> gate_comments_tab(comments?)
+            |> resolve_landing_tab(fx, ext_tabs, comments?)
 
           # Resolve the workflow-status list once (read-only — nothing is
           # provisioned or seeded here; an unset shared default simply yields
@@ -352,8 +366,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # different resources doesn't reuse stale state.
               comments_resource: nil,
               # Availability ∧ the per-project "discussions" bridge toggle.
-              comments_enabled:
-                comments_available?() and Extensions.enabled?(project, "discussions"),
+              comments_enabled: comments?,
+              # The task view the Tasks top tab reopens (the last one shown).
+              task_view: (top_tab_of(active_tab) == :tasks && active_tab) || :list,
               project_comment_count: 0,
               assignment_comment_counts: %{},
               # Skeleton defaults overwritten by the load_* helpers below;
@@ -452,6 +467,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       start_form: to_form(%{"start_at" => default_start_at_local()}),
       comments_resource: nil,
       comments_enabled: false,
+      task_view: :list,
       project_comment_count: 0,
       assignment_comment_counts: %{},
       statuses_available: false,
@@ -540,9 +556,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     # Re-gate the active tab: a gated-off view falls to :list; an extension
     # tab whose extension was just disabled falls to :list too.
+    comments? = comments_available?() and Extensions.enabled?(project, "discussions")
+
     active =
       case gate_tab(socket.assigns.active_tab, fx) do
         "ext:" <> _ = id -> if Enum.any?(ext_tabs, &(&1.id == id)), do: id, else: :list
+        :comments -> if comments?, do: :comments, else: :list
         tab -> tab
       end
 
@@ -552,6 +571,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         fx: fx,
         fx_files: Extensions.enabled?(project, "files"),
         ext_tabs: ext_tabs,
+        comments_enabled: comments?,
         active_tab: active
       )
 
@@ -1257,19 +1277,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # ── Events ──────────────────────────────────────────────────────
 
-  # Switch the List/Timeline/Calendar tab. Instant (an assign flip, no
-  # navigation) and the nested LVs stay mounted, so the gantt's zoom/expand and
-  # the calendar's month navigation survive. Each nested LV is lazy-mounted the
-  # first time its tab opens and never unmounted. We push the URL change to the
-  # `ProjectTabsUrl` hook (which REPLACES the current URL — see its comment for
-  # why per-tab history entries are impossible here) — except when URL sync is
-  # off (the default for embeds), or when the switch carries `source:
-  # "history"` (reserved for a host-authored history integration, so its
-  # URL-driven switches can't loop back into another URL write). With sync off
-  # the `ProjectTabsUrl` hook isn't even attached, so the event would no-op
-  # anyway; gating it server-side keeps the intent explicit. The hook receives
-  # the VALIDATED tab name (never the raw param), so it can't be steered into
-  # writing an arbitrary URL suffix.
+  # Switch a tab — top-level or task view. Instant (an assign flip, no
+  # navigation) and the nested LVs stay mounted, so the gantt's zoom/expand
+  # and the calendar's month navigation survive. Each nested LV is
+  # lazy-mounted the first time its tab opens and never unmounted. The URL
+  # follows on its own through the strip's `data-url` + PkUrlMirror (router
+  # mounts only) — no server push, nothing an embed can be steered into.
+  # The target is VALIDATED against the feature map / the contributed tab
+  # list, so a forged event can't open a tab the project doesn't have.
+  #
   # ── Hub feature gating (Step 4 enforcement threading) ─────────────
   #
   # Every mutating event that belongs to a per-project-toggleable feature
@@ -1567,7 +1583,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
      |> apply_list_lens()}
   end
 
-  defp gated_handle_event("switch_tab", %{"tab" => tab} = params, socket) do
+  defp gated_handle_event("switch_tab", %{"tab" => tab}, socket) do
     active = resolve_switch_target(tab, socket)
 
     socket =
@@ -1575,22 +1591,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         do: assign(socket, ext_mounted: MapSet.put(socket.assigns.ext_mounted, active)),
         else: socket
 
-    socket =
-      socket
-      |> assign(active_tab: active)
-      |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
-      |> assign(calendar_mounted?: socket.assigns.calendar_mounted? or active == :calendar)
-
-    # Only the ROUTED tabs sync to the URL (list/gantt/calendar have
-    # routes; the board and extension tabs don't — a synced suffix would
-    # 404 on reload).
-    socket =
-      if not socket.assigns.tab_url_sync? or params["source"] == "history" or
-           active not in [:list, :gantt, :calendar],
-         do: socket,
-         else: push_event(socket, "project_tab_url", %{tab: to_string(active)})
-
-    {:noreply, socket}
+    # The URL follows on its own: the tab strip carries the canonical
+    # address of the active tab in `data-url` and core's PkUrlMirror hook
+    # replaces the browser's (router mounts only — `@tab_url_sync?`).
+    {:noreply,
+     socket
+     |> assign(active_tab: active)
+     |> remember_task_view(active)
+     |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
+     |> assign(calendar_mounted?: socket.assigns.calendar_mounted? or active == :calendar)}
   end
 
   defp gated_handle_event("complete", %{"uuid" => uuid}, socket) do
@@ -2378,11 +2387,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gate_tab(:calendar, fx), do: if(fx.view_calendar, do: :calendar, else: :list)
   defp gate_tab(tab, _fx), do: tab
 
+  # A `/comments` deep link on a project whose Discussions extension is off
+  # (or without the comments package) lands like the bare page.
+  defp gate_comments_tab(:comments, false), do: :list
+  defp gate_comments_tab(tab, _comments?), do: tab
+
   # With tasks OFF the :list landing has no task surface — land on the first
-  # contributed extension tab instead (the empty state shows only when there
-  # is truly nothing to show).
-  defp resolve_landing_tab(:list, %{tasks: false}, [%{id: first} | _]), do: first
-  defp resolve_landing_tab(tab, _fx, _ext_tabs), do: tab
+  # contributed extension tab instead, or on Comments when that is the only
+  # thing on (the empty state shows only when there is truly nothing).
+  defp resolve_landing_tab(:list, %{tasks: false}, [%{id: first} | _], _comments?), do: first
+  defp resolve_landing_tab(:list, %{tasks: false}, [], true), do: :comments
+  defp resolve_landing_tab(tab, _fx, _ext_tabs, _comments?), do: tab
 
   # Contributed tabs from every effectively-enabled extension, flattened to
   # renderable entries. String ids are namespaced ("ext:<ext>:<tab>") so
@@ -2404,6 +2419,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       Enum.map(ext.tabs, fn tab ->
         %{
           id: "ext:#{ext.key}:#{tab.key}",
+          # The URL segment of the tab (`/projects/:id/whiteboards`).
+          slug: to_string(tab.key),
           label: tab.label,
           icon: tab.icon || ext.icon,
           lv: tab.lv,
@@ -2455,25 +2472,75 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # are validated against the CURRENT ext_tabs set — an id for a
   # since-disabled extension falls back too.
   defp resolve_switch_target(tab, socket) do
+    fx = socket.assigns.fx
+
     case tab do
-      "board" when :erlang.map_get(:view_board, socket.assigns.fx) -> :board
-      "gantt" when :erlang.map_get(:view_timeline, socket.assigns.fx) -> :gantt
-      "calendar" when :erlang.map_get(:view_calendar, socket.assigns.fx) -> :calendar
+      # The top-level Tasks tab reopens the task view the user last had.
+      "tasks" -> gate_tab(socket.assigns.task_view, fx)
+      "board" when :erlang.map_get(:view_board, fx) -> :board
+      "gantt" when :erlang.map_get(:view_timeline, fx) -> :gantt
+      "calendar" when :erlang.map_get(:view_calendar, fx) -> :calendar
+      "comments" when :erlang.map_get(:comments_enabled, socket.assigns) -> :comments
       "ext:" <> _ -> if valid_ext_tab?(socket, tab), do: tab, else: :list
       _ -> :list
     end
   end
 
-  defp tab_for_action(_socket, true), do: :list
+  # The task view that the Tasks top tab reopens: the last one shown.
+  defp remember_task_view(socket, tab) when tab in [:list, :board, :gantt, :calendar],
+    do: assign(socket, task_view: tab)
 
-  defp tab_for_action(socket, _is_template) do
+  defp remember_task_view(socket, _tab), do: socket
+
+  # Which TOP-LEVEL tab a view belongs to: the four task views are Tasks;
+  # everything else (a contributed extension tab, Comments) is itself.
+  @doc false
+  def top_tab_of(tab) when tab in [:list, :board, :gantt, :calendar], do: :tasks
+  def top_tab_of(tab), do: tab
+
+  defp tab_for_action(_socket, true, _ext_tabs), do: :list
+
+  defp tab_for_action(socket, _is_template, ext_tabs) do
     case Map.get(socket.assigns, :live_action) do
       :board -> :board
       :gantt -> :gantt
       :calendar -> :calendar
+      :comments -> :comments
+      # `/projects/:id/<tab>` — a contributed extension tab by its key;
+      # an unknown segment lands on the first tab like the bare page.
+      :ext_tab -> ext_tab_for_slug(ext_tabs, Map.get(socket.assigns, :ext_tab_slug)) || :list
       _ -> :list
     end
   end
+
+  defp ext_tab_for_slug(ext_tabs, slug) when is_binary(slug) do
+    case Enum.find(ext_tabs, &(&1.slug == slug)) do
+      %{id: id} -> id
+      nil -> nil
+    end
+  end
+
+  defp ext_tab_for_slug(_ext_tabs, _slug), do: nil
+
+  # The canonical address of a tab — what the strip hands PkUrlMirror so
+  # the browser's URL follows the switch (router mounts only). The task
+  # views live under `/tasks`; an extension tab is `/<key>`; an unknown tab
+  # (can't happen after resolution) falls back to the bare page.
+  @doc false
+  def tab_url(:list, project, _ext_tabs), do: Paths.project_tasks(project.uuid)
+  def tab_url(:board, project, _ext_tabs), do: Paths.project_board(project.uuid)
+  def tab_url(:gantt, project, _ext_tabs), do: Paths.project_gantt(project.uuid)
+  def tab_url(:calendar, project, _ext_tabs), do: Paths.project_calendar(project.uuid)
+  def tab_url(:comments, project, _ext_tabs), do: Paths.project_comments(project.uuid)
+
+  def tab_url("ext:" <> _ = id, project, ext_tabs) do
+    case Enum.find(ext_tabs, &(&1.id == id)) do
+      %{slug: slug} -> Paths.project_ext_tab(project.uuid, slug)
+      nil -> Paths.project(project.uuid)
+    end
+  end
+
+  def tab_url(_tab, project, _ext_tabs), do: Paths.project(project.uuid)
 
   defp do_start_project(socket, started_at) do
     case Projects.start_project(socket.assigns.project, started_at) do
@@ -3031,33 +3098,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               </span>
             </span>
           </div>
-          <%!-- Action buttons. Separate row so a long title never crowds
-               them out; `flex-wrap` keeps the row tidy on narrow viewports. --%>
+          <%!-- Action row — project-level only: the workflow status (once),
+               the ⋮ menu. Add task / Add sub-project moved into the Tasks
+               tab with everything else that is about tasks (the boss's
+               "each thing stands alone", 2026-09-05); Comments is a top
+               tab of its own now. `flex-wrap` keeps the row tidy on narrow
+               viewports. --%>
           <div class="flex flex-wrap gap-2">
-            <.smart_link
-              :if={@fx.tasks}
-              navigate={Paths.new_assignment(@project.uuid)}
-              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
-              embed_mode={@embed_mode}
-              class="btn btn-primary btn-sm"
-            >
-              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
-            </.smart_link>
-            <%!-- Add a sub-project via the same add page tasks use
-                 (`AssignmentFormLive` in sub-project mode, V127) — name +
-                 assignee + dependencies. Template sub-projects deep-clone on
-                 instantiation. --%>
-            <.smart_link
-              :if={@fx.tasks and @fx.subprojects}
-              navigate={Paths.new_assignment(@project.uuid) <> "?kind=subproject"}
-              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid, "kind" => "subproject"}}}
-              embed_mode={@embed_mode}
-              class="btn btn-outline btn-sm gap-1"
-            >
-              <.icon name="hero-folder-plus" class="w-4 h-4" /> {gettext("Add sub-project")}
-            </.smart_link>
-            <%!-- The Gantt/timeline view is now the "Timeline" tab below the
-                 header (router-mounted only), so no separate link here. --%>
             <%!-- Inline workflow-status picker (the current value). The
                  status-list *source* is chosen on the new/edit form (and the
                  global default in Settings), not here. Hidden when no
@@ -3075,21 +3122,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 class="select-sm"
               />
             </form>
-            <button
-              :if={@comments_enabled}
-              type="button"
-              phx-click="open_comments"
-              phx-value-type="project"
-              phx-value-uuid={@project.uuid}
-              phx-value-title={Project.localized_name(@project, L10n.current_content_lang())}
-              class="btn btn-ghost btn-sm gap-1"
-              title={gettext("Open project comments")}
-            >
-              <.icon name="hero-chat-bubble-left-right" class="w-4 h-4" /> {gettext("Comments")}
-              <span :if={@project_comment_count > 0} class="badge badge-sm badge-primary">
-                {@project_comment_count}
-              </span>
-            </button>
             <%!-- Edit + (Un)archive go into a kebab dropdown to match the
                  per-row action pattern used elsewhere in the module. --%>
             <.table_row_menu id={"project-header-menu-#{@project.uuid}"}>
@@ -3169,105 +3201,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </div>
       </div>
 
-      <%!-- Start mode / template bar. Hidden entirely when the project has
-           no lifecycle: a checklist has no beginning to announce, and the
-           bar's whole job is announcing one. Templates keep it — their
-           branch is about how to USE the template, not about starting. --%>
-      <div
-        :if={@is_template or @fx.lifecycle}
-        class="flex flex-wrap items-center gap-3 bg-base-200 rounded-lg px-4 py-3"
-      >
-        <%= cond do %>
-          <% @is_template -> %>
-            <.icon name="hero-document-duplicate" class="w-5 h-5 text-info" />
-            <span class="text-sm">{gettext("This is a template — set up tasks, then create projects from it.")}</span>
-            <.smart_link
-              navigate={Paths.new_project() <> "?template=#{@project.uuid}"}
-              emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new", "template" => @project.uuid}}}
-              embed_mode={@embed_mode}
-              class="btn btn-primary btn-xs ml-auto"
-            >
-              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Create project from this template")}
-            </.smart_link>
-          <% @project.completed_at -> %>
-            <.icon name="hero-trophy" class="w-5 h-5 text-success" />
-            <span class="text-sm font-medium">
-              {gettext("Completed %{when}", when: L10n.format_datetime(@project.completed_at))}
-            </span>
-            <%= if @project.started_at do %>
-              <span class="text-base-content/40 mx-1">·</span>
-              <span class="text-sm text-base-content/60">
-                {gettext("took %{duration}", duration: delta_days(@project.completed_at, @project.started_at))}
-              </span>
-            <% end %>
-          <% @project.started_at -> %>
-            <.icon name="hero-play" class="w-5 h-5 text-success" />
-            <span class="text-sm">
-              {gettext("Started %{when}", when: L10n.format_datetime(@project.started_at))}
-            </span>
-            <%= if @schedule do %>
-              <span class="text-base-content/40 mx-1">·</span>
-              <%= cond do %>
-                <% @schedule.overdue? -> %>
-                  <span class="badge badge-error badge-sm gap-1">
-                    <.icon name="hero-exclamation-triangle" class="w-3 h-3" />
-                    {gettext("%{delta} overdue", delta: @schedule.delta_label)}
-                  </span>
-                <% @schedule.ahead? -> %>
-                  <span class="badge badge-success badge-sm gap-1">
-                    <.icon name="hero-arrow-trending-up" class="w-3 h-3" />
-                    {gettext("%{delta} ahead", delta: @schedule.delta_label)}
-                  </span>
-                <% true -> %>
-                  <span class="badge badge-error badge-sm gap-1">
-                    <.icon name="hero-arrow-trending-down" class="w-3 h-3" />
-                    {gettext("%{delta} behind", delta: @schedule.delta_label)}
-                  </span>
-              <% end %>
-              <span class="text-xs text-base-content/50 ml-1">
-                {gettext("(%{actual}% done vs %{expected}% expected)", actual: @schedule.actual_pct, expected: @schedule.expected_pct)}
-              </span>
-            <% end %>
-          <% @project.start_mode == "scheduled" -> %>
-            <.icon name="hero-calendar" class="w-5 h-5 text-info" />
-            <span class="text-sm">
-              {gettext("Scheduled for %{when}", when: L10n.format_datetime(@project.scheduled_start_date))}
-            </span>
-            <button
-              type="button"
-              phx-click="open_start_modal"
-              class="btn btn-success btn-xs ml-auto"
-            >
-              {gettext("Start now")}
-            </button>
-          <% true -> %>
-            <.icon name="hero-clock" class="w-5 h-5 text-warning" />
-            <span class="text-sm">{gettext("Not started — set up tasks, then start")}</span>
-            <button
-              type="button"
-              phx-click="open_start_modal"
-              class="btn btn-success btn-xs ml-auto"
-            >
-              <.icon name="hero-play" class="w-4 h-4" /> {gettext("Start project")}
-            </button>
-        <% end %>
-      </div>
 
-      <%!-- Health strip — the hub's manual "Needle" (P2b): a human judgment
-           with a note, never auto-computed. Click-through opens the modal. --%>
-      <div
-        :if={not @is_template and @health && @fx.lifecycle}
-        class={["alert py-2 px-4", Health.color_class(@health["status"])]}
-      >
-        <.icon name="hero-heart" class="w-4 h-4" />
-        <div class="flex flex-wrap items-baseline gap-2 min-w-0">
-          <span class="font-medium text-sm">{health_label(@health["status"])}</span>
-          <span :if={@health["note"]} class="text-sm opacity-80 truncate">{@health["note"]}</span>
-        </div>
-        <button type="button" class="btn btn-ghost btn-xs ml-auto" phx-click="open_health_modal">
-          {gettext("Update")}
-        </button>
-      </div>
 
       <%!-- Access-request dialog: opened by a redacted mention anywhere on
            this page. Renders nothing until one is clicked. --%>
@@ -3543,6 +3477,196 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </dialog>
       <% end %>
 
+
+      <%!-- ── The top-level tabs (the boss, 2026-09-05) ──
+           Tasks holds everything about tasks; every enabled extension and
+           Comments are its peers, so each can stand alone in an otherwise
+           empty project (a class leader who only uses whiteboards). Files,
+           Members, Activity, Modules stay in the ⋮ menu: project chrome,
+           not places you live in. Templates get no strip (Tasks only).
+           A hidden element carries the active tab's canonical address in
+           `data-url` (present whether or not a strip shows — a lone Tasks
+           tab still has /tasks/board); core's PkUrlMirror hook replaces
+           the browser's URL with it on router mounts (`@tab_url_sync?`) so
+           copy / reload / deep links land on the tab — an embed never
+           touches its host's URL. --%>
+      <% top_tab = top_tab_of(@active_tab) %>
+      <% top_tabs =
+        if(@fx.tasks, do: [%{id: "tasks", label: gettext("Tasks"), icon: "hero-clipboard-document-list"}], else: []) ++
+          Enum.map(@ext_tabs, &%{id: &1.id, label: &1.label, icon: &1.icon}) ++
+          if(@comments_enabled,
+            do: [
+              %{
+                id: "comments",
+                label: gettext("Comments"),
+                icon: "hero-chat-bubble-left-right",
+                badge: if(@project_comment_count > 0, do: @project_comment_count)
+              }
+            ],
+            else: []
+          ) %>
+      <div
+        :if={@tab_url_sync? and not @is_template}
+        id={"project-url-#{@project.uuid}"}
+        phx-hook="PkUrlMirror"
+        data-url={tab_url(@active_tab, @project, @ext_tabs)}
+        class="hidden"
+      >
+      </div>
+      <div :if={not @is_template and length(top_tabs) > 1} id={"project-tabs-#{@project.uuid}"}>
+        <.nav_tabs active_tab={to_string(top_tab)} on_change="switch_tab" tabs={top_tabs} />
+      </div>
+
+      <%!-- Nothing turned on at all: the one state where the page has no
+           tab to show. Data is preserved — flipping anything on restores
+           its tab. --%>
+      <%= if not @is_template and top_tabs == [] do %>
+        <.empty_state icon="hero-squares-plus" title={gettext("Nothing is turned on for this project yet.")}>
+          <:cta>
+            <.smart_link
+              navigate={Paths.modules(@project.uuid)}
+              emit={{PhoenixKitProjects.Web.ProjectModulesLive, %{"id" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              popup={false}
+              class="link link-primary text-sm"
+            >
+              {gettext("Manage this project's modules & features")}
+            </.smart_link>
+          </:cta>
+        </.empty_state>
+      <% end %>
+
+      <%!-- ── The Tasks tab ──
+           Everything task-derived lives here: the add actions, the lifecycle
+           bar, health, the schedule / progress / effort card, and the task
+           views behind their own, subordinate strip. A tasks-off project
+           has no Tasks tab and none of this. --%>
+      <div :if={@fx.tasks} class={["flex flex-col gap-4", top_tab != :tasks && "hidden"]}>
+        <div :if={not @is_template} class="flex flex-wrap gap-2">
+            <.smart_link
+              :if={@fx.tasks}
+              navigate={Paths.new_assignment(@project.uuid)}
+              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="btn btn-primary btn-sm"
+            >
+              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
+            </.smart_link>
+            <%!-- Add a sub-project via the same add page tasks use
+                 (`AssignmentFormLive` in sub-project mode, V127) — name +
+                 assignee + dependencies. Template sub-projects deep-clone on
+                 instantiation. --%>
+            <.smart_link
+              :if={@fx.tasks and @fx.subprojects}
+              navigate={Paths.new_assignment(@project.uuid) <> "?kind=subproject"}
+              emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid, "kind" => "subproject"}}}
+              embed_mode={@embed_mode}
+              class="btn btn-outline btn-sm gap-1"
+            >
+              <.icon name="hero-folder-plus" class="w-4 h-4" /> {gettext("Add sub-project")}
+            </.smart_link>
+        </div>
+
+      <%!-- Start mode / template bar. Hidden entirely when the project has
+           no lifecycle: a checklist has no beginning to announce, and the
+           bar's whole job is announcing one. Templates keep it — their
+           branch is about how to USE the template, not about starting. --%>
+      <div
+        :if={@is_template or @fx.lifecycle}
+        class="flex flex-wrap items-center gap-3 bg-base-200 rounded-lg px-4 py-3"
+      >
+        <%= cond do %>
+          <% @is_template -> %>
+            <.icon name="hero-document-duplicate" class="w-5 h-5 text-info" />
+            <span class="text-sm">{gettext("This is a template — set up tasks, then create projects from it.")}</span>
+            <.smart_link
+              navigate={Paths.new_project() <> "?template=#{@project.uuid}"}
+              emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new", "template" => @project.uuid}}}
+              embed_mode={@embed_mode}
+              class="btn btn-primary btn-xs ml-auto"
+            >
+              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Create project from this template")}
+            </.smart_link>
+          <% @project.completed_at -> %>
+            <.icon name="hero-trophy" class="w-5 h-5 text-success" />
+            <span class="text-sm font-medium">
+              {gettext("Completed %{when}", when: L10n.format_datetime(@project.completed_at))}
+            </span>
+            <%= if @project.started_at do %>
+              <span class="text-base-content/40 mx-1">·</span>
+              <span class="text-sm text-base-content/60">
+                {gettext("took %{duration}", duration: delta_days(@project.completed_at, @project.started_at))}
+              </span>
+            <% end %>
+          <% @project.started_at -> %>
+            <.icon name="hero-play" class="w-5 h-5 text-success" />
+            <span class="text-sm">
+              {gettext("Started %{when}", when: L10n.format_datetime(@project.started_at))}
+            </span>
+            <%= if @schedule do %>
+              <span class="text-base-content/40 mx-1">·</span>
+              <%= cond do %>
+                <% @schedule.overdue? -> %>
+                  <span class="badge badge-error badge-sm gap-1">
+                    <.icon name="hero-exclamation-triangle" class="w-3 h-3" />
+                    {gettext("%{delta} overdue", delta: @schedule.delta_label)}
+                  </span>
+                <% @schedule.ahead? -> %>
+                  <span class="badge badge-success badge-sm gap-1">
+                    <.icon name="hero-arrow-trending-up" class="w-3 h-3" />
+                    {gettext("%{delta} ahead", delta: @schedule.delta_label)}
+                  </span>
+                <% true -> %>
+                  <span class="badge badge-error badge-sm gap-1">
+                    <.icon name="hero-arrow-trending-down" class="w-3 h-3" />
+                    {gettext("%{delta} behind", delta: @schedule.delta_label)}
+                  </span>
+              <% end %>
+              <span class="text-xs text-base-content/50 ml-1">
+                {gettext("(%{actual}% done vs %{expected}% expected)", actual: @schedule.actual_pct, expected: @schedule.expected_pct)}
+              </span>
+            <% end %>
+          <% @project.start_mode == "scheduled" -> %>
+            <.icon name="hero-calendar" class="w-5 h-5 text-info" />
+            <span class="text-sm">
+              {gettext("Scheduled for %{when}", when: L10n.format_datetime(@project.scheduled_start_date))}
+            </span>
+            <button
+              type="button"
+              phx-click="open_start_modal"
+              class="btn btn-success btn-xs ml-auto"
+            >
+              {gettext("Start now")}
+            </button>
+          <% true -> %>
+            <.icon name="hero-clock" class="w-5 h-5 text-warning" />
+            <span class="text-sm">{gettext("Not started — set up tasks, then start")}</span>
+            <button
+              type="button"
+              phx-click="open_start_modal"
+              class="btn btn-success btn-xs ml-auto"
+            >
+              <.icon name="hero-play" class="w-4 h-4" /> {gettext("Start project")}
+            </button>
+        <% end %>
+      </div>
+
+      <%!-- Health strip — the hub's manual "Needle" (P2b): a human judgment
+           with a note, never auto-computed. Click-through opens the modal. --%>
+      <div
+        :if={not @is_template and @health && @fx.lifecycle}
+        class={["alert py-2 px-4", Health.color_class(@health["status"])]}
+      >
+        <.icon name="hero-heart" class="w-4 h-4" />
+        <div class="flex flex-wrap items-baseline gap-2 min-w-0">
+          <span class="font-medium text-sm">{health_label(@health["status"])}</span>
+          <span :if={@health["note"]} class="text-sm opacity-80 truncate">{@health["note"]}</span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-xs ml-auto" phx-click="open_health_modal">
+          {gettext("Update")}
+        </button>
+      </div>
+
       <%!-- Schedule summary + progress as ONE card: the progress bar is the
            card's bottom edge (a thin flush strip), so the two read as a unit. --%>
       <% show_schedule = @fx.scheduling and @project.started_at != nil and @schedule != nil %>
@@ -3633,62 +3757,31 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         </div>
       <% end %>
 
-      <%!-- View tabs (List / Timeline / Calendar). Rendered in every context
-           (templates excepted). The `ProjectTabsUrl` phx-hook — which mirrors
-           the active tab onto the URL via replaceState — is attached ONLY when
-           `@tab_url_sync?` (the standalone admin page; off by default for
-           embeds so they never touch the host's URL). The tabs switch
-           instantly with or without the hook. --%>
+      <%!-- The task views: List / Board / Timeline / Calendar, each behind
+           its feature flag. A single view needs no strip. --%>
       <% task_tabs =
-        if @fx.tasks do
-          [%{id: "list", label: gettext("List"), icon: "hero-list-bullet"}] ++
-            if(@fx.view_board,
-              do: [%{id: "board", label: gettext("Board"), icon: "hero-view-columns"}],
-              else: []
-            ) ++
-            if(@fx.view_timeline,
-              do: [%{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"}],
-              else: []
-            ) ++
-            if(@fx.view_calendar,
-              do: [%{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}],
-              else: []
-            )
-        else
-          []
-        end %>
-      <% ext_tab_entries = Enum.map(@ext_tabs, &%{id: &1.id, label: &1.label, icon: &1.icon}) %>
-      <% view_tabs = task_tabs ++ ext_tab_entries %>
-      <div
-        :if={not @is_template and length(view_tabs) > 1}
-        id={"project-tabs-#{@project.uuid}"}
-        phx-hook={if @tab_url_sync?, do: "ProjectTabsUrl"}
-      >
-        <.nav_tabs active_tab={to_string(@active_tab)} on_change="switch_tab" tabs={view_tabs} />
+        [%{id: "list", label: gettext("List"), icon: "hero-list-bullet"}] ++
+          if(@fx.view_board,
+            do: [%{id: "board", label: gettext("Board"), icon: "hero-view-columns"}],
+            else: []
+          ) ++
+          if(@fx.view_timeline,
+            do: [%{id: "gantt", label: gettext("Timeline"), icon: "hero-chart-bar-square"}],
+            else: []
+          ) ++
+          if(@fx.view_calendar,
+            do: [%{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar-days"}],
+            else: []
+          ) %>
+      <div :if={not @is_template and length(task_tabs) > 1} id={"project-task-views-#{@project.uuid}"}>
+        <.nav_tabs
+          active_tab={to_string(@active_tab)}
+          on_change="switch_tab"
+          tabs={task_tabs}
+          variant={:border}
+        />
       </div>
 
-      <%!-- Tasks turned off for this project: the hub empty state replaces
-           the TASK surface (timeline, task tabs, schedule). Contributed
-           extension tabs still render below — the empty state shows only
-           when the :list landing is actually selected (i.e. nothing else
-           took over). Data is preserved — flipping tasks back on restores
-           everything. --%>
-      <%= if not @fx.tasks and @active_tab == :list do %>
-        <.empty_state icon="hero-squares-plus" title={gettext("Tasks are turned off for this project.")}>
-          <:cta>
-            <.smart_link
-              navigate={Paths.modules(@project.uuid)}
-              emit={{PhoenixKitProjects.Web.ProjectModulesLive, %{"id" => @project.uuid}}}
-              embed_mode={@embed_mode}
-              popup={false}
-              class="link link-primary text-sm"
-            >
-              {gettext("Manage this project's modules & features")}
-            </.smart_link>
-          </:cta>
-        </.empty_state>
-      <% else %>
-      <%= if @fx.tasks do %>
       <%!-- List tab --%>
       <div class={if(@active_tab != :list, do: "hidden")}>
       <%!-- Timeline --%>
@@ -4319,8 +4412,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             })}
         <% end %>
       </div>
-      <% end %>
-      <% end %>
+      </div>
 
       <%!-- Contributed extension tab panes — live_render with the hub's
            embed-session contract, lazy-mounted on first open and kept
@@ -4347,6 +4439,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             })}
         </div>
       <% end %>
+
+      <%!-- ── The Comments tab ── the project's own thread, inline (task
+           threads keep the drawer the row icons open). Switched by the
+           project's Discussions extension. --%>
+      <div :if={@comments_enabled} class={[top_tab != :comments && "hidden"]}>
+        <%= if @comments_enabled and top_tab == :comments and comments_available?() do %>
+          <.live_component
+            module={PhoenixKitComments.Web.CommentsComponent}
+            id={"comments-tab-project-#{@project.uuid}"}
+            resource_type="project"
+            resource_uuid={@project.uuid}
+            current_user={assigns[:phoenix_kit_current_user]}
+            show_title={false}
+            show_likes={true}
+          />
+        <% end %>
+      </div>
 
       <%!-- Start-project modal — date editable so the user can backdate
            an already-running project or queue a future start. The

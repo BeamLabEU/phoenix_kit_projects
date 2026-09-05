@@ -780,6 +780,73 @@ defmodule PhoenixKitProjects do
         # is a tab on the show page, not a separate page. `:calendar` selects it.
         live_view: {PhoenixKitProjects.Web.ProjectShowLive, :calendar}
       },
+      # ── The project page's top-level tabs (2026-09-05, the boss) ──
+      # Tasks holds the task views; every enabled extension and Comments are
+      # its peers. The canonical addresses are `/tasks[/board|timeline|calendar]`,
+      # `/comments` and `/<extension tab key>` — the `/board`, `/gantt` and
+      # `/calendar` routes above keep every old link landing on its tab.
+      %Tab{
+        id: :admin_projects_project_tasks,
+        label: "Tasks",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/tasks",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :tasks}
+      },
+      %Tab{
+        id: :admin_projects_project_tasks_board,
+        label: "Board",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/tasks/board",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :board}
+      },
+      %Tab{
+        id: :admin_projects_project_tasks_timeline,
+        label: "Timeline",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/tasks/timeline",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :gantt}
+      },
+      %Tab{
+        id: :admin_projects_project_tasks_calendar,
+        label: "Calendar",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/tasks/calendar",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :calendar}
+      },
+      %Tab{
+        id: :admin_projects_project_comments,
+        label: "Comments",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/comments",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :comments}
+      },
+      # A contributed extension tab by its key (`/whiteboards`, `/events`,
+      # `/client`, …). LAST of the `projects/:id/<segment>` family on purpose:
       %Tab{
         id: :admin_projects_template_new,
         label: "New Template",
@@ -839,6 +906,24 @@ defmodule PhoenixKitProjects do
         parent: :admin_projects,
         visible: false,
         live_view: {PhoenixKitProjects.Web.AssignmentFormLive, :edit}
+      },
+      # `/projects/:id/<extension tab>` — LAST on purpose: Phoenix matches in
+      # declaration order, so every literal sibling above (edit, files,
+      # members, modules, activity, board, gantt, calendar, tasks, comments)
+      # AND `projects/templates/*` (whose first segment would otherwise read
+      # as an id) win before this catch-all; an unknown segment lands on the
+      # project's first tab. Extension tab keys must not reuse those literals.
+      %Tab{
+        id: :admin_projects_project_ext_tab,
+        label: "Project",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/:tab",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :ext_tab}
       }
     ]
 
