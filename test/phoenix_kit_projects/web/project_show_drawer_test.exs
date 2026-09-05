@@ -120,6 +120,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     assert render(view) =~ title
   end
 
+  test "the drawer's form keeps the page's browser title", %{conn: conn, project: p} do
+    {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+    {_host, form, _} =
+      open_drawer(view, p, "button[phx-value-lv$='AssignmentFormLive']", "Add task")
+
+    # The header inside the sheet still says what it is …
+    assert render(form) =~ "Add task"
+    # … but the nested LV carries no page_title (LiveView would apply it
+    # to the tab), and the page's own title is untouched.
+    assert :sys.get_state(form.pid).socket.assigns.page_title == nil
+    assert :sys.get_state(form.pid).socket.assigns.heading == "Add task"
+    assert :sys.get_state(view.pid).socket.assigns.page_title == p.name
+
+    # The same form as a page of its own owns the tab.
+    {:ok, page, _} = live(conn, "/en/admin/projects/#{p.uuid}/assignments/new")
+    assert :sys.get_state(page.pid).socket.assigns.page_title == "Add task"
+    assert :sys.get_state(page.pid).socket.assigns.heading == "Add task"
+  end
+
   test "Cancel in the drawer closes it without saving", %{conn: conn, project: p} do
     {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
 

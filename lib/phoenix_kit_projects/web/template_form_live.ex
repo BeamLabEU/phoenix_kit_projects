@@ -44,6 +44,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       |> apply_action(live_action, resolved_params)
       |> assign_status_init()
       |> assign_ai_translate()
+      |> WebHelpers.keep_host_title()
 
     {:ok, socket}
   end
@@ -286,7 +287,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={@page_title}>
+      <.page_header title={@heading}>
         <:back_link>
           <.smart_link
             navigate={Paths.templates()}

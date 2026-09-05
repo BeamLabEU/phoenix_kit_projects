@@ -70,6 +70,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign_status_mode()
       |> assign_ai_translate()
       |> assign_cue_baseline()
+      |> WebHelpers.keep_host_title()
 
     {:ok, socket}
   end
@@ -2055,7 +2056,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={@page_title}>
+      <.page_header title={@heading}>
         <:back_link>
           <.smart_link
             navigate={Paths.projects()}

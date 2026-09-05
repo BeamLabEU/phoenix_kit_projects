@@ -824,6 +824,28 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   @doc """
+  Keeps the browser tab's title with the page when this LV is embedded.
+
+  LiveView applies *every* LV's `page_title` to `document.title`, nested
+  ones included — a form opened in the project page's drawer retitled
+  the tab "Add task" and left it there after closing. The header inside
+  the form still wants the title, so this moves it to `heading` and
+  clears `page_title` unless the LV is a page of its own (navigate
+  mode). Call it at the end of a form's mount pipeline; render the
+  header from `@heading`.
+  """
+  @spec keep_host_title(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def keep_host_title(socket) do
+    heading = socket.assigns[:page_title]
+
+    if socket.assigns[:embed_mode] == :navigate do
+      Phoenix.Component.assign(socket, heading: heading)
+    else
+      Phoenix.Component.assign(socket, heading: heading, page_title: nil)
+    end
+  end
+
+  @doc """
   Attaches the shared `open_embed` event handler to the socket via
   `Phoenix.LiveView.attach_hook/4`. Call from every LV that uses
   `<.smart_link>` (the conventional entry point is to chain it after

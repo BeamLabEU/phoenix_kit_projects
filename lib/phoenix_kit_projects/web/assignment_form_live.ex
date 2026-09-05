@@ -61,6 +61,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       # dialog (emit mode) stops closing on Esc/backdrop while true and
       # Cancel asks first. See `mark_dirty/1`.
       |> assign(dirty?: false)
+      |> WebHelpers.keep_host_title()
 
     {:ok, socket}
   end
@@ -1692,7 +1693,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={@page_title}>
+      <.page_header title={@heading}>
         <:back_link>
           <.smart_link
             navigate={Paths.project(@project.uuid)}
