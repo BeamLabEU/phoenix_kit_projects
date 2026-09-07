@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.1 - 2026-09-07
+
+### Fixed
+
+- `<.page_header>` no longer duplicates the page title on standalone admin pages (Files, Members, Activity, and every form) — the top breadcrumb bar already shows it. The title still renders when the page is embedded via `live_render`, where it's the only title available.
+
 ## 0.23.0 - 2026-09-05
 
 PR #41 — the per-item reads on the hot paths are batched. Twelve N+1s, the
