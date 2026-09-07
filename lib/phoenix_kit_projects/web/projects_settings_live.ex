@@ -53,6 +53,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
        page_subtitle: gettext("Defaults for the projects module."),
        page_section: gettext("Settings"),
        page_section_path: Routes.path("/admin/settings"),
+       active_tab: "creation",
        wrapper_class: wrapper_class,
        statuses_available: available?,
        status_entities: if(available?, do: Statuses.list_status_source_entities(), else: []),
@@ -90,6 +91,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   end
 
   @impl true
+  def handle_event("switch_settings_tab", %{"tab" => tab}, socket) do
+    {:noreply, assign(socket, :active_tab, tab)}
+  end
+
   def handle_event("select_default_status_entity", %{"entity_uuid" => uuid}, socket) do
     uuid = if uuid in [nil, ""], do: nil, else: uuid
     Statuses.set_default_status_entity(uuid)
@@ -627,10 +632,23 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
+      <.nav_tabs
+        active_tab={@active_tab}
+        on_change="switch_settings_tab"
+        variant={:border}
+        tabs={[
+          %{id: "creation", label: gettext("New Project Page"), icon: "hero-document-plus"},
+          %{id: "statuses", label: gettext("Workflow Statuses"), icon: "hero-flag"},
+          %{id: "list_controls", label: gettext("Task List Controls"), icon: "hero-list-bullet"},
+          %{id: "timeline", label: gettext("Timeline Chart"), icon: "hero-chart-bar"},
+          %{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar"}
+        ]}
+      />
+
       <%!-- New-project page customizer: the creation form defaults to
            name + description + kind; promote the blocks this site uses
            constantly to top level. --%>
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "creation" && "hidden"]}>
         <div class="card-body gap-3">
           <h2 class="card-title text-base">{gettext("New project page")}</h2>
           <p class="text-xs text-base-content/60">
@@ -656,7 +674,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
         </div>
       </div>
 
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "statuses" && "hidden"]}>
         <div class="card-body gap-4">
           <h2 class="card-title text-base">{gettext("Workflow statuses")}</h2>
 
@@ -713,7 +731,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       <%!-- The project page's task-list controls. `ListControls` — the
            lens and sort earn their row only when they can change what is
            on screen. --%>
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "list_controls" && "hidden"]}>
         <div class="card-body gap-4">
           <div class="flex items-start justify-between gap-4">
             <h2 class="card-title text-base">{gettext("Task list controls")}</h2>
@@ -771,7 +789,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       <%!-- Whole Gantt/Timeline appearance + a live preview. Each control writes
            one global setting (via GanttDisplay); the demo re-renders from the same
            settings so the admin sees the effect immediately. --%>
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "timeline" && "hidden"]}>
         <div class="card-body gap-5">
           <div class="flex items-start justify-between gap-4">
             <h2 class="card-title text-base">{gettext("Timeline chart")}</h2>
@@ -974,7 +992,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       <%!-- Overdue-animation appearance for the Overview calendar + a live preview.
            Each control writes one global setting (via CalendarDisplay); the preview
            re-renders from the same settings so the effect is immediate. --%>
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "calendar" && "hidden"]}>
         <div class="card-body gap-5">
           <div class="flex items-start justify-between gap-4">
             <h2 class="card-title text-base">{gettext("Calendar")}</h2>

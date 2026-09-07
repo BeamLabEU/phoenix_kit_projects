@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.2 - 2026-09-07
+
+### Added
+
+- Tabs on the Project Settings page — New Project Page / Workflow
+  Statuses / Task List Controls / Timeline Chart / Calendar, replacing
+  one long five-card scroll, matching the tabbed treatment core applies
+  to its own Settings pages.
+
 ## 0.23.1 - 2026-09-07
 
 ### Fixed
