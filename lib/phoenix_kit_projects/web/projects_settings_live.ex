@@ -47,9 +47,9 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     {:ok,
      socket
      |> assign(
-       # Trail: Admin Panel / Settings / Project settings — this page lives
-       # under the site's Settings area, not the Projects tab.
-       page_title: gettext("Project settings"),
+       # Trail: Admin Panel / Settings / Projects — matches the sidebar
+       # label (settings_tabs/0's :admin_settings_projects).
+       page_title: gettext("Projects"),
        page_subtitle: gettext("Defaults for the projects module."),
        page_section: gettext("Settings"),
        page_section_path: Routes.path("/admin/settings"),

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.23.3 - 2026-09-07
+
+### Fixed
+
+- Project Settings page's title was "Project settings" (with a redundant
+  "settings" word) instead of "Projects", which is what the sidebar and
+  every other Settings page's breadcrumb-title convention call for.
+
 ## 0.23.2 - 2026-09-07
 
 ### Added

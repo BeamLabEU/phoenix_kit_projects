@@ -909,6 +909,7 @@ msgstr "Progetto aggiornato."
 #: lib/phoenix_kit_projects/web/project_show_live.ex:292
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3151
 #: lib/phoenix_kit_projects/web/projects_live.ex:85
+#: lib/phoenix_kit_projects/web/projects_settings_live.ex:52
 #: lib/phoenix_kit_projects/web/tasks_live.ex:92
 #: lib/phoenix_kit_projects/web/templates_live.ex:91
 #: lib/phoenix_kit_projects/web/widgets/workload_widget.ex:78
@@ -2404,11 +2405,6 @@ msgstr "Avanzamento"
 #, elixir-autogen, elixir-format
 msgid "Progress fill"
 msgstr "Riempimento di avanzamento"
-
-#: lib/phoenix_kit_projects/web/projects_settings_live.ex:52
-#, elixir-autogen, elixir-format
-msgid "Project settings"
-msgstr "Impostazioni del progetto"
 
 #: lib/phoenix_kit_projects/web/widgets/project_status_widget.ex:77
 #: lib/phoenix_kit_projects/web/widgets/project_status_widget.ex:84
