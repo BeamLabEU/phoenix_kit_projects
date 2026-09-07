@@ -425,7 +425,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={@heading}>
+      <.page_header title={@heading} embed_mode={@embed_mode}>
         <:back_link>
           <.link :if={@embed_mode == :navigate} navigate={Paths.tasks()} class="link link-hover text-sm">
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {gettext("Tasks")}

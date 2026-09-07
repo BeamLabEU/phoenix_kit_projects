@@ -1825,7 +1825,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header title={@heading}>
+      <.page_header title={@heading} embed_mode={@embed_mode}>
         <:back_link>
           <%!-- A page goes back to the project; inside a host's frame or the
                page's drawer "back" is the way out of the sheet (a frame must

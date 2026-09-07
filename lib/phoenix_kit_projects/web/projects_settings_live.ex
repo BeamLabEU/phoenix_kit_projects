@@ -50,6 +50,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
        # Trail: Admin Panel / Settings / Project settings — this page lives
        # under the site's Settings area, not the Projects tab.
        page_title: gettext("Project settings"),
+       page_subtitle: gettext("Defaults for the projects module."),
        page_section: gettext("Settings"),
        page_section_path: Routes.path("/admin/settings"),
        wrapper_class: wrapper_class,
@@ -626,11 +627,6 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header
-        title={gettext("Project settings")}
-        description={gettext("Defaults for the projects module.")}
-      />
-
       <%!-- New-project page customizer: the creation form defaults to
            name + description + kind; promote the blocks this site uses
            constantly to top level. --%>

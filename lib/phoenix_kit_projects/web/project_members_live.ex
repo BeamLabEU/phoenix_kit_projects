@@ -438,6 +438,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
               name: Project.localized_name(@project, L10n.current_content_lang())
             )
           }
+          embed_mode={@embed_mode}
         >
           <:back_link>
             <.smart_link

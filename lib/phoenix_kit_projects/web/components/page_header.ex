@@ -4,6 +4,24 @@ defmodule PhoenixKitProjects.Web.Components.PageHeader do
   admin LV in the projects module (Overview, Projects list, Tasks,
   Templates, Project show, every form).
 
+  Every remaining caller is embeddable (`use PhoenixKitProjects.Web.Components`
+  pages rendered either as a standalone routed admin page or nested via
+  `live_render` inside a host page/drawer). When routed standalone
+  (`embed_mode: :navigate`), core's admin layout already renders this same
+  title in its breadcrumb bar from the LV's `page_title` assign — so pass
+  `embed_mode` here and the title/description are suppressed to avoid
+  showing it twice. In `:emit`/`:popup` mode (or when `embed_mode` is
+  omitted) there's no breadcrumb chrome at all, so the title/description
+  render as the page's only heading. `:back_link` and `:actions` always
+  render regardless of mode — they're functional controls, not a title
+  echo.
+
+  ## Attributes
+
+    * `embed_mode` — optional; when `:navigate`, suppresses the rendered
+      title/description (already shown in the host breadcrumb). Omit or
+      pass `:emit`/`:popup` to always render them.
+
   ## Slots
 
     * `:actions` — the action buttons rendered on the right side.
@@ -49,6 +67,7 @@ defmodule PhoenixKitProjects.Web.Components.PageHeader do
 
   attr(:title, :string, required: true)
   attr(:description, :string, default: nil)
+  attr(:embed_mode, :atom, default: nil)
 
   slot(:actions)
   slot(:back_link)
@@ -58,8 +77,10 @@ defmodule PhoenixKitProjects.Web.Components.PageHeader do
     <div class="flex items-start justify-between gap-4">
       <div>
         <div :if={@back_link != []}>{render_slot(@back_link)}</div>
-        <h1 class={["text-2xl font-bold", @back_link != [] && "mt-1"]}>{@title}</h1>
-        <p :if={@description} class="text-sm text-base-content/60 mt-1">{@description}</p>
+        <%= if @embed_mode != :navigate do %>
+          <h1 class={["text-2xl font-bold", @back_link != [] && "mt-1"]}>{@title}</h1>
+          <p :if={@description} class="text-sm text-base-content/60 mt-1">{@description}</p>
+        <% end %>
       </div>
       <div :if={@actions != []} class="flex flex-wrap gap-2">
         {render_slot(@actions)}
