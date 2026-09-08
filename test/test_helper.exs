@@ -83,6 +83,20 @@ repo_available =
       # staleness story.
       PhoenixKit.Migration.ensure_current(TestRepo, log: false)
 
+      # Then entities' chain, because the Data project extension reads and
+      # writes entity records through `PhoenixKitEntities`' own schemas. Its
+      # V1 is adoptive, so this is a no-op today — it is here so it stays
+      # one. The moment entities ships a version that adds a column, a
+      # harness that never ran its chain fails on an `undefined_column`
+      # raised from a query this module did not write. Guarded because
+      # entities is an optional dep: absent, its schemas are unreachable
+      # anyway, so there is nothing to migrate.
+      if Code.ensure_loaded?(PhoenixKitEntities.Migrations) do
+        for stmt <- PhoenixKitEntities.Migrations.up_statements("public") do
+          TestRepo.query!(stmt)
+        end
+      end
+
       # Then run the module-owned chain (V1 baselines the core-built shape,
       # V2+ add hub-rework tables). The migration is keyed on the CHAIN
       # version, not a fixed number — when Schema.@current_version bumps,
