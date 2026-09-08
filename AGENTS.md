@@ -110,6 +110,13 @@ got in and broke group grants on staff-less installs. The contract and
 functional proofs live in
 `test/phoenix_kit_projects/integration/people_seam_test.exs`.
 
+Repo-local aliases:
+
+- `mix quality` — `format` + `credo --strict` + `dialyzer` (applies formatting).
+- `mix quality.ci` — `format --check-formatted` + `credo --strict` + `dialyzer`: it CHECKS formatting rather than applying it, so run `mix format` first.
+- `mix test.reset` — drops the test database and recreates it.
+- `mix test.setup` — `ecto.create` on the test repo, the alias equivalent of `createdb`.
+
 ## Conventions
 
 - **Module key / tab ids / URL segments.** Module key `"projects"`; tab ids are
