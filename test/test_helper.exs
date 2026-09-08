@@ -37,35 +37,39 @@ db_name =
   Application.get_env(:phoenix_kit_projects, TestRepo, [])[:database] ||
     "phoenix_kit_projects_test"
 
+# The preflight ships in core, and this module's core floor (`~> 2.0`)
+# predates it — so it is used when the running core has it, and otherwise
+# this falls through to exactly the previous behaviour.
 db_check =
-  try do
-    case System.cmd("psql", ["-lqt"], stderr_to_stdout: true) do
-      {output, 0} ->
-        exists =
-          output
-          |> String.split("\n")
-          |> Enum.any?(fn line ->
-            line |> String.split("|") |> List.first("") |> String.trim() == db_name
-          end)
+  if Code.ensure_loaded?(PhoenixKit.TestSupport.PostgresPreflight) do
+    # One classified connection attempt, with the repo's OWN credentials and
+    # transport, before anything starts the pool.
+    #
+    # This replaces a `psql -lqt` listing. That check asked the wrong question:
+    # it ran as the shell's user over a unix socket, so it reported "the
+    # database is there" and said nothing about whether the CONFIGURED role
+    # could reach it over TCP. When it could not, the answer arrived minutes
+    # later as a pool checkout timeout that reads like a flaky test.
+    case PhoenixKit.TestSupport.PostgresPreflight.check(
+           Application.get_env(:phoenix_kit_projects, PhoenixKitProjects.Test.Repo, [])
+         ) do
+      :ok ->
+        :exists
 
-        if exists, do: :exists, else: :not_found
-
-      _ ->
-        :try_connect
+      {:error, _reason, message} ->
+        IO.puts(:stderr, "\n" <> message)
+        :not_found
     end
-  rescue
-    # `psql` binary not installed — fall through to the connect-attempt
-    # path. Honors the AGENTS.md contract that `mix test` never
-    # hard-fails on a missing DB.
-    ErlangError -> :try_connect
+  else
+    :try_connect
   end
 
 repo_available =
   if db_check == :not_found do
     IO.puts("""
 
-      Test database "#{db_name}" not found — integration tests excluded.
-      Run: createdb #{db_name} && mix test.setup
+      Cannot reach test database "#{db_name}" — integration tests excluded.
+       The reason is printed above. && mix test.setup
     """)
 
     false
@@ -82,6 +86,20 @@ repo_available =
       # on every boot. See `dev_docs/migration_cleanup.md` for the
       # staleness story.
       PhoenixKit.Migration.ensure_current(TestRepo, log: false)
+
+      # Then entities' chain, because the Data project extension reads and
+      # writes entity records through `PhoenixKitEntities`' own schemas. Its
+      # V1 is adoptive, so this is a no-op today — it is here so it stays
+      # one. The moment entities ships a version that adds a column, a
+      # harness that never ran its chain fails on an `undefined_column`
+      # raised from a query this module did not write. Guarded because
+      # entities is an optional dep: absent, its schemas are unreachable
+      # anyway, so there is nothing to migrate.
+      if Code.ensure_loaded?(PhoenixKitEntities.Migrations) do
+        for stmt <- PhoenixKitEntities.Migrations.up_statements("public") do
+          TestRepo.query!(stmt)
+        end
+      end
 
       # Then run the module-owned chain (V1 baselines the core-built shape,
       # V2+ add hub-rework tables). The migration is keyed on the CHAIN
@@ -108,8 +126,7 @@ repo_available =
       e ->
         IO.puts("""
 
-          Could not connect to test database — integration tests excluded.
-          Run: createdb #{db_name} && mix test.setup
+          Could not connect to test database — integration tests excluded.          The reason is printed above. && mix test.setup
           Error: #{Exception.message(e)}
         """)
 
@@ -118,8 +135,7 @@ repo_available =
       :exit, reason ->
         IO.puts("""
 
-          Could not connect to test database — integration tests excluded.
-          Run: createdb #{db_name} && mix test.setup
+          Could not connect to test database — integration tests excluded.          The reason is printed above. && mix test.setup
           Error: #{inspect(reason)}
         """)
 

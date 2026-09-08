@@ -1,1804 +1,746 @@
 # AGENTS.md
 
-Guidance for AI agents working on the `phoenix_kit_projects` plugin module.
+Guidance for AI agents working on `phoenix_kit_projects`.
 
-## Project overview
+## Overview
 
-A PhoenixKit plugin module for project + task management. Implements `PhoenixKit.Module` behaviour. Registers one admin tab (`Projects`) whose **landing page is the project list** (since 2026-09; the parent tab and the first subtab both render `ProjectsLive` at `/admin/projects`; project pages sit directly under it, `/admin/projects/:id/…`, and the old `list/…` addresses redirect), with subtabs:
+A PhoenixKit plugin module for project and task management. It implements the
+`PhoenixKit.Module` behaviour and provides a reusable task library, projects
+that pull tasks in as assignments (with team/department/person assignees),
+dependency chains within a project, sub-projects, workflow statuses, a
+per-project extension hub (files, whiteboards, events, discussions, a public
+portal), dashboard widgets and a public issue portal.
 
-- **Projects** — list of projects (filterable by status). Its subtab matcher is a regex (everything under `projects` except the `tasks`/`templates`/`overview` siblings) because tabs match independently and a `:prefix` on `projects` would light it on those too.
-- **Tasks** — library of reusable tasks (title, description, duration, default dependencies, default assignee). The word "template" is reserved for PROJECT templates in user-facing copy — a library entry is just a task. A **Library | One-off** lens (URL `lens=`) appears once one-off tasks exist — see "Quick-add" below.
-- **Templates** — reusable project templates cloned into real projects
-- **Overview** — the LAST subtab (`projects/overview`; the boss: "an overview and a dashboard are different things, both have their value"). Its pieces are also dashboards-module widgets (see "Dashboard widgets") for anyone who wants them on a `phoenix_kit_dashboards` board, and `OverviewLive` stays the embeddable root view for host apps (`dev_docs/embedding_emit.md`). What it renders:
+- **Depends on:** `phoenix_kit` `~> 2.0` (Hex; the real floor is documented in
+  `mix.exs` next to the pin — a two-segment `~>` is deliberate so core minors
+  stay compatible and `core_pin_conformance_test.exs` guards it),
+  `phoenix_kit_ai` `~> 0.18` (hard — the AI-translation pipeline),
+  `phoenix_kit_comments` `~> 0.3` (hard — `ProjectShowLive` does
+  `use PhoenixKitComments.Embed`), `phoenix_kit_staff` `~> 0.8` (**optional** —
+  the People seam; all reads go through `PhoenixKitProjects.People`),
+  `phoenix_kit_entities` `~> 0.3` (**optional** — the workflow-status catalog;
+  `Statuses.available?/0` gates every call), plus `phoenix_live_gantt` `~> 0.4`
+  (Timeline) and `phoenix_live_calendar` `~> 0.3` (Calendar).
+- **Consumed by:** `phoenix_kit_dashboards` discovers `phoenix_kit_widgets/0`
+  duck-typed (one-way — projects has no dependency on it). `phoenix_kit_ai`
+  calls `handle_ai_usage/1` the same way. Core consumes `resource_links/0`,
+  `notification_types/0`, `before_user_delete/1`, `migrate_legacy/0`,
+  `css_sources/0` and `js_sources/0`.
+- **Admin surface:** one `Projects` tab whose **landing page is the project
+  list** (`/admin/projects`), with subtabs Projects, Templates, Tasks and
+  Overview (last), plus hidden subtabs for every project/task/template/
+  assignment page. A settings tab at `/admin/settings/projects`
+  (`settings_tabs/0`), a user-dashboard tab `My Projects` at
+  `/dashboard/projects` (`user_dashboard_tabs/0`, membership-gated, no admin
+  permission), and the public portal at `/portal/:slug` (`route_module/0`).
+- **Module key** `"projects"`; settings prefix `projects_`.
 
-- active projects with progress bars, my tasks, upcoming/setup/completed projects, stats. Its Calendar tab has two modes: **Tasks (default)** — every leaf task across all projects on its scheduled days (identity-colored by project, per-day cap with a Google-style "+N more"; a day-cell or "+N more" click opens a whole-day popup via `PkDialogTrigger` + a kept-in-DOM modal; month + agenda views) — and **Projects** (the original one-bar-per-project view with the configurable overdue marker, plus a **"Late only" lens** in its toolbar — bars of late running projects only, same `summary.late` tier as the cards; count-badged, hidden at 0, kept while active). Tasks mode carries an **assignee filter** — one Linear-style chip rail: a MULTI-person core `<.search_picker>` (search-on-focus browse, DB-limited pages with Load more, picked people excluded from suggestions; **only RELEVANT people are offered** — someone at least one non-template assignment points at directly / via a team / via a department in their scope, and the per-project Calendar tab narrows that to its own rendered tree via `assignee_search_scope`) plus quick-adders for **Me** (hidden without a staff person) and **Unassigned** (a dashed chip with live count; hidden while the count is 0) that insert removable chips beside the input; every active filter is a visible chip, all filtering as one union, with a **Clear** button that renders only while filtering (resets chips + Unassigned + Overdue + Personal-only); the header is just a **Filters funnel button** (badged with the active count; the whole funnel hides while the UNFILTERED walk has zero items — a fresh install has nothing to filter) + the mode toggle; every control lives in a client-side popup panel (JS.toggle open — patch-safe — with phx-click-away dismiss): picker, Me/Unassigned quick-adders, chips, Personal-only/Overdue-only, Clear; INHERITED semantics by default — the person plus their teams and departments via `PhoenixKitProjects.Assignees`, with a "Direct only" toggle and "via Team" provenance in the popup rows) and an **"Overdue only"** toggle (late = not done + scheduled span past — red inset ring on chips, `late` badge in popup rows; hidden while the raw walk has no late items, kept while active). The raw walk is cached in assigns; filter flips are in-memory
+## What this module does NOT do
 
-Plus hidden subtabs for project/task/template/assignment new/edit/show pages.
+- **No tenant scoping on PubSub topics** — `projects:all` / `projects:tasks` /
+  `projects:templates` fan out to every subscriber. Per-tenant scoping is a
+  framework-wide gap (no other feature module partitions PubSub by tenant
+  either); the right shape is to thread an org/tenant key through every topic
+  when core grows that capability. The per-project topic
+  (`projects:project:<uuid>`) is already safe — you need the UUID to subscribe.
+- **No `handle_params/3` on `ProjectShowLive`** — initial DB reads happen at
+  the tail of `mount/3`. LiveView refuses to mount any LV exporting
+  `handle_params/3` outside a router live route, which blocks embedding via
+  `live_render`. The same constraint applies to any sibling LV that must be
+  embeddable: drop `handle_params/3` and move its body into the mount tail.
+- **No event-debounce / minimal-delta on `OverviewLive`'s `handle_info`** —
+  every `{:projects, _, _}` broadcast triggers a full dashboard reload.
+- **No status-helper extraction** — `status_color/1` / `status_badge_class/1` /
+  `status_label/1` are duplicated between `OverviewLive` and `ProjectShowLive`.
+  Cosmetic; extract when a third call site appears.
+- **No HTTP boundary** — the context calls only PostgreSQL via Ecto and reads
+  core's settings; no `Req.get` / `:httpc.request` / external service. So no
+  SSRF guard and no `Req.Test`-via-app-config stub pattern.
+- **No HTTP backend for translations** — they live in this repo's
+  `priv/gettext/` and in core's for the shared strings (see Conventions →
+  Gettext).
+- **No Errors module for HTTP error shapes** — `Errors.message/1` covers
+  `:not_found` / `:template_not_found` / `:task_not_found` plus a generic
+  fallback. Add a branch when a context function introduces a new
+  `{:error, atom}` shape.
+- **No direct `PhoenixKitStaff.*` calls** — staff is optional; the People
+  doorway is the only sanctioned path (see Conventions).
+- **No plain-POST fallback for the public portal** — `/portal/:slug/report` is
+  a `live` route, so submitting needs JS. A real no-JS fallback means a
+  controller action doing its own honeypot / fill-time / rate-limit pass, i.e.
+  a second abuse-exposed entry point; build it deliberately or not at all.
 
-## Common commands
-
-Run from `/www/app`, not from inside this plugin subdir:
+## Commands
 
 ```bash
-mix compile
-mix format
-sudo supervisorctl restart elixir
+mix deps.get
+createdb phoenix_kit_projects_test          # once; DB-backed tests are tagged :integration and auto-skip without it
+mix test
+mix precommit                # compile --warnings-as-errors + format + credo --strict + dialyzer; run before every commit
 ```
 
-## Dependencies
-
-- `phoenix_kit` (path dep) — Module behaviour, Settings, RepoHelper, Activity
-- `phoenix_kit_staff` — **OPTIONAL** (the staff-optional seam, Phase B of the hub rework). The staff DB tables are created by CORE (V100), so the assignee data model runs on projects' own read-only SHADOW schemas (`PhoenixKitProjects.People.{Person,Team,Department,TeamMembership}`) over those core-owned tables; the staff package is only the people ADMIN surface. All people/team/department reads go through the ONE doorway `PhoenixKitProjects.People`; `People.staff_admin_available?/0` gates admin-UI affordances only. The seam's compile gate: `WITHOUT_STAFF=1 mix deps.get && WITHOUT_STAFF=1 mix compile --warnings-as-errors` must stay green; the contract + functional proofs live in `test/phoenix_kit_projects/integration/people_seam_test.exs`
-- `phoenix_live_view`, `ecto_sql`
-
-## Local cross-repo development
-
-`phoenix_kit` (and any sibling `phoenix_kit_*` dep) resolves from Hex by
-default. To build or test this module against a **local checkout** of a
-dependency — e.g. an unpublished core change — export `<APP>_PATH` and Mix
-swaps the Hex pin for a `path:` + `override: true` dep at resolve time:
+`phoenix_kit*` deps resolve from Hex. To run against a local checkout, export
+`<APP>_PATH` (the dep's app name upper-cased plus `_PATH`); `pk_dep/3` in
+`mix.exs` swaps the Hex pin for a `path:` dep at resolve time. Unset means the
+Hex pin, so `mix hex.publish` is unaffected. Run `mix deps.get` with the var
+exported before the first `mix test` (a stale lock aborts on the optional
+`igniter` dep), and never commit a hand-edited `path:` tuple.
 
 ```bash
-PHOENIX_KIT_PATH=../phoenix_kit mix test     # this module against local core
+PHOENIX_KIT_PATH=../phoenix_kit mix deps.get && PHOENIX_KIT_PATH=../phoenix_kit mix test
 PHOENIX_KIT_AI_PATH=../phoenix_kit_ai mix test
 PHOENIX_KIT_STAFF_PATH=../phoenix_kit_staff mix test
 PHOENIX_KIT_COMMENTS_PATH=../phoenix_kit_comments mix test
 PHOENIX_KIT_ENTITIES_PATH=../phoenix_kit_entities mix test
+PHOENIX_LIVE_GANTT_PATH=../phoenix_live_gantt mix test
+PHOENIX_LIVE_CALENDAR_PATH=../phoenix_live_calendar mix test
 ```
 
-The variable name is the dep's app name upper-cased with `_PATH` appended
-(`:phoenix_kit` -> `PHOENIX_KIT_PATH`, `:phoenix_kit_ai` ->
-`PHOENIX_KIT_AI_PATH`). Set several at once to override multiple deps. This
-module's sibling overrides: `PHOENIX_KIT_AI_PATH`, `PHOENIX_KIT_STAFF_PATH`, `PHOENIX_KIT_COMMENTS_PATH`, `PHOENIX_KIT_ENTITIES_PATH`. **Unset = the
-published pin**, so `mix hex.publish` and CI resolve exactly as before.
-Implemented via `pk_dep/3` in `mix.exs` — never hand-edit a `phoenix_kit*`
-dep into a `path:` tuple (a committed path dep ships a broken package); set
-the env var instead.
+The staff-optional seam has its own compile gate, which must stay green:
 
-## Architecture
-
-### Concepts
-
-- **Task** — a reusable template (title, description, estimated duration with unit, optional default assignee, optional default dependencies on other tasks)
-- **Project** — a container for assignments. Has start mode (`immediate` or `scheduled`), optional `counts_weekends` flag, `is_template` flag (templates are cloned into real projects), and completion tracking (`completed_at`)
-- **Assignment** — a task instance within a project. Copies description/duration from the template at creation, but is independently editable. Optionally assigned to a Department/Team/Person.
-- **Dependency** — "assignment A must finish before B" link, scoped to the same project
-- **TaskDependency** — default dependency between two library tasks, auto-applied when both are in the same project
-
-### Schemas
-
-- `PhoenixKitProjects.Schemas.Task` — `phoenix_kit_project_tasks`
-- `PhoenixKitProjects.Schemas.Project` — `phoenix_kit_projects`
-- `PhoenixKitProjects.Schemas.Assignment` — `phoenix_kit_project_assignments`
-- `PhoenixKitProjects.Schemas.Dependency` — `phoenix_kit_project_dependencies`
-- `PhoenixKitProjects.Schemas.TaskDependency` — `phoenix_kit_project_task_dependencies`
-
-All UUIDv7 PKs. Duration units: `minutes`, `hours`, `days`, `weeks`, `fortnights`, `months`, `years` (all defined on `Schemas.Task`, which also hosts `to_hours/3` with `counts_weekends` awareness).
-
-### Context
-
-`PhoenixKitProjects.Projects` — everything. Task library CRUD, template deps, project CRUD, templates, assignment CRUD, dependency management, schedule/progress computations (`project_summaries/1` batch query to avoid N+1 per project), completion auto-detection (`recompute_project_completion/1`), and template cloning (`create_project_from_template/2` uses `Ecto.Repo.transaction` for atomic cloning).
-
-### LiveViews
-
-Under `PhoenixKitProjects.Web.*`:
-- `OverviewLive` — dashboard
-- `TasksLive`, `TaskFormLive` — task library
-- `ProjectsLive`, `ProjectFormLive`, `ProjectShowLive` — projects
-- `ProjectGanttLive`, `ProjectCalendarLive` — the show page's Timeline / Calendar tabs (read-only alternate views, nested via `live_render`)
-- `TemplatesLive`, `TemplateFormLive` — templates (reuses `ProjectShowLive` for view)
-- `AssignmentFormLive` — add/edit task-in-project
-
-`ProjectShowLive` is large (~900 lines) — handles the vertical timeline, status transitions, inline duration editing, per-task progress sliders, dependency badges, schedule/projected-end calculation. Sections are marked with `<%!-- ... --%>` HEEx comments for navigation.
-
-**Show-page tabs (List / Timeline / Calendar):** both alternate views render
-the SAME schedule through the shared `PhoenixKitProjects.ScheduleLayout`
-(tree flatten + `PhoenixLiveGantt.Layout.sequential/2` walk, hour-precise,
-weekday/weekend-aware), so they can never disagree about a task's dates. The
-Timeline is `ProjectGanttLive` (`phoenix_live_gantt`); the Calendar is
-`ProjectCalendarLive` (`phoenix_live_calendar` month grid, top-level
-assignments as all-day status-colored bars capped per day with "+N more",
-the same whole-day popup as the Overview, and the same Filters panel (shared
-`Web.AssigneeFilter` glue + `<.assignee_filter_panel>`; sub-project bars match
-DESCENDANT-aware — any subtree task belonging to the person keeps the bar); a sub-project is one bar spanning
-its subtree, click drills into the child; dates deliberately UTC-unshifted to
-match the Timeline, unlike the Overview calendar). Tabs are instant assign
-flips; each nested LV lazy-mounts on first open and stays mounted. URL sync
-is the strip's `data-url` + core's `PkUrlMirror` hook, opt-in via
-`session["tab_url_sync"]` for embeds.
-
-### The project page's top-level tabs (2026-09-05)
-
-The show page is a set of **top-level tabs**, one per thing a project can
-be: **Tasks** (which holds the four task views List / Board / Timeline /
-Calendar behind its own, subordinate strip, plus the add actions, the
-lifecycle bar, health and the schedule / progress / effort card), one tab
-per enabled extension that contributes one (Events, Whiteboards, …) and
-**Comments** — the project's own thread, inline, switched by the project's
-*Discussions* extension (its existing per-project on/off) and the comments
-module being on. Each stands alone in an otherwise empty project — a
-project can be *only* a whiteboard or *only* a discussion. The header is
-the project, not a tab — and on the standalone page most of it is the SITE
-header: the breadcrumb carries the name, and core's
-`page_toolbar` (`{ProjectShowLive, :header_toolbar}`, a function component
-rendered with the LiveView's assigns; its events land in the LiveView)
-puts the workflow-status picker and the ⋮ menu beside it. What stays in
-the page is the project's face — Completed / Archived badges and the
-description — and with neither, nothing: the tabs start right under the
-site header (`header_face?/2`). The project's assignee is NOT shown on the
-page (Max, 2026-09-05: nothing acts on it; it lives on the edit form).
-Embedded mounts have no site header, so they keep the h1 and render the
-same toolbar component in the body. Files / Members / Activity stay in the
-⋮ menu as project chrome. A single top-level tab renders no strip; with nothing on at all the page
-shows the nothing-on empty state with a link to Modules. Templates keep
-the Tasks pane alone, without either strip.
-
-Resolution lives in `ProjectShowLive` (`tab_for_action/3` → `gate_tab/2` →
-`gate_comments_tab/2` → `resolve_landing_tab/4` at mount;
-`resolve_switch_target/2` on `switch_tab`), and every target is validated
-against the feature map / the contributed tab list — a forged event lands
-on the list. `top_tab_of/1` maps a task view to `:tasks`; switching back to
-Tasks reopens the view you left (`task_view`). Task-row comments keep the
-side drawer; only the project-level thread moved into the tab.
-
-Addresses (`Paths`): `:id/tasks`, `:id/tasks/board`, `:id/tasks/timeline`,
-`:id/tasks/calendar`, `:id/comments`, `:id/<extension tab key>` (the
-`projects/:id/:tab` catch-all, declared LAST — after `templates/*`, whose
-first segment would otherwise read as an id; extension tab keys must not
-reuse a literal sibling). The pre-2026-09 `:id/board|gantt|calendar` still
-open their view. `tab_url/3` is the canonical address a tab reports.
-
-### URL paths
-
-Under `/admin/projects/*`: the list is the landing page and project pages sit directly under it — `new`, `:id`, `:id/edit`, `:id/tasks`, `:id/tasks/board|timeline|calendar`, `:id/comments`, `:id/<extension tab>`, `:id/files|activity|members|modules` (and the legacy `:id/board|gantt|calendar`), `:project_id/assignments/new`, `:project_id/assignments/:id/edit` — beside the literal siblings `tasks` (+ `tasks/new`, `tasks/:id/edit`), `templates` (+ `templates/new|:id|:id/edit`) and `overview`. The pre-2026-09 `list/…` addresses (the list used to live there) redirect to the same path without the segment (`ListRedirectLive`, hidden `projects/list` + `projects/list/*rest` tabs). **Declaration order is route order**: `admin_tabs/0` lists the literal siblings and the legacy redirects before `:id`, and `new` before `:id` — `landing_test.exs` pins it. Use `PhoenixKitProjects.Paths`.
-
-### Embedding LiveViews via `live_render`
-
-**See also:** [`dev_docs/embedding_audit.md`](dev_docs/embedding_audit.md)
-— the deep-dive audit of every LV in this module, why the blockers
-exist, the per-LV fix shapes, the test convention, and the pre-flight
-checklist for new LVs. Read it before adding a new LV.
-
-**All 11 LVs are embeddable.** The regression gate is
-`test/phoenix_kit_projects/web/embedding_test.exs` (navigate-mode
-contract, including the `current_user_uuid` identity contract) plus
-`embedding_emit_test.exs` (emit-mode contract — every LV that renders a
-`<.smart_link emit>` needs a block there, or a missing
-`attach_open_embed_hook/1` ships as a click-crash). Coverage, one
-describe block per LV in each file:
-`OverviewLive`, `ProjectsLive`, `TemplatesLive`, `TasksLive`,
-`ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`,
-`ProjectFormLive`, `TaskFormLive`, `TemplateFormLive`, `AssignmentFormLive`.
-
-The whitelist that gates **host-driven** insertion (PopupHost `root_view`,
-`<.smart_link emit>`, emit `:opened`, `next` frames) is the single
-`Web.Helpers.embeddable_lvs/0` list — an LV must be in it to be insertable
-by another app, even if its `mount/3` already handles the off-router embed
-contract. (The admin Timeline tab renders `ProjectGanttLive` via a direct
-`live_render`, which never consulted the whitelist — which is why the Gantt
-ran in our own UI yet stayed un-insertable until it was added to the list.)
-
-> **Host responsibility — pass the viewer's identity.** Any user-aware
-> behavior in an embed (the `ProjectShowLive` comments composer, and
-> activity-log actor attribution on *every* mutating LV) needs the host to
-> pass `session["current_user_uuid"]` — see the contract below. Without it
-> the embed degrades to anonymous (the comments composer shows "Sign in to
-> post a comment.", `Activity.actor_uuid/1` records `nil`) but never
-> crashes. This is unavoidable: a `live_render` child is a separate
-> `:not_mounted_at_router` process and can't see the host's `conn`,
-> assigns, or the router's auth `on_mount` hook — it only gets the
-> `session` map you hand it. Same mechanism as `session["locale"]`.
->
-> ⚠️ **Identity ≠ authorization.** The `permission: "projects"` gate lives
-> in core's `:phoenix_kit_ensure_admin` `on_mount`, which runs only for
-> router-mounted admin pages — **never** for an off-router `live_render`
-> mount. So embedded mutation handlers are NOT role-gated, and
-> `current_user_uuid` reconstructs the viewer for audit + the comments
-> composer only. **The host MUST gate the embedding page to
-> projects-authorized users** (and source the uuid from its own trusted
-> scope, never request params — the signed session stops client tampering,
-> not unauthorized hosts).
-
-Common shape for **read-only LVs** (Overview / Projects / Templates /
-Tasks / ProjectShow / ProjectGantt):
-
-```heex
-{live_render(@socket, PhoenixKitProjects.Web.OverviewLive,
-   id: "embedded-projects-overview",
-   session: %{
-     "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-6",
-     # Viewer identity — needed for the comments composer + activity actor.
-     # Source from the host's own authenticated scope, never request params.
-     "current_user_uuid" => @phoenix_kit_current_scope.user.uuid
-   })}
+```bash
+WITHOUT_STAFF=1 mix deps.get && WITHOUT_STAFF=1 mix compile --warnings-as-errors
 ```
 
-`ProjectShowLive` additionally requires `session["id"]` (the project
-UUID), reads `session["current_user_uuid"]` for the comments-drawer
-composer, and renders the **List/Timeline/Calendar tab bar in embeds too**
-(the Timeline/Calendar tabs are nested `live_render`s of `ProjectGanttLive`
-/ `ProjectCalendarLive`); its URL-sync hook is opt-in via
-`session["tab_url_sync"]` (off by default — see the contract bullet).
-`ProjectGanttLive` (the read-only Timeline view) and `ProjectCalendarLive`
-(the read-only month-calendar view) also require `session["id"]` and accept
-`session["headless"]` (drops the back-link when nested as the show page's
-tab). `TasksLive` accepts `session["view"]` (`"list"` or `"groups"`).
-
-> ⚠️ **Embedded Timeline needs the gantt JS hooks in the host's
-> LiveSocket.** When a host embeds `ProjectShowLive` and the user opens
-> the Timeline tab, the nested `ProjectGanttLive` renders with
-> `enable_hooks={true}`, expecting `window.PhoenixLiveGanttHooks`
-> (`LgBarPopover` / `LgAutoScroll`). The chart itself is server-rendered
-> SVG and shows without them, but the bar popover + scroll-to-today are
-> inert until they're loaded. A PhoenixKit-core host gets them
-> zero-config via this module's `js_sources/0` + core's
-> `:phoenix_kit_js_sources` compiler (core ≥ 1.7.146; run
-> `mix phoenix_kit.update`, recompile, rebuild assets). A non-PhoenixKit
-> host must import `phoenix_live_gantt/priv/static/assets/phoenix_live_gantt.js`
-> in its `app.js` and spread `window.PhoenixLiveGanttHooks` into its
-> LiveSocket `hooks`.
-
-Common shape for **form LVs** (ProjectForm / AssignmentForm /
-TaskForm / TemplateForm):
-
-```heex
-{live_render(@socket, PhoenixKitProjects.Web.ProjectFormLive,
-   id: "embedded-new-project",
-   session: %{"live_action" => "new",
-              "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4",
-              "redirect_to" => "/host/orders/#{@order_id}",
-              # So the form's activity log attributes to the real actor.
-              "current_user_uuid" => @phoenix_kit_current_scope.user.uuid})}
-```
-
-Contract (all keys optional unless noted):
-
-- `session["id"]` — required for `ProjectShowLive`, `ProjectGanttLive`,
-  and for `:edit` actions on form LVs. String UUID.
-- `session["project_id"]` — required for `AssignmentFormLive` (both
-  `:new` and `:edit`).
-- `session["live_action"]` — `"new"` or `"edit"` for form LVs.
-  Defaults to `:new`. Resolved via `String.to_existing_atom/1` so
-  unknown values fall back to the default.
-- `session["template"]` — optional template UUID for
-  `ProjectFormLive` `:new` (prefills the template picker).
-- `session["view"]` — `"list"` or `"groups"` for `TasksLive`.
-  Defaults to `"list"`.
-- `session["wrapper_class"]` — overrides the outermost `<div>` class.
-  Each LV defaults to its standalone-admin class
-  (`mx-auto max-w-{xl,4xl,5xl,6xl} px-4 py-6 gap-{4,6}`); pass any
-  host-friendly Tailwind class string.
-- `session["locale"]` — optional locale code (e.g. `"ru"`, `"et"`).
-  When set, both `PhoenixKitWeb.Gettext` and the process-global Gettext
-  locale are restored inside the embedded LV's mount so translations
-  render in the host's language. Backward-compatible — absent key is a
-  no-op and the backend default (English) is used.
-- `session["current_user_uuid"]` — **the viewing user's UUID** (string).
-  Required for any user-aware behavior in an embed: the comments drawer's
-  composer (else it shows "Sign in to post a comment.") and activity-log
-  actor attribution (`Activity.actor_uuid/1` would otherwise record
-  `nil`). An off-router `live_render` mount runs no `on_mount` hook, so
-  `:phoenix_kit_current_scope` / `:phoenix_kit_current_user` are absent;
-  `WebHelpers.assign_embed_user/2` reloads the user from this uuid and
-  rebuilds the scope. The host MUST source it from its own trusted
-  server-side assign (its `phoenix_kit_current_scope` → `scope.user.uuid`),
-  **never** request params. Pass a string UUID, **not** the `%User{}`
-  struct — a struct would serialize the password hash into the
-  client-readable signed `live_render` session. Absent / unknown / inactive
-  uuid degrades to an anonymous scope (composer disabled), never crashes.
-  Backward-compatible. The reconstructed scope is a mount-time snapshot
-  with no live refresh hook, so a mid-session permission change isn't
-  reflected until remount. `PopupHostLive` forwards this key into every
-  child session, so a host using it passes the uuid once.
-- `session["redirect_to"]` — form LVs only. String path. When set,
-  `push_navigate` on save / mount-error fires to this path instead of
-  the admin default. Lets the host close a modal, refresh state, etc.
-  without yanking the user to `/admin/projects/...`.
-- `session["tab_url_sync"]` — `ProjectShowLive` only. Boolean,
-  **defaults `false`** in embeds. The tab strips render in every embed
-  (only templates stay tabless), but the URL mirror — a hidden element
-  carrying the active tab's canonical address in `data-url`, which core's
-  `PkUrlMirror` hook writes over the browser's via `history.replaceState`
-  (no history entries; back/forward return to the previous page, and
-  per-tab entries are impossible without `handle_params/3`, which would
-  block embedding) — is **off by default**: an embed must not rewrite the
-  host's address bar. Pass `true` (a real boolean, not `"true"`) only if
-  the host mounts the show page as its own full-page route and wants
-  `/tasks/board` / `/whiteboards` / `/comments` deep-linking. The
-  router-mounted standalone admin page enables it implicitly.
-- `id:` opt on `live_render` should be unique per logical embed (e.g.
-  include the resource UUID) so two embeddings of the same LV on one
-  page don't collide.
-
-Behavior notes:
-
-- `push_navigate` from within an embedded LV navigates the
-  **top-level** browser session. Read-only LVs: rare paths (back-link,
-  post-delete redirect). Form LVs: every save — that's why the
-  `redirect_to` seam exists.
-- All `phx-click` events, PubSub subscriptions, and the comments
-  drawer (on `ProjectShowLive`) are scoped to the embedded socket;
-  reactivity works the same as on the standalone page. The drawer's
-  composer is enabled only when the viewer was supplied via
-  `session["current_user_uuid"]` (reconstructed by
-  `WebHelpers.assign_embed_user/2`); otherwise it renders the read-only
-  thread + a "Sign in to post a comment." prompt.
-- Two embeds of different resources can coexist on one host page;
-  PubSub fan-out (`projects:all` etc.) is global so both will rerender
-  on cross-resource events. Per-project topic
-  (`projects:project:<uuid>`) is already scoped.
-
-### Emit mode + popup host
-
-**See:** [`dev_docs/embedding_emit.md`](dev_docs/embedding_emit.md)
-for the full contract.
-
-Above contract handles **layout** (where the embedded LV sits, how
-session keys flow). The follow-up problem PR #6 deferred:
-*navigation* inside an embedded LV still calls top-level
-`push_navigate`, yanking the user out of the host page. Shipped fix
-— two extra session keys turn every `push_navigate` site into a
-PubSub broadcast on a host topic:
-
-| Key | Default | Required when | Notes |
-|---|---|---|---|
-| `"mode"` | `"navigate"` | — | `"emit"` switches all nav sites to broadcast; `"popup"` broadcasts only the sites that opt in (forms) and keeps page links |
-| `"pubsub_topic"` | `nil` | `mode in ["emit", "popup"]` | Host-supplied topic |
-| `"frame_ref"` | `nil` | inherited from PopupHost | Race-safe pop identity |
-| `"close_on"` | `["closed"]` | — | Subset of `["closed", "saved", "deleted"]` |
-
-Event vocabulary (UI-intent verbs, disjoint from
-`PhoenixKitProjects.PubSub`'s content-broadcast verbs so
-`handle_info` clauses never collide):
-
-```elixir
-{:projects, :opened, %{lv, session, frame_ref}}
-{:projects, :closed, %{frame_ref}}
-{:projects, :saved, %{kind, action, record, close, next, frame_ref}}
-{:projects, :deleted, %{kind, uuid, close, frame_ref}}
-{:projects, :dirty,   %{frame_ref, dirty}}          # form holds unsaved edits ⇒ host makes the frame un-closeable
-```
-
-`record` on `:saved` is **`%{uuid: ...}` only**, never the full Ecto
-struct — the payload rides a host-supplied PubSub topic that may be
-relayed over the client-readable wire, and a preloaded record (e.g.
-`assigned_person: [:user]`) would leak PII. `kind` conveys the type;
-the host re-fetches by uuid if it needs the record.
-
-`close: bool` — emitter-controlled "should the modal frame pop after
-this event?" `navigate_after_save/3` defaults to `true` (form saves
-are terminal). `notify_deleted_or_navigate/4` emits `true` (resource
-is gone). `notify_deleted/3` emits `false` (list-LV row deleted; the
-list stays open). `PopupHostLive` pops iff `close: true` AND
-`frame_ref` matches the top frame.
-
-`next: {lv, session} | nil` (on `:saved`) — optional follow-up LV.
-When set, PopupHost pops the current frame and pushes a new frame for
-`next` (e.g. "task created — open the edit screen so the user can add
-dependencies", mirroring the navigate-mode `push_navigate(to:
-edit_path)` flow).
-
-For zero-config popup UX, host mounts
-`PhoenixKitProjects.Web.PopupHostLive` once with an optional
-`root_view` session key — it subscribes, manages a modal stack of
-core `<.modal>` dialogs (native `<dialog>` + `PkDialog`: top layer,
-Esc/backdrop, stacked children) and renders requested LVs inside via
-`live_render`. Two more session keys shape the frames:
-
-| Key | Default | Notes |
-|---|---|---|
-| `"placement"` | `"center"` | `"end"` renders every frame as a full-height right-hand sheet (a drawer) |
-| `"max_width"` | `6xl` centered, `2xl` as a drawer | any core `max_width` value (`sm` … `7xl`, `full`) |
-
-**Dirty frames.** A form that holds unsaved edits reports
-`{:projects, :dirty, %{frame_ref, dirty: true}}` (`WebHelpers.mark_dirty/1`
-piped into every handler that changes what a save would write — the
-four form LVs do this; `notify_dirty/2` is a no-op outside emit mode);
-the host then renders that frame with `closeable: false`, so Esc and
-the backdrop do nothing and the form's own Cancel (which confirms
-via `data-confirm` from `@dirty?`) is the only way out. Every frame
-also arms core's `close_guard={:input}`, which makes the dialog
-non-closeable on the client from the first keystroke — covering the
-round trip and the forms' `phx-debounce` window. Clean again ⇒
-closeable again. Refs that are no longer on the stack are ignored.
-
-**Back inside a frame is Cancel.** The forms' header back link is a
-page link only in navigate mode; in a frame it is a `phx-click="cancel"`
-button (same confirm) — a frame must never push the list or project
-page as another frame.
-
-**Client-supplied sessions are sanitized.** The `phx-value-session`
-on an `open_embed` button is client-editable; `sanitize_session_overrides/1`
-drops the host-owned keys (`current_user_uuid`, `mode`, `pubsub_topic`,
-`frame_ref`) at both ends — the emitter's `open_embed` handler and
-`PopupHostLive` before it stamps the frame's session — so a crafted
-payload cannot open a form as another user or re-route its events.
-Never `put_new` an identity key from a wire session.
-
-**Programmatic navigation in popup mode.** `navigate_or_open/2` takes
-`popup: false` for page targets (a child project from the gantt or
-calendar); the default opens the target in the drawer, mirroring
-`<.smart_link popup={false}>`.
-
-**The project page hosts its own drawer** (`embed_mode: :popup`).
-`ProjectShowLive` mounted on the router flips `:navigate` to `:popup`,
-generates a private topic (`projects:popup:<socket id>`) and renders a
-`PopupHostLive` child with `placement: "end"`. In `:popup` mode
-`<.smart_link>`/`<.smart_menu_link>` render the popup button by
-default; a link that must leave the page passes `popup={false}`
-(Files, Members, Modules, Activity, child projects do). Forms
-(`AssignmentFormLive` in every flavour, edit project/template) open in
-the sheet; a save pops it and the page's PubSub subscription refreshes
-the plan. A page embedded by a host keeps the host's own mode — the
-flip only happens on the router mount. Tests that drive the drawer
-need a REAL user in the page scope (`fake_scope(user_uuid:
-embed_user_uuid!())`): the sheet's form mounts off-router and rebuilds
-identity from the page's `current_user_uuid`; a synthetic uuid
-degrades it to anonymous and it closes itself.
-
-**Core gate:** the drawer relies on core's `<.modal placement={:end}>`,
-its `:rest` globals on the `<dialog>` and `PkDialog` forwarding the
-dialog's `phx-value-*` on close — all unreleased at the time of
-writing. The core PR ships first; the module's core floor bumps with
-its own PR.
-
-`PopupHostLive` also reads `session["current_user_uuid"]` (and
-`session["locale"]`) from its own session and **forwards** them into
-every child session it renders — root view and each stacked frame. So a
-popup-host integration passes the viewer's uuid **once** to PopupHost
-and the comments composer / activity actor work in every nested LV:
-
-```heex
-{Phoenix.Component.live_render(@socket, PhoenixKitProjects.Web.PopupHostLive,
-   id: "projects-popup-host",
-   session: %{
-     "pubsub_topic" => "host:orders:#{@order_id}",
-     "current_user_uuid" => @phoenix_kit_current_scope.user.uuid,
-     "root_view" => %{"lv" => "Elixir.PhoenixKitProjects.Web.OverviewLive"}
-   })}
-```
-
-## Database
-
-Migrations live in `phoenix_kit` core as versioned `VNN`. Current migration: **V101** creates all project tables. When changing schema, add next `VNN`. The module's OWN chain (`Migrations.Schema`, marker `pkp_schema:<N>` on `phoenix_kit_projects`) is at **V16** (file-less whiteboards); add the next `vNN_*` step to `up/1` and its `if target < NN` block to `down/1`.
-
-## Whiteboards (file-less since chain V16 / core V183)
-
-A board is its row (`phoenix_kit_project_whiteboards`); its shapes are core
-annotation rows anchored to the board — `target_type: "projects_whiteboard"`,
-`target_uuid: board.uuid` (`Whiteboards.target_type/0`) — and drawn by
-core's `MediaCanvasViewer` in **board mode** (`board={Whiteboards.viewer_board(board)}`:
-an empty, infinite Fresco canvas with the Etcher tools; no file, no
-Storage, no folder). The old **blank-background bridge** (a salted white
-PNG per board registered as a Storage file and drawn over as a photo)
-is gone from `create/3`. `file_uuid` is nullable: boards made by the
-bridge, and boards over a real image (`create_board_for_file/3`), keep
-their file and render through the file viewer exactly as before — the
-tab LV picks by `file_uuid`. Deleting a file-less board deletes its
-shapes (`PhoenixKit.Annotations.delete_for_target/2`); a file-backed
-board's shapes stay with the file. Core gate: V183 (`target_type` /
-`target_uuid` on annotations, the polymorphic `EtcherAdapter`, the
-viewer's `:board` assign) — unreleased, core PR first.
-
-## Schedule math
-
-- Durations normalized to hours via `Task.to_hours/3`. Weekdays-only mode uses 8h/day, 40h/week; calendar mode uses 24h/day, 168h/week
-- Per-task `counts_weekends` overrides the project-level setting
-- `calculate_schedule/2` in `ProjectShowLive` computes planned vs projected end dates:
-  - **Planned** = `started_at + sum_of_task_hours` (fixed)
-  - **Projected** = `now + remaining_hours / velocity` where velocity = done_hours / max(elapsed, 1h)
-- Weekend work counts toward velocity even in weekdays-only projects (calendar_hours used when progress > plan)
-- `progress_pct` on an assignment contributes proportionally to "done hours" only when `track_progress` is enabled
-
-### Planned: per-task "count as work hours" toggle
-
-A future change will add an opt-in per-task flag (working name
-`count_as_work_hours`) that switches a task's planned-end math from
-the current weekdays-only 8h/day / calendar 24h/day approximations
-to the assignee's actual weekly work windows. The assignee side
-ships in `phoenix_kit_staff` as a `Person.work_schedule` JSONB
-column (see `phoenix_kit_staff/AGENTS.md` → "Planned:
-`Person.work_schedule` (JSONB)" for the column shape and fallback
-rules). The two PRs ship together; neither side has landed yet.
-
-When the toggle is off, `Task.to_hours/3` keeps its current
-behaviour. When it is on and the assignee has a non-empty
-`work_schedule`, planned-end math walks that week's windows. When
-it is on but the assignee's `work_schedule` is empty, math falls
-back to the existing 5×8 approximation in `work_hours_elapsed/2` —
-a Mon–Fri 09:00–17:00 windowed helper does not exist yet and is
-part of this same follow-up work.
-
-## Completion auto-detection
-
-After every assignment status/progress/removal change, `Projects.recompute_project_completion/1` checks whether all assignments are `done` and sets `project.completed_at` accordingly. Reopening a task clears it. Logs `projects.project_completed` / `projects.project_reopened`.
-
-## Activity logging
-
-Every mutation logs via `PhoenixKitProjects.Activity`. Action strings: `projects.<resource>_<verb>`:
-
-- `projects.project_created/updated/deleted/started/completed/reopened`
-- `projects.template_created/updated/deleted`
-- `projects.project_created_from_template`
-- `projects.task_created/updated/deleted`
-- `projects.task_dependency_added/removed`
-- `projects.dependency_added/removed`
-- `projects.assignment_created/updated/started/completed/reopened/removed`
-- `projects.assignment_progress_updated`
-- `projects.assignment_duration_changed`
-- `projects.assignment_tracking_toggled`
-- `projects.project_archived/unarchived`
-- `projects.subproject_created/linked/detached`
-- `projects.project_status_changed` — workflow current-status change (show page)
-- `projects.gantt_display_changed/reset` — Timeline-chart display settings (settings page; `resource_type: "projects_settings"`)
-- `projects.calendar_display_changed/reset` — Overview-calendar overdue-animation settings (settings page; `resource_type: "projects_settings"`)
-
-The two `_changed` actions are **coalesced per field**: a slider drag emits a
-debounced `phx-change` per step, but only ONE audit row — the settled value —
-flushes after ~1s of quiet (`@display_log_flush_ms`; a reset supersedes any
-still-queued change rows, and `terminate/2` best-effort-flushes on navigation).
-Discrete controls (toggles, resets, selects outside the two display forms) log
-immediately.
-- `projects.status_entity_provisioned` — a default status list generated (per-project form OR global settings; `metadata.scope` = `"shared"` | `"global_default"`)
-- `projects.default_status_entity_set` — global default status list chosen (settings page; `resource_type: "projects_settings"`)
-- `projects.status_translations_toggled` — global translated-titles flag flipped (settings page)
-
-Guarded with `Code.ensure_loaded?/1` + rescue — logging never crashes mutations.
-
-**Where to log:** activity logging happens at the **LiveView layer**, not inside context functions in `PhoenixKitProjects.Projects`. LiveViews have `actor_uuid` via `socket.assigns[:phoenix_kit_current_user]` and know the user's intent; contexts stay pure, returning `{:ok, record} | {:error, changeset}`. The LiveView logs on success.
-
-**Embedded mounts and the actor:** `socket.assigns[:phoenix_kit_current_user]` is set by core's `:phoenix_kit_ensure_admin` `on_mount` hook on the standalone admin page, but that hook does **not** run for a `live_render` (`:not_mounted_at_router`) mount. There, the assign comes from `WebHelpers.assign_embed_user/2`, which reconstructs the user from `session["current_user_uuid"]` (see the embedding contract above). If the host doesn't pass that key, embedded mutations log `actor_uuid: nil` — by design, not a crash. `Activity.actor_uuid/1` reads the assign with bracket access, so it tolerates the missing key.
-
-**Sugar helpers don't log on their own:** `complete_assignment/2` and `reopen_assignment/1` are thin wrappers that delegate to the server-trusted `update_assignment_status/2`. They emit the same PubSub broadcast, but do **not** emit an activity log entry themselves. If a caller wants `projects.assignment_completed` or `projects.assignment_reopened` recorded, the caller must log it explicitly.
-
-**Mass-assignment guard:** `Assignment.changeset/2` (used by `create_assignment/1` and `update_assignment_form/2`) does NOT cast `completed_by_uuid` or `completed_at` — those fields are server-owned and can only be set via `Assignment.status_changeset/2`, reached through `update_assignment_status/2`. This protects against form-based mass-assignment of completion metadata. The `_form` suffix on the public function is a deliberate smell: reaching for it from non-form code should trigger a second look.
-
-## Permissions
-
-`permission: "projects"` on all tabs. Mount guards; events trust the mount check.
-
-## Settings keys
-
-- `projects_enabled` — boolean, read by `PhoenixKitProjects.enabled?/0`, toggled via **Admin > Modules**. `enabled?` rescues all errors and returns `false` so missing settings tables don't crash module discovery.
-- `projects_cal_*` — the calendar customizer (`/admin/settings/projects`, all through `CalendarDisplay.read/0` + `put/2` + `put_flag/2`, validated/clamped on both ends): grid appearance (`show_weekends`, `show_week_numbers`, `fixed_weeks`, `max_events` 1–6, `max_multiday` 1–8) and the overdue/late markers (`overdue_pattern` stripes|solid, `overdue_mode` wave|flash|off, `overdue_speed`, `overdue_bright_min`/`_max`, `overdue_wave_step`, `overdue_opacity`, `late_marker` pattern|ring — pattern is the default so late tasks match late projects). The first weekday is NOT here — the calendars honor core's site-wide `week_start_day`.
-- `projects_gantt_*` — the Timeline-chart customizer (`GanttDisplay`), same page.
-
-## File layout
-
-```
-lib/phoenix_kit_projects.ex                  # Main module (PhoenixKit.Module behaviour)
-lib/phoenix_kit_projects/
-├── activity.ex                              # Activity logging wrapper
-├── assignees.ex                             # Effective-assignee resolver (person∪teams∪departments scope, match provenance)
-├── calendar_display.ex                      # Overview month-calendar mappers (Tasks mode task_events/4 + Projects mode events/6) + overdue-marker settings
-├── gantt_display.ex                         # Timeline bar-label/display settings (read on /admin/settings/projects)
-├── l10n.ex                                  # Date/time localization helpers
-├── paths.ex                                 # Path helpers (/admin/projects/*)
-├── projects.ex                              # Context: tasks, projects, assignments, deps
-├── schedule_layout.ex                       # Shared durations→dates walk behind the Timeline + Calendar tabs
-├── statuses.ex                              # Workflow statuses (entities-backed, cement-at-start)
-├── pub_sub.ex                               # Topics + broadcast helpers
-├── schemas/
-│   ├── assignment.ex                        # Mass-assignment guard + single-assignee check
-│   ├── dependency.ex                        # Per-project "A → B" link (self-reference rejected)
-│   ├── project.ex
-│   ├── project_status.ex                    # Cemented per-project workflow status row (V125)
-│   ├── task.ex                              # Duration math (to_hours/3, format_duration/2)
-│   └── task_dependency.ex                   # Template-level default deps
-└── web/
-    ├── assignment_form_live.ex
-    ├── components.ex                         # `use` aggregator — imports every web/components/*.ex
-    ├── components/
-    │   ├── assignee_filter_panel.ex         # `<.assignee_filter_panel>` — the Filters funnel + popup (chips/picker/toggles)
-    │   ├── assignment_status_badge.ex       # `<.assignment_status_badge>` — literal size map (Tailwind-scanner safe)
-    │   ├── day_popup_modal.ex               # `<.day_popup_modal>` — the whole-day popup both calendars share
-    │   ├── derived_status_badge.ex          # `<.derived_status_badge>` + `<.project_status_badge>`
-    │   ├── page_header.ex                   # `<.page_header>` — title + description + actions + back_link slots (form pages; list pages have no header row — see "List pages")
-    │   ├── popup_host.ex                    # `<.popup_host>` — emit-mode dialog-stack host frame
-    │   ├── running_card.ex                  # `<.running_card>` — dashboard project summary tile
-    │   ├── smart_link.ex                    # `<.smart_link>` — navigate-vs-emit-aware link
-    │   ├── smart_menu_link.ex               # `<.smart_menu_link>` — row-menu variant of the above
-    │   ├── stat_tile.ex                     # `<.stat_tile>` — compact "label + big number" card
-    │   ├── tier_pill.ex                     # `<.tier_pill>` — Running-tier status pill
-    │   └── workflow_status_fields.ex        # `<.workflow_status_fields>` — status source + pick (locks at start)
-    ├── list_ui.ex                            # Shared list-page plumbing: column-visibility persistence, search coercion, client-search haystacks
-    ├── overview_live.ex
-    ├── project_calendar_live.ex             # Calendar tab — month grid over the ScheduleLayout walk
-    ├── project_form_live.ex
-    ├── project_gantt_live.ex                # Timeline tab — gantt over the ScheduleLayout walk
-    ├── project_show_live.ex                 # Large (~1700 lines) — timeline, schedule math
-    ├── projects_live.ex
-    ├── task_form_live.ex
-    ├── tasks_live.ex
-    ├── template_form_live.ex
-    └── templates_live.ex
-```
-
-## Web components
-
-LVs `use PhoenixKitProjects.Web.Components` to pull in every reusable
-component in one line. Components live in `web/components/*.ex` as
-individual Phoenix.Component modules. The aggregator in
-`web/components.ex` only `import`s them — it doesn't define functions
-of its own, so adding a new component is `add file → add import` and
-done.
-
-Components are deliberately scoped to this module's surface (not
-core's `PhoenixKitWeb.Components.*` namespace). Promoting one to core
-is mechanical when a sibling module needs it: copy the file, rename
-the module to `PhoenixKitWeb.Components.<Name>`, drop the import here,
-let the consumer fall through to the core function.
-
-**What's already a core component (use the core one, don't duplicate):**
-`<.input>`, `<.select>`, `<.textarea>`, `<.checkbox>`, `<.icon>`,
-`<.multilang_tabs>`, `<.translatable_field>`, `<.stat_card>` (note:
-core's takes title + subtitle + icon — for a minimal "label + value"
-tile use this module's `<.stat_tile>`).
-
-**List-LV toolkit (in core):** `<.table_default>` + `<.sortable_tbody>`
-+ `<.sortable_row>` + `<.drag_handle_cell>` + `<.drag_handle_header_cell>`
-+ `<.bulk_select_scope>` + `<.bulk_select_header_cell>` + `<.bulk_select_cell>`
-+ `<.bulk_actions_toolbar>` + `<.sort_selector>` + `<.reorder_modal>`
-+ `<.load_more>`. See `phoenix_kit/AGENTS.md` → "Core List-UI Components"
-for the full toolkit doc. `ProjectsLive`, `TasksLive`, `TemplatesLive`
-are the canonical consumer examples — never re-roll a list LV without
-checking that file pair first.
-
-**Reorder strategy whitelist (load-bearing):** consumer LVs MUST use a
-hardcoded `%{"name_asc" => :name_asc, …}` map for `apply_reorder`'s
-strategy string→atom, never `String.to_existing_atom/1` on the param.
-A crafted payload otherwise either raises or leaks the BEAM atom slot.
-
-**`captured_uuids` collapse rule:** `open_reorder_modal` collapses
-0–1-element selection lists to `:all` (single-row "reorder" is a no-op,
-and the toolbar label reads "Reorder all" in those states). Apply the
-same rule in any new bulk-action handler.
-
-## List pages (Projects / Tasks / Templates) — shared architecture
-
-All three list LVs follow one shape (2026-07-19/20 overhaul; TemplatesLive
-is the most complete reference):
-
-- **No in-content header row.** The create action is a "+" in the admin
-  breadcrumb (core `page_action` assign: `%{icon, label, navigate}`) plus a
-  dashed full-width add-row at the list's foot.
-- **Toolbar order** (core's `bulk_actions_toolbar`): search + data filters in
-  `:leading` (left), the view tools — sort selector, Columns, the Tasks view
-  switcher — in `:trailing` (right, after the contextual Reorder/Delete/Clear).
-  Same left/right split as the catalogue tables and core's `table_default`
-  toolbar row, so the kit's lists read alike (aligned 2026-09-05). The show page likewise sets
-  the header trail ("Admin Panel / Projects / ‹name›", see **Breadcrumbs**)
-  instead of a back-link + h1 row — **embeds keep the full header**
-  (`router_mounted?` gates it; embeds have no admin breadcrumb).
-- **Recency default sort** — `updated_at desc` ("Last edited"); Manual
-  (`:position`) one selector switch away. **DnD is gated off under ANY
-  filtered view** (non-position sort, active search, Projects' status
-  filter): the DnD handlers renumber the dropped list to absolute `1..N`,
-  so a sparse subset would collide with hidden rows' positions.
-- **Column visibility** — a Columns dropdown of optional columns, persisted
-  site-wide (one comma-joined settings row per page:
-  `projects_list_columns` / `projects_tasks_columns` /
-  `projects_templates_columns`) via `ListUi.read_visible_columns/3` +
-  `toggle_visible_column/4`. Batched lookup maps (`assignment_counts_for_projects/1`,
-  `template_usage/1`, `task_usage/1`, `creation_actors/2`) only query while
-  their column is visible; `toggle_column` reloads so a newly-shown column
-  gets its map. "Created by" resolves from the activity log's creation
-  entries (best-effort — pruned/off-form rows render a dash). Template
-  "Uses" counts the durable `settings["created_from_template_uuid"]`
-  back-link every clone stamps (activity rows get pruned; the back-link
-  doesn't).
-- **Hybrid search** (core `<.search_toolbar>` + core `TableLocalSearch`
-  hook): at ≤100 rows (`@local_search_threshold`) the FULL set is loaded,
-  SQL search is deliberately NOT applied, and the client hook narrows rows
-  instantly via each row's lowercase `data-search` haystack
-  (`ListUi.search_haystack/2` — primary fields + every translated value,
-  matching the SQL coverage exactly). Above the threshold: SQL search
-  (`:search` opt — escaped ilike over name/description/title + a
-  values-only `jsonb_each` on translations) + load-more pagination + the
-  toolbar spinner (`loading_indicator={not @local_search?}`). `search`
-  payloads are coerced via `ListUi.coerce_search/1` (a forged `search[x]=y`
-  map would crash the re-render otherwise). The load-more footer hides in
-  local mode; `filtered_count` (footer) is search-aware while `total_count`
-  stays the full-set count (reorder modal's honest "Reorder all N").
-- **Titles are links** — every title anywhere in the module navigates
-  (list titles → edit/show, assignment rows → assignment edit, sub-project
-  names → child project) via `<.smart_link>` with `link link-hover`, so
-  emit-mode embeds get events instead of dead text.
-- TasksLive's List/Groups switcher is an icon-only join in the toolbar's
-  `:trailing` slot (far right, apart from the data controls); the Groups
-  view repeats it and lays group cards in a responsive grid with a
-  columnar Standalone list.
-
-Cross-repo note: this architecture consumes several **unreleased core
-additions** (`search_toolbar` form fix + spinner, `TableLocalSearch`,
-`page_action`/`page_section` forwarding, the toolbar `:trailing` slot) —
-until the next core release, run this module's checks with
-`PHOENIX_KIT_PATH=../phoenix_kit`, and bump the core floor at release.
-
-## Breadcrumbs (the admin header trail)
-
-Every page sets core's `page_section` (+ `_path`), `page_crumbs` and
-`page_title` through `Web.Crumbs`, so the trail reads the same everywhere
-(panel round with codex/grok/zai, 2026-09-05, after the boss noticed
-"Admin Panel / Add task to Test"):
-
-| page | trail (linked crumbs in *italics*) |
-|---|---|
-| list · Tasks · Templates · Overview | *Projects* / Tasks |
-| project (any tab) | *Projects* / Test |
-| sub-project | *Projects* / *Parent* / Child |
-| Files / Members / Modules / Activity | *Projects* / *Test* / Files |
-| add task · add sub-project | *Projects* / *Test* / Add task |
-| edit a task in a project | *Projects* / *Test* / Edit ‹task› |
-| new / edit project | *Projects* / New project · *Projects* / Edit Test |
-| library task new / edit | *Projects* / *Tasks* / New task · Edit ‹task› |
-| template / new / edit | *Projects* / *Templates* / ‹name› · New template · Edit ‹name› |
-| settings | *Settings* / Project settings |
-
-Rules: the module tab is always the section, so nothing can read
-"Admin Panel / New project" again; crumb labels reuse the subtab labels
-verbatim (the list page titles are "Tasks"/"Templates" too — one name per
-place); sub-pages are crumbs, never a "Test · Files" title; "Add" attaches
-to the project crumb, "New" creates a standalone record; edit names its
-object (core's "Edit Jane Doe"); the List/Board/Timeline/Calendar tabs are
-views of one place and stay out of the trail; sub-projects show their
-ancestors (`Projects.parent_chain/1`, bounded to 8 hops). Known core limit,
-flagged by every seat: `page_title` is also the browser tab title, so a
-short leaf ("Files") makes a weak tab — a separate browser-title assign in
-core is the fix, not a fused title here. `breadcrumbs_test.exs` pins every
-row; the test layout renders `page_crumbs` as `data-crumb` anchors.
-
-## Quick-add (the "Add a task" row → the sheet, V15)
-
-`Components.QuickAddComposer` is the dashed "Add a task" row at the foot
-of a real project's task list (not templates), OUTSIDE the sortable
-container. Since 2026-09-05 it is the second way into the same
-right-hand sheet as the "Add task" button at the top (Max: "the add a
-task should both open the popup and inside there should we have that
-stuff setup"): a `<.smart_link>` into `AssignmentFormLive` in Create-new
-— a popup button in popup/emit mode, a link to the add page on a host in
-navigate mode. The keyboard loop lives in the form: **Enter** adds and
-closes (the browser's implicit submission presses the FIRST submit
-button, "Add"); **Shift+Enter** presses "Add & next" through core's
-`PkShiftEnter` hook on the title (`data-shift-enter-click`); the button
-carries `name="then" value="next"`, which LiveView sends as the
-submitter, and `save` reads it as `add_next?`. After a successful create
-with it set, `after_create/2` emits `:saved` with `close: false` (the
-frame stays, the page behind refreshes its list) and `reset_for_next/1`
-re-runs the `:new` mount keeping the user's tab and "add to library"
-choice, marks the form clean (`notify_dirty(false)` — Esc closes again)
-and bumps `form_seq`, which re-keys the title's wrapper so
-`phx-mounted={JS.focus(...)}` lands the cursor back in the title. The
-same mount focuses the title when the sheet opens. The inline input,
-its four `quick_add_*` events and the `@quick_add` state are gone.
-
-**The write** is `Projects.quick_add_assignment/3` →
-`create_task_with_assignment/3`: one transaction that locks the project row
-(`FOR UPDATE`, so concurrent adds never share a bottom `position`), inserts
-the library `Task`, inserts the `Assignment`. NOTHING else inside —
-broadcasts (`:task_created`, `:assignment_created`) fire after commit and
-the activity log stays with the LiveView (it knows the actor). The full
-form's "create new task" mode calls the same helper with its full attrs, so
-the two paths cannot drift.
-
-**One-off tasks.** An assignment has no title of its own — every ad-hoc
-add mints a library `Task` — so a composer would have filled the reusable
-library with "call the client" fifty times over. V15 adds
-`phoenix_kit_project_tasks.ad_hoc` (default false, indexed): quick-adds
-set it, and `list_tasks/1` + `count_tasks/1` take `ad_hoc: :exclude`
-(default — every library surface: list, grouped view, the assignment
-form's picker, the stat tile) `| :only | :all`. The Tasks page's lens
-lists them; "Add to library" (row menu, or the edit form's "One-off task"
-checkbox) promotes one — `projects.task_promoted` in the activity log. The
-assignments pointing at a one-off task are ordinary in every way.
-
-**The full form follows the same defaults (2026-09-05, Max):** on `:new`,
-**Create new** is the first and default tab and "Add to the task library"
-is OFF — a one-off unless the user means it; **From library** is the
-second tab and is not rendered at all while the library is empty
-(`@task_options == []`). The Create-new title is a real `Task` changeset
-(`@task_form`, params `task[title]` / `task[translations][<lang>][title]`)
-rendered with `<.translatable_field>` under the language tabs next to the
-description, so a new task gets its title in every language like one
-made on the Tasks page; `save` merges the title's translations with the
-description's into the task row. The language strip is passed
-`class="pb-0"` because it sits inside the card body already — the default
-card padding made it a narrower box of its own. User-facing copy never
-says "template" for a task (the select is "Task", the back link "Tasks").
-
-**The library is a per-project feature flag** (`library`, owned by the
-`tasks` extension, default on — `Features.gates/1` exposes it as
-`fx.library`). Off, the add-task form has no From-library tab and no
-"Add to the task library" box: every task is typed in place (a stale or
-forged switch/pick/promote is refused at the handler and at save time).
-The **Simple checklist** starting point turns it off through the
-`simple` preset; Team project, Client project and Public intake leave
-it on; the project's Modules & Features page flips it later like any
-flag. The Tasks page itself stays global — the flag is whether THIS
-project draws on the library, not whether the library exists.
-
-**The task list itself is a creation decision** (2026-09-05, with the
-top-level tabs): the New project form carries the `tasks` extension as
-the first row of the *Task features* drawer — off hides the flag rows,
-the receipt says "No tasks", the summary "Off — no task list" — and a
-fifth starting point, **Just a space** (`Archetypes` key `space`:
-`extensions_off: ~w(tasks discussions)`, preset `simple` for the day
-tasks come on), makes a project that is only the tabs it picks (a
-class that is only its whiteboards). Tasks is reconciled at save like
-every extension (`apply_creation_capabilities/2`); it is never listed
-among the add-ons (`creation_ext_groups/1`, `extensions_summary/1`).
-Discussions defaults on except for Simple checklist and Just a space.
-The card copy in `Archetypes` is catalog data translated at render
-time, so every literal is wrapped in `gettext_noop/1` — without it the
-extractor never saw the cards and no locale had them.
-
-**The in-progress step is a flag too** (`in_progress`, default on,
-`fx.in_progress`; the `simple` preset turns it off — "a checklist item
-is done or it is not"). Off: a to-do row offers Done directly (no
-Start; `start_task` is gated on this flag and refused), the add-task
-form's Status offers To do / Done, and the board drops its middle
-column — unless a row already sits in `in_progress` (legacy, or the
-flag flipped mid-flight): that row keeps its Done button, stays
-selectable in the form, and holds the column open, so nothing ever
-disappears. The row lifecycle itself (`todo → in_progress → done`) is
-unchanged in the schema; the flag only removes the middle step from
-the UI and the event surface.
-
-**The task list's controls are conditional** (`ListControls`, Max
-2026-09-05: "no reason to show the filters without multiple statuses or
-under ten tasks — but controllable via the settings"). The Active /
-Done / All lens and the sort dropdown render only when
-`ListControls.show?/2` says so: mode `auto` (default) = the project has
-tasks on BOTH sides of the lens AND at least `threshold` (default 10)
-tasks; `always` / `never` override. Site-wide settings on
-`/admin/settings/projects` ("Task list controls"), keys
-`projects_list_controls_mode` / `_threshold`, validated on read. Under
-the rule `apply_list_lens/1` shows the whole project in manual order —
-which is exactly what drag-reordering needs, so small projects reorder
-by hand without the old "Reordering off" detour through the All lens.
-The "Review submissions" button is not a control and keeps its row
-whenever there is something to review. Tests that pin the lens itself
-set the mode to `always` first.
-
-**The sequence rail means "these run one after another"** — the
-schedule is a sequential walk in drag order and the vertical line down
-the list is that walk. It draws only when the claim is true:
-`@list_manual?` (manual sort) AND `@list_whole?` (the All lens — a slice
-of the plan is not the walk) AND `@fx.scheduling` (a checklist has no
-walk). The numbers are positions in the project either way. (Max,
-2026-09-05: "I thought the line meant the tasks are connected, and for
-a todo list it was off" — it does, and now it is.)
-
-**Reordering works under a lens.** `list_manual?` is only "the manual
-sort is on screen" — under Newest/Recent a drop means nothing and the
-handles go with a "Reordering off" note. A drop under the Active or
-Done lens sends the rows the client could see; `merge_visible_order/2`
-folds that into the whole plan (the visible rows keep the SET of slots
-they occupied and take their new order within them, hidden rows stay
-put) before `Projects.reorder_assignments/3` writes every position.
-Upstream's August rule refused any drop while rows were hidden; Max hit
-it at ten tasks ("shouldn't it still work just fine?").
-
-**The lens and the sort share one frame:** the sort select and the
-note render in core `nav_tabs`'s `:trailing` slot, so the row reads as
-one bar, not two boxes.
-
-## Dashboard widgets (contributed to `phoenix_kit_dashboards`)
-
-Projects contributes ten widgets to the dashboards module via the duck-typed
-`PhoenixKitProjects.phoenix_kit_widgets/0` (delegates to
-`PhoenixKitProjects.DashboardWidgets.all/0`) — a **one-way** contract: projects
-has no dependency on `phoenix_kit_dashboards`; its Registry discovers the
-plain-map list and gates visibility on the `"projects"` module + permission.
-
-Each widget is a `Phoenix.LiveComponent` under `lib/phoenix_kit_projects/web/widgets/`
-that the dashboards host renders with `settings` / `view` / `size` / `scope`
-assigns and re-queries on the host's refresh tick (`refresh_interval`). The
-widgets: `projects.board` (all projects, coloured by status — grid/counts),
-`projects.workload` (workspace lifecycle + task counts — detailed/simple),
-`projects.my_tasks` (the CURRENT USER's open assignments via the `scope` assign
-→ staff person → `list_assignments_for_user/1`), `projects.deadlines` (running
-projects by nearest weekend-aware `planned_end`, overdue flagged — built on
-`project_summaries/1`), `projects.status` / `projects.schedule` (one project's
-status / estimate — detailed/simple), `projects.tasks` (a project's ongoing
-tasks — detailed/compact), and (2026-09) the Overview's own pieces, so a
-dashboards-module board can carry them too: `projects.running` (the Running list in
-`RunningTiers` order with tier + progress; compact/cards; `late_only`),
-`projects.upcoming` (setup + scheduled / recently completed),
-`projects.calendar` (the Tasks/Projects calendar: the same
-`ScheduleLayout` walk + `CalendarDisplay` event builders + nested
-`PhoenixLiveCalendar.CalendarComponent`, which pages months on its own and
-keeps that across refresh ticks under its stable id; month/agenda;
-`mode`/`only_mine`/`late_only`). The calendar widget has NO assignee panel,
-day popup or click-to-open: a widget is a LiveComponent, and the calendar's
-`on_*` callbacks message the parent LiveView — the dashboards host — so none
-are wired (nesting a LiveView instead was rejected by the panel: refresh ticks
-remount it, no socket for `live_render` in a component, no scope across the
-session boundary). With `projects.my_tasks` and `projects.workload` (the
-stat tiles), a system-scope dashboard can mirror the page. Every view
-declares its own `min_size` (the improved dashboards widget API), and the
-shared frame renders **compact** at a single row so minimum boxes fit
-without scrollbars.
-
-Conventions for these widget components:
-- **Static root:** a stateful LiveComponent's `render/1` must return a single
-  static HTML tag, so each wraps the shared `Helpers.frame/1` (a function
-  component) in `<div class="contents">…</div>` — `contents` keeps the card
-  filling the grid cell.
-- Guard every data read behind `Helpers.available?/0` (projects loaded + enabled)
-  and `Statuses.available?/0` (entities plugin) — render the `unavailable`/empty
-  states otherwise; never crash the host dashboard.
-- Single-project widgets pick their project from a **select of current
-  projects** (`DashboardWidgets.project_options/0` → `{name, uuid}` tuples;
-  blank = first running). The options are evaluated when the dashboards
-  Registry builds its catalog, so a brand-new project appears in the select
-  after a registry refresh; stored values (and stale ones) resolve leniently
-  via `Helpers.resolve_project/1` (uuid / name / external id / substring).
-- Reuse the projects badge components (`DerivedStatusBadge`,
-  `AssignmentStatusBadge`) for consistent status colours.
-- `DashboardWidgets` catalog metadata (names/descriptions) is plain English (the
-  contract caches it), but widget CONTENT is gettext'd via `PhoenixKitProjects.Gettext`.
-
-## Versioning & Releases
-
-Versioning follows [SemVer](https://semver.org/). The version is single-sourced
-in `mix.exs` (the `@version` module attribute).
-`lib/phoenix_kit_projects.ex` reads it at compile time
-(`@version Mix.Project.config()[:version]`, returned by the `PhoenixKit.Module`
-callback), so it cannot drift — there is nothing to keep in sync by hand.
-
-Release checklist:
-
-1. Bump `@version` in `mix.exs`; add a `CHANGELOG.md` entry. Date the header in the
-   workspace-standard format `## x.y.z - YYYY-MM-DD` (matches core
-   `phoenix_kit`, `phoenix_kit_publishing`, `phoenix_kit_document_creator`).
-2. Run `mix precommit` — must exit clean
-3. Commit ("Bump version to x.y.z") and push
-4. Tag with the bare version: `git tag x.y.z && git push origin x.y.z`
-5. Create a GitHub release via `gh release create`
+`WITHOUT_STAFF=1` makes `pk_dep/3` drop the dep entirely, so a stray
+`PhoenixKitStaff.*` reference fails the compile. `optional: true` governs a
+consumer's dependency closure only — it does not remove the dep from this
+package's own build, which is how two direct references to staff schemas once
+got in and broke group grants on staff-less installs. The contract and
+functional proofs live in
+`test/phoenix_kit_projects/integration/people_seam_test.exs`.
+
+Repo-local aliases:
+
+- `mix quality` — `format` + `credo --strict` + `dialyzer` (applies formatting).
+- `mix quality.ci` — `format --check-formatted` + `credo --strict` + `dialyzer`: it CHECKS formatting rather than applying it, so run `mix format` first.
+- `mix test.reset` — drops the test database and recreates it.
+- `mix test.setup` — `ecto.create` on the test repo, the alias equivalent of `createdb`.
 
 ## Conventions
 
-- **Paths**: `PhoenixKitProjects.Paths.*` only
-- **Activity**: via `PhoenixKitProjects.Activity` wrapper, always at the LiveView layer
-- **Duration units + conversion**: centralized in `Schemas.Task`
-- **Cross-module people lookups**: NEVER call `PhoenixKitStaff.*` directly (staff is optional) — go through `PhoenixKitProjects.People` (shadow schemas over the core-owned tables; read-only, trashed-excluded by default, staff-parity label semantics). The doorway's reads rescue to safe defaults; the only sanctioned staff reference is `People.staff_admin_available?/0`'s guarded probe
-- **Gettext (hybrid, two backends)**:
+- **Module key / tab ids / URL segments.** Module key `"projects"`; tab ids are
+  `:admin_projects*`, `:dashboard_projects`, `:admin_settings_projects`;
+  settings keys are prefixed `projects_`. URL segments are lowercase words;
+  a multi-word segment uses hyphens.
+- **Paths**: `PhoenixKitProjects.Paths.*` only — never hardcode an admin path.
+- **Routing**: admin, user-dashboard and settings routes are auto-generated
+  from `admin_tabs/0` / `user_dashboard_tabs/0` / `settings_tabs/0` via each
+  tab's `live_view:`. `route_module/0` (`Web.Routes.generate/1`) adds ONLY the
+  public portal, spliced at router top level before the `/:locale` public
+  surface, so its path uses a literal first segment (`/portal/...`) and carries
+  no locale segment. Never hand-register a plugin route in a host router.
+  **Declaration order is route order**: literal siblings and the legacy
+  redirects come before `projects/:id`, `new` before `:id`, and the
+  `projects/:id/:tab` extension catch-all is declared LAST; `landing_test.exs`
+  pins it.
+- **LiveView layout**: `use PhoenixKitWeb, :live_view` (from
+  `phoenix_kit_web.ex`) injects `layout: PhoenixKit.LayoutConfig.get_layout()`
+  automatically. Do NOT wrap templates in
+  `<PhoenixKitWeb.Components.LayoutWrapper.app_layout>` — that wrapper is for
+  LiveViews served outside the admin live_session, and no LV here uses it.
+- **JS hooks** ship as prebuilt bundles declared by `js_sources/0` under a
+  namespaced global (`PhoenixLiveGanttHooks`, `PhoenixLiveCalendarHooks`),
+  which core's `:phoenix_kit_js_sources` compiler wires into the host. Never
+  register a hook from an inline `<script>` — morphdom does not execute
+  inserted script tags, so the hook vanishes on LiveView navigation. There is
+  no `@impl PhoenixKit.Module` on `js_sources/0` while the core behaviour does
+  not declare the callback (annotating it warns, and warnings are errors).
+  `css_sources/0` names `:phoenix_live_gantt` and `:phoenix_live_calendar` too,
+  so the host's Tailwind scans their classes with no manual `@source`.
+- **`enabled?/0` rescues and catches `:exit`, returning `false`**, so missing
+  settings tables can't crash module discovery.
+- **Activity logging** goes through the `PhoenixKitProjects.Activity` wrapper
+  and happens at the **LiveView layer**, never inside `PhoenixKitProjects.Projects`.
+  LiveViews have `actor_uuid` via `socket.assigns[:phoenix_kit_current_user]`
+  and know the user's intent; contexts stay pure, returning
+  `{:ok, record} | {:error, changeset}`. Every call is guarded with
+  `Code.ensure_loaded?/1` + rescue — logging never crashes a mutation.
+  Activity metadata captures the **primary** column value
+  (`metadata.name = project.name`), not the localized one: audit trails are
+  locale-agnostic.
+  - In an embedded (`:not_mounted_at_router`) mount core's
+    `:phoenix_kit_ensure_admin` `on_mount` never runs, so the actor comes from
+    `WebHelpers.assign_embed_user/2` reconstructing it from
+    `session["current_user_uuid"]`. Without that key embedded mutations log
+    `actor_uuid: nil` by design; `Activity.actor_uuid/1` reads the assign with
+    bracket access so a missing key is tolerated.
+  - **Sugar helpers don't log on their own:** `complete_assignment/2` and
+    `reopen_assignment/1` delegate to the server-trusted
+    `update_assignment_status/2`, emit the same PubSub broadcast, and log
+    nothing. A caller wanting `projects.assignment_completed` /
+    `_reopened` recorded must log it explicitly.
+  - The two `_display_changed` actions are **coalesced per field**: a slider
+    drag emits a debounced `phx-change` per step but only ONE audit row — the
+    settled value — flushes after ~1s of quiet (`@display_log_flush_ms`; a
+    reset supersedes still-queued change rows, and `terminate/2`
+    best-effort-flushes on navigation). Discrete controls log immediately.
+- **Mass-assignment guard**: `Assignment.changeset/2` (used by
+  `create_assignment/1` and `update_assignment_form/2`) does NOT cast
+  `completed_by_uuid` or `completed_at` — those are server-owned and reachable
+  only through `Assignment.status_changeset/2` via `update_assignment_status/2`.
+  The `_form` suffix on the public function is a deliberate smell: reaching for
+  it from non-form code should trigger a second look. `current_status_slug` is
+  server-owned the same way (`Project.current_status_changeset/2` only).
+- **Cross-module people lookups**: NEVER call `PhoenixKitStaff.*` directly
+  (staff is optional) — go through `PhoenixKitProjects.People`, read-only
+  shadow schemas over the CORE-owned staff tables, trashed-excluded by default,
+  staff-parity label semantics. The doorway's reads rescue to safe defaults;
+  the only sanctioned staff reference is `People.staff_admin_available?/0`'s
+  guarded probe, which gates admin-UI affordances only.
+- **Soft-hide is a timestamp, not a status enum.** `projects.archived_at`
+  follows the workspace `trashed_at` convention: null = visible, non-null =
+  hidden + audit-friendly. Public API `Projects.archive_project/1` /
+  `unarchive_project/1`; dashboard buckets and `list_projects/1` filter on
+  `is_nil(archived_at)`, and `list_projects/1` takes an `:archived` opt —
+  `false` (default), `true` (archived only), `:all`. `Project.derived_status/2`
+  returns `:archived` as the highest-priority bucket, so an archived project is
+  always labeled archived regardless of its other timestamps.
+- **The legacy `status` string column is kept and unused.** Still in
+  `phoenix_kit_projects`, no longer cast by the changeset, never read, surfaced
+  nowhere; the archive migration backfilled `archived_at = updated_at` for rows
+  that were `status = 'archived'`. Preserved deliberately so a future string
+  lifecycle state (`"paused"`, `"blocked"`, `"on_hold"`) can reuse the slot
+  without a migration. Wiring that means: re-introduce `status` to
+  `Project.@optional` + `Project.changeset/2`; add a fresh
+  `validate_inclusion(:status, …)`; update `Project.derived_status/2`'s
+  priority order if the new state should outrank the existing buckets; decide
+  whether to backfill existing rows.
+- **Duration units and conversion** are centralized in `Schemas.Task`
+  (`to_hours/3`, `format_duration/2`).
+- **Gettext is a hybrid over two backends.**
   - **Module-domain strings** (project / task / template / assignment /
-    dependency UI — the bulk) live in `PhoenixKitProjects.Gettext` with
-    `.po` files in `priv/gettext/`. Files declare
-    `use Gettext, backend: PhoenixKitProjects.Gettext` and call
-    `gettext(...)` / `ngettext(...)` normally. Refresh with
-    `mix gettext.extract && mix gettext.merge priv/gettext --no-fuzzy`
-    from this repo.
+    dependency UI — the bulk) live in `PhoenixKitProjects.Gettext` with `.po`
+    files in `priv/gettext/` (de, es, et, fr, it, pl, ru). Files declare
+    `use Gettext, backend: PhoenixKitProjects.Gettext` and call `gettext/1` /
+    `ngettext/3` normally. Refresh with
+    `mix gettext.extract && mix gettext.merge priv/gettext --no-fuzzy` from
+    this repo.
   - **Common/generic strings** (date/month formatting in
-    `PhoenixKitProjects.L10n`, generic table chrome in
-    `Web.Components.SortableTable`) stay on core's
-    `PhoenixKitWeb.Gettext` backend. Their msgids ship in
-    `phoenix_kit/lib/phoenix_kit_web/projects_gettext_manifest.ex`
-    (extraction target — never called at runtime). Mirrors the
-    `legal_gettext_manifest.ex` pattern.
+    `PhoenixKitProjects.L10n`, generic table chrome) stay on core's
+    `PhoenixKitWeb.Gettext` backend. Their msgids ship in core's
+    `lib/phoenix_kit_web/projects_gettext_manifest.ex` (extraction target,
+    never called at runtime), mirroring the `legal_gettext_manifest.ex`
+    pattern. `Web.GettextManifest` in this repo does the same job for the
+    static `%Tab{}` labels and `permission_metadata/0` strings, which core's
+    dashboard renderer translates at display time through
+    `gettext_backend: PhoenixKitProjects.Gettext`. Add or rename a Tab label
+    and you must update that manifest, or the sidebar renders raw English.
   - Both backends share the same locale via `Gettext.put_locale/1`
-    (process-global), so the `/ru/...` URL prefix translates both
-    surfaces simultaneously.
+    (process-global), so a `/ru/...` URL prefix translates both surfaces.
   - See `dev_docs/i18n_triage.md` for the per-file bucket assignments.
   - **Catalog DATA is translated at render, and registered where it is
     declared.** Extension names/descriptions and flag labels
-    (`PhoenixKitProjects.phoenix_kit_project_extensions/0`), category
-    labels (`Extensions.Registry`), the form's flag groups and the
-    starting-point cards (`Archetypes`) are plain strings in maps — the
-    `gettext/1` macro cannot see them, so each literal is wrapped in
-    `gettext_noop/1` (registers the msgid, returns it unchanged) and every
-    render site goes through `Web.Helpers.translate_catalog/1` (the
-    runtime `Gettext.gettext/2`). Without the noop the string exists in
-    NO catalogue and every locale shows English while every count says
-    "complete" — the whole extension catalog and the starting-point cards
-    shipped that way until the 2026-09-05 sweep. A sibling module's
-    contributed strings pass through unless it registers them in THIS
-    backend. Dashboards widget catalog strings are the one exception:
-    `phoenix_kit_dashboards` translates provider strings through ITS OWN
-    backend, so ours cannot reach them until that helper honours a
-    provider backend (open, 2026-09-05).
-  - **Completeness is a code-vs-catalogue diff, never a count.** After
-    every extract/merge, diff the new msgids against the pre-merge `.po`
-    and fill them in all seven locales; review every `fuzzy` the merge
-    produced (its guesses have been wrong every time: "Off — no task
-    list" → "no late marker"). The sweep found 219 empty msgstrs per
-    locale that every count had called complete.
-- **No per-item reads on a hot path.** A page mount, a PubSub re-render,
-  a dashboard widget's refresh tick — anything that runs per viewer and
-  again on every change — must not map a list through a function that
-  queries per element (the boss's #40 review: two widgets re-ran the
-  Overview's per-node walk every 15 s, per viewer). The grouped forms to
-  reach for, each with a `test/phoenix_kit_projects/batched_*_test.exs`
-  pinning "the count does not grow with the input" through
-  `PhoenixKitProjects.QueryCounter`: `Projects.assignments_by_project/1`
-  (a whole sub-project forest, one read per depth level; feeds
-  `project_tree_summaries/1` and `ScheduleLayout.trees/1`),
-  `Projects.list_all_dependencies/1` on a LIST, `Extensions.enabled_map/1`
-  + `Features.gates/1` / `flags/1` (one context read — `gates/1` used to
-  cost 22 statements per project-page mount), `Portal.review_details_for/1`,
-  `Attachments.download_urls/1`, `Grants.subject_reaches/1`. Ecto preloads
-  are statements too, so assert N-independence, never an exact count.
-  Known and left (low weight, one-off or a handful of rows):
-  `Web.Crumbs`' per-ancestor `Authz.can?` for non-admins,
-  `PortalLinks`' per-slug `Portal.resolve/2` in comment rendering,
-  `Grants.subject_reach("role", …)` per role (core has no batched form).
-- **LiveView layout**: `use PhoenixKitWeb, :live_view` (in `phoenix_kit_web.ex`) injects `layout: PhoenixKit.LayoutConfig.get_layout()` automatically. No need to wrap templates in `<PhoenixKitWeb.Components.LayoutWrapper.app_layout>` — that wrapper is for LiveViews served outside the admin live_session
+    (`phoenix_kit_project_extensions/0`), category labels
+    (`Extensions.Registry`), the form's flag groups and the starting-point
+    cards (`Archetypes`) are plain strings in maps — the `gettext/1` macro
+    cannot see them, so each literal is wrapped in `gettext_noop/1` (registers
+    the msgid, returns it unchanged) and every render site goes through
+    `Web.Helpers.translate_catalog/1` (the runtime `Gettext.gettext/2`).
+    Without the noop the string exists in NO catalogue and every locale shows
+    English while every count says "complete". A sibling module's contributed
+    strings pass through unless it registers them in THIS backend.
+  - **Completeness is a code-vs-catalogue diff, never a count.** After every
+    extract/merge, diff the new msgids against the pre-merge `.po` and fill
+    them in every locale; review each `fuzzy` the merge produced — its guesses
+    have been wrong every time ("Off — no task list" → "no late marker").
+- **No per-item reads on a hot path.** A page mount, a PubSub re-render, a
+  dashboard widget's refresh tick — anything that runs per viewer and again on
+  every change — must not map a list through a function that queries per
+  element. The grouped forms to reach for, each with a
+  `test/phoenix_kit_projects/batched_*_test.exs` pinning "the count does not
+  grow with the input" through `PhoenixKitProjects.QueryCounter`:
+  `Projects.assignments_by_project/1` (a whole sub-project forest, one read per
+  depth level; feeds `project_tree_summaries/1` and `ScheduleLayout.trees/1`),
+  `Projects.list_all_dependencies/1` on a LIST, `Extensions.enabled_map/1` +
+  `Features.gates/1` / `flags/1` (one context read), `Portal.review_details_for/1`,
+  `Attachments.download_urls/1`, `Grants.subject_reaches/1`. Ecto preloads are
+  statements too, so assert N-independence, never an exact count. Known and
+  left (low weight, one-off or a handful of rows): `Web.Crumbs`' per-ancestor
+  `Authz.can?` for non-admins, `PortalLinks`' per-slug `Portal.resolve/2` in
+  comment rendering, `Grants.subject_reach("role", …)` per role (core has no
+  batched form).
+- **Embedding: identity ≠ authorization.** The `permission: "projects"` gate
+  lives in core's `:phoenix_kit_ensure_admin` `on_mount`, which runs only for
+  router-mounted admin pages — never for an off-router `live_render`. Embedded
+  mutation handlers are therefore NOT role-gated;
+  `session["current_user_uuid"]` reconstructs the viewer for audit and the
+  comments composer only. The **host** must gate the embedding page to
+  projects-authorized users and source the uuid from its own trusted
+  server-side scope, never request params. Pass a string UUID, never a `%User{}`
+  struct — a struct serializes the password hash into the client-readable
+  signed session.
+- **Client-supplied embed sessions are sanitized.** `phx-value-session` on an
+  `open_embed` button is client-editable; `sanitize_session_overrides/1` drops
+  the host-owned keys (`current_user_uuid`, `mode`, `pubsub_topic`,
+  `frame_ref`) at both ends — the emitter's handler and `PopupHostLive` before
+  it stamps a frame's session — so a crafted payload cannot open a form as
+  another user or re-route its events. Never `put_new` an identity key from a
+  wire session.
+- **Reorder strategy whitelist (load-bearing).** Consumer LVs MUST map
+  `apply_reorder`'s strategy string to an atom through a hardcoded
+  `%{"name_asc" => :name_asc, …}` map, never `String.to_existing_atom/1` on the
+  param — a crafted payload otherwise either raises or leaks the BEAM atom slot.
+- **`captured_uuids` collapse rule.** `open_reorder_modal` collapses
+  0–1-element selection lists to `:all` (single-row reorder is a no-op, and the
+  toolbar reads "Reorder all"). Apply the same rule in any new bulk-action
+  handler.
+- **Web components.** LVs `use PhoenixKitProjects.Web.Components` to pull in
+  every reusable component in one line; components live in
+  `web/components/*.ex` as individual `Phoenix.Component` modules and the
+  aggregator only `import`s them, so adding one is "add file → add import".
+  They are deliberately scoped to this module's namespace, not core's
+  `PhoenixKitWeb.Components.*`; promoting one to core is mechanical (copy,
+  rename, drop the import, let the consumer fall through). Use the CORE
+  component where one exists — `<.input>`, `<.select>`, `<.textarea>`,
+  `<.checkbox>`, `<.icon>`, `<.multilang_tabs>`, `<.translatable_field>`,
+  `<.stat_card>` (core's takes title + subtitle + icon; for a minimal
+  "label + value" tile use this module's `<.stat_tile>`) — and core's whole
+  list-LV toolkit (see core's AGENTS.md → "Core List-UI Components").
+  `ProjectsLive` / `TasksLive` / `TemplatesLive` are the canonical consumers —
+  never re-roll a list LV without reading them first.
 
-## Pre-commit commands
+### Landmines
 
-Always run before git commit (mirrors the root `phoenix_kit` workflow):
+- **An LV that exports `handle_params/3` cannot be embedded.** LiveView refuses
+  to mount it outside a router live route, so `live_render` blows up. Symptom:
+  a new LV works in admin and crashes in a host embed. Fix: move the body into
+  the mount tail.
+- **Native form validation gates `phx-submit`.** `step` / `min` / `max` on an
+  input block Enter until the value is valid, and `LiveViewTest` cannot see it
+  (the test passes, the browser does nothing). Use `novalidate` where the
+  server owns clamping.
+- **Admin tabs match independently — there is no longest-prefix arbitration.**
+  A plain `match: :prefix` on `projects` lights the Projects subtab on
+  `tasks`/`templates`/`overview` too. The subtab uses a `{:regex, …}` matcher
+  that excludes the literal siblings; keep it in sync when a sibling is added.
+- **Route declaration order is match order.** `projects/:id/:tab` is the
+  extension catch-all and must stay LAST — after `templates/*`, whose first
+  segment would otherwise read as an id. Extension tab keys must not reuse a
+  literal sibling (`edit`, `files`, `members`, `modules`, `activity`, `board`,
+  `gantt`, `calendar`, `tasks`, `comments`).
+- **Tests that drive the project page's drawer need a REAL user in the page
+  scope** — `fake_scope(user_uuid: embed_user_uuid!())`. The sheet's form
+  mounts off-router and rebuilds identity from the page's
+  `current_user_uuid`; a synthetic uuid degrades it to anonymous and the sheet
+  closes itself.
+- **A host that adds this module's tabs can hold a stale router.** If new
+  admin routes 404 after deploying, the route table was not regenerated:
+  `mix compile --force`.
 
-```bash
-# 1. Run the full pre-commit chain
-mix precommit               # compile + format + credo --strict + dialyzer
+## Architecture
 
-# 2. Fix any problems surfaced above (warnings-as-errors in compile, format diffs, credo issues, dialyzer specs)
-
-# 3. Review changes
-git diff
-git status
-
-# 4. Commit
+```
+lib/phoenix_kit_projects.ex        # PhoenixKit.Module: tabs, permissions, extensions
+                                   # catalog, notification types, js/css sources
+lib/phoenix_kit_projects/
+├── projects.ex              # THE context: tasks, projects, assignments, deps, schedule, cloning
+├── people.ex + people/*.ex  # THE doorway to staff data + read-only shadow schemas
+├── authz.ex                 # Authorization vocabulary + the single resolver
+├── extensions.ex + extensions/*.ex, features.ex, archetypes.ex, list_controls.ex
+│                            # Per-project capabilities, flags, starting points, list controls
+├── members.ex, grants.ex, health.ex, labels.ex, ledger.ex, invoicing.ex,
+│   project_events.ex, whiteboards.ex, attachments.ex, portal.ex, portal_links.ex
+│                            # The hub's per-project surfaces
+├── statuses.ex              # Workflow statuses (entities-backed, cement-at-start)
+├── schedule_layout.ex, running_tiers.ex, assignees.ex
+│                            # Durations→dates walk, tiering, effective-assignee resolution
+├── calendar_display.ex, gantt_display.ex   # The two display-settings customizers
+├── activity.ex, pub_sub.ex, resource_links.ex, errors.ex, paths.ex
+├── gettext.ex, l10n.ex      # Own backend + content-locale helpers
+├── ai_translatable.ex, ai_translate_binding.ex, dashboard_widgets.ex
+│                            # Duck-typed seams to phoenix_kit_ai / phoenix_kit_dashboards
+├── migrations/schema.ex     # The module-owned versioned chain
+├── schemas/                 # See the table map below
+└── web/
+    ├── components.ex + components/*.ex  # `use` aggregator + one module per component
+    ├── crumbs.ex        # page_section / page_crumbs / page_title
+    ├── helpers.ex       # embed identity, translate_catalog/1, smart-link glue
+    ├── list_ui.ex       # column visibility, search coercion, client haystacks
+    ├── routes.ex        # the public portal routes (route_module/0)
+    ├── *_live.ex        # the LiveViews (below)
+    └── widgets/*.ex     # the dashboards LiveComponents
 ```
 
-Step order matters: `compile` first (warnings-as-errors catches the loud stuff), then `format`, then `credo --strict`, then `dialyzer`. Run from `/www/app` so deps resolve against the workspace; `mix format` is the only one that works from inside the plugin subdir.
+**LiveViews** (all under `PhoenixKitProjects.Web.*`): `OverviewLive`;
+`ProjectsLive`, `ProjectFormLive`, `ProjectShowLive`; `TasksLive`,
+`TaskFormLive`; `TemplatesLive`, `TemplateFormLive`; `AssignmentFormLive`;
+`ProjectGanttLive` / `ProjectCalendarLive` (the show page's Timeline /
+Calendar tabs, read-only, nested via `live_render`); the project chrome pages
+`ProjectFilesLive`, `ProjectMembersLive`, `ProjectModulesLive`,
+`ProjectActivityLive`, `ProjectWhiteboardsLive`, `ProjectEventsLive`;
+`PopupHostLive` (the emit-mode dialog stack); `MemberProjectsLive` (the user
+dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
+(legacy `projects/list/…`).
+
+### Concepts
+
+- **Task** — a reusable library entry (title, description, estimated duration
+  with unit, optional default assignee, optional default dependencies on other
+  tasks). A one-off (`ad_hoc`) task is one minted for a single project.
+- **Project** — a container for assignments. Has a start mode (`immediate` or
+  `scheduled`), an optional `counts_weekends` flag, an `is_template` flag
+  (templates are cloned into real projects) and completion tracking
+  (`completed_at`).
+- **Assignment** — a task instance within a project. Copies
+  description/duration from the library entry at creation, but is independently
+  editable. Optionally assigned to a Department/Team/Person. An assignment
+  pointing at a child project instead of a task is a **sub-project**.
+- **Dependency** — "assignment A must finish before B", scoped to one project.
+- **TaskDependency** — a default dependency between two library tasks,
+  auto-applied when both are in the same project.
+- **Extension / feature flag** — a per-project capability (`tasks`, `files`,
+  `whiteboards`, `events`, `discussions`, `portal`) and the flags inside it.
+  Declared in `phoenix_kit_project_extensions/0`; resolved through
+  `Extensions.enabled?/3` and `Features.on?/2`. A flag is dead while any of
+  its `requires` is off.
+
+### Data model
+
+| Schema | Table |
+|---|---|
+| `Schemas.Project` | `phoenix_kit_projects` |
+| `Schemas.Task` | `phoenix_kit_project_tasks` |
+| `Schemas.Assignment` | `phoenix_kit_project_assignments` |
+| `Schemas.Dependency` | `phoenix_kit_project_dependencies` |
+| `Schemas.TaskDependency` | `phoenix_kit_project_task_dependencies` |
+| `Schemas.ProjectStatus` | `phoenix_kit_project_statuses` |
+| `Schemas.ProjectModule` | `phoenix_kit_project_modules` |
+| `Schemas.ProjectMember` | `phoenix_kit_project_members` |
+| `Schemas.ProjectSubjectGrant` | `phoenix_kit_project_subject_grants` |
+| `Schemas.WorkEntry` | `phoenix_kit_project_work_entries` |
+| `Schemas.Whiteboard` | `phoenix_kit_project_whiteboards` |
+| `Schemas.ProjectEvent` | `phoenix_kit_project_events` |
+| `Schemas.Label` | `phoenix_kit_project_labels` |
+| `Schemas.Portal` | `phoenix_kit_project_portals` |
+| `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
+| `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
+
+All UUIDv7 PKs; every table-backed schema applies `use PhoenixKit.SchemaPrefix`
+(`schema_prefix_conformance_test.exs` pins it).
+
+Schema-level invariants: `Assignment` enforces a single assignee and the
+task-XOR-child-project rule; `Dependency` rejects a self-reference;
+`TaskDependency` is the library-level default pair.
+`Projects.create_project_from_template/2` clones inside one
+`Ecto.Repo.transaction`, and `project_summaries/1` is the batch query that
+keeps the dashboard off an N+1 per project.
+
+### PubSub topics
+
+Messages are `{:projects, event_atom, payload_map}` tuples.
+
+| Topic | Scope |
+|---|---|
+| `projects:all` | any project/template/task/assignment mutation |
+| `projects:tasks` | task-library mutations |
+| `projects:templates` | template-project mutations |
+| `projects:project:<uuid>` | one project (safe against cross-tenant fan-out — you need the uuid) |
+| `projects:popup:<socket id>` | one router-mounted project page's private frame topic; UI-intent verbs only, never content verbs |
+
+### Permissions
+
+`permission: "projects"` on every tab; mount guards, and events trust the mount
+check. The base key means **"may enter the module"**; the `projects.admin_all`
+sub-permission means **"administer projects you are not a member of"** — before
+the split, granting a role the module handed it every project on the site,
+because the resolver short-circuited on module access before membership was
+consulted. `migrate_legacy/0` carries every pre-split role holding the base key
+across, once, behind `projects_admin_all_backfilled`; a repeat on every boot
+would fight an Owner's revoke.
+
+`Authz.can?/5` resolves `site permission ∧ project role ∧ relationship grant`;
+extension/flag gating composes at the call site (`Extensions.enabled?/3` +
+`Features.on?/2` answer "is this capability present on this project", which is
+orthogonal to "may this caller use it"). Roles are ordered
+`:owner > :manager > :member > :viewer`. Actions: `:view`, `:create_tasks`,
+`:edit_tasks`, `:delete_tasks`, `:assign_tasks`, `:update_status`, `:log_time`,
+`:comment`, `:upload_files`, `:manage_members`, `:manage_modules`,
+`:edit_settings`, `:set_health`, `:archive_project`, `:delete_project`, plus
+whatever an extension declares in `permission_actions`. Unknown actions resolve
+fail-closed for non-admin callers. `opts[:context]` is `:admin` (default) or
+`:public`; the admin override does NOT apply under `:public` — a site admin
+browsing the public portal is a visitor.
+
+### Settings keys
+
+- `projects_enabled` — boolean, read by `PhoenixKitProjects.enabled?/0`,
+  toggled via **Admin > Modules**.
+- `projects_cal_*` — the Overview-calendar customizer
+  (`/admin/settings/projects`): grid appearance (`show_weekends`,
+  `show_week_numbers`, `fixed_weeks`, `max_events`, `max_multiday`) and the
+  overdue/late markers (`overdue_*`, `late_marker`). Every read and write goes
+  through `CalendarDisplay.read/0` + `put/2` + `put_flag/2`, which validate and
+  clamp on both ends — that module is the authority on ranges and defaults.
+  The first weekday is NOT here: the calendars honour core's site-wide
+  `week_start_day`.
+- `projects_gantt_*` — the Timeline-chart customizer (`GanttDisplay`), same page.
+- `projects_list_columns` / `projects_tasks_columns` /
+  `projects_templates_columns` — comma-joined visible-column sets per list page.
+- `projects_list_controls_mode` / `projects_list_controls_threshold` — when the
+  task list's lens + sort render (`auto` | `always` | `never`; default
+  threshold 10).
+- `projects_default_status_entity_uuid` — the global default status list.
+- `projects_use_status_translations` — global default for showing translated
+  status titles (per-project tri-state override in the project's `settings`).
+- `projects_default_preset`, `projects_new_form_top_blocks` — new-project form
+  defaults.
+- `projects_admin_all_backfilled`, `projects_checklist_flags_backfilled` —
+  one-time `migrate_legacy/0` flags. One-way and one-time on purpose:
+  re-deciding on every boot would hand back a revoked permission or re-disable
+  a feature the Owner turned on.
+
+### Activity actions
+
+`projects.<resource>_<verb>`:
+
+- `projects.project_created/updated/deleted/started/completed/reopened`
+- `projects.project_archived/unarchived`
+- `projects.template_created/updated/deleted`, `projects.project_created_from_template`
+- `projects.task_created/updated/deleted`, `projects.task_promoted`
+- `projects.task_dependency_added/removed`, `projects.dependency_added/removed`
+- `projects.assignment_created/updated/started/completed/reopened/removed`
+- `projects.assignment_progress_updated`, `projects.assignment_duration_changed`,
+  `projects.assignment_tracking_toggled`
+- `projects.subproject_created/linked/detached`
+- `projects.project_status_changed` (show page)
+- `projects.gantt_display_changed/reset`, `projects.calendar_display_changed/reset`
+  (settings page; `resource_type: "projects_settings"`)
+- `projects.status_entity_provisioned` (`metadata.scope` = `"shared"` |
+  `"global_default"`), `projects.default_status_entity_set`,
+  `projects.status_translations_toggled`
+- `projects.member_added/role_changed/removed`, `projects.health_updated`,
+  `projects.event_created/updated/deleted` — the four notification sub-types
+  fan out through core's activity→notification bridge whenever their entries
+  carry a `target_uuid` (the affected user).
+
+## Database & migrations
+
+Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
+`migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
+`phoenix_kit_projects`, currently **V16**. `mix phoenix_kit.update` applies it
+in hosts by comparing `current_version/0` against
+`migrated_version_runtime/1`; tests run it through
+`PhoenixKitProjects.Test.SchemaMigration`, keyed on
+`Schema.current_version()` so a chain bump re-runs automatically.
+
+The chain is **adoptive**. The project tables were historically created by
+core's chain, which stays authoritative for installs migrating through it —
+**this chain requires core ≥ V128** and takes over from that composed shape:
+
+- **V1 is a baseline**: an idempotent (`IF NOT EXISTS`) restatement of the
+  exact table shape core's chain produces. On a core-migrated install every
+  statement no-ops and the marker is simply stamped.
+  `migrated_version_runtime/1` treats a marker-less-but-present
+  `phoenix_kit_projects` table as already at V1, so existing installs never
+  regenerate a pointless migration. **Never edit V1** — a shape change is V2+,
+  and one that touches a core-created table needs core's `ExpectedSchema`
+  exclusion first.
+- **V2+** hold the hub-rework tables (extension enablement, members, work
+  entries, whiteboards, events, priorities/labels, portal, grants, …) and never
+  ship through core.
+
+Every statement in every version guards itself, so `up/1` always runs the whole
+chain start-to-finish and re-running is safe — which is also how the baseline's
+idempotency is proved on every test boot. `down/1` exists for protocol
+completeness only: on installs whose tables core created, a module-level down
+is NOT supported (core's marker still claims the tables); it drops data and is
+meant for scratch schemas.
+
+Add a new version as the next `vNN_*` step in `up/1` plus its
+`if target < NN` block in `down/1`. UUIDv7 PKs throughout; every table-backed
+schema uses `PhoenixKit.SchemaPrefix`.
+
+A schema change that must live in core (a column on a core-owned table) still
+ships as a core migration first, then a core release, then a pin bump here.
+While iterating ahead of that, develop and test via
+`PHOENIX_KIT_PATH=../phoenix_kit`.
 
 ## Testing
 
-Three levels:
-
-- **Unit tests** in `test/phoenix_kit_projects/` — schemas,
-  changesets, pure helpers (duration math, etc.), the `Errors` atom
-  dispatcher. Always run.
-- **Integration tests** in `test/phoenix_kit_projects/integration/`
-  — hit a real PostgreSQL database via the Ecto sandbox. Use
-  `PhoenixKitProjects.DataCase`.
-- **LiveView smoke tests** in `test/phoenix_kit_projects/web/` —
-  drive LVs via `Phoenix.LiveViewTest.live/2` against the test
-  Endpoint + Router. Use `PhoenixKitProjects.LiveCase`.
-
-Test infrastructure:
-
-- `test/support/test_repo.ex` — `PhoenixKitProjects.Test.Repo`
-- `test/support/test_endpoint.ex` — minimal `Phoenix.Endpoint` for
-  LV tests; `server: false`, no port opened
-- `test/support/test_router.ex` — minimal Router whose paths match
-  `PhoenixKitProjects.Paths.*` (base scope `/en/admin/projects`)
-- `test/support/test_layouts.ex` — root + app layouts; `app/1`
-  renders flash divs (`#flash-info`, `#flash-error`,
-  `#flash-warning`) so smoke tests can assert flash content via
-  `render(view) =~ "Saved."` after click events
-- `test/support/hooks.ex` — `:assign_scope` `on_mount` hook that
-  reads `"phoenix_kit_test_scope"` from session and assigns
-  `phoenix_kit_current_scope` + `phoenix_kit_current_user`
-- `test/support/data_case.ex` — `PhoenixKitProjects.DataCase`, tags
-  tests `:integration`, sets up the SQL Sandbox; hosts shared
-  `fixture_task/1`, `fixture_project/1`, `fixture_template/1` and
-  `errors_on/1`
-- `test/support/live_case.ex` — `PhoenixKitProjects.LiveCase` with
-  `fake_scope/1` + `put_test_scope/2` for plugging a real
-  `%PhoenixKit.Users.Auth.Scope{}` into the test session; reuses
-  fixtures from `DataCase`
-- `test/support/activity_log_assertions.ex` —
-  `assert_activity_logged/2` and `refute_activity_logged/2`
-- `test/test_helper.exs` — starts `PhoenixKit.PubSub.Manager`,
-  Hammer's `RateLimiter.Backend`, pins the URL prefix, starts
-  `PhoenixKitProjects.Test.Endpoint`, and runs core's versioned
-  migrations via `PhoenixKit.Migration.ensure_current/2` (V40
-  extensions + uuid_generate_v7, V03 settings, V90 activities,
-  V100 staff tables, V101 projects tables, V105 partial-index
-  conversion) — no module-owned DDL anywhere
-- `config/test.exs` — repo + Test.Endpoint config
-
-Commands:
-
-```bash
-# First time only:
-createdb phoenix_kit_projects_test
-
-# All runs (unit + integration if DB is reachable):
-mix test
-
-# Unit tests only (DB not required):
-mix test --exclude integration
-```
-
-The test helper runs core's versioned migrations via
-`PhoenixKit.Migration.ensure_current/2` on every boot, so the schema
-re-applies any newly-shipped Vxxx migrations automatically. No
-`mix test.setup` step needed past the initial `createdb`.
-
-Integration tests are auto-excluded if the DB isn't reachable. `mix
-test` never hard-fails on a missing DB.
-
-## CI expectations
-
-GitHub Actions run on push and PRs: formatting check, `credo --strict`, `dialyzer`, compile with warnings-as-errors, and `mix test`. A failure in any of these blocks merge.
-
-## Pull requests
-
-### PR Reviews
-
-Everything about one PR lives in **one folder**:
-
-```
-dev_docs/pull_requests/{year}/{pr_number}-{slug}/
-```
-
-`{pr_number}` is the bare PR number — `35-public-portal-review-queue`, not
-`projects35-…`. The path is already scoped to this repo, so a module prefix
-adds nothing and breaks the numeric sort. `{slug}` is short, lowercase and
-hyphenated, describing the change rather than the review.
-
-**Nothing review-shaped belongs at the repo root.** Two files have had to be
-moved back out of it; if a folder is the wrong home for something, fix the
-folder rather than leaving the file outside the convention.
-
-Files inside the folder, all optional except the review itself:
-
-| File | What it is |
-| --- | --- |
-| `{AGENT}_REVIEW.md` | One agent's review. `CLAUDE_REVIEW.md` for me. Siblings also carry `PINCER_`, `MISTRAL_`, `KIMI_`, `GLM_`, `CODEX_`, `GROK_`, `ZAI_`. |
-| `REVIEW.md` | A review with no agent behind it — a human's, or an unattributed one. |
-| `AGGREGATED_REVIEW.md` | A synthesis across several agents' reviews, sitting beside the originals rather than replacing them. |
-| `FOLLOW_UP.md` | How every finding was resolved, or explicitly skipped with the rationale. One per folder, not per agent. |
-| `README.md` | The PR's own summary — what changed and why. See `dev_docs/pull_requests/TEMPLATE.md` in the sibling repos for the shape. Not a review. |
-
-**One file per agent, and never write into another agent's.** Several reviews
-of the same PR coexist by design — that is the whole point of the `{AGENT}_`
-prefix. Add your own file; if you disagree with another review, say so in
-yours. Correcting a claim in someone else's file destroys the record of who
-thought what.
-
-**Name a review for its author, not its stage.** `phase1.md` tells a later
-reader nothing about who wrote it or whether to trust it; `PINCER_REVIEW.md`
-does. Put the phase in the document's heading instead.
-
-Work that never was a PR still gets a folder here, keyed to whatever *does*
-identify it: a commit sha (`0e84bab-multilang-data-form-flattening`, in
-`phoenix_kit_entities`), or a plain name whose first paragraph states that it
-is not a PR folder — `post-session-quality-sweep/` is the local example.
-
-Commit the review folder. An uncommitted review is one `git clean` from gone.
-
-The root `phoenix_kit/AGENTS.md` states the same rule in one line; this section
-is the long form of it, not a competing convention.
-
-Severity levels for review findings:
-
-- `BUG - CRITICAL` — Will cause crashes, data loss, or security issues
-- `BUG - HIGH` — Incorrect behavior that affects users
-- `BUG - MEDIUM` — Edge cases, minor incorrect behavior
-- `IMPROVEMENT - HIGH` — Significant code quality or performance issue
-- `IMPROVEMENT - MEDIUM` — Better patterns or maintainability
-- `NITPICK` — Style, naming, minor suggestions
-
-## Commit message rules
-
-Start with action verbs: `Add`, `Update`, `Fix`, `Remove`, `Merge`.
-
-## Soft-hide / archive
-
-Archive is a **timestamp**, not a status enum. `projects.archived_at`
-(added in core V112) follows the workspace's `trashed_at` convention
-used by publishing posts and core files: null = visible, non-null =
-hidden + audit-friendly "archived at."
-
-Public API: `Projects.archive_project/1` and `Projects.unarchive_project/1`.
-The dashboard buckets and `list_projects/1` filter on
-`is_nil(archived_at)`. `Projects.list_projects/1` accepts `:archived`
-opt — `false` (default, visible only), `true` (archived only), `:all`.
-
-The derived state from `Project.derived_status/2` returns `:archived`
-as the highest-priority bucket, so an archived project is always
-labeled "archived" in the UI regardless of its other timestamps.
-
-### Legacy `status` column — kept, unused
-
-The pre-V112 `status` string column (`"active"` / `"archived"`) is
-**still in the table** but no longer cast by the changeset, never read
-by application code, and no longer surfaced in any UI. V112 backfilled
-`archived_at = updated_at` for any row that was `status = 'archived'`
-at migration time, so the soft-hide state survived the move.
-
-The column is preserved deliberately so a future workflow concept that
-legitimately wants a string lifecycle state (e.g. `"paused"`,
-`"blocked"`, `"on_hold"`) can reuse the slot without another migration.
-Anyone wiring such a feature must:
-
-1. Re-introduce `status` to `Project.@optional` and `Project.changeset/2`.
-2. Add a fresh `validate_inclusion(:status, …)` for the new vocabulary.
-3. Update `Project.derived_status/2` priority order if the new state
-   should outrank the existing buckets.
-4. Decide whether to backfill existing `"active"`/`"archived"` rows.
-
-If after a reasonable interval no such feature lands, drop the column
-in a future Vxxx.
-
-## Workflow statuses (entities-backed, cement-at-start)
-
-A user-defined **workflow status** (Backlog → In Progress → Blocked →
-Done, etc.), orthogonal to the computed `Project.derived_status/2` and the
-`archived_at` soft-hide.
-
-**Available on every project-like record.** Since a sub-project and a template
-are both projects, they get the same status-source picker. The form section
-(Custom Status select + "Generate default" + status preview + "Translated
-status titles") lives in the shared `Web.Components.WorkflowStatusFields`
-component, with its logic (`available?/0`, `entity_options/0`, `preview_for/1`,
-`mode_string/1`, `apply_mode/3`, `selected_entity_uuid/1`) reused by
-`ProjectFormLive` (inline), `TemplateFormLive`, and `AssignmentFormLive`'s
-sub-project mode. Each LV owns its `generate_default_statuses` handler (it knows
-which form to update). The current-status value picker on `ProjectShowLive`
-isn't gated on `is_template`, so templates + opened sub-projects show it too; a
-template's chosen list + current status flow to cloned projects via
-`inherit_status_slug_in_tx/2`.
- The vocabulary is configured through the
-**optional** `phoenix_kit_entities` module and **cemented locally** when a
-project starts. Lives in `PhoenixKitProjects.Statuses` (mirrors
-`Translations`' optional-dep scaffolding) + `Schemas.ProjectStatus`.
-
-### Two layers
-- **Catalog (entities).** Status lists are entities. The admin **generates**
-  a default list (`Statuses.create_default_status_entity/0`) — named
-  `project_statuses`, auto-incrementing to `project_statuses_2`, `_3`, … so
-  generating again always makes a fresh list (e.g. after editing the last
-  one) rather than reusing it — seeded with the default vocabulary. One is
-  designated the **global default** via the Settings page (see below).
-  Per-project custom entities the user owns are named
-  `project_status_<32-hex-uuid>`; all are tagged
-  `settings["source"] = "phoenix_kit_projects"`. Templates and
-  not-yet-started projects read the chosen catalog **live**.
-- **Cemented (local).** `start_project/2` snapshots the chosen catalog
-  into `phoenix_kit_project_statuses` rows (in the same transaction). The
-  running project then uses its own frozen, independently-editable copy —
-  later catalog edits don't touch it. Same template→instance philosophy
-  as Assignment-copies-Task.
-
-  "Frozen" means it **stops following the live catalog**, NOT read-only.
-  The cemented rows remain editable through the context as a deliberate
-  escape hatch (there is no UI for it): `Statuses.add_project_status/2`,
-  `update_project_status_row/2`, `remove_project_status/2`,
-  `get_project_status/2`. So a started project's statuses can still be
-  changed via the API "in case it's really wanted" — pinned by the
-  "local CRUD post-start" test in `statuses_test.exs`.
-
-`started_at` is the cement boundary (`derived_status` → `:running` iff
-`started_at`). The selected status is `current_status_slug` on the
-project — a stable identity that resolves against the live catalog
-pre-start and the local rows post-start. It is **server-owned**: written
-only via `Statuses.set_current_status/3` →
-`Projects.set_current_status_slug/2` (the dedicated
-`Project.current_status_changeset/2`), never the form changeset.
-`status_entity_uuid` (which catalog list; nil = shared) is form-castable
-**only before start** — see the source lock below.
-
-### Choosing / changing the status source (incl. existing projects)
-Any entity can serve as a status source — each of its data **records** is a
-status, the record's built-in **`title`** is the label, and an optional
-**`color`** field on records drives the badge colour. No marker field is
-required. `Statuses.list_status_source_entities/0` returns entities grouped
-for a picker (`[{"Status lists", …}, {"Other entities", …}]`, the
-`settings["source"] = "phoenix_kit_projects"` catalogs first).
-
-**Where the source is chosen.** The status-source picker lives ONLY on the
-new/edit project forms (`ProjectFormLive`) — NOT on `ProjectShowLive`. The
-show page only displays the current-status value picker, and only once the
-project's list has statuses; it has no source selector. The picker is the
-shared `<.workflow_status_fields>` component (form-bound to
-`status_entity_uuid`, "Use global default" prompt + grouped) with a
-**"Generate default"** button beside it and a live **preview** of the
-selected list's statuses — the **same component** projects, templates and
-sub-projects (`AssignmentFormLive`) all render, so the section never diverges.
-
-**The source is a pre-start choice — frozen after start.** Since statuses
-cement at `started_at`, a started project's source can no longer change. The
-component takes `locked={Statuses.started?(project)}`: once started the
-`<.select>` is `disabled`, the "Generate default" button is hidden, and a
-"Frozen at start" hint shows. The lock is keyed on `started?` (NOT on whether
-a custom entity is selected), so a started project on the **global default**
-(nil `status_entity_uuid`) locks too. Server-side mate: every `save(:edit)`
-runs `attrs = Statuses.lock_status_source(attrs, project)`, which strips
-`status_entity_uuid` for started projects — so even a crafted submit past the
-disabled control can't change the frozen source. (`set_status_entity/3` +
-`recement_project_statuses/1` remain as a programmatic "cement on select" API,
-exercised only by `statuses_test.exs`; no UI reaches them.)
-
-**The "Shared default" is admin-chosen, not auto-created.** A project with no
-`status_entity_uuid` resolves to the global default entity stored in the
-`projects_default_status_entity_uuid` setting (picked on the projects Settings
-page — `/admin/settings/projects` — or generated there). Nothing is
-auto-provisioned on read; if no default is set, the project has no statuses.
-`Statuses.global_default_status_entity_uuid/0` / `set_default_status_entity/1`
-read/write the setting; `resolve_catalog_entity_uuid/1` uses it.
-
-**Statuses are title-only for colour** (none seeded; badges render neutral), but
-the cemented row uses JSONB (V125): `phoenix_kit_project_statuses` has
-`label`(primary)/`slug`/`position` + `data` JSONB (`{"color"}` + future per-status
-attrs) + `translations` JSONB (label i18n, workspace shape).
-`ProjectStatus.color/1` reads `data["color"]`. (V125 was edited in place for the
-JSONB shape — it's unreleased.)
-
-**Titles are localized.** Reads resolve the label to the current content locale
-(`L10n.current_content_lang/0`, the process Gettext locale the host sets from the
-URL prefix) — no LV signature changes. Catalog reads pass `lang:` to
-`EntityData.list_by_entity/2` so the entities module resolves each record's title;
-`cement_project_statuses/2` captures the **primary** title as `label` plus every
-enabled non-primary language's title into the row's `translations` JSONB (via
-per-language catalog reads + `Languages.enabled_languages/0`), and
-`ProjectStatus.localized_label/2` resolves cemented rows on read — so a started
-project stays localized independent of the catalog.
-
-**Display toggle (global + per-project override).** Translations are always
-captured; *displaying* them is gated. `Statuses.use_status_translations?/1`
-resolves: per-project override → global setting → `true`. The global default is
-the `projects_use_status_translations` setting
-(`Settings.get_boolean_setting(_, true)`). The per-project override is a tri-state
-in the project's `settings` JSONB (`use_status_translations` = true/false/absent;
-absent = inherit global) — `Project.status_translation_override/1` reads it (the
-schema stays pure; resolution-with-global lives in `Statuses`). The project form
-exposes a 3-way "Translated status titles" control (Default / Show translated /
-Show original) that folds into `settings`. The **global** toggle lives in the core Settings area
-(`/admin/settings/projects`, a global-settings tab via `settings_tabs/0` →
-`Web.ProjectsSettingsLive`, alongside Comments/Posts/Entities), which writes the
-global default — currently set via
-`PhoenixKit.Settings` (default `true`).
-
-### Optional dependency
-`{:phoenix_kit_entities, "~> 0.1", optional: true}` — loadable in this
-package's own test build, kept out of host closures. Every `Statuses`
-function degrades gracefully when entities is absent/disabled
-(`available?/0` gates everything; reads → `[]`/`nil`, provisioning →
-`{:error, :entities_not_available}`, cement → no-op). UI surfaces guard
-on a `:statuses_available` assign and hide cleanly.
-
-### Schema (core V125)
-- `phoenix_kit_projects.status_entity_uuid` — FK
-  `phoenix_kit_entities(uuid) ON DELETE SET NULL`.
-- `phoenix_kit_projects.current_status_slug` — varchar.
-- `phoenix_kit_project_statuses` — the cemented copy (`project_uuid` FK
-  cascade, `label`/`slug`/`position` + `data` JSONB (per-status attrs e.g.
-  `{"color"}`) + `translations` JSONB (label i18n), provenance
-  `source_entity_data_uuid` with no FK). Unique `(project_uuid, slug)`.
-
-### Host wiring — "Used by N projects" count
-Projects is a library and can't self-register OTP config. To power the
-entities admin's reverse-reference hint, the host app adds:
-```elixir
-config :phoenix_kit_entities,
-  reverse_references: [{"project_status", &PhoenixKitProjects.Statuses.reverse_reference_count/1}]
-```
-Informational only (never a delete-blocker). Counts projects/templates
-currently *sourcing* from a catalog entity — started projects no longer
-reference it (cemented), which is the intended semantics.
-
-### Cross-repo release ordering
-V125 ships in **core `phoenix_kit`** — released, and long since below this
-module's floor (`~> 1.7.231`), so the status feature runs against any core
-the pin admits. The pattern still applies to the *next* cross-repo schema
-change: a migration this module needs can't run until core releases it and
-the `mix.exs` pin is bumped, and projects CI stays red in between. While
-iterating ahead of a core release, develop/test locally via
-`PHOENIX_KIT_PATH=../phoenix_kit` (see `pk_dep/3` in `mix.exs`).
-
-## Sub-projects (project-as-task, core V127)
-
-A **sub-project** is a project embedded inside another project's task
-timeline. The model is an `Assignment` that points at a child `Project`
-via a new nullable `child_project_uuid` (V127) **instead of** a task
-template — so a sub-project gets dependencies and drag-reorder *for free*
-(both are already assignment-level and project-scoped, no changes there).
-
-### Data model
-- `phoenix_kit_project_assignments.child_project_uuid` → FK
-  `phoenix_kit_projects(uuid) ON DELETE RESTRICT` (V127). `task_uuid` lost
-  its `NOT NULL`; a DB `CHECK ((task_uuid IS NOT NULL) <> (child_project_uuid
-  IS NOT NULL))` enforces **exactly one** of task/child-project (mirrored by
-  `Assignment.validate_task_xor_child/1`). A partial **unique** index on
-  `child_project_uuid` makes a project the child of **at most one** parent.
-- `RESTRICT` (not `CASCADE`) is deliberate: a stray child-project delete
-  fails loudly instead of silently mutating a parent's task list. Recursive
-  teardown is orchestrated in the context (in a transaction), not by the DB.
-
-### Source of truth + rollup (denormalized, NOT computed-on-read)
-The **child project is the source of truth**; the parent's linking
-assignment carries **denormalized rollup fields** (`status` /
-`progress_pct` / `estimated_duration` / `completed_at`) synced whenever the
-child changes. So every existing read site (schedule math,
-`recompute_project_completion`, dashboards, sorting, `project_summaries`)
-keeps working **unchanged** — no per-read polymorphic branch.
-- `child_project_rollup/1` snapshots the child's summary into the shape
-  `Assignment.subproject_changeset/2` casts. Hours are stored in **minutes**
-  (`round(total_hours * 60)`, unit `"minutes"`) so sub-hour child totals
-  survive the integer `estimated_duration` column. A **completed** sub-project
-  reads as 100% (the module's `progress_pct` is the slider average, and
-  completing a task doesn't move its slider).
-- **Upward propagation:** `recompute_project_completion/2` tail-calls
-  `propagate_rollup_to_parent/2` — after a child settles, it refreshes the
-  parent's linking row and recomputes the parent, climbing the tree one level
-  at a time. Bounded by `@max_rollup_depth` (64) as a fail-closed guard; the
-  tree is acyclic by construction (single-parent unique index + inline-only
-  creation).
-- `batched_planned_hours/2` uses a **LEFT** join to `:task` so sub-project
-  rows (no task) aren't dropped; their hours come from the denormalized
-  `estimated_duration`.
-
-### Context API
-- `create_subproject/2` — one transaction: creates the child project
-  (immediate-start, not a template) + the linking assignment. Rejects
-  template parents (`:template_subproject_unsupported`) and unknown parents
-  (`:parent_not_found`).
-- `delete_assignment/1` — for a sub-project row, deletes the child project
-  subtree (linking row first, then the tree) in a transaction.
-- `delete_project/1` — recursive over sub-project descendants
-  (`delete_project_tree_in_tx/1`); broadcasts `:project_deleted` per node.
-- `list_projects/1` + dashboard buckets + `count_projects/1` **exclude**
-  projects that are someone's child (`exclude_subprojects/1`, a self-correcting
-  `NOT IN` subquery) — sub-projects are reached by drilling into the parent,
-  never shown as standalone rows. `assignment_status_counts/0` excludes the
-  rollup-placeholder linking rows (`is_nil(child_project_uuid)`).
-- `Assignment.label/2` — single locale-aware display helper (child name OR
-  task title); used by every render site (timeline, dependency badge, comment
-  header, remove-confirm, activity metadata) so none dereferences a nil task.
-
-### Templates
-Sub-projects work on templates too: `create_subproject/2` makes the child
-inherit the parent's `is_template` flag, so a sub-project added to a template is
-itself a **sub-template**. `create_project_from_template/2` **deep-clones** the
-whole sub-project subtree — `clone_subproject_assignment_in_tx/2` →
-`deep_clone_project_in_tx/2` recursively copies each child template into a fresh
-real project and re-links it (the single-parent unique index forbids two parents
-sharing a child, so the deep copy is mandatory, not optional). Sub-templates are
-hidden from `list_templates/0` / `count_templates/0` via `exclude_subprojects/1`,
-same as sub-projects are hidden from the projects list.
-
-### Dashboard (hierarchical, `OverviewLive` + `RunningCard`)
-`Projects.project_tree_summary/1` returns a recursive node (per-level task
-breakdown + nested children); the Running card renders it as an indented
-outline — top summary (`N tasks · M sub-projects`) + status breakdown
-(`X done · Y in progress · Z todo`) + each sub-project nested with its own
-summary/breakdown, all the way down. **Empty sub-projects are neutral in the
-progress average** (excluded from both `project_summaries/1`'s `progress_pct`
-and the tree node's) so they don't drag a parent's % down before they have
-tasks. The top node still carries `total` / `progress_pct` / `planned_end`, so
-the tier + sort helpers read it like the old flat summary.
-
-### UI (`ProjectShowLive`)
-- **Add/edit via the same form tasks use** — "Add sub-project" (on projects
-  **and** templates) links to `AssignmentFormLive` with `?kind=subproject`
-  (carried through emit via `resolve_action_params`'s `"kind"`); the sub-project
-  row's Actions → "Edit" opens `AssignmentFormLive(:edit)` on the linking row.
-  In sub-project mode the form is a top-level render branch (`@kind ==
-  "subproject"`, the task form path untouched): name + description + assignee
-  (a `%Project{}`/child changeset as `@sp_form`, `as: :subproject`) plus the
-  **standard dependency section** — pending deps on `:new`, live add/remove on
-  `:edit`, reusing the existing `add_pending_dep`/`add_assignment_dep` handlers.
-  `save_subproject` → `create_subproject/2` + `flush_pending_deps` (new) or
-  `update_project/2` (edit). **No bespoke inline dependency picker, no modal** —
-  a sub-project's dependencies live on its add/edit page like any task's.
-- **Create new vs. nest existing** — on `:new` the sub-project form shows a
-  `<.nav_tabs on_change="set_sp_mode">` ("Create new" / "Nest existing"). "Nest
-  existing" swaps the create-new fields for a single `link_child_uuid` picker of
-  `available_projects_to_link/1` (standalone, same `is_template`, not the parent
-  or an ancestor); submit routes to `link_subproject/2` instead of
-  `create_subproject/2`. The picker form renders **no** `subproject[...]` inputs,
-  so `validate_subproject`/`save_subproject` have catch-all clauses for the
-  no-`"subproject"`-key payload. The inverse is the sub-project row's Actions →
-  **"Make standalone"** (`detach_subproject` on the show LV) which deletes only
-  the linking assignment (`data-confirm`), leaving the child + its subtree as a
-  top-level project. Both emit `projects.subproject_linked` /
-  `projects.subproject_detached`.
-- The sub-project row is a read-only variant (child name + "Sub-project" badge +
-  rolled-up tasks/hours/progress). A chevron toggles a slide-down panel
-  (`toggle_subproject`) revealing the child's tasks **rendered with the same
-  `task_body/1` component as the top-level timeline, just inset**
-  (`draggable={false}`); nested sub-projects show as a compact link. Child-task
-  events work because `scoped_assignment/2` accepts any displayed assignment and
-  `recompute_owning_subproject/2` recomputes the child's project so the rollup
-  climbs. There's an "Open sub-project" link to the child's full page. Dependencies render and can be added/removed
-  on the row (`add_subproject_dep` reuses `available_dependencies` +
-  `add_dependency`). Drag-reorder works unchanged (the row is a `sortable-item`).
-- Activity: `projects.subproject_created` / the existing
-  `projects.assignment_removed` on teardown.
-
-### Assignee on projects + sub-projects (core V128)
-A project carries the same polymorphic assignee as a task — `assigned_team_uuid`
-/ `assigned_department_uuid` / `assigned_person_uuid` on `phoenix_kit_projects`
-(V128), one-of via a `num_nonnulls(...) <= 1` CHECK + `Project.validate_single_assignee/1`.
-Because a sub-project IS a project, this one set of columns covers assigning a
-sub-project too (its assignee lives on the child project row). `ProjectFormLive`
-gains the team/department/person picker (mirrors `AssignmentFormLive` —
-`assign_type` + `clear_other_assignees/2`); the **Add sub-project** modal carries
-the same picker so you can assign at creation (`subproject_assignee_attrs/1` →
-`create_subproject/2`). Display reuses the show LV's `assignee_type/1` +
-`assignee_label/1` (they already work on any record with the assignee fields) on
-the project header and each sub-project row; `get_project_with_assignee/1` +
-the deep child preload in `@assignment_preloads` load the names.
-
-### Linking guards (cycle-safe)
-`link_subproject/2` is the "nest an existing project" path the inline-creation
-flow originally deferred. It validates before assigning `child_project_uuid`:
-`:self_link` (parent == child), `:kind_mismatch` (`is_template` differ),
-`:would_create_cycle` (`child.uuid in project_ancestor_uuids(parent.uuid)` —
-`walk_ancestors/2` climbs linking rows), and `:already_subproject` (the partial
-unique index on `child_project_uuid`, caught at insert and mapped). The
-depth-capped propagation still fails closed on corrupt data as a backstop.
-
-### Cross-repo schema dependency
-V127 (`child_project_uuid` on `phoenix_kit_project_assignments`) **and V128**
-(assignee columns on `phoenix_kit_projects`) live in **core `phoenix_kit`**
-(`@current_version` 128). Both shipped in `1.7.128`, well below this module's
-current floor (`~> 1.7.231`), so the sub-project features run against any core
-the pin admits. When iterating on the schema ahead of a core release,
-develop/test locally via `PHOENIX_KIT_PATH=../phoenix_kit`. Tests:
-`test/phoenix_kit_projects/integration/subprojects_test.exs` (context) +
-`test/phoenix_kit_projects/web/project_show_subprojects_test.exs` (LV render).
-
-## Multilang user-input content
-
-User-typed content (project name + description, task title +
-description, assignment description) is translatable per language,
-on top of the standard gettext-based UI translation. Driven by core's
-**Languages module** — when 2+ languages are enabled there, the forms
-auto-render `<.multilang_tabs>` and `<.translatable_field>`s from
-`PhoenixKitWeb.Components.MultilangForm`; when disabled or only one
-language, the forms degrade to the regular single-language layout
-(no tabs, no skeletons).
-
-### Storage shape (V112)
-
-Each of the three project tables grew a `translations JSONB NOT NULL
-DEFAULT '{}'::jsonb` column:
-
-  * `phoenix_kit_projects.translations`            — `name`, `description`
-  * `phoenix_kit_project_tasks.translations`       — `title`, `description`
-  * `phoenix_kit_project_assignments.translations` — `description`
-
-Primary-language values stay in their dedicated columns (`name`,
-`title`, `description`); the JSONB only holds non-primary overrides:
-
-```json
-{
-  "es-ES": {"name": "Proyecto", "description": "..."},
-  "fr-FR": {"name": "Projet"}
-}
-```
-
-This is the **"settings translations"** variant of
-`<.translatable_field>` (per the component's docstring) — different
-from the entity-data variant where everything goes inside a `data`
-JSONB with a `_primary_language` marker. Projects has no per-record
-custom fields, so the simpler primary-stays-in-columns shape applies.
-
-### Read paths
-
-Each schema exposes `localized_<field>/2` helpers with primary-fallback
-semantics — `nil`/empty override → the primary column. Pass the
-current locale (or `nil`):
+Test DB `phoenix_kit_projects_test` (override with `PGDATABASE`). Three levels:
+
+- **Unit tests** in `test/phoenix_kit_projects/` — schemas, changesets, pure
+  helpers (duration math, the `Errors` atom dispatcher). Always run.
+- **Integration tests** in `test/phoenix_kit_projects/integration/` — a real
+  PostgreSQL via the Ecto sandbox, through `PhoenixKitProjects.DataCase`
+  (which tags them `:integration`).
+- **LiveView smoke tests** in `test/phoenix_kit_projects/web/` — drive LVs via
+  `Phoenix.LiveViewTest.live/2` against the test Endpoint + Router, through
+  `PhoenixKitProjects.LiveCase`.
+
+Integration tests are auto-excluded when the DB is unreachable; `mix test`
+never hard-fails on a missing DB. Unit tests run regardless
+(`mix test --exclude integration` forces that).
+
+`test_helper.exs` builds the schema the way a host does: it starts the repo,
+runs core's versioned migrations via
+`PhoenixKit.Migration.ensure_current(TestRepo, log: false)` — **not** the
+`Ecto.Migrator.run(TestRepo, [{0, PhoenixKit.Migration}], …)` pattern, which
+goes silently stale — then runs the module's own chain through
+`Ecto.Migrator.run/4` keyed on `Schema.current_version()`. It also starts
+`PhoenixKit.PubSub.Manager`, `PhoenixKit.Users.RateLimiter.Backend` (staff
+placeholder registration reaches core's Hammer-backed limiter), pins the URL
+prefix to `/` (so `Paths.*` matches the test router's `/en/admin/projects`
+scope), and starts `PhoenixKitProjects.Test.Endpoint` (`server: false`).
+
+Support modules in `test/support/`:
+
+| Module | What it is |
+|---|---|
+| `Test.Repo` | the test repo |
+| `Test.Endpoint` | minimal `Phoenix.Endpoint` for LV tests; no port opened |
+| `Test.Router` | minimal router whose paths match `Paths.*` (base scope `/en/admin/projects`) |
+| `Test.Layouts` | root + app layouts; `app/1` renders `#flash-info` / `#flash-error` / `#flash-warning` so smoke tests can assert flash via `render(view) =~ "Saved."`, and renders `page_crumbs` as `data-crumb` anchors |
+| `Test.Hooks` | `:assign_scope` `on_mount` reading `"phoenix_kit_test_scope"` from the session |
+| `Test.SchemaMigration` | wraps the module chain for `Ecto.Migrator` |
+| `DataCase` | `:integration` tag + SQL Sandbox; hosts `fixture_task/1`, `fixture_project/1`, `fixture_template/1`, `errors_on/1` |
+| `LiveCase` | `fake_scope/1` + `put_test_scope/2` for a real `%PhoenixKit.Users.Auth.Scope{}`; reuses `DataCase` fixtures |
+| `ActivityLogAssertions` | `assert_activity_logged/2`, `refute_activity_logged/2` |
+| `QueryCounter` | statement counting for the batched-read tests |
+| `StatusFixtures` | workflow-status catalog fixtures |
+
+Env vars honoured: `PGUSER` / `PGPASSWORD` / `PGHOST` / `PGDATABASE` /
+`PGPOOL` (a positive integer; the default `schedulers_online() * 2` opens
+dozens of connections). On a Mac whose Postgres role is not `postgres`, run
+`PGUSER=<role> mix test` — the default is `postgres` and a missing role
+surfaces as a pool timeout that reads like flakiness.
+`config :phoenix_kit_projects, :display_log_flush_ms, 30` shrinks the
+slider-audit coalescing window (runtime default 1s) so tests can wait it out.
+
+## Feature notes
+
+| Feature | The constraint that must hold | Guide |
+|---|---|---|
+| Embedding via `live_render` | Every LV is embeddable and must stay so — an LV that exports `handle_params/3` cannot mount off-router. The host passes identity, the host authorizes. | [`dev_docs/guides/embedding.md`](dev_docs/guides/embedding.md), [`dev_docs/embedding_audit.md`](dev_docs/embedding_audit.md), [`dev_docs/embedding_emit.md`](dev_docs/embedding_emit.md) |
+| The project page, list pages, breadcrumbs | Every tab target is validated against the feature map / contributed tab list — a forged `switch_tab` lands on the list, never on a gated tab. Timeline and Calendar render the SAME `ScheduleLayout` walk, so they can never disagree about a date. | [`dev_docs/guides/project-page.md`](dev_docs/guides/project-page.md) |
+| Quick-add and the add-task sheet | The write is ONE transaction that locks the project row (`FOR UPDATE`) and does nothing else — broadcasts fire after commit, the activity log stays with the LiveView. The full form calls the same helper, so the two paths cannot drift. | [`dev_docs/guides/quick-add.md`](dev_docs/guides/quick-add.md) |
+| Workflow statuses | Statuses cement at `started_at` and the source freezes with them: `save(:edit)` runs `Statuses.lock_status_source/2` server-side, so a crafted submit past the disabled control cannot change a started project's source. | [`dev_docs/guides/workflow-statuses.md`](dev_docs/guides/workflow-statuses.md) |
+| Sub-projects | The child project is the source of truth; the parent's linking assignment carries denormalized rollup so every existing read site works unchanged. Exactly one of `task_uuid` / `child_project_uuid` (DB CHECK + changeset), at most one parent (partial unique index), `ON DELETE RESTRICT`. | [`dev_docs/guides/sub-projects.md`](dev_docs/guides/sub-projects.md) |
+| Multilang user-input content | Non-translatable fields must be siblings OUTSIDE `<.multilang_fields_wrapper>` — the wrapper keys its id on `@current_lang`, so morphdom re-mounts everything inside on a tab switch and their state is lost. | [`dev_docs/guides/multilang-content.md`](dev_docs/guides/multilang-content.md) |
+| Whiteboards | A board's shapes are core annotations anchored by `target_type: "projects_whiteboard"` + `target_uuid`; `file_uuid` stays nullable so file-backed boards keep rendering through the file viewer. | [`dev_docs/guides/whiteboards.md`](dev_docs/guides/whiteboards.md) |
+| Dashboard widgets | One-way contract: this module never depends on `phoenix_kit_dashboards`. Every widget guards its reads behind `Helpers.available?/0` and `Statuses.available?/0` and renders an empty state rather than crashing the host board; a stateful LiveComponent's `render/1` returns a single static root. | [`dev_docs/guides/dashboard-widgets.md`](dev_docs/guides/dashboard-widgets.md) |
+| Schedule math and completion | Durations normalize to hours through `Task.to_hours/3` only; per-task `counts_weekends` overrides the project setting. `recompute_project_completion/1` runs after every assignment status/progress/removal change. | [`dev_docs/guides/schedule-math.md`](dev_docs/guides/schedule-math.md) |
+
+### Embedding host contract
+
+The three tables a host app depends on. Full prose in
+[`dev_docs/guides/embedding.md`](dev_docs/guides/embedding.md).
+
+`live_render` session keys — all optional unless noted:
+
+| Key | Applies to | Meaning |
+|---|---|---|
+| `"id"` | `ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`, form LVs on `:edit` | **Required.** String UUID of the record |
+| `"project_id"` | `AssignmentFormLive` (`:new` and `:edit`) | **Required.** Owning project UUID |
+| `"live_action"` | form LVs | `"new"` \| `"edit"`; defaults `:new`, resolved via `String.to_existing_atom/1` so unknown values fall back |
+| `"template"` | `ProjectFormLive` `:new` | Template UUID that prefills the picker |
+| `"view"` | `TasksLive` | `"list"` \| `"groups"`; defaults `"list"` |
+| `"headless"` | `ProjectGanttLive`, `ProjectCalendarLive` | Drops the back-link when nested as a tab |
+| `"wrapper_class"` | all | Overrides the outermost `<div>` class (default is the standalone-admin class) |
+| `"locale"` | all | Restores both Gettext backends inside the embedded mount; absent is a no-op |
+| `"current_user_uuid"` | all | The viewer's UUID **as a string, never a `%User{}`**. Absent/unknown/inactive degrades to anonymous, never crashes |
+| `"redirect_to"` | form LVs | Path `push_navigate`d on save / mount-error instead of the admin default |
+| `"tab_url_sync"` | `ProjectShowLive` | Real boolean; **defaults `false`** in embeds — an embed must not rewrite the host's address bar |
+| `"mode"` | all | `"navigate"` (default) \| `"emit"` \| `"popup"` |
+| `"pubsub_topic"` | all | **Required** when `mode` is `"emit"` or `"popup"` |
+| `"frame_ref"` | all | Race-safe pop identity, inherited from PopupHost |
+| `"close_on"` | all | Subset of `["closed", "saved", "deleted"]`; defaults `["closed"]` |
+
+Emit-mode event vocabulary (UI-intent verbs, deliberately disjoint from
+`PhoenixKitProjects.PubSub`'s content verbs so `handle_info` clauses never
+collide):
 
 ```elixir
-Project.localized_name(project, lang)
-Project.localized_description(project, lang)
-Task.localized_title(task, lang)
-Task.localized_description(task, lang)
-Assignment.localized_description(assignment, lang)
+{:projects, :opened,  %{lv, session, frame_ref}}
+{:projects, :closed,  %{frame_ref}}
+{:projects, :saved,   %{kind, action, record, close, next, frame_ref}}
+{:projects, :deleted, %{kind, uuid, close, frame_ref}}
+{:projects, :dirty,   %{frame_ref, dirty}}   # unsaved edits ⇒ host makes the frame un-closeable
 ```
 
-The current-content language for read paths comes from
-`PhoenixKitProjects.L10n.current_content_lang/0`, which reads
-`Gettext.get_locale(PhoenixKitWeb.Gettext)` — the locale the parent
-app set from the URL prefix (`/bs/...` → `"bs"`). Activity-log
-metadata always captures the **primary** column value
-(`metadata.name = project.name`), not the localized one — audit
-trails are locale-agnostic by design.
+`record` on `:saved` is **`%{uuid: ...}` only**, never the full Ecto struct —
+the payload rides a host-supplied topic that may be relayed over the
+client-readable wire, and a preloaded record would leak PII. `close:` is
+emitter-controlled and `PopupHostLive` pops iff `close: true` AND `frame_ref`
+matches the top frame.
 
-### Form mechanics
+`PopupHostLive`'s own session keys:
 
-LVs that need multilang inputs:
+| Key | Default | Notes |
+|---|---|---|
+| `"root_view"` | `nil` | The LV rendered as the host's base frame |
+| `"placement"` | `"center"` | `"end"` renders every frame as a full-height right-hand sheet |
+| `"max_width"` | `6xl` centered, `2xl` as a drawer | any core `max_width` value (`sm` … `7xl`, `full`) |
 
-1. `import PhoenixKitWeb.Components.MultilangForm`
-2. Call `mount_multilang(socket)` in `mount/3` — adds
-   `:multilang_enabled`, `:primary_language`, `:current_lang`,
-   `:language_tabs`, `:show_multilang_tabs` and attaches the
-   debounce hook. If the Languages module is off, all of these are
-   defaults — the components no-op and inputs render as plain
-   primary-language fields.
-3. `handle_event("switch_language", %{"lang" => code}, socket)` →
-   `handle_switch_language(socket, code)`. The component's 150 ms
-   debounce handles rapid click-through.
-4. In `validate` and `save`: pass the form params through
-   `PhoenixKitProjects.Web.Helpers.merge_translations_attrs(attrs,
-   in_flight_record, schema_module.translatable_fields())` before
-   building the changeset. This:
-     * strips Phoenix LV's `_unused_*` sentinel keys from the
-       submitted `translations` map;
-     * drops empty/`nil` overrides so cleared secondary fields
-       fall back cleanly to the primary value;
-     * deep-merges on top of the record's existing JSONB so other
-       languages aren't clobbered;
-     * preserves primary-language column values when a secondary-tab
-       submission lacks them (the primary `<input>`s aren't in the
-       DOM on secondary tabs, so a naive cast would treat them as
-       nil and trigger `validate_required` failures).
-5. `in_flight_record/3` uses `Ecto.Changeset.apply_changes/1` on the
-   form's source so the user's already-typed primary values from
-   prior `validate` events become the merge baseline. Needed for
-   the "type EN-US, switch to BS, save" flow on `:new` records where
-   `socket.assigns[:project]` is the pristine `%Project{}`.
+`PopupHostLive` forwards `current_user_uuid` and `locale` into every child
+session, so a popup-host integration passes the viewer's uuid once.
 
-### Form layout rule (load-bearing)
+## Versioning & releases
 
-Translatable fields (`name`, `title`, `description`) go inside
-`<.multilang_fields_wrapper>`. Non-translatable fields (start mode,
-scheduled date, weekends, durations, assignee picker, status, deps)
-must be **siblings outside the wrapper** — otherwise their state is
-lost on every language switch (the wrapper keys its id on
-`@current_lang`, so morphdom re-mounts everything inside on tab
-change). `ProjectFormLive` and `TaskFormLive` use a two-card layout
-(translatable card + settings card) inside one `<.form>`;
-`AssignmentFormLive` has only one translatable field, so it renders
-the tabs above the form and uses `<.translatable_field>` standalone
-without a `multilang_fields_wrapper`.
+SemVer. The version is single-sourced in `mix.exs` (`@version`); `version/0`
+reads it at compile time and the behaviour test asserts against
+`Mix.Project.config()[:version]`, so nothing else needs bumping.
 
-## What this module does NOT have
+Release procedure (the steps the maintainer runs):
 
-Pinning the deliberate non-features so future-me doesn't propose them as
-"missing":
+1. Bump `@version` in `mix.exs`; add a `CHANGELOG.md` entry headed `## x.y.z - YYYY-MM-DD`.
+2. `mix precommit` clean.
+3. Commit (`"Bump version to x.y.z"`) and push; verify the push landed.
+4. `mix hex.publish`.
+5. Tag, matching the form of the newest existing tag (`git tag --sort=-creatordate | head -1` shows it), and push the tag.
+6. GitHub release via `gh release create` if the repo does those (`gh release list` shows whether it does).
 
-- **No tenant scoping on PubSub topics** — `projects:all` /
-  `projects:tasks` / `projects:templates` fan out to every subscriber.
-  Per-tenant scoping is a framework-wide gap (no other feature module
-  partitions PubSub by tenant either); the right shape is to thread an
-  org/tenant key through every topic when core grows that capability.
-  Per-project topic (`projects:project:<uuid>`) is already safe — you
-  need the UUID to subscribe.
-- **`ProjectShowLive` is mount-only by design** — initial DB reads happen
-  at the tail of `mount/3`, not in `handle_params/3`. The 0.2.0 CHANGELOG
-  noted a `handle_params/3` refactor across all list/show/form LVs to
-  share the disconnected/connected query path; on `ProjectShowLive` that
-  was reverted (issue #5) because Phoenix LiveView refuses to mount any LV
-  exporting `handle_params/3` outside a router live route, which blocks
-  embedding via `live_render`. Same constraint applies if a sibling LV
-  ever needs to be embedded — drop `handle_params/3` and move its body
-  into the mount tail.
-- **No event-debounce / minimal-delta on OverviewLive `handle_info`** —
-  every `:projects, _, _` broadcast triggers a full dashboard reload
-  (~10 queries). Reviewer flagged in PR #1 review item #7. Same scope
-  reason as above.
-- **No status-helper extraction** — `status_color/1` /
-  `status_badge_class/1` / `status_label/1` are duplicated between
-  `OverviewLive` and `ProjectShowLive`. Cosmetic; surfaced for a future
-  extraction batch when a third call site appears.
-- **No HTTP boundary** — context calls only PostgreSQL via Ecto and
-  reads core's settings; no `Req.get` / `:httpc.request` / external
-  service. So no SSRF guard, no `Req.Test`-via-app-config stub pattern.
-- **No own migrations** — V100 (staff) and V101 (projects) live in core
-  `phoenix_kit`. Schema changes go in the next core `VNN`. Test-only
-  setup migration inlines V100 + V101 + V105 verbatim, idempotent so a
-  future Hex release containing them is a no-op.
-- **No HTTP backend for translations** — translations live in this
-  repo's `priv/gettext/` (module-domain strings, `PhoenixKitProjects.Gettext`
-  backend) and in core's `priv/gettext/` (the ~16 common strings reached
-  via the `PhoenixKitWeb.Gettext` backend). See the Gettext entry under
-  Conventions and `dev_docs/i18n_triage.md` for the split.
-- **No own Errors module for HTTP error shapes** — `Errors.message/1`
-  covers `:not_found` / `:template_not_found` / `:task_not_found` plus
-  a generic fallback. Add a new branch when a context fn introduces a
-  new `{:error, atom}` shape.
+Tags are immutable pointers: never tag before the commit is pushed and the
+publish has succeeded.
 
-## Planned: per-task work-hours toggle + per-user work schedule
+`priv/media/` is RUNTIME OUTPUT — the Storage module's local bucket writes
+uploads there and a test run fills it. Hex resolves `files:` against the
+working directory, not git, so gitignoring is not enough; `mix.exs` carries an
+`exclude_patterns` entry for it. Run the suite before publishing and check.
 
-Deferred enhancement to `Project.planned_end_for/2`'s weekday-only
-model. After V112's fix the model treats every weekday-only duration
-as work hours at a 3:1 calendar:work ratio (24 calendar hours = 8
-work hours). This is fine for multi-day tasks ("5 days = 5 workdays =
-Mon→Fri") but overshoots for short tasks: a 2-hour minute/hour-unit
-task started Sat evening doesn't really need to "wait for Monday
-morning" before it can be considered late — but the proportional
-model says it does.
+## Pull requests & commits
 
-### Design
+- Commit messages start with an action verb (`Add`, `Update`, `Fix`, `Remove`, `Merge`). No AI attribution and no `Co-Authored-By` trailers.
+- Version bumps and CHANGELOG entries land with the release commit on upstream, not in feature PRs.
+- Review files live in `dev_docs/pull_requests/{year}/{pr_number}-{slug}/{AGENT}_REVIEW.md`, one file per reviewing agent, never edited by another agent; `FOLLOW_UP.md` records how each finding was resolved. Severities: `BUG - CRITICAL/HIGH/MEDIUM`, `IMPROVEMENT - HIGH/MEDIUM`, `NITPICK`.
 
-A per-task **`count_as_work_hours`** boolean decides which clock the
-task's duration ticks against:
+Module-local additions to that convention:
 
-- **`false` (calendar)** — duration consumes raw calendar time,
-  ignoring weekends/nights. New tasks default to `false` when the
-  form unit is `minutes` or `hours`.
-- **`true` (work hours)** — duration only ticks during work windows.
-  New tasks default to `true` when the form unit is `days` or longer.
-
-The **work schedule** lives on `PhoenixKitStaff.Schemas.Person` as a
-JSONB column `work_schedule` keyed by weekday. Shape:
-
-```json
-{
-  "monday":    {"start": "09:00", "end": "17:00"},
-  "tuesday":   {"start": "09:00", "end": "17:00"},
-  "wednesday": {"start": "09:00", "end": "17:00"},
-  "thursday":  {"start": "09:00", "end": "17:00"},
-  "friday":    {"start": "09:00", "end": "17:00"},
-  "saturday":  null,
-  "sunday":    null
-}
-```
-
-When a `count_as_work_hours: true` task has an `assigned_person_uuid`,
-its planned-end calc walks calendar time consuming budget only inside
-that person's windows. Fallbacks, in order: assignee's
-`work_schedule` → built-in `Mon-Fri 09:00–17:00` default. Tasks
-assigned to a team/department (not a single person) use the default;
-multi-assignee schedule resolution is out of scope for v1.
-
-### Why this lives on Person, not Task
-
-The schedule is a fact about the human, not the work — parallel to
-the existing `work_location` / `work_phone` fields. The staff
-module's "NOT a full HRIS" caveat in `phoenix_kit_staff/AGENTS.md`
-forbids PTO ledgers and payroll; static work hours are closer to
-existing per-person profile data and were judged acceptable.
-
-### Scope (when this lands)
-
-- **V113 migration** (in core `phoenix_kit`):
-  - `count_as_work_hours BOOLEAN NOT NULL DEFAULT false` on
-    `phoenix_kit_project_tasks` and `phoenix_kit_project_assignments`
-  - `work_schedule JSONB NOT NULL DEFAULT '{}'` on
-    `phoenix_kit_staff_people`
-- **Schemas**: add the field to `Task`, `Assignment`, `Person`.
-- **Math** — refactor `planned_end_for/2` and `work_hours_elapsed/2`
-  to walk per-task. The current single-sum-of-hours design must be
-  replaced with a sequential walk: iterate tasks in `position` order,
-  extending the running cursor by each task's calendar OR work-window
-  budget. `Projects.project_summaries/1` needs to return enough
-  per-task data (or a precomputed `planned_end`) instead of a single
-  scalar `total_hours`.
-- **UI**:
-  - `task_form_live.ex` / `assignment_form_live.ex` — checkbox
-    "Count as work hours" visible when unit is minutes/hours; hidden
-    (always `true`) for days+.
-  - `person_form_live.ex` (in staff) — 7-row schedule editor (Mon–Sun
-    each with start + end time inputs; empty pair = day off).
-- **No backfill** — pre-launch, so existing rows take the column
-  defaults. New rows inherit the unit-driven default at create time.
-
-### Out of scope for v1
-
-- Multiple assignees per task with different schedules — uses default.
-- Lunch breaks / split windows per day — single window per day.
-- Holidays / time-off / PTO — explicitly forbidden by staff module.
-- Per-project schedule override — schedule is always per-assignee or
-  the built-in default, never per-project.
-
-### Origin
-
-Surfaced 2026-05-11 while fixing `planned_end_for/2`'s weekend
-handling (the wider audit that produced the "calendar past planned_end
-forces expected_pct = 100" fix). Resolves the impedance mismatch
-where the proportional model correctly handles "5 days = Mon→Fri" but
-overstates "52 minutes started Saturday evening" as not-yet-due until
-Monday morning.
+- `{pr_number}` is the bare PR number (`35-public-portal-review-queue`, not
+  `projects35-…`) — the path is already scoped to this repo, and a prefix
+  breaks the numeric sort. `{slug}` is short, lowercase, hyphenated, and
+  describes the change rather than the review.
+- Name a review for its author, not its stage: `phase1.md` tells a later reader
+  nothing about who wrote it or whether to trust it. Put the phase in the
+  document's heading instead. `REVIEW.md` is a review with no agent behind it;
+  `AGGREGATED_REVIEW.md` is a synthesis sitting beside the originals rather
+  than replacing them; `README.md` is the PR's own summary, not a review.
+- Nothing review-shaped belongs at the repo root. Work that never was a PR
+  still gets a folder here, keyed to whatever does identify it (a commit sha,
+  or a plain name whose first paragraph states that it is not a PR folder).
+- Commit the review folder. An uncommitted review is one `git clean` from gone.
 
 ## TODOs
 
-Workspace-tracked cleanups not ready for an inline `# TODO` in `lib/`.
-
-### Drop the embed-user core-helper fallback (after the next core release)
-
-`Web.Helpers.assign_embed_user/2` delegates to core's
-`PhoenixKitWeb.Users.Auth.assign_embedded_current_user/2` **only when the
-running `phoenix_kit` exposes it** — a `function_exported?`/`apply`
-forward-compat guard — and otherwise falls back to a local copy
-(`local_assign_embed_user/2` + `resolve_embed_identity/1`) so the
-Hex-pinned build stays green against older cores. The two paths are
-behaviourally identical.
-
-Once the `phoenix_kit` requirement floor in `mix.exs` includes the release
-that ships `assign_embedded_current_user/2`: **remove the guard, the
-`local_assign_embed_user/2` fallback, and `resolve_embed_identity/1`, and
-call the core helper directly.** The core helper landed in core's local
-tree (unpushed, riding a separate core change) on 2026-06-17; this cleanup
-unblocks once that core release is out and the pin is bumped. Reference:
-projects PR #22 (`53224a3`).
+- **Drop the embed-user core-helper fallback.** `Web.Helpers.assign_embed_user/2`
+  delegates to core's `PhoenixKitWeb.Users.Auth.assign_embedded_current_user/2`
+  only when the running `phoenix_kit` exports it (a `function_exported?`/`apply`
+  forward-compat guard), and otherwise falls back to a local copy
+  (`local_assign_embed_user/2` + `resolve_embed_identity/1`) so a Hex-pinned
+  build stays green against older cores. The two paths are behaviourally
+  identical. **Trigger:** once the `phoenix_kit` floor in `mix.exs` includes the
+  release shipping `assign_embedded_current_user/2`, remove the guard, the
+  fallback and `resolve_embed_identity/1`, and call the core helper directly.
+- **Per-task "count as work hours" toggle + per-user work schedule.** The
+  planned replacement for `planned_end_for/2`'s weekday-only approximation;
+  design, migration scope and out-of-scope list are in
+  [`dev_docs/guides/schedule-math.md`](dev_docs/guides/schedule-math.md).
+  **Trigger:** the staff-side `Person.work_schedule` column ships in the same
+  wave; neither side has landed, and they must ship together.
+- **Drop the legacy `status` column** on `phoenix_kit_projects` in a future
+  chain version if no string-lifecycle feature claims the slot (see
+  Conventions).
+- **Dashboards catalog strings are untranslatable from here.**
+  `phoenix_kit_dashboards` translates provider strings through its own backend.
+  **Trigger:** that helper honouring a provider backend.
