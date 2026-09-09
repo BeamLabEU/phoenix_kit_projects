@@ -511,15 +511,101 @@ defmodule PhoenixKitProjects do
     ]
   end
 
+  # ── Dashboard slots ────────────────────────────────────────────────
+
+  @doc """
+  Places a dashboard may be shown inside this module — the duck-typed
+  `phoenix_kit_dashboard_slots/0` contract (no dependency on
+  `phoenix_kit_dashboards`, no `@impl`, exactly like `phoenix_kit_widgets/0`).
+
+  Declaring these is CONSENT. The dashboards package is able to inject a
+  sub-tab under any module's sidebar entry without asking — core groups
+  sub-tabs by parent id with no ownership check — and deliberately does not.
+  Nothing appears under Projects that is not declared right here.
+
+  Two places:
+
+  * **Projects dashboard** — a sidebar sub-tab beside the list and the
+    Overview. Context-free: it is about the whole module, so widgets bound to
+    "the project this page is about" have nothing to read and say so. A widget
+    bound to *the viewer's own* project resolves fine here, which is what makes
+    one shared board work for every project manager.
+  * **Project page** — the tab inside a single project, which already exists
+    as this module's dashboard extension. It supplies `projects.project`, so
+    one shared board serves every project instead of needing a copy each.
+
+  The list stays the project list: neither slot is a landing page. The boss's
+  rule that "an overview and a dashboard are different things" is why Dashboard
+  sits next to Overview rather than replacing it.
+  """
+  @spec phoenix_kit_dashboard_slots() :: [map()]
+  def phoenix_kit_dashboard_slots do
+    [
+      %{
+        key: "projects.module",
+        name: "Projects dashboard",
+        description: "A dashboard beside the project list",
+        icon: "hero-squares-2x2",
+        surface: :module_tab,
+        parent_tab: :admin_projects,
+        path: "projects/dashboard",
+        module_key: module_key(),
+        provides: [],
+        cardinality: :many,
+        priority: 690
+      },
+      %{
+        key: "projects.project",
+        name: "Project page",
+        description: "A dashboard tab inside a single project",
+        icon: "hero-rectangle-group",
+        surface: :record_tab,
+        module_key: module_key(),
+        provides: ["projects.project"],
+        cardinality: :one,
+        priority: 691
+      }
+    ]
+  end
+
+  @doc """
+  Resolves "**my** project" for a viewer — the `viewer` bind source in the
+  dashboards package.
+
+  This is the half of the design that a page subject cannot supply: a shared
+  "Project managers" dashboard in the sidebar has no current project, yet each
+  manager needs their own. Only this module can answer that question, so the
+  dashboards package asks rather than guessing.
+
+  Deliberately conservative. It answers only when there is exactly ONE project
+  the viewer can reach, and otherwise `nil` — which renders as "pick a project"
+  rather than a confident wrong answer. Guessing "most recently visited" was
+  considered and rejected: it is wrong every Monday morning, and being silently
+  shown the wrong project's numbers is worse than being shown none.
+  """
+  @spec phoenix_kit_dashboard_viewer_context(String.t(), term()) :: String.t() | nil
+  def phoenix_kit_dashboard_viewer_context("projects.project", scope) do
+    case PhoenixKitProjects.Projects.list_projects_for(scope, limit: 2) do
+      [project] -> project.uuid
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
+
+  def phoenix_kit_dashboard_viewer_context(_kind, _scope), do: nil
+
   # Paths reach the matcher normalised (URL prefix + locale stripped, no
   # trailing slash): the landing itself and every project page under it —
   # i.e. anything under `projects` that is not one of the sibling subtabs
-  # (`tasks`, `templates`, `overview`). Legacy `list/…` addresses redirect
-  # before they render, so they need no match. A function, not a module
+  # (`tasks`, `templates`, `overview`, `dashboard`). Legacy `list/…` addresses
+  # redirect before they render, so they need no match. A function, not a module
   # attribute — a compiled Regex holds a reference and cannot be injected
   # into a function body.
   defp projects_list_match,
-    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|overview)(/|$))(/.*)?$}}
+    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|overview|dashboard)(/|$))(/.*)?$}}
 
   @impl PhoenixKit.Module
   def admin_tabs do

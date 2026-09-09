@@ -82,11 +82,19 @@ defmodule PhoenixKitProjects.DashboardWidgets do
       [{"First running project", ""}]
   end
 
+  # `context:` marks this field as holding a `projects.project` SUBJECT rather
+  # than an ordinary setting. The field still stores and reads a plain uuid —
+  # nothing about this widget changes — but declaring the kind lets the
+  # dashboards host offer "the project this page is about" and "my project"
+  # as sources for it, and resolve either into this field before render. That
+  # is what lets ONE shared board serve every project instead of needing a
+  # copy per project with the uuid retyped.
   defp project_field do
     %{
       key: "project",
       type: :select,
       label: "Project",
+      context: "projects.project",
       options: project_options(),
       default: ""
     }
