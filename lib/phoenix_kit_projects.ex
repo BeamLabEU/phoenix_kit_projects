@@ -548,7 +548,6 @@ defmodule PhoenixKitProjects do
         icon: "hero-squares-2x2",
         surface: :module_tab,
         parent_tab: :admin_projects,
-        path: "projects/dashboard",
         module_key: module_key(),
         provides: [],
         cardinality: :many,
@@ -600,12 +599,12 @@ defmodule PhoenixKitProjects do
   # Paths reach the matcher normalised (URL prefix + locale stripped, no
   # trailing slash): the landing itself and every project page under it —
   # i.e. anything under `projects` that is not one of the sibling subtabs
-  # (`tasks`, `templates`, `overview`, `dashboard`). Legacy `list/…` addresses
-  # redirect before they render, so they need no match. A function, not a module
+  # (`tasks`, `templates`, `overview`). Legacy `list/…` addresses redirect
+  # before they render, so they need no match. A function, not a module
   # attribute — a compiled Regex holds a reference and cannot be injected
   # into a function body.
   defp projects_list_match,
-    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|overview|dashboard)(/|$))(/.*)?$}}
+    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|overview)(/|$))(/.*)?$}}
 
   @impl PhoenixKit.Module
   def admin_tabs do
