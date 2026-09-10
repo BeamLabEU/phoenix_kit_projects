@@ -543,8 +543,14 @@ defmodule PhoenixKitProjects do
     [
       %{
         key: "projects.module",
-        name: "Projects dashboard",
-        description: "A dashboard beside the project list",
+        # Names and descriptions are OUR strings, so they translate through
+        # OUR catalogue — the dashboards package cannot hold msgids for text
+        # this module authors. `gettext_noop/1` pins them for the extractor,
+        # exactly as the project-extension catalog above does.
+        name: gettext_noop("Projects dashboard"),
+        description: gettext_noop("A dashboard beside the project list"),
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         icon: "hero-squares-2x2",
         surface: :module_tab,
         parent_tab: :admin_projects,
@@ -555,8 +561,10 @@ defmodule PhoenixKitProjects do
       },
       %{
         key: "projects.project",
-        name: "Project page",
-        description: "A dashboard tab inside a single project",
+        name: gettext_noop("Project page"),
+        description: gettext_noop("A dashboard tab inside a single project"),
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
         icon: "hero-rectangle-group",
         surface: :record_tab,
         module_key: module_key(),

@@ -5567,3 +5567,23 @@ msgstr "Ajajoone diagramm"
 #, elixir-autogen, elixir-format
 msgid "Workflow Statuses"
 msgstr "Töövoo olek"
+
+#: lib/phoenix_kit_projects.ex:551
+#, elixir-autogen, elixir-format
+msgid "A dashboard beside the project list"
+msgstr "Töölaud projektide loendi kõrval"
+
+#: lib/phoenix_kit_projects.ex:565
+#, elixir-autogen, elixir-format
+msgid "A dashboard tab inside a single project"
+msgstr "Töölaua vahekaart ühe projekti sees"
+
+#: lib/phoenix_kit_projects.ex:564
+#, elixir-autogen, elixir-format
+msgid "Project page"
+msgstr "Projekti leht"
+
+#: lib/phoenix_kit_projects.ex:550
+#, elixir-autogen, elixir-format
+msgid "Projects dashboard"
+msgstr "Projektide töölaud"

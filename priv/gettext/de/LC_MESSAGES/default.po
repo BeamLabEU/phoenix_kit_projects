@@ -5567,3 +5567,23 @@ msgstr "Zeitleisten-Diagramm"
 #, elixir-autogen, elixir-format
 msgid "Workflow Statuses"
 msgstr "Workflow-Status"
+
+#: lib/phoenix_kit_projects.ex:551
+#, elixir-autogen, elixir-format
+msgid "A dashboard beside the project list"
+msgstr "Ein Dashboard neben der Projektliste"
+
+#: lib/phoenix_kit_projects.ex:565
+#, elixir-autogen, elixir-format
+msgid "A dashboard tab inside a single project"
+msgstr "Ein Dashboard-Tab innerhalb eines einzelnen Projekts"
+
+#: lib/phoenix_kit_projects.ex:564
+#, elixir-autogen, elixir-format
+msgid "Project page"
+msgstr "Projektseite"
+
+#: lib/phoenix_kit_projects.ex:550
+#, elixir-autogen, elixir-format
+msgid "Projects dashboard"
+msgstr "Projekte-Dashboard"

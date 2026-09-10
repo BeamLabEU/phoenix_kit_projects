@@ -5564,3 +5564,23 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Workflow Statuses"
 msgstr ""
+
+#: lib/phoenix_kit_projects.ex:551
+#, elixir-autogen, elixir-format
+msgid "A dashboard beside the project list"
+msgstr ""
+
+#: lib/phoenix_kit_projects.ex:565
+#, elixir-autogen, elixir-format
+msgid "A dashboard tab inside a single project"
+msgstr ""
+
+#: lib/phoenix_kit_projects.ex:564
+#, elixir-autogen, elixir-format
+msgid "Project page"
+msgstr ""
+
+#: lib/phoenix_kit_projects.ex:550
+#, elixir-autogen, elixir-format
+msgid "Projects dashboard"
+msgstr ""

@@ -5586,3 +5586,23 @@ msgstr "Wykres osi czasu"
 #, elixir-autogen, elixir-format
 msgid "Workflow Statuses"
 msgstr "Status przepływu pracy"
+
+#: lib/phoenix_kit_projects.ex:551
+#, elixir-autogen, elixir-format
+msgid "A dashboard beside the project list"
+msgstr "Pulpit obok listy projektów"
+
+#: lib/phoenix_kit_projects.ex:565
+#, elixir-autogen, elixir-format
+msgid "A dashboard tab inside a single project"
+msgstr "Karta pulpitu wewnątrz pojedynczego projektu"
+
+#: lib/phoenix_kit_projects.ex:564
+#, elixir-autogen, elixir-format
+msgid "Project page"
+msgstr "Strona projektu"
+
+#: lib/phoenix_kit_projects.ex:550
+#, elixir-autogen, elixir-format
+msgid "Projects dashboard"
+msgstr "Pulpit projektów"
