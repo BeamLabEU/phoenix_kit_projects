@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.24.0 - 2026-09-11
+
+PR #43 — declares the two places a dashboard can appear inside Projects.
+
+### Added
+
+- **Dashboard slots.** `PhoenixKitProjects.phoenix_kit_dashboard_slots/0` — a
+  duck-typed contract (mirrors `phoenix_kit_widgets/0`; no dependency on
+  `phoenix_kit_dashboards`) declaring two places a dashboard may be shown:
+  a sidebar sub-tab beside the project list ("Projects dashboard",
+  context-free — a widget bound to *the viewer's own* project still resolves
+  there) and the Dashboard tab inside every project page ("Project page",
+  supplying the `projects.project` context so one shared board serves every
+  project, overridable per project from its Modules panel).
+- **`phoenix_kit_dashboard_viewer_context/2`** — resolves "my project" for a
+  viewer on the module-wide slot: answers only when exactly one project is
+  reachable, `nil` otherwise, rather than guessing "most recently visited".
+- The widgets' shared project-picker field now declares
+  `context: "projects.project"`, letting the dashboards host offer "the
+  project this page is about" / "my project" as bind sources for it.
+
+### Fixed
+
+- `mix.exs` declared `phoenix_kit_templates` as a dependency with no matching
+  entry in `mix.lock`, so a clean checkout stopped at "the dependency is not
+  locked" before compiling anything — invisible to every gate in the release
+  playbook, which runs after `deps.get`.
+- 7 user-visible strings (permission-matrix label/description/sub-permission,
+  4 per-project subtab labels) reached no gettext catalogue at all across all
+  7 locales.
+
 ## 0.23.3 - 2026-09-07
 
 ### Fixed
