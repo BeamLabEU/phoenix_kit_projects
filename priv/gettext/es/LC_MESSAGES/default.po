@@ -5568,22 +5568,22 @@ msgstr "Diagrama de cronología"
 msgid "Workflow Statuses"
 msgstr "Estado del flujo de trabajo"
 
-#: lib/phoenix_kit_projects.ex:551
+#: lib/phoenix_kit_projects.ex:554
 #, elixir-autogen, elixir-format
 msgid "A dashboard beside the project list"
 msgstr "Un panel junto a la lista de proyectos"
 
-#: lib/phoenix_kit_projects.ex:565
-#, elixir-autogen, elixir-format
-msgid "A dashboard tab inside a single project"
-msgstr "Una pestaña de panel dentro de un proyecto"
-
-#: lib/phoenix_kit_projects.ex:564
+#: lib/phoenix_kit_projects.ex:571
 #, elixir-autogen, elixir-format
 msgid "Project page"
 msgstr "Página de proyecto"
 
-#: lib/phoenix_kit_projects.ex:550
+#: lib/phoenix_kit_projects.ex:553
 #, elixir-autogen, elixir-format
 msgid "Projects dashboard"
 msgstr "Panel de proyectos"
+
+#: lib/phoenix_kit_projects.ex:573
+#, elixir-autogen, elixir-format
+msgid "The Dashboard tab on every project — a project can override it"
+msgstr "La pestaña Panel en todos los proyectos: un proyecto concreto puede anularla"

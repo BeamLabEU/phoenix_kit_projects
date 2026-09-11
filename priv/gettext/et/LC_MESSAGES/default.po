@@ -5568,22 +5568,22 @@ msgstr "Ajajoone diagramm"
 msgid "Workflow Statuses"
 msgstr "Töövoo olek"
 
-#: lib/phoenix_kit_projects.ex:551
+#: lib/phoenix_kit_projects.ex:554
 #, elixir-autogen, elixir-format
 msgid "A dashboard beside the project list"
 msgstr "Töölaud projektide loendi kõrval"
 
-#: lib/phoenix_kit_projects.ex:565
-#, elixir-autogen, elixir-format
-msgid "A dashboard tab inside a single project"
-msgstr "Töölaua vahekaart ühe projekti sees"
-
-#: lib/phoenix_kit_projects.ex:564
+#: lib/phoenix_kit_projects.ex:571
 #, elixir-autogen, elixir-format
 msgid "Project page"
 msgstr "Projekti leht"
 
-#: lib/phoenix_kit_projects.ex:550
+#: lib/phoenix_kit_projects.ex:553
 #, elixir-autogen, elixir-format
 msgid "Projects dashboard"
 msgstr "Projektide töölaud"
+
+#: lib/phoenix_kit_projects.ex:573
+#, elixir-autogen, elixir-format
+msgid "The Dashboard tab on every project — a project can override it"
+msgstr "Töölaua vahekaart igal projektil — üksik projekt saab selle üle kirjutada"

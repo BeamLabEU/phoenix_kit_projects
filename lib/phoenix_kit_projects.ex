@@ -530,9 +530,12 @@ defmodule PhoenixKitProjects do
     "the project this page is about" have nothing to read and say so. A widget
     bound to *the viewer's own* project resolves fine here, which is what makes
     one shared board work for every project manager.
-  * **Project page** — the tab inside a single project, which already exists
-    as this module's dashboard extension. It supplies `projects.project`, so
-    one shared board serves every project instead of needing a copy each.
+  * **Project page** — the Dashboard tab inside a project. It supplies
+    `projects.project`, so one shared board serves every project instead of
+    needing a copy each. It is the SAME tab this module's dashboard extension
+    contributes, and the two settle by specificity: a project that picks its
+    own board in its Modules panel overrides the placement, everything else
+    follows it.
 
   The list stays the project list: neither slot is a landing page. The boss's
   rule that "an overview and a dashboard are different things" is why Dashboard
@@ -566,7 +569,8 @@ defmodule PhoenixKitProjects do
       %{
         key: "projects.project",
         name: gettext_noop("Project page"),
-        description: gettext_noop("A dashboard tab inside a single project"),
+        description:
+          gettext_noop("The Dashboard tab on every project — a project can override it"),
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
         icon: "hero-rectangle-group",
