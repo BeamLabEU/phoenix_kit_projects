@@ -549,6 +549,10 @@ defmodule PhoenixKitProjects do
         # exactly as the project-extension catalog above does.
         name: gettext_noop("Projects dashboard"),
         description: gettext_noop("A dashboard beside the project list"),
+        # The URL segment. Without it the slug derives from the key and reads
+        # `projects-module`, which leaks how the contract is spelled rather
+        # than naming the thing.
+        slug: "projects",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
         icon: "hero-squares-2x2",
