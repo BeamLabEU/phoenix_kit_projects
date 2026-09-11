@@ -10,6 +10,8 @@ defmodule PhoenixKitProjects do
   use PhoenixKit.Module
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   # Single source of truth: read the version from mix.exs at compile time so
   # version/0 can't drift from @version on a release (baked in — no Mix at
   # runtime). The project's own config is in scope when this module compiles.
@@ -605,7 +607,16 @@ defmodule PhoenixKitProjects do
       _ -> nil
     end
   rescue
-    _ -> nil
+    # Degrading to "pick a project" is the right answer for the viewer, but it
+    # must not be the only trace: a schema drift that makes this raise on every
+    # call would leave every shared board showing a placeholder forever with
+    # nothing in the log to explain it. Mirrors `ext_tabs_for`'s handling.
+    e ->
+      Logger.warning(
+        "[Projects] phoenix_kit_dashboard_viewer_context failed: #{Exception.message(e)}"
+      )
+
+      nil
   catch
     :exit, _ -> nil
   end
