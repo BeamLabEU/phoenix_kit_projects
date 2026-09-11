@@ -10,6 +10,8 @@ defmodule PhoenixKitProjects do
   use PhoenixKit.Module
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  require Logger
+
   # Single source of truth: read the version from mix.exs at compile time so
   # version/0 can't drift from @version on a release (baked in — no Mix at
   # runtime). The project's own config is in scope when this module compiles.
@@ -510,6 +512,116 @@ defmodule PhoenixKitProjects do
       }
     ]
   end
+
+  # ── Dashboard slots ────────────────────────────────────────────────
+
+  @doc """
+  Places a dashboard may be shown inside this module — the duck-typed
+  `phoenix_kit_dashboard_slots/0` contract (no dependency on
+  `phoenix_kit_dashboards`, no `@impl`, exactly like `phoenix_kit_widgets/0`).
+
+  Declaring these is CONSENT. The dashboards package is able to inject a
+  sub-tab under any module's sidebar entry without asking — core groups
+  sub-tabs by parent id with no ownership check — and deliberately does not.
+  Nothing appears under Projects that is not declared right here.
+
+  Two places:
+
+  * **Projects dashboard** — a sidebar sub-tab beside the list and the
+    Overview. Context-free: it is about the whole module, so widgets bound to
+    "the project this page is about" have nothing to read and say so. A widget
+    bound to *the viewer's own* project resolves fine here, which is what makes
+    one shared board work for every project manager.
+  * **Project page** — the Dashboard tab inside a project. It supplies
+    `projects.project`, so one shared board serves every project instead of
+    needing a copy each. It is the SAME tab this module's dashboard extension
+    contributes, and the two settle by specificity: a project that picks its
+    own board in its Modules panel overrides the placement, everything else
+    follows it.
+
+  The list stays the project list: neither slot is a landing page. The boss's
+  rule that "an overview and a dashboard are different things" is why Dashboard
+  sits next to Overview rather than replacing it.
+  """
+  @spec phoenix_kit_dashboard_slots() :: [map()]
+  def phoenix_kit_dashboard_slots do
+    [
+      %{
+        key: "projects.module",
+        # Names and descriptions are OUR strings, so they translate through
+        # OUR catalogue — the dashboards package cannot hold msgids for text
+        # this module authors. `gettext_noop/1` pins them for the extractor,
+        # exactly as the project-extension catalog above does.
+        name: gettext_noop("Projects dashboard"),
+        description: gettext_noop("A dashboard beside the project list"),
+        # The URL segment. Without it the slug derives from the key and reads
+        # `projects-module`, which leaks how the contract is spelled rather
+        # than naming the thing.
+        slug: "projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-squares-2x2",
+        surface: :module_tab,
+        parent_tab: :admin_projects,
+        module_key: module_key(),
+        provides: [],
+        cardinality: :many,
+        priority: 690
+      },
+      %{
+        key: "projects.project",
+        name: gettext_noop("Project page"),
+        description:
+          gettext_noop("The Dashboard tab on every project — a project can override it"),
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-rectangle-group",
+        surface: :record_tab,
+        module_key: module_key(),
+        provides: ["projects.project"],
+        cardinality: :one,
+        priority: 691
+      }
+    ]
+  end
+
+  @doc """
+  Resolves "**my** project" for a viewer — the `viewer` bind source in the
+  dashboards package.
+
+  This is the half of the design that a page subject cannot supply: a shared
+  "Project managers" dashboard in the sidebar has no current project, yet each
+  manager needs their own. Only this module can answer that question, so the
+  dashboards package asks rather than guessing.
+
+  Deliberately conservative. It answers only when there is exactly ONE project
+  the viewer can reach, and otherwise `nil` — which renders as "pick a project"
+  rather than a confident wrong answer. Guessing "most recently visited" was
+  considered and rejected: it is wrong every Monday morning, and being silently
+  shown the wrong project's numbers is worse than being shown none.
+  """
+  @spec phoenix_kit_dashboard_viewer_context(String.t(), term()) :: String.t() | nil
+  def phoenix_kit_dashboard_viewer_context("projects.project", scope) do
+    case PhoenixKitProjects.Projects.list_projects_for(scope, limit: 2) do
+      [project] -> project.uuid
+      _ -> nil
+    end
+  rescue
+    # Degrading to "pick a project" is the right answer for the viewer, but it
+    # must not be the only trace: a schema drift that makes this raise on every
+    # call would leave every shared board showing a placeholder forever with
+    # nothing in the log to explain it. Mirrors `ext_tabs_for`'s handling.
+    e ->
+      Logger.warning(
+        "[Projects] phoenix_kit_dashboard_viewer_context failed: #{Exception.message(e)}"
+      )
+
+      nil
+  catch
+    :exit, _ -> nil
+  end
+
+  def phoenix_kit_dashboard_viewer_context(_kind, _scope), do: nil
 
   # Paths reach the matcher normalised (URL prefix + locale stripped, no
   # trailing slash): the landing itself and every project page under it —

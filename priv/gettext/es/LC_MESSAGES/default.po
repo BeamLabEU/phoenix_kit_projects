@@ -275,6 +275,7 @@ msgstr "Cancelar"
 msgid "Close"
 msgstr "Cerrar"
 
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:56
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3496
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4523
 #, elixir-autogen, elixir-format
@@ -820,7 +821,7 @@ msgstr "Persona"
 msgid "Pick the date and time this project starts. Defaults to right now; backdate it if work began earlier, or pick a future moment if you're queueing it up."
 msgstr "Elige la fecha y hora en que comienza este proyecto. Por defecto es ahora mismo; pon una fecha pasada si el trabajo ya empezó, o futura si lo dejas en cola."
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:42
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:68
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:696
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4529
 #, elixir-autogen, elixir-format
@@ -897,7 +898,7 @@ msgid "Project updated."
 msgstr "Proyecto actualizado."
 
 #: lib/phoenix_kit_projects/web/crumbs.ex:34
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:32
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:36
 #: lib/phoenix_kit_projects/web/overview_live.ex:71
 #: lib/phoenix_kit_projects/web/overview_live.ex:1091
 #: lib/phoenix_kit_projects/web/project_activity_live.ex:52
@@ -1245,7 +1246,7 @@ msgstr "Tareas sin relaciones de dependencia aún."
 msgid "Team"
 msgstr "Equipo"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:45
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:71
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3161
 #, elixir-autogen, elixir-format
 msgid "Template"
@@ -1284,7 +1285,7 @@ msgid "Template updated."
 msgstr "Plantilla actualizada."
 
 #: lib/phoenix_kit_projects/web/crumbs.ex:42
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:34
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:45
 #: lib/phoenix_kit_projects/web/overview_live.ex:1119
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3151
 #: lib/phoenix_kit_projects/web/template_form_live.ex:295
@@ -1658,52 +1659,47 @@ msgstr "—"
 msgid "🎉 All tasks done — project completed!"
 msgstr "🎉 ¡Todas las tareas completadas — proyecto terminado!"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:46
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:72
 #, elixir-autogen, elixir-format
 msgid "Add Task"
 msgstr "Añadir tarea"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:47
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:73
 #, elixir-autogen, elixir-format
 msgid "Edit Assignment"
 msgstr "Editar asignación"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:41
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:67
 #, elixir-autogen, elixir-format
 msgid "Edit Project"
 msgstr "Editar proyecto"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:39
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:65
 #, elixir-autogen, elixir-format
 msgid "Edit Task"
 msgstr "Editar tarea"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:44
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:70
 #, elixir-autogen, elixir-format
 msgid "Edit Template"
 msgstr "Editar plantilla"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:29
-#, elixir-autogen, elixir-format
-msgid "Manage projects, tasks, and assignments"
-msgstr "Gestionar proyectos, tareas y asignaciones"
-
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:40
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:66
 #, elixir-autogen, elixir-format
 msgid "New Project"
 msgstr "Nuevo proyecto"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:38
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:64
 #, elixir-autogen, elixir-format
 msgid "New Task"
 msgstr "Nueva tarea"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:43
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:69
 #, elixir-autogen, elixir-format
 msgid "New Template"
 msgstr "Nueva plantilla"
 
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:33
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:44
 #: lib/phoenix_kit_projects/web/overview_live.ex:70
 #, elixir-autogen, elixir-format
 msgid "Overview"
@@ -1711,7 +1707,7 @@ msgstr "Resumen"
 
 #: lib/phoenix_kit_projects.ex:355
 #: lib/phoenix_kit_projects/web/crumbs.ex:38
-#: lib/phoenix_kit_projects/web/gettext_manifest.ex:35
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:46
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2358
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3490
 #: lib/phoenix_kit_projects/web/projects_live.ex:688
@@ -1877,6 +1873,7 @@ msgstr "Junto a la barra"
 msgid "Build phase"
 msgstr "Fase de construcción"
 
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:55
 #: lib/phoenix_kit_projects/web/project_calendar_live.ex:552
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3767
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:644
@@ -2678,6 +2675,7 @@ msgstr "Ese proyecto ya no existe."
 msgid "The entities module is not enabled, so workflow statuses are currently unavailable."
 msgstr "El módulo de entidades no está activado, así que los estados de flujo de trabajo no están disponibles."
 
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:54
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:612
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3763
 #, elixir-autogen, elixir-format
@@ -3317,6 +3315,7 @@ msgstr "Aplicando…"
 msgid "Billable"
 msgstr "Facturable"
 
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:53
 #: lib/phoenix_kit_projects/web/project_show_live.ex:3759
 #, elixir-autogen, elixir-format
 msgid "Board"
@@ -4418,6 +4417,7 @@ msgstr "Miembros y superiores"
 msgid "Members, the teams and departments you add, and site admins."
 msgstr "Los miembros, los equipos y departamentos que añadas, y los administradores del sitio."
 
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:57
 #: lib/phoenix_kit_projects/web/member_projects_live.ex:47
 #: lib/phoenix_kit_projects/web/member_projects_live.ex:80
 #: lib/phoenix_kit_projects/web/member_projects_live.ex:94
@@ -5567,3 +5567,58 @@ msgstr "Diagrama de cronología"
 #, elixir-autogen, elixir-format
 msgid "Workflow Statuses"
 msgstr "Estado del flujo de trabajo"
+
+#: lib/phoenix_kit_projects.ex:554
+#, elixir-autogen, elixir-format
+msgid "A dashboard beside the project list"
+msgstr "Un panel junto a la lista de proyectos"
+
+#: lib/phoenix_kit_projects.ex:571
+#, elixir-autogen, elixir-format
+msgid "Project page"
+msgstr "Página de proyecto"
+
+#: lib/phoenix_kit_projects.ex:553
+#, elixir-autogen, elixir-format
+msgid "Projects dashboard"
+msgstr "Panel de proyectos"
+
+#: lib/phoenix_kit_projects.ex:573
+#, elixir-autogen, elixir-format
+msgid "The Dashboard tab on every project — a project can override it"
+msgstr "La pestaña Panel en todos los proyectos: un proyecto concreto puede anularla"
+
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:38
+#, elixir-autogen, elixir-format
+msgid "Administer all projects"
+msgstr "Administrar todos los proyectos"
+
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:59
+#, elixir-autogen, elixir-format
+msgid "Project Activity"
+msgstr "Actividad del proyecto"
+
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:58
+#, elixir-autogen, elixir-format
+msgid "Project Files"
+msgstr "Archivos del proyecto"
+
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:60
+#, elixir-autogen, elixir-format
+msgid "Project Members"
+msgstr "Miembros del proyecto"
+
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:61
+#, elixir-autogen, elixir-format
+msgid "Project Modules"
+msgstr "Módulos del proyecto"
+
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:37
+#, elixir-autogen, elixir-format
+msgid "Reach the Projects module — see the projects you belong to"
+msgstr "Acceder al módulo de Proyectos: ver los proyectos a los que perteneces"
+
+#: lib/phoenix_kit_projects/web/gettext_manifest.ex:39
+#, elixir-autogen, elixir-format
+msgid "See and manage every project on the site, including ones this user is not a member of"
+msgstr "Ver y gestionar todos los proyectos del sitio, incluidos aquellos de los que este usuario no es miembro"
