@@ -887,10 +887,10 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_scope_to_viewer(query, nil), do: query
 
   defp maybe_scope_to_viewer(query, user_uuid) when is_binary(user_uuid) do
-    uuids =
-      user_uuid
-      |> PhoenixKitProjects.Members.accessible_projects()
-      |> Enum.map(fn {project, _role} -> project.uuid end)
+    # `accessible_project_uuids/1`, not `accessible_projects/1` — this only
+    # needs the uuid set to narrow a WHERE clause, and the full-struct form
+    # would load every accessible project just to throw the rest away.
+    uuids = PhoenixKitProjects.Members.accessible_project_uuids(user_uuid)
 
     from(p in query, where: p.uuid in ^uuids)
   end

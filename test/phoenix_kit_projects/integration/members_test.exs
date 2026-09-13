@@ -4,7 +4,8 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
   import PhoenixKitProjects.ActivityLogAssertions
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Authz, Features, Members, Projects}
+  alias PhoenixKitProjects.{Authz, Features, Grants, Members, Projects}
+  alias PhoenixKitStaff.{Departments, Staff, Teams}
 
   defp user_fixture do
     {:ok, user} =
@@ -352,6 +353,73 @@ defmodule PhoenixKitProjects.Integration.MembersTest do
       # The split: reaching the module is not administering every project.
       reacher = PhoenixKitProjects.LiveCase.fake_scope(permissions: ["projects"])
       refute Authz.can?(reacher, project, :manage_members)
+    end
+  end
+
+  describe "accessible_project_uuids/1" do
+    # A user wired into the staff org chart: person → team → department,
+    # the same fixture shape `Integration.GrantsTest` uses for team grants.
+    defp staffed_user do
+      u = user_fixture()
+      n = System.unique_integer([:positive])
+      {:ok, dept} = Departments.create(%{"name" => "MDept-#{n}"})
+      {:ok, team} = Teams.create(%{"name" => "MTeam-#{n}", "department_uuid" => dept.uuid})
+
+      {:ok, person} =
+        Staff.create_person(%{
+          "user_uuid" => u.uuid,
+          "name" => "Member Person #{n}",
+          "employment_type" => "full_time"
+        })
+
+      {:ok, _} = Staff.add_team_person(team.uuid, person.uuid)
+      %{user: u, team: team}
+    end
+
+    test "agrees with accessible_projects/1 across every access path, uuids only" do
+      %{user: u, team: team} = staffed_user()
+
+      direct = fixture_project()
+      {:ok, _} = Members.add_member(direct, u.uuid, role: "member")
+
+      # Group-granted, no membership row of its own.
+      granted = fixture_project()
+      {:ok, _} = Grants.grant(granted, "team", team.uuid, "viewer")
+
+      # Both a direct membership AND a stronger group grant — the
+      # `stronger/2` tiebreak path in accessible_projects/1.
+      both = fixture_project()
+      {:ok, _} = Members.add_member(both, u.uuid, role: "viewer")
+      {:ok, _} = Grants.grant(both, "team", team.uuid, "manager")
+
+      # Visible to everyone, no row and no grant at all.
+      open = fixture_project(%{"settings" => %{"visibility" => "everyone"}})
+
+      # A template the user is a "member" of must NOT appear on either side.
+      template = fixture_template()
+      {:ok, _} = Members.add_member(template, u.uuid, role: "owner")
+
+      # Some other project the user can't reach at all — the negative case.
+      _unreachable = fixture_project()
+
+      expected =
+        Members.accessible_projects(u.uuid)
+        |> Enum.map(fn {p, _role} -> p.uuid end)
+        |> Enum.sort()
+
+      actual = Members.accessible_project_uuids(u.uuid) |> Enum.sort()
+
+      assert actual == expected
+      assert Enum.sort([direct.uuid, granted.uuid, both.uuid, open.uuid]) == expected
+      refute template.uuid in actual
+    end
+
+    test "a user with no access of any kind gets an empty list from both forms" do
+      u = user_fixture()
+      fixture_project()
+
+      assert Members.accessible_projects(u.uuid) == []
+      assert Members.accessible_project_uuids(u.uuid) == []
     end
   end
 end
