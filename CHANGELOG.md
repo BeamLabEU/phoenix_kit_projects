@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.24.1 - 2026-09-13
+
+Follow-ups from the PR #43 quality sweep, plus one performance fix it flagged
+and deferred.
+
+### Fixed
+
+- `list_projects_for/2`'s non-admin scoping no longer materialises a full
+  `%Project{}` struct per accessible project just to read its uuid.
+  `Members.accessible_project_uuids/1` selects uuids directly across the same
+  three access paths (direct membership, group grants, "everyone"-visible
+  projects); `phoenix_kit_dashboard_viewer_context/2`'s `limit: 2` call is
+  the caller this mattered most for.
+- The settings page's `switch_settings_tab` event accepted any string, and
+  every settings card's visibility keyed off `@active_tab != <id>` — an
+  unrecognised tab id blanked every card. Whitelisted the five known ids.
+- Restored the `Run: createdb ... && mix test.setup` hint text in
+  `test_helper.exs`, mangled into a run-on line by an earlier commit.
+- Fixed two tests from PR #43 that could not fail as written: one asserted
+  `nil` for both a real and a nonsense context kind, and one hit the database
+  from a plain `ExUnit.Case` with no sandboxed connection, passing only
+  because the query's own rescue swallowed the resulting ownership error.
+  Moved the DB-backed checks to a proper integration test with real
+  membership rows.
+- The embedded `ProjectFormLive`/`AssignmentFormLive` `:edit` tests asserted
+  only that a form rendered, indistinguishable from a blank `:new` form. They
+  now assert the loaded record's own data.
+
 ## 0.24.0 - 2026-09-11
 
 PR #43 — declares the two places a dashboard can appear inside Projects.
