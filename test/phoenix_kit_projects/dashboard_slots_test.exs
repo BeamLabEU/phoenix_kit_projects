@@ -5,18 +5,12 @@ defmodule PhoenixKitProjects.DashboardSlotsTest do
   and `phoenix_kit_dashboard_viewer_context/2` (which record is "mine").
 
   Neither package depends on the other, so nothing but a test connects the two
-  spellings. Three things can therefore vanish in silence, all of them
-  user-visible and none of them a compile error: a typo'd `parent_tab` (core
-  groups sub-tabs by parent id and drops an unknown one without complaint), a
-  `provides` kind that drifts from the `viewer_context` clause head (every
-  viewer bind then resolves to `nil` and renders "pick a project"), and the
-  `context:` key on the widget's project field (drop it and the field stops
-  being offered a bind source, quietly reverting one shared board to a copy
-  per project).
+  spellings. Pure shape checks live here (no DB, so plain `ExUnit.Case`); the
+  resolver's actual "mine" behaviour and the widget field's `context:` key
+  need real project/membership rows and live in
+  `PhoenixKitProjects.Integration.DashboardSlotsTest`.
   """
   use ExUnit.Case, async: true
-
-  alias PhoenixKitProjects.DashboardWidgets
 
   @module_slot "projects.module"
   @record_slot "projects.project"
@@ -52,28 +46,11 @@ defmodule PhoenixKitProjects.DashboardSlotsTest do
     assert slot(@record_slot).provides == [@record_slot]
   end
 
-  test "the kind the record slot provides is the kind viewer_context answers for" do
-    [kind] = slot(@record_slot).provides
-
-    # Not a value assertion — the point is that the clause HEAD matches. A
-    # drift here makes every viewer bind fall through to the catch-all.
-    assert PhoenixKitProjects.phoenix_kit_dashboard_viewer_context(kind, nil) == nil
-    assert PhoenixKitProjects.phoenix_kit_dashboard_viewer_context("nonsense.kind", nil) == nil
-  end
-
-  test "the project widget field still declares the context kind it binds to" do
-    field =
-      DashboardWidgets.all()
-      |> Enum.flat_map(&(&1[:settings_schema] || []))
-      |> Enum.find(&(&1[:context] == @record_slot))
-
-    assert field,
-           "no widget settings field declares context: #{inspect(@record_slot)} — without " <>
-             "it the host stops offering \"the one this page is about\" as a bind source " <>
-             "and one shared board silently reverts to a copy per project"
-  end
-
   test "a nil scope resolves to no project rather than guessing one" do
     assert PhoenixKitProjects.phoenix_kit_dashboard_viewer_context(@record_slot, nil) == nil
+  end
+
+  test "an unrecognised context kind resolves to nil rather than raising" do
+    assert PhoenixKitProjects.phoenix_kit_dashboard_viewer_context("nonsense.kind", nil) == nil
   end
 end

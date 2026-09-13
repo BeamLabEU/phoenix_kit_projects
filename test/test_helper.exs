@@ -69,7 +69,7 @@ repo_available =
     IO.puts("""
 
       Cannot reach test database "#{db_name}" — integration tests excluded.
-       The reason is printed above. && mix test.setup
+      The reason is printed above. Run: createdb #{db_name} && mix test.setup
     """)
 
     false
@@ -126,7 +126,8 @@ repo_available =
       e ->
         IO.puts("""
 
-          Could not connect to test database — integration tests excluded.          The reason is printed above. && mix test.setup
+          Could not connect to test database — integration tests excluded.
+          Run: createdb #{db_name} && mix test.setup
           Error: #{Exception.message(e)}
         """)
 
@@ -135,7 +136,8 @@ repo_available =
       :exit, reason ->
         IO.puts("""
 
-          Could not connect to test database — integration tests excluded.          The reason is printed above. && mix test.setup
+          Could not connect to test database — integration tests excluded.
+          Run: createdb #{db_name} && mix test.setup
           Error: #{inspect(reason)}
         """)
 

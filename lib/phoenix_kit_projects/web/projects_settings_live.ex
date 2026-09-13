@@ -91,9 +91,16 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   end
 
   @impl true
-  def handle_event("switch_settings_tab", %{"tab" => tab}, socket) do
+  @settings_tabs ~w(creation statuses list_controls timeline calendar)
+
+  def handle_event("switch_settings_tab", %{"tab" => tab}, socket) when tab in @settings_tabs do
     {:noreply, assign(socket, :active_tab, tab)}
   end
+
+  # An unknown tab id (a crafted event, or a stale client after a tab was
+  # renamed) must not hide every card — every card's visibility keys off
+  # `@active_tab != <id>`, so an id matching none of them blanks the page.
+  def handle_event("switch_settings_tab", %{"tab" => _tab}, socket), do: {:noreply, socket}
 
   def handle_event("select_default_status_entity", %{"entity_uuid" => uuid}, socket) do
     uuid = if uuid in [nil, ""], do: nil, else: uuid

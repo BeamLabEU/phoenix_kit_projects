@@ -539,9 +539,9 @@ defmodule PhoenixKitProjects do
     own board in its Modules panel overrides the placement, everything else
     follows it.
 
-  The list stays the project list: neither slot is a landing page. The boss's
-  rule that "an overview and a dashboard are different things" is why Dashboard
-  sits next to Overview rather than replacing it.
+  The list stays the project list: neither slot is a landing page. An overview
+  and a dashboard are different things, which is why Dashboard sits next to
+  Overview rather than replacing it.
   """
   @spec phoenix_kit_dashboard_slots() :: [map()]
   def phoenix_kit_dashboard_slots do
