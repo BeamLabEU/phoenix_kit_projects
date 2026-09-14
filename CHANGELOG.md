@@ -25,6 +25,19 @@ instead of always at the storage root.
   attachment into `<project folder>/Portal submissions/` when the parent
   hook resolves a folder for the project; best-effort — a submission is
   still saved if the folder cannot be resolved.
+- `list_files/2` and `attach_files/3` also take an optional actor uuid, so a
+  folder they lazily resolve or create is attributed and parent-chained the
+  same as one created via `ensure_folder/2`.
+
+### Fixed
+
+- `folder_uuid/2` is now render-safe for a malformed uuid string (it no
+  longer lets an `Ecto.Query.CastError` escape from the underlying
+  `Repo.get/2`).
+- Portal's `ensure_child/3` retry (the unique-index race on
+  `[:parent_uuid, :name]`) is bounded to one attempt instead of recursing
+  unconditionally on any changeset error, so a persistent failure can't hang
+  the public portal endpoint.
 
 ## 0.24.1 - 2026-09-13
 

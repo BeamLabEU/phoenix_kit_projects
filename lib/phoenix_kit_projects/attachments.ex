@@ -58,6 +58,7 @@ defmodule PhoenixKitProjects.Attachments do
   @doc false
   # Host-configured parent folder; `nil` = storage root (default). Contract:
   # `fun(kind, actor_uuid, subject)` (preferred) or `fun(kind, actor_uuid)`.
+  @spec parent_folder_uuid(Project.t() | {:ensure, Project.t()}, binary() | nil) :: binary() | nil
   def parent_folder_uuid(resource, actor_uuid) do
     kind = resource_kind(resource)
 
@@ -103,6 +104,7 @@ defmodule PhoenixKitProjects.Attachments do
   @doc false
   # Folder name: the host's (`:attachments_folder_name`, `fun(resource, actor) :: {:ok, name} | nil`)
   # or the deterministic `project-<uuid>` name.
+  @spec folder_name(Project.t() | {:ensure, Project.t()}, binary() | nil) :: binary()
   def folder_name(resource, actor_uuid) do
     with {mod, fun} when is_atom(mod) and is_atom(fun) <-
            Application.get_env(:phoenix_kit_projects, :attachments_folder_name),
@@ -120,6 +122,8 @@ defmodule PhoenixKitProjects.Attachments do
   # deterministic name ANYWHERE (a project unlinked from its sub-order keeps a folder under the
   # old sub-order; it must still be found so the host can move it). Read-only: the host answers
   # the bare struct without creating anything.
+  @spec find_resource_folder(Project.t() | {:ensure, Project.t()}, binary() | nil) ::
+          %Folder{} | nil
   def find_resource_folder(resource, actor_uuid) do
     parent = parent_folder_uuid(resource, actor_uuid)
     host_name = folder_name(resource, actor_uuid)
@@ -171,6 +175,10 @@ defmodule PhoenixKitProjects.Attachments do
     else
       _ -> nil
     end
+  rescue
+    error ->
+      Logger.warning("[Projects.Attachments] folder_uuid failed: #{Exception.message(error)}")
+      nil
   end
 
   @doc """
@@ -224,9 +232,9 @@ defmodule PhoenixKitProjects.Attachments do
   end
 
   @doc "Active files in the project folder (home or linked), newest first, capped."
-  @spec list_files(binary()) :: [File.t()]
-  def list_files(project_uuid) do
-    case folder_uuid(project_uuid) do
+  @spec list_files(binary(), binary() | nil) :: [File.t()]
+  def list_files(project_uuid, actor_uuid \\ nil) do
+    case folder_uuid(project_uuid, actor_uuid) do
       nil ->
         []
 
@@ -255,9 +263,9 @@ defmodule PhoenixKitProjects.Attachments do
   this folder as home; a file homed elsewhere gains a `FolderLink`
   (idempotent per file).
   """
-  @spec attach_files(binary(), [binary()]) :: :ok
-  def attach_files(project_uuid, file_uuids) when is_list(file_uuids) do
-    case ensure_folder(project_uuid) do
+  @spec attach_files(binary(), [binary()], binary() | nil) :: :ok
+  def attach_files(project_uuid, file_uuids, actor_uuid \\ nil) when is_list(file_uuids) do
+    case ensure_folder(project_uuid, actor_uuid) do
       {:ok, folder_uuid} -> Enum.each(file_uuids, &attach(&1, folder_uuid))
       {:error, _} -> :ok
     end

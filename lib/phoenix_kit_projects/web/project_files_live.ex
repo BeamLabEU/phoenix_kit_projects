@@ -109,7 +109,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
   # The download URLs resolve once per load, in one read — the rows used
   # to ask per file, twice, on every render.
   defp load_files(socket) do
-    files = Attachments.list_files(socket.assigns.project.uuid)
+    files = Attachments.list_files(socket.assigns.project.uuid, current_user_uuid(socket))
     assign(socket, files: files, download_urls: Attachments.download_urls(files))
   end
 
@@ -165,7 +165,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
   @impl true
   def handle_info({:media_selected, file_uuids}, socket) when is_list(file_uuids) do
     if Authz.can?(scope(socket), socket.assigns.project, :upload_files) do
-      Attachments.attach_files(socket.assigns.project.uuid, file_uuids)
+      Attachments.attach_files(socket.assigns.project.uuid, file_uuids, current_user_uuid(socket))
 
       Activity.log("projects.file_added",
         actor_uuid: Activity.actor_uuid(socket),

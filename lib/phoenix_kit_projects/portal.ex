@@ -734,22 +734,37 @@ defmodule PhoenixKitProjects.Portal do
   end
 
   defp ensure_child(parent_uuid, name, actor_uuid) do
-    case RepoHelper.repo().one(
-           from(f in Folder,
-             where: f.parent_uuid == ^parent_uuid and f.name == ^name and is_nil(f.trashed_at),
-             limit: 1
-           )
-         ) do
+    case find_child(parent_uuid, name) do
       %{uuid: uuid} ->
         {:ok, uuid}
 
       nil ->
         case Storage.create_folder(%{name: name, parent_uuid: parent_uuid, user_uuid: actor_uuid}) do
-          {:ok, %{uuid: uuid}} -> {:ok, uuid}
-          {:error, %Ecto.Changeset{}} -> ensure_child(parent_uuid, name, actor_uuid)
-          error -> error
+          {:ok, %{uuid: uuid}} ->
+            {:ok, uuid}
+
+          # One bounded retry for the transient (name, parent_uuid) unique-index race; a
+          # persistent failure (e.g. an actor whose user_uuid no longer resolves) must not
+          # loop forever on this public endpoint.
+          {:error, %Ecto.Changeset{} = cs} ->
+            case find_child(parent_uuid, name) do
+              %{uuid: uuid} -> {:ok, uuid}
+              nil -> {:error, cs}
+            end
+
+          error ->
+            error
         end
     end
+  end
+
+  defp find_child(parent_uuid, name) do
+    RepoHelper.repo().one(
+      from(f in Folder,
+        where: f.parent_uuid == ^parent_uuid and f.name == ^name and is_nil(f.trashed_at),
+        limit: 1
+      )
+    )
   end
 
   # The uploader named this file. It reaches a Content-Disposition header

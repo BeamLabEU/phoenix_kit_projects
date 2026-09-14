@@ -117,6 +117,44 @@ defmodule PhoenixKitProjects.AttachmentsParentFolderTest do
              1
   end
 
+  test "folder_uuid/2 is render-safe for a malformed uuid input" do
+    refute Attachments.folder_uuid("not-a-real-uuid", nil)
+  end
+
+  # ── actor threading (attach_files/3, list_files/2) ──
+
+  test "attach_files/3 attributes a lazily created folder to the given actor" do
+    project = project!()
+
+    {:ok, user} =
+      Auth.register_user(%{
+        "email" => "pf-actor-#{System.unique_integer([:positive])}@example.com",
+        "password" => "ValidPassword123!"
+      })
+
+    assert :ok = Attachments.attach_files(project.uuid, [], user.uuid)
+
+    folder = Repo.get_by!(Folder, name: "project-#{project.uuid}")
+    assert folder.user_uuid == user.uuid
+  end
+
+  test "list_files/2 resolves the folder created under a host-configured parent when an actor is given" do
+    container = container!("Projects")
+    configure_parent_hook(container.uuid)
+
+    project = project!()
+
+    {:ok, user} =
+      Auth.register_user(%{
+        "email" => "pf-list-#{System.unique_integer([:positive])}@example.com",
+        "password" => "ValidPassword123!"
+      })
+
+    {:ok, _folder_uuid} = Attachments.ensure_folder(project, user.uuid)
+
+    assert Attachments.list_files(project.uuid, user.uuid) == []
+  end
+
   # ── portal submissions ──
 
   @tag :tmp_dir
