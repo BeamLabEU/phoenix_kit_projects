@@ -64,7 +64,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
           "status" => "todo"
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       # Schedule blocks render only when started_at != nil + total_hours > 0.
       # New schedule shape: "Remaining:" + "ETA:" (active) or "Finished:" (done).
       assert html =~ "Remaining:" or html =~ "ETA:" or html =~ "Finished:" or html =~ "/"
@@ -83,7 +83,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
           "status" => "in_progress"
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert html =~ task.title
     end
 
@@ -102,7 +102,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
           "counts_weekends" => true
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert html =~ "incl. weekends"
     end
 
@@ -114,7 +114,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
             DateTime.utc_now() |> DateTime.add(7 * 86_400, :second) |> DateTime.to_iso8601()
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       # No schedule yet — the pre-start banner offers Start now instead.
       assert html =~ "Start now"
       refute html =~ "incl. weekends"
@@ -134,7 +134,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
           "status" => "todo"
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       # When unassigned, assignee_type returns nil (no badge rendered).
       # When assigned (e.g. via fixture overrides), the badge would show.
       assert html =~ task.title
@@ -160,7 +160,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
 
     test "progress_pct = 100 sets status=done + completed_at + logs `assignment_completed`",
          %{conn: conn, project: p, assignment: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ =
         render_change(view, "update_progress", %{
@@ -181,7 +181,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
 
     test "progress_pct > 0 from todo sets status=in_progress + logs `assignment_started`",
          %{conn: conn, project: p, assignment: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ =
         render_change(view, "update_progress", %{
@@ -201,7 +201,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
 
     test "progress_pct = 0 from in_progress reverts to todo + logs `assignment_reopened`",
          %{conn: conn, project: p, assignment: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "60"})
       _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "0"})
@@ -218,7 +218,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
 
     test "progress_pct stays-in-progress logs `assignment_progress_updated`",
          %{conn: conn, project: p, assignment: a, actor_uuid: actor_uuid} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "30"})
       _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "60"})
@@ -234,7 +234,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
     end
 
     test "parse_pct/1 invalid string falls to 0", %{conn: conn, project: p, assignment: a} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ =
         render_change(view, "update_progress", %{
@@ -248,7 +248,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowScheduleTest do
     end
 
     test "parse_pct/1 clamps values >100 to 100", %{conn: conn, project: p, assignment: a} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ = render_change(view, "update_progress", %{"uuid" => a.uuid, "progress_pct" => "200"})
 

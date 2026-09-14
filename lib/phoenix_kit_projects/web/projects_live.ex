@@ -69,7 +69,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   @optional_columns ~w(status tasks created updated created_by external_id)
   @default_columns ~w(status)
   @columns_key "projects_list_columns"
-  @views_key "projects_list_views"
 
   @impl true
   def mount(_params, session, socket) do
@@ -124,8 +123,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         # (without provisioning it); `nil` = no filter. Hidden when
         # entities is unavailable or the shared list has no statuses yet.
         statuses_available: Statuses.available?(),
-        status_options: status_filter_options(),
-        saved_views: ListUi.read_views(@views_key)
+        status_options: status_filter_options()
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
@@ -260,22 +258,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     """
   end
 
-  # Stored view status filters re-validate against the live options —
-  # a renamed/removed status degrades to "no filter".
-  defp safe_status_filter(status, options) when is_binary(status) do
-    if Enum.any?(options, fn {_label, slug} -> slug == status end), do: status
-  end
-
-  defp safe_status_filter(_status, _options), do: nil
-
-  # Stored view sort fields re-validate against the roster (atom-safe).
-  defp safe_sort_field(str, fallback) do
-    case Enum.find(@sort_fields, &(Atom.to_string(&1) == str)) do
-      nil -> fallback
-      field -> field
-    end
-  end
-
   defp sort_options do
     [
       {:position, gettext("Manual")},
@@ -364,64 +346,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
-
-  # ── Saved views (Step 19): SHARED named presets of the list state
-  # (sort + status filter + columns), the columns-persistence precedent.
-
-  def handle_event("save_view", %{"name" => name}, socket) do
-    name = String.trim(to_string(name))
-
-    if name == "" do
-      {:noreply, put_flash(socket, :error, gettext("Give the view a name."))}
-    else
-      state = %{
-        "sort_by" => Atom.to_string(socket.assigns.sort_by),
-        "sort_dir" => Atom.to_string(socket.assigns.sort_dir),
-        "status" => socket.assigns.status_filter,
-        "columns" => socket.assigns.visible_columns
-      }
-
-      views = ListUi.save_view(@views_key, String.slice(name, 0, 60), state)
-
-      {:noreply,
-       socket
-       |> assign(saved_views: views)
-       |> put_flash(:info, gettext("View saved."))}
-    end
-  end
-
-  def handle_event("apply_view", %{"name" => name}, socket) do
-    case Enum.find(socket.assigns.saved_views, &(&1["name"] == name)) do
-      nil ->
-        {:noreply, socket}
-
-      view ->
-        # Every stored field re-validates against the live rosters —
-        # a stale view (renamed status, removed column) degrades to the
-        # current defaults instead of crashing or leaking junk state.
-        sort_by = safe_sort_field(view["sort_by"], socket.assigns.sort_by)
-        sort_dir = if view["sort_dir"] == "asc", do: :asc, else: :desc
-
-        status = safe_status_filter(view["status"], socket.assigns.status_options)
-
-        columns = Enum.filter(@optional_columns, &(&1 in List.wrap(view["columns"])))
-
-        {:noreply,
-         socket
-         |> assign(
-           sort_by: sort_by,
-           sort_dir: sort_dir,
-           status_filter: status,
-           visible_columns: columns,
-           loaded_count: @per_batch
-         )
-         |> load_projects()}
-    end
-  end
-
-  def handle_event("delete_view", %{"name" => name}, socket) do
-    {:noreply, assign(socket, saved_views: ListUi.delete_view(@views_key, name))}
-  end
 
   # The bulk toolbar's Reorder button pushes this event with the
   # currently-selected UUIDs (gathered from the DOM by the
@@ -669,67 +593,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             allow_delete={false}
             reorder_gate={if @sort_by == :position, do: :always, else: :multi}
           >
+            <%!-- Control order follows the kit's other lists (catalogue,
+                 core's table toolbar): search + data filters on the LEFT,
+                 the view tools (sort, Columns) on the RIGHT after the
+                 selection actions. --%>
             <:leading>
-              <.sort_selector
-                sort_by={@sort_by}
-                sort_dir={@sort_dir}
-                options={sort_options()}
-                manual_field={:position}
-              />
-              {status_filter_control(assigns)}
-              <ListUi.columns_control options={column_options()} visible={@visible_columns} />
-              <%!-- Saved views (Step 19): SHARED named presets of sort +
-                   status filter + columns (the columns precedent). --%>
-              <div class="dropdown">
-                <div tabindex="0" role="button" class="btn btn-sm btn-ghost">
-                  <.icon name="hero-bookmark" class="w-4 h-4" /> {gettext("Views")}
-                </div>
-                <div
-                  tabindex="0"
-                  class="dropdown-content z-20 bg-base-100 rounded-box border border-base-200 shadow-md w-64 p-2 flex flex-col gap-1"
-                >
-                  <p :if={@saved_views == []} class="text-xs opacity-50 px-1 py-1">
-                    {gettext("No saved views yet.")}
-                  </p>
-                  <div
-                    :for={view <- @saved_views}
-                    class="flex items-center gap-1 rounded-lg hover:bg-base-200 px-1"
-                  >
-                    <button
-                      type="button"
-                      phx-click="apply_view"
-                      phx-value-name={view["name"]}
-                      class="flex-1 text-left text-sm px-1 py-1.5 cursor-pointer truncate"
-                    >
-                      {view["name"]}
-                    </button>
-                    <button
-                      type="button"
-                      phx-click="delete_view"
-                      phx-value-name={view["name"]}
-                      data-confirm={gettext("Delete the \"%{name}\" view?", name: view["name"])}
-                      aria-label={gettext("Delete %{name}", name: view["name"])}
-                      class="btn btn-ghost btn-xs text-error"
-                    >
-                      <.icon name="hero-x-mark" class="w-3 h-3" />
-                    </button>
-                  </div>
-                  <form
-                    phx-submit="save_view"
-                    class="flex items-center gap-1 border-t border-base-200 pt-2 mt-1"
-                  >
-                    <input
-                      type="text"
-                      name="name"
-                      required
-                      maxlength="60"
-                      placeholder={gettext("Save current as…")}
-                      class="input input-xs flex-1"
-                    />
-                    <button type="submit" class="btn btn-primary btn-xs">{gettext("Save")}</button>
-                  </form>
-                </div>
-              </div>
               <.search_toolbar
                 value={@search}
                 on_submit="search"
@@ -737,7 +605,17 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 placeholder={gettext("Search projects...")}
                 class="w-48"
               />
+              {status_filter_control(assigns)}
             </:leading>
+            <:trailing>
+              <.sort_selector
+                sort_by={@sort_by}
+                sort_dir={@sort_dir}
+                options={sort_options()}
+                manual_field={:position}
+              />
+              <ListUi.columns_control options={column_options()} visible={@visible_columns} />
+            </:trailing>
           </.bulk_actions_toolbar>
 
           {render_projects_table(assigns, draggable?, lang)}

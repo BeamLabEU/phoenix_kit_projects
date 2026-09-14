@@ -16,9 +16,11 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Activity
   alias PhoenixKitProjects.CalendarDisplay
   alias PhoenixKitProjects.GanttDisplay
+  alias PhoenixKitProjects.ListControls
   alias PhoenixKitProjects.Statuses
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -45,7 +47,13 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     {:ok,
      socket
      |> assign(
-       page_title: gettext("Project settings"),
+       # Trail: Admin Panel / Settings / Projects — matches the sidebar
+       # label (settings_tabs/0's :admin_settings_projects).
+       page_title: gettext("Projects"),
+       page_subtitle: gettext("Defaults for the projects module."),
+       page_section: gettext("Settings"),
+       page_section_path: Routes.path("/admin/settings"),
+       active_tab: "creation",
        wrapper_class: wrapper_class,
        statuses_available: available?,
        status_entities: if(available?, do: Statuses.list_status_source_entities(), else: []),
@@ -55,6 +63,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
        creation_top_blocks: PhoenixKitProjects.Features.creation_top_blocks(),
        gantt_display: GanttDisplay.read(),
        calendar_anim: CalendarDisplay.read(),
+       list_controls: ListControls.read(),
        # Anchor for the calendar demo grid (real current month, unlike the
        # gantt demo's fixed range — the month grid reads best around today).
        demo_calendar_today: Date.utc_today(),
@@ -82,6 +91,17 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   end
 
   @impl true
+  @settings_tabs ~w(creation statuses list_controls timeline calendar)
+
+  def handle_event("switch_settings_tab", %{"tab" => tab}, socket) when tab in @settings_tabs do
+    {:noreply, assign(socket, :active_tab, tab)}
+  end
+
+  # An unknown tab id (a crafted event, or a stale client after a tab was
+  # renamed) must not hide every card — every card's visibility keys off
+  # `@active_tab != <id>`, so an id matching none of them blanks the page.
+  def handle_event("switch_settings_tab", %{"tab" => _tab}, socket), do: {:noreply, socket}
+
   def handle_event("select_default_status_entity", %{"entity_uuid" => uuid}, socket) do
     uuid = if uuid in [nil, ""], do: nil, else: uuid
     Statuses.set_default_status_entity(uuid)
@@ -162,6 +182,58 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
      socket
      |> assign(use_status_translations: new_value)
      |> put_flash(:info, gettext("Settings saved."))}
+  end
+
+  # The task list's controls (lens + sort): mode and the task threshold.
+  # One form, `_target` names the field; re-read so the form shows the
+  # validated (clamped) value.
+  def handle_event(
+        "set_list_controls",
+        %{"_target" => ["controls_mode"], "controls_mode" => mode},
+        socket
+      ) do
+    ListControls.put_mode(mode)
+
+    Activity.log("projects.list_controls_changed",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "projects_settings",
+      metadata: %{"field" => "mode", "value" => mode}
+    )
+
+    {:noreply, assign(socket, list_controls: ListControls.read())}
+  end
+
+  def handle_event(
+        "set_list_controls",
+        %{"_target" => ["controls_threshold"], "controls_threshold" => threshold},
+        socket
+      ) do
+    ListControls.put_threshold(threshold)
+
+    socket =
+      queue_display_log(socket, "projects.list_controls_changed", "threshold",
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "projects_settings",
+        metadata: %{"field" => "threshold", "value" => threshold}
+      )
+
+    {:noreply, assign(socket, list_controls: ListControls.read())}
+  end
+
+  def handle_event("set_list_controls", _params, socket), do: {:noreply, socket}
+
+  def handle_event("reset_list_controls", _params, socket) do
+    ListControls.reset()
+
+    Activity.log("projects.list_controls_reset",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "projects_settings"
+    )
+
+    {:noreply,
+     socket
+     |> drop_pending_display_logs("projects.list_controls_changed")
+     |> assign(list_controls: ListControls.read())}
   end
 
   # One change to a Gantt-label setting. `_target` names the field that fired, so
@@ -567,15 +639,23 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <.page_header
-        title={gettext("Project settings")}
-        description={gettext("Defaults for the projects module.")}
+      <.nav_tabs
+        active_tab={@active_tab}
+        on_change="switch_settings_tab"
+        variant={:border}
+        tabs={[
+          %{id: "creation", label: gettext("New Project Page"), icon: "hero-document-plus"},
+          %{id: "statuses", label: gettext("Workflow Statuses"), icon: "hero-flag"},
+          %{id: "list_controls", label: gettext("Task List Controls"), icon: "hero-list-bullet"},
+          %{id: "timeline", label: gettext("Timeline Chart"), icon: "hero-chart-bar"},
+          %{id: "calendar", label: gettext("Calendar"), icon: "hero-calendar"}
+        ]}
       />
 
       <%!-- New-project page customizer: the creation form defaults to
            name + description + kind; promote the blocks this site uses
            constantly to top level. --%>
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "creation" && "hidden"]}>
         <div class="card-body gap-3">
           <h2 class="card-title text-base">{gettext("New project page")}</h2>
           <p class="text-xs text-base-content/60">
@@ -601,7 +681,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
         </div>
       </div>
 
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "statuses" && "hidden"]}>
         <div class="card-body gap-4">
           <h2 class="card-title text-base">{gettext("Workflow statuses")}</h2>
 
@@ -655,10 +735,68 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
         </div>
       </div>
 
+      <%!-- The project page's task-list controls. `ListControls` — the
+           lens and sort earn their row only when they can change what is
+           on screen. --%>
+      <div class={["card bg-base-100 shadow", @active_tab != "list_controls" && "hidden"]}>
+        <div class="card-body gap-4">
+          <div class="flex items-start justify-between gap-4">
+            <h2 class="card-title text-base">{gettext("Task list controls")}</h2>
+            <button
+              type="button"
+              class="btn btn-ghost btn-xs"
+              phx-click="reset_list_controls"
+              phx-disable-with={gettext("Resetting…")}
+              data-confirm={gettext("Reset the task list controls to their defaults?")}
+            >
+              {gettext("Reset to defaults")}
+            </button>
+          </div>
+          <p class="text-xs text-base-content/60">
+            {gettext(
+              "The Active / Done / All filter and the sort dropdown above a project's task list. Automatic shows them only when they can change what is on screen — the project has both active and finished tasks, and at least the number of tasks below. Without them the list shows every task in manual order, so small projects can be reordered by hand straight away."
+            )}
+          </p>
+
+          <form id="list-controls-form" phx-change="set_list_controls" class="grid gap-3 sm:grid-cols-2">
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">{gettext("Show the controls")}</span>
+              <select name="controls_mode" class="select select-sm select-bordered">
+                <option value="auto" selected={@list_controls.mode == :auto}>
+                  {gettext("Automatically, when they can change the view")}
+                </option>
+                <option value="always" selected={@list_controls.mode == :always}>
+                  {gettext("Always")}
+                </option>
+                <option value="never" selected={@list_controls.mode == :never}>
+                  {gettext("Never")}
+                </option>
+              </select>
+            </label>
+            <label class="flex flex-col gap-1">
+              <span class="text-sm font-medium">
+                {gettext("From this many tasks")}: {@list_controls.threshold}
+              </span>
+              <input
+                type="range"
+                name="controls_threshold"
+                min={elem(ListControls.threshold_range(), 0)}
+                max="50"
+                step="1"
+                value={@list_controls.threshold}
+                phx-debounce="150"
+                disabled={@list_controls.mode != :auto}
+                class="range range-sm"
+              />
+            </label>
+          </form>
+        </div>
+      </div>
+
       <%!-- Whole Gantt/Timeline appearance + a live preview. Each control writes
            one global setting (via GanttDisplay); the demo re-renders from the same
            settings so the admin sees the effect immediately. --%>
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "timeline" && "hidden"]}>
         <div class="card-body gap-5">
           <div class="flex items-start justify-between gap-4">
             <h2 class="card-title text-base">{gettext("Timeline chart")}</h2>
@@ -861,7 +999,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       <%!-- Overdue-animation appearance for the Overview calendar + a live preview.
            Each control writes one global setting (via CalendarDisplay); the preview
            re-renders from the same settings so the effect is immediate. --%>
-      <div class="card bg-base-100 shadow">
+      <div class={["card bg-base-100 shadow", @active_tab != "calendar" && "hidden"]}>
         <div class="card-body gap-5">
           <div class="flex items-start justify-between gap-4">
             <h2 class="card-title text-base">{gettext("Calendar")}</h2>

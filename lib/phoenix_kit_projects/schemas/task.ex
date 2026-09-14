@@ -66,6 +66,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
           estimated_duration_unit: String.t() | nil,
           position: integer() | nil,
           translations: translations_map(),
+          ad_hoc: boolean(),
           default_assigned_team_uuid: UUIDv7.t() | nil,
           default_assigned_team: Team.t() | Ecto.Association.NotLoaded.t() | nil,
           default_assigned_department_uuid: UUIDv7.t() | nil,
@@ -85,6 +86,9 @@ defmodule PhoenixKitProjects.Schemas.Task do
     field(:estimated_duration_unit, :string, default: "hours")
     field(:position, :integer, default: 0)
     field(:translations, :map, default: %{})
+    # One-off task (V15): created by a project's quick-add composer, hidden
+    # from the library list/pickers/counts by default. See `ad_hoc?/1`.
+    field(:ad_hoc, :boolean, default: false)
 
     belongs_to(:default_assigned_team, Team,
       foreign_key: :default_assigned_team_uuid,
@@ -107,7 +111,7 @@ defmodule PhoenixKitProjects.Schemas.Task do
   @required ~w(title)a
   @optional ~w(description estimated_duration estimated_duration_unit position translations
                default_assigned_team_uuid default_assigned_department_uuid
-               default_assigned_person_uuid)a
+               default_assigned_person_uuid ad_hoc)a
 
   @spec changeset(t(), map()) :: Ecto.Changeset.t()
   def changeset(task, attrs) do

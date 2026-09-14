@@ -27,12 +27,15 @@ defmodule PhoenixKitProjects.DashboardWidgets do
   alias PhoenixKitProjects.Projects
 
   alias PhoenixKitProjects.Web.Widgets.{
+    CalendarWidget,
     DeadlinesWidget,
     MyTasksWidget,
     OngoingTasksWidget,
     ProjectsBoardWidget,
     ProjectScheduleWidget,
     ProjectStatusWidget,
+    RunningWidget,
+    UpcomingWidget,
     WorkloadWidget
   }
 
@@ -79,11 +82,19 @@ defmodule PhoenixKitProjects.DashboardWidgets do
       [{"First running project", ""}]
   end
 
+  # `context:` marks this field as holding a `projects.project` SUBJECT rather
+  # than an ordinary setting. The field still stores and reads a plain uuid —
+  # nothing about this widget changes — but declaring the kind lets the
+  # dashboards host offer "the project this page is about" and "my project"
+  # as sources for it, and resolve either into this field before render. That
+  # is what lets ONE shared board serve every project instead of needing a
+  # copy per project with the uuid retyped.
   defp project_field do
     %{
       key: "project",
       type: :select,
       label: "Project",
+      context: "projects.project",
       options: project_options(),
       default: ""
     }
@@ -163,6 +174,83 @@ defmodule PhoenixKitProjects.DashboardWidgets do
           @limit_field,
           %{key: "only_mine", type: :boolean, label: "Only my projects", default: false}
         ]
+      },
+      # The Overview dashboard's pieces (the page stopped being the module's
+      # landing in 2026-09 — it keeps its route as the LAST subtab, and the
+      # boss wants module dashboards assembled in the dashboards module):
+      # its Running list and its side column. Together with
+      # `projects.my_tasks`, `projects.workload` (the stat tiles) and
+      # `projects.calendar`, a system dashboard can stand in for the page.
+      %{
+        key: "projects.running",
+        name: "Running projects",
+        description:
+          "Running projects in the Overview's order — late first, then near done — with tier and progress.",
+        icon: "hero-play-circle",
+        module_key: "projects",
+        component: RunningWidget,
+        category: "Projects",
+        default_size: %{w: 16, h: 12},
+        min_size: %{w: 8, h: 8},
+        refresh_interval: 15_000,
+        views: [
+          %{key: "compact", name: "Compact", min_size: %{w: 8, h: 8}},
+          %{key: "cards", name: "Cards (with sub-projects)", min_size: %{w: 16, h: 12}}
+        ],
+        settings_schema: [
+          @limit_field,
+          %{key: "late_only", type: :boolean, label: "Late projects only", default: false}
+        ]
+      },
+      %{
+        key: "projects.calendar",
+        name: "Projects calendar",
+        description:
+          "Every scheduled task across projects on its days (or one line per project), late marked.",
+        icon: "hero-calendar-days",
+        module_key: "projects",
+        component: CalendarWidget,
+        category: "Projects",
+        default_size: %{w: 32, h: 24},
+        min_size: %{w: 12, h: 10},
+        refresh_interval: 60_000,
+        views: [
+          %{key: "month", name: "Month grid", min_size: %{w: 20, h: 16}},
+          %{key: "agenda", name: "Agenda", min_size: %{w: 12, h: 10}}
+        ],
+        settings_schema: [
+          %{
+            key: "mode",
+            type: :select,
+            label: "Show",
+            default: "tasks",
+            options: [
+              {"Tasks (one chip per task)", "tasks"},
+              {"Projects (one line per project)", "projects"}
+            ]
+          },
+          %{key: "only_mine", type: :boolean, label: "Only my tasks", default: false},
+          %{key: "late_only", type: :boolean, label: "Late only", default: false}
+        ]
+      },
+      %{
+        key: "projects.upcoming",
+        name: "Upcoming & completed",
+        description:
+          "Projects in setup or scheduled to start, or the most recently completed ones.",
+        icon: "hero-calendar",
+        module_key: "projects",
+        component: UpcomingWidget,
+        category: "Projects",
+        # Same box as Deadlines — both are six-slot lists under a header.
+        default_size: %{w: 16, h: 12},
+        min_size: %{w: 8, h: 8},
+        refresh_interval: 30_000,
+        views: [
+          %{key: "upcoming", name: "Upcoming (setup + scheduled)", min_size: %{w: 8, h: 8}},
+          %{key: "completed", name: "Recently completed", min_size: %{w: 8, h: 8}}
+        ],
+        settings_schema: [@limit_field]
       },
       %{
         key: "projects.status",

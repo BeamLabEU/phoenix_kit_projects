@@ -20,7 +20,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
 
   describe "save :new error branch" do
     test "invalid attrs (blank name) re-renders the form with errors", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       html =
         view
@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
     test "invalid attrs re-render the form with errors", %{conn: conn} do
       project = fixture_project()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}/edit")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
 
       html =
         view
@@ -75,7 +75,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
         })
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/new?template=#{template.uuid}")
+        live(conn, "/en/admin/projects/new?template=#{template.uuid}")
 
       name = "Cloned-#{System.unique_integer([:positive])}"
 
@@ -101,7 +101,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
       template = fixture_template()
 
       {:ok, view, _html} =
-        live(conn, "/en/admin/projects/list/new?template=#{template.uuid}")
+        live(conn, "/en/admin/projects/new?template=#{template.uuid}")
 
       # Blank name → the cloned-project changeset itself fails →
       # `{:error, %Ecto.Changeset{data: %Project{}} = cs}` branch.
@@ -123,7 +123,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
 
   describe "start_mode_value/1 fallback (rendered via start_mode select)" do
     test "renders default 'immediate' when no start_mode in form", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/new")
       # The default scaffolded form value is 'immediate' — start_mode_value
       # fallback renders this on the empty-form mount.
       assert html =~ "immediate"
@@ -131,7 +131,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormExtrasTest do
 
     test "validate event with start_mode=scheduled re-renders with that value",
          %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/new")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
 
       html =
         view

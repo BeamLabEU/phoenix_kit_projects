@@ -118,6 +118,32 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLiveTest do
     assert_redirect(view, Paths.project(child.uuid))
   end
 
+  test "inside the project page's drawer mode, Edit opens the sheet and Open still navigates",
+       %{conn: conn, actor_uuid: actor} do
+    # The gantt nested in ProjectShowLive inherits `mode: "popup"`: a form
+    # belongs in the drawer, a page target (the child project) does not.
+    {project, a1, _a2} = started_project_with_tasks(actor)
+
+    {:ok, %{child_project: child}} =
+      Projects.create_subproject(project.uuid, %{"name" => "Phase"})
+
+    topic = "popup-gantt-#{System.unique_integer([:positive])}"
+    PhoenixKitProjects.PubSub.subscribe(topic)
+
+    {:ok, view, _html} =
+      live_isolated(conn, ProjectGanttLive,
+        session: view_session(project.uuid, actor, %{"mode" => "popup", "pubsub_topic" => topic})
+      )
+
+    render_click(view, "gantt_edit", %{"event-id" => a1.uuid, "project" => project.uuid})
+
+    assert_receive {:projects, :opened, %{lv: PhoenixKitProjects.Web.AssignmentFormLive}}, 500
+
+    render_click(view, "gantt_open", %{"child" => child.uuid})
+    assert_redirect(view, Paths.project(child.uuid))
+    refute_receive {:projects, :opened, %{lv: PhoenixKitProjects.Web.ProjectShowLive}}, 100
+  end
+
   test "maps a dependency to a connector path", %{conn: conn, actor_uuid: actor} do
     {project, a1, a2} = started_project_with_tasks(actor)
     {:ok, _} = Projects.add_dependency(a2.uuid, a1.uuid)

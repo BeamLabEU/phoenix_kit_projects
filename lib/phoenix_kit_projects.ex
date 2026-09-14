@@ -8,6 +8,9 @@ defmodule PhoenixKitProjects do
   """
 
   use PhoenixKit.Module
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
+  require Logger
 
   # Single source of truth: read the version from mix.exs at compile time so
   # version/0 can't drift from @version on a release (baked in — no Mix at
@@ -342,12 +345,18 @@ defmodule PhoenixKitProjects do
   # unchanged — the hub's behavior-preserving default. Its feature flags land
   # with the Features layer (Step 3 of the 2026-08-05 plan); tabs stay native
   # on the show page until enforcement threading gates them.
+  # Names, descriptions and flag labels are catalog DATA, translated at
+  # render through `Web.Helpers.translate_catalog/1`; `gettext_noop/1`
+  # registers each literal so the extractor keeps it in the `.pot` — without
+  # it the whole catalog rendered English in every locale (the sweep,
+  # 2026-09-05).
   def phoenix_kit_project_extensions do
     [
       %{
         key: "tasks",
-        name: "Tasks",
-        description: "Task lists, dependencies, scheduling, Timeline and Calendar views",
+        name: gettext_noop("Tasks"),
+        description:
+          gettext_noop("Task lists, dependencies, scheduling, Timeline and Calendar views"),
         icon: "hero-clipboard-document-list",
         module_key: nil,
         default_enabled: true,
@@ -365,33 +374,53 @@ defmodule PhoenixKitProjects do
         # (Features.on?/2 — a flag is dead while any requirement is off).
         # The "simple todo list" preset is these, explicitly false.
         feature_flags: [
-          %{key: "assignees", label: "Assignees", default: true},
-          %{key: "estimates", label: "Estimates & durations", default: true},
-          %{key: "progress", label: "Progress tracking", default: true, requires: []},
-          %{key: "dependencies", label: "Dependencies", default: true},
-          %{key: "statuses", label: "Workflow statuses", default: true},
-          %{key: "scheduling", label: "Scheduling & ETA", default: true, requires: ["estimates"]},
-          %{key: "subprojects", label: "Sub-projects", default: true},
-          %{key: "priorities", label: "Priorities", default: true},
-          %{key: "labels", label: "Labels", default: true},
-          %{key: "ledger", label: "Work ledger", default: true},
+          # Whether this project draws on the shared task library: the
+          # "From library" tab and "Add to the task library" on the add-task
+          # form. Off, every task is a one-off typed in place — a checklist
+          # (the Simple preset turns it off; the others leave it on).
+          %{key: "library", label: gettext_noop("Task library"), default: true},
+          # The task row's middle state. Off, a task goes straight from
+          # to-do to done (one tick, no Start step) — a checklist. Rows
+          # already in progress keep their Done button; the board keeps
+          # its In-progress column only while one is there.
+          %{key: "in_progress", label: gettext_noop("In-progress step"), default: true},
+          %{key: "assignees", label: gettext_noop("Assignees"), default: true},
+          %{key: "estimates", label: gettext_noop("Estimates & durations"), default: true},
+          %{
+            key: "progress",
+            label: gettext_noop("Progress tracking"),
+            default: true,
+            requires: []
+          },
+          %{key: "dependencies", label: gettext_noop("Dependencies"), default: true},
+          %{key: "statuses", label: gettext_noop("Workflow statuses"), default: true},
+          %{
+            key: "scheduling",
+            label: gettext_noop("Scheduling & ETA"),
+            default: true,
+            requires: ["estimates"]
+          },
+          %{key: "subprojects", label: gettext_noop("Sub-projects"), default: true},
+          %{key: "priorities", label: gettext_noop("Priorities"), default: true},
+          %{key: "labels", label: gettext_noop("Labels"), default: true},
+          %{key: "ledger", label: gettext_noop("Work ledger"), default: true},
           # Whether the project HAS a start and a finish. Off, it is just a
           # list of tasks that exists: no "start it" step, no completion, no
           # dashboard bucket asking when it begins. A shared checklist has
           # no beginning to name, and being asked to name one is the whole
           # complaint. Defaults on, like every flag here, so existing
           # projects are unchanged with no backfill.
-          %{key: "lifecycle", label: "Start & finish", default: true},
-          %{key: "view_board", label: "Board view", default: true},
+          %{key: "lifecycle", label: gettext_noop("Start & finish"), default: true},
+          %{key: "view_board", label: gettext_noop("Board view"), default: true},
           %{
             key: "view_timeline",
-            label: "Timeline view",
+            label: gettext_noop("Timeline view"),
             default: true,
             requires: ["scheduling"]
           },
           %{
             key: "view_calendar",
-            label: "Calendar view",
+            label: gettext_noop("Calendar view"),
             default: true,
             requires: ["scheduling"]
           }
@@ -399,8 +428,8 @@ defmodule PhoenixKitProjects do
       },
       %{
         key: "files",
-        name: "Files",
-        description: "Attach files to the project (core media library)",
+        name: gettext_noop("Files"),
+        description: gettext_noop("Attach files to the project (core media library)"),
         icon: "hero-paper-clip",
         module_key: nil,
         default_enabled: true,
@@ -412,8 +441,8 @@ defmodule PhoenixKitProjects do
       # opt-in capability, not part of the pre-hub surface.
       %{
         key: "whiteboards",
-        name: "Whiteboards",
-        description: "Freeform drawing boards on the core annotation canvas",
+        name: gettext_noop("Whiteboards"),
+        description: gettext_noop("Freeform drawing boards on the core annotation canvas"),
         icon: "hero-paint-brush",
         module_key: nil,
         default_enabled: false,
@@ -421,7 +450,7 @@ defmodule PhoenixKitProjects do
         tabs: [
           %{
             key: "boards",
-            label: "Whiteboards",
+            label: gettext_noop("Whiteboards"),
             icon: "hero-paint-brush",
             lv: PhoenixKitProjects.Web.ProjectWhiteboardsLive
           }
@@ -431,8 +460,8 @@ defmodule PhoenixKitProjects do
       # milestones, reviews — on their own calendar tab. Off by default.
       %{
         key: "events",
-        name: "Events",
-        description: "Meetings, milestones, and reviews on a project calendar",
+        name: gettext_noop("Events"),
+        description: gettext_noop("Meetings, milestones, and reviews on a project calendar"),
         icon: "hero-calendar-days",
         module_key: nil,
         default_enabled: false,
@@ -440,7 +469,7 @@ defmodule PhoenixKitProjects do
         tabs: [
           %{
             key: "events",
-            label: "Events",
+            label: gettext_noop("Events"),
             icon: "hero-calendar-days",
             lv: PhoenixKitProjects.Web.ProjectEventsLive
           }
@@ -452,8 +481,8 @@ defmodule PhoenixKitProjects do
       # own availability check still applies — this gate composes with it.
       %{
         key: "discussions",
-        name: "Discussions",
-        description: "Comment threads on the project and its tasks",
+        name: gettext_noop("Discussions"),
+        description: gettext_noop("Comment threads on the project and its tasks"),
         icon: "hero-chat-bubble-left-right",
         module_key: "comments",
         default_enabled: true,
@@ -465,21 +494,144 @@ defmodule PhoenixKitProjects do
       # (2026-08-06 design doc + the external security panel's findings).
       %{
         key: "portal",
-        name: "Public portal",
-        description: "Anonymous issue submission and a public status page behind a private link",
+        name: gettext_noop("Public portal"),
+        description:
+          gettext_noop(
+            "Anonymous issue submission and a public status page behind a private link"
+          ),
         icon: "hero-globe-alt",
         module_key: nil,
         default_enabled: false,
         permission_actions: [:edit_tasks],
         on_enable: {PhoenixKitProjects.Portal, :ensure_portal},
         feature_flags: [
-          %{key: "portal_submit", label: "Public issue submission", default: true},
-          %{key: "portal_list", label: "Public issue list", default: true},
-          %{key: "portal_status", label: "Public status summary", default: true}
+          %{key: "portal_submit", label: gettext_noop("Public issue submission"), default: true},
+          %{key: "portal_list", label: gettext_noop("Public issue list"), default: true},
+          %{key: "portal_status", label: gettext_noop("Public status summary"), default: true}
         ]
       }
     ]
   end
+
+  # ── Dashboard slots ────────────────────────────────────────────────
+
+  @doc """
+  Places a dashboard may be shown inside this module — the duck-typed
+  `phoenix_kit_dashboard_slots/0` contract (no dependency on
+  `phoenix_kit_dashboards`, no `@impl`, exactly like `phoenix_kit_widgets/0`).
+
+  Declaring these is CONSENT. The dashboards package is able to inject a
+  sub-tab under any module's sidebar entry without asking — core groups
+  sub-tabs by parent id with no ownership check — and deliberately does not.
+  Nothing appears under Projects that is not declared right here.
+
+  Two places:
+
+  * **Projects dashboard** — a sidebar sub-tab beside the list and the
+    Overview. Context-free: it is about the whole module, so widgets bound to
+    "the project this page is about" have nothing to read and say so. A widget
+    bound to *the viewer's own* project resolves fine here, which is what makes
+    one shared board work for every project manager.
+  * **Project page** — the Dashboard tab inside a project. It supplies
+    `projects.project`, so one shared board serves every project instead of
+    needing a copy each. It is the SAME tab this module's dashboard extension
+    contributes, and the two settle by specificity: a project that picks its
+    own board in its Modules panel overrides the placement, everything else
+    follows it.
+
+  The list stays the project list: neither slot is a landing page. An overview
+  and a dashboard are different things, which is why Dashboard sits next to
+  Overview rather than replacing it.
+  """
+  @spec phoenix_kit_dashboard_slots() :: [map()]
+  def phoenix_kit_dashboard_slots do
+    [
+      %{
+        key: "projects.module",
+        # Names and descriptions are OUR strings, so they translate through
+        # OUR catalogue — the dashboards package cannot hold msgids for text
+        # this module authors. `gettext_noop/1` pins them for the extractor,
+        # exactly as the project-extension catalog above does.
+        name: gettext_noop("Projects dashboard"),
+        description: gettext_noop("A dashboard beside the project list"),
+        # The URL segment. Without it the slug derives from the key and reads
+        # `projects-module`, which leaks how the contract is spelled rather
+        # than naming the thing.
+        slug: "projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-squares-2x2",
+        surface: :module_tab,
+        parent_tab: :admin_projects,
+        module_key: module_key(),
+        provides: [],
+        cardinality: :many,
+        priority: 690
+      },
+      %{
+        key: "projects.project",
+        name: gettext_noop("Project page"),
+        description:
+          gettext_noop("The Dashboard tab on every project — a project can override it"),
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-rectangle-group",
+        surface: :record_tab,
+        module_key: module_key(),
+        provides: ["projects.project"],
+        cardinality: :one,
+        priority: 691
+      }
+    ]
+  end
+
+  @doc """
+  Resolves "**my** project" for a viewer — the `viewer` bind source in the
+  dashboards package.
+
+  This is the half of the design that a page subject cannot supply: a shared
+  "Project managers" dashboard in the sidebar has no current project, yet each
+  manager needs their own. Only this module can answer that question, so the
+  dashboards package asks rather than guessing.
+
+  Deliberately conservative. It answers only when there is exactly ONE project
+  the viewer can reach, and otherwise `nil` — which renders as "pick a project"
+  rather than a confident wrong answer. Guessing "most recently visited" was
+  considered and rejected: it is wrong every Monday morning, and being silently
+  shown the wrong project's numbers is worse than being shown none.
+  """
+  @spec phoenix_kit_dashboard_viewer_context(String.t(), term()) :: String.t() | nil
+  def phoenix_kit_dashboard_viewer_context("projects.project", scope) do
+    case PhoenixKitProjects.Projects.list_projects_for(scope, limit: 2) do
+      [project] -> project.uuid
+      _ -> nil
+    end
+  rescue
+    # Degrading to "pick a project" is the right answer for the viewer, but it
+    # must not be the only trace: a schema drift that makes this raise on every
+    # call would leave every shared board showing a placeholder forever with
+    # nothing in the log to explain it. Mirrors `ext_tabs_for`'s handling.
+    e ->
+      Logger.warning(
+        "[Projects] phoenix_kit_dashboard_viewer_context failed: #{Exception.message(e)}"
+      )
+
+      nil
+  catch
+    :exit, _ -> nil
+  end
+
+  def phoenix_kit_dashboard_viewer_context(_kind, _scope), do: nil
+
+  # Paths reach the matcher normalised (URL prefix + locale stripped, no
+  # trailing slash): the landing itself and every project page under it —
+  # i.e. anything under `projects` that is not one of the sibling subtabs
+  # (`tasks`, `templates`, `overview`). Legacy `list/…` addresses redirect
+  # before they render, so they need no match. A function, not a module
+  # attribute — a compiled Regex holds a reference and cannot be injected
+  # into a function body.
+  defp projects_list_match,
+    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|overview)(/|$))(/.*)?$}}
 
   @impl PhoenixKit.Module
   def admin_tabs do
@@ -498,24 +650,32 @@ defmodule PhoenixKitProjects do
         group: :admin_modules,
         subtab_display: :when_active,
         highlight_with_subtabs: false,
-        live_view: {PhoenixKitProjects.Web.OverviewLive, :index}
+        # The landing page IS the project list (boss, 2026-09-04). The
+        # Overview keeps its own value next to a dashboards-module board
+        # (boss, 2026-09-05: "an overview and a dashboard are different
+        # things") — it lives on as the LAST subtab, at `projects/overview`.
+        live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
       }
     ]
 
     visible_subtabs = [
       %Tab{
-        id: :admin_projects_overview,
-        label: "Overview",
+        id: :admin_projects_list,
+        label: "Projects",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        icon: "hero-home",
+        icon: "hero-clipboard-document-list",
         path: "projects",
         priority: 661,
         level: :admin,
         permission: module_key(),
-        match: :exact,
+        # Lit on the landing page AND on every project page under it,
+        # without claiming Tasks/Templates/Overview. Tabs match
+        # independently (no longest-prefix arbitration), so a plain
+        # `:prefix` on `projects` would light this one everywhere.
+        match: projects_list_match(),
         parent: :admin_projects,
-        live_view: {PhoenixKitProjects.Web.OverviewLive, :index}
+        live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
       },
       %Tab{
         id: :admin_projects_templates,
@@ -545,29 +705,67 @@ defmodule PhoenixKitProjects do
         parent: :admin_projects,
         live_view: {PhoenixKitProjects.Web.TasksLive, :index}
       },
+      # Last on purpose: the list is where the work is, the Overview is
+      # the read-only picture of it. Its pieces are also dashboards-module
+      # widgets (`DashboardWidgets`) for anyone who wants them on a board.
       %Tab{
-        id: :admin_projects_list,
-        label: "Projects",
+        id: :admin_projects_overview,
+        label: "Overview",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        icon: "hero-clipboard-document-list",
-        path: "projects/list",
+        icon: "hero-home",
+        path: "projects/overview",
         priority: 664,
         level: :admin,
         permission: module_key(),
         match: :prefix,
         parent: :admin_projects,
-        live_view: {PhoenixKitProjects.Web.ProjectsLive, :index}
+        live_view: {PhoenixKitProjects.Web.OverviewLive, :index}
       }
     ]
 
     hidden_subtabs = [
+      # Legacy `projects/list/…` addresses (the list lived there until
+      # 2026-09, with every project page nested under it). Both tabs
+      # redirect to the same path without the segment, so bookmarks and
+      # older embeds' `redirect_to` values keep landing. Declared FIRST
+      # among the hidden tabs: routes are emitted in this order and Phoenix
+      # matches in declaration order, so the bare `projects/list` must be
+      # seen before `projects/:id` would swallow it as an id.
+      %Tab{
+        id: :admin_projects_list_legacy,
+        label: "Projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list",
+        priority: 665,
+        level: :admin,
+        permission: module_key(),
+        match: :exact,
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ListRedirectLive, :index}
+      },
+      %Tab{
+        id: :admin_projects_list_legacy_glob,
+        label: "Projects",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/list/*rest",
+        priority: 666,
+        level: :admin,
+        permission: module_key(),
+        match: :exact,
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ListRedirectLive, :index}
+      },
       %Tab{
         id: :admin_projects_files,
         label: "Project Files",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/files",
+        path: "projects/:id/files",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -579,7 +777,7 @@ defmodule PhoenixKitProjects do
         label: "Project Activity",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/activity",
+        path: "projects/:id/activity",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -591,7 +789,7 @@ defmodule PhoenixKitProjects do
         label: "Project Members",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/members",
+        path: "projects/:id/members",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -603,7 +801,7 @@ defmodule PhoenixKitProjects do
         label: "Project Modules",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/modules",
+        path: "projects/:id/modules",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -639,7 +837,7 @@ defmodule PhoenixKitProjects do
         label: "New Project",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/new",
+        path: "projects/new",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -651,7 +849,7 @@ defmodule PhoenixKitProjects do
         label: "Edit Project",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/edit",
+        path: "projects/:id/edit",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -663,7 +861,7 @@ defmodule PhoenixKitProjects do
         label: "Project",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id",
+        path: "projects/:id",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -675,7 +873,7 @@ defmodule PhoenixKitProjects do
         label: "Board",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/board",
+        path: "projects/:id/board",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -691,7 +889,7 @@ defmodule PhoenixKitProjects do
         label: "Timeline",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/gantt",
+        path: "projects/:id/gantt",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -705,7 +903,7 @@ defmodule PhoenixKitProjects do
         label: "Calendar",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:id/calendar",
+        path: "projects/:id/calendar",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -713,6 +911,71 @@ defmodule PhoenixKitProjects do
         # Same LiveView as the show page, different live_action — the calendar
         # is a tab on the show page, not a separate page. `:calendar` selects it.
         live_view: {PhoenixKitProjects.Web.ProjectShowLive, :calendar}
+      },
+      # ── The project page's top-level tabs (2026-09-05, the boss) ──
+      # Tasks holds the task views; every enabled extension and Comments are
+      # its peers. The canonical addresses are `/tasks[/board|timeline|calendar]`,
+      # `/comments` and `/<extension tab key>` — the `/board`, `/gantt` and
+      # `/calendar` routes above keep every old link landing on its tab.
+      %Tab{
+        id: :admin_projects_project_tasks,
+        label: "Tasks",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/tasks",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :tasks}
+      },
+      %Tab{
+        id: :admin_projects_project_tasks_board,
+        label: "Board",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/tasks/board",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :board}
+      },
+      %Tab{
+        id: :admin_projects_project_tasks_timeline,
+        label: "Timeline",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/tasks/timeline",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :gantt}
+      },
+      %Tab{
+        id: :admin_projects_project_tasks_calendar,
+        label: "Calendar",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/tasks/calendar",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :calendar}
+      },
+      %Tab{
+        id: :admin_projects_project_comments,
+        label: "Comments",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/comments",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :comments}
       },
       %Tab{
         id: :admin_projects_template_new,
@@ -755,7 +1018,7 @@ defmodule PhoenixKitProjects do
         label: "Add Task",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:project_id/assignments/new",
+        path: "projects/:project_id/assignments/new",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
@@ -767,12 +1030,30 @@ defmodule PhoenixKitProjects do
         label: "Edit Assignment",
         gettext_backend: PhoenixKitProjects.Gettext,
         gettext_domain: "default",
-        path: "projects/list/:project_id/assignments/:id/edit",
+        path: "projects/:project_id/assignments/:id/edit",
         level: :admin,
         permission: module_key(),
         parent: :admin_projects,
         visible: false,
         live_view: {PhoenixKitProjects.Web.AssignmentFormLive, :edit}
+      },
+      # `/projects/:id/<extension tab>` — LAST on purpose: Phoenix matches in
+      # declaration order, so every literal sibling above (edit, files,
+      # members, modules, activity, board, gantt, calendar, tasks, comments)
+      # AND `projects/templates/*` (whose first segment would otherwise read
+      # as an id) win before this catch-all; an unknown segment lands on the
+      # project's first tab. Extension tab keys must not reuse those literals.
+      %Tab{
+        id: :admin_projects_project_ext_tab,
+        label: "Project",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/:tab",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :ext_tab}
       }
     ]
 

@@ -574,7 +574,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive, session: %{})
 
-      assert html =~ "New project"
+      # The page name lives in the admin layout's `page_title`, which
+      # `live_isolated` does not render. Assert the form this test is
+      # named for instead.
+      assert html =~ ~s(id="project-form")
     end
 
     test "wrapper_class defaults to max-w-xl", %{conn: conn} do
@@ -667,7 +670,13 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           }
         )
 
-      assert html =~ "Edit Existing"
+      # The page name lives in the admin layout's `page_title`, which
+      # `live_isolated` does not render. Asserting on the form id alone
+      # would pass identically for a blank :new form, so also assert the
+      # name INPUT carries "Existing" — proof the project this test is
+      # named for was actually loaded, not just that some form rendered.
+      assert html =~ ~s(id="project-form")
+      assert html =~ ~s(value="Existing")
     end
   end
 
@@ -676,7 +685,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive, session: %{})
 
-      assert html =~ "New task"
+      # The page name lives in the admin layout's `page_title`, which
+      # `live_isolated` does not render. Assert the form this test is
+      # named for instead.
+      assert html =~ ~s(id="task-form")
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
@@ -715,7 +727,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive, session: %{})
 
-      assert html =~ "New template"
+      # The page name lives in the admin layout's `page_title`, which
+      # `live_isolated` does not render. Assert the form this test is
+      # named for instead.
+      assert html =~ ~s(id="template-form")
     end
 
     test "wrapper_class override replaces the default", %{conn: conn} do
@@ -764,7 +779,11 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           session: %{"project_id" => project.uuid, "current_user_uuid" => actor_uuid}
         )
 
-      assert html =~ "Add task to Embed Host"
+      # The page name lives in the admin layout's `page_title`, which
+      # `live_isolated` does not render. Assert the form instead; the
+      # back-link below still proves the project came through the session.
+      assert html =~ ~s(id="assignment-form")
+      assert html =~ "Embed Host"
     end
 
     test "a stranger embedding the form is refused, shaped as not-found", %{
@@ -838,7 +857,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
         Projects.create_assignment(%{
           "project_uuid" => project.uuid,
           "task_uuid" => task.uuid,
-          "status" => "todo"
+          "status" => "todo",
+          "description" => "Distinctive assignment description",
+          "estimated_duration" => "42",
+          "estimated_duration_unit" => "hours"
         })
 
       {:ok, _view, html} =
@@ -851,9 +873,15 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           }
         )
 
-      # Title references the assignment's task (falls back to "Edit assignment"
-      # only when the task can't be resolved).
-      assert html =~ "Edit task:"
+      # The page name lives in the admin layout's `page_title`, which
+      # `live_isolated` does not render, and the task title itself is not
+      # shown anywhere in :edit mode either (the task picker only renders
+      # for :new) — so asserting the form id alone would pass identically
+      # for a blank assignment. Assert the description/duration this
+      # specific assignment carries instead, proof the right record loaded.
+      assert html =~ ~s(id="assignment-form")
+      assert html =~ "Distinctive assignment description"
+      assert html =~ ~s(value="42")
     end
   end
 end

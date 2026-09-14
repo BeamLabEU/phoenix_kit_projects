@@ -27,6 +27,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Label
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -63,12 +64,17 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       {:ok,
        socket
        |> assign(
-         page_title:
-           gettext("%{name} · Modules",
-             name: Project.localized_name(project, L10n.current_content_lang())
-           ),
+         # Trail: Admin Panel / Projects / <parents…> / <project> / Modules —
+         # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
+         page_title: gettext("Modules"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
+         page_crumbs:
+           Crumbs.project(
+             project,
+             L10n.current_content_lang(),
+             socket.assigns[:phoenix_kit_current_scope]
+           ),
          project: project
        )
        |> load_panel()}
@@ -141,10 +147,16 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
   # ── Data ────────────────────────────────────────────────────────
 
+  # Three reads for the whole panel — the rows, the effective extension
+  # map and the resolved flag map — where it used to ask per extension
+  # and per flag (~30 reads) on every mount, toggle and broadcast (the
+  # 2026-09-05 N+1 audit).
   defp load_panel(socket) do
     project = socket.assigns.project
     rows = Extensions.list_rows(project.uuid)
     row_by_key = Map.new(rows, &{{&1.ext_key, &1.instance_key}, &1})
+    enabled = Extensions.enabled_map(project.uuid)
+    on = Features.flags(project)
 
     extensions =
       Enum.map(Extensions.list_types(), fn ext ->
@@ -154,22 +166,20 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           ext: ext,
           row: row,
           available: Extensions.Registry.available?(ext),
-          enabled: Extensions.enabled?(project, ext.key)
+          enabled: Map.get(enabled, ext.key, false)
         }
       end)
 
     flag_groups =
       Features.catalog_by_extension()
-      |> Enum.filter(fn {ext, _flags} -> Extensions.enabled?(project, ext.key) end)
+      |> Enum.filter(fn {ext, _flags} -> Map.get(enabled, ext.key, false) end)
       |> Enum.map(fn {ext, flags} ->
         {ext,
          Enum.map(flags, fn flag ->
-           unmet = Enum.reject(flag.requires, &Features.on?(project, &1))
-
            %{
              flag: flag,
-             on: Features.on?(project, flag.key),
-             unmet_requires: unmet
+             on: Map.get(on, flag.key, false),
+             unmet_requires: Enum.reject(flag.requires, &Map.get(on, &1, false))
            }
          end)}
       end)
@@ -179,7 +189,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       flag_groups: flag_groups,
       presets: Features.presets(),
       labels: Labels.list_for_project(project.uuid),
-      labels_on: Features.on?(project, "labels"),
+      labels_on: Map.get(on, "labels", false),
       label_colors: Label.colors(),
       portal: PhoenixKitProjects.Portal.get_portal(project.uuid),
       board_exposure: PhoenixKitProjects.Portal.board_exposure_count(project.uuid)
@@ -519,12 +529,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                 <.icon name={ext.icon} class="w-6 h-6 mt-0.5 shrink-0 opacity-70" />
                 <div class="min-w-0 grow">
                   <div class="flex items-center gap-2">
-                    <span class="font-semibold">{ext.name}</span>
+                    <span class="font-semibold">{WebHelpers.translate_catalog(ext.name)}</span>
                     <span :if={ext.source == PhoenixKitProjects and ext.key == "tasks"} class="badge badge-ghost badge-xs">
                       {gettext("built-in")}
                     </span>
                   </div>
-                  <p :if={ext.description} class="text-sm opacity-70">{ext.description}</p>
+                  <p :if={ext.description} class="text-sm opacity-70">{WebHelpers.translate_catalog(ext.description)}</p>
                   <p :if={not available} class="text-xs text-warning mt-1">
                     {gettext("Unavailable — enable the backing module in Admin › Modules first.")}
                   </p>
@@ -536,7 +546,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   disabled={not available}
                   phx-click="toggle_ext"
                   phx-value-key={ext.key}
-                  aria-label={gettext("Toggle %{name}", name: ext.name)}
+                  aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(ext.name))}
                 />
               </div>
 
@@ -686,7 +696,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
           <h2 class="text-lg font-semibold">{gettext("Features")}</h2>
           <div :for={{ext, flags} <- @flag_groups} class="card border border-base-200 bg-base-100">
             <div class="card-body py-4 gap-2">
-              <h3 class="text-sm font-semibold opacity-70">{ext.name}</h3>
+              <h3 class="text-sm font-semibold opacity-70">{WebHelpers.translate_catalog(ext.name)}</h3>
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
                 <label
                   :for={%{flag: flag, on: on, unmet_requires: unmet} <- flags}
@@ -694,7 +704,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   title={requires_hint(unmet, @flag_groups)}
                 >
                   <span class="text-sm">
-                    {flag.label}
+                    {WebHelpers.translate_catalog(flag.label)}
                     <span :if={unmet != []} class="block text-xs text-warning">
                       {gettext("Requires: %{list}", list: requires_labels(unmet, @flag_groups))}
                     </span>
@@ -706,7 +716,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                     disabled={unmet != []}
                     phx-click="toggle_flag"
                     phx-value-key={flag.key}
-                    aria-label={gettext("Toggle %{name}", name: flag.label)}
+                    aria-label={gettext("Toggle %{name}", name: WebHelpers.translate_catalog(flag.label))}
                   />
                 </label>
               </div>
@@ -782,7 +792,10 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
   defp requires_labels(unmet, flag_groups) do
     labels =
-      for {_ext, flags} <- flag_groups, %{flag: flag} <- flags, flag.key in unmet, do: flag.label
+      for {_ext, flags} <- flag_groups,
+          %{flag: flag} <- flags,
+          flag.key in unmet,
+          do: WebHelpers.translate_catalog(flag.label)
 
     case labels do
       [] -> Enum.join(unmet, ", ")

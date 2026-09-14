@@ -68,7 +68,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
       |> Map.new(fn project ->
         title = Project.localized_name(project, lang)
 
-        {project.uuid, %{title: title, full_title: title, path: "#{@base}/list/#{project.uuid}"}}
+        {project.uuid, %{title: title, full_title: title, path: "#{@base}/#{project.uuid}"}}
       end)
 
     tasks =
@@ -85,7 +85,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
            full_title: title,
            # A task has no page of its own: it lives on its project's hub,
            # so the link goes there rather than nowhere.
-           path: "#{@base}/list/#{assignment.project_uuid}"
+           path: "#{@base}/#{assignment.project_uuid}"
          }}
       end)
 

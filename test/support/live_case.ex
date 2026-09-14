@@ -89,7 +89,14 @@ defmodule PhoenixKitProjects.LiveCase do
     permissions = Keyword.get(opts, :permissions, ["projects", "projects.admin_all"])
     authenticated? = Keyword.get(opts, :authenticated?, true)
 
-    user = %{uuid: user_uuid, email: email}
+    # A real `%User{}`, not a look-alike map: core's `Scope.user` is typed as
+    # one, and sibling packages we render inside our pages call core with it
+    # directly — `phoenix_kit_comments` 0.4.5 resolves `viewer_is_admin?` on
+    # every `update/2` through `Roles.user_has_role_owner?/1`, which clauses
+    # on the struct, so a synthetic map crashed every page hosting the
+    # comments component. The struct is unsaved; the role lookup is a plain
+    # `exists?` that answers false for a uuid with no assignments.
+    user = %PhoenixKit.Users.Auth.User{uuid: user_uuid, email: email}
 
     %PhoenixKit.Users.Auth.Scope{
       user: user,

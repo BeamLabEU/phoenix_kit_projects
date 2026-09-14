@@ -103,6 +103,22 @@ defmodule PhoenixKitProjects.Web.Helpers do
     PhoenixKitProjects.Web.AssignmentFormLive
   ]
 
+  @doc """
+  Translates a CATALOG string — an extension's name or description, a
+  feature flag's label, a category or archetype label: plain data in the
+  descriptors, so the `gettext/1` macro cannot see it. The literals are
+  registered with `gettext_noop/1` where they are declared (the built-ins
+  in `PhoenixKitProjects`, `Extensions.Registry`, `Archetypes`), which is
+  what keeps them in the `.pot`; a sibling module's contributed string
+  passes through unchanged unless it happens to be a msgid here. `nil`
+  stays `nil`.
+  """
+  @spec translate_catalog(String.t() | nil) :: String.t() | nil
+  def translate_catalog(nil), do: nil
+
+  def translate_catalog(s) when is_binary(s),
+    do: Gettext.gettext(PhoenixKitProjects.Gettext, s)
+
   @doc "The canonical list of LVs eligible for embed-mode mounting."
   @spec embeddable_lvs() :: [module()]
   def embeddable_lvs, do: @embeddable_lvs
@@ -428,7 +444,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   def resolve_action_params(_atom, session) do
     session
-    |> Map.take(["id", "project_id", "template", "kind"])
+    |> Map.take(["id", "project_id", "template", "kind", "title"])
   end
 
   @doc """
@@ -501,17 +517,20 @@ defmodule PhoenixKitProjects.Web.Helpers do
   `wrapper_class` resolution.
 
   Session keys read:
-    * `"mode"` — `"navigate"` (default) or `"emit"`
-    * `"pubsub_topic"` — string; required when mode is `"emit"`
+    * `"mode"` — `"navigate"` (default), `"emit"`, or `"popup"` (the
+      router-mounted project page: it hosts its own `PopupHostLive` and
+      opens forms as frames over itself — links `emit` into that host)
+    * `"pubsub_topic"` — string; required when mode is `"emit"` or `"popup"`
     * `"frame_ref"` — opaque integer stamped by `PopupHostLive` (may be nil)
 
   Socket assigns produced:
-    * `:embed_mode` — `:navigate | :emit`
+    * `:embed_mode` — `:navigate | :emit | :popup`
     * `:embed_pubsub_topic` — string or nil
     * `:embed_frame_ref` — integer or nil
 
-  Raises `ArgumentError` if `mode == "emit"` but `pubsub_topic` is missing
-  — fail-fast at mount rather than silently no-op every later emit call.
+  Raises `ArgumentError` if the mode is `"emit"` or `"popup"` but
+  `pubsub_topic` is missing — fail-fast at mount rather than silently
+  no-op every later emit call.
   """
   @spec assign_embed_state(Phoenix.LiveView.Socket.t(), map()) ::
           Phoenix.LiveView.Socket.t()
@@ -520,9 +539,9 @@ defmodule PhoenixKitProjects.Web.Helpers do
     topic = Map.get(session, "pubsub_topic")
     frame_ref = decode_frame_ref(Map.get(session, "frame_ref"))
 
-    if mode == :emit and (not is_binary(topic) or topic == "") do
+    if mode in [:emit, :popup] and (not is_binary(topic) or topic == "") do
       raise ArgumentError,
-            "embed mode is \"emit\" but session[\"pubsub_topic\"] is missing or empty"
+            "embed mode is #{inspect(mode)} but session[\"pubsub_topic\"] is missing or empty"
     end
 
     if mode == :emit and is_binary(Map.get(session, "redirect_to", nil)) and
@@ -542,6 +561,13 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   defp decode_mode("emit"), do: :emit
   defp decode_mode(:emit), do: :emit
+  # `:popup` — a router-mounted page that hosts its OWN popup: page
+  # semantics everywhere (save/cancel/delete navigate), except that
+  # "open a form" broadcasts `:opened` on the page's popup topic, so forms
+  # open as a drawer over the page. Set by the page itself (the project
+  # show page) and inherited by its nested tabs through their session.
+  defp decode_mode("popup"), do: :popup
+  defp decode_mode(:popup), do: :popup
   defp decode_mode("navigate"), do: :navigate
   defp decode_mode(:navigate), do: :navigate
   defp decode_mode(nil), do: :navigate
@@ -716,23 +742,27 @@ defmodule PhoenixKitProjects.Web.Helpers do
     * `:to` (string) — fallback path used in navigate mode
     * `:open` (`{module(), map()}`) — `{TargetLV, session_overrides}` used
       in emit mode
+    * `:popup` (boolean, default `true`) — in **popup** mode only: whether
+      this target belongs in the page's drawer. Forms do; a page target
+      (another project, a sub-page) passes `popup: false` and navigates,
+      the same split `<.smart_link popup={false}>` makes for links.
 
-  Both opts are required. In emit mode the open-target's module is
-  validated against `embeddable_lvs/0`; an unlisted module logs a
+  `:to` and `:open` are required. In emit mode the open-target's module
+  is validated against `embeddable_lvs/0`; an unlisted module logs a
   warning and is dropped (no broadcast, no navigation — caller's bug).
   """
   @spec navigate_or_open(Phoenix.LiveView.Socket.t(), keyword()) ::
           Phoenix.LiveView.Socket.t()
   def navigate_or_open(socket, opts) when is_list(opts) do
-    case socket.assigns[:embed_mode] do
-      :emit ->
-        {lv, session_overrides} = Keyword.fetch!(opts, :open)
-        emit_opened(socket, lv, session_overrides)
-        socket
+    mode = socket.assigns[:embed_mode]
 
-      _ ->
-        path = Keyword.fetch!(opts, :to)
-        Phoenix.LiveView.push_navigate(socket, to: path)
+    if mode == :emit or (mode == :popup and Keyword.get(opts, :popup, true)) do
+      {lv, session_overrides} = Keyword.fetch!(opts, :open)
+      emit_opened(socket, lv, session_overrides)
+      socket
+    else
+      path = Keyword.fetch!(opts, :to)
+      Phoenix.LiveView.push_navigate(socket, to: path)
     end
   end
 
@@ -798,6 +828,64 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   @doc """
+  Marks a form as holding unsaved edits: `dirty?` becomes true and the
+  host hears about it once (`notify_dirty/2`). Idempotent — pipe it into
+  every handler that changes what a save would write (validate, pending
+  dependency picks); later calls see `dirty?` already set and do nothing.
+  Mount with `dirty?: false`; render `data-confirm` from `@dirty?` on
+  Cancel and the header's back link.
+  """
+  @spec mark_dirty(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def mark_dirty(%{assigns: %{dirty?: true}} = socket), do: socket
+
+  def mark_dirty(socket) do
+    socket
+    |> Phoenix.Component.assign(dirty?: true)
+    |> notify_dirty(true)
+  end
+
+  @doc """
+  Tells the host whether this form holds unsaved edits.
+
+  In emit mode: broadcasts `{:projects, :dirty, %{frame_ref, dirty}}` on
+  the host topic; `PopupHostLive` makes the frame's dialog ignore Esc and
+  the backdrop while `dirty` is true, so a stray click never eats what
+  was typed — the form's own Cancel is the way out. In navigate mode:
+  no-op (a page has no dialog to guard). Idempotent per value: call it
+  on every transition, not on every keystroke.
+  """
+  @spec notify_dirty(Phoenix.LiveView.Socket.t(), boolean()) :: Phoenix.LiveView.Socket.t()
+  def notify_dirty(socket, dirty?) when is_boolean(dirty?) do
+    if socket.assigns[:embed_mode] == :emit do
+      do_broadcast(socket, :dirty, %{frame_ref: socket.assigns[:embed_frame_ref], dirty: dirty?})
+    end
+
+    socket
+  end
+
+  @doc """
+  Keeps the browser tab's title with the page when this LV is embedded.
+
+  LiveView applies *every* LV's `page_title` to `document.title`, nested
+  ones included — a form opened in the project page's drawer retitled
+  the tab "Add task" and left it there after closing. The header inside
+  the form still wants the title, so this moves it to `heading` and
+  clears `page_title` unless the LV is a page of its own (navigate
+  mode). Call it at the end of a form's mount pipeline; render the
+  header from `@heading`.
+  """
+  @spec keep_host_title(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def keep_host_title(socket) do
+    heading = socket.assigns[:page_title]
+
+    if socket.assigns[:embed_mode] == :navigate do
+      Phoenix.Component.assign(socket, heading: heading)
+    else
+      Phoenix.Component.assign(socket, heading: heading, page_title: nil)
+    end
+  end
+
+  @doc """
   Attaches the shared `open_embed` event handler to the socket via
   `Phoenix.LiveView.attach_hook/4`. Call from every LV that uses
   `<.smart_link>` (the conventional entry point is to chain it after
@@ -831,10 +919,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
     # ...)`, so a fall-through would crash them. Halt + log in both modes;
     # only emit mode actually fires the broadcast.
     case socket.assigns[:embed_mode] do
-      :emit ->
+      mode when mode in [:emit, :popup] ->
         with {:ok, lv} <- decode_embeddable_lv(lv_str),
              {:ok, session} <- decode_session(Map.get(params, "session")) do
-          emit_opened(socket, lv, session)
+          emit_opened(socket, lv, sanitize_session_overrides(session))
         else
           _ ->
             Logger.warning(
@@ -887,6 +975,26 @@ defmodule PhoenixKitProjects.Web.Helpers do
   end
 
   def decode_embeddable_lv(_), do: :error
+
+  # Session keys the host owns. A session that came over the wire
+  # (`phx-value-session` on an `open_embed` button is client-editable)
+  # must never set identity or routing: `current_user_uuid` is what the
+  # embedded LV rebuilds its scope from, the other three route the
+  # frame's events.
+  @reserved_session_keys ~w(current_user_uuid mode pubsub_topic frame_ref)
+
+  @doc """
+  Drops the keys the host owns from a client-supplied session override.
+
+  Applied to every `:opened` payload at both ends — by the emitter's
+  `open_embed` handler and by `PopupHostLive` before it stamps the
+  frame's session — so a crafted button payload cannot open a form as
+  another user or point its events at another topic. Server-built
+  sessions (`root_view`, `:saved`'s `next`) do not pass through here.
+  """
+  @spec sanitize_session_overrides(map()) :: map()
+  def sanitize_session_overrides(session) when is_map(session),
+    do: Map.drop(session, @reserved_session_keys)
 
   @doc """
   Decodes the `phx-value-session` JSON blob produced by `<.smart_link>`.

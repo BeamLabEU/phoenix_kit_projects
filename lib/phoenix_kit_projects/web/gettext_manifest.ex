@@ -19,20 +19,46 @@ defmodule PhoenixKitProjects.Web.GettextManifest do
   # When a Tab label is added or renamed in `phoenix_kit_projects.ex`,
   # append/update the corresponding `gettext("...")` here, then run
   # `mix gettext.extract && mix gettext.merge priv/gettext --no-fuzzy`.
+  #
+  # ⚠️ A label missing from this list is invisible to EVERY completeness
+  # check: the catalogues stay in perfect parity with each other and report
+  # zero empty `msgstr`, because a string that reached no catalogue at all is
+  # in none of them to be counted. The only check that sees it is a diff of
+  # the literals in `lib/` against `default.pot`.
 
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   @doc false
   def __extract__ do
     [
-      # `permission_metadata/0` description and label.
-      gettext("Manage projects, tasks, and assignments"),
+      # `permission_metadata/0` label, description, and sub-permission.
+      # These are what a viewer reads in the admin permission matrix.
+      gettext("Projects"),
+      gettext("Reach the Projects module — see the projects you belong to"),
+      gettext("Administer all projects"),
+      gettext(
+        "See and manage every project on the site, including ones this user is not a member of"
+      ),
 
       # Top-level + visible subtab labels (`admin_tabs/0`).
-      gettext("Projects"),
       gettext("Overview"),
       gettext("Templates"),
       gettext("Tasks"),
+
+      # Per-project subtabs. Listed even where the same literal happens to
+      # appear in an ordinary `gettext/1` call elsewhere in the module: that
+      # coverage is coincidental and one unrelated refactor away from
+      # vanishing, which would drop the label out of every catalogue without
+      # a single test going red.
+      gettext("Board"),
+      gettext("Timeline"),
+      gettext("Calendar"),
+      gettext("Comments"),
+      gettext("My Projects"),
+      gettext("Project Files"),
+      gettext("Project Activity"),
+      gettext("Project Members"),
+      gettext("Project Modules"),
 
       # Hidden subtabs (used for routing + page-header crumbs).
       gettext("New Task"),

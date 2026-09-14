@@ -24,7 +24,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
     {:ok, conn: conn}
   end
 
-  defp path(project), do: "/en/admin/projects/list/#{project.uuid}"
+  defp path(project), do: "/en/admin/projects/#{project.uuid}"
 
   test "an existing sub-project renders as a row with the child name + badge", %{conn: conn} do
     parent = fixture_project()
@@ -43,17 +43,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
     parent = fixture_project()
     {:ok, _view, html} = live(conn, path(parent))
 
-    # The button is now a link to AssignmentFormLive's add page in sub-project
-    # mode (same page tasks use), not a bespoke modal.
+    # The button opens AssignmentFormLive in sub-project mode (the same
+    # form tasks use) in the page's drawer — a popup button carrying the
+    # form's session, not a page link and not a bespoke modal.
     assert html =~ "Add sub-project"
-    assert html =~ "assignments/new?kind=subproject"
+    assert html =~ ~s(phx-value-lv="Elixir.PhoenixKitProjects.Web.AssignmentFormLive")
+    assert html =~ "&quot;kind&quot;:&quot;subproject&quot;"
   end
 
   test "the add form in sub-project mode creates a sub-project", %{conn: conn} do
     parent = fixture_project()
 
     {:ok, view, _html} =
-      live(conn, "/en/admin/projects/list/#{parent.uuid}/assignments/new?kind=subproject")
+      live(conn, "/en/admin/projects/#{parent.uuid}/assignments/new?kind=subproject")
 
     html =
       view
@@ -62,7 +64,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
 
     # Navigates back to the project on success.
     assert {:error, {:live_redirect, %{to: to}}} = html
-    assert to =~ "/list/#{parent.uuid}"
+    assert to == PhoenixKitProjects.Paths.project(parent.uuid)
 
     assert Enum.any?(Projects.list_assignments(parent.uuid), &(&1.child_project_uuid != nil))
   end

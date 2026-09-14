@@ -80,7 +80,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
   describe "show-page integration" do
     test "the tab appears only when the whiteboards extension is enabled",
          %{conn: conn, project: project} do
-      path = "/en/admin/projects/list/#{project.uuid}"
+      path = "/en/admin/projects/#{project.uuid}"
 
       {:ok, _view, html} = live(conn, path)
       refute html =~ "Whiteboards"
@@ -150,9 +150,14 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
 
       assert [board] = Whiteboards.list_for_project(project.uuid)
       assert board.name == "Fresh board"
-      # Auto-selected into the canvas branch with the LC mounted.
+      # File-less (core V183): no background file, the viewer mounts in
+      # board mode over an empty infinite canvas keyed by the board itself.
+      assert board.file_uuid == nil
       assert html =~ "All whiteboards"
-      assert html =~ "project-whiteboard-canvas-#{board.file_uuid}"
+      assert html =~ "project-whiteboard-canvas-#{board.uuid}"
+      assert html =~ ~s(id="media-zoom-#{board.uuid}")
+      assert html =~ ~s(data-infinite-canvas="true")
+      refute html =~ "background file for this whiteboard is missing"
     end
 
     test "create without a session user is refused", %{conn: conn, project: project} do
@@ -176,6 +181,44 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLiveTest do
       html = render_submit(view, "create_board", %{"name" => "Forged", "size" => "1920x1080"})
       assert html =~ "permission to change whiteboards"
 
+      render_click(view, "delete_board", %{"uuid" => board.uuid})
+      assert length(Whiteboards.list_for_project(project.uuid)) == 1
+    end
+
+    test "a read-only viewer opens a board LOCKED: no tools, no pencil, shapes marked readonly",
+         %{conn: conn, project: project, user: user} do
+      {:ok, board} = Whiteboards.create(project, "Locked", actor_uuid: user.uuid)
+
+      {:ok, _} =
+        PhoenixKit.Annotations.create(%{
+          target_type: Whiteboards.target_type(),
+          target_uuid: board.uuid,
+          kind: "rectangle",
+          geometry: %{"x" => 1, "y" => 2, "w" => 3, "h" => 4}
+        })
+
+      # The sweep (2026-09-05): the canvas used to ignore can_write — a
+      # member who could not create a board could still draw on one and,
+      # through the sync, wipe everyone else's shapes.
+      {:ok, view, _} = mount_tab_readonly(conn, project, user)
+      html = render_click(view, "open_board", %{"uuid" => board.uuid})
+      assert html =~ "project-whiteboard-canvas-#{board.uuid}"
+      assert html =~ ~s(data-toolbar="false")
+      assert html =~ ~s(data-tools="[]")
+      assert html =~ "readonly"
+
+      # A writer gets the full surface.
+      {:ok, view, _} = mount_tab(conn, project, user)
+      html = render_click(view, "open_board", %{"uuid" => board.uuid})
+      refute html =~ ~s(data-toolbar="false")
+      refute html =~ "readonly"
+    end
+
+    test "delete without a session user is refused (no nil-actor destruction)",
+         %{conn: conn, project: project, user: user} do
+      {:ok, board} = Whiteboards.create(project, "Kept", actor_uuid: user.uuid)
+
+      {:ok, view, _} = mount_tab(conn, project, nil)
       render_click(view, "delete_board", %{"uuid" => board.uuid})
       assert length(Whiteboards.list_for_project(project.uuid)) == 1
     end

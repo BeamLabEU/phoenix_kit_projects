@@ -292,7 +292,7 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
         )
 
       conn = PhoenixKitProjects.LiveCase.put_test_scope(conn, scope)
-      {:ok, view, _} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _} = live(conn, "/en/admin/projects")
 
       render_hook(view, "delete", %{"uuid" => project.uuid})
 
@@ -316,7 +316,7 @@ defmodule PhoenixKitProjects.Integration.GrantsTest do
         )
 
       conn = PhoenixKitProjects.LiveCase.put_test_scope(conn, scope)
-      {:ok, view, _} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _} = live(conn, "/en/admin/projects")
 
       render_hook(view, "delete", %{"uuid" => project.uuid})
 

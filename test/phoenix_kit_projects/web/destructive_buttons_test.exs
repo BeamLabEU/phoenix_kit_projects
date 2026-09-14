@@ -56,17 +56,17 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
     end
 
     test "start_task button (status=todo)", %{conn: conn, project: project} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert_disable_with(html, "start_task")
     end
 
     test "remove_assignment button", %{conn: conn, project: project} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert_disable_with(html, "remove_assignment")
     end
 
     test "toggle_tracking button (track-off branch)", %{conn: conn, project: project} do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       # The off-track form renders even when track_progress is false.
       assert_disable_with(html, "toggle_tracking")
     end
@@ -80,7 +80,7 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
           "scheduled_start_date" => DateTime.utc_now() |> DateTime.to_iso8601()
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # The bare button no longer carries phx-disable-with — that label
       # has moved to the modal's "Start project" submit button (the
@@ -102,7 +102,7 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
           "status" => "in_progress"
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert_disable_with(html, "complete")
     end
 
@@ -117,7 +117,7 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
           "status" => "done"
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert_disable_with(html, "reopen")
     end
   end

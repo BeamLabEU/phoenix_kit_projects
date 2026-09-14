@@ -37,28 +37,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
 
     test "start_task with bogus uuid is silently ignored",
          %{conn: conn, project: p, bogus: bogus} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
       _ = render_click(view, "start_task", %{"uuid" => bogus})
       assert Process.alive?(view.pid)
     end
 
     test "reopen with bogus uuid is silently ignored",
          %{conn: conn, project: p, bogus: bogus} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
       _ = render_click(view, "reopen", %{"uuid" => bogus})
       assert Process.alive?(view.pid)
     end
 
     test "edit_duration with bogus uuid is silently ignored",
          %{conn: conn, project: p, bogus: bogus} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
       _ = render_click(view, "edit_duration", %{"uuid" => bogus})
       assert Process.alive?(view.pid)
     end
 
     test "update_progress with bogus uuid is silently ignored",
          %{conn: conn, project: p, bogus: bogus} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ =
         render_change(view, "update_progress", %{
@@ -71,21 +71,21 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
 
     test "toggle_tracking with bogus uuid is silently ignored",
          %{conn: conn, project: p, bogus: bogus} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
       _ = render_click(view, "toggle_tracking", %{"uuid" => bogus})
       assert Process.alive?(view.pid)
     end
 
     test "remove_assignment with bogus uuid is silently ignored",
          %{conn: conn, project: p, bogus: bogus} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
       _ = render_click(view, "remove_assignment", %{"uuid" => bogus})
       assert Process.alive?(view.pid)
     end
 
     test "remove_dependency with bogus assignment uuid is silently ignored",
          %{conn: conn, project: p, bogus: bogus} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{p.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
       _ =
         render_click(view, "remove_dependency", %{
@@ -113,7 +113,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
 
       {:completed, _} = Projects.recompute_project_completion(project.uuid)
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert html =~ "Completed" or html =~ "completed"
     end
 
@@ -123,7 +123,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
       # Router-mounted admin pages push name + section into the site
       # breadcrumb and render no h1/badge row; EMBEDS have no breadcrumb
       # so they keep the full header. Pin both contracts.
-      {:ok, _view, router_html} = live(conn, "/en/admin/projects/list/#{template.uuid}")
+      {:ok, _view, router_html} = live(conn, "/en/admin/projects/#{template.uuid}")
       refute router_html =~ "<h1"
 
       # The embed carries identity: a template is reachable to anyone who
@@ -166,7 +166,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
         ["archived", raw_uuid]
       )
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{template.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{template.uuid}")
       # Template project — status buttons don't render but the timeline
       # dot uses `status_color/1` which falls through to the `_` clause.
       assert html =~ task.title
@@ -190,7 +190,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
 
       {:completed, _} = Projects.recompute_project_completion(project.uuid)
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       # `projected_end({:completed_at: dt}, ...)` returns dt — exercises
       # the first projected_end clause.
       assert html =~ "Finished" or html =~ "Completed"
@@ -215,7 +215,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
           })
       end)
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       # Three :done tasks → project auto-completes → "Finished:" badge.
       # Earlier this matched on "Planned"/"Projected" labels that were
       # removed when the schedule block was simplified to "Remaining: …
@@ -243,7 +243,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
           "status" => "todo"
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert html =~ task.title
     end
   end
@@ -252,7 +252,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBranchesTest do
     test "project_updated broadcast fires after project deletion → nil branch",
          %{conn: conn} do
       project = fixture_project()
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list/#{project.uuid}")
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # Delete the project via raw SQL to bypass the
       # `Projects.delete_project/1` `:project_deleted` PubSub broadcast

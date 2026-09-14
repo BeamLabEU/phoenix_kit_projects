@@ -127,6 +127,24 @@ defmodule PhoenixKitProjects.People do
     _ -> []
   end
 
+  @doc """
+  The names of a set of teams or departments in one read, `%{uuid => name}`
+  — the members page labels its group grants this way (it read one row
+  per grant). Unknown uuids are simply absent.
+  """
+  @spec names_by_uuid(:team | :department, [binary()]) :: %{binary() => String.t()}
+  def names_by_uuid(_kind, []), do: %{}
+
+  def names_by_uuid(kind, uuids) when kind in [:team, :department] and is_list(uuids) do
+    schema = if kind == :team, do: Team, else: Department
+
+    from(s in schema, where: s.uuid in ^uuids, select: {s.uuid, s.name})
+    |> RepoHelper.repo().all()
+    |> Map.new()
+  rescue
+    _ -> %{}
+  end
+
   @doc "A person's team memberships with `team: [:department]` preloaded."
   @spec list_memberships_for_person(binary()) :: [TeamMembership.t()]
   def list_memberships_for_person(person_uuid) do

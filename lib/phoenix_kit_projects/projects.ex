@@ -96,6 +96,10 @@ defmodule PhoenixKitProjects.Projects do
   ordering. After a reorder, dragged tasks claim `1..N` and appear
   above any still-zero ones; among the still-zero tasks, creation
   order wins.
+
+  Options: `:search`, `:sort_by`/`:sort_dir`, `:limit`, and `:ad_hoc` —
+  `:exclude` (default: the reusable library only), `:only` (one-off tasks
+  minted by a project's quick-add) or `:all`.
   """
   @spec list_tasks(keyword()) :: [Task.t()]
   def list_tasks(opts \\ []) do
@@ -104,6 +108,7 @@ defmodule PhoenixKitProjects.Projects do
     limit_n = Keyword.get(opts, :limit)
 
     Task
+    |> filter_ad_hoc(Keyword.get(opts, :ad_hoc, :exclude))
     |> maybe_search_task(Keyword.get(opts, :search))
     |> task_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
@@ -270,9 +275,18 @@ defmodule PhoenixKitProjects.Projects do
   @spec count_tasks(keyword()) :: non_neg_integer()
   def count_tasks(opts \\ []) do
     Task
+    |> filter_ad_hoc(Keyword.get(opts, :ad_hoc, :exclude))
     |> maybe_search_task(Keyword.get(opts, :search))
     |> repo().aggregate(:count, :uuid)
   end
+
+  # One-off tasks (V15) are library rows only by storage: every library
+  # surface excludes them unless it asks. `:only` is the library page's
+  # "One-off" lens; `:all` is for code that must see every row (usage
+  # counts, deletes).
+  defp filter_ad_hoc(query, :exclude), do: where(query, [t], t.ad_hoc == false)
+  defp filter_ad_hoc(query, :only), do: where(query, [t], t.ad_hoc == true)
+  defp filter_ad_hoc(query, :all), do: query
 
   @doc """
   Returns `%{assignment_uuid => published_comment_count}` for the
@@ -873,10 +887,10 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_scope_to_viewer(query, nil), do: query
 
   defp maybe_scope_to_viewer(query, user_uuid) when is_binary(user_uuid) do
-    uuids =
-      user_uuid
-      |> PhoenixKitProjects.Members.accessible_projects()
-      |> Enum.map(fn {project, _role} -> project.uuid end)
+    # `accessible_project_uuids/1`, not `accessible_projects/1` — this only
+    # needs the uuid set to narrow a WHERE clause, and the full-struct form
+    # would load every accessible project just to throw the rest away.
+    uuids = PhoenixKitProjects.Members.accessible_project_uuids(user_uuid)
 
     from(p in query, where: p.uuid in ^uuids)
   end
@@ -1179,6 +1193,10 @@ defmodule PhoenixKitProjects.Projects do
           select: a.child_project_uuid
         )
       )
+
+    # Whiteboard shapes live in core's annotations table keyed by the
+    # board's uuid, with no FK — the cascade below cannot reach them.
+    _ = PhoenixKitProjects.Whiteboards.delete_shapes_for_project(project.uuid)
 
     deleted =
       case repo().delete(project) do
@@ -1843,6 +1861,16 @@ defmodule PhoenixKitProjects.Projects do
     |> Map.new(&{&1, true})
   end
 
+  # Depth cap for the forest: the loader reads this many levels and the
+  # builders stop constructing children at it — the linking guards keep
+  # the sub-project graph acyclic, but a walk over persisted data must
+  # not depend on it. `ScheduleLayout` applies the same bound.
+  @max_subproject_depth 32
+
+  @doc "How many levels of sub-projects the forest read and the tree builders descend."
+  @spec max_subproject_depth() :: pos_integer()
+  def max_subproject_depth, do: @max_subproject_depth
+
   @doc """
   Recursive **tree summary** for a project: its own task breakdown plus a nested
   summary for each embedded sub-project, all the way down (V127). Powers the
@@ -1867,20 +1895,51 @@ defmodule PhoenixKitProjects.Projects do
   progress average counts each real task (done = 100, else its slider) and each
   **non-empty** child's rolled progress — empty sub-projects are neutral.
 
-  One `list_assignments/1` per node; depth is bounded by the (acyclic) tree, so
-  it's fine for the handful of running projects on the dashboard.
+  One project: `project_tree_summaries/1` on a list of one. For several —
+  a dashboard's running projects on a refresh tick — use the plural: it
+  reads the whole forest's assignments in one query per depth level
+  instead of one per node (the boss's #40 review: the widgets re-ran the
+  Overview's N+1 on every tick, per viewer).
   """
   @spec project_tree_summary(Project.t()) :: map()
-  def project_tree_summary(%Project{} = project), do: build_tree_node(project)
+  def project_tree_summary(%Project{} = project) do
+    [node] = project_tree_summaries([project])
+    node
+  end
 
-  defp build_tree_node(%Project{} = project) do
-    assignments = list_assignments(project.uuid)
+  @doc """
+  `project_tree_summary/1` for a list of projects, batched: the assignments
+  of every project in the forest (the roots, their sub-projects, theirs, …)
+  are read with `assignments_by_project/1` — one grouped query per depth
+  level, bounded by `@max_subproject_depth` — and each node is built from
+  that map. Same node shape, same order as the input; a project that has
+  no assignments gets an empty node.
+  """
+  @spec project_tree_summaries([Project.t()]) :: [map()]
+  def project_tree_summaries(projects) when is_list(projects) do
+    by_project = assignments_by_project(Enum.map(projects, & &1.uuid))
+    Enum.map(projects, &build_tree_node(&1, by_project, 0, %{}))
+  end
+
+  # `depth` and `path` bound the recursion the same way the loader bounds
+  # its reads: a child at the depth cap is not built (its assignments were
+  # never loaded, so it would read as falsely empty — codex, 2026-09-05),
+  # and a project already on the path down to here is a cycle in bad
+  # data, not a child — skipped, never recursed into. (`path` is a plain
+  # map: dialyzer's opaqueness false positive on a literal MapSet.)
+  defp build_tree_node(%Project{} = project, by_project, depth, path) do
+    assignments = Map.get(by_project, project.uuid, [])
     {task_rows, link_rows} = Enum.split_with(assignments, &is_nil(&1.child_project_uuid))
+    path = Map.put(path, project.uuid, true)
 
     children =
-      link_rows
-      |> Enum.filter(& &1.child_project)
-      |> Enum.map(&build_tree_node(&1.child_project))
+      if depth + 1 < @max_subproject_depth do
+        link_rows
+        |> Enum.filter(&(&1.child_project && not Map.has_key?(path, &1.child_project_uuid)))
+        |> Enum.map(&build_tree_node(&1.child_project, by_project, depth + 1, path))
+      else
+        []
+      end
 
     total_hours = node_hours(project, assignments)
 
@@ -2565,6 +2624,45 @@ defmodule PhoenixKitProjects.Projects do
     |> repo().all()
   end
 
+  @doc """
+  The accepted assignments of a set of projects AND every sub-project
+  beneath them, as `%{project_uuid => [Assignment.t()]}` — each list in
+  `list_assignments/1` order with the same preloads. One `WHERE project_uuid
+  IN (…)` read per depth level: the roots, then the children the linking
+  rows name, then theirs, until a level names nothing new (or
+  #{@max_subproject_depth} levels). A project with no rows maps to `[]`.
+  The batched base the tree summaries and `ScheduleLayout.trees/1` read
+  from, so a dashboard of N projects costs O(depth) queries, not O(nodes).
+  """
+  @spec assignments_by_project([uuid()]) :: %{uuid() => [Assignment.t()]}
+  def assignments_by_project(project_uuids) when is_list(project_uuids) do
+    load_forest(Enum.uniq(project_uuids), %{}, @max_subproject_depth)
+  end
+
+  defp load_forest([], acc, _hops), do: acc
+  defp load_forest(_uuids, acc, 0), do: acc
+
+  defp load_forest(uuids, acc, hops) do
+    rows =
+      Assignment
+      |> where([a], a.project_uuid in ^uuids and a.review_status == "accepted")
+      |> order_by([a], asc: a.position, asc: a.inserted_at)
+      |> preload(^@assignment_preloads)
+      |> repo().all()
+
+    # Every asked-for uuid gets an entry, so a later lookup never re-queries.
+    grouped = Map.new(uuids, &{&1, []}) |> Map.merge(Enum.group_by(rows, & &1.project_uuid))
+    acc = Map.merge(acc, grouped)
+
+    next =
+      rows
+      |> Enum.map(& &1.child_project_uuid)
+      |> Enum.reject(&(is_nil(&1) or Map.has_key?(acc, &1)))
+      |> Enum.uniq()
+
+    load_forest(next, acc, hops - 1)
+  end
+
   defp maybe_pending_review(changeset, :pending) do
     Ecto.Changeset.put_change(changeset, :review_status, "pending")
   end
@@ -2702,6 +2800,166 @@ defmodule PhoenixKitProjects.Projects do
       end
 
       {:ok, a}
+    end
+  end
+
+  @doc """
+  Creates a library task AND its assignment in `project_uuid` in one
+  transaction — the write behind "add a task that is not in the library
+  yet", whether it comes from the full form (a reusable library task) or
+  from a project's quick-add composer (a one-off, `ad_hoc: true` task).
+
+  Inside the transaction: the project row is locked (`FOR UPDATE`) so two
+  people adding at the same time cannot both claim the same bottom
+  `position`; the task is inserted; the assignment is inserted pointing at
+  it. NOTHING else — no broadcast, no activity log, so a rollback can never
+  leave a phantom event on someone else's screen or an audit line for a
+  row that does not exist. The `:task_created` / `:assignment_created`
+  broadcasts fire after commit; activity logging stays with the caller,
+  which knows the actor.
+
+  `assignment_attrs` may carry `"description"`, `"estimated_duration"`,
+  `"estimated_duration_unit"`, the assignee fields, `"status"`,
+  `"priority"`, `"position"`; `"project_uuid"` and `"task_uuid"` are set
+  here. Returns `{:ok, %{task: task, assignment: assignment}}`,
+  `{:error, :task | :assignment, changeset}` on validation failure, or
+  `{:error, :project, :not_found}`.
+  """
+  @spec create_task_with_assignment(uuid(), map(), map()) ::
+          {:ok, %{task: Task.t(), assignment: Assignment.t()}}
+          | {:error, :task | :assignment, Ecto.Changeset.t()}
+          | {:error, :project, :not_found}
+  def create_task_with_assignment(project_uuid, task_attrs, assignment_attrs \\ %{})
+      when is_binary(project_uuid) and is_map(task_attrs) and is_map(assignment_attrs) do
+    result =
+      repo().transaction(fn ->
+        # Serialises concurrent adds to ONE project (and only that one):
+        # the bottom position is read inside the lock, so no two adds can
+        # land on the same number. `next_assignment_position/1` is an
+        # unlocked max() everywhere else — good enough for a form page,
+        # not for a composer built to be hammered.
+        case repo().one(from(p in Project, where: p.uuid == ^project_uuid, lock: "FOR UPDATE")) do
+          nil ->
+            repo().rollback({:project, :not_found})
+
+          %Project{} ->
+            insert_task_then_assignment(project_uuid, task_attrs, assignment_attrs)
+        end
+      end)
+
+    case result do
+      {:ok, %{task: task, assignment: assignment} = created} ->
+        ProjectsPubSub.broadcast_task(:task_created, %{uuid: task.uuid, title: task.title})
+
+        ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+          uuid: assignment.uuid,
+          project_uuid: assignment.project_uuid
+        })
+
+        {:ok, created}
+
+      {:error, {step, reason}} ->
+        {:error, step, reason}
+    end
+  end
+
+  # The locked half of `create_task_with_assignment/3`. Either insert
+  # failing rolls the transaction back with `{step, changeset}`, so the
+  # bare `{:ok, _} =` matches never see an error tuple.
+  defp insert_task_then_assignment(project_uuid, task_attrs, assignment_attrs) do
+    task_attrs = put_default_position(stringify_keys(task_attrs), &next_task_position/0)
+    {:ok, task} = insert_or_rollback(:task, Task.changeset(%Task{}, task_attrs))
+
+    assignment_attrs =
+      assignment_attrs
+      |> stringify_keys()
+      |> Map.put("project_uuid", project_uuid)
+      |> Map.put("task_uuid", task.uuid)
+      |> put_default_position(fn -> next_assignment_position(project_uuid) end)
+
+    {:ok, assignment} =
+      insert_or_rollback(:assignment, Assignment.changeset(%Assignment{}, assignment_attrs))
+
+    %{task: task, assignment: assignment}
+  end
+
+  defp insert_or_rollback(step, changeset) do
+    case repo().insert(changeset) do
+      {:ok, record} -> {:ok, record}
+      {:error, cs} -> repo().rollback({step, cs})
+    end
+  end
+
+  defp stringify_keys(map) when is_map(map) do
+    Map.new(map, fn
+      {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      {k, v} -> {k, v}
+    end)
+  end
+
+  @doc """
+  Adds a **one-off** task by title (`ad_hoc: true`, so it never shows in
+  the library) into `project_uuid` at the bottom of the plan — the
+  by-title shortcut over `create_task_with_assignment/3` for hosts and
+  scripts (the add-task sheet builds the full attrs itself). Trims the
+  title; a blank one is a `:task` changeset error like any other
+  validation failure. Broadcasts after commit, logs nothing — see
+  `create_task_with_assignment/3`.
+
+  The title is ALL it sets. The assignment takes the schema's own defaults
+  (`status: "todo"`, `priority: "normal"`, `progress_pct: 0`) plus the
+  computed bottom position — no assignee, no estimate, and nothing read
+  off the project. `opts` is accepted for call compatibility and ignored;
+  a caller that needs any of the above wants
+  `create_task_with_assignment/3` directly.
+  """
+  @spec quick_add_assignment(uuid(), String.t(), keyword()) ::
+          {:ok, %{task: Task.t(), assignment: Assignment.t()}}
+          | {:error, :task | :assignment, Ecto.Changeset.t()}
+          | {:error, :project, :not_found}
+  def quick_add_assignment(project_uuid, title, _opts \\ []) when is_binary(title) do
+    create_task_with_assignment(
+      project_uuid,
+      %{"title" => String.trim(title), "ad_hoc" => true},
+      %{}
+    )
+  end
+
+  @max_parent_depth 8
+
+  @doc """
+  The ancestors of a sub-project, ROOT FIRST — the projects whose plans
+  embed it, walking up through the linking assignments
+  (`child_project_uuid`, unique per child, so a project has at most one
+  parent). A top-level project has none. Used for the admin header's
+  breadcrumb trail (`Projects / Parent / Child`).
+
+  Bounded to #{@max_parent_depth} hops: the linking guards keep the
+  parent graph acyclic, but a walk over persisted data should never be
+  able to spin regardless.
+  """
+  @spec parent_chain(uuid()) :: [Project.t()]
+  def parent_chain(project_uuid) when is_binary(project_uuid) do
+    do_parent_chain(project_uuid, [], @max_parent_depth)
+  end
+
+  defp do_parent_chain(_uuid, acc, 0), do: acc
+
+  defp do_parent_chain(uuid, acc, hops) do
+    parent =
+      repo().one(
+        from(a in Assignment,
+          join: p in Project,
+          on: p.uuid == a.project_uuid,
+          where: a.child_project_uuid == ^uuid,
+          select: p,
+          limit: 1
+        )
+      )
+
+    case parent do
+      nil -> acc
+      %Project{} = p -> do_parent_chain(p.uuid, [p | acc], hops - 1)
     end
   end
 
@@ -3512,19 +3770,25 @@ defmodule PhoenixKitProjects.Projects do
     |> repo().all()
   end
 
-  @doc "All dependencies across every assignment in a project (used when cloning templates)."
-  @spec list_all_dependencies(uuid()) :: [Dependency.t()]
-  def list_all_dependencies(project_uuid) do
+  @doc """
+  All dependencies across every assignment in a project — or in a LIST of
+  projects, in one read (a project page with expanded sub-projects, the
+  gantt's whole rendered tree; each used to ask per project).
+  """
+  @spec list_all_dependencies(uuid() | [uuid()]) :: [Dependency.t()]
+  def list_all_dependencies(project_uuids) when is_list(project_uuids) do
     from(d in Dependency,
       join: a in Assignment,
       on: d.assignment_uuid == a.uuid,
-      where: a.project_uuid == ^project_uuid,
+      where: a.project_uuid in ^project_uuids,
       # `:child_project` alongside `:task` so a dependency whose target is a
       # sub-project (no task template, V127) can still render a label.
       preload: [depends_on: [:task, :child_project]]
     )
     |> repo().all()
   end
+
+  def list_all_dependencies(project_uuid), do: list_all_dependencies([project_uuid])
 
   @doc """
   Adds an assignment-level dependency and broadcasts `:dependency_added`.

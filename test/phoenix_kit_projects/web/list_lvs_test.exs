@@ -23,12 +23,12 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
     test "mount renders the projects list page", %{conn: conn} do
       p = fixture_project(%{"name" => "Listed-#{System.unique_integer([:positive])}"})
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/list")
+      {:ok, _view, html} = live(conn, "/en/admin/projects")
       assert html =~ p.name
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
       bogus = Ecto.UUID.generate()
 
       html = render_click(view, "delete", %{"uuid" => bogus})
@@ -39,7 +39,7 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
          %{conn: conn, actor_uuid: actor_uuid} do
       project = fixture_project()
 
-      {:ok, view, _html} = live(conn, "/en/admin/projects/list")
+      {:ok, view, _html} = live(conn, "/en/admin/projects")
 
       html = render_click(view, "delete", %{"uuid" => project.uuid})
 
@@ -99,7 +99,7 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
       # The test layout renders these fixture consumers — see
       # test/support/test_layouts.ex. Core's admin layout is the real
       # consumer (breadcrumb "+" button); this pins the producer half.
-      assert html =~ ~s(data-page-title="Project Templates")
+      assert html =~ ~s(data-page-title="Templates")
       assert html =~ ~r{data-crumb-action[^>]*href="[^"]*templates/new"}
     end
 

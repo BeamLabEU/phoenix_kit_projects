@@ -134,6 +134,72 @@ defmodule PhoenixKitProjects.Members do
 
   def accessible_projects(_), do: []
 
+  @doc """
+  The uuid set behind `accessible_projects/1`, without materialising a
+  single `%Project{}` struct.
+
+  For a caller that only needs to scope a `WHERE uuid IN (...)` — the
+  narrowing every non-admin listing query does — `accessible_projects/1`
+  does needless work: it loads the FULL row for every direct membership
+  and every group-granted extra just to discard everything but the uuid a
+  moment later. This selects `p.uuid` at each step instead, same three
+  sources (direct membership, group grants, "everyone"-visible), same
+  non-template filter, same fail-closed `[]` on error.
+
+  Equivalence with `accessible_projects/1` is pinned in
+  `test/phoenix_kit_projects/integration/members_test.exs` — the two must
+  always agree on WHICH projects, never just on shape.
+  """
+  @spec accessible_project_uuids(binary()) :: [binary()]
+  def accessible_project_uuids(user_uuid) when is_binary(user_uuid) do
+    direct_uuids =
+      RepoHelper.repo().all(
+        from(m in ProjectMember,
+          join: p in PhoenixKitProjects.Schemas.Project,
+          on: p.uuid == m.project_uuid,
+          where: m.user_uuid == ^user_uuid and p.is_template == false,
+          select: p.uuid
+        )
+      )
+
+    granted_keys = user_uuid |> PhoenixKitProjects.Grants.project_roles_for_user() |> Map.keys()
+
+    granted_uuids =
+      if granted_keys == [] do
+        []
+      else
+        RepoHelper.repo().all(
+          from(p in PhoenixKitProjects.Schemas.Project,
+            where: p.uuid in ^granted_keys and p.is_template == false,
+            select: p.uuid
+          )
+        )
+      end
+
+    open_uuids =
+      RepoHelper.repo().all(
+        from(p in PhoenixKitProjects.Schemas.Project,
+          where:
+            p.is_template == false and
+              fragment("COALESCE(?->>'visibility', 'private') = 'everyone'", p.settings),
+          select: p.uuid
+        )
+      )
+
+    (direct_uuids ++ granted_uuids ++ open_uuids) |> Enum.uniq()
+  rescue
+    e ->
+      Logger.warning(
+        "[Projects.Members] accessible_project_uuids failed: #{Exception.message(e)}"
+      )
+
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  def accessible_project_uuids(_), do: []
+
   defp stronger(a, b) do
     rank = %{"owner" => 0, "manager" => 1, "member" => 2, "viewer" => 3}
     if Map.get(rank, a, 9) <= Map.get(rank, b, 9), do: a, else: b

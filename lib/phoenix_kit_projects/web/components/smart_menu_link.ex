@@ -45,13 +45,21 @@ defmodule PhoenixKitProjects.Web.Components.SmartMenuLink do
     doc: "{TargetLV :: module(), session_overrides :: map()}"
   )
 
-  attr(:embed_mode, :atom, default: :navigate, values: [:navigate, :emit])
+  attr(:embed_mode, :atom, default: :navigate, values: [:navigate, :emit, :popup])
+
+  attr(:popup, :boolean,
+    default: true,
+    doc:
+      "In `:popup` mode whether the target opens in the page's drawer (forms) or navigates (pages). See `SmartLink`."
+  )
+
   attr(:icon, :string, default: nil)
   attr(:label, :string, required: true)
   attr(:variant, :string, default: "default")
   attr(:rest, :global, include: ~w(data-id title aria-label))
 
-  def smart_menu_link(%{embed_mode: :emit} = assigns) do
+  def smart_menu_link(%{embed_mode: mode, popup: popup} = assigns)
+      when mode == :emit or (mode == :popup and popup) do
     {target_lv, session_overrides} = assigns.emit
 
     assigns =

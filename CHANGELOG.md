@@ -1,5 +1,223 @@
 # Changelog
 
+## 0.24.1 - 2026-09-13
+
+Follow-ups from the PR #43 quality sweep, plus one performance fix it flagged
+and deferred.
+
+### Fixed
+
+- `list_projects_for/2`'s non-admin scoping no longer materialises a full
+  `%Project{}` struct per accessible project just to read its uuid.
+  `Members.accessible_project_uuids/1` selects uuids directly across the same
+  three access paths (direct membership, group grants, "everyone"-visible
+  projects); `phoenix_kit_dashboard_viewer_context/2`'s `limit: 2` call is
+  the caller this mattered most for.
+- The settings page's `switch_settings_tab` event accepted any string, and
+  every settings card's visibility keyed off `@active_tab != <id>` — an
+  unrecognised tab id blanked every card. Whitelisted the five known ids.
+- Restored the `Run: createdb ... && mix test.setup` hint text in
+  `test_helper.exs`, mangled into a run-on line by an earlier commit.
+- Fixed two tests from PR #43 that could not fail as written: one asserted
+  `nil` for both a real and a nonsense context kind, and one hit the database
+  from a plain `ExUnit.Case` with no sandboxed connection, passing only
+  because the query's own rescue swallowed the resulting ownership error.
+  Moved the DB-backed checks to a proper integration test with real
+  membership rows.
+- The embedded `ProjectFormLive`/`AssignmentFormLive` `:edit` tests asserted
+  only that a form rendered, indistinguishable from a blank `:new` form. They
+  now assert the loaded record's own data.
+
+## 0.24.0 - 2026-09-11
+
+PR #43 — declares the two places a dashboard can appear inside Projects.
+
+### Added
+
+- **Dashboard slots.** `PhoenixKitProjects.phoenix_kit_dashboard_slots/0` — a
+  duck-typed contract (mirrors `phoenix_kit_widgets/0`; no dependency on
+  `phoenix_kit_dashboards`) declaring two places a dashboard may be shown:
+  a sidebar sub-tab beside the project list ("Projects dashboard",
+  context-free — a widget bound to *the viewer's own* project still resolves
+  there) and the Dashboard tab inside every project page ("Project page",
+  supplying the `projects.project` context so one shared board serves every
+  project, overridable per project from its Modules panel).
+- **`phoenix_kit_dashboard_viewer_context/2`** — resolves "my project" for a
+  viewer on the module-wide slot: answers only when exactly one project is
+  reachable, `nil` otherwise, rather than guessing "most recently visited".
+- The widgets' shared project-picker field now declares
+  `context: "projects.project"`, letting the dashboards host offer "the
+  project this page is about" / "my project" as bind sources for it.
+
+### Fixed
+
+- `mix.exs` declared `phoenix_kit_templates` as a dependency with no matching
+  entry in `mix.lock`, so a clean checkout stopped at "the dependency is not
+  locked" before compiling anything — invisible to every gate in the release
+  playbook, which runs after `deps.get`.
+- 7 user-visible strings (permission-matrix label/description/sub-permission,
+  4 per-project subtab labels) reached no gettext catalogue at all across all
+  7 locales.
+
+## 0.23.3 - 2026-09-07
+
+### Fixed
+
+- Project Settings page's title was "Project settings" (with a redundant
+  "settings" word) instead of "Projects", which is what the sidebar and
+  every other Settings page's breadcrumb-title convention call for.
+
+## 0.23.2 - 2026-09-07
+
+### Added
+
+- Tabs on the Project Settings page — New Project Page / Workflow
+  Statuses / Task List Controls / Timeline Chart / Calendar, replacing
+  one long five-card scroll, matching the tabbed treatment core applies
+  to its own Settings pages.
+
+## 0.23.1 - 2026-09-07
+
+### Fixed
+
+- `<.page_header>` no longer duplicates the page title on standalone admin pages (Files, Members, Activity, and every form) — the top breadcrumb bar already shows it. The title still renders when the page is embedded via `live_render`, where it's the only title available.
+
+## 0.23.0 - 2026-09-05
+
+PR #41 — the per-item reads on the hot paths are batched. Twelve N+1s, the
+worst of them on surfaces that re-run on a timer.
+
+### Added
+
+- **`Projects.assignments_by_project/1`** — the accepted assignments of a set
+  of projects *and every sub-project beneath them*, as
+  `%{project_uuid => [Assignment.t()]}`: one `WHERE project_uuid IN (…)` read
+  per depth level rather than one per node. Filter, order and preloads are
+  identical to `list_assignments/1`, which is what makes it a drop-in base for
+  the tree walkers.
+- **`Projects.project_tree_summaries/1`** and **`ScheduleLayout.trees/1`** —
+  the plural forms of `project_tree_summary/1` and `tree/1`, built off that one
+  read. The singular forms delegate to them, so both shapes stay in step.
+- **`Features.flags/1`**, **`Extensions.enabled_map/1`**,
+  **`Grants.subject_reaches/1`**, **`Portal.review_details_for/1`**,
+  **`People.names_by_uuid/2`**, **`Attachments.download_urls/1`** — batched
+  forms of the per-item lookups the Modules panel, the members page, the review
+  queue and the files page were making in a loop.
+- **`Projects.max_subproject_depth/0`** — the depth bound the forest read and
+  both tree builders share, so the loader and the builders cannot disagree
+  about where to stop.
+- `Projects.list_all_dependencies/1` now also accepts a list of project uuids.
+- `test/support/query_counter.ex` — counts the statements a function runs, via
+  repo telemetry, so the new suites assert what actually matters: that the
+  count follows the depth, not the number of projects.
+
+### Changed
+
+- **The dashboard widgets and the Overview no longer re-run the per-project
+  N+1.** `RunningWidget` (every 15 s), `CalendarWidget` (every 60 s) and
+  `OverviewLive` walked `project_tree_summary/1` — and `ScheduleLayout.tree/1`
+  — once per project and recursively per sub-project. On a page that refreshes
+  on a tick, per connected viewer, that is the cost that matters.
+- **`Features.gates/1` resolves from one context read.** It was asking the
+  database per flag *and* per `requires` hop — 22 reads for the 16 gates, on
+  every project-page mount and every modules-changed broadcast.
+- Both tree builders now carry the set of projects on the path down to them, so
+  a cycle in bad data is skipped at the edge instead of recursing; and a node at
+  the depth cap is not built at all rather than read as falsely empty.
+
+### Fixed
+
+- `Projects.quick_add_assignment/3` documented itself as adding the task "with
+  the project's defaults". It sets the title and nothing else — the assignment
+  takes the schema's own defaults plus the computed bottom position. `opts` is
+  accepted and ignored; the doc now says so.
+- `RunningTiers.prioritize/4` hand-rolled a Schwartzian transform that
+  `Enum.sort_by/2` already performs.
+
+## 0.22.0 - 2026-09-05
+
+PR #40 — the project page becomes top-level tabs, forms open as a drawer over
+it, and a task can be a one-off. **Needs phoenix_kit 2.14.2 or newer** (core
+V183). The `~> 2.0` requirement is unchanged and deliberately stays wide — a
+pin that excluded a core minor would break `mix deps.get` for hosts running
+this module beside a newer core — so the real floor is documented in `mix.exs`
+rather than encoded; on an older 2.x this release does not compile.
+
+### Added
+
+- **Top-level project tabs.** Tasks is one tab holding the list, board,
+  timeline and calendar views (`/:id/tasks[/board|timeline|calendar]`); every
+  enabled extension and Comments are its peers, served by a `projects/:id/:tab`
+  catch-all declared after every literal sibling. A tab the project has gated
+  off is never landed on — with Tasks itself off the page opens on the first
+  extension tab, or Comments, or the empty state, and a live change to the
+  Modules panel re-gates the open page.
+- **Forms as a right-hand drawer.** `PopupHost` renders core's
+  `<.modal placement={:end}>` per frame instead of a hand-rolled `<dialog>`, so
+  a create/edit form opens over the page it belongs to. A form with unsaved
+  input tells its host (`:dirty`), and the frame then refuses Esc and the
+  backdrop — its own Cancel, which confirms, is the way out.
+- **Quick-add and one-off tasks** (chain V15). Adding a task to a project no
+  longer mints a reusable library entry: `tasks.ad_hoc` keeps quick-added tasks
+  out of the library list, pickers and counts, and the library page grows a
+  Library / One-off lens with "Add to the library" promotion. Task and
+  assignment are written in one transaction under a project-row lock, so two
+  people adding at once cannot claim the same position.
+- **"Just a space"** — a fifth starting point on the new-project form for a
+  project with no task list at all, plus Tasks as an explicit toggle.
+- **The Overview's pieces as dashboard widgets** — `projects.running`,
+  `projects.upcoming` and `projects.calendar`, so a dashboards-module board can
+  stand in for the page. All three are viewer-scoped at the query.
+- **Site-configurable task-list controls** (`ListControls`, on
+  `/admin/settings/projects`): the lens and sort appear only when they can
+  change what is on screen, or always, or never.
+- **A real breadcrumb trail on every page** (`Web.Crumbs`), including a
+  sub-project's parent chain — with any ancestor the reader may not view left
+  out of it.
+
+### Changed
+
+- **The project list is the module's landing page.** The Overview keeps its
+  route as the last subtab. The `list` segment leaves project URLs; the old
+  `/admin/projects/list/…` addresses redirect to the same path without it.
+- **Whiteboards no longer need a background file** (chain V16, core V183). A
+  board is its row and its shapes are annotations anchored to it; the salted
+  white-PNG bridge is gone from the create path. Boards made by it, and boards
+  over a real image, keep their file and render exactly as before. Deleting a
+  project now also deletes its file-less boards' shapes, which no cascade could
+  reach.
+- **Every "who can X" floor for a task capability now requires the task list.**
+  A project that is only its whiteboards is not asked who may create tasks.
+- **The "Full tracker" preset is derived from the gate list** rather than typed
+  out — the hand-kept map had missed `lifecycle`, `ledger` and `view_board`, so
+  applying Full over Simple left three explicit falses standing.
+- Catalog strings — extension names and descriptions, feature-flag labels,
+  archetype copy — are registered with `gettext_noop/1` and translated at
+  render, so they stop rendering English in every locale.
+
+### Fixed
+
+- **A form opened in the drawer no longer steals the browser tab's title.**
+  LiveView applies every LV's `page_title`, nested ones included; an embedded
+  form now keeps its heading and leaves the tab to the page.
+- **A client-supplied embed session cannot name its own user or topic.**
+  `current_user_uuid`, `mode`, `pubsub_topic` and `frame_ref` are stripped from
+  every `:opened` payload at both ends, so a crafted `phx-value-session` cannot
+  open a form as someone else.
+- **A contributed tab requires its own module's permission.** The registry gate
+  existed but nothing consulted `module_key`, so any projects viewer could read
+  a sibling module's linked data through a tab.
+- **Whiteboard drawing is write-gated.** `can_write` reaches the canvas as
+  `can_annotate`; a reader without it sees every board locked. Board deletion
+  is identity-gated like creation.
+- `LiveCase.fake_scope/1` builds a real `%User{}` rather than a look-alike map.
+  `phoenix_kit_comments` 0.4.5 resolves the viewer's admin flag on every
+  `update/2` through core's `Roles.user_has_role_owner?/1`, which clauses on the
+  struct — the map crashed every page hosting the comments component.
+- `ProjectShowLive`'s embed-mount clause derives its placeholder assigns from
+  `not_found_assigns/0` instead of repeating all 49 of them, and `TasksLive`'s
+  `one_off_count` gets the mount default its three siblings already had.
+
 ## 0.21.2 - 2026-08-21
 
 ### Changed

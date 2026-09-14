@@ -19,7 +19,8 @@ defmodule PhoenixKitProjects.Extensions do
       `config_schema` keys — raw params never reach the JSONB.
     * **Effective enablement is an intersection**: a row with
       `enabled: true` counts only while the extension is in the catalog AND
-      its backing site module is enabled (`Registry.available?/1`) — a
+      its backing site module is enabled
+      (`PhoenixKitProjects.Extensions.Registry.available?/1`) — a
       site-level disable wins instantly without touching rows.
     * **Defaults**: a project with NO row for an extension falls back to the
       catalog's `default_enabled` (the built-in Tasks extension ships
@@ -84,6 +85,43 @@ defmodule PhoenixKitProjects.Extensions do
         nil -> if ext.default_enabled, do: [{ext, nil}], else: []
       end
     end)
+  end
+
+  @doc """
+  The effective enablement of EVERY catalog extension for a project — its
+  DEFAULT instance, which is what `enabled?/2` asks about; a named
+  instance is `enabled?/3`'s business — as `%{ext_key => boolean}`, from
+  ONE `list_rows/1` read: an explicit row wins, otherwise the catalog
+  default; an unavailable extension (its
+  module off) is `false` however its row reads — the same answer
+  `enabled?/3` gives per key, for the callers that need all of them at
+  once (`Features.gates/1`, the Modules panel, the members page: each
+  used to ask per extension, per flag, on every mount and broadcast).
+  """
+  @spec enabled_map(binary()) :: %{String.t() => boolean()}
+  def enabled_map(project_uuid) when is_binary(project_uuid) do
+    by_key =
+      project_uuid
+      |> list_rows()
+      |> Enum.filter(&(&1.instance_key == @default_instance))
+      |> Map.new(&{&1.ext_key, &1.enabled})
+
+    Map.new(Registry.list(), fn ext ->
+      enabled? =
+        Registry.available?(ext) and
+          case Map.get(by_key, ext.key) do
+            nil -> ext.default_enabled
+            value -> value
+          end
+
+      {ext.key, enabled?}
+    end)
+  rescue
+    e ->
+      Logger.warning("[Projects.Extensions] enabled_map failed: #{Exception.message(e)}")
+      %{}
+  catch
+    :exit, _ -> %{}
   end
 
   @doc """

@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
   alias PhoenixKitProjects.{Attachments, Authz, Extensions, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Live.Components.MediaSelectorModal
 
@@ -54,12 +55,17 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
       {:ok,
        socket
        |> assign(
-         page_title:
-           gettext("%{name} · Files",
-             name: Project.localized_name(project, L10n.current_content_lang())
-           ),
+         # Trail: Admin Panel / Projects / <parents…> / <project> / Files —
+         # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
+         page_title: gettext("Files"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
+         page_crumbs:
+           Crumbs.project(
+             project,
+             L10n.current_content_lang(),
+             socket.assigns[:phoenix_kit_current_scope]
+           ),
          project: project,
          show_picker: false,
          folder_uuid: Attachments.folder_uuid(project.uuid)
@@ -86,6 +92,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
      |> assign(
        project: nil,
        files: [],
+       download_urls: %{},
        show_picker: false,
        folder_uuid: nil,
        wrapper_class: socket.assigns[:wrapper_class] || @default_wrapper_class
@@ -96,8 +103,11 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
 
   defp scope(socket), do: socket.assigns[:phoenix_kit_current_scope]
 
+  # The download URLs resolve once per load, in one read — the rows used
+  # to ask per file, twice, on every render.
   defp load_files(socket) do
-    assign(socket, files: Attachments.list_files(socket.assigns.project.uuid))
+    files = Attachments.list_files(socket.assigns.project.uuid)
+    assign(socket, files: files, download_urls: Attachments.download_urls(files))
   end
 
   # ── Events ──────────────────────────────────────────────────────
@@ -191,6 +201,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
               name: Project.localized_name(@project, L10n.current_content_lang())
             )
           }
+          embed_mode={@embed_mode}
         >
           <:back_link>
             <.smart_link
@@ -235,8 +246,8 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
                   </div>
                 </div>
                 <a
-                  :if={Attachments.download_url(file)}
-                  href={Attachments.download_url(file)}
+                  :if={@download_urls[file.uuid]}
+                  href={@download_urls[file.uuid]}
                   target="_blank"
                   rel="noopener"
                   class="btn btn-ghost btn-xs btn-circle"

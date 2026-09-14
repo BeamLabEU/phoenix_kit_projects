@@ -109,6 +109,18 @@ defmodule PhoenixKitProjects.Integration.FeaturesTest do
     end
   end
 
+  describe "the Full preset" do
+    test "turns EVERY built-in flag on, even after Simple wrote them all off", %{project: project} do
+      {:ok, project} = Features.apply_preset(project, "simple")
+      {:ok, project} = Features.apply_preset(project, "full")
+
+      gates = Features.gates(project)
+      off = gates |> Enum.reject(fn {_k, v} -> v end) |> Enum.map(&elem(&1, 0))
+      # A hand-kept map once missed lifecycle, ledger and view_board.
+      assert off == []
+    end
+  end
+
   describe "set_flags/3" do
     test "whitelists keys and value types; logs the change", %{project: project} do
       {:ok, updated} =
