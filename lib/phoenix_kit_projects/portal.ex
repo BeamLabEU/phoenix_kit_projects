@@ -42,6 +42,7 @@ defmodule PhoenixKitProjects.Portal do
   require Logger
 
   alias PhoenixKit.Modules.Storage
+  alias PhoenixKit.Modules.Storage.Folder
   alias PhoenixKit.Modules.Storage.ImageProcessor
   alias PhoenixKit.Modules.Storage.URLSigner
   alias PhoenixKit.RepoHelper
@@ -49,6 +50,7 @@ defmodule PhoenixKitProjects.Portal do
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Users.RateLimiter
   alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.Attachments
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Features
   alias PhoenixKitProjects.Members
@@ -85,6 +87,7 @@ defmodule PhoenixKitProjects.Portal do
   @mention_limit 8
   @attachment_max_count 3
   @attachment_max_bytes 5_000_000
+  @portal_submissions_folder "Portal submissions"
   defp min_fill_ms,
     do: Application.get_env(:phoenix_kit_projects, :portal_min_fill_ms, @min_fill_ms)
 
@@ -629,7 +632,7 @@ defmodule PhoenixKitProjects.Portal do
       true ->
         try do
           Enum.reduce_while(files, {:ok, []}, fn file, {:ok, acc} ->
-            case store_one_attachment(file, owner) do
+            case store_one_attachment(file, owner, project_uuid) do
               {:ok, uuid} ->
                 {:cont, {:ok, acc ++ [uuid]}}
 
@@ -679,12 +682,12 @@ defmodule PhoenixKitProjects.Portal do
     _ -> nil
   end
 
-  defp store_one_attachment(%{path: path, name: name}, owner_uuid) do
+  defp store_one_attachment(%{path: path, name: name}, owner_uuid, project_uuid) do
     sanitized =
       Path.join(System.tmp_dir!(), "pk-portal-#{System.unique_integer([:positive])}.jpg")
 
     try do
-      do_store_attachment(path, name, owner_uuid, sanitized)
+      do_store_attachment(path, name, owner_uuid, sanitized, project_uuid)
     after
       # The re-encoded copy is scratch space — storage takes its own — so
       # leaving it behind fills /tmp one report at a time. `after` because
@@ -693,12 +696,12 @@ defmodule PhoenixKitProjects.Portal do
     end
   end
 
-  defp store_one_attachment(_file, _owner), do: :error
+  defp store_one_attachment(_file, _owner, _project_uuid), do: :error
 
-  defp do_store_attachment(path, name, owner_uuid, sanitized) do
+  defp do_store_attachment(path, name, owner_uuid, sanitized, project_uuid) do
     with {:ok, _} <- ImageProcessor.sanitize(path, sanitized, max_edge: 2000),
          %{size: size} when size > 0 and size <= @attachment_max_bytes <- File.stat!(sanitized),
-         {:ok, %{uuid: uuid}} <-
+         {:ok, %{uuid: uuid} = file} <-
            Storage.store_file(sanitized,
              filename: safe_filename(name),
              # The type we PRODUCED, never the one that was claimed.
@@ -707,9 +710,45 @@ defmodule PhoenixKitProjects.Portal do
              user_uuid: owner_uuid,
              metadata: %{"source" => "portal_submission"}
            ) do
+      place_in_project_folder(file, project_uuid, owner_uuid)
       {:ok, uuid}
     else
       _ -> :error
+    end
+  end
+
+  # Best-effort: the submission is saved even if the folder cannot be resolved.
+  defp place_in_project_folder(_file, nil, _actor_uuid), do: :ok
+
+  defp place_in_project_folder(file, project_uuid, actor_uuid) do
+    with {:ok, project_folder} <- Attachments.ensure_folder(project_uuid, actor_uuid),
+         {:ok, sub_uuid} <- ensure_child(project_folder, @portal_submissions_folder, actor_uuid),
+         {:ok, _} <- Storage.attach_file_to_folder(file, sub_uuid) do
+      :ok
+    else
+      other ->
+        Logger.warning("[Portal] could not place submission file #{file.uuid}: #{inspect(other)}")
+
+        :ok
+    end
+  end
+
+  defp ensure_child(parent_uuid, name, actor_uuid) do
+    case RepoHelper.repo().one(
+           from(f in Folder,
+             where: f.parent_uuid == ^parent_uuid and f.name == ^name and is_nil(f.trashed_at),
+             limit: 1
+           )
+         ) do
+      %{uuid: uuid} ->
+        {:ok, uuid}
+
+      nil ->
+        case Storage.create_folder(%{name: name, parent_uuid: parent_uuid, user_uuid: actor_uuid}) do
+          {:ok, %{uuid: uuid}} -> {:ok, uuid}
+          {:error, %Ecto.Changeset{}} -> ensure_child(parent_uuid, name, actor_uuid)
+          error -> error
+        end
     end
   end
 

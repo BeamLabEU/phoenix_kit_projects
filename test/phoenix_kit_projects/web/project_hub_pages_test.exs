@@ -30,6 +30,16 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
 
     test "open_picker ensures the folder; media_selected attaches + logs",
          %{conn: conn, project: project} do
+      # `ensure_folder/2` now attributes the folder to the acting user (FK on
+      # `user_uuid`), so the scope needs a REAL persisted user here — the
+      # module setup's `fake_scope()` is unsaved on purpose (see live_case.ex).
+      {:ok, actor} =
+        Auth.register_user(%{
+          email: "actor-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      conn = put_test_scope(conn, fake_scope(user_uuid: actor.uuid))
       {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/files")
 
       render_click(view, "open_picker", %{})

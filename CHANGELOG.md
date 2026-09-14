@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.25.0 - 2026-09-14
+
+A project's attachment folder can now live under a host-configured parent
+instead of always at the storage root.
+
+### Added
+
+- `Attachments.parent_folder_uuid/2` and `Attachments.folder_name/2` consult
+  two new host hooks — `:attachments_parent_folder` (`fun(kind, actor_uuid,
+  subject)` or `fun(kind, actor_uuid)`, subject `%Project{}` for lookups,
+  `{:ensure, %Project{}}` for creation) and `:attachments_folder_name`
+  (`fun(resource, actor) :: {:ok, name} | nil`) — falling back to no parent
+  and the deterministic `project-<uuid>` name when unconfigured, exactly
+  today's behaviour.
+- `ensure_folder/2` and `folder_uuid/2` take an optional actor uuid (attached
+  to a created folder's `user_uuid`) and accept either a project uuid or a
+  loaded `%Project{}`; resolution order is host-name-under-parent →
+  deterministic-name-under-parent → deterministic-name-at-root →
+  deterministic-name-anywhere, so a legacy root `project-<uuid>` folder is
+  found and reused rather than twinned once a parent hook is configured.
+  `folder_uuid/2` never creates anything (render-safe).
+- Portal submissions (`Portal.store_attachments/2`) now place a stored
+  attachment into `<project folder>/Portal submissions/` when the parent
+  hook resolves a folder for the project; best-effort — a submission is
+  still saved if the folder cannot be resolved.
+
 ## 0.24.1 - 2026-09-13
 
 Follow-ups from the PR #43 quality sweep, plus one performance fix it flagged
