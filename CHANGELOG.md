@@ -1,18 +1,5 @@
 # Changelog
 
-## Unreleased
-
-### Added
-
-- `PhoenixKitProjects.MediaReorganizer`: plans legacy media-folder moves
-  for projects from the `:attachments_parent_folder` /
-  `:attachments_folder_name` hooks, plus orphaned-legacy-folder reports.
-  No pointer back-fill (a project's folder is always resolved by name,
-  never cached) and no pending-folder rule (this module never stages an
-  upload before the project exists). Registered via
-  `PhoenixKitProjects.media_reorganizer/0` (no `@impl` yet — the core
-  engine that will consume it has not shipped).
-
 ## 0.25.1 - 2026-09-15
 
 Post-merge review of PR #44 (`dev_docs/pull_requests/2026/44-attachments-parent-folder/CLAUDE_REVIEW.md`).
