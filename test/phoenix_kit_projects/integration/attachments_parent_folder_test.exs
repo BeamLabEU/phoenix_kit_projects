@@ -191,4 +191,116 @@ defmodule PhoenixKitProjects.AttachmentsParentFolderTest do
     project_folder_uuid = Attachments.folder_uuid(project, nil)
     assert submission_folder.parent_uuid == project_folder_uuid
   end
+
+  # ── post-merge review fixes ──
+
+  defmodule ActorHook do
+    @moduledoc false
+    # A parent that only an identified actor gets — the shape where a
+    # resolve that forgets the actor lands on a different folder.
+    def parent(:project, actor, _subject) when is_binary(actor), do: {:ok, Process.get(:parent)}
+    def parent(_kind, _actor, _subject), do: nil
+
+    def raising_name(_resource, _actor), do: raise("host bug")
+  end
+
+  defp user!(tag) do
+    {:ok, user} =
+      Auth.register_user(%{
+        "email" => "pf-#{tag}-#{System.unique_integer([:positive])}@example.com",
+        "password" => "ValidPassword123!"
+      })
+
+    user
+  end
+
+  defp stored_file!(owner_uuid, folder_uuid) do
+    n = System.unique_integer([:positive])
+
+    %Storage.File{}
+    |> Ecto.Changeset.change(%{
+      user_uuid: owner_uuid,
+      folder_uuid: folder_uuid,
+      original_file_name: "spec.pdf",
+      file_name: "spec.pdf",
+      file_path: "/tmp/spec.pdf",
+      ext: "pdf",
+      file_type: "document",
+      mime_type: "application/pdf",
+      file_checksum: "pf-checksum-#{n}",
+      user_file_checksum: "pf-user-checksum-#{n}",
+      size: 123,
+      status: "active"
+    })
+    |> Repo.insert!()
+  end
+
+  test "a trashed project folder is never reused; ensure_folder/2 makes a live one" do
+    project = project!()
+    {:ok, old} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+
+    old
+    |> Ecto.Changeset.change(trashed_at: DateTime.utc_now() |> DateTime.truncate(:second))
+    |> Repo.update!()
+
+    assert Attachments.folder_uuid(project, nil) == nil
+
+    assert {:ok, fresh} = Attachments.ensure_folder(project, nil)
+    refute fresh == old.uuid
+    assert Attachments.folder_uuid(project, nil) == fresh
+  end
+
+  test "remove_file/3 resolves the same actor-dependent folder list_files/2 does" do
+    container = container!("Projects")
+    Process.put(:parent, container.uuid)
+    Application.put_env(:phoenix_kit_projects, :attachments_parent_folder, {ActorHook, :parent})
+    configure_name_hook()
+
+    project = project!()
+    actor = user!("remove")
+    {:ok, folder_uuid} = Attachments.ensure_folder(project, actor.uuid)
+    file = stored_file!(actor.uuid, folder_uuid)
+
+    assert [%{uuid: listed}] = Attachments.list_files(project, actor.uuid)
+    assert listed == file.uuid
+
+    assert :ok = Attachments.remove_file(project, file.uuid, actor.uuid)
+    assert Repo.get!(Storage.File, file.uuid).status == "trashed"
+    assert Attachments.list_files(project, actor.uuid) == []
+  end
+
+  test "a raising name hook falls back to the deterministic name" do
+    Application.put_env(
+      :phoenix_kit_projects,
+      :attachments_folder_name,
+      {ActorHook, :raising_name}
+    )
+
+    project = project!()
+    {:ok, legacy} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+
+    assert Attachments.folder_name(project, nil) == "project-#{project.uuid}"
+    assert Attachments.folder_uuid(project, nil) == legacy.uuid
+  end
+
+  @tag :tmp_dir
+  test "portal: with no hooks configured, a submission still lands under project-<uuid>/Portal submissions",
+       %{tmp_dir: dir} do
+    project = project!()
+    owner = user!("owner-nohook")
+    {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+
+    path = Path.join(dir, "shot.png")
+    {_, 0} = System.cmd("convert", ["-size", "40x40", "xc:red", path], stderr_to_stdout: true)
+
+    assert {:ok, [file_uuid]} =
+             Portal.store_attachments([%{path: path, name: "shot.png"}], project.uuid)
+
+    submission_folder = Repo.get!(Folder, Repo.get!(Storage.File, file_uuid).folder_uuid)
+    assert submission_folder.name == "Portal submissions"
+
+    project_folder = Repo.get!(Folder, submission_folder.parent_uuid)
+    assert project_folder.name == "project-#{project.uuid}"
+    assert project_folder.parent_uuid == nil
+  end
 end

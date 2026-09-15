@@ -731,6 +731,18 @@ defmodule PhoenixKitProjects.Portal do
 
         :ok
     end
+  rescue
+    # `find_child/2` and core's attach can raise on a DB error. Escaping, that
+    # reaches `take_attachments/2`'s rescue and refuses the whole report —
+    # orphaning the file just stored — which is the opposite of best-effort.
+    e ->
+      Logger.warning(
+        "[Portal] could not place submission file #{file.uuid}: #{Exception.message(e)}"
+      )
+
+      :ok
+  catch
+    :exit, _ -> :ok
   end
 
   defp ensure_child(parent_uuid, name, actor_uuid) do

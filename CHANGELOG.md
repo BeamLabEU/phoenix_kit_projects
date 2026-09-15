@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.25.1 - 2026-09-15
+
+Post-merge review of PR #44 (`dev_docs/pull_requests/2026/44-attachments-parent-folder/CLAUDE_REVIEW.md`).
+0.25.0 was never published; its entry below ships in this release.
+
+### Changed
+
+- `Attachments.remove_file/3` takes the actor uuid, like its siblings, and
+  `list_files`, `attach_files` and `remove_file` all accept a loaded
+  `%Project{}`. The Files page passes the struct, so a refresh no longer
+  re-reads the project row.
+- The folder-hook contract is now stated: a project's folder is found by the
+  `{parent, name}` pair the hooks answer (core records no owner on a folder),
+  so that pair must be unique per project. Two projects answering the same
+  parent AND the same host name share one folder and see each other's files.
+
+### Fixed
+
+- Removing a file could silently do nothing — "File removed." while the file
+  stayed — under an actor-dependent parent hook, because `remove_file`
+  resolved the folder without the actor.
+- Folder lookups skip trashed folders. Core's name/parent unique index ignores
+  trashed rows, so a trashed project folder and its live replacement coexist,
+  and Projects could keep attaching into the trashed one.
+- Placing a portal image in `Portal submissions` is best-effort for real: a
+  raise while resolving the folder no longer refuses the whole report and
+  orphans the image that was just stored.
+- A raising `:attachments_folder_name` hook falls back to the deterministic
+  name instead of blanking the Files page; both hooks also survive an `:exit`.
+
 ## 0.25.0 - 2026-09-14
 
 A project's attachment folder can now live under a host-configured parent
@@ -22,9 +52,10 @@ instead of always at the storage root.
   found and reused rather than twinned once a parent hook is configured.
   `folder_uuid/2` never creates anything (render-safe).
 - Portal submissions (`Portal.store_attachments/2`) now place a stored
-  attachment into `<project folder>/Portal submissions/` when the parent
-  hook resolves a folder for the project; best-effort — a submission is
-  still saved if the folder cannot be resolved.
+  attachment into `<project folder>/Portal submissions/` on every install,
+  hooks or not — without hooks that is a root `project-<uuid>` folder,
+  created on the first report carrying an image; best-effort — a submission
+  is still saved if the folder cannot be resolved.
 - `list_files/2` and `attach_files/3` also take an optional actor uuid, so a
   folder they lazily resolve or create is attributed and parent-chained the
   same as one created via `ensure_folder/2`.

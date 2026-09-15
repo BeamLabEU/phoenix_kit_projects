@@ -32,6 +32,13 @@ defmodule PhoenixKitProjects.Attachments do
       actor_uuid)` returns `{:ok, name}` or anything else to fall back to
       the deterministic `project-<uuid>` name.
 
+  A folder is found by its `{parent, name}` pair — core records no owning
+  resource on a folder — so the pair a host's hooks answer must be unique
+  per project. Two projects that resolve to the same parent AND the same
+  host name share one folder, and each Files page lists the other's files.
+  A per-project parent (a sub-order's own folder) with a fixed name is
+  fine; a shared container needs a name carrying something project-unique.
+
   Resolution order (read-only, no writes): host-name-under-parent →
   deterministic-name-under-parent → deterministic-name-at-root →
   deterministic-name-anywhere — so a legacy root `project-<uuid>` folder,
@@ -88,6 +95,8 @@ defmodule PhoenixKitProjects.Attachments do
     error ->
       Logger.warning("[Projects] parent folder hook failed: #{inspect(error)}")
       nil
+  catch
+    :exit, _ -> nil
   end
 
   defp resource_kind(%Project{}), do: :project
@@ -98,14 +107,15 @@ defmodule PhoenixKitProjects.Attachments do
 
   # Callers that only have a uuid: load the record once. A deleted project must not raise
   # (the portal calls ensure_folder from a public endpoint).
-  defp project!(%Project{} = p), do: p
-  defp project!(uuid) when is_binary(uuid), do: repo().get(Project, uuid)
+  defp load_project(%Project{} = p), do: p
+  defp load_project(uuid) when is_binary(uuid), do: repo().get(Project, uuid)
 
   @doc false
   # Folder name: the host's (`:attachments_folder_name`, `fun(resource, actor) :: {:ok, name} | nil`)
-  # or the deterministic `project-<uuid>` name.
-  @spec folder_name(Project.t() | {:ensure, Project.t()}, binary() | nil) :: binary()
-  def folder_name(resource, actor_uuid) do
+  # or the deterministic `project-<uuid>` name. A raising hook falls back like a declining
+  # one — the parent hook already does, and without it one host bug blanked the Files page.
+  @spec folder_name(Project.t(), binary() | nil) :: binary()
+  def folder_name(%Project{} = resource, actor_uuid) do
     with {mod, fun} when is_atom(mod) and is_atom(fun) <-
            Application.get_env(:phoenix_kit_projects, :attachments_folder_name),
          true <- Code.ensure_loaded?(mod) and function_exported?(mod, fun, 2),
@@ -115,6 +125,12 @@ defmodule PhoenixKitProjects.Attachments do
     else
       _ -> deterministic_name(resource)
     end
+  rescue
+    error ->
+      Logger.warning("[Projects] folder name hook failed: #{inspect(error)}")
+      deterministic_name(resource)
+  catch
+    :exit, _ -> deterministic_name(resource)
   end
 
   @doc false
@@ -123,7 +139,7 @@ defmodule PhoenixKitProjects.Attachments do
   # old sub-order; it must still be found so the host can move it). Read-only: the host answers
   # the bare struct without creating anything.
   @spec find_resource_folder(Project.t() | {:ensure, Project.t()}, binary() | nil) ::
-          %Folder{} | nil
+          struct() | nil
   def find_resource_folder(resource, actor_uuid) do
     parent = parent_folder_uuid(resource, actor_uuid)
     host_name = folder_name(resource, actor_uuid)
@@ -148,8 +164,17 @@ defmodule PhoenixKitProjects.Attachments do
     _ -> nil
   end
 
+  # Live folders only. Core's `[:name, :parent_uuid]` unique index is partial
+  # (`WHERE trashed_at IS NULL`), so a trashed folder and its live
+  # replacement coexist — and an unfiltered `limit: 1` could hand back the
+  # trashed one, stranding every attach in a folder the media browser hides.
   defp find_folder_under(name, nil) do
-    repo().one(from(f in Folder, where: f.name == ^name and is_nil(f.parent_uuid), limit: 1))
+    repo().one(
+      from(f in Folder,
+        where: f.name == ^name and is_nil(f.parent_uuid) and is_nil(f.trashed_at),
+        limit: 1
+      )
+    )
   rescue
     error ->
       Logger.warning("[Projects] find_folder_under #{name} failed: #{inspect(error)}")
@@ -158,7 +183,10 @@ defmodule PhoenixKitProjects.Attachments do
 
   defp find_folder_under(name, parent_uuid) do
     repo().one(
-      from(f in Folder, where: f.name == ^name and f.parent_uuid == ^parent_uuid, limit: 1)
+      from(f in Folder,
+        where: f.name == ^name and f.parent_uuid == ^parent_uuid and is_nil(f.trashed_at),
+        limit: 1
+      )
     )
   rescue
     error ->
@@ -169,7 +197,7 @@ defmodule PhoenixKitProjects.Attachments do
   @doc "Resolves the project folder uuid WITHOUT creating it (render-safe)."
   @spec folder_uuid(binary() | Project.t(), binary() | nil) :: binary() | nil
   def folder_uuid(project_or_uuid, actor_uuid \\ nil) do
-    with %Project{} = project <- project!(project_or_uuid),
+    with %Project{} = project <- load_project(project_or_uuid),
          %Folder{uuid: uuid} <- find_resource_folder(project, actor_uuid) do
       uuid
     else
@@ -191,7 +219,7 @@ defmodule PhoenixKitProjects.Attachments do
   @spec ensure_folder(binary() | Project.t(), binary() | nil) ::
           {:ok, binary()} | {:error, term()}
   def ensure_folder(project_or_uuid, actor_uuid \\ nil) do
-    case project!(project_or_uuid) do
+    case load_project(project_or_uuid) do
       nil -> {:error, :not_found}
       project -> do_ensure_folder(project, actor_uuid)
     end
@@ -232,9 +260,9 @@ defmodule PhoenixKitProjects.Attachments do
   end
 
   @doc "Active files in the project folder (home or linked), newest first, capped."
-  @spec list_files(binary(), binary() | nil) :: [File.t()]
-  def list_files(project_uuid, actor_uuid \\ nil) do
-    case folder_uuid(project_uuid, actor_uuid) do
+  @spec list_files(binary() | Project.t(), binary() | nil) :: [File.t()]
+  def list_files(project_or_uuid, actor_uuid \\ nil) do
+    case folder_uuid(project_or_uuid, actor_uuid) do
       nil ->
         []
 
@@ -263,9 +291,9 @@ defmodule PhoenixKitProjects.Attachments do
   this folder as home; a file homed elsewhere gains a `FolderLink`
   (idempotent per file).
   """
-  @spec attach_files(binary(), [binary()], binary() | nil) :: :ok
-  def attach_files(project_uuid, file_uuids, actor_uuid \\ nil) when is_list(file_uuids) do
-    case ensure_folder(project_uuid, actor_uuid) do
+  @spec attach_files(binary() | Project.t(), [binary()], binary() | nil) :: :ok
+  def attach_files(project_or_uuid, file_uuids, actor_uuid \\ nil) when is_list(file_uuids) do
+    case ensure_folder(project_or_uuid, actor_uuid) do
       {:ok, folder_uuid} -> Enum.each(file_uuids, &attach(&1, folder_uuid))
       {:error, _} -> :ok
     end
@@ -303,9 +331,11 @@ defmodule PhoenixKitProjects.Attachments do
   soft-trash (recoverable in the media trash); home here + linked elsewhere →
   promote a link to home; linked-only here → drop the link.
   """
-  @spec remove_file(binary(), binary()) :: :ok | {:error, term()}
-  def remove_file(project_uuid, file_uuid) do
-    case folder_uuid(project_uuid) do
+  @spec remove_file(binary() | Project.t(), binary(), binary() | nil) :: :ok | {:error, term()}
+  def remove_file(project_or_uuid, file_uuid, actor_uuid \\ nil) do
+    # The actor matters: an actor-dependent parent hook resolves a different
+    # folder without it, and a miss here is a silent `:ok`.
+    case folder_uuid(project_or_uuid, actor_uuid) do
       nil -> :ok
       folder_uuid -> detach(file_uuid, folder_uuid)
     end
