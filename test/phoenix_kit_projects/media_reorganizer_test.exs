@@ -201,6 +201,34 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
     assert action.folder.uuid == relocated.uuid
   end
 
+  test "legacy-named twin live elsewhere is reported relocated alongside the project's own move (stray_legacy)" do
+    project = project!()
+    {:ok, target} = Storage.create_folder(%{name: "Projects"})
+    {:ok, elsewhere} = Storage.create_folder(%{name: "Somewhere else"})
+    {:ok, current} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+
+    {:ok, stray} =
+      Storage.create_folder(%{name: "project-#{project.uuid}", parent_uuid: elsewhere.uuid})
+
+    configure_parent_hook(target.uuid)
+
+    actions = MediaReorganizer.plan(nil, [])
+
+    move = Enum.find(actions, &(&1.kind == :project and &1.label == project.name))
+    refute is_nil(move)
+    assert move.op == :move
+    assert move.folder.uuid == current.uuid
+
+    relocated =
+      Enum.find(
+        actions,
+        &(&1.kind == :relocated and &1.op == :report and &1.folder.uuid == stray.uuid)
+      )
+
+    refute is_nil(relocated)
+    assert relocated.label == project.name
+  end
+
   test "legacy folder live at both root and under the resolved parent → one duplicate report, no move" do
     project = project!()
     {:ok, target} = Storage.create_folder(%{name: "Projects"})

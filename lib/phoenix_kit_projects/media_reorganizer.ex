@@ -176,6 +176,18 @@ defmodule PhoenixKitProjects.MediaReorganizer do
     {unique, ambiguous, shared, relocated} = classify_entries(entries)
     {converging, solo} = split_converging(unique)
 
+    # A project whose current folder WAS resolved (unique or shared) can
+    # still leave a SEPARATE legacy-named folder live somewhere else
+    # entirely (an old container, or a duplicate from before parent hooks
+    # existed) — that stray twin is neither this project's current folder
+    # nor an orphan (the project is alive), so it gets its own
+    # `:relocated` report alongside whatever action the project itself
+    # gets. Mirrors catalogue's `stray_legacy` handling.
+    stray_actions =
+      entries
+      |> Enum.filter(& &1.stray_legacy)
+      |> Enum.map(&build_relocated_action(%{&1 | relocated: &1.stray_legacy}))
+
     move_actions = solo |> Enum.map(&build_move_action/1) |> Enum.reject(&is_nil/1)
     relocated_actions = Enum.map(relocated, &build_relocated_action/1)
     dup_actions = Enum.map(ambiguous, &build_ambiguous_duplicate_action/1)
@@ -184,7 +196,7 @@ defmodule PhoenixKitProjects.MediaReorganizer do
     hook_error_actions = hook_error_action(hook_error_count)
 
     actions =
-      finalize_counts(move_actions ++ relocated_actions) ++
+      finalize_counts(move_actions ++ relocated_actions ++ stray_actions) ++
         dup_actions ++ shared_actions ++ converging_actions ++ hook_error_actions
 
     claimed_uuids = claimed_folder_uuids(unique, ambiguous, shared, converging)
@@ -289,6 +301,15 @@ defmodule PhoenixKitProjects.MediaReorganizer do
   # used below to tell a genuinely absent candidate apart from one that is
   # live but relocated). A live match at more than one of these tiers is
   # ambiguous.
+  #
+  # `by_anywhere` (every live folder anywhere named after the
+  # project's legacy name) also surfaces a STRAY twin: when a single
+  # restricted match IS found, any other live folder sharing the legacy
+  # name elsewhere (a third parent, neither root nor the resolved
+  # parent) is a separate leftover — never this project's current
+  # folder, never an orphan (the project is alive) — so it is kept as
+  # `stray_legacy` and reported `:relocated` alongside whatever action
+  # the project itself gets (see `build_resource_plan/2`).
   defp resolve_entry(d, by_parent_host, by_parent_deterministic, by_root, by_anywhere) do
     host_match = d.parent_uuid && Map.get(by_parent_host, {d.name, d.parent_uuid})
 
@@ -302,19 +323,23 @@ defmodule PhoenixKitProjects.MediaReorganizer do
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq_by(& &1.uuid)
 
+    anywhere = Map.get(by_anywhere, d.deterministic_name, [])
+
     case matches do
       [] ->
         Map.merge(d, %{
           folder: nil,
           ambiguous: nil,
-          relocated: Map.get(by_anywhere, d.deterministic_name)
+          relocated: List.first(anywhere),
+          stray_legacy: nil
         })
 
       [folder] ->
-        Map.merge(d, %{folder: folder, ambiguous: nil, relocated: nil})
+        stray = Enum.find(anywhere, &(&1.uuid != folder.uuid))
+        Map.merge(d, %{folder: folder, ambiguous: nil, relocated: nil, stray_legacy: stray})
 
       matches ->
-        Map.merge(d, %{folder: nil, ambiguous: matches, relocated: nil})
+        Map.merge(d, %{folder: nil, ambiguous: matches, relocated: nil, stray_legacy: nil})
     end
   end
 
@@ -529,10 +554,14 @@ defmodule PhoenixKitProjects.MediaReorganizer do
   end
 
   # One query for every distinct deterministic name in the batch, live,
-  # regardless of parent — oldest wins per name, mirroring
-  # `Attachments.find_folder_anywhere/1`'s `order_by: [asc: :inserted_at],
-  # limit: 1`, batched instead of one query per name. Used only to detect a
-  # relocated candidate (X9) — never as a match a `:move` is planned for.
+  # regardless of parent, grouped by name (oldest first per group,
+  # mirroring `Attachments.find_folder_anywhere/1`'s
+  # `order_by: [asc: :inserted_at]`) — batched instead of one query per
+  # name. Used to detect a relocated candidate when no restricted match
+  # exists at all (X9 — the first/oldest of the group), and to detect a
+  # stray legacy-named twin when a restricted match WAS found (any other
+  # live folder in the group, `resolve_entry/5`) — never as a match a
+  # `:move` is planned for.
   defp preload_by_anywhere_name(names) do
     case names |> Enum.reject(&is_nil/1) |> Enum.uniq() do
       [] ->
@@ -543,7 +572,7 @@ defmodule PhoenixKitProjects.MediaReorganizer do
         |> where([f], f.name in ^names and is_nil(f.trashed_at))
         |> order_by([f], asc: f.inserted_at)
         |> repo().all()
-        |> Enum.reduce(%{}, &Map.put_new(&2, &1.name, &1))
+        |> Enum.group_by(& &1.name)
     end
   end
 
