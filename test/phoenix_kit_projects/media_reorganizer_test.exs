@@ -355,6 +355,69 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
 
       refute is_nil(action)
     end
+
+    test "a folder claimed via an ambiguous match is not also reported orphan (R4)" do
+      project = project!()
+      {:ok, target} = Storage.create_folder(%{name: "Projects"})
+      {:ok, _own_folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+
+      # A different, deleted project's leftover legacy folder — live under
+      # the resolved parent.
+      other_uuid = Ecto.UUID.generate()
+
+      {:ok, stray} =
+        Storage.create_folder(%{name: "project-#{other_uuid}", parent_uuid: target.uuid})
+
+      configure_parent_hook(target.uuid)
+      # A naive host-name hook that (mis)resolves every project to the
+      # same fixed string — here it happens to collide with the deleted
+      # project's legacy folder name.
+      configure_name_hook("project-#{other_uuid}")
+
+      actions = MediaReorganizer.plan(nil, [])
+
+      dup = Enum.find(actions, &(&1.kind == :duplicate and &1.op == :report))
+      refute is_nil(dup)
+      assert dup.reason =~ stray.uuid
+
+      refute Enum.any?(actions, &(&1.kind == :orphan and &1.folder.uuid == stray.uuid))
+    end
+  end
+
+  describe "shared destinations (X5)" do
+    test "two projects whose current folder resolves to the same live folder → one duplicate report, no moves" do
+      project1 = project!()
+      project2 = project!()
+      {:ok, target} = Storage.create_folder(%{name: "Projects"})
+      {:ok, shared} = Storage.create_folder(%{name: "Shared name", parent_uuid: target.uuid})
+      {:ok, elsewhere} = Storage.create_folder(%{name: "Elsewhere"})
+
+      # Each project's own legacy folder lives somewhere unrelated to the
+      # resolved parent/root — enough to make it a candidate, but never a
+      # tier match, so only the shared "Shared name" folder resolves.
+      {:ok, _folder1} =
+        Storage.create_folder(%{name: "project-#{project1.uuid}", parent_uuid: elsewhere.uuid})
+
+      {:ok, _folder2} =
+        Storage.create_folder(%{name: "project-#{project2.uuid}", parent_uuid: elsewhere.uuid})
+
+      configure_parent_hook(target.uuid)
+      configure_name_hook("Shared name")
+
+      actions = MediaReorganizer.plan(nil, [])
+
+      refute Enum.any?(actions, &(&1.op == :move))
+
+      dup =
+        Enum.find(
+          actions,
+          &(&1.kind == :duplicate and &1.op == :report and &1.label == shared.name)
+        )
+
+      refute is_nil(dup)
+      assert dup.reason =~ project1.name
+      assert dup.reason =~ project2.name
+    end
   end
 
   test "counts include a trashed file — the engine re-measures the same way at apply time" do

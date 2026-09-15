@@ -120,9 +120,9 @@ defmodule PhoenixKitProjects.MediaReorganizer do
   """
   @spec plan(String.t() | nil, keyword()) :: [map()]
   def plan(actor_uuid, _opts \\ []) do
-    {resource_actions, resolved_parents} = resource_plan(actor_uuid)
+    {resource_actions, resolved_parents, claimed_uuids} = resource_plan(actor_uuid)
 
-    resource_actions ++ orphan_actions(resolved_parents)
+    resource_actions ++ orphan_actions(resolved_parents, claimed_uuids)
   end
 
   # ── Projects ─────────────────────────────────────────────────────
@@ -131,15 +131,19 @@ defmodule PhoenixKitProjects.MediaReorganizer do
     if hook_configured?() do
       build_resource_plan(light_projects(), actor_uuid)
     else
-      {[], []}
+      {[], [], claimed_folder_uuids([], [], [], [])}
     end
   end
 
   defp hook_configured? do
-    match?(
-      {mod, fun} when is_atom(mod) and is_atom(fun),
-      Application.get_env(:phoenix_kit_projects, :attachments_parent_folder)
-    )
+    case Application.get_env(:phoenix_kit_projects, :attachments_parent_folder) do
+      {mod, fun} when is_atom(mod) and is_atom(fun) ->
+        Code.ensure_loaded?(mod) and
+          (function_exported?(mod, fun, 3) or function_exported?(mod, fun, 2))
+
+      _ ->
+        false
+    end
   end
 
   # Candidate detection needs no hook call: a live folder anywhere named
@@ -183,7 +187,9 @@ defmodule PhoenixKitProjects.MediaReorganizer do
       finalize_counts(move_actions ++ relocated_actions) ++
         dup_actions ++ shared_actions ++ converging_actions ++ hook_error_actions
 
-    {actions, resolved_parents}
+    claimed_uuids = claimed_folder_uuids(unique, ambiguous, shared, converging)
+
+    {actions, resolved_parents, claimed_uuids}
   end
 
   # R2: resolves each candidate's parent via the host's own hook, called
@@ -356,6 +362,27 @@ defmodule PhoenixKitProjects.MediaReorganizer do
 
   defp convergence_key(entry), do: {entry.parent_uuid, entry.name}
 
+  # R4/§9: every folder this batch has already resolved as a live project's
+  # current folder — a unique move/no-op target, every folder listed in an
+  # ambiguous match, and every folder claimed by a shared or converging
+  # group — must never also be reported `:orphan` below, even when its
+  # literal name embeds a different (deleted) project's uuid (e.g. a naive
+  # host-name hook that happens to return that stray name). Mirrors
+  # catalogue's `claimed_folder_uuids/4`.
+  defp claimed_folder_uuids(unique, ambiguous, shared_groups, converging_groups) do
+    unique_uuids = Enum.map(unique, & &1.folder.uuid)
+
+    ambiguous_uuids =
+      Enum.flat_map(ambiguous, fn %{ambiguous: folders} -> Enum.map(folders, & &1.uuid) end)
+
+    shared_uuids = Enum.flat_map(shared_groups, fn [%{folder: f} | _] -> [f.uuid] end)
+
+    converging_uuids =
+      Enum.flat_map(converging_groups, fn group -> Enum.map(group, & &1.folder.uuid) end)
+
+    MapSet.new(unique_uuids ++ ambiguous_uuids ++ shared_uuids ++ converging_uuids)
+  end
+
   # A `:move` whose folder already sits at `parent_uuid` under `name` (or
   # an accepted `"name (N)"` suffix variant) is a no-op — filtered here
   # since this Source has no core `Action.noop?/1` to lean on, and (unlike
@@ -526,33 +553,36 @@ defmodule PhoenixKitProjects.MediaReorganizer do
   # parent this batch's hooks resolved to, whose uuid no longer names any
   # project row (D4 — a hard delete is the only way a project stops
   # existing; archived projects are live) is reported so a host can
-  # collect it. Never `:move`d or `:trash`ed here — a legacy folder that
-  # IS a live project's current folder is left to `build_move_action/1`
-  # above.
-  defp orphan_actions(resolved_parents) do
-    case legacy_candidate_folders(resolved_parents) do
+  # collect it. Never `:move`d or `:trash`ed here — this module owns no
+  # "orphans" container; a legacy folder claimed by a live project (its
+  # current folder, a duplicate, or a converging-target group) is excluded
+  # (R4 — one folder gets at most one action).
+  defp orphan_actions(resolved_parents, claimed_uuids) do
+    case legacy_candidate_folders(resolved_parents, claimed_uuids) do
       [] ->
         []
 
       candidates ->
-        records_by_uuid = load_candidate_records(candidates)
+        existing_uuids = load_candidate_records(candidates)
         counts = counts_by_folder(Enum.map(candidates, fn {folder, _uuid} -> folder.uuid end))
 
         candidates
-        |> Enum.map(&orphan_action(&1, records_by_uuid, counts))
+        |> Enum.map(&orphan_action(&1, existing_uuids, counts))
         |> Enum.reject(&is_nil/1)
     end
   end
 
   # One SQL-filtered query (X6 — prefix filter in SQL, not loaded then
   # filtered in Elixir) for every live folder at root or under a resolved
-  # parent whose name starts with the legacy prefix.
-  defp legacy_candidate_folders(parent_uuids) do
+  # parent whose name starts with the legacy prefix, minus every folder
+  # already claimed by a live project (R4 — see `claimed_folder_uuids/4`).
+  defp legacy_candidate_folders(parent_uuids, claimed_uuids) do
     Folder
     |> where([f], is_nil(f.trashed_at))
     |> where([f], is_nil(f.parent_uuid) or f.parent_uuid in ^parent_uuids)
     |> where([f], like(f.name, ^"#{@legacy_prefix}%"))
     |> repo().all()
+    |> Enum.reject(&MapSet.member?(claimed_uuids, &1.uuid))
     |> Enum.map(&{&1, legacy_uuid(&1.name)})
     |> Enum.filter(fn {_folder, uuid} -> uuid end)
   end
@@ -571,32 +601,33 @@ defmodule PhoenixKitProjects.MediaReorganizer do
 
   # One query for every candidate uuid in the batch — not per folder. Always
   # called with a non-empty list (the caller branches on `[]` already).
+  # R9: only the uuid column — an orphan report needs nothing else off the
+  # record (existence alone decides it).
   defp load_candidate_records(candidates) do
     uuids = candidates |> Enum.map(fn {_folder, uuid} -> uuid end) |> Enum.uniq()
 
     Project
     |> where([p], p.uuid in ^uuids)
+    |> select([p], p.uuid)
     |> repo().all()
-    |> Map.new(&{&1.uuid, &1})
+    |> MapSet.new()
   end
 
-  defp orphan_action({folder, uuid}, records_by_uuid, counts) do
-    case Map.get(records_by_uuid, uuid) do
-      nil ->
-        folder_counts = folder_counts(counts, folder.uuid)
+  defp orphan_action({folder, uuid}, existing_uuids, counts) do
+    if MapSet.member?(existing_uuids, uuid) do
+      nil
+    else
+      folder_counts = folder_counts(counts, folder.uuid)
 
-        %{
-          source: "projects",
-          kind: :orphan,
-          op: :report,
-          label: folder.name,
-          folder: folder,
-          counts: folder_counts,
-          reason: "record missing, #{elem(folder_counts, 0)} file(s)"
-        }
-
-      %Project{} ->
-        nil
+      %{
+        source: "projects",
+        kind: :orphan,
+        op: :report,
+        label: folder.name,
+        folder: folder,
+        counts: folder_counts,
+        reason: "record missing, #{elem(folder_counts, 0)} file(s)"
+      }
     end
   end
 
