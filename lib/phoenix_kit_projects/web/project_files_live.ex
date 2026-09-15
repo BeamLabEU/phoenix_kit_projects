@@ -68,7 +68,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
            ),
          project: project,
          show_picker: false,
-         folder_uuid: Attachments.folder_uuid(project.uuid)
+         folder_uuid: Attachments.folder_uuid(project, current_user_uuid(socket))
        )
        |> load_files()}
     else
@@ -103,10 +103,13 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
 
   defp scope(socket), do: socket.assigns[:phoenix_kit_current_scope]
 
+  defp current_user_uuid(socket),
+    do: socket.assigns[:phoenix_kit_current_user] && socket.assigns.phoenix_kit_current_user.uuid
+
   # The download URLs resolve once per load, in one read — the rows used
   # to ask per file, twice, on every render.
   defp load_files(socket) do
-    files = Attachments.list_files(socket.assigns.project.uuid)
+    files = Attachments.list_files(socket.assigns.project.uuid, current_user_uuid(socket))
     assign(socket, files: files, download_urls: Attachments.download_urls(files))
   end
 
@@ -115,7 +118,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
   @impl true
   def handle_event("open_picker", _params, socket) do
     with_upload_authz(socket, fn ->
-      case Attachments.ensure_folder(socket.assigns.project.uuid) do
+      case Attachments.ensure_folder(socket.assigns.project, current_user_uuid(socket)) do
         {:ok, folder_uuid} ->
           {:noreply, assign(socket, folder_uuid: folder_uuid, show_picker: true)}
 
@@ -162,7 +165,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
   @impl true
   def handle_info({:media_selected, file_uuids}, socket) when is_list(file_uuids) do
     if Authz.can?(scope(socket), socket.assigns.project, :upload_files) do
-      Attachments.attach_files(socket.assigns.project.uuid, file_uuids)
+      Attachments.attach_files(socket.assigns.project.uuid, file_uuids, current_user_uuid(socket))
 
       Activity.log("projects.file_added",
         actor_uuid: Activity.actor_uuid(socket),

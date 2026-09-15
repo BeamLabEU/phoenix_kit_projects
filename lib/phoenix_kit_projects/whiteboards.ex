@@ -156,7 +156,8 @@ defmodule PhoenixKitProjects.Whiteboards do
     |> case do
       {:ok, board} ->
         # Best-effort: the board renders fine from the root folder too.
-        if file_uuid, do: Attachments.attach_files(project.uuid, [file_uuid])
+        if file_uuid,
+          do: Attachments.attach_files(project.uuid, [file_uuid], board.created_by_uuid)
 
         Activity.log("projects.whiteboard_created",
           actor_uuid: board.created_by_uuid,
