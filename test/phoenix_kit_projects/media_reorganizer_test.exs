@@ -3,6 +3,7 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
   use PhoenixKitProjects.DataCase, async: false
 
   alias PhoenixKit.Modules.Storage
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.MediaReorganizer
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.QueryCounter
@@ -76,6 +77,28 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
     refute Enum.any?(actions, &(&1.kind == :project and &1.label == project.name))
   end
 
+  test "no hook configured, legacy folder relocated away from root → left untouched" do
+    project = project!()
+    {:ok, elsewhere} = Storage.create_folder(%{name: "Somewhere else"})
+
+    {:ok, _relocated} =
+      Storage.create_folder(%{name: "project-#{project.uuid}", parent_uuid: elsewhere.uuid})
+
+    actions = MediaReorganizer.plan(nil, [])
+    refute Enum.any?(actions, &(&1.label == project.name))
+  end
+
+  test "parent hook resolves nil, name hook resolves a host name → root legacy folder is not renamed" do
+    project = project!(%{"name" => "Käepide"})
+    {:ok, _folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+
+    configure_parent_hook(nil)
+    configure_name_hook("Host Name")
+
+    actions = MediaReorganizer.plan(nil, [])
+    refute Enum.any?(actions, &(&1.label == project.name))
+  end
+
   test "parent hook configured, legacy folder at root → one move action, name kept" do
     project = project!(%{"name" => "Käepide"})
     {:ok, target} = Storage.create_folder(%{name: "Projects"})
@@ -92,7 +115,7 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
     assert action.folder.uuid == folder.uuid
     assert action.parent_uuid == target.uuid
     assert action.name == folder.name
-    assert action.on_conflict == :suffix
+    assert action.on_conflict == :report
     assert action.counts == {0, 0}
     assert is_nil(action.after_move)
   end
@@ -143,31 +166,41 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
     refute Enum.any?(actions, &(&1.kind == :project and &1.label == project.name))
   end
 
-  test "trashed folder at root, live legacy folder found elsewhere via the 'anywhere' fallback → the live one is used" do
+  test "hook configured, legacy folder lives away from root/resolved parent → reported relocated, not moved" do
     project = project!()
-
+    {:ok, target} = Storage.create_folder(%{name: "Projects"})
     {:ok, elsewhere} = Storage.create_folder(%{name: "Somewhere else"})
 
-    {:ok, trashed} =
-      Storage.create_folder(%{name: "project-#{project.uuid}", parent_uuid: nil})
+    {:ok, relocated} =
+      Storage.create_folder(%{name: "project-#{project.uuid}", parent_uuid: elsewhere.uuid})
 
-    {:ok, _trashed} = Storage.trash_folder(trashed)
-
-    {:ok, live} =
-      Storage.create_folder(%{name: "project-#{project.uuid}-x", parent_uuid: elsewhere.uuid})
-
-    # Rename the live one to the exact legacy name so it collides only via the
-    # "anywhere" fallback (no root folder, no folder under the resolved parent).
-    {:ok, live} =
-      live
-      |> Ecto.Changeset.change(%{name: "project-#{project.uuid}"})
-      |> Repo.update()
+    configure_parent_hook(target.uuid)
 
     actions = MediaReorganizer.plan(nil, [])
-    action = Enum.find(actions, &(&1.kind == :project and &1.label == project.name))
+    refute Enum.any?(actions, &(&1.op == :move and &1.label == project.name))
 
+    action = Enum.find(actions, &(&1.kind == :relocated and &1.label == project.name))
     refute is_nil(action)
-    assert action.folder.uuid == live.uuid
+    assert action.op == :report
+    assert action.folder.uuid == relocated.uuid
+  end
+
+  test "legacy folder live at both root and under the resolved parent → one duplicate report, no move" do
+    project = project!()
+    {:ok, target} = Storage.create_folder(%{name: "Projects"})
+    {:ok, _root_folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+
+    {:ok, _under_folder} =
+      Storage.create_folder(%{name: "project-#{project.uuid}", parent_uuid: target.uuid})
+
+    configure_parent_hook(target.uuid)
+
+    actions = MediaReorganizer.plan(nil, [])
+    refute Enum.any?(actions, &(&1.op == :move and &1.label == project.name))
+
+    action = Enum.find(actions, &(&1.kind == :duplicate and &1.label == project.name))
+    refute is_nil(action)
+    assert action.op == :report
   end
 
   test "hooks run exactly once per project across a batch, not once per project per lookup tier" do
@@ -186,27 +219,27 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
     assert Process.get(:name_calls) == 2
   end
 
-  test "current-folder resolution is batched — statement count is flat regardless of project count" do
+  test "current-folder resolution is batched — statement count is flat regardless of project count needing a move" do
     {:ok, target} = Storage.create_folder(%{name: "Projects"})
     configure_parent_hook(target.uuid)
 
     project1 = project!()
+    {:ok, _folder1} = Storage.create_folder(%{name: "project-#{project1.uuid}"})
 
-    {:ok, _folder1} =
-      Storage.create_folder(%{name: "project-#{project1.uuid}", parent_uuid: target.uuid})
+    {actions_one, one_project_queries} =
+      QueryCounter.count(fn -> MediaReorganizer.plan(nil, []) end)
 
-    {_actions, one_project_queries} = QueryCounter.count(fn -> MediaReorganizer.plan(nil, []) end)
+    assert Enum.count(actions_one, &(&1.op == :move)) == 1
 
     for _ <- 1..4 do
       project = project!()
-
-      {:ok, _folder} =
-        Storage.create_folder(%{name: "project-#{project.uuid}", parent_uuid: target.uuid})
+      {:ok, _folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
     end
 
-    {_actions, five_project_queries} =
+    {actions_five, five_project_queries} =
       QueryCounter.count(fn -> MediaReorganizer.plan(nil, []) end)
 
+    assert Enum.count(actions_five, &(&1.op == :move)) == 5
     assert five_project_queries == one_project_queries
   end
 
@@ -225,17 +258,19 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
       assert action.reason =~ "missing"
     end
 
-    test "legacy folder of an archived project → report names the record archived" do
+    test "legacy folder with an uppercase uuid still matches its live project (not a false orphan)" do
       project = project!()
-      {:ok, folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
-      {:ok, _project} = Projects.archive_project(project)
+      {:ok, folder} = Storage.create_folder(%{name: "project-" <> String.upcase(project.uuid)})
 
       actions = MediaReorganizer.plan(nil, [])
-      action = Enum.find(actions, &(&1.kind == :orphan and &1.folder.uuid == folder.uuid))
+      refute Enum.any?(actions, &(&1.kind == :orphan and &1.folder.uuid == folder.uuid))
+    end
 
-      refute is_nil(action)
-      assert action.op == :report
-      assert action.reason =~ "archived"
+    test "malformed legacy-looking folder name is not treated as an orphan" do
+      {:ok, folder} = Storage.create_folder(%{name: "project-not-a-real-uuid"})
+
+      actions = MediaReorganizer.plan(nil, [])
+      refute Enum.any?(actions, &(&1.kind == :orphan and &1.folder.uuid == folder.uuid))
     end
 
     test "legacy folder of a live project → not reported as orphan" do
@@ -244,6 +279,30 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
 
       actions = MediaReorganizer.plan(nil, [])
       refute Enum.any?(actions, &(&1.kind == :orphan and &1.folder.uuid == folder.uuid))
+    end
+
+    test "legacy folder of an archived project → not reported as orphan (archived is live)" do
+      project = project!()
+      {:ok, folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+      {:ok, _project} = Projects.archive_project(project)
+
+      actions = MediaReorganizer.plan(nil, [])
+      refute Enum.any?(actions, &(&1.kind == :orphan and &1.folder.uuid == folder.uuid))
+    end
+
+    test "archived project's legacy folder still gets a move action (archived is live)" do
+      project = project!()
+      {:ok, project} = Projects.archive_project(project)
+      {:ok, target} = Storage.create_folder(%{name: "Projects"})
+      {:ok, folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+
+      configure_parent_hook(target.uuid)
+
+      actions = MediaReorganizer.plan(nil, [])
+      action = Enum.find(actions, &(&1.kind == :project and &1.label == project.name))
+
+      refute is_nil(action)
+      assert action.folder.uuid == folder.uuid
     end
 
     test "orphan candidates are also scanned under a resolved parent" do
@@ -255,8 +314,10 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
       {:ok, folder} =
         Storage.create_folder(%{name: "project-#{stray_uuid}", parent_uuid: target.uuid})
 
-      # A live project so the hook actually resolves `target` into `desired`.
-      _project = project!()
+      # A live project with its own legacy folder so the hook resolves
+      # `target` into `desired` and it lands in `resolved_parents`.
+      project = project!()
+      {:ok, _own_folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
 
       actions = MediaReorganizer.plan(nil, [])
       action = Enum.find(actions, &(&1.kind == :orphan and &1.folder.uuid == folder.uuid))
@@ -267,7 +328,7 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
 
   test "counts include a trashed file — the engine re-measures the same way at apply time" do
     {:ok, user} =
-      PhoenixKit.Users.Auth.register_user(%{
+      Auth.register_user(%{
         "email" => "reorg-#{System.unique_integer([:positive])}@example.com",
         "password" => "ValidPassword123!"
       })
