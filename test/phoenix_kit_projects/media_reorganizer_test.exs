@@ -5,15 +5,29 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
   alias PhoenixKit.Modules.Storage
   alias PhoenixKitProjects.MediaReorganizer
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.QueryCounter
   alias PhoenixKitProjects.Schemas.Project
 
   defmodule Hook do
     @moduledoc false
-    def parent(:project, _actor, %Project{}), do: {:ok, Process.get(:target_folder)}
+    def parent(:project, _actor, %Project{} = resource) do
+      bump(:parent_calls)
+      parent_result(resource)
+    end
+
     def parent(_kind, _actor, _resource), do: nil
 
-    def name(%Project{}, _actor), do: {:ok, Process.get(:target_name) || nil}
+    def name(%Project{} = resource, _actor) do
+      bump(:name_calls)
+      name_result(resource)
+    end
+
     def name(_resource, _actor), do: nil
+
+    defp parent_result(_resource), do: {:ok, Process.get(:target_folder)}
+    defp name_result(_resource), do: {:ok, Process.get(:target_name) || nil}
+
+    defp bump(key), do: Process.put(key, (Process.get(key) || 0) + 1)
   end
 
   setup do
@@ -154,6 +168,46 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
 
     refute is_nil(action)
     assert action.folder.uuid == live.uuid
+  end
+
+  test "hooks run exactly once per project across a batch, not once per project per lookup tier" do
+    project1 = project!()
+    project2 = project!()
+    {:ok, target} = Storage.create_folder(%{name: "Projects"})
+    {:ok, _f1} = Storage.create_folder(%{name: "project-#{project1.uuid}"})
+    {:ok, _f2} = Storage.create_folder(%{name: "project-#{project2.uuid}"})
+
+    configure_parent_hook(target.uuid)
+    configure_name_hook("Nice project")
+
+    _actions = MediaReorganizer.plan(nil, [])
+
+    assert Process.get(:parent_calls) == 2
+    assert Process.get(:name_calls) == 2
+  end
+
+  test "current-folder resolution is batched — statement count is flat regardless of project count" do
+    {:ok, target} = Storage.create_folder(%{name: "Projects"})
+    configure_parent_hook(target.uuid)
+
+    project1 = project!()
+
+    {:ok, _folder1} =
+      Storage.create_folder(%{name: "project-#{project1.uuid}", parent_uuid: target.uuid})
+
+    {_actions, one_project_queries} = QueryCounter.count(fn -> MediaReorganizer.plan(nil, []) end)
+
+    for _ <- 1..4 do
+      project = project!()
+
+      {:ok, _folder} =
+        Storage.create_folder(%{name: "project-#{project.uuid}", parent_uuid: target.uuid})
+    end
+
+    {_actions, five_project_queries} =
+      QueryCounter.count(fn -> MediaReorganizer.plan(nil, []) end)
+
+    assert five_project_queries == one_project_queries
   end
 
   describe "orphan folders" do

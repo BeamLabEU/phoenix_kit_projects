@@ -33,16 +33,14 @@ defmodule PhoenixKitProjects.MediaReorganizer do
       `Portal` nor `PortalSubmission` ever creates a top-level legacy
       folder, so they get no `plan/2` entries of their own.
 
-  Current folder resolution uses `Attachments.find_resource_folder/2`
-  directly (the same function `Attachments.folder_uuid/2` uses) rather
-  than re-implementing its four-level order
-  (host-name-under-parent → deterministic-name-under-parent →
-  deterministic-name-at-root → deterministic-name-anywhere) with
-  batched preload queries the way `PhoenixKitCatalogue.MediaReorganizer`
-  does for its much larger catalogue/category/item scan — the module
-  is orders of magnitude smaller (one project row per project, not one
-  per item), so a per-record call is the simpler, obviously-correct
-  choice.
+  Current folder resolution re-implements `Attachments.find_resource_folder/2`'s
+  four-level order (host-name-under-parent → deterministic-name-under-parent
+  → deterministic-name-at-root → deterministic-name-anywhere) against maps
+  preloaded once for the whole batch, the way
+  `PhoenixKitCatalogue.MediaReorganizer` batches its own lookups — the
+  parent/name hooks run exactly once per project (`resolve_desired/2`),
+  and the folder search costs a fixed handful of queries for the batch
+  instead of 1-4 unbatched round trips per project.
   """
 
   import Ecto.Query, warn: false
@@ -67,29 +65,53 @@ defmodule PhoenixKitProjects.MediaReorganizer do
   def plan(actor_uuid, _opts \\ []) do
     desired = resolve_desired(live_projects(), actor_uuid)
 
-    resource_actions(desired, actor_uuid) ++ orphan_actions(desired)
+    resource_actions(desired) ++ orphan_actions(desired)
   end
 
   # ── Projects ─────────────────────────────────────────────────────
 
+  # Runs both hooks exactly once per project — `resource_actions/1` below
+  # reuses `parent_uuid`/`name` from here instead of re-deriving them.
   defp resolve_desired(projects, actor_uuid) do
     Enum.map(projects, fn project ->
       %{
         project: project,
         parent_uuid: Attachments.parent_folder_uuid(project, actor_uuid),
-        name: Attachments.folder_name(project, actor_uuid)
+        name: Attachments.folder_name(project, actor_uuid),
+        deterministic_name: Attachments.folder_name(project.uuid)
       }
     end)
   end
 
-  defp resource_actions(desired, actor_uuid) do
+  # Every current-folder lookup for the whole batch runs as four preloaded
+  # queries (host-name×parent pairs, deterministic-name×parent pairs,
+  # deterministic names at root, deterministic names anywhere) instead of
+  # 1-4 individual round trips per project.
+  defp resource_actions(desired) do
+    by_parent_host = preload_pairs(desired, & &1.name)
+    by_parent_deterministic = preload_pairs(desired, & &1.deterministic_name)
+    by_root_deterministic = preload_by_root_name(Enum.map(desired, & &1.deterministic_name))
+
+    by_anywhere_deterministic =
+      preload_by_anywhere_name(Enum.map(desired, & &1.deterministic_name))
+
     desired
-    |> Enum.map(&resource_action(&1, actor_uuid))
+    |> Enum.map(
+      &resource_action(
+        &1,
+        by_parent_host,
+        by_parent_deterministic,
+        by_root_deterministic,
+        by_anywhere_deterministic
+      )
+    )
     |> Enum.reject(&is_nil/1)
   end
 
-  defp resource_action(%{project: project, parent_uuid: parent_uuid, name: name}, actor_uuid) do
-    case Attachments.find_resource_folder(project, actor_uuid) do
+  defp resource_action(desired, by_parent_host, by_parent_deterministic, by_root, by_anywhere) do
+    %{project: project, parent_uuid: parent_uuid, name: name} = desired
+
+    case current_folder(desired, by_parent_host, by_parent_deterministic, by_root, by_anywhere) do
       nil ->
         nil
 
@@ -110,6 +132,75 @@ defmodule PhoenixKitProjects.MediaReorganizer do
             after_move: nil
           }
         end
+    end
+  end
+
+  # host-name-under-parent → deterministic-name-under-parent →
+  # deterministic-name-at-root → deterministic-name-anywhere — the same
+  # order `Attachments.find_resource_folder/2` uses, read from maps
+  # preloaded once for the whole batch.
+  defp current_folder(desired, by_parent_host, by_parent_deterministic, by_root, by_anywhere) do
+    %{parent_uuid: parent_uuid, name: name, deterministic_name: deterministic_name} = desired
+
+    (parent_uuid && Map.get(by_parent_host, {name, parent_uuid})) ||
+      (parent_uuid && Map.get(by_parent_deterministic, {deterministic_name, parent_uuid})) ||
+      Map.get(by_root, deterministic_name) ||
+      Map.get(by_anywhere, deterministic_name)
+  end
+
+  # One query for every distinct {name, parent_uuid} pair the batch needs —
+  # not a query per project. `name_fun` selects `desired.name` (host-name
+  # tier) or `desired.deterministic_name` (legacy-name tier); both share
+  # this shape.
+  defp preload_pairs(desired, name_fun) do
+    pairs =
+      desired
+      |> Enum.map(&{name_fun.(&1), &1.parent_uuid})
+      |> Enum.reject(fn {_name, parent_uuid} -> is_nil(parent_uuid) end)
+      |> Enum.uniq()
+
+    names = pairs |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+    parents = pairs |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+
+    if names == [] or parents == [] do
+      %{}
+    else
+      Folder
+      |> where([f], f.name in ^names and f.parent_uuid in ^parents and is_nil(f.trashed_at))
+      |> repo().all()
+      |> Map.new(&{{&1.name, &1.parent_uuid}, &1})
+    end
+  end
+
+  # One query for every distinct deterministic name in the batch, at root.
+  defp preload_by_root_name(names) do
+    case Enum.reject(Enum.uniq(names), &is_nil/1) do
+      [] ->
+        %{}
+
+      names ->
+        Folder
+        |> where([f], f.name in ^names and is_nil(f.parent_uuid) and is_nil(f.trashed_at))
+        |> repo().all()
+        |> Map.new(&{&1.name, &1})
+    end
+  end
+
+  # One query for every distinct deterministic name in the batch, live,
+  # regardless of parent — oldest wins per name, mirroring
+  # `Attachments.find_folder_anywhere/1`'s `order_by: [asc: :inserted_at],
+  # limit: 1`, batched instead of one query per name.
+  defp preload_by_anywhere_name(names) do
+    case Enum.reject(Enum.uniq(names), &is_nil/1) do
+      [] ->
+        %{}
+
+      names ->
+        Folder
+        |> where([f], f.name in ^names and is_nil(f.trashed_at))
+        |> order_by([f], asc: f.inserted_at)
+        |> repo().all()
+        |> Enum.reduce(%{}, &Map.put_new(&2, &1.name, &1))
     end
   end
 
