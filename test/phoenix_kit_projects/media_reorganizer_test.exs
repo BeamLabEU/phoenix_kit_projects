@@ -219,6 +219,21 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
     assert Process.get(:name_calls) == 2
   end
 
+  test "project without any legacy folder never triggers the hooks; a candidate triggers them once" do
+    {:ok, target} = Storage.create_folder(%{name: "Projects"})
+    configure_parent_hook(target.uuid)
+    configure_name_hook("Nice project")
+
+    _no_folder_project = project!()
+    candidate = project!()
+    {:ok, _folder} = Storage.create_folder(%{name: "project-#{candidate.uuid}"})
+
+    _actions = MediaReorganizer.plan(nil, [])
+
+    assert Process.get(:parent_calls) == 1
+    assert Process.get(:name_calls) == 1
+  end
+
   test "current-folder resolution is batched — statement count is flat regardless of project count needing a move" do
     {:ok, target} = Storage.create_folder(%{name: "Projects"})
     configure_parent_hook(target.uuid)

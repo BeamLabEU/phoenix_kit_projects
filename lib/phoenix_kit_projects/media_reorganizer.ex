@@ -37,35 +37,41 @@ defmodule PhoenixKitProjects.MediaReorganizer do
       folder, so they get no `plan/2` entries of their own.
 
   A host that has not configured `:attachments_parent_folder` is left
-  entirely untouched: `plan/2`'s move-planning half runs, and both hooks
-  are called, only when the env is set — never a single move or report for
-  a legacy folder sitting somewhere other than root (see "Move planning").
-  The orphan scan is independent of the hook and always runs (root-only
-  when no parent is resolved).
+  entirely untouched: `plan/2`'s move-planning half runs, and the hooks
+  are called, only when the env is set — never a single move or report
+  for a legacy folder sitting somewhere other than root (see "Move
+  planning"). The orphan scan is independent of the hook and always runs
+  (root-only when no parent is resolved).
 
   ## Move planning
 
   For each live project (D4 — **archived is live**; only a hard-deleted
   project, i.e. no matching row at all, makes an orphan):
 
-  1. Both hooks run once (`Attachments.parent_folder_uuid/2`,
-     `Attachments.folder_name/2`) — exactly the functions a fresh upload
-     would call. When the parent hook resolves `nil` the host name is
-     **not** used as the desired name either: `find_resource_folder/2`
-     only ever looks for a host name *under a parent*, so without one the
-     desired name stays the deterministic `project-<uuid>` name — a
-     project whose parent hook answers `nil` this run (while the name
-     hook still answers a host name) must not have its root folder
-     renamed to that host name, or `find_resource_folder/2` can no longer
-     find it there on the next read.
-  2. The project's *current* folder is looked up, in the module's own
+  1. A project is a *candidate* when it has a live folder anywhere named
+     after its legacy deterministic name (`project-<uuid>`, resolved
+     without calling any hook — one batched query for the whole plan). A
+     project with nothing named after it is left alone: nothing exists to
+     move, and the host's hooks are never called for it.
+  2. Only for candidates, both hooks run once
+     (`Attachments.parent_folder_uuid/2`, `Attachments.folder_name/2`) —
+     exactly the functions a fresh upload would call. When the parent hook
+     resolves `nil` the host name is **not** used as the desired name
+     either: `find_resource_folder/2` only ever looks for a host name
+     *under a parent*, so without one the desired name stays the
+     deterministic `project-<uuid>` name — a project whose parent hook
+     answers `nil` this run (while the name hook still answers a host
+     name) must not have its root folder renamed to that host name, or
+     `find_resource_folder/2` can no longer find it there on the next
+     read.
+  3. The candidate's *current* folder is looked up, in the module's own
      order, only at the resolved parent (host name, then deterministic
      name) and at root (deterministic name) — never the unrestricted
      "anywhere" scan `find_resource_folder/2` falls back to for a live
      upload. A legacy folder that exists live only somewhere else (the
      owner moved it, or it is still parked under a parent the project was
      since unlinked from) is reported as `kind: :relocated`, never moved.
-  3. A live match at **both** the resolved parent and root is
+  4. A live match at **both** the resolved parent and root is
      unresolvable — reported as `kind: :duplicate`, nothing moved. Two (or
      more) projects whose current folder resolves to the very same live
      folder (e.g. two projects sharing a parent and a colliding host name)
@@ -118,12 +124,17 @@ defmodule PhoenixKitProjects.MediaReorganizer do
     )
   end
 
-  # Runs both hooks exactly once per project. The desired name is the
-  # host name only when a parent was resolved — see moduledoc point 1
-  # (the blocker this guards against).
+  # Candidate detection needs no hook call: a live folder anywhere named
+  # after the project's legacy name (one batched query for the whole
+  # plan). Only candidates go on to have the host's parent/name hooks
+  # resolved — a project with nothing pointing at it never triggers a
+  # (possibly writing) host hook. See moduledoc "Move planning".
   defp build_resource_plan(projects, actor_uuid) do
+    candidate_uuids = candidate_project_uuids()
+    candidates = Enum.filter(projects, &MapSet.member?(candidate_uuids, &1.uuid))
+
     desired =
-      Enum.map(projects, fn project ->
+      Enum.map(candidates, fn project ->
         parent_uuid = Attachments.parent_folder_uuid(project, actor_uuid)
         deterministic_name = Attachments.folder_name(project.uuid)
         host_name = Attachments.folder_name(project, actor_uuid)
@@ -161,6 +172,20 @@ defmodule PhoenixKitProjects.MediaReorganizer do
     actions = finalize_counts(move_actions ++ relocated_actions) ++ dup_actions ++ shared_actions
 
     {actions, resolved_parents}
+  end
+
+  # One batched query for the whole plan: every live folder named after
+  # the legacy `project-<uuid>` pattern, anywhere. Only a project whose
+  # uuid appears in this set is a candidate — see `build_resource_plan/2`.
+  defp candidate_project_uuids do
+    Folder
+    |> where([f], is_nil(f.trashed_at))
+    |> where([f], like(f.name, ^"#{@legacy_prefix}%"))
+    |> select([f], f.name)
+    |> repo().all()
+    |> Enum.map(&legacy_uuid/1)
+    |> Enum.reject(&is_nil/1)
+    |> MapSet.new()
   end
 
   # host-name-under-parent → deterministic-name-under-parent →
