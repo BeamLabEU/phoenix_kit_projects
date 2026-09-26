@@ -498,8 +498,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     |> WebHelpers.close_or_navigate(Paths.projects())
   end
 
-  # Which assignee `<select>` is active for a record carrying the polymorphic
-  # assignee fields (an Assignment or a Project).
   # The edit trail's leaf crumb: the record the form is about. A linked
   # sub-project has a page of its own, so its crumb links there (an
   # unresolved child — deleted under the row — has none); an assignment's
@@ -518,6 +516,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp edit_titles(task_name),
     do: [page_title: gettext("Edit"), heading: gettext("Edit %{name}", name: task_name)]
 
+  # Which assignee `<select>` is active for a record carrying the polymorphic
+  # assignee fields (an Assignment or a Project).
   defp assignee_kind(%{assigned_person_uuid: u}) when not is_nil(u), do: "person"
   defp assignee_kind(%{assigned_team_uuid: u}) when not is_nil(u), do: "team"
   defp assignee_kind(%{assigned_department_uuid: u}) when not is_nil(u), do: "department"
