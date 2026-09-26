@@ -3,7 +3,10 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
   The admin header trail on every page of the module (`Web.Crumbs`):
   "Admin Panel / Projects / …" everywhere, subtab labels as crumbs, sub-pages
   as crumbs (not "Test · Files"), the sub-project parent chain, "Add task"
-  under a project vs "New task" in the library, "Edit <name>".
+  under a project vs "New task" in the library, and an edit page as the
+  record's trail plus the record, titled plainly "Edit" (core's
+  admin-header-trail guide) — the record crumb links to its page, or is
+  text when the list is its only page.
   """
 
   use PhoenixKitProjects.LiveCase, async: false
@@ -21,11 +24,12 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
     [crumbs_html] = Regex.run(~r/<div id="test-breadcrumb"[^>]*>.*?<\/div>/s, html)
     [_, title] = Regex.run(~r/data-page-title="([^"]*)"/, crumbs_html)
     section = Regex.run(~r/data-crumb-section="([^"]*)"/, crumbs_html)
-    crumbs = Regex.scan(~r/data-crumb="([^"]*)" href="([^"]*)"/, crumbs_html)
+    # A crumb with no path renders with no href (core renders it as text).
+    crumbs = Regex.scan(~r/data-crumb="([^"]*)"(?: href="([^"]*)")?/, crumbs_html)
 
     %{
       section: section && Enum.at(section, 1),
-      crumbs: Enum.map(crumbs, fn [_, label, href] -> {label, href} end),
+      crumbs: Enum.map(crumbs, fn [_, label | rest] -> {label, List.first(rest)} end),
       title: title
     }
   end
@@ -72,16 +76,32 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
     assert trail_labels(html) == ["Projects", "Test", "Add task"]
     refute html =~ "Add task to"
 
+    # Edit: the project page's trail plus the project (linked), then "Edit".
     {:ok, _, html} = live(conn, "#{base}/edit")
-    assert trail_labels(html) == ["Projects", "Edit Test"]
+    assert trail_labels(html) == ["Projects", "Test", "Edit"]
+    assert {"Test", "/en/admin/projects/#{p.uuid}"} in trail(html).crumbs
 
     {:ok, _, html} = live(conn, "/en/admin/projects/new")
     assert trail_labels(html) == ["Projects", "New project"]
 
     t = fixture_task(%{"title" => "Measure"})
     {:ok, a} = Projects.create_assignment(%{"project_uuid" => p.uuid, "task_uuid" => t.uuid})
+    # An assignment has no page of its own: its task is a text crumb.
     {:ok, _, html} = live(conn, "#{base}/assignments/#{a.uuid}/edit")
-    assert trail_labels(html) == ["Projects", "Test", "Edit Measure"]
+    assert trail_labels(html) == ["Projects", "Test", "Measure", "Edit"]
+    assert {"Measure", nil} in trail(html).crumbs
+    assert {"Test", "/en/admin/projects/#{p.uuid}"} in trail(html).crumbs
+  end
+
+  test "editing a sub-project row links the child's own page", %{conn: conn} do
+    parent = fixture_project(%{"name" => "Parent"})
+
+    {:ok, %{child_project: child, assignment: row}} =
+      Projects.create_subproject(parent.uuid, %{"name" => "Child"})
+
+    {:ok, _, html} = live(conn, "/en/admin/projects/#{parent.uuid}/assignments/#{row.uuid}/edit")
+    assert trail_labels(html) == ["Projects", "Parent", "Child", "Edit"]
+    assert {"Child", "/en/admin/projects/#{child.uuid}"} in trail(html).crumbs
   end
 
   test "the task library and templates", %{conn: conn} do
@@ -89,8 +109,10 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
     assert trail_labels(html) == ["Projects", "Tasks", "New task"]
 
     t = fixture_task(%{"title" => "Order fronts"})
+    # The library is a task's only page, so the task crumb is text.
     {:ok, _, html} = live(conn, "/en/admin/projects/tasks/#{t.uuid}/edit")
-    assert trail_labels(html) == ["Projects", "Tasks", "Edit Order fronts"]
+    assert trail_labels(html) == ["Projects", "Tasks", "Order fronts", "Edit"]
+    assert {"Order fronts", nil} in trail(html).crumbs
 
     tpl = fixture_template(%{"name" => "Kitchen template"})
     {:ok, _, html} = live(conn, "/en/admin/projects/templates/#{tpl.uuid}")
@@ -99,8 +121,11 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
     {:ok, _, html} = live(conn, "/en/admin/projects/templates/new")
     assert trail_labels(html) == ["Projects", "Templates", "New template"]
 
+    # Edit: the template page's trail plus the template (linked), then "Edit".
     {:ok, _, html} = live(conn, "/en/admin/projects/templates/#{tpl.uuid}/edit")
-    assert trail_labels(html) == ["Projects", "Templates", "Edit Kitchen template"]
+    assert trail_labels(html) == ["Projects", "Templates", "Kitchen template", "Edit"]
+
+    assert {"Kitchen template", "/en/admin/projects/templates/#{tpl.uuid}"} in trail(html).crumbs
   end
 
   test "a sub-project carries its parent chain", %{conn: conn} do

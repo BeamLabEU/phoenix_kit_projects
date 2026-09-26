@@ -443,25 +443,11 @@ defmodule PhoenixKitProjects.Projects do
     })
   end
 
-  # Wraps `PhoenixKit.Activity.log/1` with the same load-bearing
-  # rescue + catch shape every other module uses — logging failures
-  # never crash the primary operation. Mirror of
-  # `PhoenixKitProjects.Activity`'s wrapper but local-only since
-  # reorder logging fires from the context layer (not the LV layer
-  # where `Activity.log/3` lives).
+  # Reorder logging fires from the context layer (not the LV layer where
+  # `Activity.log/2` lives). Core's log never raises, so a logging failure
+  # never crashes the primary operation.
   defp log_activity(payload) do
-    if Code.ensure_loaded?(PhoenixKit.Activity) do
-      try do
-        PhoenixKit.Activity.log(Map.put_new(payload, :module, "projects"))
-      rescue
-        Postgrex.Error -> :ok
-        DBConnection.OwnershipError -> :ok
-        e -> Logger.warning("[Projects] activity log failed: #{Exception.message(e)}")
-      catch
-        :exit, _ -> :ok
-      end
-    end
-
+    PhoenixKit.Activity.log(Map.put_new(payload, :module, "projects"))
     :ok
   end
 

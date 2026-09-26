@@ -162,15 +162,19 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
     refute Enum.any?(actions, &(&1.label == project.name))
   end
 
-  test "parent hook resolves nil, name hook resolves a host name → root legacy folder is not renamed" do
+  # Files pages look the host name up at the root too, so the renamed
+  # folder is still found.
+  test "parent hook resolves nil, name hook resolves a host name → root legacy folder takes the host name in place" do
     project = project!(%{"name" => "Käepide"})
-    {:ok, _folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+    {:ok, folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
 
     configure_parent_hook(nil)
     configure_name_hook("Host Name")
 
     actions = MediaReorganizer.plan(nil, [])
-    refute Enum.any?(actions, &(&1.label == project.name))
+    action = Enum.find(actions, &(&1.label == project.name))
+    assert %{op: :move, parent_uuid: nil, name: "Host Name"} = action
+    assert action.folder.uuid == folder.uuid
   end
 
   test "parent hook configured, legacy folder at root → one move action, name kept" do
@@ -821,9 +825,8 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
   end
 
   describe "name hook (R8/F3/T9)" do
-    test "the name hook is never called when the parent hook resolves root" do
-      project = project!()
-      {:ok, _folder} = Storage.create_folder(%{name: "project-#{project.uuid}"})
+    test "the name hook is never called for a project with no folder" do
+      _project = project!()
 
       configure_parent_hook(nil)
       configure_name_hook("Host Name")
@@ -1169,7 +1172,7 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
 
       assert log =~ "BadReturnHook"
       assert log =~ "parent"
-      assert log =~ "{:error, :timeout}"
+      assert log =~ ":timeout"
     end
 
     test "a parent hook returning a non-uuid string is logged with the bad value" do
@@ -1184,8 +1187,9 @@ defmodule PhoenixKitProjects.MediaReorganizerTest do
 
       log = capture_log(fn -> MediaReorganizer.plan(nil, []) end)
 
+      # The answer's shape, not its text: an answer can carry the hook's arguments.
       assert log =~ "BadUuidParentHook"
-      assert log =~ "not-a-uuid"
+      assert log =~ "not a uuid"
     end
 
     test "a name hook returning a bad value is logged with the module and function" do

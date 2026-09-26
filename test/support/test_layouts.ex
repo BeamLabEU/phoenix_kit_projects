@@ -41,7 +41,9 @@ defmodule PhoenixKitProjects.Test.Layouts do
       </span>
       <%!-- The linked middle of the trail (core's `page_crumbs`): one
            anchor per crumb, in order, so tests can pin the whole trail
-           as "section / crumb / crumb / title". --%>
+           as "section / crumb / crumb / title". A crumb with no path
+           (a record with no page of its own) renders without href, as
+           core renders it as text. --%>
       <a :for={crumb <- assigns[:page_crumbs] || []} data-crumb={crumb.label} href={crumb[:path]}>
         {crumb.label}
       </a>

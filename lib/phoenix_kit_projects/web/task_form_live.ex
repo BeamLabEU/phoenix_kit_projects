@@ -34,7 +34,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     # `live_render`. See dev_docs/embedding_audit.md.
     socket =
       socket
-      |> mount_multilang()
+      |> mount_multilang(open_on: if(live_action == :edit, do: :viewing_language, else: :primary))
       |> assign(
         wrapper_class: wrapper_class,
         embed_redirect_to: redirect_to,
@@ -113,9 +113,13 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
           end
 
         socket
-        |> assign(Crumbs.under(:tasks))
+        # Trail: Admin Panel / Projects / Tasks / <title> / Edit — the task
+        # is a text crumb (the library is its only page), the leaf is the
+        # page. The drawer has no trail, so its heading still names the task.
+        |> assign(Crumbs.under_task(task))
         |> assign(
-          page_title:
+          page_title: gettext("Edit"),
+          heading:
             gettext("Edit %{title}",
               title: Task.localized_title(task, L10n.current_content_lang())
             ),

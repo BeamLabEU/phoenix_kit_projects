@@ -295,11 +295,7 @@ defmodule PhoenixKitProjects do
   # `@source` — the css-sources compiler resolves each dep atom to deps/<dep>.
   def css_sources, do: [:phoenix_kit_projects, :phoenix_live_gantt, :phoenix_live_calendar]
 
-  # PhoenixKit.Module.media_reorganizer/0 (core ≥ 2.24.0, which ships
-  # Storage.Reorganizer). No `@impl` yet — the `~> 2.0` pin still admits
-  # cores that predate the callback; `ModuleRegistry.all_media_reorganizers/0`
-  # looks this function up by name, not by behaviour, so it is collected on
-  # any core that ships the engine.
+  @impl PhoenixKit.Module
   def media_reorganizer, do: PhoenixKitProjects.MediaReorganizer
 
   # The Timeline tab renders the gantt with enable_hooks={true}, so the host's

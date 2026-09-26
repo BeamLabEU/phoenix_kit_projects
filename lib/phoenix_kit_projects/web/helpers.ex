@@ -873,10 +873,16 @@ defmodule PhoenixKitProjects.Web.Helpers do
   clears `page_title` unless the LV is a page of its own (navigate
   mode). Call it at the end of a form's mount pipeline; render the
   header from `@heading`.
+
+  A form may assign `heading` itself before this runs, and it is kept:
+  the admin header's trail names the record as a crumb and titles an
+  edit page plainly "Edit" (core's admin-header-trail guide), while a
+  drawer or modal has no trail, so its heading still names the record
+  ("Edit Measure").
   """
   @spec keep_host_title(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def keep_host_title(socket) do
-    heading = socket.assigns[:page_title]
+    heading = socket.assigns[:heading] || socket.assigns[:page_title]
 
     if socket.assigns[:embed_mode] == :navigate do
       Phoenix.Component.assign(socket, heading: heading)

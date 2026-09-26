@@ -46,7 +46,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     # See dev_docs/embedding_audit.md.
     socket =
       socket
-      |> mount_multilang()
+      |> mount_multilang(open_on: if(live_action == :edit, do: :viewing_language, else: :primary))
       |> assign(
         wrapper_class: wrapper_class,
         embed_redirect_to: redirect_to,
@@ -395,13 +395,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         # child, so `assign_type` + `sp_form` come from it.
         child = Projects.get_project_with_assignee(child_uuid) || %Project{}
 
+        child_name = Project.localized_name(child, L10n.current_content_lang())
+
         socket
-        |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
+        # Trail: … / <project> / <child> / Edit — the child has a page of its
+        # own, so its crumb links there; the leaf is the page.
         |> assign(
-          page_title:
-            gettext("Edit %{name}",
-              name: Project.localized_name(child, L10n.current_content_lang())
-            ),
+          Crumbs.under_project(
+            project,
+            socket.assigns[:phoenix_kit_current_scope],
+            child_crumbs(child, child_name)
+          )
+        )
+        |> assign(
+          page_title: gettext("Edit"),
+          heading: gettext("Edit %{name}", name: child_name),
           kind: "subproject",
           sp_form: to_form(Projects.change_project(child), as: :subproject),
           sp_mode: "new",
@@ -433,14 +441,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           assignment.task && Task.localized_title(assignment.task, L10n.current_content_lang())
 
         socket
-        |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
+        # Trail: … / <project> / <task> / Edit — the assignment has no page
+        # of its own, so its task is a text crumb; the leaf is the page. The
+        # drawer has no trail, so its heading still names the task.
         |> assign(
-          # "Edit <task>" under the project crumb — the leaf names its object.
-          page_title:
-            if(task_name,
-              do: gettext("Edit %{name}", name: task_name),
-              else: gettext("Edit assignment")
-            ),
+          Crumbs.under_project(
+            project,
+            socket.assigns[:phoenix_kit_current_scope],
+            task_crumbs(task_name)
+          )
+        )
+        |> assign(edit_titles(task_name))
+        |> assign(
           kind: "task",
           sp_form: to_form(Projects.change_project(%Project{}), as: :subproject),
           sp_mode: "new",
@@ -488,6 +500,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # Which assignee `<select>` is active for a record carrying the polymorphic
   # assignee fields (an Assignment or a Project).
+  # The edit trail's leaf crumb: the record the form is about. A linked
+  # sub-project has a page of its own, so its crumb links there (an
+  # unresolved child — deleted under the row — has none); an assignment's
+  # task is text, since the assignment has no page.
+  defp child_crumbs(%Project{uuid: nil}, _name), do: []
+  defp child_crumbs(%Project{uuid: uuid}, name), do: [%{label: name, path: Paths.project(uuid)}]
+
+  defp task_crumbs(nil), do: []
+  defp task_crumbs(task_name), do: [%{label: task_name}]
+
+  # The routed header titles the page "Edit" under the task crumb; the
+  # drawer has no trail, so its heading names the task.
+  defp edit_titles(nil),
+    do: [page_title: gettext("Edit assignment"), heading: gettext("Edit assignment")]
+
+  defp edit_titles(task_name),
+    do: [page_title: gettext("Edit"), heading: gettext("Edit %{name}", name: task_name)]
+
   defp assignee_kind(%{assigned_person_uuid: u}) when not is_nil(u), do: "person"
   defp assignee_kind(%{assigned_team_uuid: u}) when not is_nil(u), do: "team"
   defp assignee_kind(%{assigned_department_uuid: u}) when not is_nil(u), do: "department"

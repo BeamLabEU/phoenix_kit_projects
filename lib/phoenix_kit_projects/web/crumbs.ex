@@ -10,24 +10,28 @@ defmodule PhoenixKitProjects.Web.Crumbs do
       Admin Panel / Projects / Parent / Child          sub-projects show their parent chain
       Admin Panel / Projects / Test / Add task         "Add" attaches to the project crumb…
       Admin Panel / Projects / Tasks / New task        …"New" creates a standalone record
-      Admin Panel / Projects / Tasks / Edit <name>     edit names its object (core's Users convention)
+      Admin Panel / Projects / Test / Edit             edit: the record is a crumb, the leaf is "Edit"
+      Admin Panel / Projects / Tasks / Measure / Edit  a record with no page of its own is a text crumb
 
-  The trail is core's contract: `page_section` (+ `page_section_path`) is
-  the module tab, `page_crumbs` the linked middle, `page_title` the plain
-  leaf. The project's List/Board/Timeline/Calendar tabs are views of one
-  place and never appear. Crumb labels reuse the subtab labels verbatim
-  so the trail mirrors the sidebar.
+  The trail is core's contract (core's `dev_docs/guides/2026-09-25-admin-
+  header-trail.md`): `page_section` (+ `page_section_path`) is the module
+  tab, `page_crumbs` the linked middle, `page_title` the plain leaf — never
+  a trail of its own. The project's List/Board/Timeline/Calendar tabs are
+  views of one place and never appear. Crumb labels reuse the subtab
+  labels verbatim so the trail mirrors the sidebar.
 
   Known limit of the core contract, not fixed here: `page_title` is also
-  the browser tab title, so a short leaf ("Files", "Add task") makes a
-  weak tab title. Every panel seat flagged it — the fix is a separate
-  browser-title assign in core.
+  the browser tab title, so a short leaf ("Files", "Edit") makes a weak
+  tab title. Every panel seat flagged it — the fix is a separate
+  browser-title assign in core. A form opened in a drawer has no trail at
+  all, so its in-form heading still names the record (`heading`, see
+  `Web.Helpers.keep_host_title/1`).
   """
 
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   alias PhoenixKitProjects.{Authz, L10n, Paths, Projects}
-  alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Schemas.{Project, Task}
 
   @doc "The assigns every page of the module starts from: the Projects section."
   @spec section() :: keyword()
@@ -63,16 +67,38 @@ defmodule PhoenixKitProjects.Web.Crumbs do
     |> Enum.map(&%{label: Project.localized_name(&1, lang), path: Paths.project(&1.uuid)})
   end
 
-  @doc "Section + the project's crumbs, ready to `assign/2` before `page_title`."
-  @spec under_project(Project.t(), term()) :: keyword()
-  def under_project(%Project{} = project, scope) do
-    section() ++ [page_crumbs: project(project, L10n.current_content_lang(), scope)]
+  @doc """
+  Section + the project's crumbs, ready to `assign/2` before `page_title`.
+  `extra` are crumbs below the project — a record of the project that the
+  page is about (an assignment's task as text, a linked sub-project with
+  its path), so an edit page's trail is the record's trail plus the
+  record.
+  """
+  @spec under_project(Project.t(), term(), [map()]) :: keyword()
+  def under_project(%Project{} = project, scope, extra \\ []) do
+    section() ++ [page_crumbs: project(project, L10n.current_content_lang(), scope) ++ extra]
   end
 
   @doc "Section + one subtab crumb (`:tasks` | `:templates`)."
   @spec under(:tasks | :templates) :: keyword()
   def under(:tasks), do: section() ++ [page_crumbs: [tasks()]]
   def under(:templates), do: section() ++ [page_crumbs: [templates()]]
+
+  @doc """
+  Section + the Tasks crumb + the library task as a text crumb (the list is
+  its only page, so there is nothing to link) — the trail of the task's
+  edit form.
+  """
+  @spec under_task(Task.t()) :: keyword()
+  def under_task(%Task{} = task) do
+    section() ++
+      [
+        page_crumbs: [
+          tasks(),
+          %{label: Task.localized_title(task, L10n.current_content_lang())}
+        ]
+      ]
+  end
 
   @doc "Section + the project's crumbs MINUS the project itself (for the project page, whose title is the name)."
   @spec above_project(Project.t(), term()) :: keyword()

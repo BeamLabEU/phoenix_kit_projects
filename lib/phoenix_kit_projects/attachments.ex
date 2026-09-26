@@ -27,7 +27,12 @@ defmodule PhoenixKitProjects.Attachments do
       parent_folder_uuid}` or anything else for "no parent". `subject` is
       the bare `%Project{}` for read-only lookups (`folder_uuid/2`,
       render-safe: never creates a parent) and `{:ensure, %Project{}}` for
-      `ensure_folder/2`, which may create the parent chain.
+      `ensure_folder/2`, which may create the parent chain. Both forms must
+      name the same parent once it exists: reads only ever look under the
+      bare form's answer, so a folder created under a different one is
+      invisible to the Files page. A hook with no clause for the tuple form
+      is read as answering nothing for it, and creation then uses the bare
+      form's parent.
     * `:attachments_folder_name` — `{mod, fun}` where `fun(resource,
       actor_uuid)` returns `{:ok, name}` or anything else to fall back to
       the deterministic `project-<uuid>` name.
@@ -39,11 +44,13 @@ defmodule PhoenixKitProjects.Attachments do
   A per-project parent (a sub-order's own folder) with a fixed name is
   fine; a shared container needs a name carrying something project-unique.
 
-  Resolution order (read-only, no writes): host-name-under-parent →
-  deterministic-name-under-parent → deterministic-name-at-root →
-  deterministic-name-anywhere — so a legacy root `project-<uuid>` folder,
-  or one left under a since-unlinked parent, is found and reused rather
-  than twinned once a parent hook is configured.
+  Resolution order (read-only, no writes; live folders only):
+  host-name-under-parent → deterministic-name-under-parent →
+  deterministic-name-at-root → deterministic-name-anywhere — so a legacy
+  root `project-<uuid>` folder, or one left under a since-unlinked parent,
+  is found and reused rather than twinned once a parent hook is
+  configured. The convention is core's
+  `PhoenixKit.Modules.Storage.ResourceFolders`.
   """
 
   require Logger
@@ -51,7 +58,18 @@ defmodule PhoenixKitProjects.Attachments do
   import Ecto.Query, warn: false
 
   alias PhoenixKit.Modules.Storage
-  alias PhoenixKit.Modules.Storage.{File, FileInstance, Folder, FolderLink, Manager, URLSigner}
+
+  alias PhoenixKit.Modules.Storage.{
+    File,
+    FileInstance,
+    Folder,
+    Manager,
+    ResourceFolders,
+    URLSigner
+  }
+
+  alias PhoenixKit.Utils.Format
+
   alias PhoenixKitProjects.Schemas.Project
 
   @list_limit 200
@@ -64,40 +82,18 @@ defmodule PhoenixKitProjects.Attachments do
 
   @doc false
   # Host-configured parent folder; `nil` = storage root (default). Contract:
-  # `fun(kind, actor_uuid, subject)` (preferred) or `fun(kind, actor_uuid)`.
+  # `fun(kind, actor_uuid, subject)` (preferred) or `fun(kind, actor_uuid)`;
+  # a failing hook or a non-uuid answer falls back to the root, logged
+  # (`ResourceFolders.parent_uuid/4`).
   @spec parent_folder_uuid(Project.t() | {:ensure, Project.t()}, binary() | nil) :: binary() | nil
-  def parent_folder_uuid(resource, actor_uuid) do
-    kind = resource_kind(resource)
-
-    case Application.get_env(:phoenix_kit_projects, :attachments_parent_folder) do
-      {mod, fun} when is_atom(mod) and is_atom(fun) ->
-        result =
-          cond do
-            Code.ensure_loaded?(mod) and function_exported?(mod, fun, 3) ->
-              apply(mod, fun, [kind, actor_uuid, resource])
-
-            Code.ensure_loaded?(mod) and function_exported?(mod, fun, 2) ->
-              apply(mod, fun, [kind, actor_uuid])
-
-            true ->
-              nil
-          end
-
-        case result do
-          {:ok, uuid} when is_binary(uuid) -> uuid
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
-  rescue
-    error ->
-      Logger.warning("[Projects] parent folder hook failed: #{inspect(error)}")
-      nil
-  catch
-    :exit, _ -> nil
-  end
+  def parent_folder_uuid(resource, actor_uuid),
+    do:
+      ResourceFolders.parent_uuid(
+        :phoenix_kit_projects,
+        resource_kind(resource),
+        actor_uuid,
+        resource
+      )
 
   defp resource_kind(%Project{}), do: :project
   defp resource_kind({:ensure, %Project{}}), do: :project
@@ -112,86 +108,34 @@ defmodule PhoenixKitProjects.Attachments do
 
   @doc false
   # Folder name: the host's (`:attachments_folder_name`, `fun(resource, actor) :: {:ok, name} | nil`)
-  # or the deterministic `project-<uuid>` name. A raising hook falls back like a declining
-  # one — the parent hook already does, and without it one host bug blanked the Files page.
+  # or the deterministic `project-<uuid>` name. A failing hook falls back like a declining
+  # one — without it one host bug blanked the Files page.
   @spec folder_name(Project.t(), binary() | nil) :: binary()
   def folder_name(%Project{} = resource, actor_uuid) do
-    with {mod, fun} when is_atom(mod) and is_atom(fun) <-
-           Application.get_env(:phoenix_kit_projects, :attachments_folder_name),
-         true <- Code.ensure_loaded?(mod) and function_exported?(mod, fun, 2),
-         {:ok, name} when is_binary(name) and name != "" <-
-           apply(mod, fun, [resource, actor_uuid]) do
-      name
-    else
-      _ -> deterministic_name(resource)
-    end
-  rescue
-    error ->
-      Logger.warning("[Projects] folder name hook failed: #{inspect(error)}")
+    ResourceFolders.host_name(:phoenix_kit_projects, resource, actor_uuid) ||
       deterministic_name(resource)
-  catch
-    :exit, _ -> deterministic_name(resource)
   end
 
   @doc false
-  # host name under parent → deterministic name under parent → deterministic name at root →
-  # deterministic name ANYWHERE (a project unlinked from its sub-order keeps a folder under the
-  # old sub-order; it must still be found so the host can move it). Read-only: the host answers
-  # the bare struct without creating anything.
+  # host name under parent → deterministic name under parent → at root → ANYWHERE (a
+  # project unlinked from its sub-order keeps a folder under the old sub-order; it must
+  # still be found so the host can move it). Live folders only. Read-only: the host
+  # answers the bare struct without creating anything.
   @spec find_resource_folder(Project.t() | {:ensure, Project.t()}, binary() | nil) ::
           struct() | nil
-  def find_resource_folder(resource, actor_uuid) do
-    parent = parent_folder_uuid(resource, actor_uuid)
-    host_name = folder_name(resource, actor_uuid)
-    deterministic = deterministic_name(resource)
+  def find_resource_folder({:ensure, %Project{} = project}, actor_uuid),
+    do: find_resource_folder(project, actor_uuid)
 
-    (parent && find_folder_under(host_name, parent)) ||
-      (parent && find_folder_under(deterministic, parent)) ||
-      find_folder_under(deterministic, nil) ||
-      find_folder_anywhere(deterministic)
-  end
+  def find_resource_folder(%Project{} = project, actor_uuid),
+    do: find_under_parent(project, parent_folder_uuid(project, actor_uuid), actor_uuid)
 
-  # Unique by construction (the name carries the project uuid); if several exist the oldest wins.
-  defp find_folder_anywhere(name) do
-    repo().one(
-      from(f in Folder,
-        where: f.name == ^name and is_nil(f.trashed_at),
-        order_by: [asc: f.inserted_at],
-        limit: 1
-      )
+  defp find_under_parent(project, parent_uuid, actor_uuid) do
+    ResourceFolders.resolve(
+      parent: parent_uuid,
+      host_name: folder_name(project, actor_uuid),
+      name: deterministic_name(project),
+      anywhere: true
     )
-  rescue
-    _ -> nil
-  end
-
-  # Live folders only. Core's `[:name, :parent_uuid]` unique index is partial
-  # (`WHERE trashed_at IS NULL`), so a trashed folder and its live
-  # replacement coexist — and an unfiltered `limit: 1` could hand back the
-  # trashed one, stranding every attach in a folder the media browser hides.
-  defp find_folder_under(name, nil) do
-    repo().one(
-      from(f in Folder,
-        where: f.name == ^name and is_nil(f.parent_uuid) and is_nil(f.trashed_at),
-        limit: 1
-      )
-    )
-  rescue
-    error ->
-      Logger.warning("[Projects] find_folder_under #{name} failed: #{inspect(error)}")
-      nil
-  end
-
-  defp find_folder_under(name, parent_uuid) do
-    repo().one(
-      from(f in Folder,
-        where: f.name == ^name and f.parent_uuid == ^parent_uuid and is_nil(f.trashed_at),
-        limit: 1
-      )
-    )
-  rescue
-    error ->
-      Logger.warning("[Projects] find_folder_under #{name} failed: #{inspect(error)}")
-      nil
   end
 
   @doc "Resolves the project folder uuid WITHOUT creating it (render-safe)."
@@ -207,6 +151,14 @@ defmodule PhoenixKitProjects.Attachments do
     error ->
       Logger.warning("[Projects.Attachments] folder_uuid failed: #{Exception.message(error)}")
       nil
+  catch
+    :exit, reason ->
+      Logger.warning(
+        "[Projects.Attachments] folder_uuid failed: " <>
+          ResourceFolders.describe_failure({:exit, reason})
+      )
+
+      nil
   end
 
   @doc """
@@ -214,7 +166,9 @@ defmodule PhoenixKitProjects.Attachments do
   the winner via the unique index. The host-configured parent (via
   `:attachments_parent_folder`, subject `{:ensure, project}`) may build the
   parent chain; a legacy root `project-<uuid>` folder is found and reused
-  rather than twinned.
+  rather than twinned. When the host's name is taken under that parent by a
+  folder this project's lookup does not reach, the folder gets the
+  deterministic `project-<uuid>` name instead.
   """
   @spec ensure_folder(binary() | Project.t(), binary() | nil) ::
           {:ok, binary()} | {:error, term()}
@@ -236,49 +190,44 @@ defmodule PhoenixKitProjects.Attachments do
 
       nil ->
         # Creation may build the parent chain: the host gets `{:ensure, project}`.
-        attrs = %{
-          name: folder_name(project, actor_uuid),
-          parent_uuid: parent_folder_uuid({:ensure, project}, actor_uuid)
-        }
+        # Its folder is looked for under that parent too, so a host answering
+        # the two forms differently gets no second folder on the next upload.
+        # A hook that answers only the bare form (a clause on `%Project{}`
+        # raises on the tuple, which core reads as no answer) still places
+        # the folder under the parent it names for reads, where the Files
+        # page looks for it — not at the root, where reads would miss a
+        # host-named folder.
+        create_parent =
+          parent_folder_uuid({:ensure, project}, actor_uuid) ||
+            parent_folder_uuid(project, actor_uuid)
 
-        attrs = if actor_uuid, do: Map.put(attrs, :user_uuid, actor_uuid), else: attrs
+        lookup = fn ->
+          find_resource_folder(project, actor_uuid) ||
+            find_under_parent(project, create_parent, actor_uuid)
+        end
 
-        case Storage.create_folder(attrs) do
-          {:ok, %Folder{uuid: uuid}} ->
-            {:ok, uuid}
-
-          {:error, %Ecto.Changeset{} = cs} ->
-            case find_resource_folder(project, actor_uuid) do
-              %Folder{uuid: uuid} -> {:ok, uuid}
-              nil -> {:error, cs}
-            end
-
-          {:error, reason} ->
-            {:error, reason}
+        project
+        |> folder_name(actor_uuid)
+        |> ResourceFolders.ensure(create_parent, actor_uuid,
+          lookup: lookup,
+          fallback_name: deterministic_name(project)
+        )
+        |> case do
+          {:ok, %Folder{uuid: uuid}} -> {:ok, uuid}
+          {:error, reason} -> {:error, reason}
         end
     end
   end
 
-  @doc "Active files in the project folder (home or linked), newest first, capped."
+  @doc """
+  Live files in the project folder (home or linked; not trashed, not
+  system-managed), newest first, capped.
+  """
   @spec list_files(binary() | Project.t(), binary() | nil) :: [File.t()]
   def list_files(project_or_uuid, actor_uuid \\ nil) do
     case folder_uuid(project_or_uuid, actor_uuid) do
-      nil ->
-        []
-
-      folder_uuid ->
-        linked =
-          from(fl in FolderLink, where: fl.folder_uuid == ^folder_uuid, select: fl.file_uuid)
-
-        repo().all(
-          from(f in File,
-            where:
-              (f.folder_uuid == ^folder_uuid or f.uuid in subquery(linked)) and
-                f.status != "trashed",
-            order_by: [desc: f.inserted_at],
-            limit: @list_limit
-          )
-        )
+      nil -> []
+      folder_uuid -> ResourceFolders.list_files(folder_uuid, limit: @list_limit)
     end
   rescue
     e ->
@@ -287,9 +236,9 @@ defmodule PhoenixKitProjects.Attachments do
   end
 
   @doc """
-  Links picked/uploaded files into the project folder: a homeless file gets
-  this folder as home; a file homed elsewhere gains a `FolderLink`
-  (idempotent per file).
+  Links picked/uploaded files into the project folder by core's rule: a
+  homeless file gets this folder as home; a file homed elsewhere gains a
+  `FolderLink` (idempotent per file). Always `:ok`; a failure is logged.
   """
   @spec attach_files(binary() | Project.t(), [binary()], binary() | nil) :: :ok
   def attach_files(project_or_uuid, file_uuids, actor_uuid \\ nil) when is_list(file_uuids) do
@@ -302,98 +251,43 @@ defmodule PhoenixKitProjects.Attachments do
   end
 
   defp attach(file_uuid, folder_uuid) do
-    case Storage.get_file(file_uuid) do
-      nil ->
+    case ResourceFolders.attach(file_uuid, folder_uuid) do
+      {:ok, _outcome} ->
         :ok
 
-      %File{folder_uuid: ^folder_uuid} ->
-        :ok
-
-      %File{folder_uuid: nil} = file ->
-        file |> Ecto.Changeset.change(%{folder_uuid: folder_uuid}) |> repo().update()
-        :ok
-
-      %File{} ->
-        %FolderLink{}
-        |> FolderLink.changeset(%{folder_uuid: folder_uuid, file_uuid: file_uuid})
-        |> repo().insert(on_conflict: :nothing, conflict_target: [:folder_uuid, :file_uuid])
-
-        :ok
+      {:error, reason} ->
+        Logger.warning(
+          "[Projects.Attachments] attach #{file_uuid} failed: " <>
+            ResourceFolders.describe_failure(reason)
+        )
     end
-  rescue
-    e ->
-      Logger.warning("[Projects.Attachments] attach #{file_uuid} failed: #{inspect(e)}")
-      :ok
   end
 
   @doc """
-  Removes a file from the project folder. Home here + not linked elsewhere →
-  soft-trash (recoverable in the media trash); home here + linked elsewhere →
-  promote a link to home; linked-only here → drop the link.
+  Removes a file from the project folder by core's rule: linked-only here →
+  drop the link; home here + linked into another live folder → move it
+  there; home here and nothing else holds it → soft-trash (recoverable in the
+  media trash). A file that is not here is left alone.
   """
   @spec remove_file(binary() | Project.t(), binary(), binary() | nil) :: :ok | {:error, term()}
   def remove_file(project_or_uuid, file_uuid, actor_uuid \\ nil) do
     # The actor matters: an actor-dependent parent hook resolves a different
     # folder without it, and a miss here is a silent `:ok`.
     case folder_uuid(project_or_uuid, actor_uuid) do
-      nil -> :ok
-      folder_uuid -> detach(file_uuid, folder_uuid)
-    end
-  end
+      nil ->
+        :ok
 
-  defp detach(file_uuid, folder_uuid) do
-    case Storage.get_file(file_uuid) do
-      nil -> :ok
-      %File{folder_uuid: ^folder_uuid} = file -> detach_home(file)
-      %File{} -> detach_link(file_uuid, folder_uuid)
-    end
-  rescue
-    e ->
-      Logger.warning("[Projects.Attachments] remove #{file_uuid} failed: #{inspect(e)}")
-      {:error, e}
-  end
-
-  defp detach_home(file) do
-    case repo().all(from(fl in FolderLink, where: fl.file_uuid == ^file.uuid)) do
-      [] ->
-        file
-        |> Ecto.Changeset.change(%{
-          status: "trashed",
-          trashed_at: DateTime.utc_now() |> DateTime.truncate(:second)
-        })
-        |> repo().update()
-        |> case do
-          {:ok, _} -> :ok
-          err -> err
-        end
-
-      [%FolderLink{} = link | _] ->
-        repo().transaction(fn ->
-          file |> Ecto.Changeset.change(%{folder_uuid: link.folder_uuid}) |> repo().update!()
-          repo().delete!(link)
-        end)
-        |> case do
-          {:ok, _} -> :ok
-          err -> err
+      folder_uuid ->
+        case ResourceFolders.detach(file_uuid, folder_uuid) do
+          {:ok, _outcome} -> :ok
+          {:error, reason} -> {:error, reason}
         end
     end
   end
 
-  defp detach_link(file_uuid, folder_uuid) do
-    from(fl in FolderLink, where: fl.file_uuid == ^file_uuid and fl.folder_uuid == ^folder_uuid)
-    |> repo().delete_all()
-
-    :ok
-  end
-
-  @doc "Heroicon name for a file's type (template helper)."
+  @doc "Heroicon name for a file's Storage type / mime (`Format.file_icon/1`)."
   @spec file_icon(map()) :: String.t()
-  def file_icon(%{file_type: "image"}), do: "hero-photo"
-  def file_icon(%{file_type: "video"}), do: "hero-film"
-  def file_icon(%{file_type: "audio"}), do: "hero-musical-note"
-  def file_icon(%{file_type: "archive"}), do: "hero-archive-box"
-  def file_icon(%{mime_type: "application/pdf"}), do: "hero-document-text"
-  def file_icon(_), do: "hero-document"
+  defdelegate file_icon(file), to: Format
 
   @doc "Public download URL, nil-safe."
   @spec download_url(File.t()) :: String.t() | nil

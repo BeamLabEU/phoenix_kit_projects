@@ -18,6 +18,27 @@ defmodule PhoenixKitProjects.AttachmentsParentFolderTest do
     def name(_resource, _actor), do: nil
   end
 
+  # Answers one parent for reads and another when asked to create.
+  defmodule SplitParentHook do
+    @moduledoc false
+    def parent(:project, _actor, {:ensure, %Project{}}), do: {:ok, Process.get(:create_parent)}
+    def parent(:project, _actor, %Project{}), do: {:ok, Process.get(:read_parent)}
+    def name(%Project{}, _actor), do: {:ok, "Human"}
+  end
+
+  # A hook with a clause for the bare project only: the tuple form raises,
+  # which core reads as no answer.
+  defmodule StrictParentHook do
+    @moduledoc false
+    def parent(:project, _actor, %Project{}), do: {:ok, Process.get(:read_parent)}
+    def name(%Project{}, _actor), do: {:ok, "Human"}
+  end
+
+  defmodule ProjectNameHook do
+    @moduledoc false
+    def name(%Project{name: name}, _actor), do: {:ok, name}
+  end
+
   setup do
     on_exit(fn ->
       Application.delete_env(:phoenix_kit_projects, :attachments_parent_folder)
@@ -96,6 +117,64 @@ defmodule PhoenixKitProjects.AttachmentsParentFolderTest do
     folder = Repo.get!(Folder, folder_uuid)
     assert folder.name == "project-#{project.uuid}"
     assert folder.parent_uuid == nil
+  end
+
+  test "a name hook without a parent hook: the host-named root folder is found again" do
+    Application.put_env(:phoenix_kit_projects, :attachments_folder_name, {ProjectNameHook, :name})
+    project = project!()
+
+    assert {:ok, folder_uuid} = Attachments.ensure_folder(project, nil)
+    folder = Repo.get!(Folder, folder_uuid)
+    assert {folder.name, folder.parent_uuid} == {project.name, nil}
+
+    assert Attachments.folder_uuid(project, nil) == folder_uuid
+    assert Attachments.ensure_folder(project, nil) == {:ok, folder_uuid}
+  end
+
+  test "a host answering reads and creates differently gets no second folder" do
+    Process.put(:read_parent, container!("Read").uuid)
+    Process.put(:create_parent, container!("Create").uuid)
+
+    Application.put_env(
+      :phoenix_kit_projects,
+      :attachments_parent_folder,
+      {SplitParentHook, :parent}
+    )
+
+    Application.put_env(:phoenix_kit_projects, :attachments_folder_name, {SplitParentHook, :name})
+    project = project!()
+
+    assert {:ok, first} = Attachments.ensure_folder(project, nil)
+    assert Attachments.ensure_folder(project, nil) == {:ok, first}
+
+    assert Repo.aggregate(
+             from(f in Folder, where: f.parent_uuid == ^Process.get(:create_parent)),
+             :count
+           ) == 1
+  end
+
+  test "a hook that answers only the bare form still places the folder where reads look" do
+    read_parent = container!("Read parent")
+    Process.put(:read_parent, read_parent.uuid)
+
+    Application.put_env(
+      :phoenix_kit_projects,
+      :attachments_parent_folder,
+      {StrictParentHook, :parent}
+    )
+
+    Application.put_env(
+      :phoenix_kit_projects,
+      :attachments_folder_name,
+      {StrictParentHook, :name}
+    )
+
+    project = project!()
+
+    assert {:ok, uuid} = Attachments.ensure_folder(project, nil)
+    assert Repo.get!(Folder, uuid).parent_uuid == read_parent.uuid
+    assert Attachments.folder_uuid(project, nil) == uuid
+    assert Attachments.ensure_folder(project, nil) == {:ok, uuid}
   end
 
   # ── legacy compatibility ──

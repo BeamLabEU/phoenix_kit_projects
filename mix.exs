@@ -129,16 +129,20 @@ defmodule PhoenixKitProjects.MixProject do
       # only on consumers. `core_pin_conformance_test.exs` guards this; it is
       # the reason a real floor is documented here rather than encoded.
       #
-      # The real floor as of 0.22.0 is **2.14.2** — the release carrying core
-      # V183 (annotations anchored to `target_type` + `target_uuid` rather
-      # than a file), `<.modal>`'s `placement` / `close_guard`, and
-      # `<.nav_tabs>`' `:trailing` slot. Below it this module does not compile
-      # and `Whiteboards.delete/2` raises. Earlier floors it supersedes:
-      # 1.7.231 for `PhoenixKitWeb.Live.UrlState` (+ `mode: :history`),
-      # 1.7.189 for `PhoenixKit.SchemaPrefix`, 1.7.184 for the `<.checkbox>`
-      # attrs, and V125/V127/V128 for the workflow-status and project-assignee
-      # columns.
-      pk_dep(:phoenix_kit, "~> 2.0"),
+      # The floor is 2.38.0: project files live on core's
+      # `Storage.ResourceFolders`, the reorganizer on its `ResourceSource`,
+      # the actor and activity log come from `PhoenixKitWeb.Actor` and
+      # `Activity.log/3`, file helpers from `Utils.Format`, and the edit forms
+      # use `mount_multilang(open_on:)` — all first shipped there, none
+      # feature-detected, so a lower core fails to compile. Earlier floors it
+      # supersedes: 2.14.2 (core V183 annotation anchors, `<.modal>`'s
+      # `placement` / `close_guard`, `<.nav_tabs>`' `:trailing` slot),
+      # 1.7.231 for `PhoenixKitWeb.Live.UrlState`, 1.7.189 for
+      # `PhoenixKit.SchemaPrefix`, and V125/V127/V128 for the workflow-status
+      # and project-assignee columns. Patch-precise floor in the compound
+      # form, so the ceiling stays open through every later 2.x minor (see
+      # test/core_pin_conformance_test.exs).
+      pk_dep(:phoenix_kit, ">= 2.38.0 and < 3.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move

@@ -11,9 +11,10 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `~> 2.0` (Hex; the real floor is documented in
-  `mix.exs` next to the pin — a two-segment `~>` is deliberate so core minors
-  stay compatible and `core_pin_conformance_test.exs` guards it),
+- **Depends on:** `phoenix_kit` `>= 2.38.0 and < 3.0.0` (Hex — the release
+  that carries `Storage.ResourceFolders`, `PhoenixKitWeb.Actor` and
+  `Activity.log/3`; the compound form keeps the ceiling open across later 2.x
+  minors and `core_pin_conformance_test.exs` guards it),
   `phoenix_kit_ai` `~> 0.18` (hard — the AI-translation pipeline),
   `phoenix_kit_comments` `~> 0.3` (hard — `ProjectShowLive` does
   `use PhoenixKitComments.Embed`), `phoenix_kit_staff` `~> 0.8` (**optional** —
@@ -152,10 +153,11 @@ Repo-local aliases:
   settings tables can't crash module discovery.
 - **Activity logging** goes through the `PhoenixKitProjects.Activity` wrapper
   and happens at the **LiveView layer**, never inside `PhoenixKitProjects.Projects`.
-  LiveViews have `actor_uuid` via `socket.assigns[:phoenix_kit_current_user]`
-  and know the user's intent; contexts stay pure, returning
-  `{:ok, record} | {:error, changeset}`. Every call is guarded with
-  `Code.ensure_loaded?/1` + rescue — logging never crashes a mutation.
+  LiveViews read the actor with `Activity.actor_uuid/1` (core's
+  `PhoenixKitWeb.Actor`: the scope first, then the bare current user) and
+  know the user's intent; contexts stay pure, returning
+  `{:ok, record} | {:error, changeset}`. Core's `PhoenixKit.Activity.log/3`
+  never raises — logging never crashes a mutation.
   Activity metadata captures the **primary** column value
   (`metadata.name = project.name`), not the localized one: audit trails are
   locale-agnostic.
@@ -163,8 +165,8 @@ Repo-local aliases:
     `:phoenix_kit_ensure_admin` `on_mount` never runs, so the actor comes from
     `WebHelpers.assign_embed_user/2` reconstructing it from
     `session["current_user_uuid"]`. Without that key embedded mutations log
-    `actor_uuid: nil` by design; `Activity.actor_uuid/1` reads the assign with
-    bracket access so a missing key is tolerated.
+    `actor_uuid: nil` by design; `Activity.actor_uuid/1` tolerates a missing
+    assign.
   - **Sugar helpers don't log on their own:** `complete_assignment/2` and
     `reopen_assignment/1` delegate to the server-trusted
     `update_assignment_status/2`, emit the same PubSub broadcast, and log
@@ -617,7 +619,7 @@ slider-audit coalescing window (runtime default 1s) so tests can wait it out.
 | Quick-add and the add-task sheet | The write is ONE transaction that locks the project row (`FOR UPDATE`) and does nothing else — broadcasts fire after commit, the activity log stays with the LiveView. The full form calls the same helper, so the two paths cannot drift. | [`dev_docs/guides/quick-add.md`](dev_docs/guides/quick-add.md) |
 | Workflow statuses | Statuses cement at `started_at` and the source freezes with them: `save(:edit)` runs `Statuses.lock_status_source/2` server-side, so a crafted submit past the disabled control cannot change a started project's source. | [`dev_docs/guides/workflow-statuses.md`](dev_docs/guides/workflow-statuses.md) |
 | Sub-projects | The child project is the source of truth; the parent's linking assignment carries denormalized rollup so every existing read site works unchanged. Exactly one of `task_uuid` / `child_project_uuid` (DB CHECK + changeset), at most one parent (partial unique index), `ON DELETE RESTRICT`. | [`dev_docs/guides/sub-projects.md`](dev_docs/guides/sub-projects.md) |
-| Multilang user-input content | Non-translatable fields must be siblings OUTSIDE `<.multilang_fields_wrapper>` — the wrapper keys its id on `@current_lang`, so morphdom re-mounts everything inside on a tab switch and their state is lost. | [`dev_docs/guides/multilang-content.md`](dev_docs/guides/multilang-content.md) |
+| Multilang user-input content | Non-translatable fields must be siblings OUTSIDE `<.multilang_fields_wrapper>` — the wrapper keys its id on `@current_lang`, so morphdom re-mounts everything inside on a tab switch and their state is lost. An `:edit` form opens on the viewing language (`mount_multilang(open_on: :viewing_language)`); `:new` opens on the main language, which holds the required fields. | [`dev_docs/guides/multilang-content.md`](dev_docs/guides/multilang-content.md) |
 | Whiteboards | A board's shapes are core annotations anchored by `target_type: "projects_whiteboard"` + `target_uuid`; `file_uuid` stays nullable so file-backed boards keep rendering through the file viewer. | [`dev_docs/guides/whiteboards.md`](dev_docs/guides/whiteboards.md) |
 | Dashboard widgets | One-way contract: this module never depends on `phoenix_kit_dashboards`. Every widget guards its reads behind `Helpers.available?/0` and `Statuses.available?/0` and renders an empty state rather than crashing the host board; a stateful LiveComponent's `render/1` returns a single static root. | [`dev_docs/guides/dashboard-widgets.md`](dev_docs/guides/dashboard-widgets.md) |
 | Schedule math and completion | Durations normalize to hours through `Task.to_hours/3` only; per-task `counts_weekends` overrides the project setting. `recompute_project_completion/1` runs after every assignment status/progress/removal change. | [`dev_docs/guides/schedule-math.md`](dev_docs/guides/schedule-math.md) |

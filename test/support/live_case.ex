@@ -155,4 +155,13 @@ defmodule PhoenixKitProjects.LiveCase do
   def put_test_scope(conn, scope) do
     Plug.Test.init_test_session(conn, %{"phoenix_kit_test_scope" => scope})
   end
+
+  @doc """
+  Views the page in `dialect` (e.g. `"fr-FR"`), as production's locale hook
+  would for a `/fr/…` URL: `Multilang.current_locale/0` answers it inside
+  the LiveView.
+  """
+  def with_request_locale(conn, dialect) do
+    Plug.Test.init_test_session(conn, %{"pk_test_request_locale" => dialect})
+  end
 end
