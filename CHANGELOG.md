@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.27.0 - 2026-09-26
+
+PR #46 plus its post-merge review
+(`dev_docs/pull_requests/2026/46-core-resource-folders/CLAUDE_REVIEW.md`).
+
+### Changed
+
+- **Requires `phoenix_kit` >= 2.38.0** (pin `>= 2.38.0 and < 3.0.0`). Project
+  files, the media reorganizer, file icons and activity logging now run on
+  core's shared toolkits instead of local copies:
+  `Storage.ResourceFolders`, `Reorganizer.ResourceSource`, `Utils.Format`,
+  `PhoenixKitWeb.Actor` and `PhoenixKit.Activity.log/3`. Behaviour is
+  unchanged; `MediaReorganizer` shrinks to a declaration.
+- The activity actor is read from the scope first, then the bare current
+  user, the same way every module now reads it.
+- Edit forms (project, template, task, assignment) open on the language being
+  viewed; new forms still open on the main language, which holds the
+  required fields.
+- Edit pages' admin trail names the record as a crumb and titles the page
+  "Edit" (`… / Projects / Test / Edit`); a form opened in the drawer keeps a
+  heading that names the record.
+
+### Fixed
+
+- A parent hook answering the ensure form differently from the bare form no
+  longer creates a second project folder on the next upload.
+- A parent hook with no clause for the ensure form no longer places a new
+  folder at the root, where the Files page could not find a host-named one.
+
 ## 0.26.0 - 2026-09-16
 
 PR #45 plus its post-merge review
