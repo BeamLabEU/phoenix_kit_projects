@@ -1224,7 +1224,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <%= if @fx.estimates and @editing_duration_uuid == @a.uuid do %>
               <% prefill_dur = @a.estimated_duration || @a.task.estimated_duration %>
               <% prefill_unit = @a.estimated_duration_unit || @a.task.estimated_duration_unit || "hours" %>
-              <form phx-submit="save_duration" class="flex items-center gap-1">
+              <form id={"duration-#{@a.uuid}"} phx-submit="save_duration" class="flex items-center gap-1">
                 <input type="hidden" name="uuid" value={@a.uuid} />
                 <input type="number" name="estimated_duration" value={prefill_dur} class="input input-xs w-16" min="1" />
                 <.select name="estimated_duration_unit" value={prefill_unit} options={duration_unit_options()} class="select-xs w-auto" />
@@ -1304,7 +1304,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             <%= if @fx.progress and not @is_template do %>
               <%= if @a.track_progress do %>
-                <.form for={%{}} phx-change="update_progress" class="flex items-center gap-1">
+                <.form for={%{}} id={"progress-#{@a.uuid}"} phx-change="update_progress" class="flex items-center gap-1">
                   <input type="hidden" name="uuid" value={@a.uuid} />
                   <input type="range" name="progress_pct" value={@a.progress_pct} min="0" max="100" step="5" phx-debounce="300" class="range range-xs range-primary w-20" />
                   <span class="text-xs text-base-content/60 w-8">{@a.progress_pct}%</span>
@@ -3352,7 +3352,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <p class="text-sm text-base-content/70 mt-1">
               {gettext("Your judgment, not a computed number — how does this project feel right now?")}
             </p>
-            <form phx-submit="save_health" class="flex flex-col gap-3 mt-4">
+            <form id="health-form" phx-submit="save_health" class="flex flex-col gap-3 mt-4">
               <div class="flex flex-col gap-2">
                 <label
                   :for={status <- Health.statuses()}
@@ -3400,7 +3400,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 {gettext("On the project overall")}
               <% end %>
             </p>
-            <form phx-submit="save_work_entry" class="flex flex-col gap-3 mt-4">
+            <form id="work-entry-form" phx-submit="save_work_entry" class="flex flex-col gap-3 mt-4">
               <div class="flex items-start gap-2">
                 <.input
                   id="log-time-hours"
@@ -4450,7 +4450,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               {gettext("Pick the date and time this project starts. Defaults to right now; backdate it if work began earlier, or pick a future moment if you're queueing it up.")}
             </p>
 
-            <.form for={@start_form} phx-submit="confirm_start_project" class="flex flex-col gap-3 mt-4">
+            <.form id="start-project-form" for={@start_form} phx-submit="confirm_start_project" class="flex flex-col gap-3 mt-4">
               <.input field={@start_form[:start_at]} type="datetime-local" label={gettext("Start date and time")} required />
 
               <div class="modal-action">

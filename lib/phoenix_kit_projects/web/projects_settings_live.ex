@@ -695,7 +695,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
           <%!-- Default status list: the entity a project's "Shared default"
                draws from. Pick any entity, or generate a starter list. --%>
-          <form
+          <form id="default-status-entity-form"
             :if={@statuses_available}
             phx-change="select_default_status_entity"
             class="flex flex-col gap-2"

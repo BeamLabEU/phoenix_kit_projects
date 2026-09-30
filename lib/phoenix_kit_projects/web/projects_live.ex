@@ -237,7 +237,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # sort selector's form.
   defp status_filter_control(assigns) do
     ~H"""
-    <form
+    <form id="projects-status-filter"
       :if={@statuses_available and @status_options != []}
       phx-change="filter_status"
       class="flex items-center"

@@ -624,7 +624,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                   {(member.user && member.user.email) || gettext("(deleted account)")}
                 </div>
               </div>
-              <form phx-change="change_role" class="shrink-0">
+              <form id={"member-role-#{member.user_uuid}"} phx-change="change_role" class="shrink-0">
                 <input type="hidden" name="user" value={member.user_uuid} />
                 <.role_select name="role" value={member.role} />
               </form>

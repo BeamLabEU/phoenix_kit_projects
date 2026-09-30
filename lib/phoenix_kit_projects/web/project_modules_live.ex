@@ -641,6 +641,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                      read, so it is chosen rather than generated. --%>
                 <form
                   :if={@portal.access_mode == "public"}
+                  id="portal-slug-form"
                   phx-submit="set_portal_slug"
                   class="flex flex-wrap items-end gap-2"
                 >
@@ -660,7 +661,11 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   <h4 class="mb-1 text-xs font-semibold uppercase opacity-50">
                     {gettext("Who can take part")}
                   </h4>
-                  <form phx-change="set_portal_participation" class="flex flex-wrap gap-3">
+                  <form
+                    id="portal-participation-form"
+                    phx-change="set_portal_participation"
+                    class="flex flex-wrap gap-3"
+                  >
                     <.select
                       id="portal-submit-access"
                       name="submit_access"
@@ -723,12 +728,8 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
       <%!-- Labels registry (Phase C): the config home for the project's
            label catalog. Renders only while the labels flag is on. --%>
-      <section :if={@labels_on} class="card bg-base-100 border border-base-200">
-        <div class="card-body gap-3">
-          <h2 class="card-title text-base">{gettext("Labels")}</h2>
-          <p class="text-xs text-base-content/60">
-            {gettext("Tags tasks can wear — pick them on the task form.")}
-          </p>
+      <.form_section :if={@labels_on} title={gettext("Labels")} icon="hero-tag" body_class="gap-3">
+        <:subtitle>{gettext("Tags tasks can wear — pick them on the task form.")}</:subtitle>
 
           <div :if={@labels != []} class="flex flex-wrap gap-2">
             <span
@@ -749,7 +750,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             </span>
           </div>
 
-          <form phx-submit="add_label" class="flex items-end gap-2">
+          <form id="project-label-add" phx-submit="add_label" class="flex items-end gap-2">
             <div class="flex-1 max-w-52">
               <.input
                 id="new-label-name"
@@ -776,8 +777,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
               {gettext("Add")}
             </.button>
           </form>
-        </div>
-      </section>
+      </.form_section>
     </div>
     """
   end
