@@ -114,14 +114,12 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
             </p>
           </div>
 
-          <div :if={@memberships == []} class="card border border-dashed border-base-300 bg-base-100">
-            <div class="card-body items-center text-center py-10">
-              <.icon name="hero-briefcase" class="w-10 h-10 opacity-30" />
-              <p class="text-sm opacity-70">
-                {gettext("You are not a member of any project yet.")}
-              </p>
-            </div>
-          </div>
+          <.empty_state
+            :if={@memberships == []}
+            variant="featured"
+            icon="hero-briefcase"
+            title={gettext("You are not a member of any project yet.")}
+          />
 
           <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <.link

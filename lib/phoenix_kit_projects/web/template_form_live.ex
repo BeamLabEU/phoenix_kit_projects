@@ -332,17 +332,6 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
             skeleton_class="card-body pt-4 space-y-4"
             fields_class="card-body pt-4 space-y-4"
           >
-            <%!-- See `project_form_live.ex` for skeleton contrast rationale. --%>
-            <:skeleton>
-              <div class="space-y-2">
-                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
-                <div class="bg-base-content/15 rounded h-12 w-full animate-pulse"></div>
-              </div>
-              <div class="space-y-2">
-                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
-                <div class="bg-base-content/15 rounded h-24 w-full animate-pulse"></div>
-              </div>
-            </:skeleton>
 
             <.translatable_field
               field_name="name"
@@ -399,24 +388,24 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
               status_translation_mode={@status_translation_mode}
             />
 
-            <div class="flex justify-end gap-2 mt-2">
-              <button
-              type="button"
-              phx-click="cancel"
-              data-confirm={@dirty? && gettext("Discard your changes?")}
-              class="btn btn-ghost btn-sm"
+            <.form_actions
+              class="gap-2 mt-2"
+              submit_label={if @live_action == :new, do: gettext("Create"), else: gettext("Save")}
+              submitting_label={gettext("Saving…")}
+              submit_class="btn btn-primary btn-sm"
+              submit_disabled={@ai_in_flight != []}
             >
+              <:cancel>
+              <button
+                type="button"
+                phx-click="cancel"
+                data-confirm={@dirty? && gettext("Discard your changes?")}
+                class="btn btn-ghost btn-sm"
+              >
                 {gettext("Cancel")}
               </button>
-              <button
-                type="submit"
-                phx-disable-with={gettext("Saving…")}
-                disabled={@ai_in_flight != []}
-                class="btn btn-primary btn-sm"
-              >
-                <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
-              </button>
-            </div>
+          </:cancel>
+            </.form_actions>
           </div>
         </div>
       </.form>

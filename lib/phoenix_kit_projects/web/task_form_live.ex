@@ -464,17 +464,6 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
             skeleton_class="card-body pt-4 space-y-4"
             fields_class="card-body pt-4 space-y-4"
           >
-            <%!-- See `project_form_live.ex` for skeleton contrast rationale. --%>
-            <:skeleton>
-              <div class="space-y-2">
-                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
-                <div class="bg-base-content/15 rounded h-12 w-full animate-pulse"></div>
-              </div>
-              <div class="space-y-2">
-                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
-                <div class="bg-base-content/15 rounded h-24 w-full animate-pulse"></div>
-              </div>
-            </:skeleton>
 
             <.translatable_field
               field_name="title"
@@ -568,12 +557,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
              `<.form>` to avoid nested-form HTML invalidity. --%>
         <%= if @live_action == :edit do %>
           <% lang = L10n.current_content_lang() %>
-          <div class="card bg-base-100 shadow">
-            <div class="card-body">
-              <h2 class="card-title text-lg">{gettext("Default dependencies")}</h2>
-              <p class="text-xs text-base-content/60">
+          <.form_section title={gettext("Default dependencies")}>
+              <:subtitle>
                 {gettext("When this task is added to a project, dependencies will be auto-created for any of these tasks already in the same project.")}
-              </p>
+              </:subtitle>
 
               <%= if @task_deps != [] do %>
                 <div class="flex flex-wrap gap-2 mt-2">
@@ -608,28 +595,27 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               <%= if @task_deps == [] and @available_deps == [] do %>
                 <p class="text-sm text-base-content/50 mt-2">{gettext("No other tasks in the library to depend on.")}</p>
               <% end %>
-            </div>
-          </div>
+          </.form_section>
         <% end %>
 
-        <div class="flex justify-end gap-2 mt-2">
+        <.form_actions
+          class="gap-2 mt-2"
+          submit_label={if @live_action == :new, do: gettext("Create"), else: gettext("Save")}
+          submitting_label={gettext("Saving…")}
+          submit_class="btn btn-primary btn-sm"
+          submit_disabled={@ai_in_flight != []}
+        >
+          <:cancel>
           <button
-              type="button"
-              phx-click="cancel"
-              data-confirm={@dirty? && gettext("Discard your changes?")}
-              class="btn btn-ghost btn-sm"
-            >
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
+            class="btn btn-ghost btn-sm"
+          >
             {gettext("Cancel")}
           </button>
-          <button
-            type="submit"
-            phx-disable-with={gettext("Saving…")}
-            disabled={@ai_in_flight != []}
-            class="btn btn-primary btn-sm"
-          >
-            <%= if @live_action == :new, do: gettext("Create"), else: gettext("Save") %>
-          </button>
-        </div>
+          </:cancel>
+        </.form_actions>
       </.form>
 
       <%!-- Modal lives outside the form — see project_form_live.ex. --%>

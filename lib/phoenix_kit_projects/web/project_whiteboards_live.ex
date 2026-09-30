@@ -357,51 +357,44 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
             </div>
           <% end %>
 
-          <%= if @new_modal_open do %>
-            <dialog open class="modal modal-open" phx-window-keydown="close_new_board" phx-key="Escape">
-              <div class="modal-box max-w-sm">
-                <h3 class="font-bold text-lg">{gettext("New whiteboard")}</h3>
-                <form phx-submit="create_board" class="flex flex-col gap-3 mt-4">
-                  <label class="fieldset">
-                    <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Name")}</span>
-                    <input
-                      type="text"
-                      name="name"
-                      required
-                      maxlength="160"
-                      class="input input-sm"
-                      placeholder={gettext("e.g. Sprint sketches")}
-                    />
-                  </label>
-                  <label class="fieldset">
-                    <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Size")}</span>
-                    <select name="size" class="select select-sm">
-                      <option :for={{key, label} <- size_options()} value={key}>{label}</option>
-                    </select>
-                  </label>
-                  <div class="modal-action">
-                    <button type="button" phx-click="close_new_board" class="btn btn-ghost btn-sm">
-                      {gettext("Cancel")}
-                    </button>
-                    <button
-                      type="submit"
-                      phx-disable-with={gettext("Creating…")}
-                      class="btn btn-primary btn-sm"
-                    >
-                      {gettext("Create")}
-                    </button>
-                  </div>
-                </form>
+          <.modal
+            :if={@new_modal_open}
+            show
+            on_close="close_new_board"
+            id="whiteboard-new"
+            max_width="sm"
+            close_guard={:input}
+          >
+            <:title>{gettext("New whiteboard")}</:title>
+            <form id="new-whiteboard-form" phx-submit="create_board" class="flex flex-col gap-3">
+              <.input
+                id="whiteboard-name"
+                name="name"
+                value=""
+                label={gettext("Name")}
+                required
+                maxlength="160"
+                class="input-sm"
+                placeholder={gettext("e.g. Sprint sketches")}
+              />
+              <.select
+                id="whiteboard-size"
+                name="size"
+                label={gettext("Size")}
+                value={size_options() |> List.first() |> elem(0)}
+                class="select-sm"
+                options={for {key, label} <- size_options(), do: {label, key}}
+              />
+              <div class="modal-action">
+                <.button type="button" variant="ghost" size="sm" phx-click="close_new_board">
+                  {gettext("Cancel")}
+                </.button>
+                <.button type="submit" size="sm" phx-disable-with={gettext("Creating…")}>
+                  {gettext("Create")}
+                </.button>
               </div>
-              <button
-                type="button"
-                phx-click="close_new_board"
-                class="modal-backdrop"
-                aria-label={gettext("Close")}
-              >
-              </button>
-            </dialog>
-          <% end %>
+            </form>
+          </.modal>
       <% end %>
     </div>
     """

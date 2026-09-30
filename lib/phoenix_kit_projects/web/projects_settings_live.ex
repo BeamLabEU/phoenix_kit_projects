@@ -79,8 +79,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
        demo_today: ~D[2026-01-15],
        # Sub-project expanded by default so the preview shows the roll-up + its
        # children + frame; the chevron toggles it (see `toggle_demo_subproject`).
-       demo_expanded: MapSet.new(["buildphase"]),
-       subhead_class: "text-xs font-semibold uppercase tracking-wide text-base-content/60"
+       demo_expanded: MapSet.new(["buildphase"])
      )
      |> WebHelpers.assign_embed_state(session)
      # Reconstruct the acting user across the `live_render` boundary so the
@@ -620,18 +619,20 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   attr(:on, :boolean, required: true)
   attr(:event, :string, default: "toggle_gantt_flag")
 
+  # Core's checkbox, outside any form: its hidden "false" fallback is never
+  # submitted, and the phx-click carries the flip.
   defp gantt_toggle(assigns) do
     ~H"""
-    <label class="flex items-center gap-2 cursor-pointer">
-      <input
-        type="checkbox"
-        class="checkbox checkbox-sm"
-        checked={@on}
-        phx-click={@event}
-        phx-value-field={@field}
-      />
-      <span class="text-sm">{@label}</span>
-    </label>
+    <.checkbox
+      id={"setting-#{@field}"}
+      name={@field}
+      checked={@on}
+      label={@label}
+      class="checkbox-sm"
+      wrapper_class="gap-2"
+      phx-click={@event}
+      phx-value-field={@field}
+    />
     """
   end
 
@@ -655,9 +656,11 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       <%!-- New-project page customizer: the creation form defaults to
            name + description + kind; promote the blocks this site uses
            constantly to top level. --%>
-      <div class={["card bg-base-100 shadow", @active_tab != "creation" && "hidden"]}>
-        <div class="card-body gap-3">
-          <h2 class="card-title text-base">{gettext("New project page")}</h2>
+      <.form_section
+        title={gettext("New project page")}
+        class={if @active_tab != "creation", do: "hidden"}
+        body_class="gap-3"
+      >
           <p class="text-xs text-base-content/60">
             {gettext(
               "By default the creation page shows only the essentials — everything else folds into \"Setup options\". Promote the blocks your team uses on every project to top level."
@@ -678,12 +681,13 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               />
             </label>
           </div>
-        </div>
-      </div>
+      </.form_section>
 
-      <div class={["card bg-base-100 shadow", @active_tab != "statuses" && "hidden"]}>
-        <div class="card-body gap-4">
-          <h2 class="card-title text-base">{gettext("Workflow statuses")}</h2>
+      <.form_section
+        title={gettext("Workflow statuses")}
+        class={if @active_tab != "statuses", do: "hidden"}
+        body_class="gap-4"
+      >
 
           <p :if={not @statuses_available} class="text-xs text-base-content/50">
             {gettext("The entities module is not enabled, so workflow statuses are currently unavailable.")}
@@ -714,44 +718,43 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             </button>
           </form>
 
-          <label :if={@statuses_available} class="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              class="checkbox checkbox-sm mt-0.5"
-              checked={@use_status_translations}
-              phx-click="toggle_status_translations"
-            />
-            <span class="flex flex-col">
-              <span class="text-sm font-medium">
-                {gettext("Show translated status titles by default")}
-              </span>
-              <span class="text-xs text-base-content/60">
-                {gettext(
-                  "When on, status titles display in the viewer's language where a translation exists. Each project can override this on its form. Translations are always saved regardless."
-                )}
-              </span>
-            </span>
-          </label>
-        </div>
-      </div>
+          <.checkbox
+            :if={@statuses_available}
+            id="setting-use-status-translations"
+            name="use_status_translations"
+            checked={@use_status_translations}
+            label={gettext("Show translated status titles by default")}
+            class="checkbox-sm"
+            phx-click="toggle_status_translations"
+          >
+            <:description>
+              {gettext(
+                "When on, status titles display in the viewer's language where a translation exists. Each project can override this on its form. Translations are always saved regardless."
+              )}
+            </:description>
+          </.checkbox>
+      </.form_section>
 
       <%!-- The project page's task-list controls. `ListControls` — the
            lens and sort earn their row only when they can change what is
            on screen. --%>
-      <div class={["card bg-base-100 shadow", @active_tab != "list_controls" && "hidden"]}>
-        <div class="card-body gap-4">
-          <div class="flex items-start justify-between gap-4">
-            <h2 class="card-title text-base">{gettext("Task list controls")}</h2>
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs"
-              phx-click="reset_list_controls"
-              phx-disable-with={gettext("Resetting…")}
-              data-confirm={gettext("Reset the task list controls to their defaults?")}
-            >
-              {gettext("Reset to defaults")}
-            </button>
-          </div>
+      <.form_section
+        title={gettext("Task list controls")}
+        class={if @active_tab != "list_controls", do: "hidden"}
+        body_class="gap-4"
+      >
+        <:actions>
+          <.button
+            type="button"
+            variant="ghost"
+            size="xs"
+            phx-click="reset_list_controls"
+            phx-disable-with={gettext("Resetting…")}
+            data-confirm={gettext("Reset the task list controls to their defaults?")}
+          >
+            {gettext("Reset to defaults")}
+          </.button>
+        </:actions>
           <p class="text-xs text-base-content/60">
             {gettext(
               "The Active / Done / All filter and the sort dropdown above a project's task list. Automatic shows them only when they can change what is on screen — the project has both active and finished tasks, and at least the number of tasks below. Without them the list shows every task in manual order, so small projects can be reordered by hand straight away."
@@ -759,20 +762,16 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
           </p>
 
           <form id="list-controls-form" phx-change="set_list_controls" class="grid gap-3 sm:grid-cols-2">
-            <label class="flex flex-col gap-1">
-              <span class="text-sm font-medium">{gettext("Show the controls")}</span>
-              <select name="controls_mode" class="select select-sm select-bordered">
-                <option value="auto" selected={@list_controls.mode == :auto}>
-                  {gettext("Automatically, when they can change the view")}
-                </option>
-                <option value="always" selected={@list_controls.mode == :always}>
-                  {gettext("Always")}
-                </option>
-                <option value="never" selected={@list_controls.mode == :never}>
-                  {gettext("Never")}
-                </option>
-              </select>
-            </label>
+            <.select
+              name="controls_mode"
+              label={gettext("Show the controls")}
+              value={to_string(@list_controls.mode)}
+              options={[
+                {gettext("Automatically, when they can change the view"), "auto"},
+                {gettext("Always"), "always"},
+                {gettext("Never"), "never"}
+              ]}
+            />
             <label class="flex flex-col gap-1">
               <span class="text-sm font-medium">
                 {gettext("From this many tasks")}: {@list_controls.threshold}
@@ -790,26 +789,28 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               />
             </label>
           </form>
-        </div>
-      </div>
+      </.form_section>
 
       <%!-- Whole Gantt/Timeline appearance + a live preview. Each control writes
            one global setting (via GanttDisplay); the demo re-renders from the same
            settings so the admin sees the effect immediately. --%>
-      <div class={["card bg-base-100 shadow", @active_tab != "timeline" && "hidden"]}>
-        <div class="card-body gap-5">
-          <div class="flex items-start justify-between gap-4">
-            <h2 class="card-title text-base">{gettext("Timeline chart")}</h2>
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs"
-              phx-click="reset_gantt_display"
-              phx-disable-with={gettext("Resetting…")}
-              data-confirm={gettext("Reset all Timeline chart settings to their defaults?")}
-            >
-              {gettext("Reset to defaults")}
-            </button>
-          </div>
+      <.form_section
+        title={gettext("Timeline chart")}
+        class={if @active_tab != "timeline", do: "hidden"}
+        body_class="gap-5"
+      >
+        <:actions>
+          <.button
+            type="button"
+            variant="ghost"
+            size="xs"
+            phx-click="reset_gantt_display"
+            phx-disable-with={gettext("Resetting…")}
+            data-confirm={gettext("Reset all Timeline chart settings to their defaults?")}
+          >
+            {gettext("Reset to defaults")}
+          </.button>
+        </:actions>
           <p class="text-xs text-base-content/60">
             {gettext(
               "How the Gantt/Timeline view looks across every project. The preview below updates as you change these."
@@ -819,7 +820,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
           <%!-- Labels. A select per concern; the conditional knobs (alignment /
                overflow / fit / opacity) appear for the chosen style. --%>
           <section class="flex flex-col gap-2">
-            <h3 class={@subhead_class}>{gettext("Labels")}</h3>
+            <.section_header icon="hero-tag" title={gettext("Labels")} />
             <form
               id="gantt-labels-form"
               phx-change="set_gantt_label"
@@ -880,7 +881,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
           <%!-- Bars --%>
           <section class="flex flex-col gap-2">
-            <h3 class={@subhead_class}>{gettext("Bars")}</h3>
+            <.section_header icon="hero-bars-3-bottom-left" title={gettext("Bars")} />
             <form
               id="gantt-bars-form"
               phx-change="set_gantt_label"
@@ -916,7 +917,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
           <%!-- Show. Checkboxes (separate `phx-click` — an unchecked box isn't
                submitted in a phx-change form). --%>
           <section class="flex flex-col gap-2">
-            <h3 class={@subhead_class}>{gettext("Show")}</h3>
+            <.section_header icon="hero-eye" title={gettext("Show")} />
             <div class="flex flex-wrap gap-x-6 gap-y-2">
               <.gantt_toggle
                 field="show_progress"
@@ -943,7 +944,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
           <%!-- Dependency arrows — only relevant when arrows are shown. --%>
           <section :if={@gantt_display.show_connectors} class="flex flex-col gap-2">
-            <h3 class={@subhead_class}>{gettext("Dependency arrows")}</h3>
+            <.section_header icon="hero-arrow-long-right" title={gettext("Dependency arrows")} />
             <div class="flex flex-wrap items-end gap-x-6 gap-y-3">
               <.gantt_toggle
                 field="avoid_collisions"
@@ -993,26 +994,28 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               class="max-h-80"
             />
           </div>
-        </div>
-      </div>
+      </.form_section>
 
       <%!-- Overdue-animation appearance for the Overview calendar + a live preview.
            Each control writes one global setting (via CalendarDisplay); the preview
            re-renders from the same settings so the effect is immediate. --%>
-      <div class={["card bg-base-100 shadow", @active_tab != "calendar" && "hidden"]}>
-        <div class="card-body gap-5">
-          <div class="flex items-start justify-between gap-4">
-            <h2 class="card-title text-base">{gettext("Calendar")}</h2>
-            <button
-              type="button"
-              class="btn btn-ghost btn-xs"
-              phx-click="reset_calendar_anim"
-              phx-disable-with={gettext("Resetting…")}
-              data-confirm={gettext("Reset the calendar overdue animation to its defaults?")}
-            >
-              {gettext("Reset to defaults")}
-            </button>
-          </div>
+      <.form_section
+        title={gettext("Calendar")}
+        class={if @active_tab != "calendar", do: "hidden"}
+        body_class="gap-5"
+      >
+        <:actions>
+          <.button
+            type="button"
+            variant="ghost"
+            size="xs"
+            phx-click="reset_calendar_anim"
+            phx-disable-with={gettext("Resetting…")}
+            data-confirm={gettext("Reset the calendar overdue animation to its defaults?")}
+          >
+            {gettext("Reset to defaults")}
+          </.button>
+        </:actions>
           <p class="text-xs text-base-content/60">
             {gettext(
               "How the project calendars look across the module — the month grid itself, and how overdue projects and late tasks are marked. The live preview below updates as you change these. The first day of the week follows the site-wide setting."
@@ -1226,8 +1229,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               />
             </div>
           </div>
-        </div>
-      </div>
+      </.form_section>
     </div>
     """
   end

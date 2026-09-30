@@ -1996,14 +1996,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             </p>
           </div>
 
-          <div class="flex justify-end gap-2">
-            <button type="button" phx-click="close_add_participant" class="btn btn-ghost btn-sm">
-              {gettext("Cancel")}
-            </button>
-            <button type="submit" class="btn btn-primary btn-sm" disabled={is_nil(@staged)}>
-              {gettext("Add")}
-            </button>
-          </div>
+          <.form_actions
+            class="gap-2"
+            cancel_click="close_add_participant"
+            submit_label={gettext("Add")}
+            submitting_label={gettext("Adding…")}
+            submit_class="btn btn-primary btn-sm"
+            submit_disabled={is_nil(@staged)}
+          />
         </form>
       </div>
     </.modal>
@@ -2039,23 +2039,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             skeleton_class="card-body pt-4 space-y-4"
             fields_class="card-body pt-4 space-y-4"
           >
-            <%!-- daisyUI's bare `.skeleton` resolves to a ~8%-opacity
-                 base-content grey, which is nearly invisible on the
-                 `bg-base-100` (pure white) card we render inside —
-                 user reported seeing what looked like a "blank white
-                 page" during the lang-switch window. `bg-base-content/15`
-                 gives a visible mid-grey on every theme + Tailwind's
-                 `animate-pulse` carries the loading affordance. --%>
-            <:skeleton>
-              <div class="space-y-2">
-                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
-                <div class="bg-base-content/15 rounded h-12 w-full animate-pulse"></div>
-              </div>
-              <div class="space-y-2">
-                <div class="bg-base-content/15 rounded h-4 w-24 animate-pulse"></div>
-                <div class="bg-base-content/15 rounded h-24 w-full animate-pulse"></div>
-              </div>
-            </:skeleton>
 
             <.translatable_field
               field_name="name"
@@ -2518,7 +2501,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             </:content>
           </.accordion>
 
-          <div class="flex justify-end gap-2">
+          <.form_actions
+            class="gap-2"
+            submit_label={gettext("Create")}
+            submitting_label={gettext("Creating…")}
+            submit_class="btn btn-primary btn-sm"
+          >
+            <:cancel>
             <button
               type="button"
               phx-click="cancel"
@@ -2527,10 +2516,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             >
               {gettext("Cancel")}
             </button>
-            <button type="submit" phx-disable-with={gettext("Creating…")} class="btn btn-primary btn-sm">
-              {gettext("Create")}
-            </button>
-          </div>
+          </:cancel>
+          </.form_actions>
         <% end %>
 
         <%!-- Translatable card: name + description with language tabs.
@@ -2660,24 +2647,25 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
              made the page look like it had ended and then carried on. --%>
         <%!-- :edit only. The creation form has its own action row further
              up; without this guard the new-project page renders two. --%>
-        <div :if={@live_action == :edit} class="flex justify-end gap-2">
+        <.form_actions
+          :if={@live_action == :edit}
+          class="gap-2"
+          submit_label={gettext("Save")}
+          submitting_label={gettext("Saving…")}
+          submit_class="btn btn-primary btn-sm"
+          submit_disabled={@ai_in_flight != []}
+        >
+          <:cancel>
           <button
-              type="button"
-              phx-click="cancel"
-              data-confirm={@dirty? && gettext("Discard your changes?")}
-              class="btn btn-ghost btn-sm"
-            >
+            type="button"
+            phx-click="cancel"
+            data-confirm={@dirty? && gettext("Discard your changes?")}
+            class="btn btn-ghost btn-sm"
+          >
             {gettext("Cancel")}
           </button>
-          <button
-            type="submit"
-            phx-disable-with={gettext("Saving…")}
-            disabled={@ai_in_flight != []}
-            class="btn btn-primary btn-sm"
-          >
-            {gettext("Save")}
-          </button>
-        </div>
+          </:cancel>
+        </.form_actions>
       </.form>
 
       <%!-- Outside the project form on purpose: nested <form> elements are
