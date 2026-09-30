@@ -361,14 +361,14 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
             :if={@new_modal_open}
             show
             on_close="close_new_board"
-            id="whiteboard-new"
+            id={"whiteboard-new-#{@project.uuid}"}
             max_width="sm"
             close_guard={:input}
           >
             <:title>{gettext("New whiteboard")}</:title>
-            <form id="new-whiteboard-form" phx-submit="create_board" class="flex flex-col gap-3">
+            <form id={"new-whiteboard-form-#{@project.uuid}"} phx-submit="create_board" class="flex flex-col gap-3">
               <.input
-                id="whiteboard-name"
+                id={"whiteboard-name-#{@project.uuid}"}
                 name="name"
                 value=""
                 label={gettext("Name")}
@@ -378,7 +378,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
                 placeholder={gettext("e.g. Sprint sketches")}
               />
               <.select
-                id="whiteboard-size"
+                id={"whiteboard-size-#{@project.uuid}"}
                 name="size"
                 label={gettext("Size")}
                 value={size_options() |> List.first() |> elem(0)}

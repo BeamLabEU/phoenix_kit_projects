@@ -641,7 +641,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                      read, so it is chosen rather than generated. --%>
                 <form
                   :if={@portal.access_mode == "public"}
-                  id="portal-slug-form"
+                  id={"portal-slug-form-#{@project.uuid}"}
                   phx-submit="set_portal_slug"
                   class="flex flex-wrap items-end gap-2"
                 >
@@ -662,12 +662,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                     {gettext("Who can take part")}
                   </h4>
                   <form
-                    id="portal-participation-form"
+                    id={"portal-participation-form-#{@project.uuid}"}
                     phx-change="set_portal_participation"
                     class="flex flex-wrap gap-3"
                   >
                     <.select
-                      id="portal-submit-access"
+                      id={"portal-submit-access-#{@project.uuid}"}
                       name="submit_access"
                       label={gettext("Submit issues")}
                       value={@portal.submit_access}
@@ -675,7 +675,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                       options={for {value, label} <- participation_choices(), do: {label, value}}
                     />
                     <.select
-                      id="portal-comment-access"
+                      id={"portal-comment-access-#{@project.uuid}"}
                       name="comment_access"
                       label={gettext("Comment")}
                       value={@portal.comment_access}
@@ -750,10 +750,10 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             </span>
           </div>
 
-          <form id="project-label-add" phx-submit="add_label" class="flex items-end gap-2">
+          <form id={"project-label-add-#{@project.uuid}"} phx-submit="add_label" class="flex items-end gap-2">
             <div class="flex-1 max-w-52">
               <.input
-                id="new-label-name"
+                id={"new-label-name-#{@project.uuid}"}
                 name="name"
                 value=""
                 label={gettext("New label")}
@@ -765,7 +765,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             </div>
             <div class="w-40">
               <.select
-                id="new-label-color"
+                id={"new-label-color-#{@project.uuid}"}
                 name="color"
                 label={gettext("Color")}
                 value={List.first(@label_colors)}

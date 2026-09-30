@@ -1027,6 +1027,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp link_error_message(:kind_mismatch),
     do: gettext("Templates and projects can't be nested into each other.")
 
+  defp link_error_message(:archived),
+    do: gettext("That project is archived — restore it before nesting it.")
+
   defp link_error_message(:not_found), do: gettext("That project no longer exists.")
   defp link_error_message(_), do: gettext("Could not nest that project.")
 

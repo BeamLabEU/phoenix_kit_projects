@@ -1386,6 +1386,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # flash when off. The real handlers are `gated_handle_event/3` — a
   # forged client event can't reach them around the gate. UI hiding is
   # the courtesy; THIS is the enforcement.
+  # Closing a dialog is never gated: it changes nothing, and a feature
+  # switched off (in another session) while its dialog is open would
+  # otherwise refuse every Cancel, Escape and backdrop click.
   @gated_events %{
     "complete" => :tasks,
     # Owned by the in-progress flag (which itself needs the tasks
@@ -1397,7 +1400,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "review_submission" => :tasks,
     "board_move" => :view_board,
     "open_review" => :tasks,
-    "close_review" => :tasks,
     "edit_duration" => :estimates,
     "save_duration" => :estimates,
     "update_progress" => :progress,
@@ -1406,13 +1408,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "change_workflow_status" => :statuses,
     "detach_subproject" => :subprojects,
     "open_health_modal" => :lifecycle,
-    "close_health_modal" => :lifecycle,
     "save_health" => :lifecycle,
     "open_start_modal" => :lifecycle,
-    "close_start_modal" => :lifecycle,
     "confirm_start_project" => :lifecycle,
     "open_log_time" => :ledger,
-    "close_log_time" => :ledger,
     "save_work_entry" => :ledger,
     "generate_invoice" => :ledger
   }

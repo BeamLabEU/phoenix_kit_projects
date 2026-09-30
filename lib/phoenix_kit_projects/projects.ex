@@ -3099,6 +3099,9 @@ defmodule PhoenixKitProjects.Projects do
   defp validate_link(%Project{} = parent, %Project{} = child) do
     cond do
       parent.is_template != child.is_template -> {:error, :kind_mismatch}
+      # The picker never offers an archived project; a forged submit must
+      # not nest one either.
+      not is_nil(child.archived_at) -> {:error, :archived}
       child.uuid in project_ancestor_uuids(parent.uuid) -> {:error, :would_create_cycle}
       true -> :ok
     end

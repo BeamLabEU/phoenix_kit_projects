@@ -396,7 +396,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
         </div>
 
         <%!-- Detail panel --%>
-        <.modal :if={@selected} show on_close="close_detail" id="event-detail" max_width="md">
+        <.modal :if={@selected} show on_close="close_detail" id={"event-detail-#{@project.uuid}"} max_width="md">
           <:title>{@selected.title}</:title>
           <div class="flex flex-col gap-2 text-sm">
             <div class="flex items-center gap-2">
@@ -439,14 +439,14 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
           :if={@modal_open}
           show
           on_close="close_new_event"
-          id="event-new"
+          id={"event-new-#{@project.uuid}"}
           max_width="md"
           close_guard={:input}
         >
           <:title>{gettext("New event")}</:title>
-          <form id="new-event-form" phx-submit="create_event" class="flex flex-col gap-3">
+          <form id={"new-event-form-#{@project.uuid}"} phx-submit="create_event" class="flex flex-col gap-3">
             <.input
-              id="event-title"
+              id={"event-title-#{@project.uuid}"}
               name="title"
               value=""
               label={gettext("Title")}
@@ -457,7 +457,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
             />
             <div class="flex items-start gap-2">
               <.input
-                id="event-date"
+                id={"event-date-#{@project.uuid}"}
                 type="date"
                 name="date"
                 label={gettext("Date")}
@@ -467,7 +467,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
                 wrapper_class="flex-1"
               />
               <.input
-                id="event-end-date"
+                id={"event-end-date-#{@project.uuid}"}
                 type="date"
                 name="end_date"
                 value=""
@@ -477,7 +477,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               />
             </div>
             <.checkbox
-              id="event-all-day"
+              id={"event-all-day-#{@project.uuid}"}
               name="all_day"
               checked
               label={gettext("All day")}
@@ -486,7 +486,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
             />
             <div class="flex items-start gap-2">
               <.input
-                id="event-start-time"
+                id={"event-start-time-#{@project.uuid}"}
                 type="time"
                 name="start_time"
                 value=""
@@ -495,7 +495,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
                 wrapper_class="flex-1"
               />
               <.input
-                id="event-end-time"
+                id={"event-end-time-#{@project.uuid}"}
                 type="time"
                 name="end_time"
                 value=""
@@ -505,7 +505,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               />
             </div>
             <.input
-              id="event-location"
+              id={"event-location-#{@project.uuid}"}
               name="location"
               value=""
               label={gettext("Location (optional)")}
@@ -513,7 +513,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               class="input-sm"
             />
             <.textarea
-              id="event-description"
+              id={"event-description-#{@project.uuid}"}
               name="description"
               value=""
               label={gettext("Description (optional)")}

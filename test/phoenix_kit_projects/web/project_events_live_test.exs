@@ -174,13 +174,13 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLiveTest do
 
     {:ok, view, _} = mount_tab(conn, project)
     render_click(view, "select_event", %{"uuid" => event.uuid})
-    assert has_element?(view, "dialog#event-detail", "Doomed")
+    assert has_element?(view, "dialog[id^=event-detail-]", "Doomed")
 
     # Another session deletes it; the broadcast must close the panel.
     :ok = ProjectEvents.delete(event)
     send(view.pid, {:projects, :project_event_deleted, %{uuid: project.uuid}})
 
-    refute has_element?(view, "dialog#event-detail")
+    refute has_element?(view, "dialog[id^=event-detail-]")
   end
 
   test "can_write false hides the buttons and refuses forged writes",

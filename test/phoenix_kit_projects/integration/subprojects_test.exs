@@ -289,6 +289,15 @@ defmodule PhoenixKitProjects.Integration.SubprojectsTest do
       refute is_nil(Projects.get_project(child.uuid))
     end
 
+    # The picker only offers live projects; a forged submit with an archived
+    # one must be refused by the context, not just hidden by the UI.
+    test "rejects nesting an archived project" do
+      parent = fixture_project()
+      {:ok, child} = Projects.archive_project(fixture_project())
+
+      assert {:error, :archived} = Projects.link_subproject(parent.uuid, child.uuid)
+    end
+
     test "rejects nesting a project into itself" do
       project = fixture_project()
       assert {:error, :self_link} = Projects.link_subproject(project.uuid, project.uuid)
