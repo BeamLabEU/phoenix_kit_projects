@@ -2118,14 +2118,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <%!-- Starting point: outcome cards bundling preset + extension
                seeds (the panel's strongest consensus). The radio is real
                and visible — works without JS. --%>
-          <div class="card bg-base-100 shadow">
-            <div class="group/kind card-body flex flex-col gap-3">
-              <div>
-                <h2 class="text-sm font-semibold">{gettext("Choose a starting point")}</h2>
-                <p class="text-xs opacity-50">
-                  {gettext("Pick the closest fit — you can change everything below.")}
-                </p>
-              </div>
+          <.form_section
+            title={gettext("Choose a starting point")}
+            body_class="group/kind gap-3"
+          >
+            <:subtitle>
+              {gettext("Pick the closest fit — you can change everything below.")}
+            </:subtitle>
               <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <%!-- The quorum card face: icon + intent name, radio far
                      right, description, two plain-language outcome lines
@@ -2185,8 +2184,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   {gettext("Customize capabilities ↓")}
                 </button>
               </div>
-            </div>
-          </div>
+          </.form_section>
 
           <%!-- Site-PROMOTED blocks (Settings → Projects → New project
                page): each renders as its own top-level card; everything
@@ -2224,17 +2222,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             </div>
           </div>
 
-          <div :if={"people" in @top_blocks} id="create-top-people" class="card bg-base-100 shadow">
-            <div class="card-body flex flex-col gap-3">
-              <h2 class="text-sm font-semibold">
-                {gettext("People")}
-                <span :if={@participants != []} class="badge badge-ghost badge-xs ml-2">
-                  {length(@participants)}
-                </span>
-              </h2>
-              <.people_block participants={@participants} />
-            </div>
-          </div>
+          <.form_section
+            :if={"people" in @top_blocks}
+            id="create-top-people"
+            title={gettext("People")}
+            body_class="gap-3"
+          >
+            <:actions :if={@participants != []}>
+              <span class="badge badge-ghost badge-sm">{length(@participants)}</span>
+            </:actions>
+            <.people_block participants={@participants} />
+          </.form_section>
 
           <%!-- The four sections below replace three grab-bags ("Customize
                capabilities" / "People" / "Setup options"). The 2026-08-07
