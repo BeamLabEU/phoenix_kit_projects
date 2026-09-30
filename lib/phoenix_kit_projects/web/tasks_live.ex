@@ -91,13 +91,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         page_title: gettext("Tasks"),
         page_section: gettext("Projects"),
         page_section_path: Paths.projects(),
-        # The create action lives in the admin breadcrumb (+ the
-        # add-row under the list) — no in-content header row.
-        page_action: %{
-          icon: "hero-plus",
-          label: gettext("New task"),
-          navigate: Paths.new_task()
-        },
+        # No header "+": the create button is the list toolbar's last
+        # control (`new_task_button/1`), like every admin list.
         wrapper_class: wrapper_class,
         view: initial_view,
         pagination: pagination,
@@ -561,20 +556,16 @@ defmodule PhoenixKitProjects.Web.TasksLive do
           >
             {gettext("Each group is rooted at a task that nothing else depends on. Tasks reused across multiple groups appear in every one that pulls them in — they're independent task templates, the relationship is just a dependency.")}
           </p>
-          <div class="ml-auto shrink-0">{view_switcher(assigns)}</div>
+          <div class="ml-auto shrink-0 flex items-center gap-2">
+            {view_switcher(assigns)}
+            <.new_task_button embed_mode={@embed_mode} />
+          </div>
         </div>
 
         <%= if @groups == [] and @standalone == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
-              <.smart_link
-                navigate={Paths.new_task()}
-                emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
-                embed_mode={@embed_mode}
-                class="link link-primary text-sm"
-              >
-                {gettext("Create your first")}
-              </.smart_link>
+              <.new_task_button embed_mode={@embed_mode} label={gettext("Create your first task")} />
             </:cta>
           </.empty_state>
         <% else %>
@@ -680,14 +671,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <%= if @total_count == 0 do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
-              <.smart_link
-                navigate={Paths.new_task()}
-                emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
-                embed_mode={@embed_mode}
-                class="link link-primary text-sm"
-              >
-                {gettext("Create your first")}
-              </.smart_link>
+              <.new_task_button embed_mode={@embed_mode} label={gettext("Create your first task")} />
             </:cta>
           </.empty_state>
         <% else %>
@@ -702,29 +686,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               data-local-search-enabled={to_string(@local_search?)}
               class="flex flex-col gap-2"
             >
-              <%!-- Library | One-off lens. Rendered only while one-off
-                   tasks exist (or the lens is already on them) — a fresh
-                   install has nothing to switch between. --%>
-              <div
-                :if={@one_off_count > 0 or @lens == :one_off}
-                class="flex flex-wrap items-center gap-2"
-                aria-label={gettext("Task library lens")}
-              >
-                <.nav_tabs
-                  active_tab={Atom.to_string(@lens)}
-                  on_change="set_lens"
-                  variant={:boxed}
-                  class="tabs-sm"
-                  tabs={[
-                    %{id: "library", label: gettext("Library")},
-                    %{id: "one_off", label: gettext("One-off"), badge: @one_off_count}
-                  ]}
-                />
-                <span :if={@lens == :one_off} class="text-xs text-base-content/50">
-                  {gettext("Added from a project's quick-add; hidden from pickers until added to the library.")}
-                </span>
-              </div>
-
               <.bulk_actions_toolbar
                 on_open_reorder="open_reorder_modal"
                 reorder_dialog_id="reorder-modal"
@@ -733,11 +694,30 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                 allow_delete={false}
                 reorder_gate={if @sort_by == :position, do: :always, else: :multi}
               >
-                <%!-- Control order follows the kit's other lists (catalogue,
-                     core's table toolbar): search on the LEFT, the view
-                     tools (sort, Columns, view switcher) on the RIGHT after
-                     the selection actions. --%>
+                <%!-- One row, like every admin list: the lens tabs and search
+                     on the LEFT; the view tools (sort, Columns, view
+                     switcher) on the RIGHT after the selection actions; the
+                     create button last. --%>
                 <:leading>
+                  <%!-- Library | One-off lens. Rendered only while one-off
+                       tasks exist (or the lens is already on them) — a
+                       fresh install has nothing to switch between. --%>
+                  <div
+                    :if={@one_off_count > 0 or @lens == :one_off}
+                    role="group"
+                    aria-label={gettext("Task library lens")}
+                  >
+                  <.nav_tabs
+                    active_tab={Atom.to_string(@lens)}
+                    on_change="set_lens"
+                    variant={:boxed}
+                    class="tabs-sm"
+                    tabs={[
+                      %{id: "library", label: gettext("Library")},
+                      %{id: "one_off", label: gettext("One-off"), badge: @one_off_count}
+                    ]}
+                  />
+                  </div>
                   <.search_toolbar
                     value={@search}
                     on_submit="search"
@@ -756,7 +736,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                   <ListUi.columns_control options={column_options()} visible={@visible_columns} />
                   {view_switcher(assigns)}
                 </:trailing>
+                <:primary>
+                  <.new_task_button embed_mode={@embed_mode} />
+                </:primary>
               </.bulk_actions_toolbar>
+
+              <p :if={@lens == :one_off} class="text-xs text-base-content/50">
+                {gettext("Added from a project's quick-add; hidden from pickers until added to the library.")}
+              </p>
 
               {render_tasks_table(assigns, lang)}
 
@@ -771,17 +758,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               >
                 {gettext("No tasks match.")}
               </p>
-
-              <%!-- The create action, at the foot of the list (the header
-                   row is gone — its "+" lives in the admin breadcrumb). --%>
-              <.smart_link
-                navigate={Paths.new_task()}
-                emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
-                embed_mode={@embed_mode}
-                class="btn btn-ghost btn-sm w-full justify-start border border-dashed border-base-300 text-base-content/60 hover:text-base-content hover:border-base-content/40"
-              >
-                <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New task")}
-              </.smart_link>
             </div>
           </.bulk_select_scope>
 
@@ -814,6 +790,27 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         noun_plural={gettext("tasks")}
       />
     </div>
+    """
+  end
+
+  attr(:embed_mode, :atom, required: true)
+  attr(:label, :string, default: nil)
+
+  # The list's create button: the toolbar's last control, and the empty
+  # state's call to action. `smart_link`, so an embedded list opens the
+  # form in its drawer instead of navigating away.
+  defp new_task_button(assigns) do
+    ~H"""
+    <.smart_link
+      navigate={Paths.new_task()}
+      emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
+      embed_mode={@embed_mode}
+      class="btn btn-primary btn-sm"
+      aria-label={@label || gettext("New task")}
+    >
+      <.icon name="hero-plus" class="w-4 h-4" />
+      <span class={!@label && "hidden sm:inline"}>{@label || gettext("New task")}</span>
+    </.smart_link>
     """
   end
 

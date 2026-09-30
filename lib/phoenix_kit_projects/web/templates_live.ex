@@ -90,15 +90,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         page_title: gettext("Templates"),
         page_section: gettext("Projects"),
         page_section_path: Paths.projects(),
-        # The primary create action lives in the admin header's
-        # breadcrumb row (core `page_action`) + a dashed add-row under
-        # the list — no in-content header row at all (short screens).
-        # Ignored in embed mode (no admin layout); the add-row covers it.
-        page_action: %{
-          icon: "hero-plus",
-          label: gettext("New template"),
-          navigate: Paths.new_template()
-        },
+        # No header "+": the create button is the list toolbar's last
+        # control (`new_template_button/1`), like every admin list — and
+        # it renders in embed mode too, where there is no admin header.
         wrapper_class: wrapper_class,
         pagination: pagination,
         # Load-more pagination state (same shape as ProjectsLive):
@@ -448,14 +442,10 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
       <%= if @total_count == 0 do %>
         <.empty_state icon="hero-document-duplicate" title={gettext("No templates yet.")}>
           <:cta>
-            <.smart_link
-              navigate={Paths.new_template()}
-              emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
+            <.new_template_button
               embed_mode={@embed_mode}
-              class="link link-primary text-sm"
-            >
-              {gettext("Create your first")}
-            </.smart_link>
+              label={gettext("Create your first template")}
+            />
           </:cta>
         </.empty_state>
       <% else %>
@@ -514,6 +504,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
               />
               <ListUi.columns_control options={column_options()} visible={@visible_columns} />
             </:trailing>
+            <:primary>
+              <.new_template_button embed_mode={@embed_mode} />
+            </:primary>
           </.bulk_actions_toolbar>
 
             {render_templates_table(assigns, draggable?, lang)}
@@ -530,17 +523,6 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             >
               {gettext("No templates match.")}
             </p>
-
-            <%!-- The create action, at the foot of the list (the header
-                 row is gone — its "+" lives in the admin breadcrumb). --%>
-            <.smart_link
-              navigate={Paths.new_template()}
-              emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
-              embed_mode={@embed_mode}
-              class="btn btn-ghost btn-sm w-full justify-start border border-dashed border-base-300 text-base-content/60 hover:text-base-content hover:border-base-content/40"
-            >
-              <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New template")}
-            </.smart_link>
           </div>
         </.bulk_select_scope>
       <% end %>
@@ -562,6 +544,27 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         noun_plural={gettext("templates")}
       />
     </div>
+    """
+  end
+
+  attr(:embed_mode, :atom, required: true)
+  attr(:label, :string, default: nil)
+
+  # The list's create button: the toolbar's last control, and the empty
+  # state's call to action. `smart_link`, so an embedded list opens the
+  # form in its drawer instead of navigating away.
+  defp new_template_button(assigns) do
+    ~H"""
+    <.smart_link
+      navigate={Paths.new_template()}
+      emit={{PhoenixKitProjects.Web.TemplateFormLive, %{"live_action" => "new"}}}
+      embed_mode={@embed_mode}
+      class="btn btn-primary btn-sm"
+      aria-label={@label || gettext("New template")}
+    >
+      <.icon name="hero-plus" class="w-4 h-4" />
+      <span class={!@label && "hidden sm:inline"}>{@label || gettext("New template")}</span>
+    </.smart_link>
     """
   end
 
