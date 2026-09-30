@@ -16,7 +16,9 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   use Phoenix.LiveView
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import PhoenixKitWeb.Components.Core.Button, only: [button: 1]
   import PhoenixKitWeb.Components.Core.EmptyState
+  import PhoenixKitWeb.Components.Core.FormActions, only: [form_actions: 1]
   import PhoenixKitWeb.Components.Core.FileUpload, only: [file_upload: 1]
   import PhoenixKitWeb.Components.Core.Input, only: [input: 1]
   import PhoenixKitWeb.Components.Core.MentionText
@@ -413,14 +415,17 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           </label>
         </div>
 
-        <div class="flex items-center justify-end gap-2">
-          <.link navigate={board_path(@slug)} class="btn btn-ghost btn-sm">
-            {gettext("Cancel")}
-          </.link>
-          <button type="submit" class="btn btn-primary" phx-disable-with={gettext("Sending…")}>
-            {gettext("Send report")}
-          </button>
-        </div>
+        <.form_actions
+          class="items-center gap-2"
+          submit_label={gettext("Send report")}
+          submitting_label={gettext("Sending…")}
+        >
+          <:cancel>
+            <.link navigate={board_path(@slug)} class="btn btn-ghost btn-sm">
+              {gettext("Cancel")}
+            </.link>
+          </:cancel>
+        </.form_actions>
       </form>
     </div>
     """
@@ -527,9 +532,9 @@ defmodule PhoenixKitProjects.Web.PortalLive do
             </span>
           </p>
         </div>
-        <.link :if={@view.may_submit} navigate={report_path(@slug)} class="btn btn-primary btn-sm">
+        <.button :if={@view.may_submit} size="sm" navigate={report_path(@slug)}>
           {gettext("Report an issue")}
-        </.link>
+        </.button>
       </header>
 
       <p :if={@view.capabilities.submit and not @view.may_submit} class="text-sm opacity-60">

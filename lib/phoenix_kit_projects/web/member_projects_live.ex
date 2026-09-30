@@ -90,9 +90,9 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
         <%= if @open do %>
           <% {project, _role} = @open %>
           <div>
-            <.link patch={Routes.path("/dashboard/projects")} class="btn btn-ghost btn-sm gap-1">
+            <.button variant="ghost" size="sm" class="gap-1" patch={Routes.path("/dashboard/projects")}>
               <.icon name="hero-arrow-left" class="w-4 h-4" /> {gettext("My Projects")}
-            </.link>
+            </.button>
           </div>
           {live_render(@socket, PopupHostLive,
             id: "member-project-host-#{project.uuid}",

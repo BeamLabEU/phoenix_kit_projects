@@ -1142,13 +1142,27 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       {gettext("Start")}
                     </button>
                   <% @a.status in ["todo", "in_progress"] -> %>
-                    <button phx-click="complete" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Saving…")} class="btn btn-success btn-xs">
+                    <.button
+                      type="button"
+                      variant="success"
+                      size="xs"
+                      phx-click="complete"
+                      phx-value-uuid={@a.uuid}
+                      phx-disable-with={gettext("Saving…")}
+                    >
                       <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("Done")}
-                    </button>
+                    </.button>
                   <% @a.status == "done" -> %>
-                    <button phx-click="reopen" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Reopening…")} class="btn btn-ghost btn-xs">
+                    <.button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      phx-click="reopen"
+                      phx-value-uuid={@a.uuid}
+                      phx-disable-with={gettext("Reopening…")}
+                    >
                       {gettext("Reopen")}
-                    </button>
+                    </.button>
                   <% true -> %>
                     <%!-- A status outside the vocabulary. The changeset
                          refuses to write one, so this is legacy or
