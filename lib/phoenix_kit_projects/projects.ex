@@ -3032,10 +3032,10 @@ defmodule PhoenixKitProjects.Projects do
   top-level list once linked.
 
   Guards: the child must exist, not be the parent, match the parent's
-  `is_template`, not already be a sub-project (the single-parent unique index),
-  and not be an **ancestor** of the parent (which would create a cycle). Errors:
-  `:not_found`, `:self_link`, `:kind_mismatch`, `:already_subproject`,
-  `:would_create_cycle`.
+  `is_template`, not be archived, not already be a sub-project (the
+  single-parent unique index), and not be an **ancestor** of the parent
+  (which would create a cycle). Errors: `:not_found`, `:self_link`,
+  `:kind_mismatch`, `:archived`, `:already_subproject`, `:would_create_cycle`.
   """
   @spec link_subproject(uuid(), uuid()) ::
           {:ok, %{child_project: Project.t(), assignment: Assignment.t()}}
@@ -3043,6 +3043,7 @@ defmodule PhoenixKitProjects.Projects do
              :not_found
              | :self_link
              | :kind_mismatch
+             | :archived
              | :already_subproject
              | :would_create_cycle
              | Ecto.Changeset.t()}
