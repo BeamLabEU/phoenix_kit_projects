@@ -18,6 +18,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
+  import PhoenixKitWeb.Components.Core.PopoverPanel, only: [popover_panel: 1, toggle_popover: 1]
   import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
 
   alias Phoenix.LiveView.JS
@@ -50,13 +51,13 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
     assigns = assign(assigns, :active_count, AssigneeFilter.active_count(assigns))
 
     ~H"""
-    <div class="relative" phx-click-away={JS.hide(to: "##{@id}-panel")}>
+    <div class="relative">
       <button
         type="button"
         class="btn btn-sm btn-ghost border-base-300 gap-1.5 tooltip"
         data-tip={gettext("Filters")}
         aria-label={gettext("Filters")}
-        phx-click={JS.toggle(to: "##{@id}-panel")}
+        phx-click={toggle_popover("#{@id}-panel")}
       >
         <.icon name="hero-funnel" class="w-4 h-4" />
         {gettext("Filters")}
@@ -65,14 +66,10 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
         </span>
       </button>
 
-      <%!-- On phones the button-anchored w-80 panel can poke past the screen
-           edge (the button sits mid-toolbar), so max-sm pins the panel to the
-           viewport's x-edges instead: fixed + inset-x, top:auto keeps the
-           flow position just below the button. --%>
-      <div
-        id={"#{@id}-panel"}
-        class="hidden absolute left-0 top-full mt-2 z-30 w-80 max-w-[90vw] max-sm:fixed max-sm:inset-x-3 max-sm:top-auto max-sm:w-auto max-sm:max-w-none card bg-base-100 border border-base-200 shadow-lg"
-      >
+      <%!-- Core's popover: instant client-side open, Escape and a click-away
+           backdrop, and a full-screen overlay on phones (the button sits
+           mid-toolbar, where a w-80 panel would poke past the screen). --%>
+      <.popover_panel id={"#{@id}-panel"} align="start" width_class="sm:w-80">
         <div class="card-body p-4 gap-3">
           <div class="flex items-center justify-between">
             <span class="text-sm font-semibold">{gettext("Filters")}</span>
@@ -195,7 +192,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
             {gettext("Overdue only")}
           </label>
         </div>
-      </div>
+      </.popover_panel>
     </div>
     """
   end
