@@ -598,6 +598,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   <button
                     type="button"
                     phx-click="rotate_portal_link"
+                phx-disable-with={gettext("Rotating…")}
                     data-confirm={gettext("Rotate the portal link? The current link stops working immediately.")}
                     class="btn btn-ghost btn-sm gap-1"
                   >
@@ -740,6 +741,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
               <button
                 type="button"
                 phx-click="delete_label"
+                phx-disable-with={gettext("Removing…")}
                 phx-value-uuid={label.uuid}
                 data-confirm={gettext("Remove the \"%{name}\" label from this project?", name: label.name)}
                 aria-label={gettext("Remove %{name}", name: label.name)}

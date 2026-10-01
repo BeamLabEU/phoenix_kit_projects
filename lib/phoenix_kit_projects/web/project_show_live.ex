@@ -3211,7 +3211,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            so the decision happens here, in one place, with the text and the
            images the person actually sent. Accepting is what turns it into
            a task; until then it is in no list, no board and no count. --%>
-      <.modal :if={@review_open? and @pending_reviews != []} show on_close="close_review" id="project-review" max_width="2xl">
+      <.modal :if={@review_open? and @pending_reviews != []} show on_close="close_review" id={"project-review-#{@project.uuid}"} max_width="2xl">
         <:title>{gettext("Submissions to review")}</:title>
             <p class="text-sm text-base-content/70 mt-1">
               {gettext("Sent from the public board. Accepting adds it to the project; rejecting keeps a record and shows nobody.")}
@@ -3346,12 +3346,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       </.modal>
 
       <%!-- Health modal --%>
-      <.modal :if={@health_modal_open} show on_close="close_health_modal" id="project-health" max_width="md" close_guard={:input}>
+      <.modal :if={@health_modal_open} show on_close="close_health_modal" id={"project-health-#{@project.uuid}"} max_width="md" close_guard={:input}>
         <:title>{gettext("Project health")}</:title>
             <p class="text-sm text-base-content/70 mt-1">
               {gettext("Your judgment, not a computed number — how does this project feel right now?")}
             </p>
-            <form id="health-form" phx-submit="save_health" class="flex flex-col gap-3 mt-4">
+            <form id={"health-form-#{@project.uuid}"} phx-submit="save_health" class="flex flex-col gap-3 mt-4">
               <div class="flex flex-col gap-2">
                 <label
                   :for={status <- Health.statuses()}
@@ -3369,7 +3369,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 </label>
               </div>
               <.textarea
-                id="health-note"
+                id={"health-note-#{@project.uuid}"}
                 name="note"
                 value={@health && @health["note"]}
                 label={gettext("Note (optional)")}
@@ -3390,7 +3390,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       <%!-- Log-time modal (Step 10). Render-gated on the same flag the
            events check; @log_time_uuid scopes the entry to a task. --%>
-      <.modal :if={@log_time_open and @fx.ledger} show on_close="close_log_time" id="project-log-time" max_width="sm" close_guard={:input}>
+      <.modal :if={@log_time_open and @fx.ledger} show on_close="close_log_time" id={"project-log-time-#{@project.uuid}"} max_width="sm" close_guard={:input}>
         <:title>{gettext("Log time")}</:title>
             <p class="text-sm text-base-content/70 mt-1">
               <%= if label = log_time_task_label(assigns) do %>
@@ -3399,10 +3399,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 {gettext("On the project overall")}
               <% end %>
             </p>
-            <form id="work-entry-form" phx-submit="save_work_entry" class="flex flex-col gap-3 mt-4">
+            <form id={"work-entry-form-#{@project.uuid}"} phx-submit="save_work_entry" class="flex flex-col gap-3 mt-4">
               <div class="flex items-start gap-2">
                 <.input
-                  id="log-time-hours"
+                  id={"log-time-hours-#{@project.uuid}"}
                   type="number"
                   name="hours"
                   label={gettext("Hours")}
@@ -3413,7 +3413,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   wrapper_class="flex-1"
                 />
                 <.input
-                  id="log-time-minutes"
+                  id={"log-time-minutes-#{@project.uuid}"}
                   type="number"
                   name="minutes"
                   label={gettext("Minutes")}
@@ -3426,7 +3426,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 />
               </div>
               <.input
-                id="log-time-note"
+                id={"log-time-note-#{@project.uuid}"}
                 name="note"
                 value=""
                 label={gettext("Note (optional)")}
@@ -3434,7 +3434,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 placeholder={gettext("What was the time spent on?")}
               />
               <.checkbox
-                id="log-time-billable"
+                id={"log-time-billable-#{@project.uuid}"}
                 name="billable"
                 label={gettext("Billable")}
                 class="checkbox-sm"
@@ -3716,6 +3716,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   type="button"
                   class="btn btn-ghost btn-xs"
                   phx-click="generate_invoice"
+                phx-disable-with={gettext("Generating…")}
                   data-confirm={gettext("Create a draft invoice from all uninvoiced billable time?")}
                 >
                   <.icon name="hero-banknotes" class="w-3 h-3" /> {gettext("Invoice effort")}
@@ -4443,13 +4444,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            form's `phx-change="noop"` prevents the LV from rebuilding
            the changeset on each keystroke (no live validation needed
            for a single date input); submit goes via `phx-submit`. --%>
-      <.modal :if={@start_modal_open} show on_close="close_start_modal" id="project-start" max_width="md">
+      <.modal :if={@start_modal_open} show on_close="close_start_modal" id={"project-start-#{@project.uuid}"} max_width="md">
         <:title>{gettext("Start project")}</:title>
             <p class="text-sm text-base-content/70 mt-1">
               {gettext("Pick the date and time this project starts. Defaults to right now; backdate it if work began earlier, or pick a future moment if you're queueing it up.")}
             </p>
 
-            <.form id="start-project-form" for={@start_form} phx-submit="confirm_start_project" class="flex flex-col gap-3 mt-4">
+            <.form id={"start-project-form-#{@project.uuid}"} for={@start_form} phx-submit="confirm_start_project" class="flex flex-col gap-3 mt-4">
               <.input field={@start_form[:start_at]} type="datetime-local" label={gettext("Start date and time")} required />
 
               <div class="modal-action">
@@ -4490,7 +4491,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         :if={@comments_resource}
         show
         on_close="close_comments"
-        id="project-comments"
+        id={"project-comments-#{@project.uuid}"}
         aria-label={gettext("Comments")}
         placement={:end}
         max_width="md"

@@ -593,6 +593,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                   size="xs"
                   class="btn-circle text-error"
                   phx-click="revoke_grant"
+                phx-disable-with={gettext("Removing…")}
                   phx-value-uuid={grant.uuid}
                   data-confirm={gettext("Remove this group's access?")}
                   aria-label={gettext("Remove access")}

@@ -3140,17 +3140,41 @@ defmodule PhoenixKitProjects.Projects do
   (not already a sub-project), same `is_template`, not archived, not the parent,
   and not one of the parent's ancestors (cycle-safe). Ordered by name for a
   picker.
+
+  With a `scope`, only the projects that scope may see (`list_projects_for/2`'s
+  rule: everything for a site admin, otherwise membership or a group grant).
+  A picker that lists private titles has already leaked them, and nesting a
+  project you cannot open would bring it under one you can. `:all` (the
+  default) is the unfiltered set, for callers that are not a viewer.
+  Templates are a shared library with no membership, so nesting one
+  template under another is not narrowed.
   """
-  @spec available_projects_to_link(Project.t()) :: [Project.t()]
-  def available_projects_to_link(%Project{} = parent) do
+  @spec available_projects_to_link(Project.t(), term()) :: [Project.t()]
+  def available_projects_to_link(%Project{} = parent, scope \\ :all) do
     excluded = [parent.uuid | project_ancestor_uuids(parent.uuid)]
 
     Project
     |> where([p], p.is_template == ^parent.is_template and is_nil(p.archived_at))
     |> where([p], p.uuid not in ^excluded)
     |> exclude_subprojects()
+    |> scope_link_candidates(if parent.is_template, do: :all, else: scope)
     |> order_by([p], asc: p.name, asc: p.uuid)
     |> repo().all()
+  end
+
+  defp scope_link_candidates(query, :all), do: query
+
+  defp scope_link_candidates(query, scope) do
+    cond do
+      PhoenixKitProjects.Authz.admin_all?(scope) ->
+        query
+
+      user_uuid = PhoenixKitProjects.Authz.subject_user_uuid_of(scope) ->
+        maybe_scope_to_viewer(query, user_uuid)
+
+      true ->
+        from(p in query, where: false)
+    end
   end
 
   @doc """

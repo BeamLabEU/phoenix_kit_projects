@@ -319,7 +319,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           # set (cycle-safe, same kind).
           sp_mode: "new",
           link_options:
-            if(kind == "subproject", do: Projects.available_projects_to_link(project), else: []),
+            if(kind == "subproject",
+              do:
+                Projects.available_projects_to_link(
+                  project,
+                  socket.assigns[:phoenix_kit_current_scope]
+                ),
+              else: []
+            ),
           project: project,
           assignment: assignment,
           portal_review_images: [],
@@ -986,6 +993,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp link_existing_subproject(socket, child_uuid) do
     parent = socket.assigns.project
 
+    # Re-resolved at save time, not trusted from the client: only a project
+    # the picker would offer this viewer right now may be nested.
+    eligible =
+      parent
+      |> Projects.available_projects_to_link(socket.assigns[:phoenix_kit_current_scope])
+      |> Enum.map(& &1.uuid)
+
+    if child_uuid in eligible do
+      do_link_existing_subproject(socket, parent, child_uuid)
+    else
+      {:noreply, put_flash(socket, :error, link_error_message(:not_available))}
+    end
+  end
+
+  defp do_link_existing_subproject(socket, parent, child_uuid) do
     case Projects.link_subproject(parent.uuid, child_uuid) do
       {:ok, %{child_project: child, assignment: link}} ->
         Activity.log("projects.subproject_linked",
@@ -1026,6 +1048,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp link_error_message(:kind_mismatch),
     do: gettext("Templates and projects can't be nested into each other.")
+
+  defp link_error_message(:not_available),
+    do: gettext("That project can't be nested here.")
 
   defp link_error_message(:archived),
     do: gettext("That project is archived — restore it before nesting it.")

@@ -265,13 +265,13 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
 
       {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}")
       render_click(view, "open_health_modal", %{})
-      assert has_element?(view, "dialog#project-health")
+      assert has_element?(view, "dialog[id^=project-health-]")
 
       {:ok, _} = Features.set_flags(project, %{"lifecycle" => false})
       _ = render(view)
 
       html = render_click(view, "close_health_modal", %{})
-      refute has_element?(view, "dialog#project-health")
+      refute has_element?(view, "dialog[id^=project-health-]")
       refute html =~ "This feature is turned off for this project."
     end
 
