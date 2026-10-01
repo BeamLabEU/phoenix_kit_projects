@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.28.0 - 2026-10-01
+
+PR #47 plus its post-merge review
+(`dev_docs/pull_requests/2026/47-subproject-link-scope-and-core-ui/CLAUDE_REVIEW.md`).
+
+### Changed
+
+- **Requires `phoenix_kit` >= 2.43.0** (pin `>= 2.43.0 and < 3.0.0`). The list
+  and form pages use `form_actions`' `submit_disabled`, `bulk_actions_toolbar`'s
+  `:primary` slot and `form_section`'s `:actions` slot, which first shipped in
+  2.43.0; on an older core they only warn at compile time and the page silently
+  loses the "New …" buttons and the disabled-while-busy Save states.
+- Dialogs, selects, form-action rows, section cards, the filter popover, the
+  portal's status tabs and the comments drawer move onto core's `modal`,
+  `select`, `input`, `form_actions`, `form_section`, `popover_panel`,
+  `nav_tabs` and `load_more`. Create buttons sit in the list toolbar.
+- Closing a dialog is never a feature-gated event, so a dialog cannot be
+  trapped open when its feature is switched off elsewhere.
+- Resource-link subtitles, member roles and label colours are translated.
+
+### Fixed
+
+- **"Nest an existing project" only offers, and accepts, projects the viewer can
+  see.** The picker listed every project on the site and the save took any uuid
+  the client sent. The set is re-resolved at save time; `link_subproject/2`
+  also refuses an archived project (`:archived`). Templates stay a shared
+  library.
+- The calendar's "overdue only" test no longer fails in the first days of a
+  month; five mis-indented `phx-disable-with` attributes re-aligned.
+
+### Added
+
+- `core_ui_api_conformance_test.exs` pins the core component attrs and slots the
+  LiveViews rely on, so an older core fails with a message naming the missing piece.
+
 ## 0.27.0 - 2026-09-26
 
 PR #46 plus its post-merge review

@@ -12,7 +12,11 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
   outright, with no degraded mode. Nothing else in this repo's own test run
   would notice, which is why the check is a test rather than a convention.
 
-  The floor is `>= 2.38.0 and < 3.0.0`: project files live on core's
+  The floor is `>= 2.43.0 and < 3.0.0`: the LiveViews use `form_actions`'
+  `submit_disabled`, `bulk_actions_toolbar`'s `:primary` slot and `form_section`'s
+  `:actions` slot, first published in core 2.43.0 (see
+  `core_ui_api_conformance_test.exs`). Before that the floor was 2.38.0: project
+  files live on core's
   `Storage.ResourceFolders`, the reorganizer on its `ResourceSource`, and the
   actor and activity log come from `PhoenixKitWeb.Actor` and `Activity.log/3`,
   all first shipped in core 2.38.0 — the module does not compile without them.
@@ -20,10 +24,10 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
   V135 floor and the module was verified only against that baseline.
   """
 
-  @must_admit ["2.38.0", "2.38.1", "2.39.0", "2.99.4"]
-  @must_reject ["1.7.236", "2.0.0", "2.9.4", "2.24.0", "2.37.5", "3.0.0"]
+  @must_admit ["2.43.0", "2.43.1", "2.44.0", "2.99.4"]
+  @must_reject ["1.7.236", "2.0.0", "2.9.4", "2.24.0", "2.37.5", "2.42.1", "3.0.0"]
 
-  test "the :phoenix_kit requirement admits every core >= 2.38.0 minor and nothing else" do
+  test "the :phoenix_kit requirement admits every core >= 2.43.0 minor and nothing else" do
     requirement = core_requirement()
 
     assert match?({:ok, _parsed}, Version.parse_requirement(requirement)),
@@ -34,7 +38,7 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
              "`:phoenix_kit` requirement #{inspect(requirement)} rejects core #{version}. " <>
                "A pin that excludes a core minor breaks `mix deps.get` for every host " <>
                "running this module alongside that core. Keep the floor patch-precise " <>
-               "and the ceiling open (`>= 2.38.0 and < 3.0.0`), never a three-segment `~>`."
+               "and the ceiling open (`>= 2.43.0 and < 3.0.0`), never a three-segment `~>`."
     end
 
     for version <- @must_reject do

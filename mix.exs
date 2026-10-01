@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.27.0"
+  @version "0.28.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -129,7 +129,12 @@ defmodule PhoenixKitProjects.MixProject do
       # only on consumers. `core_pin_conformance_test.exs` guards this; it is
       # the reason a real floor is documented here rather than encoded.
       #
-      # The floor is 2.38.0: project files live on core's
+      # The floor is 2.43.0: the list and form LiveViews use `form_actions`'
+      # `submit_disabled`, `bulk_actions_toolbar`'s `:primary` slot and
+      # `form_section`'s `:actions` slot, first published in 2.43.0 (an older
+      # core only warns at compile time and the page silently drops the
+      # control; `core_ui_api_conformance_test.exs` guards it). Before that the
+      # floor was 2.38.0: project files live on core's
       # `Storage.ResourceFolders`, the reorganizer on its `ResourceSource`,
       # the actor and activity log come from `PhoenixKitWeb.Actor` and
       # `Activity.log/3`, file helpers from `Utils.Format`, and the edit forms
@@ -142,7 +147,7 @@ defmodule PhoenixKitProjects.MixProject do
       # and project-assignee columns. Patch-precise floor in the compound
       # form, so the ceiling stays open through every later 2.x minor (see
       # test/core_pin_conformance_test.exs).
-      pk_dep(:phoenix_kit, ">= 2.38.0 and < 3.0.0"),
+      pk_dep(:phoenix_kit, ">= 2.43.0 and < 3.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move
