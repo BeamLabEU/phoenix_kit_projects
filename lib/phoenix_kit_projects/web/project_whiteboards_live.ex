@@ -344,7 +344,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
                       :if={@can_write}
                       type="button"
                       phx-click="delete_board"
-                phx-disable-with={gettext("Deleting…")}
+                      phx-disable-with={gettext("Deleting…")}
                       phx-value-uuid={board.uuid}
                       data-confirm={gettext("Remove \"%{name}\"? The drawing stays in the project files.", name: board.name)}
                       class="btn btn-ghost btn-xs text-error ml-auto"

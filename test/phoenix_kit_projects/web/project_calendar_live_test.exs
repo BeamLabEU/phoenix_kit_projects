@@ -514,14 +514,23 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
 
     test "overdue only keeps late bars", %{conn: conn, actor_uuid: actor} do
       project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => true})
-      {:ok, _} = Projects.start_project(project, DateTime.add(DateTime.utc_now(), -5 * 24 * 3600))
+      # Started 5 days ago, but never before the 1st of this month: the grid
+      # opens on the month the schedule is in progress around today, so a late
+      # bar that sat wholly in the previous month (this ran in the first five days)
+      # was filtered into a month the grid never showed. A one-hour task is
+      # late the moment it is over, so the clamped start keeps it late too.
+      now = DateTime.utc_now()
+      month_start = DateTime.new!(Date.beginning_of_month(DateTime.to_date(now)), ~T[00:00:00])
+      start = Enum.max([DateTime.add(now, -5 * 24 * 3600), month_start], DateTime)
+
+      {:ok, _} = Projects.start_project(project, start)
       project = Projects.get_project!(project.uuid)
 
       late =
         fixture_task(%{
           "title" => "LateBar-#{System.unique_integer([:positive])}",
           "estimated_duration" => 1,
-          "estimated_duration_unit" => "days"
+          "estimated_duration_unit" => "hours"
         })
 
       ontime =

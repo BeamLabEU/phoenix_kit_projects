@@ -422,7 +422,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               size="sm"
               class="text-error"
               phx-click="delete_event"
-                phx-disable-with={gettext("Deleting…")}
+              phx-disable-with={gettext("Deleting…")}
               phx-value-uuid={@selected.uuid}
               data-confirm={gettext("Remove \"%{title}\"?", title: @selected.title)}
             >

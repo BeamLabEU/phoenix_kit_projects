@@ -3716,7 +3716,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   type="button"
                   class="btn btn-ghost btn-xs"
                   phx-click="generate_invoice"
-                phx-disable-with={gettext("Generating…")}
+                  phx-disable-with={gettext("Generating…")}
                   data-confirm={gettext("Create a draft invoice from all uninvoiced billable time?")}
                 >
                   <.icon name="hero-banknotes" class="w-3 h-3" /> {gettext("Invoice effort")}

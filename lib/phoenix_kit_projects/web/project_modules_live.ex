@@ -598,7 +598,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   <button
                     type="button"
                     phx-click="rotate_portal_link"
-                phx-disable-with={gettext("Rotating…")}
+                    phx-disable-with={gettext("Rotating…")}
                     data-confirm={gettext("Rotate the portal link? The current link stops working immediately.")}
                     class="btn btn-ghost btn-sm gap-1"
                   >
