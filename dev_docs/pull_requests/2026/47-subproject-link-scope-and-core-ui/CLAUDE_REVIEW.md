@@ -44,11 +44,14 @@ in flight, while no participant is staged, or while "Nest existing" has nothing 
 `mix compile --warnings-as-errors` against the Hex core fails with 12 warnings; it is
 clean against `PHOENIX_KIT_PATH=../phoenix_kit`.
 
-**Not fixed here, deliberately.** The cure is a core release shipping those three APIs and
-then raising the floor in `mix.exs` (and `core_pin_conformance_test.exs`) to it — a
-cross-repo, outward-facing step, and a floor naming a version that does not exist would
-make `mix deps.get` fail for every consumer. **A Hex release of this package is held until
-that core release exists.**
+**Not fixed at review time, deliberately.** The cure is a core release shipping those three
+APIs and then raising the floor — a cross-repo, outward-facing step, and a floor naming a
+version that did not exist would have broken `mix deps.get` for every consumer. The release
+was held until core shipped them.
+
+**Resolved 2026-10-01:** `phoenix_kit` 2.43.0 carries all three. The floor is now
+`>= 2.43.0 and < 3.0.0` (`mix.exs`, `core_pin_conformance_test.exs`, AGENTS.md) and the
+package shipped as 0.28.0; the published tarball's requirement was checked.
 
 **Added:** `test/core_ui_api_conformance_test.exs` pins every core component API the
 LiveViews rely on (attrs and slots). Verified both ways — green against the local core,
@@ -102,6 +105,12 @@ rare and admin-side, and a targeted `exists?` would duplicate the picker's filte
 
 ## Validation
 
-Against `PHOENIX_KIT_PATH=../phoenix_kit` (the only core that carries the APIs):
-`mix test` 1614 tests, 1 failure (the calendar test above, since fixed); the calendar
-file and the new conformance test pass; `mix precommit` result below.
+At review time, against `PHOENIX_KIT_PATH=../phoenix_kit`: `mix test` 1614 tests, 1 failure
+(the calendar test above, since fixed); `mix precommit` clean.
+
+Before the 0.28.0 release, on the published deps (core 2.43.0, phoenix_kit_ai 0.25.0):
+`mix precommit` clean (format, `--warnings-as-errors`, credo strict, dialyzer),
+`mix test` 1619 tests, 0 failures with no integration tests excluded, and
+`WITHOUT_STAFF=1 mix compile --force --warnings-as-errors` clean. Re-checked after the
+release: tag `v0.28.0` is annotated, points at the release commit `317b8de` and is on
+origin; Hex lists 0.28.0; the tarball has no `priv/media`.
