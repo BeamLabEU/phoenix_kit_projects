@@ -301,6 +301,19 @@ Repo-local aliases:
   list-LV toolkit (see core's AGENTS.md → "Core List-UI Components").
   `ProjectsLive` / `TasksLive` / `TemplatesLive` are the canonical consumers —
   never re-roll a list LV without reading them first.
+- **Create buttons sit in the list's toolbar, never the admin header.** A list
+  page's primary action goes in the bulk toolbar's `:primary` slot (core
+  `bulk_actions_toolbar`), the far-right corner beside the selection actions;
+  `page_action` stays unset on list pages.
+- **Embeddable pages namespace their DOM ids.** Every LV in `@embeddable_lvs`
+  can render twice on one page (a `PopupHostLive` stack, a host embedding two
+  frames), so a dialog, form or field id carries the record it belongs to —
+  `id={"project-health-#{@project.uuid}"}`, never a bare string. A static id
+  silently breaks the dialog hook and label `for=` wiring of the second copy.
+- **A dialog's close event is never feature-gated.** Closing changes nothing;
+  gating it in `@gated_events` means a feature switched off in another
+  session while its dialog is open traps the dialog (Cancel, Escape and the
+  backdrop all refused). Gate the open and the write, not the close.
 
 ### Landmines
 
