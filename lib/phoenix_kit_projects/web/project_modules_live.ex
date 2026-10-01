@@ -598,6 +598,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   <button
                     type="button"
                     phx-click="rotate_portal_link"
+                phx-disable-with={gettext("Rotating…")}
                     data-confirm={gettext("Rotate the portal link? The current link stops working immediately.")}
                     class="btn btn-ghost btn-sm gap-1"
                   >
@@ -641,6 +642,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                      read, so it is chosen rather than generated. --%>
                 <form
                   :if={@portal.access_mode == "public"}
+                  id={"portal-slug-form-#{@project.uuid}"}
                   phx-submit="set_portal_slug"
                   class="flex flex-wrap items-end gap-2"
                 >
@@ -660,27 +662,27 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   <h4 class="mb-1 text-xs font-semibold uppercase opacity-50">
                     {gettext("Who can take part")}
                   </h4>
-                  <form phx-change="set_portal_participation" class="flex flex-wrap gap-3">
-                    <label class="fieldset">
-                      <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Submit issues")}</span>
-                      <select name="submit_access" class="select select-sm">
-                        <option
-                          :for={{value, label} <- participation_choices()}
-                          value={value}
-                          selected={@portal.submit_access == value}
-                        >{label}</option>
-                      </select>
-                    </label>
-                    <label class="fieldset">
-                      <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Comment")}</span>
-                      <select name="comment_access" class="select select-sm">
-                        <option
-                          :for={{value, label} <- participation_choices()}
-                          value={value}
-                          selected={@portal.comment_access == value}
-                        >{label}</option>
-                      </select>
-                    </label>
+                  <form
+                    id={"portal-participation-form-#{@project.uuid}"}
+                    phx-change="set_portal_participation"
+                    class="flex flex-wrap gap-3"
+                  >
+                    <.select
+                      id={"portal-submit-access-#{@project.uuid}"}
+                      name="submit_access"
+                      label={gettext("Submit issues")}
+                      value={@portal.submit_access}
+                      class="select-sm"
+                      options={for {value, label} <- participation_choices(), do: {label, value}}
+                    />
+                    <.select
+                      id={"portal-comment-access-#{@project.uuid}"}
+                      name="comment_access"
+                      label={gettext("Comment")}
+                      value={@portal.comment_access}
+                      class="select-sm"
+                      options={for {value, label} <- participation_choices(), do: {label, value}}
+                    />
                   </form>
                   <p :if={@portal.comment_access == "anyone"} class="mt-1 text-xs opacity-60">
                     {PhoenixKitProjects.Portal.comment_access_note()}
@@ -727,12 +729,8 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
       <%!-- Labels registry (Phase C): the config home for the project's
            label catalog. Renders only while the labels flag is on. --%>
-      <section :if={@labels_on} class="card bg-base-100 border border-base-200">
-        <div class="card-body gap-3">
-          <h2 class="card-title text-base">{gettext("Labels")}</h2>
-          <p class="text-xs text-base-content/60">
-            {gettext("Tags tasks can wear — pick them on the task form.")}
-          </p>
+      <.form_section :if={@labels_on} title={gettext("Labels")} icon="hero-tag" body_class="gap-3">
+        <:subtitle>{gettext("Tags tasks can wear — pick them on the task form.")}</:subtitle>
 
           <div :if={@labels != []} class="flex flex-wrap gap-2">
             <span
@@ -743,6 +741,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
               <button
                 type="button"
                 phx-click="delete_label"
+                phx-disable-with={gettext("Removing…")}
                 phx-value-uuid={label.uuid}
                 data-confirm={gettext("Remove the \"%{name}\" label from this project?", name: label.name)}
                 aria-label={gettext("Remove %{name}", name: label.name)}
@@ -753,32 +752,34 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             </span>
           </div>
 
-          <form phx-submit="add_label" class="flex items-end gap-2">
-            <label class="fieldset flex-1 max-w-52">
-              <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("New label")}</span>
-              <input
-                type="text"
+          <form id={"project-label-add-#{@project.uuid}"} phx-submit="add_label" class="flex items-end gap-2">
+            <div class="flex-1 max-w-52">
+              <.input
+                id={"new-label-name-#{@project.uuid}"}
                 name="name"
+                value=""
+                label={gettext("New label")}
                 required
                 maxlength="60"
-                class="input input-sm"
+                class="input-sm"
                 placeholder={gettext("e.g. frontend")}
               />
-            </label>
-            <label class="fieldset w-40">
-              <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Color")}</span>
-              <select name="color" class="select select-sm">
-                <option :for={color <- @label_colors} value={color}>
-                  {String.replace_prefix(color, "badge-", "")}
-                </option>
-              </select>
-            </label>
-            <button type="submit" phx-disable-with={gettext("Adding…")} class="btn btn-primary btn-sm">
+            </div>
+            <div class="w-40">
+              <.select
+                id={"new-label-color-#{@project.uuid}"}
+                name="color"
+                label={gettext("Color")}
+                value={List.first(@label_colors)}
+                class="select-sm"
+                options={for color <- @label_colors, do: {color_label(color), color}}
+              />
+            </div>
+            <.button type="submit" size="sm" phx-disable-with={gettext("Adding…")}>
               {gettext("Add")}
-            </button>
+            </.button>
           </form>
-        </div>
-      </section>
+      </.form_section>
     </div>
     """
   end
@@ -874,4 +875,16 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   end
 
   defp suggested_slug(_mode, _project), do: nil
+
+  # The label colours are daisyUI tones; name them in the viewer's language
+  # instead of showing the class suffix.
+  defp color_label("badge-neutral"), do: gettext("Neutral")
+  defp color_label("badge-primary"), do: gettext("Primary")
+  defp color_label("badge-secondary"), do: gettext("Secondary")
+  defp color_label("badge-accent"), do: gettext("Accent")
+  defp color_label("badge-info"), do: gettext("Info")
+  defp color_label("badge-success"), do: gettext("Success")
+  defp color_label("badge-warning"), do: gettext("Warning")
+  defp color_label("badge-error"), do: gettext("Error")
+  defp color_label(color), do: String.replace_prefix(color, "badge-", "")
 end

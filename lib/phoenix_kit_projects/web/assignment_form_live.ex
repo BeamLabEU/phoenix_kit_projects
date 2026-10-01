@@ -319,7 +319,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           # set (cycle-safe, same kind).
           sp_mode: "new",
           link_options:
-            if(kind == "subproject", do: Projects.available_projects_to_link(project), else: []),
+            if(kind == "subproject",
+              do:
+                Projects.available_projects_to_link(
+                  project,
+                  socket.assigns[:phoenix_kit_current_scope]
+                ),
+              else: []
+            ),
           project: project,
           assignment: assignment,
           portal_review_images: [],
@@ -986,6 +993,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp link_existing_subproject(socket, child_uuid) do
     parent = socket.assigns.project
 
+    # Re-resolved at save time, not trusted from the client: only a project
+    # the picker would offer this viewer right now may be nested.
+    eligible =
+      parent
+      |> Projects.available_projects_to_link(socket.assigns[:phoenix_kit_current_scope])
+      |> Enum.map(& &1.uuid)
+
+    if child_uuid in eligible do
+      do_link_existing_subproject(socket, parent, child_uuid)
+    else
+      {:noreply, put_flash(socket, :error, link_error_message(:not_available))}
+    end
+  end
+
+  defp do_link_existing_subproject(socket, parent, child_uuid) do
     case Projects.link_subproject(parent.uuid, child_uuid) do
       {:ok, %{child_project: child, assignment: link}} ->
         Activity.log("projects.subproject_linked",
@@ -1026,6 +1048,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp link_error_message(:kind_mismatch),
     do: gettext("Templates and projects can't be nested into each other.")
+
+  defp link_error_message(:not_available),
+    do: gettext("That project can't be nested here.")
+
+  defp link_error_message(:archived),
+    do: gettext("That project is archived — restore it before nesting it.")
 
   defp link_error_message(:not_found), do: gettext("That project no longer exists.")
   defp link_error_message(_), do: gettext("Could not nest that project.")
@@ -1961,12 +1989,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <%!-- Dependencies — identical to a task's (this sub-project is a row in
                the parent's timeline). Edit mode adds/removes live; new mode
                collects pending selections applied on save. --%>
-          <div :if={@fx.dependencies} class="card bg-base-100 shadow">
-            <div class="card-body">
-              <h2 class="card-title text-lg">{gettext("Dependencies")}</h2>
-              <p class="text-xs text-base-content/60">
+          <.form_section :if={@fx.dependencies} title={gettext("Dependencies")}>
+              <:subtitle>
                 {gettext("Items in this project that must finish before this sub-project can start.")}
-              </p>
+              </:subtitle>
 
               <%= if @live_action == :edit do %>
                 <div :if={@assignment_deps != []} class="flex flex-wrap gap-2 mt-2">
@@ -2019,8 +2045,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   {gettext("No other items in this project to depend on.")}
                 </p>
               <% end %>
-            </div>
-          </div>
+          </.form_section>
 
           <%!-- Workflow status — a sub-project is a project, so it gets the same
                status-source picker (V125). --%>
@@ -2038,31 +2063,32 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </div>
           <% end %>
 
-          <div class="flex gap-2">
-            <%!-- The same `cancel` as the task form: in a drawer it closes
-                 the frame, on the page it navigates back. (It used to be a
-                 link that, in emit mode, opened the project as a NEW frame.) --%>
-            <button
-              type="button"
-              phx-click="cancel"
-              data-confirm={@dirty? && gettext("Discard your changes?")}
-              class="btn btn-ghost"
-            >
-              {gettext("Cancel")}
-            </button>
-            <button
-              type="submit"
-              phx-disable-with={gettext("Saving…")}
-              class="btn btn-primary"
-              disabled={@sp_mode == "existing" and @link_options == []}
-            >
-              {cond do
+          <%!-- The same `cancel` as the task form: in a drawer it closes
+               the frame, on the page it navigates back. (It used to be a
+               link that, in emit mode, opened the project as a NEW frame.) --%>
+          <.form_actions
+            class="gap-2"
+            submit_label={
+              cond do
                 @live_action == :edit -> gettext("Save")
                 @sp_mode == "existing" -> gettext("Nest sub-project")
                 true -> gettext("Add sub-project")
-              end}
-            </button>
-          </div>
+              end
+            }
+            submitting_label={gettext("Saving…")}
+            submit_disabled={@sp_mode == "existing" and @link_options == []}
+          >
+            <:cancel>
+              <button
+                type="button"
+                phx-click="cancel"
+                data-confirm={@dirty? && gettext("Discard your changes?")}
+                class="btn btn-ghost"
+              >
+                {gettext("Cancel")}
+              </button>
+            </:cancel>
+          </.form_actions>
         </.form>
       <% else %>
       <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
@@ -2346,10 +2372,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                `create_assignment_for_new_task` after insert.
              --%>
         <% lang = L10n.current_content_lang() %>
-        <div :if={@fx.dependencies} class="card bg-base-100 shadow">
-          <div class="card-body">
-            <h2 class="card-title text-lg">{gettext("Dependencies")}</h2>
-            <p class="text-xs text-base-content/60">
+        <.form_section :if={@fx.dependencies} title={gettext("Dependencies")}>
+            <:subtitle>
               {gettext("Tasks in this project that must finish before this one can start.")}
               <%= if @live_action == :new do %>
                 <br />
@@ -2357,7 +2381,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   {gettext("Selections will be applied when you save this task.")}
                 </span>
               <% end %>
-            </p>
+            </:subtitle>
 
             <%= if @live_action == :edit do %>
               <%= if @assignment_deps != [] do %>
@@ -2433,8 +2457,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 <p class="text-sm text-base-content/50 mt-2">{gettext("No other tasks in this project to depend on.")}</p>
               <% end %>
             <% end %>
-          </div>
-        </div>
+        </.form_section>
 
         <%!-- Portal visibility. Inside the form so the page reads in
              order — fields, then who can see this, then Save. It used to

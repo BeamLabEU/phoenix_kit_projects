@@ -1008,9 +1008,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # of the user's locale — Phase 1 PR #1 review item #15, deferred
   # then to Phase 2 C3 + closed in this re-validation batch.
   #
-  # Named `translate_validator_error/1` (not `translate_error/1`) to
-  # avoid shadowing `PhoenixKitWeb.Components.Core.Input.translate_error/1`
-  # which is auto-imported by `use PhoenixKitWeb, :live_view`.
+  # Core's `PhoenixKitWeb.Components.Core.Input.translate_error/1` (imported
+  # by `use PhoenixKitWeb, :live_view`) does the translating, in the
+  # "errors" domain of core's catalogue, which owns Ecto's messages.
   defp error_summary(%Ecto.Changeset{errors: errors}, fallback) do
     case errors do
       [] ->
@@ -1018,7 +1018,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       errs ->
         Enum.map_join(errs, ", ", fn {k, {msg, opts}} ->
-          "#{humanize_field(k)}: #{translate_validator_error({msg, opts})}"
+          "#{humanize_field(k)}: #{translate_error({msg, opts})}"
         end)
     end
   end
@@ -1032,14 +1032,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> to_string()
     |> String.replace("_", " ")
     |> String.capitalize()
-  end
-
-  defp translate_validator_error({msg, opts}) do
-    if count = opts[:count] do
-      Gettext.dngettext(PhoenixKitWeb.Gettext, "errors", msg, msg, count, opts)
-    else
-      Gettext.dgettext(PhoenixKitWeb.Gettext, "errors", msg, opts)
-    end
   end
 
   # When a mutated assignment belongs to an embedded sub-project (its row is
@@ -1150,13 +1142,27 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       {gettext("Start")}
                     </button>
                   <% @a.status in ["todo", "in_progress"] -> %>
-                    <button phx-click="complete" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Saving…")} class="btn btn-success btn-xs">
+                    <.button
+                      type="button"
+                      variant="success"
+                      size="xs"
+                      phx-click="complete"
+                      phx-value-uuid={@a.uuid}
+                      phx-disable-with={gettext("Saving…")}
+                    >
                       <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("Done")}
-                    </button>
+                    </.button>
                   <% @a.status == "done" -> %>
-                    <button phx-click="reopen" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Reopening…")} class="btn btn-ghost btn-xs">
+                    <.button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      phx-click="reopen"
+                      phx-value-uuid={@a.uuid}
+                      phx-disable-with={gettext("Reopening…")}
+                    >
                       {gettext("Reopen")}
-                    </button>
+                    </.button>
                   <% true -> %>
                     <%!-- A status outside the vocabulary. The changeset
                          refuses to write one, so this is legacy or
@@ -1218,7 +1224,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <%= if @fx.estimates and @editing_duration_uuid == @a.uuid do %>
               <% prefill_dur = @a.estimated_duration || @a.task.estimated_duration %>
               <% prefill_unit = @a.estimated_duration_unit || @a.task.estimated_duration_unit || "hours" %>
-              <form phx-submit="save_duration" class="flex items-center gap-1">
+              <form id={"duration-#{@a.uuid}"} phx-submit="save_duration" class="flex items-center gap-1">
                 <input type="hidden" name="uuid" value={@a.uuid} />
                 <input type="number" name="estimated_duration" value={prefill_dur} class="input input-xs w-16" min="1" />
                 <.select name="estimated_duration_unit" value={prefill_unit} options={duration_unit_options()} class="select-xs w-auto" />
@@ -1298,7 +1304,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             <%= if @fx.progress and not @is_template do %>
               <%= if @a.track_progress do %>
-                <.form for={%{}} phx-change="update_progress" class="flex items-center gap-1">
+                <.form for={%{}} id={"progress-#{@a.uuid}"} phx-change="update_progress" class="flex items-center gap-1">
                   <input type="hidden" name="uuid" value={@a.uuid} />
                   <input type="range" name="progress_pct" value={@a.progress_pct} min="0" max="100" step="5" phx-debounce="300" class="range range-xs range-primary w-20" />
                   <span class="text-xs text-base-content/60 w-8">{@a.progress_pct}%</span>
@@ -1380,6 +1386,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # flash when off. The real handlers are `gated_handle_event/3` — a
   # forged client event can't reach them around the gate. UI hiding is
   # the courtesy; THIS is the enforcement.
+  # Closing a dialog is never gated: it changes nothing, and a feature
+  # switched off (in another session) while its dialog is open would
+  # otherwise refuse every Cancel, Escape and backdrop click.
   @gated_events %{
     "complete" => :tasks,
     # Owned by the in-progress flag (which itself needs the tasks
@@ -1391,7 +1400,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "review_submission" => :tasks,
     "board_move" => :view_board,
     "open_review" => :tasks,
-    "close_review" => :tasks,
     "edit_duration" => :estimates,
     "save_duration" => :estimates,
     "update_progress" => :progress,
@@ -1400,13 +1408,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "change_workflow_status" => :statuses,
     "detach_subproject" => :subprojects,
     "open_health_modal" => :lifecycle,
-    "close_health_modal" => :lifecycle,
     "save_health" => :lifecycle,
     "open_start_modal" => :lifecycle,
-    "close_start_modal" => :lifecycle,
     "confirm_start_project" => :lifecycle,
     "open_log_time" => :ledger,
-    "close_log_time" => :ledger,
     "save_work_entry" => :ledger,
     "generate_invoice" => :ledger
   }
@@ -3206,15 +3211,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            so the decision happens here, in one place, with the text and the
            images the person actually sent. Accepting is what turns it into
            a task; until then it is in no list, no board and no count. --%>
-      <%= if @review_open? and @pending_reviews != [] do %>
-        <dialog open class="modal modal-open" phx-window-keydown="close_review" phx-key="Escape">
-          <div class="modal-box max-w-2xl">
-            <h3 class="font-bold text-lg">{gettext("Submissions to review")}</h3>
+      <.modal :if={@review_open? and @pending_reviews != []} show on_close="close_review" id={"project-review-#{@project.uuid}"} max_width="2xl">
+        <:title>{gettext("Submissions to review")}</:title>
             <p class="text-sm text-base-content/70 mt-1">
               {gettext("Sent from the public board. Accepting adds it to the project; rejecting keeps a record and shows nobody.")}
             </p>
 
-            <div class="flex flex-col gap-2 mt-4 max-h-[60vh] overflow-y-auto">
+            <div class="flex flex-col gap-2 mt-4">
               <div
                 :for={a <- @pending_reviews}
                 class={[
@@ -3340,22 +3343,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 {gettext("Close")}
               </button>
             </div>
-          </div>
-          <form method="dialog" class="modal-backdrop">
-            <button type="button" phx-click="close_review">close</button>
-          </form>
-        </dialog>
-      <% end %>
+      </.modal>
 
       <%!-- Health modal --%>
-      <%= if @health_modal_open do %>
-        <dialog open class="modal modal-open" phx-window-keydown="close_health_modal" phx-key="Escape">
-          <div class="modal-box max-w-md">
-            <h3 class="font-bold text-lg">{gettext("Project health")}</h3>
+      <.modal :if={@health_modal_open} show on_close="close_health_modal" id={"project-health-#{@project.uuid}"} max_width="md" close_guard={:input}>
+        <:title>{gettext("Project health")}</:title>
             <p class="text-sm text-base-content/70 mt-1">
               {gettext("Your judgment, not a computed number — how does this project feel right now?")}
             </p>
-            <form phx-submit="save_health" class="flex flex-col gap-3 mt-4">
+            <form id={"health-form-#{@project.uuid}"} phx-submit="save_health" class="flex flex-col gap-3 mt-4">
               <div class="flex flex-col gap-2">
                 <label
                   :for={status <- Health.statuses()}
@@ -3372,15 +3368,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   <span class="text-sm font-medium">{health_label(status)}</span>
                 </label>
               </div>
-              <label class="fieldset">
-                <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Note (optional)")}</span>
-                <textarea
-                  name="note"
-                  rows="2"
-                  class="textarea textarea-sm"
-                  placeholder={gettext("What's behind this call?")}
-                >{@health && @health["note"]}</textarea>
-              </label>
+              <.textarea
+                id={"health-note-#{@project.uuid}"}
+                name="note"
+                value={@health && @health["note"]}
+                label={gettext("Note (optional)")}
+                rows="2"
+                class="textarea-sm"
+                placeholder={gettext("What's behind this call?")}
+              />
               <div class="modal-action">
                 <button type="button" phx-click="close_health_modal" class="btn btn-ghost btn-sm">
                   {gettext("Cancel")}
@@ -3390,18 +3386,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 </button>
               </div>
             </form>
-          </div>
-          <button type="button" phx-click="close_health_modal" class="modal-backdrop" aria-label={gettext("Close")}>
-          </button>
-        </dialog>
-      <% end %>
+      </.modal>
 
       <%!-- Log-time modal (Step 10). Render-gated on the same flag the
            events check; @log_time_uuid scopes the entry to a task. --%>
-      <%= if @log_time_open and @fx.ledger do %>
-        <dialog open class="modal modal-open" phx-window-keydown="close_log_time" phx-key="Escape">
-          <div class="modal-box max-w-sm">
-            <h3 class="font-bold text-lg">{gettext("Log time")}</h3>
+      <.modal :if={@log_time_open and @fx.ledger} show on_close="close_log_time" id={"project-log-time-#{@project.uuid}"} max_width="sm" close_guard={:input}>
+        <:title>{gettext("Log time")}</:title>
             <p class="text-sm text-base-content/70 mt-1">
               <%= if label = log_time_task_label(assigns) do %>
                 {gettext("On task: %{task}", task: label)}
@@ -3409,45 +3399,47 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 {gettext("On the project overall")}
               <% end %>
             </p>
-            <form phx-submit="save_work_entry" class="flex flex-col gap-3 mt-4">
-              <div class="flex items-center gap-2">
-                <label class="fieldset flex-1">
-                  <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Hours")}</span>
-                  <input
-                    type="number"
-                    name="hours"
-                    min="0"
-                    step="1"
-                    value="0"
-                    class="input input-sm"
-                  />
-                </label>
-                <label class="fieldset flex-1">
-                  <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Minutes")}</span>
-                  <input
-                    type="number"
-                    name="minutes"
-                    min="0"
-                    max="59"
-                    step="1"
-                    value="30"
-                    class="input input-sm"
-                  />
-                </label>
-              </div>
-              <label class="fieldset">
-                <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Note (optional)")}</span>
-                <input
-                  type="text"
-                  name="note"
-                  class="input input-sm"
-                  placeholder={gettext("What was the time spent on?")}
+            <form id={"work-entry-form-#{@project.uuid}"} phx-submit="save_work_entry" class="flex flex-col gap-3 mt-4">
+              <div class="flex items-start gap-2">
+                <.input
+                  id={"log-time-hours-#{@project.uuid}"}
+                  type="number"
+                  name="hours"
+                  label={gettext("Hours")}
+                  min="0"
+                  step="1"
+                  value="0"
+                  class="input-sm"
+                  wrapper_class="flex-1"
                 />
-              </label>
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" name="billable" value="true" class="checkbox checkbox-sm" />
-                <span class="text-sm">{gettext("Billable")}</span>
-              </label>
+                <.input
+                  id={"log-time-minutes-#{@project.uuid}"}
+                  type="number"
+                  name="minutes"
+                  label={gettext("Minutes")}
+                  min="0"
+                  max="59"
+                  step="1"
+                  value="30"
+                  class="input-sm"
+                  wrapper_class="flex-1"
+                />
+              </div>
+              <.input
+                id={"log-time-note-#{@project.uuid}"}
+                name="note"
+                value=""
+                label={gettext("Note (optional)")}
+                class="input-sm"
+                placeholder={gettext("What was the time spent on?")}
+              />
+              <.checkbox
+                id={"log-time-billable-#{@project.uuid}"}
+                name="billable"
+                label={gettext("Billable")}
+                class="checkbox-sm"
+                wrapper_class="gap-2"
+              />
               <div class="modal-action">
                 <button type="button" phx-click="close_log_time" class="btn btn-ghost btn-sm">
                   {gettext("Cancel")}
@@ -3461,16 +3453,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 </button>
               </div>
             </form>
-          </div>
-          <button
-            type="button"
-            phx-click="close_log_time"
-            class="modal-backdrop"
-            aria-label={gettext("Close")}
-          >
-          </button>
-        </dialog>
-      <% end %>
+      </.modal>
 
 
       <%!-- ── The top-level tabs (the boss, 2026-09-05) ──
@@ -3733,6 +3716,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   type="button"
                   class="btn btn-ghost btn-xs"
                   phx-click="generate_invoice"
+                phx-disable-with={gettext("Generating…")}
                   data-confirm={gettext("Create a draft invoice from all uninvoiced billable time?")}
                 >
                   <.icon name="hero-banknotes" class="w-3 h-3" /> {gettext("Invoice effort")}
@@ -3813,17 +3797,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                  input to be inside a form"), so the bare version changed
                  the control and never the list. The sweep, 2026-09-05. --%>
             <form id={"project-list-sort-#{@project.uuid}"} phx-change="list_sort">
-              <select class="select select-sm" name="sort" aria-label={gettext("Sort tasks")}>
-                <option value="position" selected={@list_sort == :position}>
-                  {gettext("Manual order")}
-                </option>
-                <option value="newest" selected={@list_sort == :newest}>
-                  {gettext("Newest first")}
-                </option>
-                <option value="recent" selected={@list_sort == :recent}>
-                  {gettext("Recently updated")}
-                </option>
-              </select>
+              <.select
+                id={"project-list-sort-select-#{@project.uuid}"}
+                name="sort"
+                value={to_string(@list_sort)}
+                class="select-sm"
+                aria-label={gettext("Sort tasks")}
+                options={[
+                  {gettext("Manual order"), "position"},
+                  {gettext("Newest first"), "newest"},
+                  {gettext("Recently updated"), "recent"}
+                ]}
+              />
             </form>
 
             <%!-- Says why the handles vanished. A control that disappears
@@ -4459,15 +4444,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            form's `phx-change="noop"` prevents the LV from rebuilding
            the changeset on each keystroke (no live validation needed
            for a single date input); submit goes via `phx-submit`. --%>
-      <%= if @start_modal_open do %>
-        <dialog open class="modal modal-open" phx-window-keydown="close_start_modal" phx-key="Escape">
-          <div class="modal-box max-w-md">
-            <h3 class="font-bold text-lg">{gettext("Start project")}</h3>
+      <.modal :if={@start_modal_open} show on_close="close_start_modal" id={"project-start-#{@project.uuid}"} max_width="md">
+        <:title>{gettext("Start project")}</:title>
             <p class="text-sm text-base-content/70 mt-1">
               {gettext("Pick the date and time this project starts. Defaults to right now; backdate it if work began earlier, or pick a future moment if you're queueing it up.")}
             </p>
 
-            <.form for={@start_form} phx-submit="confirm_start_project" class="flex flex-col gap-3 mt-4">
+            <.form id={"start-project-form-#{@project.uuid}"} for={@start_form} phx-submit="confirm_start_project" class="flex flex-col gap-3 mt-4">
               <.input field={@start_form[:start_at]} type="datetime-local" label={gettext("Start date and time")} required />
 
               <div class="modal-action">
@@ -4487,10 +4470,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 </button>
               </div>
             </.form>
-          </div>
-          <button type="button" phx-click="close_start_modal" class="modal-backdrop" aria-label={gettext("Close")}></button>
-        </dialog>
-      <% end %>
+      </.modal>
 
       <%!-- Slide-in comments drawer. Right-side fixed panel that
            hosts `PhoenixKitComments.Web.CommentsComponent` for either
@@ -4504,58 +4484,40 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            (we don't need to react to project-level comment counts
            in the timeline yet) — the catch-all `handle_info` clause
            logs it at debug and moves on. --%>
-      <%!-- z-[60] / z-[70] so we paint over the admin header
-           (`fixed top-0 z-50` in the layout wrapper). At z-40 the
-           backdrop sat behind the header and looked broken. --%>
-      <%= if @comments_resource do %>
-        <div
-          class="fixed inset-0 z-[60] bg-black/40"
-          phx-click="close_comments"
-          phx-window-keydown="close_comments"
-          phx-key="Escape"
-          aria-hidden="true"
-        ></div>
-
-        <aside
-          class="fixed top-0 right-0 z-[70] h-screen w-full max-w-md bg-base-100 shadow-2xl flex flex-col"
-          role="dialog"
-          aria-modal="true"
-          aria-label={gettext("Comments")}
-        >
-          <header class="flex items-start gap-2 p-4 border-b border-base-200 shrink-0">
-            <div class="flex-1 min-w-0">
-              <div class="text-xs uppercase tracking-wide text-base-content/60">
-                <%= if @comments_resource.type == "project" do %>
-                  {gettext("Project")}
-                <% else %>
-                  {gettext("Task")}
-                <% end %>
-              </div>
-              <h2 class="font-bold text-lg truncate">{@comments_resource.title}</h2>
-            </div>
-            <button
-              type="button"
-              phx-click="close_comments"
-              class="btn btn-ghost btn-sm btn-square"
-              aria-label={gettext("Close")}
-            >
-              <.icon name="hero-x-mark" class="w-5 h-5" />
-            </button>
-          </header>
-
-          <div class="flex-1 min-h-0 overflow-y-auto p-4">
-            <.live_component
-              module={PhoenixKitComments.Web.CommentsComponent}
-              id={"comments-drawer-#{@comments_resource.type}-#{@comments_resource.uuid}"}
-              resource_type={@comments_resource.type}
-              resource_uuid={@comments_resource.uuid}
-              current_user={assigns[:phoenix_kit_current_user]}
-              title=""
-              show_likes={true}
-            />
-          </div>
-        </aside>
-      <% end %>
+      <%!-- A core drawer (`placement={:end}`): the dialog's top layer paints
+           over the admin header without z-index tricks, and PkDialog owns
+           Esc, the backdrop and focus. --%>
+      <.modal
+        :if={@comments_resource}
+        show
+        on_close="close_comments"
+        id={"project-comments-#{@project.uuid}"}
+        aria-label={gettext("Comments")}
+        placement={:end}
+        max_width="md"
+      >
+        <:title>
+          <span class="flex flex-col min-w-0">
+            <span class="text-xs font-normal uppercase tracking-wide text-base-content/60">
+              <%= if @comments_resource.type == "project" do %>
+                {gettext("Project")}
+              <% else %>
+                {gettext("Task")}
+              <% end %>
+            </span>
+            <span class="truncate">{@comments_resource.title}</span>
+          </span>
+        </:title>
+        <.live_component
+          module={PhoenixKitComments.Web.CommentsComponent}
+          id={"comments-drawer-#{@comments_resource.type}-#{@comments_resource.uuid}"}
+          resource_type={@comments_resource.type}
+          resource_uuid={@comments_resource.uuid}
+          current_user={assigns[:phoenix_kit_current_user]}
+          title=""
+          show_likes={true}
+        />
+      </.modal>
 
       <%!-- The page's own drawer host (`:popup` mode — a router mount; an
            embed emits to its host's popup instead). Every "Add task" /

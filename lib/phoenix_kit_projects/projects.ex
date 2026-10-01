@@ -3032,10 +3032,10 @@ defmodule PhoenixKitProjects.Projects do
   top-level list once linked.
 
   Guards: the child must exist, not be the parent, match the parent's
-  `is_template`, not already be a sub-project (the single-parent unique index),
-  and not be an **ancestor** of the parent (which would create a cycle). Errors:
-  `:not_found`, `:self_link`, `:kind_mismatch`, `:already_subproject`,
-  `:would_create_cycle`.
+  `is_template`, not be archived, not already be a sub-project (the
+  single-parent unique index), and not be an **ancestor** of the parent
+  (which would create a cycle). Errors: `:not_found`, `:self_link`,
+  `:kind_mismatch`, `:archived`, `:already_subproject`, `:would_create_cycle`.
   """
   @spec link_subproject(uuid(), uuid()) ::
           {:ok, %{child_project: Project.t(), assignment: Assignment.t()}}
@@ -3043,6 +3043,7 @@ defmodule PhoenixKitProjects.Projects do
              :not_found
              | :self_link
              | :kind_mismatch
+             | :archived
              | :already_subproject
              | :would_create_cycle
              | Ecto.Changeset.t()}
@@ -3099,6 +3100,9 @@ defmodule PhoenixKitProjects.Projects do
   defp validate_link(%Project{} = parent, %Project{} = child) do
     cond do
       parent.is_template != child.is_template -> {:error, :kind_mismatch}
+      # The picker never offers an archived project; a forged submit must
+      # not nest one either.
+      not is_nil(child.archived_at) -> {:error, :archived}
       child.uuid in project_ancestor_uuids(parent.uuid) -> {:error, :would_create_cycle}
       true -> :ok
     end
@@ -3136,17 +3140,41 @@ defmodule PhoenixKitProjects.Projects do
   (not already a sub-project), same `is_template`, not archived, not the parent,
   and not one of the parent's ancestors (cycle-safe). Ordered by name for a
   picker.
+
+  With a `scope`, only the projects that scope may see (`list_projects_for/2`'s
+  rule: everything for a site admin, otherwise membership or a group grant).
+  A picker that lists private titles has already leaked them, and nesting a
+  project you cannot open would bring it under one you can. `:all` (the
+  default) is the unfiltered set, for callers that are not a viewer.
+  Templates are a shared library with no membership, so nesting one
+  template under another is not narrowed.
   """
-  @spec available_projects_to_link(Project.t()) :: [Project.t()]
-  def available_projects_to_link(%Project{} = parent) do
+  @spec available_projects_to_link(Project.t(), term()) :: [Project.t()]
+  def available_projects_to_link(%Project{} = parent, scope \\ :all) do
     excluded = [parent.uuid | project_ancestor_uuids(parent.uuid)]
 
     Project
     |> where([p], p.is_template == ^parent.is_template and is_nil(p.archived_at))
     |> where([p], p.uuid not in ^excluded)
     |> exclude_subprojects()
+    |> scope_link_candidates(if parent.is_template, do: :all, else: scope)
     |> order_by([p], asc: p.name, asc: p.uuid)
     |> repo().all()
+  end
+
+  defp scope_link_candidates(query, :all), do: query
+
+  defp scope_link_candidates(query, scope) do
+    cond do
+      PhoenixKitProjects.Authz.admin_all?(scope) ->
+        query
+
+      user_uuid = PhoenixKitProjects.Authz.subject_user_uuid_of(scope) ->
+        maybe_scope_to_viewer(query, user_uuid)
+
+      true ->
+        from(p in query, where: false)
+    end
   end
 
   @doc """

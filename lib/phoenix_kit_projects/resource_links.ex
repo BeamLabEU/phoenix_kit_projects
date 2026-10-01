@@ -24,6 +24,8 @@ defmodule PhoenixKitProjects.ResourceLinks do
   visible, so asking about the task means asking about its project.
   """
 
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   import Ecto.Query
 
   require Logger
@@ -140,7 +142,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
         type: "project",
         uuid: project.uuid,
         title: Project.localized_name(project, lang),
-        subtitle: "Project"
+        subtitle: gettext("Project")
       }
     end)
   end
@@ -173,10 +175,12 @@ defmodule PhoenixKitProjects.ResourceLinks do
   end
 
   defp task_subtitle(%{project: %{} = project}) do
-    "Task in #{Project.localized_name(project, L10n.current_content_lang())}"
+    gettext("Task in %{project}",
+      project: Project.localized_name(project, L10n.current_content_lang())
+    )
   end
 
-  defp task_subtitle(_), do: "Task"
+  defp task_subtitle(_), do: gettext("Task")
 
   defp match_name(queryable, ""), do: queryable
 

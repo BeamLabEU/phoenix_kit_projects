@@ -91,16 +91,30 @@ defmodule PhoenixKitProjects.Web.ListLVsTest do
       assert html =~ "No templates yet."
     end
 
-    test "breadcrumb producer contract: page_title + page_action reach the layout", %{
-      conn: conn
-    } do
-      {:ok, _view, html} = live(conn, "/en/admin/projects/templates")
+    test "the create button is on the page, not in the admin header", %{conn: conn} do
+      fixture_template()
+      {:ok, view, html} = live(conn, "/en/admin/projects/templates")
 
       # The test layout renders these fixture consumers — see
-      # test/support/test_layouts.ex. Core's admin layout is the real
-      # consumer (breadcrumb "+" button); this pins the producer half.
+      # test/support/test_layouts.ex. No header "+" any more: the create
+      # button is the list toolbar's last control.
       assert html =~ ~s(data-page-title="Templates")
-      assert html =~ ~r{data-crumb-action[^>]*href="[^"]*templates/new"}
+      refute html =~ "data-crumb-action"
+
+      assert has_element?(
+               view,
+               ~s(#templates-local-search a[href$="templates/new"]),
+               "New template"
+             )
+
+      {toolbar_end, _} = :binary.match(html, ~s(data-bulk-clear="true"))
+      {button, _} = :binary.match(html, ~s(aria-label="New template"))
+      assert toolbar_end < button
+    end
+
+    test "an empty list offers the first template", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+      assert has_element?(view, ~s(a[href$="templates/new"]), "Create your first template")
     end
 
     test "delete on missing uuid surfaces a flash", %{conn: conn} do

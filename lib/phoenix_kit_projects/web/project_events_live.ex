@@ -396,144 +396,143 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
         </div>
 
         <%!-- Detail panel --%>
-        <%= if @selected do %>
-          <dialog open class="modal modal-open" phx-window-keydown="close_detail" phx-key="Escape">
-            <div class="modal-box max-w-md">
-              <h3 class="font-bold text-lg">{@selected.title}</h3>
-              <div class="flex flex-col gap-2 mt-3 text-sm">
-                <div class="flex items-center gap-2">
-                  <.icon name="hero-clock" class="w-4 h-4 opacity-60" />
-                  <span>{event_time_label(@selected)}</span>
-                  <span :if={@selected.all_day} class="badge badge-ghost badge-sm">
-                    {gettext("All day")}
-                  </span>
-                </div>
-                <div :if={@selected.location} class="flex items-center gap-2">
-                  <.icon name="hero-map-pin" class="w-4 h-4 opacity-60" />
-                  <span>{@selected.location}</span>
-                </div>
-                <p :if={@selected.description} class="text-base-content/70 whitespace-pre-wrap">
-                  {@selected.description}
-                </p>
-              </div>
-              <div class="modal-action">
-                <button
-                  :if={@can_write}
-                  type="button"
-                  phx-click="delete_event"
-                  phx-value-uuid={@selected.uuid}
-                  data-confirm={gettext("Remove \"%{title}\"?", title: @selected.title)}
-                  class="btn btn-ghost btn-sm text-error"
-                >
-                  <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Remove")}
-                </button>
-                <button type="button" phx-click="close_detail" class="btn btn-primary btn-sm">
-                  {gettext("Close")}
-                </button>
-              </div>
+        <.modal :if={@selected} show on_close="close_detail" id={"event-detail-#{@project.uuid}"} max_width="md">
+          <:title>{@selected.title}</:title>
+          <div class="flex flex-col gap-2 text-sm">
+            <div class="flex items-center gap-2">
+              <.icon name="hero-clock" class="w-4 h-4 opacity-60" />
+              <span>{event_time_label(@selected)}</span>
+              <span :if={@selected.all_day} class="badge badge-ghost badge-sm">
+                {gettext("All day")}
+              </span>
             </div>
-            <button type="button" phx-click="close_detail" class="modal-backdrop" aria-label={gettext("Close")}>
-            </button>
-          </dialog>
-        <% end %>
-
-        <%!-- Create modal --%>
-        <%= if @modal_open do %>
-          <dialog open class="modal modal-open" phx-window-keydown="close_new_event" phx-key="Escape">
-            <div class="modal-box max-w-md">
-              <h3 class="font-bold text-lg">{gettext("New event")}</h3>
-              <form phx-submit="create_event" class="flex flex-col gap-3 mt-4">
-                <label class="fieldset">
-                  <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Title")}</span>
-                  <input
-                    type="text"
-                    name="title"
-                    required
-                    maxlength="200"
-                    class="input input-sm"
-                    placeholder={gettext("e.g. Sprint review")}
-                  />
-                </label>
-                <div class="flex items-center gap-2">
-                  <label class="fieldset flex-1">
-                    <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Date")}</span>
-                    <input
-                      type="date"
-                      name="date"
-                      required
-                      value={@modal_date && Date.to_iso8601(@modal_date)}
-                      class="input input-sm"
-                    />
-                  </label>
-                  <label class="fieldset flex-1">
-                    <span class="fieldset-legend text-xs opacity-70 mb-1">
-                      {gettext("End date (optional)")}
-                    </span>
-                    <input type="date" name="end_date" class="input input-sm" />
-                  </label>
-                </div>
-                <label class="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    name="all_day"
-                    value="true"
-                    checked
-                    class="checkbox checkbox-sm"
-                  />
-                  <span class="text-sm">{gettext("All day")}</span>
-                </label>
-                <div class="flex items-center gap-2">
-                  <label class="fieldset flex-1">
-                    <span class="fieldset-legend text-xs opacity-70 mb-1">
-                      {gettext("Start time (UTC)")}
-                    </span>
-                    <input type="time" name="start_time" class="input input-sm" />
-                  </label>
-                  <label class="fieldset flex-1">
-                    <span class="fieldset-legend text-xs opacity-70 mb-1">
-                      {gettext("End time (UTC)")}
-                    </span>
-                    <input type="time" name="end_time" class="input input-sm" />
-                  </label>
-                </div>
-                <label class="fieldset">
-                  <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Location (optional)")}</span>
-                  <input
-                    type="text"
-                    name="location"
-                    maxlength="200"
-                    class="input input-sm"
-                  />
-                </label>
-                <label class="fieldset">
-                  <span class="fieldset-legend text-xs opacity-70 mb-1">
-                    {gettext("Description (optional)")}
-                  </span>
-                  <textarea name="description" rows="2" class="textarea textarea-sm"></textarea>
-                </label>
-                <div class="modal-action">
-                  <button type="button" phx-click="close_new_event" class="btn btn-ghost btn-sm">
-                    {gettext("Cancel")}
-                  </button>
-                  <button
-                    type="submit"
-                    phx-disable-with={gettext("Adding…")}
-                    class="btn btn-primary btn-sm"
-                  >
-                    {gettext("Add event")}
-                  </button>
-                </div>
-              </form>
+            <div :if={@selected.location} class="flex items-center gap-2">
+              <.icon name="hero-map-pin" class="w-4 h-4 opacity-60" />
+              <span>{@selected.location}</span>
             </div>
-            <button
+            <p :if={@selected.description} class="text-base-content/70 whitespace-pre-wrap">
+              {@selected.description}
+            </p>
+          </div>
+          <:actions>
+            <.button
+              :if={@can_write}
               type="button"
-              phx-click="close_new_event"
-              class="modal-backdrop"
-              aria-label={gettext("Close")}
+              variant="ghost"
+              size="sm"
+              class="text-error"
+              phx-click="delete_event"
+                phx-disable-with={gettext("Deleting…")}
+              phx-value-uuid={@selected.uuid}
+              data-confirm={gettext("Remove \"%{title}\"?", title: @selected.title)}
             >
-            </button>
-          </dialog>
-        <% end %>
+              <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Remove")}
+            </.button>
+            <.button type="button" size="sm" phx-click="close_detail">
+              {gettext("Close")}
+            </.button>
+          </:actions>
+        </.modal>
+
+        <%!-- Create modal. `close_guard`: a quick Esc must not throw away
+             what was just typed. --%>
+        <.modal
+          :if={@modal_open}
+          show
+          on_close="close_new_event"
+          id={"event-new-#{@project.uuid}"}
+          max_width="md"
+          close_guard={:input}
+        >
+          <:title>{gettext("New event")}</:title>
+          <form id={"new-event-form-#{@project.uuid}"} phx-submit="create_event" class="flex flex-col gap-3">
+            <.input
+              id={"event-title-#{@project.uuid}"}
+              name="title"
+              value=""
+              label={gettext("Title")}
+              required
+              maxlength="200"
+              class="input-sm"
+              placeholder={gettext("e.g. Sprint review")}
+            />
+            <div class="flex items-start gap-2">
+              <.input
+                id={"event-date-#{@project.uuid}"}
+                type="date"
+                name="date"
+                label={gettext("Date")}
+                required
+                value={@modal_date && Date.to_iso8601(@modal_date)}
+                class="input-sm"
+                wrapper_class="flex-1"
+              />
+              <.input
+                id={"event-end-date-#{@project.uuid}"}
+                type="date"
+                name="end_date"
+                value=""
+                label={gettext("End date (optional)")}
+                class="input-sm"
+                wrapper_class="flex-1"
+              />
+            </div>
+            <.checkbox
+              id={"event-all-day-#{@project.uuid}"}
+              name="all_day"
+              checked
+              label={gettext("All day")}
+              class="checkbox-sm"
+              wrapper_class="gap-2"
+            />
+            <div class="flex items-start gap-2">
+              <.input
+                id={"event-start-time-#{@project.uuid}"}
+                type="time"
+                name="start_time"
+                value=""
+                label={gettext("Start time (UTC)")}
+                class="input-sm"
+                wrapper_class="flex-1"
+              />
+              <.input
+                id={"event-end-time-#{@project.uuid}"}
+                type="time"
+                name="end_time"
+                value=""
+                label={gettext("End time (UTC)")}
+                class="input-sm"
+                wrapper_class="flex-1"
+              />
+            </div>
+            <.input
+              id={"event-location-#{@project.uuid}"}
+              name="location"
+              value=""
+              label={gettext("Location (optional)")}
+              maxlength="200"
+              class="input-sm"
+            />
+            <.textarea
+              id={"event-description-#{@project.uuid}"}
+              name="description"
+              value=""
+              label={gettext("Description (optional)")}
+              rows="2"
+              class="textarea-sm"
+            />
+            <%!-- Inside the form (not the modal's :actions slot) so Enter
+                 and the submit button reach phx-submit. --%>
+            <div class="modal-action">
+              <.button type="button" variant="ghost" size="sm" phx-click="close_new_event">
+                {gettext("Cancel")}
+              </.button>
+              <.button type="submit" size="sm" phx-disable-with={gettext("Adding…")}>
+                {gettext("Add event")}
+              </.button>
+            </div>
+          </form>
+        </.modal>
       <% end %>
     </div>
     """

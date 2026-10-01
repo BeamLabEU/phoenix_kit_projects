@@ -181,15 +181,12 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
             </div>
           </div>
 
-          <button
+          <.load_more
             :if={@has_more}
-            type="button"
-            class="btn btn-ghost btn-sm self-center"
-            phx-click="load_more"
-            phx-disable-with={gettext("Loading…")}
-          >
-            {gettext("Load more")} ({@total - length(@entries)})
-          </button>
+            loaded={length(@entries)}
+            total={@total}
+            noun_plural={gettext("entries")}
+          />
         <% end %>
       <% end %>
     </div>

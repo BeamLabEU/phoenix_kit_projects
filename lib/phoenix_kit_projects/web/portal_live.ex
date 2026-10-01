@@ -16,10 +16,13 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   use Phoenix.LiveView
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import PhoenixKitWeb.Components.Core.Button, only: [button: 1]
   import PhoenixKitWeb.Components.Core.EmptyState
+  import PhoenixKitWeb.Components.Core.FormActions, only: [form_actions: 1]
   import PhoenixKitWeb.Components.Core.FileUpload, only: [file_upload: 1]
   import PhoenixKitWeb.Components.Core.Input, only: [input: 1]
   import PhoenixKitWeb.Components.Core.MentionText
+  import PhoenixKitWeb.Components.Core.NavTabs, only: [nav_tabs: 1]
   import PhoenixKitWeb.Components.Core.StatusDot
   import PhoenixKitWeb.Components.Core.Textarea, only: [textarea: 1]
   import PhoenixKitWeb.Components.Core.TimeDisplay, only: [time_ago: 1]
@@ -412,14 +415,17 @@ defmodule PhoenixKitProjects.Web.PortalLive do
           </label>
         </div>
 
-        <div class="flex items-center justify-end gap-2">
-          <.link navigate={board_path(@slug)} class="btn btn-ghost btn-sm">
-            {gettext("Cancel")}
-          </.link>
-          <button type="submit" class="btn btn-primary" phx-disable-with={gettext("Sending…")}>
-            {gettext("Send report")}
-          </button>
-        </div>
+        <.form_actions
+          class="items-center gap-2"
+          submit_label={gettext("Send report")}
+          submitting_label={gettext("Sending…")}
+        >
+          <:cancel>
+            <.link navigate={board_path(@slug)} class="btn btn-ghost btn-sm">
+              {gettext("Cancel")}
+            </.link>
+          </:cancel>
+        </.form_actions>
       </form>
     </div>
     """
@@ -526,9 +532,9 @@ defmodule PhoenixKitProjects.Web.PortalLive do
             </span>
           </p>
         </div>
-        <.link :if={@view.may_submit} navigate={report_path(@slug)} class="btn btn-primary btn-sm">
+        <.button :if={@view.may_submit} size="sm" navigate={report_path(@slug)}>
           {gettext("Report an issue")}
-        </.link>
+        </.button>
       </header>
 
       <p :if={@view.capabilities.submit and not @view.may_submit} class="text-sm opacity-60">
@@ -538,16 +544,17 @@ defmodule PhoenixKitProjects.Web.PortalLive do
       <%!-- Real links, not JS tabs: server-rendered, crawlable, and they
            work with scripting off. They also replace the old "To do: 3"
            chip row, which read like debug output. --%>
-      <div :if={@view.capabilities.list and @view.issues != []} class="join">
-        <.link
-          :for={{key, label, count} <- status_filters(@view)}
-          patch={board_path(@slug, key)}
-          class={["btn btn-sm join-item", @status_filter == key && "btn-active"]}
-        >
-          {label}
-          <span class="opacity-50">{count}</span>
-        </.link>
-      </div>
+      <.nav_tabs
+        :if={@view.capabilities.list and @view.issues != []}
+        active_tab={@status_filter}
+        variant={:boxed}
+        class="tabs-sm self-start"
+        tabs={
+          for {key, label, count} <- status_filters(@view) do
+            %{id: key, label: label, badge: count, patch: board_path(@slug, key)}
+          end
+        }
+      />
 
       <section :if={@view.capabilities.list} class="flex flex-col">
         <.empty_state

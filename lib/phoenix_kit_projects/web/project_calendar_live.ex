@@ -560,10 +560,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
           aria-busy="true"
           aria-label={gettext("Loading the calendar…")}
         >
-          <div class="h-6 w-1/3 bg-base-200 rounded animate-pulse"></div>
-          <div class="h-4 w-2/3 bg-base-200/70 rounded animate-pulse"></div>
-          <div class="h-4 w-1/2 bg-base-200/70 rounded animate-pulse"></div>
-          <div class="h-4 w-3/5 bg-base-200/70 rounded animate-pulse"></div>
+          <div class="h-6 w-1/3 bg-base-content/15 rounded animate-pulse"></div>
+          <div class="h-4 w-2/3 bg-base-content/10 rounded animate-pulse"></div>
+          <div class="h-4 w-1/2 bg-base-content/10 rounded animate-pulse"></div>
+          <div class="h-4 w-3/5 bg-base-content/10 rounded animate-pulse"></div>
         </div>
       <% else %>
         <%= if elem(@calendar_items, 0) == [] do %>

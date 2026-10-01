@@ -255,6 +255,26 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       assert html =~ "open_health_modal"
     end
 
+    # A feature switched off in another session while its dialog is open
+    # must not trap the dialog: closing changes nothing, so it is not gated.
+    test "the health dialog still closes after lifecycle is switched off", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, project} =
+        Projects.create_project(%{"name" => "Normal #{uniq()}", "start_mode" => "immediate"})
+
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}")
+      render_click(view, "open_health_modal", %{})
+      assert has_element?(view, "dialog[id^=project-health-]")
+
+      {:ok, _} = Features.set_flags(project, %{"lifecycle" => false})
+      _ = render(view)
+
+      html = render_click(view, "close_health_modal", %{})
+      refute has_element?(view, "dialog[id^=project-health-]")
+      refute html =~ "This feature is turned off for this project."
+    end
+
     test "setting health on a checklist is refused, not just hidden", %{conn: conn} do
       conn = put_test_scope(conn, fake_scope())
       project = checklist()

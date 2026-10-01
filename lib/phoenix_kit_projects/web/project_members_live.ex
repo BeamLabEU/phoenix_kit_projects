@@ -502,9 +502,9 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                 ownership_note={false}
               />
               <div>
-                <button type="submit" class="btn btn-primary btn-sm" phx-disable-with={gettext("Saving…")}>
+                <.button type="submit" size="sm" phx-disable-with={gettext("Saving…")}>
                   {gettext("Save access")}
-                </button>
+                </.button>
               </div>
             </form>
           </div>
@@ -529,34 +529,40 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                    exactly one enabled; an optgroup needs neither, and the
                    value carries its own kind so the server never has to
                    trust a separate type field. --%>
-              <label class="fieldset grow max-w-sm">
-                <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Group")}</span>
-                <label class="select select-sm">
-                  <select name="subject">
-                    <option value="">{gettext("Choose a team, department, or role…")}</option>
-                    <optgroup :for={{kind, label, options} <- @subject_options} label={label}>
-                      <option :for={{name, uuid} <- options} value={"#{kind}:#{uuid}"}>
-                        {name}
-                      </option>
-                    </optgroup>
-                  </select>
-                </label>
-              </label>
+              <div class="grow max-w-sm">
+                <.select
+                  id="grant-subject"
+                  name="subject"
+                  label={gettext("Group")}
+                  prompt={gettext("Choose a team, department, or role…")}
+                  class="select-sm"
+                  value=""
+                  options={
+                    for {kind, label, options} <- @subject_options do
+                      {label, for({name, uuid} <- options, do: {name, "#{kind}:#{uuid}"})}
+                    end
+                  }
+                />
+              </div>
 
-              <label class="fieldset w-36">
-                <span class="fieldset-legend text-xs opacity-70 mb-1">{gettext("Role")}</span>
-                <label class="select select-sm">
-                  <select name="role">
-                    <option value="viewer">{gettext("Viewer")}</option>
-                    <option value="member">{gettext("Member")}</option>
-                    <option value="manager">{gettext("Manager")}</option>
-                  </select>
-                </label>
-              </label>
+              <div class="w-36">
+                <.select
+                  id="grant-role"
+                  name="role"
+                  label={gettext("Role")}
+                  class="select-sm"
+                  value="viewer"
+                  options={[
+                    {gettext("Viewer"), "viewer"},
+                    {gettext("Member"), "member"},
+                    {gettext("Manager"), "manager"}
+                  ]}
+                />
+              </div>
 
-              <button type="submit" class="btn btn-primary btn-sm gap-1">
+              <.button type="submit" size="sm" class="gap-1">
                 <.icon name="hero-user-group" class="w-4 h-4" /> {gettext("Grant")}
-              </button>
+              </.button>
             </form>
 
             <p class="text-xs opacity-50">
@@ -580,17 +586,20 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                     )} · {gettext("and anyone added later")}
                   </div>
                 </div>
-                <span class="badge badge-ghost badge-sm shrink-0">{grant.role}</span>
-                <button
+                <span class="badge badge-ghost badge-sm shrink-0">{role_label(grant.role)}</span>
+                <.button
                   type="button"
-                  class="btn btn-ghost btn-xs btn-circle text-error"
+                  variant="ghost"
+                  size="xs"
+                  class="btn-circle text-error"
                   phx-click="revoke_grant"
+                phx-disable-with={gettext("Removing…")}
                   phx-value-uuid={grant.uuid}
                   data-confirm={gettext("Remove this group's access?")}
                   aria-label={gettext("Remove access")}
                 >
                   <.icon name="hero-x-mark" class="w-4 h-4" />
-                </button>
+                </.button>
               </div>
             </div>
           </div>
@@ -599,11 +608,12 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
         <%!-- Member rows --%>
         <div class="card border border-base-200 bg-base-100">
           <div class="card-body py-2 px-4 divide-y divide-base-200">
-            <%= if @members == [] do %>
-              <p class="text-sm opacity-60 py-3">
-                {gettext("No members yet — the project is visible to admins only.")}
-              </p>
-            <% end %>
+            <.empty_state
+              :if={@members == []}
+              icon="hero-users"
+              title={gettext("No members yet — the project is visible to admins only.")}
+              class="py-6"
+            />
             <div :for={member <- @members} class="flex items-center gap-3 py-2">
               <div class="avatar placeholder">
                 <div class="bg-base-300 text-base-content rounded-full w-8 h-8 text-xs">
@@ -615,13 +625,15 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                   {(member.user && member.user.email) || gettext("(deleted account)")}
                 </div>
               </div>
-              <form phx-change="change_role" class="shrink-0">
+              <form id={"member-role-#{member.user_uuid}"} phx-change="change_role" class="shrink-0">
                 <input type="hidden" name="user" value={member.user_uuid} />
                 <.role_select name="role" value={member.role} />
               </form>
-              <button
+              <.button
                 type="button"
-                class="btn btn-ghost btn-xs btn-circle text-error"
+                variant="ghost"
+                size="xs"
+                class="btn-circle text-error"
                 phx-click="remove_member"
                 phx-value-user={member.user_uuid}
                 phx-disable-with="…"
@@ -629,7 +641,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                 aria-label={gettext("Remove member")}
               >
                 <.icon name="hero-x-mark" class="w-4 h-4" />
-              </button>
+              </.button>
             </div>
           </div>
         </div>
@@ -651,14 +663,22 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
 
   defp role_select(assigns) do
     ~H"""
-    <label class="select select-sm">
-      <select name={@name}>
-        <option value="owner" selected={@value == "owner"}>{gettext("Owner")}</option>
-        <option value="manager" selected={@value == "manager"}>{gettext("Manager")}</option>
-        <option value="member" selected={@value == "member"}>{gettext("Member")}</option>
-        <option value="viewer" selected={@value == "viewer"}>{gettext("Viewer")}</option>
-      </select>
-    </label>
+    <div class="w-32">
+      <.select
+        name={@name}
+        value={@value}
+        class="select-sm"
+        aria-label={gettext("Role")}
+        options={for role <- ~w(owner manager member viewer), do: {role_label(role), role}}
+      />
+    </div>
     """
   end
+
+  # A role's label in the viewer's language; the stored value is the key.
+  defp role_label("owner"), do: gettext("Owner")
+  defp role_label("manager"), do: gettext("Manager")
+  defp role_label("member"), do: gettext("Member")
+  defp role_label("viewer"), do: gettext("Viewer")
+  defp role_label(other), do: other
 end

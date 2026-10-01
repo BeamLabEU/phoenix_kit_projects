@@ -83,13 +83,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       socket
       |> assign(
         page_title: gettext("Projects"),
-        # The create action lives in the admin breadcrumb (+ the
-        # add-row under the list) — no in-content header row.
-        page_action: %{
-          icon: "hero-plus",
-          label: gettext("New project"),
-          navigate: Paths.new_project()
-        },
+        # No header "+": the create button is the list toolbar's last
+        # control (`new_project_button/1`), like every admin list.
         wrapper_class: wrapper_class,
         pagination: pagination,
         # Recency default — most recently edited projects first; manual
@@ -242,7 +237,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # sort selector's form.
   defp status_filter_control(assigns) do
     ~H"""
-    <form
+    <form id="projects-status-filter"
       :if={@statuses_available and @status_options != []}
       phx-change="filter_status"
       class="flex items-center"
@@ -539,14 +534,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       <%= if @total_count == 0 do %>
         <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects yet.")}>
           <:cta>
-            <.smart_link
-              navigate={Paths.new_project()}
-              emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+            <.new_project_button
               embed_mode={@embed_mode}
-              class="link link-primary text-sm"
-            >
-              {gettext("Create your first")}
-            </.smart_link>
+              label={gettext("Create your first project")}
+            />
           </:cta>
         </.empty_state>
       <% else %>
@@ -616,6 +607,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
               />
               <ListUi.columns_control options={column_options()} visible={@visible_columns} />
             </:trailing>
+            <:primary>
+              <.new_project_button embed_mode={@embed_mode} />
+            </:primary>
           </.bulk_actions_toolbar>
 
           {render_projects_table(assigns, draggable?, lang)}
@@ -632,17 +626,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           >
             {gettext("No projects match.")}
           </p>
-
-          <%!-- The create action, at the foot of the list (the header
-               row is gone — its "+" lives in the admin breadcrumb). --%>
-          <.smart_link
-            navigate={Paths.new_project()}
-            emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
-            embed_mode={@embed_mode}
-            class="btn btn-ghost btn-sm w-full justify-start border border-dashed border-base-300 text-base-content/60 hover:text-base-content hover:border-base-content/40"
-          >
-            <.icon name="hero-plus" class="w-4 h-4" /> {gettext("New project")}
-          </.smart_link>
           </div>
         </.bulk_select_scope>
 
@@ -691,6 +674,27 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       {"created_by", gettext("Created by")},
       {"external_id", gettext("External ID")}
     ]
+  end
+
+  attr(:embed_mode, :atom, required: true)
+  attr(:label, :string, default: nil)
+
+  # The list's create button: the toolbar's last control, and the empty
+  # state's call to action. `smart_link`, so an embedded list opens the
+  # form in its drawer instead of navigating away.
+  defp new_project_button(assigns) do
+    ~H"""
+    <.smart_link
+      navigate={Paths.new_project()}
+      emit={{PhoenixKitProjects.Web.ProjectFormLive, %{"live_action" => "new"}}}
+      embed_mode={@embed_mode}
+      class="btn btn-primary btn-sm"
+      aria-label={@label || gettext("New project")}
+    >
+      <.icon name="hero-plus" class="w-4 h-4" />
+      <span class={!@label && "hidden sm:inline"}>{@label || gettext("New project")}</span>
+    </.smart_link>
+    """
   end
 
   # Extracted because the table is rendered both inside the
