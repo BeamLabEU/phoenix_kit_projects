@@ -1251,8 +1251,9 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `truncated` whether the list was cut. `done_today` is a tail of what was finished in the
     last day (for the daily story). Then the project and its policy, the sub-projects one line
     each, the project's notes since a moment, the client's latest interactions
-    (`client.interactions`, when the Client extension is on) and the next planned events
-    (`events`). Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
+    (`client.interactions` — from the nearest project above that holds the client, when you
+    work in a sub-project; `client.project_uuid` says which) and the next planned events
+    (`events`). Every task row carries its `interactions`. Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
     once a minute; it answers what changed at or after that moment (inclusive, so a change in
     the same second is never lost - dedupe by uuid) and `now` for the next round.
 

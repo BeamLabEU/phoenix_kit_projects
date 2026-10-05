@@ -577,6 +577,23 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
              |> json_response(404)
 
     refute Enum.any?(Projects.list_assignments(child["uuid"]), &(Assignment.label(&1) == "Lost"))
+
+    # the briefing inside the sub-project still shows the parent's client, and the row its link
+    {:ok, _, below} = ApiKeys.create(project, %{"name" => "Below"})
+
+    sub_brief =
+      conn
+      |> api(below)
+      |> get("#{@base}/briefing?project=#{child["uuid"]}")
+      |> json_response(200)
+
+    assert sub_brief["client"]["project_uuid"] == project.uuid
+    assert [%{"subject" => "Call"}] = sub_brief["client"]["interactions"]
+
+    assert Enum.find(sub_brief["tasks"], &(&1["uuid"] == in_child["uuid"]))["interactions"] == [
+             uuid
+           ]
+
     Process.delete(:fake_client_root)
 
     # the client lines need the interactions scope: a key minted now carries it

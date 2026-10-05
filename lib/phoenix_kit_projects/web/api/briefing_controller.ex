@@ -96,15 +96,26 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   # The client's latest interactions — the four calls today an agent would
   # otherwise not learn about — through the extension's provider when the
   # Client extension is on and the key may read it; `since` narrows them.
+  # The client usually sits on the parent of the sub-project an agent works
+  # in, so the briefing looks at the task's project first, then each
+  # ancestor within the key's reach — the same walk a task's link makes.
   defp client_lines(conn, since) do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
     with %{ext: ext, module: provider} <- Extensions.api_provider("interactions"),
-         true <- Extensions.enabled?(project, ext.key),
-         true <- ApiKey.scope?(key, provider.scopes().read),
-         {:ok, %{interactions: rows}} <- list_interactions(provider, conn, since) do
-      # one line each: the bodies are the interaction's own read
-      %{interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"]))}
+         true <- ApiKey.scope?(key, provider.scopes().read) do
+      [project | Enum.reverse(Projects.parent_chain(project.uuid))]
+      |> Enum.filter(&(Json.within_reach?(key, &1.uuid) and Extensions.enabled?(&1, ext.key)))
+      |> Enum.find_value(nil, fn p ->
+        case list_interactions(provider, Json.rescope(conn, p), since) do
+          # one line each: the bodies are the interaction's own read
+          {:ok, %{interactions: rows}} ->
+            %{project_uuid: p.uuid, interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"]))}
+
+          _ ->
+            nil
+        end
+      end)
     else
       _ -> nil
     end
@@ -208,6 +219,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       origin: a.origin,
       labels: Enum.map(labels, & &1.name),
       checklist: Assignment.checklist_counts(a),
+      interactions: Projects.interactions_of(a),
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       direction: latest.redirect && brief_note(latest.redirect),
