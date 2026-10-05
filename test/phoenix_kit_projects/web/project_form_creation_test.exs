@@ -63,6 +63,61 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
     assert html =~ "Statuses: site default"
   end
 
+  describe "the change cue on the Customize drawers" do
+    # What the browser posts on any change: every field, the hidden/checkbox
+    # pairs collapsed to their last value (Plug keeps the last of a repeated
+    # key), the status select's "Use global default" as "".
+    defp full_params(ext_key, on?) do
+      flags =
+        ~w(assignees dependencies estimates in_progress labels ledger library lifecycle priorities progress scheduling statuses subprojects view_board view_calendar view_timeline)
+
+      %{
+        "archetype" => "standard",
+        "ext" => %{
+          "discussions" => "true",
+          "files" => "true",
+          "tasks" => "true",
+          "events" => "false",
+          "portal" => "false",
+          "whiteboards" => "false",
+          ext_key => if(on?, do: "true", else: "false")
+        },
+        "flag" => Map.new(flags, &{&1, "true"}),
+        "project" => %{
+          "counts_weekends" => "false",
+          "description" => "",
+          "name" => "",
+          "scheduled_start_date" => "",
+          "start_mode" => "immediate",
+          "status_entity_uuid" => ""
+        },
+        "status_translation_mode" => "",
+        "visibility" => "private"
+      }
+    end
+
+    # Flipping an extension with the other drawers closed cued Start-from
+    # too, with nothing there to see: the status select's form value is the
+    # raw "" once anything has been posted, against a nil baseline (Max,
+    # 2026-10-05). The cue must name only the drawer that changed, and clear
+    # when the change is undone.
+    test "flipping an extension cues the Extensions drawer only, and undoing it clears", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+      render_change(view, "validate", full_params("events", true))
+      assert cue_marked(view) == ["create-extensions"]
+
+      render_change(view, "validate", full_params("events", false))
+      assert cue_marked(view) == []
+    end
+
+    defp cue_marked(view) do
+      :sys.get_state(view.pid).socket.assigns.cue_marked |> MapSet.to_list() |> Enum.sort()
+    end
+  end
+
   describe "who-can-do-what floors (the 2026-08-07 panel's permissions answer)" do
     test "the section renders the overridable floors, not a scheme editor", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/new")

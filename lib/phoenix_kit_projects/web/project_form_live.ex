@@ -898,7 +898,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       flags: assigns.flag_states,
       exts: assigns.ext_states,
       authz_rows: assigns |> visible_authz_actions() |> Enum.map(& &1.settings_key),
-      statuses: assigns.form[:status_entity_uuid].value,
+      # Blank-normalised: the form's value is the RAW param once anything has
+      # been posted, so "Use global default" read as `""` against a `nil`
+      # baseline and cued the Start-from drawer on the first change of
+      # anything (Max, 2026-10-05: a dot with nothing to see).
+      statuses: Values.blank_to_nil(assigns.form[:status_entity_uuid].value),
       start_mode: assigns.form[:start_mode].value
     }
   end
