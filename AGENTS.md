@@ -11,10 +11,11 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 2.43.0 and < 3.0.0` (Hex — the release
-  that carries `Storage.ResourceFolders`, `PhoenixKitWeb.Actor`,
-  `Activity.log/3` and the `form_actions` / `bulk_actions_toolbar` /
-  `form_section` attrs and slots the LiveViews use; the compound form keeps the ceiling open across later 2.x
+- **Depends on:** `phoenix_kit` `>= 2.49.0 and < 3.0.0` (Hex — the release
+  that carries `activity_list/1`, on top of `Storage.ResourceFolders`,
+  `PhoenixKitWeb.Actor`, `Activity.log/3`, `TableColumns` and the
+  `form_actions` / `bulk_actions_toolbar` / `form_section` attrs and slots
+  the LiveViews use; the compound form keeps the ceiling open across later 2.x
   minors and `core_pin_conformance_test.exs` guards it),
   `phoenix_kit_ai` `~> 0.18` (hard — the AI-translation pipeline),
   `phoenix_kit_comments` `~> 0.3` (hard — `ProjectShowLive` does
@@ -492,7 +493,11 @@ browsing the public portal is a visitor.
   `week_start_day`.
 - `projects_gantt_*` — the Timeline-chart customizer (`GanttDisplay`), same page.
 - `projects_list_columns` / `projects_tasks_columns` /
-  `projects_templates_columns` — comma-joined visible-column sets per list page.
+  `projects_templates_columns` — RETIRED: the list pages' visible columns
+  were one comma-joined site-wide row each; they are now each viewer's own
+  choice in core's `ViewPrefs` (keys `projects.list` / `projects.tasks` /
+  `projects.templates`, via `PhoenixKitWeb.TableColumns`). The rows are no
+  longer read or written; an install that still has them can delete them.
 - `projects_list_controls_mode` / `projects_list_controls_threshold` — when the
   task list's lens + sort render (`auto` | `always` | `never`; default
   threshold 10).

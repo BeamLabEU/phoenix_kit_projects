@@ -19,7 +19,15 @@ defmodule PhoenixKitProjects.CoreUiApiConformanceTest do
   do not delete the entry.
   """
 
-  alias PhoenixKitWeb.Components.Core.{BulkSelect, FormActions, FormSection, Modal, PopoverPanel}
+  alias PhoenixKitWeb.Components.Core.{
+    ActivityList,
+    BulkSelect,
+    ColumnSettings,
+    FormActions,
+    FormSection,
+    Modal,
+    PopoverPanel
+  }
 
   # {module, component, attrs the LiveViews pass, slots the LiveViews fill}
   @used [
@@ -27,7 +35,11 @@ defmodule PhoenixKitProjects.CoreUiApiConformanceTest do
     {BulkSelect, :bulk_actions_toolbar, [], [:primary]},
     {FormSection, :form_section, [:title, :icon, :body_class], [:subtitle, :actions]},
     {Modal, :modal, [:show, :on_close, :close_guard, :placement, :max_width], [:title, :actions]},
-    {PopoverPanel, :popover_panel, [:align, :width_class], []}
+    {PopoverPanel, :popover_panel, [:align, :width_class], []},
+    # The list pages' column picker (core 2.38) and the project Activity
+    # page's list (core 2.49) — the pieces behind the 2.49.0 floor.
+    {ColumnSettings, :column_settings_modal, [:show, :id, :columns, :selected], []},
+    {ActivityList, :activity_list, [:id, :entries, :detail_links], []}
   ]
 
   for {module, component, attrs, slots} <- @used do

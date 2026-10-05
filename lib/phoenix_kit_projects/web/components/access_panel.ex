@@ -30,6 +30,8 @@ defmodule PhoenixKitProjects.Web.Components.AccessPanel do
   use Phoenix.Component
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import PhoenixKitWeb.Components.Core.Select, only: [select: 1]
+
   # What each floor DEPENDS on, keyed on the flags/extensions that provide
   # the capability — ALL of a row's requirements must hold. Every task
   # floor needs the task list itself (a project can be only its
@@ -118,17 +120,13 @@ defmodule PhoenixKitProjects.Web.Components.AccessPanel do
             id={"authz-row-#{action.settings_key}"}
           >
             <span class="text-sm">{action_label(action.settings_key)}</span>
-            <label class="select select-sm w-56 shrink-0">
-              <select name={"authz[#{action.settings_key}]"}>
-                <option
-                  :for={{value, label} <- choice_labels()}
-                  value={value}
-                  selected={Map.get(@authz_choices, action.settings_key, action.default) == value}
-                >
-                  {label}
-                </option>
-              </select>
-            </label>
+            <.select
+              id={"authz-#{action.settings_key}"}
+              name={"authz[#{action.settings_key}]"}
+              value={Map.get(@authz_choices, action.settings_key, action.default)}
+              options={for {value, label} <- choice_labels(), do: {label, value}}
+              class="select-sm w-56 shrink-0"
+            />
           </div>
         </div>
       </div>

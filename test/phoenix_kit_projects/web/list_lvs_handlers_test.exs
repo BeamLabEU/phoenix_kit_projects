@@ -450,7 +450,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/tasks")
 
       for col <- ["uses", "last_used", "created_by"] do
-        render_click(view, "toggle_column", %{"col" => col})
+        render_click(view, "add_column", %{"column_id" => col})
       end
 
       html = render(view)
@@ -556,8 +556,8 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       )
 
       {:ok, view, _html} = live(conn, "/en/admin/projects")
-      render_click(view, "toggle_column", %{"col" => "tasks"})
-      html = render_click(view, "toggle_column", %{"col" => "created_by"})
+      render_click(view, "add_column", %{"column_id" => "tasks"})
+      html = render_click(view, "add_column", %{"column_id" => "created_by"})
 
       assert has_element?(view, "th", "Tasks")
       assert has_element?(view, "th", "Created by")
@@ -735,32 +735,63 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
   end
 
   describe "TemplatesLive — column visibility" do
-    test "toggle_column hides/shows columns and persists across mounts", %{conn: conn} do
+    # Core's column picker (`column_settings_modal` + `TableColumns`) keeps
+    # each viewer's columns in their ViewPrefs, which reference a real user
+    # row — so the viewer here is a registered user behind the fake scope.
+    test "the picker's edits hide/show columns and persist for the viewer", %{conn: conn} do
       fixture_template(%{"name" => "TA"})
+      conn = put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!()))
 
-      # Scope assertions to `<th>` — the Columns dropdown always lists
-      # every label, so a bare `html =~` can't distinguish visibility.
+      # Scope assertions to `<th>` — the picker's modal lists every label,
+      # so a bare `html =~` can't distinguish visibility.
       {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
       # Defaults: Weekends on, Created/Updated off.
       assert has_element?(view, "th", "Weekends")
       refute has_element?(view, "th", "Created")
 
-      render_click(view, "toggle_column", %{"col" => "weekends"})
+      render_click(view, "remove_column", %{"column_id" => "weekends"})
       refute has_element?(view, "th", "Weekends")
 
-      render_click(view, "toggle_column", %{"col" => "created"})
+      render_click(view, "add_column", %{"column_id" => "created"})
       assert has_element?(view, "th", "Created")
 
-      # Persisted in settings — a fresh mount sees the same set.
+      # Saved for the viewer — a fresh mount sees the same set.
       {:ok, view2, _html2} = live(conn, "/en/admin/projects/templates")
       refute has_element?(view2, "th", "Weekends")
       assert has_element?(view2, "th", "Created")
+
+      # Reset takes the choice back out: the defaults again, on this mount
+      # and the next.
+      render_click(view2, "reset_columns", %{})
+      assert has_element?(view2, "th", "Weekends")
+      refute has_element?(view2, "th", "Created")
+      {:ok, view3, _html3} = live(conn, "/en/admin/projects/templates")
+      assert has_element?(view3, "th", "Weekends")
     end
 
-    test "toggle_column ignores unknown column names", %{conn: conn} do
+    test "the table draws the optional columns in the viewer's order", %{conn: conn} do
+      fixture_template(%{"name" => "TB"})
+      {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
+
+      render_click(view, "add_column", %{"column_id" => "created"})
+      render_click(view, "add_column", %{"column_id" => "tasks"})
+      # Header order follows the shown list: Weekends, Created, Tasks …
+      html = render(view)
+      assert order_of(html, ["Weekends", "Created", "Tasks"]) == [0, 1, 2]
+
+      # … and reorder_columns (what the modal's drag sends) moves them.
+      render_click(view, "reorder_columns", %{"ordered_ids" => ["tasks", "weekends", "created"]})
+      html = render(view)
+      assert order_of(html, ["Tasks", "Weekends", "Created"]) == [0, 1, 2]
+    end
+
+    test "an unknown column name is ignored", %{conn: conn} do
       fixture_template()
       {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
-      assert render_click(view, "toggle_column", %{"col" => "evil"})
+      assert render_click(view, "add_column", %{"column_id" => "evil"})
+      refute has_element?(view, "th", "evil")
+      assert render_click(view, "reorder_columns", %{"ordered_ids" => "evil"})
+      assert has_element?(view, "th", "Weekends")
     end
 
     test "tasks / created_by / external_id columns render batched data", %{conn: conn} do
@@ -794,7 +825,7 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/templates")
 
       for col <- ["tasks", "created_by", "external_id"] do
-        render_click(view, "toggle_column", %{"col" => col})
+        render_click(view, "add_column", %{"column_id" => col})
       end
 
       html = render(view)
@@ -898,5 +929,22 @@ defmodule PhoenixKitProjects.Web.ListLVsHandlersTest do
       assert html =~ "101"
       assert length(String.split(html, "data-search=")) - 1 == 50
     end
+  end
+
+  # The rank of each header label by its position in the table's `<thead>`
+  # (the labels also appear in the sidebar and the column picker, so the
+  # page as a whole cannot be searched).
+  defp order_of(html, labels) do
+    [_, thead_on] = String.split(html, "<thead", parts: 2)
+    [thead, _] = String.split(thead_on, "</thead>", parts: 2)
+
+    positions =
+      for label <- labels do
+        {pos, _} = :binary.match(thead, label)
+        pos
+      end
+
+    ranked = positions |> Enum.sort() |> Enum.with_index() |> Map.new()
+    Enum.map(positions, &Map.fetch!(ranked, &1))
   end
 end

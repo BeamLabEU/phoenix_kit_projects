@@ -159,13 +159,15 @@ reference):
   filtered view** (non-position sort, active search, Projects' status
   filter): the DnD handlers renumber the dropped list to absolute `1..N`,
   so a sparse subset would collide with hidden rows' positions.
-- **Column visibility** — a Columns dropdown of optional columns, persisted
-  site-wide (one comma-joined settings row per page:
-  `projects_list_columns` / `projects_tasks_columns` /
-  `projects_templates_columns`) via `ListUi.read_visible_columns/3` +
-  `toggle_visible_column/4`. Batched lookup maps (`assignment_counts_for_projects/1`,
+- **Column visibility** — core's live `column_settings_modal` (the toolbar's
+  Columns button), each viewer's own choice and order, kept by core's
+  `PhoenixKitWeb.TableColumns` in their `ViewPrefs` under `projects.list` /
+  `projects.tasks` / `projects.templates` (`ListUi.columns_spec/3` +
+  `load_columns/2`). The table renders the optional columns in that order,
+  Name leading and the rest sized to their content and packed right
+  (`ListUi` moduledoc). Batched lookup maps (`assignment_counts_for_projects/1`,
   `template_usage/1`, `task_usage/1`, `creation_actors/2`) only query while
-  their column is visible; `toggle_column` reloads so a newly-shown column
+  their column is visible; a column edit reloads so a newly-shown column
   gets its map. "Created by" resolves from the activity log's creation
   entries (best-effort — pruned/off-form rows render a dash). Template
   "Uses" counts the durable `settings["created_from_template_uuid"]`

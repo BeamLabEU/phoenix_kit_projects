@@ -2,16 +2,20 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
   @moduledoc """
   Per-project **Activity** — the hub's native audit surface (P2b): core's
   activity log filtered to this project via the `resource_uuid` filter
-  (`PhoenixKit.Activity.list/1`), paged with load-more. Read-only; guarded
-  with `Code.ensure_loaded?` so a stripped Activity module degrades to an
-  empty feed (the hello_world events pattern). Embeddable like every LV
-  here.
+  (`PhoenixKit.Activity.list/1`), drawn by core's `activity_list/1` and
+  paged with load-more. Read-only; guarded with `Code.ensure_loaded?` so a
+  stripped Activity module degrades to an empty feed (the hello_world
+  events pattern). Embeddable like every LV here.
   """
 
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  # Opt-in import, like core's own callers (it is not in `:live_view`'s set).
+  import PhoenixKitWeb.Components.Core.ActivityList, only: [activity_list: 1]
+
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.{Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Crumbs
@@ -161,25 +165,19 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
         <%= if @entries == [] do %>
           <.empty_state icon="hero-clock" title={gettext("No activity recorded yet.")} />
         <% else %>
-          <div class="flex flex-col divide-y divide-base-200 border border-base-200 rounded-box bg-base-100">
-            <div :for={entry <- @entries} class="flex items-start gap-3 px-4 py-3">
-              <.icon name="hero-bolt" class="w-4 h-4 mt-0.5 opacity-40 shrink-0" />
-              <div class="min-w-0 grow">
-                <div class="text-sm">
-                  <span class="font-medium">{entry.action}</span>
-                  <span :if={entry.actor} class="opacity-60">
-                    · {entry.actor.email}
-                  </span>
-                </div>
-                <div :if={entry.metadata != %{} and entry.metadata} class="text-xs opacity-50 truncate">
-                  {inspect(entry.metadata, limit: 6)}
-                </div>
-              </div>
-              <span class="text-xs opacity-50 shrink-0">
-                {L10n.format_month_day_time(entry.inserted_at)}
-              </span>
-            </div>
-          </div>
+          <%!-- Core's own rendering of its Activity log: when, who, what,
+               the subject and every recorded field. The per-entry link
+               opens the Activity page, which only a viewer with the
+               dashboard's access can reach (core's Media history makes
+               the same check). --%>
+          <.activity_list
+            id={"project-activity-#{@project.uuid}"}
+            entries={@entries}
+            detail_links={
+              match?(%Scope{}, @phoenix_kit_current_scope) and
+                Scope.has_module_access?(@phoenix_kit_current_scope, "dashboard")
+            }
+          />
 
           <.load_more
             :if={@has_more}
