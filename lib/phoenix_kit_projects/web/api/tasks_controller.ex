@@ -16,6 +16,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   use Phoenix.Controller, formats: [:json]
 
+  alias PhoenixKit.Mentions
   alias PhoenixKitProjects.{Activity, Projects}
   alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitProjects.Web.Api.Json
@@ -84,6 +85,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
             metadata: api_metadata(key, %{"task" => title})
           )
 
+          sync_mentions(a.uuid, task_attrs["description"], key)
+
           {201, %{task: Json.task(Projects.get_assignment(a.uuid))}}
 
         {:error, _step, %Ecto.Changeset{} = cs} ->
@@ -124,12 +127,30 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         metadata: api_metadata(key, %{"fields" => Map.keys(Map.merge(content, assignment_attrs))})
       )
 
+      if Map.has_key?(content, "description"),
+        do: sync_mentions(a.uuid, content["description"], key)
+
       {200, %{task: Json.task(Projects.get_assignment(a.uuid))}}
     else
       {:error, {status, _} = pair} when is_integer(status) -> pair
       {:error, %Ecto.Changeset{} = cs} -> Json.changeset_error(cs)
     end
   end
+
+  # Indexes the `#` links in a saved description, so a task that says
+  # "from this meeting" is listed on the meeting (core keeps the reverse
+  # index). Never fails the save: a mention that does not index is a
+  # missing backlink, not lost work.
+  defp sync_mentions(assignment_uuid, description, key) when is_binary(description) do
+    Mentions.sync("project_task", assignment_uuid, description,
+      field: "description",
+      actor_uuid: key.created_by_uuid
+    )
+  rescue
+    _ -> :ok
+  end
+
+  defp sync_mentions(_uuid, _description, _key), do: :ok
 
   defp content_editable(_a, content) when map_size(content) == 0, do: :ok
 

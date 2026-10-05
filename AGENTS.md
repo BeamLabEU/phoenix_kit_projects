@@ -659,6 +659,21 @@ as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
 mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
 them.
 
+### Tasks and `#` mentions
+
+A task's description goes through core's mentions (`<.translatable_field
+… mentions>` in the form, `<.mention_text>` on the page) and — since the
+CRM's meetings asked (2026-10-05) — is INDEXED too: the assignment form
+(`sync_task_mentions/3`) and the API's create/update call
+`PhoenixKit.Mentions.sync("project_task", assignment_uuid, description)`,
+so a task whose text carries `#[crm_interaction:…|…]` is listed on the
+meeting through `Mentions.list_backlinks/3`. Before that only sub-project
+and project descriptions were synced; a `#` in a task rendered as a chip
+and was never a backlink. `AssignmentFormLive` `:new` takes a
+`description` param next to `title` for exactly this (the CRM's "Add task"
+pre-fills the chip). The link is the text: edit the chip out and the
+backlink goes with it (panel 2:1 against an extra origin field).
+
 Idea, not built (2026-10-05, Max: skip for now): **webhooks** on task events,
 so an agent is handed a task instead of polling — the module already
 broadcasts every task change on `PhoenixKitProjects.PubSub`, so a webhook
@@ -703,6 +718,7 @@ The three tables a host app depends on. Full prose in
 | `"pubsub_topic"` | all | **Required** when `mode` is `"emit"` or `"popup"` |
 | `"frame_ref"` | all | Race-safe pop identity, inherited from PopupHost |
 | `"close_on"` | all | Subset of `["closed", "saved", "deleted"]`; defaults `["closed"]` |
+| `"host_paths"` | contributed extension tabs | `%{"new_task" => path}` — where the hub's own pages are, so a tab (the CRM's "add a task from this meeting") can send someone there without naming this module's routes |
 
 Emit-mode event vocabulary (UI-intent verbs, deliberately disjoint from
 `PhoenixKitProjects.PubSub`'s content verbs so `handle_info` clauses never

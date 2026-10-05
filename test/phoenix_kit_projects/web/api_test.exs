@@ -8,6 +8,8 @@ defmodule PhoenixKitProjects.Web.ApiTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias PhoenixKit.Mentions
+  alias PhoenixKit.Mentions.Token
   alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Features, Ledger, Projects}
   alias PhoenixKitProjects.Test.Repo
 
@@ -384,6 +386,35 @@ defmodule PhoenixKitProjects.Web.ApiTest do
              c
              |> post_json("#{@base}/usage", %{tokens: 1, occurred_at: future}, idem())
              |> json_response(422)
+  end
+
+  test "a # link in a created or edited description is indexed as a backlink", %{
+    conn: conn,
+    token: token,
+    assignment: a
+  } do
+    c = api(conn, token)
+
+    {:ok, token_text} =
+      Token.to_string(:resource, "project_task", a.uuid, "Wire the API")
+
+    %{"task" => %{"uuid" => created}} =
+      c
+      |> post_json("#{@base}/tasks", %{
+        title: "Follow-up",
+        description: "Came out of #{token_text}"
+      })
+      |> json_response(201)
+
+    assert [%{source_type: "project_task", source_uuid: ^created}] =
+             Mentions.list_backlinks("project_task", a.uuid)
+
+    # Editing the link out of the text takes the backlink with it.
+    assert c
+           |> patch_json("#{@base}/tasks/#{created}", %{description: "plain"})
+           |> json_response(200)
+
+    assert Mentions.list_backlinks("project_task", a.uuid) == []
   end
 
   # ── Rate limit ──────────────────────────────────────────────────

@@ -4456,7 +4456,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid,
               "mode" => @embed_mode,
               "pubsub_topic" => @embed_pubsub_topic,
-              "frame_ref" => @embed_frame_ref
+              "frame_ref" => @embed_frame_ref,
+              # Where the host's own pages are, for a tab that wants to send
+              # someone there (the CRM's "add a task from this meeting")
+              # without naming this module's routes itself.
+              "host_paths" => %{"new_task" => Paths.new_assignment(@project.uuid)}
             })}
         </div>
       <% end %>

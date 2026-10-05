@@ -84,6 +84,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  defp prefill_description(params) do
+    case Map.get(params, "description") do
+      text when is_binary(text) -> text |> String.trim() |> String.slice(0, 2000)
+      _ -> nil
+    end
+  end
+
   # The hub gate map for this form's project. Placeholder projects (the
   # not-found render window) fall back to catalog defaults.
   defp assign_fx(socket) do
@@ -363,7 +370,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           excluded_closure_uuids: MapSet.new()
         )
         |> assign_options()
-        |> assign_form(Projects.change_assignment(assignment))
+        # A `description` param (the CRM's "add a task from this meeting"
+        # hands over the meeting's `#` chip) prefills the description the
+        # way `title` prefills the title — nothing is saved until Save.
+        |> assign_form(
+          Projects.change_assignment(assignment, %{"description" => prefill_description(params)})
+        )
         |> assign_status_init(%Project{})
     end
   end
@@ -1101,6 +1113,31 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   #
   # Never allowed to fail the save. A mention that doesn't index is a
   # missing backlink; a save that rolls back because of one is lost work.
+  # The same, for a TASK's description: indexed under `project_task` (the
+  # type `ResourceLinks` resolves an assignment as), so a task whose text
+  # says "from this meeting" is listed on the meeting — and so a `#` in a
+  # task is a backlink at all, which it was not before V8 of the CRM asked.
+  defp sync_task_mentions(socket, assignment_uuid, description) when is_binary(description) do
+    case Mentions.sync("project_task", assignment_uuid, description,
+           field: "description",
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, new} ->
+        Mentions.notify(new,
+          source_type: "project_task",
+          source_uuid: assignment_uuid,
+          preview: description
+        )
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp sync_task_mentions(_socket, _uuid, _description), do: :ok
+
   defp sync_mentions(socket, %{uuid: uuid, description: description}) do
     case Mentions.sync("project", uuid, description,
            field: "description",
@@ -1285,6 +1322,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
 
         flush_pending_deps(socket, assignment)
+        sync_task_mentions(socket, assignment.uuid, task_attrs["description"])
 
         {:noreply, socket |> put_flash(flash_kind, flash_msg) |> after_create(assignment)}
 
@@ -1605,6 +1643,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
         apply_pending_labels(socket, updated)
+        sync_task_mentions(socket, updated.uuid, attrs["description"])
 
         Activity.log("projects.assignment_updated",
           actor_uuid: Activity.actor_uuid(socket),
