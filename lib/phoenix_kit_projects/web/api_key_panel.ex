@@ -121,6 +121,10 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
     |> Enum.map(&{&1.user_uuid, user_name(&1.user || %{uuid: &1.user_uuid})})
   end
 
+  @doc "`people/1` as a select's `{label, value}` pairs — the name shown, the uuid posted."
+  @spec people_options([{String.t(), String.t()}]) :: [{String.t(), String.t()}]
+  def people_options(people), do: Enum.map(people, fn {uuid, name} -> {name, uuid} end)
+
   @doc ~S|"Personal · acts for Max Don" or "Shared agent" — the row's kind line.|
   @spec kind_label(ApiKey.t(), map()) :: String.t()
   def kind_label(%ApiKey{user_uuid: uuid}, names) when is_binary(uuid) do

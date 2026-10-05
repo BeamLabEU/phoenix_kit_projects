@@ -1010,7 +1010,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                 label={gettext("Acts for")}
                 value={@api_key_form["user"]}
                 class="select-sm"
-                options={[{gettext("Nobody — a shared agent"), ""} | @key_people]}
+                options={[{gettext("Nobody — a shared agent"), ""} | ApiKeyPanel.people_options(@key_people)]}
               />
             </div>
             <div class="w-36">

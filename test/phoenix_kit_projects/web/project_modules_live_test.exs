@@ -141,7 +141,8 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
       {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
       html = render_click(view, "toggle_api_key_form", %{})
       assert html =~ "Nobody — a shared agent"
-      assert html =~ "Maria Kottel"
+      # the person's NAME is what the select shows; the uuid is what it posts
+      assert html =~ ~s(<option value="#{user.uuid}">Maria Kottel</option>)
 
       html =
         render_submit(view, "create_api_key", %{
