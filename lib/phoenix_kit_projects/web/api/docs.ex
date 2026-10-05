@@ -444,6 +444,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         feature: "ledger",
         idempotency: :required,
         params: [
+          %{
+            name: "estimated",
+            in: :body,
+            type: "boolean",
+            required: false,
+            doc: "true when tokens and cost are your estimate, not a count — kept on the entry"
+          },
           %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
           %{
             name: "tokens",
@@ -482,6 +489,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         feature: "ledger",
         idempotency: :required,
         params: [
+          %{
+            name: "estimated",
+            in: :body,
+            type: "boolean",
+            required: false,
+            doc: "true when tokens and cost are your estimate, not a count — kept on the entry"
+          },
           %{
             name: "project",
             in: :body,
@@ -622,8 +636,11 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
      "The key's role may not perform this action on this project. Do not retry."},
     {403, "scope_missing", "The key does not carry the scope this call needs. Do not retry."},
     {403, "feature_disabled",
-     "The project has this feature turned off (see `features` on /me). Do not retry."},
-    {404, "not_found", "No such task in this project. Reload /tasks."},
+     "The project has this feature turned off (see `features` and `extensions` on /me). Do not retry."},
+    {403, "membership_ended",
+     "This key acts for a person who is no longer a member of the project. Do not retry; tell your operator."},
+    {404, "not_found",
+     "No such task, or no such project within this key's reach (its own project and the sub-projects under it). Reload /tasks or /project."},
     {409, "invalid_transition",
      "The task cannot move from its current status to the one asked; `details.allowed_transitions` lists what it can do. Reload the task, then pick one of those."},
     {409, "library_task",
@@ -703,7 +720,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
 
     ## Start here
 
-    `GET /me` tells you the project, which features are on (`features`), what your role may do
+    `GET /me` tells you the project, whom you act for (`acting_for`), which features are on
+    (`features` for the task calls, `extensions` for the `/ext/…` records), what your role may do
     (`allowed_actions`), the scopes your key carries, and the project's workflow statuses.
     The live set of calls that will work for you follows from that; read it before anything else.
 
@@ -741,9 +759,18 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     - **Status moves are explicit:** `PATCH /tasks/{id}` never changes status. Use `/transition`
       (or `/start`, `/complete`, `/reopen`) and obey `allowed_transitions` on the task.
     - **Appends are forever:** time and usage entries cannot be edited or deleted. Every such POST
-      must carry an `Idempotency-Key` (any unique string per attempt — a UUID is fine); retry a
-      timeout with the SAME key and you get the original response back, never a second row.
-      `POST /tasks` and the transitions honour the header too.
+      must carry an `Idempotency-Key`; retry a timeout with the SAME key and you get the original
+      response back, never a second row (the replay carries the header `Idempotent-Replayed: true`,
+      with the same status as the first answer). Derive the key from the CONTENT — task, kind,
+      what you are reporting, the turn it belongs to — not from a random draw, so a turn replayed
+      after a restart or a context reset posts once. `POST /tasks`, `POST /subprojects` and the
+      transitions honour the header too.
+    - **Completing the last open task completes the project** (its `completed_at` is set) — and
+      when that project is a sub-project whose row was the parent's last open one, the parent
+      completes too; reopening the task reopens them. Mean it: a throwaway task you complete can
+      close a real project.
+    - **Tokens and cost you cannot see:** send `estimated: true` on a usage post when the figures
+      are your estimate rather than a count; the entry keeps the flag.
     - **Workflow statuses belong to the project**, not to tasks: `POST /project/status`, with a slug
       from `available_workflow_statuses`. Tasks have only todo / in_progress / done.
     - **Who did it:** your time and usage are recorded as this key (AI time, apart from people's;
@@ -755,8 +782,10 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       (ISO 8601, not in the future) — do so when you report in a batch after the work.
     - **Notes, not essays, in the description:** the task's `description` is the short human text.
       Everything long — reasoning, what you changed, what came out — goes to `POST /tasks/{id}/notes`
-      with a one-line `summary`, your `outcome` for the attempt, `refs` (commits, branches, PRs) and
-      the `usage` it cost, all in one call. Before you work on a task, `GET /tasks/{id}`: if
+      with a one-line `summary` (240 characters at most), your `outcome` for the attempt,
+      `next_steps` (2000 at most), `refs` (commits, branches, PRs; 20 at most) and the `usage`
+      it cost, all in one call; the `body` is the long text and has no fixed cap, but a human
+      reads it, so keep it to what the next worker needs. Before you work on a task, `GET /tasks/{id}`: if
       `direction` is set, a person changed the direction after an earlier attempt — follow it, the
       older notes are context; `last_outcome` and `latest_agent_note` say where the last worker stopped.
     - **Rate limit:** #{RateLimit.describe()} per key, counted on every call. Every response carries `X-RateLimit-Limit` and

@@ -659,6 +659,40 @@ as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
 mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
 them.
 
+### What the first agent on the API asked for (2026-10-05, not built)
+
+The 3D-editor session's Claude read the guide, ran 27 calls on ANDI Manager
+and reviewed the API from the agent's seat. Fixed the same day: unknown
+`status` filter → 422, `membership_ended` in the error list, `extensions` on
+`/me`, whole-number amounts, `estimated` on usage, the replay header and the
+completion climb documented. Still open, each a design decision for Max/the
+boss:
+
+- **Sub-items**: a `parent_uuid` on a task or a checklist — a sub-project per
+  client question is too heavy (its own workflow status and ledger).
+- **Project-level notes**: `POST /notes` beside `/time` and `/usage` — half a
+  day's report is not about a task (decisions, research, the in-flight block).
+- **A briefing read**: `GET /notes?since=` or one call returning the open tasks
+  with `direction` and `latest_agent_note` — recovery after a context reset is
+  one GET per task today; `last_outcome` and a direction flag on list rows.
+- **A waiting state** for a task blocked on someone else (`outcome: blocked`
+  on a note is only a claim).
+- **Claiming**: `/start` could record the key that started a task and the row
+  show it — two sessions can start the same task.
+- **Wording protection**: record who created a task; let an agent edit only
+  its own titles (the key carries the person's role, so PATCH can reword a
+  person's text).
+- **Corrections**: a manager's reversing ledger entry (append-only with no
+  void leaves a wrong row forever).
+- **Polling**: `updated_since` or an ETag on `GET /tasks`; `position` on
+  `POST /tasks`; tags and a `source` ("from the client"); file refs beyond
+  URLs; no API delete (test rows are cleaned up in the UI).
+- **The completion climb**: completing the only task of a test sub-project
+  completed the client project (the parent's own rows were all done). The UI
+  does the same; whether an API completion should stop at the sub-project, or
+  whether a project with no open rows of its own should complete at all, is
+  the open question. Documented in the guide for now.
+
 ### Task notes: the long record, apart from the discussion (2026-10-05)
 
 Max: an agent "would want to write as much information as possible … but

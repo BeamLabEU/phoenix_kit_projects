@@ -44,6 +44,7 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
         priorities: Map.get(fx, :priorities, false),
         progress: Map.get(fx, :progress, false)
       },
+      extensions: Extensions.enabled_map(project.uuid),
       allowed_actions: allowed,
       all_scopes: ApiKey.scopes(),
       docs: %{llms_txt: Docs.url("/llms.txt"), openapi: Docs.url("/openapi.json")}

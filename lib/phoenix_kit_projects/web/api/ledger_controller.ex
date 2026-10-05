@@ -182,6 +182,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
         via: "api"
       }
       |> maybe_put(:model, string_or_nil(params["model"]))
+      |> maybe_put(:estimated, if(params["estimated"] in [true, "true"], do: true))
       |> Map.reject(fn {_k, v} -> is_nil(v) end)
 
     case Ledger.record_ai(project.uuid, usage,
@@ -196,7 +197,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
                %{
                  uuid: e.uuid,
                  kind: e.kind,
-                 amount: Decimal.to_float(e.amount),
+                 amount: Json.number(e.amount),
                  task_uuid: assignment_uuid,
                  occurred_at: e.ended_at,
                  recorded_at: e.inserted_at

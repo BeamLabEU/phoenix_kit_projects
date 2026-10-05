@@ -222,7 +222,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   """
   @spec task(Assignment.t(), map() | nil) :: map()
   def task(%Assignment{} = a, totals \\ nil) do
-    totals = totals || Map.get(Ledger.totals_for_assignments([a.uuid]), a.uuid)
+    totals =
+      (totals || Map.get(Ledger.totals_for_assignments([a.uuid]), a.uuid))
+      |> whole_totals()
 
     %{
       totals: totals,
@@ -273,6 +275,16 @@ defmodule PhoenixKitProjects.Web.Api.Json do
 
   defp library_task?(%Assignment{task: %Task{ad_hoc: ad_hoc}}), do: not ad_hoc
   defp library_task?(_), do: false
+
+  @doc "A ledger amount as JSON: whole numbers stay integers (`12`, not `12.0`); a fraction stays a float."
+  @spec number(Decimal.t() | number() | nil) :: number() | nil
+  def number(nil), do: nil
+  def number(%Decimal{} = d), do: d |> Decimal.to_float() |> number()
+  def number(f) when is_float(f), do: if(f == Float.round(f), do: trunc(f), else: f)
+  def number(n), do: n
+
+  defp whole_totals(nil), do: nil
+  defp whole_totals(totals), do: Map.new(totals, fn {k, v} -> {k, number(v)} end)
 
   @doc "The JSON shape of the key's project."
   @spec project(Project.t()) :: map()

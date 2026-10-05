@@ -24,11 +24,14 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   @priorities ~w(urgent high normal low)
   @units ~w(minutes hours days weeks fortnights months years)
 
+  @status_filters ~w(todo in_progress done open)
+
   def index(conn, params) do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
          {:ok, conn} <- Json.scope_project(conn, params),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
-         {:ok, conn} <- Json.require_action(conn, :view) do
+         {:ok, conn} <- Json.require_action(conn, :view),
+         {:ok, conn} <- known_status(conn, params["status"]) do
       tasks =
         conn.assigns.pk_project.uuid
         |> Projects.list_assignments()
@@ -39,6 +42,19 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     else
       {:halt, conn} -> conn
     end
+  end
+
+  # A filter nobody recognises used to answer the whole list, which an
+  # agent read as "no tasks match" or "every task matches" at random.
+  defp known_status(conn, status) when is_nil(status) or status in @status_filters,
+    do: {:ok, conn}
+
+  defp known_status(conn, status) do
+    {:halt,
+     Json.error(conn, :unprocessable_entity, "validation_failed", "Unknown status filter.", %{
+       status: status,
+       allowed: @status_filters
+     })}
   end
 
   defp filter_status(tasks, status) when status in ["todo", "in_progress", "done"],

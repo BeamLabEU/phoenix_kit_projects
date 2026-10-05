@@ -144,6 +144,25 @@ defmodule PhoenixKitProjects.Web.ApiTest do
 
       assert grandchild["parent_uuid"] == child_uuid
 
+      # the climb, and the way back: reopening the child's only task
+      # reopens the child, and its row on the parent follows
+      {:ok, _} =
+        Projects.update_assignment_status(Projects.get_assignment(task["uuid"]), %{status: "done"})
+
+      assert %{"task" => %{"status" => "todo"}} =
+               c
+               |> post_json("#{@base}/tasks/#{task["uuid"]}/reopen", %{}, idem())
+               |> json_response(200)
+
+      assert Projects.get_project(child_uuid).completed_at == nil
+      link = Projects.get_assignment(row["uuid"])
+      assert link.status in ["todo", "in_progress"]
+      assert link.progress_pct == 0
+
+      # amounts are whole numbers in JSON
+      %{"task" => t} = c |> get("#{@base}/tasks/#{task["uuid"]}") |> json_response(200)
+      assert t["totals"]["minutes"] === 7
+
       # llms.txt teaches it and openapi lists it
       llms = conn |> get("#{@base}/llms.txt") |> response(200)
       assert llms =~ "## Sub-projects"
@@ -211,6 +230,36 @@ defmodule PhoenixKitProjects.Web.ApiTest do
 
   # ── Auth ────────────────────────────────────────────────────────
 
+  test "an unknown status filter is a 422, not the whole list", %{conn: conn, token: token} do
+    assert %{"error" => %{"code" => "validation_failed", "details" => %{"status" => "bogus"}}} =
+             conn |> api(token) |> get("#{@base}/tasks?status=bogus") |> json_response(422)
+
+    assert %{"tasks" => _} =
+             conn |> api(token) |> get("#{@base}/tasks?status=open") |> json_response(200)
+  end
+
+  test "usage marked estimated keeps the flag on the entry", %{
+    conn: conn,
+    token: token,
+    assignment: a
+  } do
+    %{"entries" => [e | _]} =
+      conn
+      |> api(token)
+      |> post_json(
+        "#{@base}/tasks/#{a.uuid}/usage",
+        %{"tokens" => 1200, "cost_cents" => 3, "estimated" => true},
+        idem()
+      )
+      |> json_response(201)
+
+    assert e["amount"] === 1200 or e["amount"] === 3
+    [entry | _] = Ledger.list_entries(project_uuid_of(a), metadata: %{"estimated" => true})
+    assert entry.metadata["estimated"] == true
+  end
+
+  defp project_uuid_of(%{project_uuid: uuid}), do: uuid
+
   test "a personal key says whom it acts for, acts with their role, and dies with their membership",
        %{conn: conn, project: project} do
     {:ok, owner} =
@@ -230,6 +279,8 @@ defmodule PhoenixKitProjects.Web.ApiTest do
       )
 
     me = conn |> api(token) |> get("#{@base}/me") |> json_response(200)
+    assert is_map(me["extensions"])
+    assert me["extensions"]["tasks"] == true
     assert me["key"]["kind"] == "personal"
     assert me["key"]["role"] == "manager"
     assert me["acting_for"] == %{"uuid" => owner.uuid, "name" => "Max Don"}
