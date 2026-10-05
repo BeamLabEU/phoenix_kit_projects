@@ -310,6 +310,41 @@ defmodule PhoenixKitProjects.Ledger do
     _ -> %{}
   end
 
+  @doc """
+  Minutes, tokens and cents per assignment for a DISPLAYED set — one query,
+  a `%{minutes, tokens, cost_cents}` per uuid asked about (zeros when
+  nothing is logged). The task row's chips and the API's `totals` read
+  this; `time_for_assignments/1` stays for callers that want minutes only.
+  """
+  @spec totals_for_assignments([binary()]) :: %{binary() => map()}
+  def totals_for_assignments([]), do: %{}
+
+  def totals_for_assignments(uuids) when is_list(uuids) do
+    rows =
+      RepoHelper.repo().all(
+        from(e in WorkEntry,
+          where: e.assignment_uuid in ^uuids,
+          group_by: [e.assignment_uuid, e.kind],
+          select: {e.assignment_uuid, e.kind, sum(e.amount)}
+        )
+      )
+
+    base = Map.new(uuids, &{&1, %{minutes: 0.0, tokens: 0.0, cost_cents: 0.0}})
+
+    Enum.reduce(rows, base, fn {uuid, kind, sum}, acc ->
+      key =
+        case kind do
+          "time" -> :minutes
+          "tokens" -> :tokens
+          "cost" -> :cost_cents
+        end
+
+      update_in(acc, [uuid, key], &(&1 + Decimal.to_float(sum)))
+    end)
+  rescue
+    _ -> Map.new(uuids, &{&1, %{minutes: 0.0, tokens: 0.0, cost_cents: 0.0}})
+  end
+
   defp empty_totals,
     do: %{
       time_minutes: 0.0,

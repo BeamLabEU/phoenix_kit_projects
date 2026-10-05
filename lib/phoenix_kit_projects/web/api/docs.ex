@@ -397,6 +397,83 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
           ~s({"tokens": 900, "model": "claude-haiku-4-5", "occurred_at": "2026-10-05T14:30:00Z"})
       },
       %{
+        id: "listTaskNotes",
+        method: "GET",
+        path: "/tasks/{id}/notes",
+        summary:
+          "The task's notes thread (the long record, apart from the human discussion), oldest first, plus what to read FIRST: `direction` (the latest redirect a person wrote — follow it; older notes are context), `latest_agent_note` and `latest_human_note`.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: "tasks",
+        idempotency: nil,
+        params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
+        example: nil
+      },
+      %{
+        id: "createTaskNote",
+        method: "POST",
+        path: "/tasks/{id}/notes",
+        summary:
+          "Write a note on the task — your reasoning, what you changed, what came out — with the usage it cost, in one call. `summary` is required: one line (≤ 240 chars) the next worker reads first. Put the long record in `content` (the site's comment length cap applies). `usage` is written to the ledger in the same transaction and counts toward the task's totals. Append-only: send an Idempotency-Key.",
+        auth: true,
+        scope: "tasks:write",
+        action: "edit_tasks",
+        feature: "tasks",
+        idempotency: :required,
+        params: [
+          %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
+          %{
+            name: "summary",
+            in: :body,
+            type: "string",
+            required: true,
+            doc: "one line, at most 240 characters — the TLDR of this note"
+          },
+          %{
+            name: "content",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "the long record: reasoning, changes, results. Markdown and # / @ mentions render."
+          },
+          %{
+            name: "outcome",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "your claim about THIS attempt: done | partial | blocked | failed | needs_review. A later redirect supersedes it; it never sets the task's status."
+          },
+          %{
+            name: "next_steps",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "where you stopped and what you would do next, at most 2000 characters"
+          },
+          %{
+            name: "refs",
+            in: :body,
+            type: "array",
+            required: false,
+            doc:
+              "the artifacts of this attempt, at most 20: objects {type, id, url?, label?}. type is a slug (recommended: commit, branch, pr, issue, run, deploy, file, url, ticket), id ≤ 256 chars, url http(s) ≤ 2048 chars without credentials (never fetched), label ≤ 120 chars"
+          },
+          %{
+            name: "usage",
+            in: :body,
+            type: "object",
+            required: false,
+            doc:
+              "{tokens, cost_cents, minutes, model, occurred_at}: whole non-negative figures (cents, not dollars; whole minutes); needs the usage:write scope, the ledger feature and the log_time floor"
+          }
+        ],
+        example:
+          ~s({"summary": "Moved the import to the batch API; tests green", "outcome": "done", "content": "## What I tried\\n…", "next_steps": "Deploy to dev and watch the queue", "refs": [{"type": "commit", "id": "a1b2c3d", "url": "https://github.com/acme/app/commit/a1b2c3d"}, {"type": "pr", "id": "42", "label": "Batch import"}], "usage": {"tokens": 18422, "cost_cents": 7, "minutes": 12, "model": "claude-sonnet-5-5"}})
+      },
+      %{
         id: "llmsTxt",
         method: "GET",
         path: "/llms.txt",
@@ -545,6 +622,12 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       never billable). Task changes are logged under the person who minted the key, with the key named.
     - **When it happened:** time and usage carry the receipt time unless you send `occurred_at`
       (ISO 8601, not in the future) — do so when you report in a batch after the work.
+    - **Notes, not essays, in the description:** the task's `description` is the short human text.
+      Everything long — reasoning, what you changed, what came out — goes to `POST /tasks/{id}/notes`
+      with a one-line `summary`, your `outcome` for the attempt, `refs` (commits, branches, PRs) and
+      the `usage` it cost, all in one call. Before you work on a task, `GET /tasks/{id}`: if
+      `direction` is set, a person changed the direction after an earlier attempt — follow it, the
+      older notes are context; `last_outcome` and `latest_agent_note` say where the last worker stopped.
     - **Rate limit:** #{RateLimit.describe()} per key, counted on every call. Every response carries `X-RateLimit-Limit` and
       `X-RateLimit-Remaining`; a 429 carries `Retry-After` in seconds. Poll `/tasks` no more than
       once a minute.
@@ -566,8 +649,12 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
 
     `uuid`, `kind` (`task` | `subproject`), `title`, `description`, `status`, `allowed_transitions`,
     `priority`, `progress_pct`, `estimated_duration`, `estimated_duration_unit`, `position`,
-    `task_uuid`, `child_project_uuid`, `library_task`, `completed_at`, `inserted_at`, `updated_at`.
-    A `subproject` row is a nested project; its lifecycle is its own and it cannot be edited here.
+    `task_uuid`, `child_project_uuid`, `library_task`, `completed_at`, `inserted_at`, `updated_at`,
+    `totals` (`minutes`, `tokens`, `cost_cents` logged on the task — sums over the ledger).
+    `GET /tasks/{id}` adds `direction` (the latest redirect, or null), `last_outcome`,
+    `latest_agent_note`, `display_summary` (`text` + `source`: description | redirect | agent) and
+    `notes_url`. A `subproject` row is a nested project; its lifecycle is its own and it cannot be
+    edited here.
 
     Machine-readable description: `GET #{base}/openapi.json`.
     """

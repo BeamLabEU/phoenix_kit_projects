@@ -75,6 +75,22 @@ messages are English and locale-free on purpose (a machine contract).
 nobody can undo), honoured on task create and transitions. Panel: the one
 thing to block v1 on.
 
+## Task notes
+
+`TaskNotes` (see AGENTS.md "Task notes"): `POST /tasks/:id/notes` takes
+`summary` (required, ≤ 240), `content`, `outcome`, `next_steps`, `refs`
+(≤ 20 of `{type, id, url?, label?}`), `usage` (`tokens`, `cost_cents`,
+`minutes`, `model`, `occurred_at`; needs `usage:write`, the ledger gate and
+the `log_time` floor) — `Idempotency-Key` required. The note is a comment
+on `project_task_notes`; its usage is ledger rows in the same transaction,
+linked both ways. `GET /tasks/:id/notes` lists them oldest first with
+`direction` / `latest_agent_note` / `latest_human_note` first; `GET
+/tasks/:id` carries `direction`, `last_outcome`, `latest_agent_note`,
+`display_summary` and `totals`. A key cannot write a `redirect`; a person
+does, from the notes drawer. Notes need the comments module switched on
+(`403 feature_disabled`, feature `notes`); a key minted with nobody behind
+it (no `created_by_uuid`) cannot write notes (`403 forbidden`).
+
 ## Rate limit
 
 `Web.Api.RateLimit`: a fixed window per key on core's Hammer ETS backend (the

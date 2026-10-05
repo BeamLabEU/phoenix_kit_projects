@@ -44,7 +44,9 @@ defmodule PhoenixKitProjects.ResourceLinks do
   """
   @spec types() :: %{String.t() => module()}
   def types do
-    %{"project" => __MODULE__, "project_task" => __MODULE__}
+    # `project_task_notes` is the comments anchor of a task's notes thread
+    # (`TaskNotes`); it resolves exactly as the task does.
+    %{"project" => __MODULE__, "project_task" => __MODULE__, "project_task_notes" => __MODULE__}
   end
 
   # ── Resolve ─────────────────────────────────────────────────────────

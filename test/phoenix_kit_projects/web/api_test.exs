@@ -10,7 +10,9 @@ defmodule PhoenixKitProjects.Web.ApiTest do
 
   alias PhoenixKit.Mentions
   alias PhoenixKit.Mentions.Token
-  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Features, Ledger, Projects}
+  alias PhoenixKit.Settings
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Features, Ledger, Projects, TaskNotes}
   alias PhoenixKitProjects.Test.Repo
 
   @base "/api/projects/v1"
@@ -415,6 +417,151 @@ defmodule PhoenixKitProjects.Web.ApiTest do
            |> json_response(200)
 
     assert Mentions.list_backlinks("project_task", a.uuid) == []
+  end
+
+  # ── Notes ───────────────────────────────────────────────────────
+
+  describe "task notes" do
+    setup %{project: project} do
+      {:ok, _} = Settings.update_setting("comments_enabled", "true")
+      on_exit(fn -> Settings.update_setting("comments_enabled", "false") end)
+
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "minter-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      # A key with a person behind it: notes are written as that person.
+      {:ok, key, token} =
+        ApiKeys.create(project, %{"name" => "Runner", "role" => "member"}, actor_uuid: user.uuid)
+
+      {:ok, minter: user, key: key, token: token}
+    end
+
+    test "a note with usage lands with its ledger rows; the task answers with what to read first",
+         %{conn: conn, token: token, key: key, assignment: a} do
+      c = api(conn, token)
+      path = "#{@base}/tasks/#{a.uuid}/notes"
+
+      assert %{"error" => %{"code" => "idempotency_key_required"}} =
+               c |> post_json(path, %{summary: "x"}) |> json_response(422)
+
+      assert %{"error" => %{"code" => "validation_failed", "details" => %{"summary" => _}}} =
+               c |> post_json(path, %{content: "long"}, idem()) |> json_response(422)
+
+      assert %{"error" => %{"details" => %{"refs" => _}}} =
+               c
+               |> post_json(path, %{summary: "s", refs: [%{type: "Bad Type", id: "1"}]}, idem())
+               |> json_response(422)
+
+      headers = idem()
+
+      body = %{
+        summary: "Batch import works; tests green",
+        outcome: "done",
+        content: "## What I did\nSwitched to the batch API.",
+        next_steps: "Deploy to dev",
+        refs: [
+          %{type: "commit", id: "a1b2c3d", url: "https://example.com/c/a1b2c3d"},
+          %{type: "pr", id: "42"}
+        ],
+        usage: %{tokens: 18_422, cost_cents: 7, minutes: 12, model: "m"}
+      }
+
+      %{"note" => note, "entries" => entries} =
+        c |> post_json(path, body, headers) |> json_response(201)
+
+      assert note["kind"] == "agent_note"
+      assert note["author"] == "Runner"
+      assert note["summary"] == "Batch import works; tests green"
+      assert note["outcome"] == "done"
+      assert length(note["refs"]) == 2
+      assert note["usage"]["tokens"] == 18_422
+      assert length(note["usage"]["entries"]) == 3
+      assert Enum.sort(Enum.map(entries, & &1["kind"])) == ["cost", "time", "tokens"]
+
+      # Replay: same note, no second set of rows.
+      replay = c |> post_json(path, body, headers)
+      assert json_response(replay, 201)["note"]["uuid"] == note["uuid"]
+      assert get_resp_header(replay, "idempotent-replayed") == ["true"]
+
+      [entry | _] = Ledger.list_entries(a.project_uuid)
+      assert entry.actor_kind == "ai_agent"
+      assert entry.actor_uuid == key.uuid
+      assert entry.metadata["note_uuid"] == note["uuid"]
+      assert length(Ledger.list_entries(a.project_uuid)) == 3
+
+      %{"task" => task} = c |> get("#{@base}/tasks/#{a.uuid}") |> json_response(200)
+      assert task["totals"] == %{"minutes" => 12.0, "tokens" => 18_422.0, "cost_cents" => 7.0}
+      assert task["direction"] == nil
+      assert task["last_outcome"] == "done"
+
+      assert task["display_summary"] == %{
+               "text" => "Batch import works; tests green",
+               "source" => "agent"
+             }
+
+      assert task["notes_url"] =~ "/tasks/#{a.uuid}/notes"
+
+      %{"notes" => [listed], "count" => 1, "latest_agent_note" => %{"uuid" => latest}} =
+        c |> get(path) |> json_response(200)
+
+      assert listed["uuid"] == note["uuid"] and latest == note["uuid"]
+
+      # A person changes the direction (only people can): the task now leads with it.
+      {:ok, fields} =
+        TaskNotes.validate(
+          %{"summary" => "No — keep the old parser"},
+          "redirect"
+        )
+
+      {:ok, _} =
+        TaskNotes.create(a, fields,
+          user_uuid: key.created_by_uuid,
+          kind: "redirect"
+        )
+
+      %{"task" => task} = c |> get("#{@base}/tasks/#{a.uuid}") |> json_response(200)
+      assert task["direction"]["summary"] == "No — keep the old parser"
+      assert task["display_summary"]["source"] == "redirect"
+      assert %{"direction" => %{"kind" => "redirect"}} = c |> get(path) |> json_response(200)
+    end
+
+    test "usage on a note needs the usage scope; a key with nobody behind it cannot write notes",
+         %{conn: conn, project: project, assignment: a, minter: user} do
+      {:ok, _, narrow} =
+        ApiKeys.create(project, %{"name" => "Narrow", "scopes" => ["tasks:read", "tasks:write"]},
+          actor_uuid: user.uuid
+        )
+
+      path = "#{@base}/tasks/#{a.uuid}/notes"
+
+      assert %{"error" => %{"code" => "scope_missing"}} =
+               conn
+               |> api(narrow)
+               |> post_json(path, %{summary: "s", usage: %{tokens: 1}}, idem())
+               |> json_response(403)
+
+      assert %{"note" => _} =
+               conn
+               |> api(narrow)
+               |> post_json(path, %{summary: "s"}, idem())
+               |> json_response(201)
+
+      {:ok, _, orphan} = ApiKeys.create(project, %{"name" => "Orphan"})
+
+      assert %{"error" => %{"code" => "forbidden"}} =
+               conn
+               |> api(orphan)
+               |> post_json(path, %{summary: "s"}, idem())
+               |> json_response(403)
+
+      {:ok, _} = Settings.update_setting("comments_enabled", "false")
+
+      assert %{"error" => %{"code" => "feature_disabled", "details" => %{"feature" => "notes"}}} =
+               conn |> api(narrow) |> get(path) |> json_response(403)
+    end
   end
 
   # ── Rate limit ──────────────────────────────────────────────────

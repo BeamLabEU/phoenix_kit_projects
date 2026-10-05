@@ -49,6 +49,8 @@ defmodule PhoenixKitProjects.Test.Router do
     get("/tasks/:id", TasksController, :show)
     patch("/tasks/:id", TasksController, :update)
     post("/tasks/:id/transition", TasksController, :transition)
+    get("/tasks/:id/notes", NotesController, :index)
+    post("/tasks/:id/notes", NotesController, :create)
     post("/tasks/:id/start", TasksController, :start)
     post("/tasks/:id/complete", TasksController, :complete)
     post("/tasks/:id/reopen", TasksController, :reopen)

@@ -659,6 +659,40 @@ as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
 mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
 them.
 
+### Task notes: the long record, apart from the discussion (2026-10-05)
+
+Max: an agent "would want to write as much information as possible … but
+it becomes something a human would never read"; keep the description the
+TLDR, fold the long record away, keep a running token total per task, and
+track the handoffs ("the boss says no, that's wrong; the second person
+redoes it") so the next worker reads the original reasoning AND the new
+direction. `TaskNotes` is that record: comments on the anchor type
+`project_task_notes` (the discussion stays on `assignment`), one note
+profile validated in the context and nowhere else — `kind` (`agent_note`
+via the API, `note` by a person, `redirect` by a person only), a required
+one-line `summary` on agent notes and redirects, `outcome` (a claim about
+the attempt, never the task's status), `refs` (`{type, id, url?, label?}`
+per note — shape-validated, never fetched, free slug type), `next_steps`,
+and `usage` whose figures are LEDGER rows written in the same transaction
+(`metadata.note_uuid` on the rows, `usage.entries` on the note; totals are
+sums over the ledger, never over the note). The note's author is the
+key's accountable person with the key's name pinned as display name. The
+API: `GET/POST /tasks/:id/notes`; `GET /tasks/:id` leads with `direction`
+(the latest redirect), `last_outcome`, `latest_agent_note`,
+`display_summary` (description → redirect → agent summary) and `totals`.
+On the page: a second drawer button on the task row (cpu-chip icon, note
+count, tokens), the comments component on the notes anchor with the
+usage / outcome / redirect lines as decorations, a "Change the direction"
+form (a redirect) and "Use as description" (adopts the latest summary,
+logged as machine-made when it was an agent's). Panel (grok, zai, codex,
+2026-10-05) shaped it: summary required, refs per note not per task, a
+typed redirect the task surfaces first, usage never stored as a second
+total. Known gaps, deliberate: the idempotency record is stored after
+the transaction (a crash in between can double-count on retry); a note's
+author may edit or delete it through the comments UI (the ledger rows
+stay); Summarize through the AI module is not built — `display_summary`
+and "Use as description" are the honest TLDR until it is.
+
 ### Tasks and `#` mentions
 
 A task's description goes through core's mentions (`<.translatable_field

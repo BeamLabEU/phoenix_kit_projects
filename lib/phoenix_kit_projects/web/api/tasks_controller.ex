@@ -17,7 +17,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKit.Mentions
-  alias PhoenixKitProjects.{Activity, Projects}
+  alias PhoenixKitProjects.{Activity, Ledger, Projects}
   alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitProjects.Web.Api.Json
 
@@ -33,7 +33,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         |> Projects.list_assignments()
         |> filter_status(params["status"])
 
-      json(conn, %{tasks: Enum.map(tasks, &Json.task/1), count: length(tasks)})
+      totals = Ledger.totals_for_assignments(Enum.map(tasks, & &1.uuid))
+      json(conn, %{tasks: Enum.map(tasks, &Json.task(&1, totals[&1.uuid])), count: length(tasks)})
     else
       {:halt, conn} -> conn
     end
@@ -50,7 +51,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view),
          {:ok, a} <- fetch(conn, id) do
-      json(conn, %{task: Json.task(a)})
+      json(conn, %{task: Map.merge(Json.task(a), Json.task_detail(a))})
     else
       {:halt, conn} -> conn
       {:error, :not_found} -> not_found(conn)

@@ -12,8 +12,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
-  alias PhoenixKitProjects.{ApiKeys, Authz, Statuses}
+  alias PhoenixKitProjects.{ApiKeys, Authz, Ledger, Statuses, TaskNotes}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
+  alias PhoenixKitProjects.Web.Api.Docs
 
   @lifecycle ~w(todo in_progress done)
   @transitions %{
@@ -156,10 +157,18 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     {status, %{error: body}}
   end
 
-  @doc "The JSON shape of a task (an assignment with its task or sub-project preloaded)."
-  @spec task(Assignment.t()) :: map()
-  def task(%Assignment{} = a) do
+  @doc """
+  The JSON shape of a task (an assignment with its task or sub-project
+  preloaded). `totals` — minutes, tokens and cents logged on it — comes
+  from `Ledger.totals_for_assignments/1`: pass the batch for a list, or
+  nothing for one task.
+  """
+  @spec task(Assignment.t(), map() | nil) :: map()
+  def task(%Assignment{} = a, totals \\ nil) do
+    totals = totals || Map.get(Ledger.totals_for_assignments([a.uuid]), a.uuid)
+
     %{
+      totals: totals,
       uuid: a.uuid,
       kind: if(a.child_project_uuid, do: "subproject", else: "task"),
       title: Assignment.label(a),
@@ -177,6 +186,27 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       completed_at: a.completed_at,
       inserted_at: a.inserted_at,
       updated_at: a.updated_at
+    }
+  end
+
+  @doc """
+  What `GET /tasks/:id` adds for the worker picking the task up: the
+  direction now (the latest `redirect` a person wrote), the last agent
+  note's outcome, the one line to read (`display_summary`: the person's
+  description, else the direction, else the latest agent summary marked
+  as such), and where the whole notes thread is.
+  """
+  @spec task_detail(Assignment.t()) :: map()
+  def task_detail(%Assignment{} = a) do
+    latest = TaskNotes.latest(a.uuid)
+    display = TaskNotes.display_summary(description(a), latest)
+
+    %{
+      direction: latest.redirect && TaskNotes.to_json(latest.redirect),
+      last_outcome: latest.agent && latest.agent.metadata["outcome"],
+      latest_agent_note: latest.agent && TaskNotes.to_json(latest.agent),
+      display_summary: display,
+      notes_url: Docs.url("/tasks/#{a.uuid}/notes")
     }
   end
 
