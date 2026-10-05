@@ -1,0 +1,23 @@
+A JSON API an outside AI agent drives a project with, per-project API keys that act for a person, and the settings that make a project ongoing and decide what an agent may do. Built on dev.greenoak.ee for the boss's case ("I run an AI model elsewhere, it does a task, it must reach in and submit its token usage and time, and control the tasks"), used for a day by a second AI session working the ANDI Manager project, and reviewed three times by a panel (grok, zai, codex) plus a full quality sweep before this PR. 31 commits; the earlier ten are UI work on the same branch (core's current list components and confirm modal, the New project drawers, the primary-colour inputs).
+
+## What a reader needs to know
+
+**The API** (`/api/projects/v1`, `dev_docs/guides/api.md` is the account). Endpoints are generated from one table (`Web.Api.Docs.endpoints/0`) and served without a key as `llms.txt` (a guide written for an LLM) and `openapi.json`. Bearer keys (`pkp_<key_id>_<secret>`, SHA-256 of the secret stored, shown once, rotate/revoke), per-key rate limit, `Idempotency-Key` on every append with `Idempotent-Replayed: true` on a replay. Tasks: list (`status`, `updated_since`), create (`position: top`, labels by name, `origin`, `waiting_on`, a `checklist`, an `interaction`), read, patch, transitions (`start`/`complete`/`reopen`), delete under policy, a checklist item tick, link/unlink a client interaction, notes (summary, outcome, next steps, refs, usage) on a task and on the project, time and usage on a task and on the project with corrections (`PATCH`/`DELETE /entries/{id}`), sub-projects (`POST /subprojects`, a `project` param on every project-level call — a key reaches its project and everything nested under it), events, extension records (`/ext/<resource>`, the CRM's interactions and companies), and `GET /briefing`: the one read after a context reset (resume pointer, mine → ready → waiting, done today, sub-projects, project notes, the client's latest calls, the next events).
+
+**Keys act for a person** (chain V18). A key is personal (`user_uuid`; it acts with that member's current role, capped at manager, and dies with their membership) or shared (a CI runner with its own role). Every member mints their own on a "Your API key" page off the project's ⋮ menu; the owner's full list stays on Modules & Features with an "Acts for" choice. Activity names the person acted for; `/me` says whom.
+
+**Projects as settings** (chain V19, V20). `completion: auto | manual` — ongoing work never completes on its own, every task done is "all caught up", an ongoing child never completes its parent, sub-projects copy the parent's mode; an "Ends" select on the project and sub-project forms, Ongoing / All caught up badges, no progress bar on an ongoing project. An `agents` policy (take over a started task, reword foreign text, delete tasks none/own/any, amend own ledger entries) on the project's edit card, read back as `agent_policy`, enforced as 409 `already_started`, 403 `foreign_text` / `delete_not_allowed` / `amend_not_allowed`. Tasks record who created and who started them and whose words the title and description are (`words_by_key_uuid`: the last writer — a person's rewording in the form sticks). `waiting_on`, `origin` and a `checklist` on the task form and as row badges.
+
+**Links between records.** A task ↔ interaction link is a table (`phoenix_kit_project_task_interactions`); the mention token the forms use is kept in step in the description, so people see it and the backlink index agrees. The `#` typeahead inside a project offers that project's subtree only (core sends the field's context — see the core PR).
+
+**Also:** the modules panel renders outside the project edit form (a nested form was flattening its own forms), task notes as comments with ledger rows in one transaction, `Ledger.update_time`/`delete_entry`/`update_amount` with an activity trace, the ledger listing by metadata and by task.
+
+## Migrations
+
+Chain V17 → V20: API keys and idempotency tables; `user_uuid` on keys; `created_by`/`started_by` (person and key), `waiting_on`, `origin`, `checklist` and an `updated_at` index on assignments; `words_by_key_uuid` and the task–interaction table. `down` drops each version's own tables and columns.
+
+## Verification
+
+`mix precommit` clean (format, compile --warnings-as-errors, deps.unlock --check-unused, hex.audit, credo --strict, dialyzer); 1694 tests, 0 failures. Panel reviews and the quality-sweep triage are under `dev_docs/pull_requests/2026/<this PR>/` with a `FOLLOW_UP.md`. The 3D-editor session's four live reports (27+ calls per round) are what drove rounds two to five.
+
+No version bump, no CHANGELOG entry (the release commit's).

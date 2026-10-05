@@ -36,8 +36,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ListUi
+  alias PhoenixKitWeb.TableColumns
 
   require Logger
 
@@ -64,11 +66,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # SQL search only engages past the threshold. See TemplatesLive.
   @local_search_threshold 100
 
-  # Optional table columns (Name and Actions always render), toggleable
-  # from the Columns dropdown; persisted site-wide via ListUi.
-  @optional_columns ~w(status tasks created updated created_by external_id)
+  # Optional table columns (Name and Actions always render), each viewer's
+  # own choice through core's column picker (`ListUi` moduledoc).
   @default_columns ~w(status)
-  @columns_key "projects_list_columns"
+  @columns_key "projects.list"
+  @column_events ~w(add_column remove_column reorder_columns reset_columns)
 
   @impl true
   def mount(_params, session, socket) do
@@ -103,8 +105,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         total_count: 0,
         filtered_count: 0,
         local_search?: true,
-        visible_columns:
-          ListUi.read_visible_columns(@columns_key, @optional_columns, @default_columns),
         task_counts: %{},
         creators: %{},
         projects: [],
@@ -114,6 +114,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         # live selection lives client-side in the BulkSelectScope hook.
         captured_uuids: [],
         show_reorder_modal: false,
+        show_column_modal: false,
         # Workflow-status filter. Options come from the shared catalog
         # (without provisioning it); `nil` = no filter. Hidden when
         # entities is unavailable or the shared list has no statuses yet.
@@ -123,6 +124,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
+
+    # The viewer's columns, read once the embed user is known.
+    socket = assign(socket, visible_columns: ListUi.load_columns(socket, columns_spec()))
 
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
@@ -264,6 +268,21 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   @impl true
 
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   # Sort selector fires `sort_form` for both field changes (via the
   # form's phx-change) and direction toggles (via the button's
   # phx-click). One event, two shapes — derive the missing half from
@@ -326,21 +345,19 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     {:noreply, push_url_state(socket, [search: ListUi.coerce_search(params)], replace: true)}
   end
 
-  def handle_event("toggle_column", %{"col" => col}, socket) when col in @optional_columns do
-    new_visible =
-      ListUi.toggle_visible_column(
-        @columns_key,
-        @optional_columns,
-        socket.assigns.visible_columns,
-        col
-      )
+  def handle_event("open_column_modal", _params, socket),
+    do: {:noreply, assign(socket, show_column_modal: true)}
 
-    # Reload so a newly-shown tasks / created_by column gets its
-    # batched lookup map (hidden columns skip those queries).
-    {:noreply, socket |> assign(visible_columns: new_visible) |> load_projects()}
+  def handle_event("hide_column_modal", _params, socket),
+    do: {:noreply, assign(socket, show_column_modal: false)}
+
+  # Core's live column picker: every edit applies at once and is saved for
+  # the viewer. Reload so a newly-shown tasks / created_by column gets its
+  # batched lookup map (hidden columns skip those queries).
+  def handle_event(event, params, socket) when event in @column_events do
+    socket = TableColumns.handle_event(event, params, socket, columns_spec(), :visible_columns)
+    {:noreply, load_projects(socket)}
   end
-
-  def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
 
   # The bulk toolbar's Reorder button pushes this event with the
   # currently-selected UUIDs (gathered from the DOM by the
@@ -605,7 +622,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 options={sort_options()}
                 manual_field={:position}
               />
-              <ListUi.columns_control options={column_options()} visible={@visible_columns} />
+              <ListUi.columns_button />
             </:trailing>
             <:primary>
               <.new_project_button embed_mode={@embed_mode} />
@@ -661,6 +678,14 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         noun_singular={gettext("project")}
         noun_plural={gettext("projects")}
       />
+
+      <.column_settings_modal
+        show={@show_column_modal}
+        id="projects-column-settings"
+        columns={columns_spec().columns}
+        selected={@visible_columns}
+      />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end
@@ -675,6 +700,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       {"external_id", gettext("External ID")}
     ]
   end
+
+  defp columns_spec, do: ListUi.columns_spec(@columns_key, column_options(), @default_columns)
 
   attr(:embed_mode, :atom, required: true)
   attr(:label, :string, default: nil)
@@ -699,11 +726,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   # Extracted because the table is rendered both inside the
   # bulk-select scope and (when bulk is disabled) bare.
+  #
+  # Columns follow the catalogue's shape: Name is the lead column and takes
+  # the slack; every optional column is sized to its content and packed
+  # against the right edge, in the viewer's own order (`ListUi` moduledoc).
   defp render_projects_table(assigns, draggable?, lang) do
     assigns = assign(assigns, draggable?: draggable?, lang: lang)
 
     ~H"""
-    <.table_default id="projects-list" size="sm">
+    <.table_default id="projects-list" size="sm" {ListUi.table_fit()}>
       <.table_default_header>
         <.table_default_row>
           <.drag_handle_header_cell :if={@draggable?} />
@@ -712,36 +743,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             id="projects-select-all"
             aria_label={gettext("Select all projects")}
           />
-          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}}>
+          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}} data-col-lead="true">
             {gettext("Name")}
           </.sort_header_cell>
-          <.table_default_header_cell :if={"status" in @visible_columns}>
-            {gettext("Status")}
-          </.table_default_header_cell>
-          <.table_default_header_cell :if={"tasks" in @visible_columns} class="text-right">
-            {gettext("Tasks")}
-          </.table_default_header_cell>
-          <.sort_header_cell
-            :if={"created" in @visible_columns}
-            field={:inserted_at}
-            sort={%{by: @sort_by, dir: @sort_dir}}
-          >
-            {gettext("Created")}
-          </.sort_header_cell>
-          <.sort_header_cell
-            :if={"updated" in @visible_columns}
-            field={:updated_at}
-            sort={%{by: @sort_by, dir: @sort_dir}}
-          >
-            {gettext("Last edited")}
-          </.sort_header_cell>
-          <.table_default_header_cell :if={"created_by" in @visible_columns}>
-            {gettext("Created by")}
-          </.table_default_header_cell>
-          <.table_default_header_cell :if={"external_id" in @visible_columns}>
-            {gettext("External ID")}
-          </.table_default_header_cell>
-          <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
+          <%= for col <- @visible_columns do %>
+            {column_header(assigns, col)}
+          <% end %>
+          <ListUi.actions_header_cell />
         </.table_default_row>
       </.table_default_header>
       <.sortable_tbody
@@ -756,7 +764,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         >
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={p.uuid} />
-          <.table_default_cell class="font-medium">
+          <.table_default_cell class="font-medium" data-col-lead="true">
             <.smart_link
               navigate={Paths.project(p.uuid)}
               emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
@@ -768,45 +776,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             <% desc = Project.localized_description(p, @lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
           </.table_default_cell>
-          <.table_default_cell :if={"status" in @visible_columns}>
-            <div class="flex flex-wrap items-center gap-1">
-              <.project_status_badge project={p} />
-              <.workflow_status_badge
-                :if={@statuses_available}
-                status={Map.get(@workflow_status_by_project, p.uuid)}
-              />
-            </div>
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"tasks" in @visible_columns}
-            class="text-right tabular-nums text-base-content/70"
-          >
-            {Map.get(@task_counts, p.uuid, 0)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"created" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {L10n.format_date(p.inserted_at)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"updated" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {L10n.format_date(p.updated_at)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"created_by" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {Map.get(@creators, p.uuid) || "—"}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"external_id" in @visible_columns}
-            class="font-mono text-xs text-base-content/70"
-          >
-            {p.external_id || "—"}
-          </.table_default_cell>
+          <%= for col <- @visible_columns do %>
+            {column_cell(assigns, col, p)}
+          <% end %>
           <.table_default_cell class="text-right whitespace-nowrap">
             <.table_row_menu id={"project-menu-#{p.uuid}"}>
               <.smart_menu_link
@@ -818,10 +790,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
               />
               <.table_row_menu_divider />
               <.table_row_menu_button
-                phx-click="delete"
-                phx-value-uuid={p.uuid}
-                phx-disable-with={gettext("Deleting…")}
-                data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, @lang))}
+                {ConfirmAction.ask("delete",
+                  uuid: p.uuid,
+                  title: gettext("Delete project"),
+                  message: gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, @lang)),
+                  confirm: gettext("Delete")
+                )}
                 icon="hero-trash"
                 label={gettext("Delete")}
                 variant="error"
@@ -839,6 +813,130 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       total={@filtered_count}
       noun_plural={gettext("projects")}
     />
+    """
+  end
+
+  # One optional column's header cell, by id. Sortable columns keep core's
+  # sortable header; every one carries its fit class and drop priority.
+  defp column_header(assigns, "status") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("status")}>{gettext("Status")}</.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "tasks") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("tasks", "text-right")}>
+      {gettext("Tasks")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "created") do
+    ~H"""
+    <.sort_header_cell
+      field={:inserted_at}
+      sort={%{by: @sort_by, dir: @sort_dir}}
+      {ListUi.column_attrs("created")}
+    >
+      {gettext("Created")}
+    </.sort_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "updated") do
+    ~H"""
+    <.sort_header_cell
+      field={:updated_at}
+      sort={%{by: @sort_by, dir: @sort_dir}}
+      {ListUi.column_attrs("updated")}
+    >
+      {gettext("Last edited")}
+    </.sort_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "created_by") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("created_by")}>
+      {gettext("Created by")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "external_id") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("external_id")}>
+      {gettext("External ID")}
+    </.table_default_header_cell>
+    """
+  end
+
+  # One optional column's body cell for project `p`, by id — the same
+  # order as the header, which is what `fit` hides columns by.
+  defp column_cell(assigns, "status", p) do
+    assigns = assign(assigns, p: p)
+
+    ~H"""
+    <.table_default_cell>
+      <div class="flex flex-wrap items-center gap-1">
+        <.project_status_badge project={@p} />
+        <.workflow_status_badge
+          :if={@statuses_available}
+          status={Map.get(@workflow_status_by_project, @p.uuid)}
+        />
+      </div>
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "tasks", p) do
+    assigns = assign(assigns, p: p)
+
+    ~H"""
+    <.table_default_cell class="text-right tabular-nums text-base-content/70">
+      {Map.get(@task_counts, @p.uuid, 0)}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "created", p) do
+    assigns = assign(assigns, p: p)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {L10n.format_date(@p.inserted_at)}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "updated", p) do
+    assigns = assign(assigns, p: p)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {L10n.format_date(@p.updated_at)}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "created_by", p) do
+    assigns = assign(assigns, p: p)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {Map.get(@creators, @p.uuid) || "—"}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "external_id", p) do
+    assigns = assign(assigns, p: p)
+
+    ~H"""
+    <.table_default_cell class="font-mono text-xs text-base-content/70">
+      {@p.external_id || "—"}
+    </.table_default_cell>
     """
   end
 end

@@ -58,6 +58,7 @@ defmodule PhoenixKitProjects.Authz do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Schemas.Project
 
   @roles [:owner, :manager, :member, :viewer]
@@ -301,6 +302,26 @@ defmodule PhoenixKitProjects.Authz do
   end
 
   @doc """
+  May a principal holding `role` on `project` perform `action`? The floor
+  check alone — no membership lookup, no relationship grant, no admin
+  override — for a principal that IS its role: a project API key
+  (`Schemas.ApiKey`), whose role is stored on the key rather than resolved
+  from a person. `role` may be an atom or its string; an unknown role or
+  action is a hard no.
+  """
+  @spec can_role?(map() | nil, atom() | String.t(), atom()) :: boolean()
+  def can_role?(project, role, action) when is_atom(action) do
+    case to_role_atom(role) do
+      nil -> false
+      role_atom -> not is_nil(project) and meets_floor?(role_atom, floor_for(project, action))
+    end
+  rescue
+    _ -> false
+  end
+
+  def can_role?(_project, _role, _action), do: false
+
+  @doc """
   The role a user effectively holds on a project: the STRONGEST of their
   direct membership and every group grant that matches them (their teams,
   their departments, their site roles). Always an ATOM from `roles/0`, or
@@ -351,7 +372,7 @@ defmodule PhoenixKitProjects.Authz do
   defp to_role_atom(_), do: nil
 
   defp floor_for(project, action) do
-    default = Map.get(@role_floors, action)
+    default = Map.get(@role_floors, action) || extension_floor(action)
 
     case Map.get(@overridable, action) do
       nil ->
@@ -366,6 +387,22 @@ defmodule PhoenixKitProjects.Authz do
 
         Map.get(choices, override, default)
     end
+  end
+
+  # An action an installed extension declares in its `permission_actions`
+  # (the CRM's `log_interaction`) floors at member — "no restrictions on
+  # the work" applies to an extension's work too. Anything undeclared
+  # stays nil: fail-closed.
+  defp extension_floor(action) do
+    declared? =
+      Extensions.Registry.list()
+      |> Enum.any?(fn ext ->
+        Enum.any?(ext.permission_actions, &(to_string(&1) == to_string(action)))
+      end)
+
+    if declared?, do: :member, else: nil
+  rescue
+    _ -> nil
   end
 
   defp meets_floor?(_role, nil), do: false

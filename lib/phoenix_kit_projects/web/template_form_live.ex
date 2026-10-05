@@ -375,12 +375,13 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
             <.checkbox
               field={@form[:counts_weekends]}
               label={gettext("Count weekends in schedule")}
-              class="checkbox-sm"
+              class="checkbox-primary checkbox-sm"
             />
 
             <%!-- Workflow status — a template is a project, so it picks the
                  status list its cloned projects inherit (V125). --%>
             <.workflow_status_fields
+              class="border-t border-base-300 mt-6 pt-6"
               statuses_available={@statuses_available}
               field={@form[:status_entity_uuid]}
               status_entities={@status_entities}

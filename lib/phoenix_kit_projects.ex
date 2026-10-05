@@ -800,6 +800,18 @@ defmodule PhoenixKitProjects do
         live_view: {PhoenixKitProjects.Web.ProjectMembersLive, :edit}
       },
       %Tab{
+        id: :admin_projects_api,
+        label: "Your API key",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/api",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectApiLive, :show}
+      },
+      %Tab{
         id: :admin_projects_modules,
         label: "Project Modules",
         gettext_backend: PhoenixKitProjects.Gettext,
@@ -1042,7 +1054,7 @@ defmodule PhoenixKitProjects do
       },
       # `/projects/:id/<extension tab>` — LAST on purpose: Phoenix matches in
       # declaration order, so every literal sibling above (edit, files,
-      # members, modules, activity, board, gantt, calendar, tasks, comments)
+      # members, modules, api, activity, board, gantt, calendar, tasks, comments)
       # AND `projects/templates/*` (whose first segment would otherwise read
       # as an id) win before this catch-all; an unknown segment lands on the
       # project's first tab. Extension tab keys must not reuse those literals.

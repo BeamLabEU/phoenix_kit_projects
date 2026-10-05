@@ -311,7 +311,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
     end
 
     test "the other task archetypes suppress nothing" do
-      for key <- ~w(standard client_hub public_intake),
+      for key <- ~w(standard public_intake),
           archetype = PhoenixKitProjects.Archetypes.get(key),
           archetype != nil do
         assert archetype.extensions_off == []
@@ -375,10 +375,13 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
                |> live("/en/admin/projects/#{project.uuid}/edit")
     end
 
-    test "Save is the LAST thing on the edit page, after the modules panel", %{conn: conn} do
-      # Embedding the modules panel put a whole card below the Save button,
-      # which reads as the page having ended and then carried on — the same
-      # complaint the assignment form's portal switches drew.
+    test "Save belongs to the fields: before the modules panel, which says it applies at once",
+         %{conn: conn} do
+      # Save once sat LAST, after the panel, so the page did not read as
+      # having ended and then carried on. But the panel writes immediately,
+      # and a Cancel + Save row under it read as if it applied to the panel
+      # — "I doubt the API key will be removed if I click cancel" (Max,
+      # 2026-10-05). The row now closes the fields; the panel says so.
       conn = put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!()))
 
       {:ok, project} =
@@ -389,7 +392,9 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
       modules_at = :binary.match(html, "Presets:") |> elem(0)
       save_at = :binary.match(html, "phx-disable-with") |> elem(0)
 
-      assert modules_at < save_at, "Save renders before the modules panel"
+      assert save_at < modules_at, "Save renders after the modules panel"
+      assert html =~ "Changes here apply at once"
+      refute binary_part(html, modules_at, byte_size(html) - modules_at) =~ "Saving…"
     end
   end
 end

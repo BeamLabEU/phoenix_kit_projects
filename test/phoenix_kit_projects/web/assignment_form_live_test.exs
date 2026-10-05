@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  alias PhoenixKit.Mentions.Token
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Schemas.Assignment
 
@@ -28,6 +29,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
 
       assert html =~ "assignment-form"
       assert html =~ project.name
+    end
+
+    test "a description param prefills the description (the CRM's add-task-from-meeting link)",
+         %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, token} =
+        Token.to_string(:resource, "crm_interaction", Ecto.UUID.generate(), "Kickoff")
+
+      query = URI.encode_query(%{"description" => "From the meeting #{token}"})
+
+      {:ok, _view, html} =
+        live(conn, "/en/admin/projects/#{project.uuid}/assignments/new?#{query}")
+
+      assert html =~ "From the meeting"
+      assert html =~ "crm_interaction:"
     end
 
     test "missing project id redirects to projects list with flash", %{conn: conn} do

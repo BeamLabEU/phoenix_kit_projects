@@ -68,7 +68,11 @@ defmodule PhoenixKitProjects.ProjectEvents do
     event
     |> ProjectEvent.changeset(attrs)
     |> RepoHelper.repo().update()
-    |> tap_event("projects.event_updated", :project_event_updated, Keyword.get(opts, :actor_uuid))
+    |> tap_event("projects.event_updated", :project_event_updated, Keyword.get(opts, :actor_uuid),
+      # A moved event says where it moved FROM: the feed then reads
+      # "moved from 13:00 to 14:00", not just "updated".
+      moved_from: event.starts_at
+    )
   end
 
   @doc "Deletes an event."
@@ -91,17 +95,23 @@ defmodule PhoenixKitProjects.ProjectEvents do
     end
   end
 
-  defp tap_event({:ok, event} = result, action, broadcast, actor_uuid) do
+  defp tap_event(result, action, broadcast, actor_uuid, extra \\ [])
+
+  defp tap_event({:ok, event} = result, action, broadcast, actor_uuid, extra) do
+    metadata =
+      %{
+        "title" => event.title,
+        "event_uuid" => event.uuid,
+        "starts_at" => DateTime.to_iso8601(event.starts_at)
+      }
+      |> put_moved_from(Keyword.get(extra, :moved_from), event.starts_at)
+
     log_result =
       Activity.log(action,
         actor_uuid: actor_uuid,
         resource_type: "project",
         resource_uuid: event.project_uuid,
-        metadata: %{
-          "title" => event.title,
-          "event_uuid" => event.uuid,
-          "starts_at" => DateTime.to_iso8601(event.starts_at)
-        }
+        metadata: metadata
       )
 
     notify_members(log_result, event.project_uuid)
@@ -109,7 +119,15 @@ defmodule PhoenixKitProjects.ProjectEvents do
     result
   end
 
-  defp tap_event({:error, _} = error, _action, _broadcast, _actor), do: error
+  defp tap_event({:error, _} = error, _action, _broadcast, _actor, _extra), do: error
+
+  defp put_moved_from(metadata, %DateTime{} = before, now) do
+    if DateTime.compare(before, now) == :eq,
+      do: metadata,
+      else: Map.put(metadata, "moved_from", DateTime.to_iso8601(before))
+  end
+
+  defp put_moved_from(metadata, _before, _now), do: metadata
 
   # Fan the ONE feed entry out to every project member's notification
   # rules (Max's call: events notify all members). Core's

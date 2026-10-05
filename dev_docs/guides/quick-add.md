@@ -67,15 +67,14 @@ user-facing copy — a library entry is just a task.
 "Add to the task library" box: every task is typed in place (a stale or
 forged switch/pick/promote is refused at the handler and at save time).
 The **Simple checklist** starting point turns it off through the
-`simple` preset; Team project, Client project and Public intake leave
-it on; the project's Modules & Features page flips it later like any
+`simple` preset; Team project and Public intake leave it on; the project's Modules & Features page flips it later like any
 flag. The Tasks page itself stays global — the flag is whether THIS
 project draws on the library, not whether the library exists.
 
 **The task list itself is a creation decision.** The New project form
 carries the `tasks` extension as the first row of the *Task features*
 drawer — off hides the flag rows, the receipt says "No tasks", the summary
-"Off — no task list" — and a fifth starting point, **Just a space**
+"Off — no task list" — and a fourth starting point, **Just a space**
 (`Archetypes` key `space`: `extensions_off: ~w(tasks discussions)`, preset
 `simple` for the day tasks come on), makes a project that is only the tabs
 it picks (a class that is only its whiteboards). Tasks is reconciled at

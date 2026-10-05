@@ -37,9 +37,13 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  # A destructive action that asks through core's confirm modal.
+  import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{L10n, Projects, Whiteboards}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Components.MediaCanvasViewer
 
@@ -88,6 +92,21 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   # ── Events ──────────────────────────────────────────────────────
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete_board))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event("open_new_board", _params, socket) do
     {:noreply, assign(socket, new_modal_open: true)}
   end
@@ -343,10 +362,12 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
                     <button
                       :if={@can_write}
                       type="button"
-                      phx-click="delete_board"
-                      phx-disable-with={gettext("Deleting…")}
-                      phx-value-uuid={board.uuid}
-                      data-confirm={gettext("Remove \"%{name}\"? The drawing stays in the project files.", name: board.name)}
+                      {ConfirmAction.ask("delete_board",
+                        uuid: board.uuid,
+                        title: gettext("Remove whiteboard"),
+                        message: gettext("Remove \"%{name}\"? The drawing stays in the project files.", name: board.name),
+                        confirm: gettext("Remove")
+                      )}
                       class="btn btn-ghost btn-xs text-error ml-auto"
                       title={gettext("Remove whiteboard")}
                     >
@@ -397,6 +418,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
             </form>
           </.modal>
       <% end %>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

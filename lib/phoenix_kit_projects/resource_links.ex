@@ -44,7 +44,16 @@ defmodule PhoenixKitProjects.ResourceLinks do
   """
   @spec types() :: %{String.t() => module()}
   def types do
-    %{"project" => __MODULE__, "project_task" => __MODULE__}
+    # `project_task_notes` is the comments anchor of a task's notes thread
+    # (`TaskNotes`); it resolves exactly as the task does.
+    # `project_notes` is the anchor of a project's own notes; it resolves
+    # as the project does.
+    %{
+      "project" => __MODULE__,
+      "project_task" => __MODULE__,
+      "project_task_notes" => __MODULE__,
+      "project_notes" => __MODULE__
+    }
   end
 
   # ── Resolve ─────────────────────────────────────────────────────────
@@ -103,7 +112,11 @@ defmodule PhoenixKitProjects.ResourceLinks do
   # ── Search (the `#` typeahead) ──────────────────────────────────────
 
   @doc """
-  Projects and tasks matching `query`, scoped to the SEARCHER.
+  Projects and tasks matching `query`, scoped to the SEARCHER — and, when
+  the field says where it is (`opts[:context]`, `%{"project" => uuid}`),
+  to that project and the sub-projects under it: a `#` typed inside a
+  project links its own work, not another main project's (Max,
+  2026-10-05). The context narrows; the scope still decides access.
 
   Never offers something the searcher cannot open: the typeahead is the
   first place a leak would appear, and it is the easiest one to miss
@@ -114,7 +127,10 @@ defmodule PhoenixKitProjects.ResourceLinks do
     scope = Keyword.get(opts, :scope) || Keyword.get(opts, :user_uuid)
     lang = L10n.current_content_lang()
 
-    accessible = accessible_project_uuids(scope)
+    accessible =
+      scope
+      |> accessible_project_uuids()
+      |> narrow_to_context(Keyword.get(opts, :context))
 
     if accessible == :none, do: [], else: do_search(query, accessible, lang)
   rescue
@@ -238,9 +254,9 @@ defmodule PhoenixKitProjects.ResourceLinks do
 
         Enum.filter(uuids, fn uuid ->
           cond do
-            project_uuid = Map.get(task_projects, uuid) -> MapSet.member?(allowed, project_uuid)
+            project_uuid = Map.get(task_projects, uuid) -> project_visible?(project_uuid, allowed)
             MapSet.member?(allowed, uuid) -> true
-            parent = Map.get(parents, uuid) -> MapSet.member?(allowed, parent)
+            parent = Map.get(parents, uuid) -> project_visible?(parent, allowed)
             true -> false
           end
         end)
@@ -249,6 +265,14 @@ defmodule PhoenixKitProjects.ResourceLinks do
     e ->
       Logger.warning("[Projects.ResourceLinks] visibility failed: #{Exception.message(e)}")
       []
+  end
+
+  # A project is visible when it, or any project above it, is accessible:
+  # a grandchild's visibility is its root's (the panel's sweep found the
+  # one-hop version losing it).
+  defp project_visible?(project_uuid, allowed) do
+    MapSet.member?(allowed, project_uuid) or
+      Enum.any?(Projects.parent_chain(project_uuid), &MapSet.member?(allowed, &1.uuid))
   end
 
   # For each uuid that is a sub-project, the project it hangs under. Only
@@ -271,6 +295,24 @@ defmodule PhoenixKitProjects.ResourceLinks do
   # `:all` for a site admin, `:none` for someone with no identity, else the
   # concrete set. Returning `:all` rather than every uuid keeps the admin
   # path from loading the whole table to answer "yes".
+  # The project the field belongs to and everything nested under it,
+  # intersected with what the searcher may see.
+  defp narrow_to_context(accessible, %{"project" => uuid}) when is_binary(uuid) do
+    subtree = Projects.subtree_uuids(uuid)
+
+    case accessible do
+      :none -> :none
+      :all -> subtree
+      uuids -> Enum.filter(subtree, &(&1 in uuids))
+    end
+    |> case do
+      [] -> :none
+      narrowed -> narrowed
+    end
+  end
+
+  defp narrow_to_context(accessible, _context), do: accessible
+
   defp accessible_project_uuids(nil), do: :none
 
   defp accessible_project_uuids(scope) do

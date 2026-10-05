@@ -297,6 +297,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     _ -> []
   end
 
+  defp agent_policy_switches do
+    [
+      {"take_started_task", gettext("Take over a task someone else started")},
+      {"edit_foreign_text", gettext("Reword tasks it did not create")},
+      {"amend_own_ledger", gettext("Amend or remove its own time and usage entries")}
+    ]
+  end
+
   defp default_authz_choices do
     Map.new(overridable_authz_actions(), fn %{settings_key: key, default: default} ->
       {key, default}
@@ -824,6 +832,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         merge_attrs(attrs, socket)
         |> clear_other_assignees(assign_type)
         |> maybe_apply_status_mode(params, socket.assigns.project, fx)
+        |> apply_project_type(
+          params,
+          socket.assigns.project,
+          socket.assigns[:can_manage_modules] == true
+        )
         |> strip_gated_project_attrs(fx)
 
       socket =
@@ -898,7 +911,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       flags: assigns.flag_states,
       exts: assigns.ext_states,
       authz_rows: assigns |> visible_authz_actions() |> Enum.map(& &1.settings_key),
-      statuses: assigns.form[:status_entity_uuid].value,
+      # Blank-normalised: the form's value is the RAW param once anything has
+      # been posted, so "Use global default" read as `""` against a `nil`
+      # baseline and cued the Start-from drawer on the first change of
+      # anything (Max, 2026-10-05: a dot with nothing to see).
+      statuses: Values.blank_to_nil(assigns.form[:status_entity_uuid].value),
       start_mode: assigns.form[:start_mode].value
     }
   end
@@ -1194,6 +1211,52 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       _ -> Features.default_gates()
     end
   end
+
+  # How the project ends and what an agent may do — both live in the
+  # settings JSONB beside the status-mode key, so the fold starts from
+  # whatever the earlier folds built (never from an empty map: a posted
+  # settings map replaces every key the project holds).
+  defp apply_project_type(attrs, params, project, can_manage?)
+
+  # Without `manage_modules` the controls are not on the page, and a
+  # crafted post must not reach the settings either.
+  defp apply_project_type(attrs, _params, _project, false), do: attrs
+
+  defp apply_project_type(attrs, params, project, true) do
+    base = Map.get(attrs, "settings") || (project && project.settings) || %{}
+
+    settings =
+      base
+      |> put_completion(Map.get(params, "completion"))
+      |> put_agent_policy(Map.get(params, "agents"))
+
+    if settings == base and not Map.has_key?(attrs, "settings"),
+      do: attrs,
+      else: Map.put(attrs, "settings", settings)
+  end
+
+  defp put_completion(settings, mode) when mode in ["auto", "manual"],
+    do: Map.put(settings, "completion", mode)
+
+  defp put_completion(settings, _), do: settings
+
+  defp put_agent_policy(settings, %{} = posted) do
+    policy =
+      Map.new(Project.agent_policy_defaults(), fn {key, default} ->
+        {key, policy_param(key, Map.get(posted, key), default)}
+      end)
+
+    Map.put(settings, "agents", policy)
+  end
+
+  defp put_agent_policy(settings, _), do: settings
+
+  defp policy_param("delete_tasks", v, default),
+    do: if(v in Project.delete_choices(), do: v, else: default)
+
+  defp policy_param(_key, "true", _default), do: true
+  defp policy_param(_key, "false", _default), do: false
+  defp policy_param(_key, _v, default), do: default
 
   # The status translation-mode fold also writes into settings — it rides
   # the same statuses gate as the source field (panel R3-5).
@@ -1719,6 +1782,17 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     parts |> Enum.reject(&is_nil/1) |> Enum.join(" · ")
   end
 
+  # The Customize drawers take the shape of core's own collapsibles
+  # (`collapse collapse-arrow bg-base-200`, Settings → Media and friends): a
+  # panel one shade apart from the page. Core's accordion draws
+  # `bg-base-100` with a `border-base-200` line, which on a dark theme is a
+  # hair off the page's own colour — Max, 2026-10-05: "it's kind of hard to
+  # tell where the drawer is". A literal string, so Tailwind's scanner sees
+  # the class.
+  @drawer_class "bg-base-200"
+
+  defp drawer_class, do: @drawer_class
+
   # LITERAL class strings per archetype key — Tailwind's scanner needs
   # them verbatim in source (an interpolated variant never compiles).
   defp receipt_reveal_class("quick_todo"),
@@ -1726,9 +1800,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp receipt_reveal_class("standard"),
     do: "hidden group-has-[[data-arch=standard]:checked]/kind:block"
-
-  defp receipt_reveal_class("client_hub"),
-    do: "hidden group-has-[[data-arch=client-hub]:checked]/kind:block"
 
   defp receipt_reveal_class("public_intake"),
     do: "hidden group-has-[[data-arch=public-intake]:checked]/kind:block"
@@ -1741,6 +1812,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # Indexes the description's mentions and delivers its pings, on the
   # durable save. Never allowed to cost the save: a missing backlink is a
   # smaller loss than a rolled-back project.
+  # A `#` in the project's own description offers the project's records
+  # and its sub-projects' — nothing on a new project, which has none yet.
+  defp mention_context(%{uuid: uuid}) when is_binary(uuid), do: Jason.encode!(%{project: uuid})
+  defp mention_context(_), do: nil
+
   defp sync_mentions(socket, project) do
     case Mentions.sync("project", project.uuid, project.description,
            field: "description",
@@ -2072,7 +2148,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               rows={4}
               disabled={@current_lang in @ai_in_flight}
               mentions
-              />
+              data-mention-context={mention_context(assigns[:project])}
+            />
           </.multilang_fields_wrapper>
     </div>
     """
@@ -2203,6 +2280,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <div :if={"start" in @top_blocks} id="create-top-start" class="card bg-base-100 shadow">
             <div class="card-body flex flex-col gap-3">
               <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
+
             </div>
           </div>
 
@@ -2245,7 +2323,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                entirely (and out of their own summaries). --%>
 
           <%!-- 1. What it starts from — template, timing, statuses. --%>
-          <.accordion :if={setup_section_shown?(assigns)} id="create-start" cue={true}>
+          <.accordion :if={setup_section_shown?(assigns)} id="create-start" cue={true} class={drawer_class()}>
             <:title>
               {gettext("Start from")}
               <span class="ml-2 text-xs font-normal opacity-50">{setup_summary(assigns)}</span>
@@ -2282,7 +2360,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   :if={@flag_states["scheduling"] != false}
                   field={@form[:counts_weekends]}
                   label={gettext("Count weekends in schedule")}
-                  class="checkbox-sm"
+                  class="checkbox-primary checkbox-sm"
                 />
               </div>
             </:content>
@@ -2292,7 +2370,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                rather than in their own drawer: "who is on this project" and
                "what can they do" is one question, and the roles picked
                above are exactly what the floors below apply to. --%>
-          <.accordion :if={"people" not in @top_blocks} id="create-people" cue={true}>
+          <.accordion :if={"people" not in @top_blocks} id="create-people" cue={true} class={drawer_class()}>
             <:title>
               {gettext("People & permissions")}
               <span class="ml-2 text-xs font-normal opacity-50">{people_summary(assigns)}</span>
@@ -2323,6 +2401,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             :if={@flag_defs != [] or Enum.any?(@ext_types, &(&1.key == "tasks"))}
             id="create-features"
             cue={true}
+            class={drawer_class()}
           >
             <:title>
               {gettext("Task features")}
@@ -2351,7 +2430,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                     name="ext[tasks]"
                     value="true"
                     checked={tasks_on?(assigns)}
-                    class="toggle toggle-sm"
+                    class="toggle toggle-primary toggle-sm"
                   />
                 </label>
                 <div
@@ -2378,7 +2457,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                         name={"flag[#{flag.key}]"}
                         value="true"
                         checked={@flag_states[flag.key]}
-                        class="toggle toggle-sm"
+                        class="toggle toggle-primary toggle-sm"
                       />
                     </label>
                   </div>
@@ -2393,7 +2472,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                hunting for "publish documents" thinks in package names).
                Inline config stays inert until its toggle is on: pure CSS
                reveal, and the server ignores unchecked rows at save. --%>
-          <.accordion :if={@ext_types != []} id="create-extensions" cue={true}>
+          <.accordion :if={@ext_types != []} id="create-extensions" cue={true} class={drawer_class()}>
             <:title>
               {gettext("Extensions")}
               <span class="ml-2 text-xs font-normal opacity-50">{extensions_summary(assigns)}</span>
@@ -2428,7 +2507,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                           value="true"
                           checked={@ext_states[ext.key]}
                           data-ext-toggle
-                          class="toggle toggle-sm"
+                          class="toggle toggle-primary toggle-sm"
                         />
                       </label>
                       <%!-- The extension's OWN capability flags, revealed
@@ -2452,7 +2531,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                             name={"flag[#{flag.key}]"}
                             value="true"
                             checked={@flag_states[flag.key]}
-                            class="toggle toggle-sm"
+                            class="toggle toggle-primary toggle-sm"
                           />
                         </label>
                       </div>
@@ -2547,9 +2626,60 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               :if={@fx.scheduling}
               field={@form[:counts_weekends]}
               label={gettext("Count weekends in schedule")}
-              class="checkbox-sm"
+              class="checkbox-primary checkbox-sm"
             />
             <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
+
+            <%!-- How the project ends (Max, 2026-10-05: "some projects have a
+                 defined end while this one is more of an ongoing one… it
+                 should be a setting"). Ongoing work never completes on its
+                 own; every task done is "all caught up". --%>
+            <.select
+              :if={@can_manage_modules}
+              name="completion"
+              label={gettext("Ends")}
+              value={Project.completion(@project)}
+              options={[
+                {gettext("When the last task is done"), "auto"},
+                {gettext("Only when someone ends it — ongoing work"), "manual"}
+              ]}
+            />
+
+            <%!-- What an AI agent on the API may do here. Every row is a
+                 project setting (`Project.agent_policy/1`), so the same
+                 module serves a locked-down client project and an open
+                 sandbox. --%>
+            <% policy = Project.agent_policy(@project) %>
+            <fieldset :if={@can_manage_modules} class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+              <legend class="px-1 text-sm font-medium">{gettext("What an AI agent may do here")}</legend>
+              <label :for={{key, label} <- agent_policy_switches()} class="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="hidden" name={"agents[#{key}]"} value="false" />
+                <input
+                  type="checkbox"
+                  name={"agents[#{key}]"}
+                  value="true"
+                  checked={policy[key] == true}
+                  class="checkbox checkbox-primary checkbox-sm"
+                />
+                <span>{label}</span>
+              </label>
+              <div class="w-72">
+                <.select
+                  name="agents[delete_tasks]"
+                  label={gettext("Delete tasks")}
+                  value={policy["delete_tasks"]}
+                  class="select-sm"
+                  options={[
+                    {gettext("Never"), "none"},
+                    {gettext("Only the ones it created"), "own"},
+                    {gettext("Any task"), "any"}
+                  ]}
+                />
+              </div>
+              <p class="text-xs opacity-60">
+                {gettext("An agent always acts with the role of the person its key acts for; these rows narrow what it may do on top of that.")}
+              </p>
+            </fieldset>
 
             <%!-- Assignee (V128) — same polymorphic team/department/person
                  picker tasks use. Non-translatable, so it lives outside the
@@ -2593,6 +2723,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                  the whole workflow-status section disappears; the save path
                  strips the field so a crafted submit can't set a source. --%>
             <.workflow_status_fields
+              class="border-t border-base-300 mt-6 pt-6"
               :if={@fx.statuses}
               statuses_available={@statuses_available}
               field={@form[:status_entity_uuid]}
@@ -2605,46 +2736,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </div>
         </div>
 
-        <%!-- What this project can DO lives here too, rather than behind a
-             separate menu entry. The creation form already asks these
-             questions in its Features and Extensions drawers; splitting
-             them onto their own page after creation was the asymmetry —
-             "edit the project" and "change what the project is" are the
-             same errand.
-
-             Embedded rather than moved: this page is 600 lines with its own
-             events, PubSub and per-extension config forms, and the module
-             already supports mounting it off-router. --%>
-        <%!-- Rendered only when the viewer may actually manage modules.
-             The embedded LV enforces that itself, but its refusal is a
-             REDIRECT — inside a host page that navigates the whole edit
-             form away, so a manager who can rename a project but not
-             change its modules would be bounced out of editing it.
-
-             Identity has to be threaded explicitly: an embed mounts
-             off-router, so the hooks that build a scope never run and the
-             LV rebuilds it from this uuid. --%>
-        <div :if={@live_action == :edit and @can_manage_modules} class="card bg-base-100 shadow">
-          <div class="card-body">
-            {live_render(@socket, PhoenixKitProjects.Web.ProjectModulesLive,
-              id: "edit-modules-#{@project.uuid}",
-              session: %{
-                "id" => @project.uuid,
-                "embedded_in_form" => true,
-                "current_user_uuid" => @current_user_uuid,
-                "wrapper_class" => "flex flex-col gap-6"
-              }
-            )}
-          </div>
-        </div>
-
-        <%!-- Last, so the page reads in order: what the project is called,
-             how it behaves, what it can do — then Save. The modules panel
-             above writes immediately and needs no Save of its own; this
-             button belongs to the fields, and putting it before the panel
-             made the page look like it had ended and then carried on. --%>
-        <%!-- :edit only. The creation form has its own action row further
-             up; without this guard the new-project page renders two. --%>
+        <%!-- Cancel + Save belong to the FIELDS above: the modules panel
+             below writes immediately and has nothing to save, and a Save
+             row under it read as if it applied to the panel — "I doubt the
+             API key will be removed if I click cancel" (Max, 2026-10-05).
+             :edit only — the creation form has its own action row. --%>
         <.form_actions
           :if={@live_action == :edit}
           class="gap-2"
@@ -2654,17 +2750,45 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           submit_disabled={@ai_in_flight != []}
         >
           <:cancel>
-          <button
-            type="button"
-            phx-click="cancel"
-            data-confirm={@dirty? && gettext("Discard your changes?")}
-            class="btn btn-ghost btn-sm"
-          >
-            {gettext("Cancel")}
-          </button>
+            <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
+              {gettext("Cancel")}
+            </button>
           </:cancel>
         </.form_actions>
       </.form>
+
+      <%!-- Modules & Features, embedded — OUTSIDE the project form (and
+           after its Save row), where its own forms (labels, extension
+           settings, API keys) can post:
+           a <form> inside a <form> is invalid HTML and the browser drops
+           the inner one, so "Create key" was submitting the project form
+           and navigating away with nothing created (Max, 2026-10-05).
+           Rendered only when the viewer may actually manage modules. The
+           embedded LV enforces that itself, but its refusal is a REDIRECT —
+           inside a host page that navigates the whole edit form away, so a
+           manager who can rename a project but not change its modules
+           would be bounced out of editing it. Identity has to be threaded
+           explicitly: an embed mounts off-router, so the hooks that build
+           a scope never run and the LV rebuilds it from this uuid. --%>
+      <div :if={@live_action == :edit and @can_manage_modules} class="card bg-base-100 shadow">
+        <div class="card-body">
+          {live_render(@socket, PhoenixKitProjects.Web.ProjectModulesLive,
+            id: "edit-modules-#{@project.uuid}",
+            session: %{
+              "id" => @project.uuid,
+              "embedded_in_form" => true,
+              "current_user_uuid" => @current_user_uuid,
+              "wrapper_class" => "flex flex-col gap-6"
+            }
+          )}
+        </div>
+      </div>
+
 
       <%!-- Outside the project form on purpose: nested <form> elements are
            invalid HTML, so the browser silently drops the inner one — its

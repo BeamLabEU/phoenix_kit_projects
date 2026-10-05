@@ -86,6 +86,9 @@ defmodule PhoenixKitProjects.Paths do
   @doc "Per-project Members page."
   @spec members(String.t()) :: String.t()
   def members(id), do: Routes.path("#{@base}/#{id}/members")
+  @doc "Per-project Your API key page — every member's own keys."
+  @spec api(String.t()) :: String.t()
+  def api(id), do: Routes.path("#{@base}/#{id}/api")
   @doc "Per-project Files page."
   @spec files(String.t()) :: String.t()
   def files(id), do: Routes.path("#{@base}/#{id}/files")

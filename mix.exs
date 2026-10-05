@@ -133,8 +133,10 @@ defmodule PhoenixKitProjects.MixProject do
       # `submit_disabled`, `bulk_actions_toolbar`'s `:primary` slot and
       # `form_section`'s `:actions` slot, first published in 2.43.0 (an older
       # core only warns at compile time and the page silently drops the
-      # control; `core_ui_api_conformance_test.exs` guards it). Before that the
-      # floor was 2.38.0: project files live on core's
+      # control; `core_ui_api_conformance_test.exs` guards it). 2.49.0 is the
+      # floor now: the project Activity page is drawn by core's
+      # `activity_list/1`, first shipped there. Before that it was 2.43.0, and
+      # before that 2.38.0: project files live on core's
       # `Storage.ResourceFolders`, the reorganizer on its `ResourceSource`,
       # the actor and activity log come from `PhoenixKitWeb.Actor` and
       # `Activity.log/3`, file helpers from `Utils.Format`, and the edit forms
@@ -147,7 +149,7 @@ defmodule PhoenixKitProjects.MixProject do
       # and project-assignee columns. Patch-precise floor in the compound
       # form, so the ceiling stays open through every later 2.x minor (see
       # test/core_pin_conformance_test.exs).
-      pk_dep(:phoenix_kit, ">= 2.43.0 and < 3.0.0"),
+      pk_dep(:phoenix_kit, ">= 2.49.0 and < 3.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move

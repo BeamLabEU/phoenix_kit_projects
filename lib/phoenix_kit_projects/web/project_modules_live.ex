@@ -23,10 +23,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.Activity
-  alias PhoenixKitProjects.{Authz, Extensions, Features, L10n, Labels, Paths, Projects}
+  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Features, L10n, Labels, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
-  alias PhoenixKitProjects.Schemas.Label
-  alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Schemas.{ApiKey, Label, Project}
+  alias PhoenixKitProjects.Web.Api.Docs
+  alias PhoenixKitProjects.Web.ApiKeyPanel
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -101,7 +103,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
        project: nil,
        extensions: [],
        flag_groups: [],
-       presets: []
+       presets: [],
+       api_keys: [],
+       key_people: [],
+       api_token: nil,
+       api_key_form: nil,
+       show_revoked: false
      )
      |> put_flash(:error, gettext("Project not found."))
      |> WebHelpers.close_or_navigate(Paths.projects())}
@@ -126,7 +133,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
         labels_on: false,
         label_colors: [],
         portal: nil,
-        board_exposure: 0
+        board_exposure: 0,
+        api_keys: [],
+        key_people: [],
+        api_token: nil,
+        api_key_form: nil,
+        show_revoked: false
       )
 
     if socket.assigns.embedded_in_form do
@@ -192,7 +204,14 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       labels_on: Map.get(on, "labels", false),
       label_colors: Label.colors(),
       portal: PhoenixKitProjects.Portal.get_portal(project.uuid),
-      board_exposure: PhoenixKitProjects.Portal.board_exposure_count(project.uuid)
+      board_exposure: PhoenixKitProjects.Portal.board_exposure_count(project.uuid),
+      api_keys: ApiKeys.list_for_project(project.uuid),
+      key_people: ApiKeyPanel.people(project.uuid),
+      # The token just minted or rotated, shown once; nil otherwise.
+      api_token: socket.assigns[:api_token],
+      # The new-key panel's state while it is open; nil when closed.
+      api_key_form: socket.assigns[:api_key_form],
+      show_revoked: socket.assigns[:show_revoked] || false
     )
   end
 
@@ -206,6 +225,23 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   # ── Events ──────────────────────────────────────────────────────
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do:
+      {:noreply,
+       ConfirmAction.request(socket, params, ~w(delete_label rotate_api_key revoke_api_key))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event("toggle_ext", %{"key" => key}, socket) do
     with_authz(socket, fn ->
       project = socket.assigns.project
@@ -318,6 +354,36 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   # label catalog; assignment forms only PICK from it. Gated on the
   # labels flag (the section hides AND the events refuse when off).
 
+  # ── API keys (the JSON API an outside agent drives this project with) ──
+
+  def handle_event("create_api_key", params, socket) do
+    with_authz(socket, fn -> do_create_api_key(params, socket) end)
+  end
+
+  def handle_event("rotate_api_key", %{"uuid" => uuid}, socket) do
+    with_authz(socket, fn -> do_rotate_api_key(uuid, socket) end)
+  end
+
+  def handle_event("revoke_api_key", %{"uuid" => uuid}, socket) do
+    with_authz(socket, fn -> do_revoke_api_key(uuid, socket) end)
+  end
+
+  def handle_event("dismiss_api_token", _params, socket),
+    do: {:noreply, assign(socket, api_token: nil)}
+
+  def handle_event("toggle_api_key_form", _params, socket) do
+    form = if socket.assigns.api_key_form, do: nil, else: ApiKeyPanel.new_form()
+    {:noreply, assign(socket, api_key_form: form)}
+  end
+
+  def handle_event("api_key_form_change", params, socket) do
+    {:noreply,
+     assign(socket, api_key_form: ApiKeyPanel.form_from(params, socket.assigns.api_key_form))}
+  end
+
+  def handle_event("toggle_revoked_keys", _params, socket),
+    do: {:noreply, assign(socket, show_revoked: not socket.assigns.show_revoked)}
+
   def handle_event("add_label", %{"name" => name} = params, socket) do
     with_authz(socket, fn -> do_add_label(name, params, socket) end)
   end
@@ -424,6 +490,102 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
     end
   end
 
+  defp do_create_api_key(params, socket) do
+    preset = Map.get(params, "preset", "full")
+
+    attrs =
+      %{
+        "name" => Map.get(params, "name", ""),
+        "role" => Map.get(params, "role", "member"),
+        "scopes" => ApiKeyPanel.scopes_for(preset, api_key_scopes(params))
+      }
+      |> maybe_put_expiry(ApiKeyPanel.expires_at(Map.get(params, "expires")))
+      |> maybe_put_person(Map.get(params, "user"), socket.assigns.key_people)
+
+    case ApiKeys.create(socket.assigns.project, attrs, actor_opts(socket)) do
+      {:ok, key, token} ->
+        {:noreply,
+         socket
+         |> assign(api_token: %{token: token, key: key, action: :created}, api_key_form: nil)
+         |> reload()
+         |> put_flash(:info, gettext("API key created — copy it now, it is shown only once."))}
+
+      {:error, cs} ->
+        {:noreply,
+         put_flash(socket, :error, changeset_summary(cs, gettext("Could not create the key.")))}
+    end
+  end
+
+  defp do_rotate_api_key(uuid, socket) do
+    with %ApiKey{} = key <- ApiKeys.get_for_project(socket.assigns.project.uuid, uuid),
+         {:ok, key, token} <- ApiKeys.rotate(key, actor_opts(socket)) do
+      {:noreply,
+       socket
+       |> assign(api_token: %{token: token, key: key, action: :rotated})
+       |> reload()
+       |> put_flash(
+         :info,
+         gettext("Key rotated — the old token stopped working; copy the new one now.")
+       )}
+    else
+      _ -> {:noreply, put_flash(socket, :error, gettext("Could not rotate the key."))}
+    end
+  end
+
+  defp do_revoke_api_key(uuid, socket) do
+    with %ApiKey{} = key <- ApiKeys.get_for_project(socket.assigns.project.uuid, uuid),
+         {:ok, _} <- ApiKeys.revoke(key, actor_opts(socket)) do
+      {:noreply, socket |> reload() |> put_flash(:info, gettext("Key revoked."))}
+    else
+      _ -> {:noreply, put_flash(socket, :error, gettext("Could not revoke the key."))}
+    end
+  end
+
+  # Live keys first; revoked ones only when asked for, after them.
+  defp visible_api_keys(keys, show_revoked) do
+    {live, revoked} = Enum.split_with(keys, &is_nil(&1.revoked_at))
+    if show_revoked, do: live ++ revoked, else: live
+  end
+
+  defp project_name(%Project{} = project),
+    do: Project.localized_name(project, L10n.current_content_lang())
+
+  defp project_name(_), do: ""
+
+  defp maybe_put_expiry(attrs, %DateTime{} = at), do: Map.put(attrs, "expires_at", at)
+  defp maybe_put_expiry(attrs, _), do: attrs
+
+  # Only a current member can be acted for; anything else is a shared key.
+  defp maybe_put_person(attrs, user_uuid, people) when is_binary(user_uuid) do
+    if List.keymember?(people, user_uuid, 0),
+      do: Map.put(attrs, "user_uuid", user_uuid),
+      else: attrs
+  end
+
+  defp maybe_put_person(attrs, _, _), do: attrs
+
+  # The scope checkboxes post as `scope[<name>]`; the changeset validates
+  # against the closed set anyway, so an unknown name never gets through.
+  defp api_key_scopes(params) do
+    chosen =
+      params
+      |> Map.get("scope", %{})
+      |> Enum.filter(fn {_k, v} -> v in ["true", "on"] end)
+      |> Enum.map(&elem(&1, 0))
+
+    Enum.filter(ApiKey.scopes(), &(&1 in chosen))
+  end
+
+  defp changeset_summary(%Ecto.Changeset{} = cs, fallback) do
+    cs
+    |> Ecto.Changeset.traverse_errors(fn {msg, _opts} -> msg end)
+    |> Enum.map(fn {field, msgs} -> "#{field} #{Enum.join(List.wrap(msgs), ", ")}" end)
+    |> case do
+      [] -> fallback
+      lines -> Enum.join(lines, "; ")
+    end
+  end
+
   defp with_authz(socket, fun) do
     if socket.assigns.project && allowed?(socket, socket.assigns.project) do
       fun.()
@@ -470,7 +632,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
         <div :if={@embedded_in_form}>
           <h2 class="text-sm font-semibold">{gettext("Modules & features")}</h2>
           <p class="text-xs opacity-60">
-            {gettext("Choose what this project uses — from a simple to-do list to a full tracker.")}
+            {gettext("Choose what this project uses — from a simple to-do list to a full tracker. Changes here apply at once; the Save button above is for the fields.")}
           </p>
         </div>
 
@@ -713,7 +875,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   </span>
                   <input
                     type="checkbox"
-                    class="toggle toggle-sm"
+                    class="toggle toggle-primary toggle-sm"
                     checked={on}
                     disabled={unmet != []}
                     phx-click="toggle_flag"
@@ -740,10 +902,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
               {label.name}
               <button
                 type="button"
-                phx-click="delete_label"
-                phx-disable-with={gettext("Removing…")}
-                phx-value-uuid={label.uuid}
-                data-confirm={gettext("Remove the \"%{name}\" label from this project?", name: label.name)}
+                {ConfirmAction.ask("delete_label",
+                  uuid: label.uuid,
+                  title: gettext("Remove label"),
+                  message: gettext("Remove the \"%{name}\" label from this project?", name: label.name),
+                  confirm: gettext("Remove")
+                )}
                 aria-label={gettext("Remove %{name}", name: label.name)}
                 class="cursor-pointer opacity-60 hover:opacity-100"
               >
@@ -780,6 +944,260 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             </.button>
           </form>
       </.form_section>
+
+      <%!-- API keys: the credentials an outside agent drives THIS project
+           with (`Web.Api`). One key = one project, a role of its own, an
+           access preset over scopes; the token is shown once. The shape —
+           four fixed columns, no key ellipsis, a "For your AI" strip, the
+           form behind a button, a setup prompt — came from a three-seat
+           panel (see `ApiKeyPanel`). dev_docs/guides/api.md has the API. --%>
+      <.form_section
+        :if={@project}
+        title={gettext("API access")}
+        icon="hero-key"
+        body_class="gap-4"
+      >
+        <:subtitle>
+          {gettext("Keys an AI agent or a script uses to work on this project over its JSON API: read and create tasks, move them, log time, tokens and cost.")}
+          {gettext("Every member mints their own personal key on the project's \"Your API key\" page; this is the whole list, shared agents included.")}
+        </:subtitle>
+        <:actions>
+          <.button type="button" size="sm" phx-click="toggle_api_key_form">
+            <.icon name={if @api_key_form, do: "hero-x-mark", else: "hero-plus"} class="w-4 h-4" />
+            {if @api_key_form, do: gettext("Cancel"), else: gettext("New key")}
+          </.button>
+        </:actions>
+
+        <%!-- The reference an agent reads, findable with or without keys. --%>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <span class="font-medium">{gettext("For your AI:")}</span>
+          <a href={Docs.url("/llms.txt")} target="_blank" rel="noopener" class="link link-primary link-hover">
+            {gettext("Agent guide")}
+          </a>
+          <span class="opacity-40">·</span>
+          <a href={Docs.url("/openapi.json")} target="_blank" rel="noopener" class="link link-primary link-hover">
+            {gettext("OpenAPI spec")}
+          </a>
+          <span class="text-xs text-base-content/60">
+            {gettext("Every key's menu has a setup prompt to paste to your AI.")}
+          </span>
+        </div>
+
+        <form
+          :if={@api_key_form}
+          id={"project-api-key-add-#{@project.uuid}"}
+          phx-change="api_key_form_change"
+          phx-submit="create_api_key"
+          class="flex flex-col gap-3 rounded-box border border-base-300 bg-base-200/40 p-4"
+        >
+          <div class="flex flex-wrap items-end gap-3">
+            <div class="flex-1 min-w-48">
+              <.input
+                id={"new-api-key-name-#{@project.uuid}"}
+                name="name"
+                value={@api_key_form["name"]}
+                label={gettext("Key name")}
+                required
+                maxlength="80"
+                class="input-sm"
+                placeholder={gettext("e.g. Claude runner")}
+              />
+            </div>
+            <div class="w-52">
+              <.select
+                id={"new-api-key-user-#{@project.uuid}"}
+                name="user"
+                label={gettext("Acts for")}
+                value={@api_key_form["user"]}
+                class="select-sm"
+                options={[{gettext("Nobody — a shared agent"), ""} | ApiKeyPanel.people_options(@key_people)]}
+              />
+            </div>
+            <div class="w-36">
+              <.select
+                id={"new-api-key-role-#{@project.uuid}"}
+                name="role"
+                label={if @api_key_form["user"] == "", do: gettext("Role"), else: gettext("Role, at most")}
+                value={@api_key_form["role"]}
+                class="select-sm"
+                options={for role <- ApiKey.roles(), do: {role, role}}
+              />
+            </div>
+            <div class="w-40">
+              <.select
+                id={"new-api-key-expires-#{@project.uuid}"}
+                name="expires"
+                label={gettext("Expires")}
+                value={@api_key_form["expires"]}
+                class="select-sm"
+                options={ApiKeyPanel.expiry_options()}
+              />
+            </div>
+          </div>
+          <fieldset class="flex flex-col gap-1">
+            <legend class="text-sm font-medium mb-1">{gettext("Access")}</legend>
+            <label
+              :for={preset <- ApiKeyPanel.presets()}
+              class="flex items-start gap-2 text-sm cursor-pointer"
+            >
+              <input
+                type="radio"
+                name="preset"
+                value={preset}
+                checked={@api_key_form["preset"] == preset}
+                class="radio radio-primary radio-sm mt-0.5"
+              />
+              <span>
+                <span class="font-medium">{ApiKeyPanel.preset_label(preset)}</span>
+                <span class="text-base-content/60"> — {ApiKeyPanel.preset_hint(preset)}</span>
+              </span>
+            </label>
+          </fieldset>
+          <div :if={@api_key_form["preset"] == "custom"} class="flex flex-wrap gap-4 pl-6">
+            <.checkbox
+              :for={scope <- ApiKey.scopes()}
+              id={"new-api-key-scope-#{scope}-#{@project.uuid}"}
+              name={"scope[#{scope}]"}
+              checked={Map.get(@api_key_form["scope"], scope) == "true"}
+              label={scope}
+              class="checkbox-primary checkbox-sm"
+            />
+          </div>
+          <div class="flex justify-end gap-2">
+            <.button type="button" size="sm" variant="ghost" phx-click="toggle_api_key_form">
+              {gettext("Cancel")}
+            </.button>
+            <.button type="submit" size="sm" phx-disable-with={gettext("Creating…")}>
+              {gettext("Create key")}
+            </.button>
+          </div>
+        </form>
+
+        <% visible_keys = visible_api_keys(@api_keys, @show_revoked) %>
+        <% revoked_count = Enum.count(@api_keys, & &1.revoked_at) %>
+
+        <table :if={visible_keys != []} class="table table-sm table-fixed w-full">
+          <thead>
+            <tr>
+              <th class="w-[40%]">{gettext("Key")}</th>
+              <th class="w-[28%]">{gettext("Access")}</th>
+              <th class="w-[26%]">{gettext("Activity")}</th>
+              <th class="w-12"><span class="sr-only">{gettext("Actions")}</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr :for={key <- visible_keys} class={key.revoked_at && "opacity-60"}>
+              <td class="align-top">
+                <div class="flex items-center gap-2 flex-wrap min-w-0">
+                  <span class="font-medium truncate">{key.name}</span>
+                  <span class="badge badge-ghost badge-xs">{key.role}</span>
+                  <span :if={key.revoked_at} class="badge badge-error badge-outline badge-xs">
+                    {gettext("revoked")}
+                  </span>
+                </div>
+                <div class="text-xs text-base-content/70 mt-0.5 truncate">
+                  {ApiKeyPanel.kind_label(key, Map.new(@key_people))}
+                </div>
+                <div class="font-mono text-xs text-base-content/60 mt-0.5 truncate">
+                  {gettext("ID")} {ApiKeyPanel.display_id(key)}
+                </div>
+                <div class="text-xs text-base-content/50 mt-0.5">
+                  {gettext("Created %{date}", date: L10n.format_date(key.inserted_at))}
+                </div>
+              </td>
+              <td class="align-top text-sm">
+                <div title={Enum.join(key.scopes, " ")}>{ApiKeyPanel.access_label(key.scopes)}</div>
+                <div
+                  :if={ApiKeyPanel.preset_for(key.scopes) == "custom"}
+                  class="flex flex-wrap gap-1 mt-1"
+                >
+                  <span :for={scope <- key.scopes} class="badge badge-ghost badge-xs font-mono">
+                    {scope}
+                  </span>
+                </div>
+              </td>
+              <td class="align-top text-xs">
+                <div :if={key.last_used_at} title={L10n.format_datetime(key.last_used_at)}>
+                  {gettext("Last used")} <.time_ago datetime={key.last_used_at} class="" />
+                </div>
+                <div :if={is_nil(key.last_used_at)}>{gettext("Never used")}</div>
+                <div class="text-base-content/60 mt-0.5">
+                  {if key.expires_at,
+                    do: gettext("Expires %{date}", date: L10n.format_date(key.expires_at)),
+                    else: gettext("No expiry")}
+                </div>
+              </td>
+              <td class="align-top text-right">
+                <.table_row_menu :if={is_nil(key.revoked_at)} id={"api-key-menu-#{key.uuid}"}>
+                  <.table_row_menu_button
+                    id={"api-key-copy-prompt-#{key.uuid}"}
+                    phx-hook="CopyToClipboard"
+                    data-copy-target={"#api-key-prompt-#{key.uuid}"}
+                    icon="hero-clipboard-document"
+                    label={gettext("Copy setup prompt")}
+                  />
+                  <.table_row_menu_button
+                    {ConfirmAction.ask("rotate_api_key",
+                      uuid: key.uuid,
+                      title: gettext("Rotate key"),
+                      message:
+                        gettext("Give \"%{name}\" a new token? The current one stops working at once.",
+                          name: key.name
+                        ),
+                      confirm: gettext("Rotate")
+                    )}
+                    icon="hero-arrow-path"
+                    label={gettext("Rotate")}
+                  />
+                  <.table_row_menu_divider />
+                  <.table_row_menu_button
+                    {ConfirmAction.ask("revoke_api_key",
+                      uuid: key.uuid,
+                      title: gettext("Revoke key"),
+                      message:
+                        gettext("Revoke \"%{name}\"? Every call with it will be refused from now on, and this cannot be undone.",
+                          name: key.name
+                        ),
+                      confirm: gettext("Revoke")
+                    )}
+                    icon="hero-no-symbol"
+                    label={gettext("Revoke")}
+                    variant="error"
+                  />
+                </.table_row_menu>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p :if={@api_keys == []} class="text-sm text-base-content/60">
+          {gettext("No keys yet — create one to let an AI agent work on this project.")}
+        </p>
+        <p class="text-xs text-base-content/60">
+          {gettext("A row shows the key's ID only. The token is shown once — when the key is created or rotated — and only its hash is stored. Lost it? Rotate the key.")}
+        </p>
+        <button
+          :if={revoked_count > 0}
+          type="button"
+          phx-click="toggle_revoked_keys"
+          class="link link-hover text-xs self-start"
+        >
+          {if @show_revoked,
+            do: gettext("Hide revoked keys"),
+            else: gettext("Show revoked keys (%{count})", count: revoked_count)}
+        </button>
+
+        <.api_key_prompts keys={@api_keys} project_name={project_name(@project)} />
+      </.form_section>
+
+      <.api_token_modal
+        :if={@project}
+        id={"api-token-#{@project.uuid}"}
+        api_token={@api_token}
+        project_name={project_name(@project)}
+      />
+
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

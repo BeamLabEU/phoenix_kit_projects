@@ -11,10 +11,11 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 2.43.0 and < 3.0.0` (Hex — the release
-  that carries `Storage.ResourceFolders`, `PhoenixKitWeb.Actor`,
-  `Activity.log/3` and the `form_actions` / `bulk_actions_toolbar` /
-  `form_section` attrs and slots the LiveViews use; the compound form keeps the ceiling open across later 2.x
+- **Depends on:** `phoenix_kit` `>= 2.49.0 and < 3.0.0` (Hex — the release
+  that carries `activity_list/1`, on top of `Storage.ResourceFolders`,
+  `PhoenixKitWeb.Actor`, `Activity.log/3`, `TableColumns` and the
+  `form_actions` / `bulk_actions_toolbar` / `form_section` attrs and slots
+  the LiveViews use; the compound form keeps the ceiling open across later 2.x
   minors and `core_pin_conformance_test.exs` guards it),
   `phoenix_kit_ai` `~> 0.18` (hard — the AI-translation pipeline),
   `phoenix_kit_comments` `~> 0.3` (hard — `ProjectShowLive` does
@@ -430,6 +431,8 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.Label` | `phoenix_kit_project_labels` |
 | `Schemas.Portal` | `phoenix_kit_project_portals` |
 | `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
+| `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — a project's API keys, the credentials of `Web.Api`) |
+| `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
 
 All UUIDv7 PKs; every table-backed schema applies `use PhoenixKit.SchemaPrefix`
@@ -492,7 +495,11 @@ browsing the public portal is a visitor.
   `week_start_day`.
 - `projects_gantt_*` — the Timeline-chart customizer (`GanttDisplay`), same page.
 - `projects_list_columns` / `projects_tasks_columns` /
-  `projects_templates_columns` — comma-joined visible-column sets per list page.
+  `projects_templates_columns` — RETIRED: the list pages' visible columns
+  were one comma-joined site-wide row each; they are now each viewer's own
+  choice in core's `ViewPrefs` (keys `projects.list` / `projects.tasks` /
+  `projects.templates`, via `PhoenixKitWeb.TableColumns`). The rows are no
+  longer read or written; an install that still has them can delete them.
 - `projects_list_controls_mode` / `projects_list_controls_threshold` — when the
   task list's lens + sort render (`auto` | `always` | `never`; default
   threshold 10).
@@ -514,6 +521,10 @@ browsing the public portal is a visitor.
 - `projects.project_archived/unarchived`
 - `projects.template_created/updated/deleted`, `projects.project_created_from_template`
 - `projects.task_created/updated/deleted`, `projects.task_promoted`
+- `projects.api_key_created/rotated/revoked` (resource: the project); `projects.project_status_changed`
+  (the workflow status set over the API). Every entry the API writes carries
+  `metadata.via = "api"`, `metadata.api_key` and `metadata.api_key_name`, with the
+  key's minter as `actor_uuid`.
 - `projects.task_dependency_added/removed`, `projects.dependency_added/removed`
 - `projects.assignment_created/updated/started/completed/reopened/removed`
 - `projects.assignment_progress_updated`, `projects.assignment_duration_changed`,
@@ -626,6 +637,242 @@ slider-audit coalescing window (runtime default 1s) so tests can wait it out.
 
 ## Feature notes
 
+### The JSON API (`/api/projects/v1`)
+
+The surface an outside agent drives ONE project with — `dev_docs/guides/api.md`
+is the full account. In short: per-project API keys (`ApiKeys`, minted on the
+Modules & Features page) are their own principal — a role of their own, never
+owner, plus scopes — authorised by `Authz.can_role?/3` (the project's floors
+and overrides, nothing else) and the project's feature gates; `Web.Api.Auth`
+is the bearer plug, `Web.Api.Json` the shared checks and shapes, the
+controllers call the same context functions the LiveViews do. The agent-facing
+contract is generated from `Web.Api.Docs.endpoints/0` as `llms.txt` and
+`openapi.json`; **never add an endpoint the table does not list**. Ledger
+appends require an `Idempotency-Key` (`ApiKeys.idempotent/3`); an agent's
+minutes are `kind: "time"` by an `ai_agent` actor, never billable, summed as
+`ai_minutes`, and both appends take an optional `occurred_at` (stored as the
+entry's `ended_at`; `inserted_at` stays the receipt time). Every key has a
+rate limit (`Web.Api.RateLimit`, a bucket per key on core's Hammer backend,
+`config :phoenix_kit_projects, :api_rate_limit, limit: 300, window_ms: 60_000`;
+`limit: nil` turns it off) applied in the auth plug, so a 429 is never stored
+as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
+mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
+them.
+
+### What the first agent on the API asked for (2026-10-05) — built, as settings
+
+The 3D-editor session's Claude read the guide, ran 27 calls on ANDI Manager
+and reviewed the API from the agent's seat. Max: *"go ahead and build
+everything that the other AI needs… make sure that everything is
+controllable via settings. We want projects to be very flexible."* A
+three-seat panel (grok, zai, codex) converged on the shape; chain **V19**
+carries the columns. What landed:
+
+- **`completion`** on a project (`settings["completion"]`: `auto` | `manual`,
+  `Project.completion/1`, `ongoing?/1`): ongoing work never completes on its
+  own — `decide_completion/1` leaves it, every task done is **caught up**
+  (`Projects.caught_up?/1`; the rollup row reads 100% but not done, so an
+  ongoing child never completes its parent). Copied onto a sub-project at
+  creation (`create_subproject/2`, the form, `POST /subprojects completion`).
+  The project form's "Ends" select; the sub-project form's too; "Ongoing" /
+  "All caught up" badges in the header.
+- **`agents` policy** (`settings["agents"]`, `Project.agent_policy/1` with
+  defaults): `take_started_task` (false), `edit_foreign_text` (false),
+  `delete_tasks` (`none` | `own` | `any`), `amend_own_ledger` (true). The
+  project form's "What an AI agent may do here" card; `/me` and `/project`
+  carry `agent_policy`. Enforced in the API: 409 `already_started`, 403
+  `foreign_text`, 403 `delete_not_allowed`, 403 `amend_not_allowed`.
+- **Provenance** on a task: `created_by_uuid` / `created_by_key_uuid`,
+  `started_by_uuid` / `started_by_key_uuid` (server-only fields,
+  `Projects.stamp_assignment/2`; the form and the API stamp them).
+- **`waiting_on`**, **`origin`** (`source` was taken — it means internal vs
+  portal), **`checklist`** (`[{id, text, done, done_at}]`, ≤ 50 items, ids
+  minted by the changeset, never driving `progress_pct`); form fields and
+  row badges; `PATCH /tasks/{id}/checklist/{item}` ticks one item.
+- **Labels by name** on the API (`Labels.ensure_by_names/3`, creates the
+  missing ones when the flag is on); `position: "top"` on create
+  (`Projects.top_assignment_position/1`); `updated_since` on `GET /tasks`
+  (strict, with `now` in the answer; index on `(project_uuid, updated_at)`).
+- **Project notes**: `TaskNotes.create_for_project/3`, `list_for_project/2`
+  on the comments anchor `project_notes` (registered in `ResourceLinks.types`);
+  `POST /notes`, `GET /notes?since=`.
+- **`GET /briefing`**: project + policy, open tasks (≤ 50, priority then
+  position, `truncated`) with direction / last outcome / latest note / who
+  started / waiting / checklist counts, sub-projects one line each, project
+  notes since. **Ledger corrections**: `PATCH /entries/{id}` (minutes),
+  `DELETE /entries/{id}`. **`DELETE /tasks/{id}`** under the policy.
+
+Not built, by choice: a fourth lifecycle status (waiting is a badge), a
+parent task (the checklist is the sub-item), typed file refs, ETags (an
+`updated_since` poll is enough), a claim history (the current holder only).
+
+**The second sweep (2026-10-05, same agent, three reports):** `estimated`
+echoed on every entry (`Json.entry/1`: actor, note_uuid, model, estimated)
+and kept through a note's usage; `GET /entries` and `GET /tasks/{id}/entries`
+(the read behind a correction); `/me.features` is the whole gates map;
+`subproject` (`{completion, caught_up, completed_at}`) on a nested row;
+`GET /events`, `GET /events/{id}` (`Web.Api.EventsController`, needs the
+events extension); the briefing carries `client.interactions` (the Client
+extension's provider, `since`-narrowed) and `events` (the next five).
+**Task ↔ interaction**: first as a mention token appended to the
+description, then (V20, below) as a join table with the token kept in step —
+`interaction: <uuid>` on `POST`/`PATCH /tasks` (the provider's `get/2`
+supplies the label), `tasks: [<uuid>]` on the CRM's interaction create/update
+(`ProjectsLink.link_task/3`), `interactions: [uuid]` on a task, `tasks:
+[{uuid, title}]` on an interaction. An extension's `api:`
+may now be a LIST of providers (`Extension.normalize_api/2`); the CRM adds
+`PhoenixKitCRM.CompanyApi` (`/ext/companies`, the client and its people, on
+the interactions scopes). The UI: no progress bar on an ongoing project; a
+nested ongoing row says Ongoing / All caught up.
+
+**The panel's sweep of all that (2026-10-05, grok + zai on the surface,
+codex on the repo) and what changed — chain V20:** wording ownership follows
+the LAST human edit, not creation (`words_by_key_uuid`: the key that wrote
+the title/description last, nil for a person's; the form's save clears it,
+the API's text edits stamp it; `Json.may_edit_text?/3`); the task ↔
+interaction link is a table (`phoenix_kit_project_task_interactions`,
+`Projects.link_interaction/4`, `unlink_interaction/2`, `interactions_of/1`,
+`tasks_for_interaction/1`; `POST`/`DELETE /tasks/{id}/interactions/{uuid}`)
+and the token in the text is kept in step with it (`ensure_interaction_tokens/3`
+after an API description rewrite; the token lives on the one-off TASK's
+description, on the assignment's — with a copy of the library text — for a
+shared task); claims hold for every move out of `in_progress` by another
+actor, not only the start; every task-level API action rescopes to the
+task's project BEFORE its feature and role gates (codex: a child's floors
+were checked against the root); a checklist tick is one row-locked update
+(`Projects.update_checklist_item/3`); `ResourceLinks.visible_resource_uuids/2`
+climbs the whole ancestry (a grandchild's records were invisible to a root
+member); ledger reads say `limit`/`truncated`, task entries are queried by
+`assignment_uuid`, amendments name the key in the trace, tokens/cost entries
+take `amount` (`Ledger.update_amount/3`), a billable row is never removed
+over the API (403 `billable_entry`); `updated_since` is inclusive; the
+briefing orders mine → ready → waiting with `counts`, a `resume` pointer
+(this key's latest note), `done_today`, `caught_up_since`, and summarises
+children in one pass. Not done: a batched "latest note per task" (50 open
+tasks = 50 comment reads; acceptable at one briefing per reset).
+
+**Round four (2026-10-05, the agent's third report):** the interaction
+lookup for a task in a sub-project walks up the parent chain within the
+key's reach to the project that holds the client (`interaction_label/2` in
+`TasksController`), and `POST /tasks` checks the interaction BEFORE creating
+the task (404, never a 201 without the link); `now` is floored to whole
+seconds wherever a poll reads it back (`updated_at` has no microseconds);
+`Json.entry/1` says `billable`; the briefing's client lines drop the bodies.
+**A deploy trap:** the extension registry is cached — after a provider
+change lands on dev, `Extensions.Registry.refresh()` over the node (the
+`/ext/companies` rows vanished from the guide until it ran; the CRM extension
+declares `api: [ProjectApi, CompanyApi]` and the stale list held one). The
+"events" extension was off on ANDI Manager although it had a planned event —
+switched on by hand.
+
+The earlier list, for the record:
+
+- **Sub-items**: a `parent_uuid` on a task or a checklist — a sub-project per
+  client question is too heavy (its own workflow status and ledger).
+- **Project-level notes**: `POST /notes` beside `/time` and `/usage` — half a
+  day's report is not about a task (decisions, research, the in-flight block).
+- **A briefing read**: `GET /notes?since=` or one call returning the open tasks
+  with `direction` and `latest_agent_note` — recovery after a context reset is
+  one GET per task today; `last_outcome` and a direction flag on list rows.
+- **A waiting state** for a task blocked on someone else (`outcome: blocked`
+  on a note is only a claim).
+- **Claiming**: `/start` could record the key that started a task and the row
+  show it — two sessions can start the same task.
+- **Wording protection**: record who created a task; let an agent edit only
+  its own titles (the key carries the person's role, so PATCH can reword a
+  person's text).
+- **Corrections**: a manager's reversing ledger entry (append-only with no
+  void leaves a wrong row forever).
+- **Polling**: `updated_since` or an ETag on `GET /tasks`; `position` on
+  `POST /tasks`; tags and a `source` ("from the client"); file refs beyond
+  URLs; no API delete (test rows are cleaned up in the UI).
+- **The completion climb**: completing the only task of a test sub-project
+  completed the client project (the parent's own rows were all done). The UI
+  does the same; whether an API completion should stop at the sub-project, or
+  whether a project with no open rows of its own should complete at all, is
+  the open question. Documented in the guide for now.
+
+### Task notes: the long record, apart from the discussion (2026-10-05)
+
+Max: an agent "would want to write as much information as possible … but
+it becomes something a human would never read"; keep the description the
+TLDR, fold the long record away, keep a running token total per task, and
+track the handoffs ("the boss says no, that's wrong; the second person
+redoes it") so the next worker reads the original reasoning AND the new
+direction. `TaskNotes` is that record: comments on the anchor type
+`project_task_notes` (the discussion stays on `assignment`), one note
+profile validated in the context and nowhere else — `kind` (`agent_note`
+via the API, `note` by a person, `redirect` by a person only), a required
+one-line `summary` on agent notes and redirects, `outcome` (a claim about
+the attempt, never the task's status), `refs` (`{type, id, url?, label?}`
+per note — shape-validated, never fetched, free slug type), `next_steps`,
+and `usage` whose figures are LEDGER rows written in the same transaction
+(`metadata.note_uuid` on the rows, `usage.entries` on the note; totals are
+sums over the ledger, never over the note). The note's author is the
+key's accountable person with the key's name pinned as display name. The
+API: `GET/POST /tasks/:id/notes`; `GET /tasks/:id` leads with `direction`
+(the latest redirect), `last_outcome`, `latest_agent_note`,
+`display_summary` (description → redirect → agent summary) and `totals`.
+On the page: a second drawer button on the task row (cpu-chip icon, note
+count, tokens), the comments component on the notes anchor with the
+usage / outcome / redirect lines as decorations, a "Change the direction"
+form (a redirect) and "Use as description" (adopts the latest summary,
+logged as machine-made when it was an agent's). Panel (grok, zai, codex,
+2026-10-05) shaped it: summary required, refs per note not per task, a
+typed redirect the task surfaces first, usage never stored as a second
+total. Known gaps, deliberate: the idempotency record is stored after
+the transaction (a crash in between can double-count on retry); a note's
+author may edit or delete it through the comments UI (the ledger rows
+stay); Summarize through the AI module is not built — `display_summary`
+and "Use as description" are the honest TLDR until it is.
+
+### An extension's record on the API (`/ext/:resource`, 2026-10-05)
+
+Max: "make sure that all the stuff is editable via the API because my AI
+knows stuff about the meeting". A meeting is the CRM's row, and this
+module never names a CRM function — so an extension may put ONE of its
+records on this API by declaring `api: Module` in its
+`phoenix_kit_project_extensions/0` map; the module follows
+`Extensions.ApiProvider` (`resource/0`, `scopes/0`, `action/0`, `list/2`,
+`get/2`, `create/2`, `update/3`, `docs/0`). `Web.Api.ExtController` serves
+`GET/POST /ext/<resource>` and `GET/PATCH /ext/<resource>/:id` with the
+usual three checks first — the provider's scope (its scopes join
+`ApiKey.scopes/0`, so the key panel offers them), the extension enabled on
+the project (else 403 `feature_disabled` naming the extension key), the
+key's role at the provider's action (an action an installed extension
+declares in `permission_actions` floors at member — `Authz.floor_for/2`'s
+"future refinement", done) — then `apply/3` into the provider with a
+`ctx` (project, key, accountable person, agent actor). The provider's
+`docs/0` rows join `Docs.endpoints/0`, so `llms.txt` and `openapi.json`
+carry the resource. `Extensions.config/3` is what a provider reads to know
+the project's client. The CRM's `PhoenixKitCRM.ProjectApi` is the first:
+`/ext/interactions`. `test/phoenix_kit_projects/web/api_ext_test.exs`
+proves the mechanism with a fake provider registered through
+`config :phoenix_kit_projects, :extension_providers`.
+
+### Tasks and `#` mentions
+
+A task's description goes through core's mentions (`<.translatable_field
+… mentions>` in the form, `<.mention_text>` on the page) and — since the
+CRM's meetings asked (2026-10-05) — is INDEXED too: the assignment form
+(`sync_task_mentions/3`) and the API's create/update call
+`PhoenixKit.Mentions.sync("project_task", assignment_uuid, description)`,
+so a task whose text carries `#[crm_interaction:…|…]` is listed on the
+meeting through `Mentions.list_backlinks/3`. Before that only sub-project
+and project descriptions were synced; a `#` in a task rendered as a chip
+and was never a backlink. `AssignmentFormLive` `:new` takes a
+`description` param next to `title` for exactly this (the CRM's "Add task"
+pre-fills the chip). The link is the text: edit the chip out and the
+backlink goes with it (panel 2:1 against an extra origin field).
+
+Idea, not built (2026-10-05, Max: skip for now): **webhooks** on task events,
+so an agent is handed a task instead of polling — the module already
+broadcasts every task change on `PhoenixKitProjects.PubSub`, so a webhook
+would be a subscriber that POSTs to a URL stored on the key (with a signing
+secret, retries with backoff, and a delivery log). Until then an agent polls
+`GET /tasks?status=open` no more than once a minute.
+
+
 | Feature | The constraint that must hold | Guide |
 |---|---|---|
 | Embedding via `live_render` | Every LV is embeddable and must stay so — an LV that exports `handle_params/3` cannot mount off-router. The host passes identity, the host authorizes. | [`dev_docs/guides/embedding.md`](dev_docs/guides/embedding.md), [`dev_docs/embedding_audit.md`](dev_docs/embedding_audit.md), [`dev_docs/embedding_emit.md`](dev_docs/embedding_emit.md) |
@@ -662,6 +909,7 @@ The three tables a host app depends on. Full prose in
 | `"pubsub_topic"` | all | **Required** when `mode` is `"emit"` or `"popup"` |
 | `"frame_ref"` | all | Race-safe pop identity, inherited from PopupHost |
 | `"close_on"` | all | Subset of `["closed", "saved", "deleted"]`; defaults `["closed"]` |
+| `"host_paths"` | contributed extension tabs | `%{"new_task" => path}` — where the hub's own pages are, so a tab (the CRM's "add a task from this meeting") can send someone there without naming this module's routes |
 
 Emit-mode event vocabulary (UI-intent verbs, deliberately disjoint from
 `PhoenixKitProjects.PubSub`'s content verbs so `handle_info` clauses never

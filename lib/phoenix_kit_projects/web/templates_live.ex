@@ -8,8 +8,10 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ListUi
+  alias PhoenixKitWeb.TableColumns
 
   require Logger
 
@@ -65,14 +67,13 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
     "reverse" => :reverse
   }
 
-  # Optional table columns, toggleable from the Columns dropdown (Name
-  # and Actions always render). Visibility persists site-wide in
-  # settings — same custody as the calendar/gantt display config.
+  # Optional table columns (Name and Actions always render), each viewer's
+  # own choice through core's column picker (`ListUi` moduledoc).
   # `tasks` and `created_by` need batched lookup maps; load_templates
   # only runs those queries while the column is visible.
-  @optional_columns ~w(weekends tasks uses last_used created updated created_by external_id)
   @default_columns ~w(weekends)
-  @columns_key "projects_templates_columns"
+  @columns_key "projects.templates"
+  @column_events ~w(add_column remove_column reorder_columns reset_columns)
 
   @impl true
   def mount(_params, session, socket) do
@@ -112,8 +113,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         # action button is clicked (BulkSelectScope hook).
         captured_uuids: [],
         show_reorder_modal: false,
-        visible_columns:
-          ListUi.read_visible_columns(@columns_key, @optional_columns, @default_columns),
+        show_column_modal: false,
         # Batched per-row lookup maps for the tasks / uses / created_by
         # columns — filled by load_templates only while visible.
         task_counts: %{},
@@ -123,6 +123,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
+
+    # The viewer's columns, read once the embed user is known.
+    socket = assign(socket, visible_columns: ListUi.load_columns(socket, columns_spec()))
 
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
@@ -225,6 +228,21 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
   @impl true
 
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   # Sort selector fires `sort_form` for both field changes (form
   # phx-change) and direction toggles (button phx-click). One event,
   # two shapes — derive the missing half from current state.
@@ -280,21 +298,19 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
     {:noreply, push_url_state(socket, [search: ListUi.coerce_search(params)], replace: true)}
   end
 
-  def handle_event("toggle_column", %{"col" => col}, socket) when col in @optional_columns do
-    new_visible =
-      ListUi.toggle_visible_column(
-        @columns_key,
-        @optional_columns,
-        socket.assigns.visible_columns,
-        col
-      )
+  def handle_event("open_column_modal", _params, socket),
+    do: {:noreply, assign(socket, show_column_modal: true)}
 
-    # Reload so a newly-shown tasks / created_by column gets its
-    # batched lookup map (hidden columns skip those queries).
-    {:noreply, socket |> assign(visible_columns: new_visible) |> load_templates()}
+  def handle_event("hide_column_modal", _params, socket),
+    do: {:noreply, assign(socket, show_column_modal: false)}
+
+  # Core's live column picker: every edit applies at once and is saved for
+  # the viewer. Reload so a newly-shown tasks / created_by column gets its
+  # batched lookup map (hidden columns skip those queries).
+  def handle_event(event, params, socket) when event in @column_events do
+    socket = TableColumns.handle_event(event, params, socket, columns_spec(), :visible_columns)
+    {:noreply, load_templates(socket)}
   end
-
-  def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
 
   # Empty (or single-row) selection collapses to :all — the button
   # label reads "Reorder all" in those states and a single-row permute
@@ -502,7 +518,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
                 options={sort_options()}
                 manual_field={:position}
               />
-              <ListUi.columns_control options={column_options()} visible={@visible_columns} />
+              <ListUi.columns_button />
             </:trailing>
             <:primary>
               <.new_template_button embed_mode={@embed_mode} />
@@ -543,9 +559,19 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         noun_singular={gettext("template")}
         noun_plural={gettext("templates")}
       />
+
+      <.column_settings_modal
+        show={@show_column_modal}
+        id="templates-column-settings"
+        columns={columns_spec().columns}
+        selected={@visible_columns}
+      />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end
+
+  defp columns_spec, do: ListUi.columns_spec(@columns_key, column_options(), @default_columns)
 
   attr(:embed_mode, :atom, required: true)
   attr(:label, :string, default: nil)
@@ -570,11 +596,15 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
   # Extracted so a future bulk-disabled branch can reuse it (same
   # shape as ProjectsLive's render_projects_table).
+  #
+  # Columns follow the catalogue's shape: Name is the lead column and takes
+  # the slack; every optional column is sized to its content and packed
+  # against the right edge, in the viewer's own order (`ListUi` moduledoc).
   defp render_templates_table(assigns, draggable?, lang) do
     assigns = assign(assigns, draggable?: draggable?, lang: lang)
 
     ~H"""
-    <.table_default id="templates-list" size="sm">
+    <.table_default id="templates-list" size="sm" {ListUi.table_fit()}>
       <.table_default_header>
         <.table_default_row>
           <.drag_handle_header_cell :if={@draggable?} />
@@ -582,51 +612,20 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             id="templates-select-all"
             aria_label={gettext("Select all templates")}
           />
-          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}}>
+          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}} data-col-lead="true">
             {gettext("Name")}
           </.sort_header_cell>
-          <.table_default_header_cell :if={"weekends" in @visible_columns}>
-            {gettext("Weekends")}
-          </.table_default_header_cell>
-          <.table_default_header_cell :if={"tasks" in @visible_columns} class="text-right">
-            {gettext("Tasks")}
-          </.table_default_header_cell>
-          <.table_default_header_cell :if={"uses" in @visible_columns} class="text-right">
-            {gettext("Uses")}
-          </.table_default_header_cell>
-          <.table_default_header_cell :if={"last_used" in @visible_columns}>
-            {gettext("Last used")}
-          </.table_default_header_cell>
-          <.sort_header_cell
-            :if={"created" in @visible_columns}
-            field={:inserted_at}
-            sort={%{by: @sort_by, dir: @sort_dir}}
-          >
-            {gettext("Created")}
-          </.sort_header_cell>
-          <.sort_header_cell
-            :if={"updated" in @visible_columns}
-            field={:updated_at}
-            sort={%{by: @sort_by, dir: @sort_dir}}
-          >
-            {gettext("Last edited")}
-          </.sort_header_cell>
-          <.table_default_header_cell :if={"created_by" in @visible_columns}>
-            {gettext("Created by")}
-          </.table_default_header_cell>
-          <.table_default_header_cell :if={"external_id" in @visible_columns}>
-            {gettext("External ID")}
-          </.table_default_header_cell>
-          <.table_default_header_cell class="text-right whitespace-nowrap">
-            {gettext("Actions")}
-          </.table_default_header_cell>
+          <%= for col <- @visible_columns do %>
+            {column_header(assigns, col)}
+          <% end %>
+          <ListUi.actions_header_cell />
         </.table_default_row>
       </.table_default_header>
       <.sortable_tbody id="templates-list-body" enabled={@draggable?} event="reorder_templates">
         <.sortable_row :for={t <- @templates} item_id={t.uuid} data-search={ListUi.search_haystack(t, ["name", "description"])}>
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell value={t.uuid} />
-          <.table_default_cell class="font-medium">
+          <.table_default_cell class="font-medium" data-col-lead="true">
             <.smart_link
               navigate={Paths.template(t.uuid)}
               emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => t.uuid}}}
@@ -638,56 +637,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             <% desc = Project.localized_description(t, @lang) %>
             <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
           </.table_default_cell>
-          <.table_default_cell :if={"weekends" in @visible_columns}>
-            <span class={"badge badge-xs #{if t.counts_weekends, do: "badge-info", else: "badge-ghost"}"}>
-              {if t.counts_weekends, do: gettext("yes"), else: gettext("no")}
-            </span>
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"tasks" in @visible_columns}
-            class="text-right tabular-nums text-base-content/70"
-          >
-            {Map.get(@task_counts, t.uuid, 0)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"uses" in @visible_columns}
-            class="text-right tabular-nums text-base-content/70"
-          >
-            {get_in(@usage, [t.uuid, :count]) || 0}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"last_used" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {case get_in(@usage, [t.uuid, :last_used]) do
-              nil -> "—"
-              at -> L10n.format_date(at)
-            end}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"created" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {L10n.format_date(t.inserted_at)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"updated" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {L10n.format_date(t.updated_at)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"created_by" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {Map.get(@creators, t.uuid) || "—"}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"external_id" in @visible_columns}
-            class="font-mono text-xs text-base-content/70"
-          >
-            {t.external_id || "—"}
-          </.table_default_cell>
+          <%= for col <- @visible_columns do %>
+            {column_cell(assigns, col, t)}
+          <% end %>
           <.table_default_cell class="text-right whitespace-nowrap">
             <.table_row_menu id={"template-menu-#{t.uuid}"}>
               <.smart_menu_link
@@ -699,10 +651,12 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
               />
               <.table_row_menu_divider />
               <.table_row_menu_button
-                phx-click="delete"
-                phx-value-uuid={t.uuid}
-                phx-disable-with={gettext("Deleting…")}
-                data-confirm={gettext("Delete template \"%{name}\"?", name: Project.localized_name(t, @lang))}
+                {ConfirmAction.ask("delete",
+                  uuid: t.uuid,
+                  title: gettext("Delete template"),
+                  message: gettext("Delete template \"%{name}\"?", name: Project.localized_name(t, @lang)),
+                  confirm: gettext("Delete")
+                )}
                 icon="hero-trash"
                 label={gettext("Delete")}
                 variant="error"
@@ -721,6 +675,167 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
       total={@filtered_count}
       noun_plural={gettext("templates")}
     />
+    """
+  end
+
+  # One optional column's header cell, by id. Sortable columns keep core's
+  # sortable header; every one carries its fit class and drop priority.
+  defp column_header(assigns, "weekends") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("weekends")}>
+      {gettext("Weekends")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "tasks") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("tasks", "text-right")}>
+      {gettext("Tasks")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "uses") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("uses", "text-right")}>
+      {gettext("Uses")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "last_used") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("last_used")}>
+      {gettext("Last used")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "created") do
+    ~H"""
+    <.sort_header_cell
+      field={:inserted_at}
+      sort={%{by: @sort_by, dir: @sort_dir}}
+      {ListUi.column_attrs("created")}
+    >
+      {gettext("Created")}
+    </.sort_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "updated") do
+    ~H"""
+    <.sort_header_cell
+      field={:updated_at}
+      sort={%{by: @sort_by, dir: @sort_dir}}
+      {ListUi.column_attrs("updated")}
+    >
+      {gettext("Last edited")}
+    </.sort_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "created_by") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("created_by")}>
+      {gettext("Created by")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "external_id") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("external_id")}>
+      {gettext("External ID")}
+    </.table_default_header_cell>
+    """
+  end
+
+  # One optional column's body cell for template `t`, by id — the same
+  # order as the header, which is what `fit` hides columns by.
+  defp column_cell(assigns, "weekends", t) do
+    assigns = assign(assigns, t: t)
+
+    ~H"""
+    <.table_default_cell>
+      <span class={"badge badge-xs #{if @t.counts_weekends, do: "badge-info", else: "badge-ghost"}"}>
+        {if @t.counts_weekends, do: gettext("yes"), else: gettext("no")}
+      </span>
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "tasks", t) do
+    assigns = assign(assigns, t: t)
+
+    ~H"""
+    <.table_default_cell class="text-right tabular-nums text-base-content/70">
+      {Map.get(@task_counts, @t.uuid, 0)}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "uses", t) do
+    assigns = assign(assigns, t: t)
+
+    ~H"""
+    <.table_default_cell class="text-right tabular-nums text-base-content/70">
+      {get_in(@usage, [@t.uuid, :count]) || 0}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "last_used", t) do
+    assigns = assign(assigns, t: t)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {case get_in(@usage, [@t.uuid, :last_used]) do
+        nil -> "—"
+        at -> L10n.format_date(at)
+      end}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "created", t) do
+    assigns = assign(assigns, t: t)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {L10n.format_date(@t.inserted_at)}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "updated", t) do
+    assigns = assign(assigns, t: t)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {L10n.format_date(@t.updated_at)}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "created_by", t) do
+    assigns = assign(assigns, t: t)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {Map.get(@creators, @t.uuid) || "—"}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "external_id", t) do
+    assigns = assign(assigns, t: t)
+
+    ~H"""
+    <.table_default_cell class="font-mono text-xs text-base-content/70">
+      {@t.external_id || "—"}
+    </.table_default_cell>
     """
   end
 end

@@ -169,7 +169,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFilterPanel do
           >
             <input
               type="checkbox"
-              class={["checkbox checkbox-xs", CalendarDisplay.loading_class()]}
+              class={["checkbox checkbox-primary checkbox-xs", CalendarDisplay.loading_class()]}
               checked={@assignee_direct_only?}
               phx-click="toggle_assignee_direct"
             />

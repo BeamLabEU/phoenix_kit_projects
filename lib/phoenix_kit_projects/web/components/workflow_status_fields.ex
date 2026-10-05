@@ -36,12 +36,16 @@ defmodule PhoenixKitProjects.Web.Components.WorkflowStatusFields do
         "(`started_at` is the freeze boundary), so the source can no longer change"
   )
 
+  # Where the section sits is the caller's: the edit and template forms put
+  # it after other fields and pass a divider (`border-t … mt-6 pt-6`); the
+  # New project drawer and the cards already draw their own edge, and a
+  # divider baked in here doubled it there — an empty band under the Start
+  # select (Max, 2026-10-05).
+  attr(:class, :any, default: nil, doc: "extra classes on the section, e.g. a divider")
+
   def workflow_status_fields(assigns) do
     ~H"""
-    <div
-      :if={@statuses_available}
-      class="border-t border-base-300 mt-6 pt-6 flex flex-col gap-2"
-    >
+    <div :if={@statuses_available} class={["flex flex-col gap-2", @class]}>
       <h3 class="text-sm font-semibold text-base-content/80">
         {gettext("Workflow status")}
       </h3>

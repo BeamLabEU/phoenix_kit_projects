@@ -70,12 +70,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Statuses
   }
 
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
 
   alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
+  alias PhoenixKitProjects.TaskNotes
   alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -331,12 +333,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # `CommentsComponent` is keyed on `{type, uuid}` so opening
               # different resources doesn't reuse stale state.
               comments_resource: nil,
+              notes_summary_preview: nil,
               # Availability ∧ the per-project "discussions" bridge toggle.
               comments_enabled: comments?,
               # The task view the Tasks top tab reopens (the last one shown).
               task_view: (top_tab_of(active_tab) == :tasks && active_tab) || :list,
               project_comment_count: 0,
               assignment_comment_counts: %{},
+              assignment_note_counts: %{},
               # Skeleton defaults overwritten by the load_* helpers below;
               # they keep the assigns coherent if either helper short-circuits.
               assignments: [],
@@ -367,6 +371,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # task; nil logs against the project overall.
               ledger_totals: nil,
               ledger_minutes: %{},
+              ledger_tokens: %{},
               log_time_open: false,
               log_time_uuid: nil,
               assignment_labels: %{},
@@ -432,10 +437,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       start_modal_open: false,
       start_form: to_form(%{"start_at" => default_start_at_local()}),
       comments_resource: nil,
+      notes_summary_preview: nil,
       comments_enabled: false,
       task_view: :list,
       project_comment_count: 0,
       assignment_comment_counts: %{},
+      assignment_note_counts: %{},
       statuses_available: false,
       current_status: nil,
       status_options: [],
@@ -444,6 +451,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       subproject_child_tasks: %{},
       ledger_totals: nil,
       ledger_minutes: %{},
+      ledger_tokens: %{},
       log_time_open: false,
       log_time_uuid: nil,
       assignment_labels: %{},
@@ -832,6 +840,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             label={gettext("Members")}
           />
           <.smart_menu_link
+            :if={not @is_template}
+            navigate={Paths.api(@project.uuid)}
+            emit={{PhoenixKitProjects.Web.ProjectApiLive, %{"id" => @project.uuid}}}
+            embed_mode={@embed_mode}
+            popup={false}
+            icon="hero-key"
+            label={gettext("Your API key")}
+          />
+          <.smart_menu_link
             :if={not @is_template and @fx_files}
             navigate={Paths.files(@project.uuid)}
             emit={{PhoenixKitProjects.Web.ProjectFilesLive, %{"id" => @project.uuid}}}
@@ -870,9 +887,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               />
             <% else %>
               <.table_row_menu_button
-                phx-click="archive_project"
-                phx-disable-with={gettext("Archiving…")}
-                data-confirm={gettext("Archive this project? It will be hidden from the main lists but kept in the database.")}
+                {ConfirmAction.ask("archive_project",
+                  title: gettext("Archive project"),
+                  message: gettext("Archive this project? It will be hidden from the main lists but kept in the database."),
+                  confirm: gettext("Archive")
+                )}
                 icon="hero-archive-box"
                 label={gettext("Archive")}
               />
@@ -1103,6 +1122,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:assignment_comment_counts, :map, default: %{})
   attr(:deps_by_assignment, :map, default: %{})
   attr(:ledger_minutes, :map, default: %{})
+  attr(:ledger_tokens, :map, default: %{})
+  attr(:assignment_note_counts, :map, default: %{})
   attr(:assignment_labels, :map, default: %{})
 
   defp task_body(assigns) do
@@ -1189,6 +1210,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name="hero-chat-bubble-left" class="w-3.5 h-3.5" />
                 <span :if={a_comment_count > 0} class="badge badge-xs badge-primary">{a_comment_count}</span>
               </button>
+              <%!-- The notes thread (`TaskNotes`): what an agent wrote while
+                   working — apart from the discussion, folded away, with
+                   the tokens it reported. Same drawer, its own anchor. --%>
+              <% a_note_count = Map.get(@assignment_note_counts, @a.uuid, 0) %>
+              <% a_tokens = Map.get(@ledger_tokens, @a.uuid, 0) %>
+              <button
+                :if={@comments_enabled and not @is_template}
+                type="button"
+                phx-click="open_comments"
+                phx-value-type="notes"
+                phx-value-uuid={@a.uuid}
+                phx-value-title={TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
+                class="btn btn-ghost btn-xs gap-1"
+                title={gettext("Open agent notes")}
+              >
+                <.icon name="hero-cpu-chip" class="w-3.5 h-3.5" />
+                <span :if={a_note_count > 0} class="badge badge-xs badge-primary">{a_note_count}</span>
+                <span :if={a_tokens > 0} class="text-base-content/60">{format_tokens(a_tokens)}</span>
+              </button>
               <.table_row_menu id={"assignment-menu-#{@a.uuid}"}>
                 <.smart_menu_link
                   navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid)}
@@ -1199,10 +1239,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 />
                 <.table_row_menu_divider />
                 <.table_row_menu_button
-                  phx-click="remove_assignment"
-                  phx-value-uuid={@a.uuid}
-                  phx-disable-with={gettext("Removing…")}
-                  data-confirm={gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(@a.task, L10n.current_content_lang()))}
+                  {ConfirmAction.ask("remove_assignment",
+                    uuid: @a.uuid,
+                    title: gettext("Remove task"),
+                    message: gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(@a.task, L10n.current_content_lang())),
+                    confirm: gettext("Remove")
+                  )}
                   icon="hero-trash"
                   label={gettext("Remove")}
                   variant="error"
@@ -1221,6 +1263,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <%!-- Meta row: duration, assignee, completed by. Each chip is
                feature-gated via @fx (Step 4 enforcement threading). --%>
           <div class="flex flex-wrap items-center gap-2 text-xs">
+            <%!-- What an agent (or a person) set on the task: whom it waits
+                 on, where it came from, how far its checklist is. --%>
+            <span :if={@a.waiting_on} class="badge badge-sm badge-warning gap-1" title={gettext("Waiting on someone else")}>
+              <.icon name="hero-pause-circle" class="w-3 h-3" /> {gettext("Waiting on %{who}", who: @a.waiting_on)}
+            </span>
+            <span :if={@a.origin} class="badge badge-sm badge-ghost" title={gettext("Where this came from")}>
+              {gettext("from %{origin}", origin: @a.origin)}
+            </span>
+            <% checklist = Assignment.checklist_counts(@a) %>
+            <span :if={checklist.total > 0} class="badge badge-sm badge-outline gap-1" title={gettext("Checklist")}>
+              <.icon name="hero-list-bullet" class="w-3 h-3" /> {checklist.done}/{checklist.total}
+            </span>
             <%= if @fx.estimates and @editing_duration_uuid == @a.uuid do %>
               <% prefill_dur = @a.estimated_duration || @a.task.estimated_duration %>
               <% prefill_unit = @a.estimated_duration_unit || @a.task.estimated_duration_unit || "hours" %>
@@ -1472,6 +1526,27 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           update_progress toggle_tracking remove_assignment save_duration)
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do:
+      {:noreply,
+       ConfirmAction.request(
+         socket,
+         params,
+         ~w(archive_project remove_assignment review_submission detach_subproject)
+       )}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event(event, params, socket) do
     case Map.get(@gated_events, event) do
       nil ->
@@ -1709,7 +1784,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       a ->
         new_pct = if a.progress_pct == 100, do: 0, else: a.progress_pct
-        attrs = %{status: "in_progress", progress_pct: new_pct}
+
+        attrs = %{
+          status: "in_progress",
+          progress_pct: new_pct,
+          started_by_uuid: Activity.actor_uuid(socket),
+          started_by_key_uuid: nil
+        }
 
         socket
         |> update_assignment_with_activity(a, attrs, "projects.assignment_started",
@@ -2218,25 +2299,75 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # component unmounts and any in-flight reply state is dropped
   # (intended: drawer-close is a "step away" affordance).
   defp gated_handle_event("open_comments", %{"type" => type, "uuid" => uuid} = params, socket)
-       when type in ["project", "assignment"] do
+       when type in ["project", "assignment", "notes"] do
     title = Map.get(params, "title", "")
 
-    {:noreply, assign(socket, comments_resource: %{type: type, uuid: uuid, title: title})}
+    {:noreply,
+     assign(socket,
+       comments_resource: %{type: type, uuid: uuid, title: title},
+       notes_summary_preview: if(type == "notes", do: notes_summary_preview(socket, uuid))
+     )}
+  end
+
+  # A person's "no, that's wrong — do X": a redirect note, written as the
+  # viewer, one line required. The thread is the comments component's; it
+  # reloads off the comments broadcast.
+  defp gated_handle_event("save_redirect", %{"uuid" => uuid} = params, socket) do
+    with %Assignment{} = a <- find_displayed_assignment(socket, uuid),
+         {:ok, fields} <- TaskNotes.validate(params, "redirect"),
+         {:ok, _} <-
+           TaskNotes.create(a, fields,
+             user_uuid: Activity.actor_uuid(socket),
+             kind: "redirect",
+             metadata: %{"via" => "web"}
+           ) do
+      Activity.log("projects.assignment_redirected",
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: a.uuid,
+        metadata: %{"summary" => fields.summary}
+      )
+
+      {:noreply,
+       socket
+       |> assign(notes_summary_preview: notes_summary_preview(socket, uuid))
+       |> put_flash(:info, gettext("Direction set."))}
+    else
+      {:error, %{"summary" => _}} ->
+        {:noreply, put_flash(socket, :error, gettext("Write one line for the new direction."))}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, gettext("Could not set the direction."))}
+    end
+  end
+
+  # The latest summary (a redirect's, else an agent's) becomes the task's
+  # description — a person's act, logged as machine-made text adopted.
+  defp gated_handle_event("adopt_summary", %{"uuid" => uuid}, socket) do
+    with %Assignment{} = a <- find_displayed_assignment(socket, uuid),
+         %{text: text, source: source} when is_binary(text) <-
+           TaskNotes.display_summary(nil, TaskNotes.latest(uuid)),
+         {:ok, _} <- Projects.update_assignment_form(a, %{"description" => text}) do
+      Activity.log("projects.assignment_updated",
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: a.uuid,
+        metadata: %{"description_from" => to_string(source), "machine_made" => source == :agent}
+      )
+
+      {:noreply,
+       socket
+       |> assign(notes_summary_preview: nil)
+       |> put_flash(:info, gettext("Description set from the latest summary."))}
+    else
+      _ -> {:noreply, put_flash(socket, :error, gettext("Nothing to adopt."))}
+    end
   end
 
   defp gated_handle_event("close_comments", _params, socket) do
-    {:noreply, assign(socket, comments_resource: nil)}
+    {:noreply, assign(socket, comments_resource: nil, notes_summary_preview: nil)}
   end
 
-  # SortableGrid drop handler. Validates the new order against the
-  # project's assignments, applies positions atomically, and pushes a
-  # `sortable:flash` back so the dragged card flashes green/red. This
-  # session reloads explicitly (immediate feedback); OTHER open views
-  # (and gantt charts) reload off the `:assignment_reordered` broadcast.
-  # Refused unless the manual order is on screen: under "Newest first" a
-  # drop describes nothing. The drag handles are already hidden then, but
-  # hiding a control has never been the control. (A drop under a STATUS
-  # lens is fine — `merge_visible_order/2` folds it into the whole plan.)
   defp gated_handle_event(
          "reorder_assignments",
          _params,
@@ -2341,6 +2472,50 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # admin-enabled. Off-by-default `enabled?/0` rescues any error
   # (missing tables, sandbox-down) and returns false, so this stays
   # safe in early-install or test environments.
+  # A task on this page, by uuid — the displayed set first (no query),
+  # else the store, and only if it belongs to this project.
+  defp find_displayed_assignment(socket, uuid) do
+    displayed =
+      socket.assigns.assignments
+      |> Enum.find(&(&1.uuid == uuid))
+
+    case displayed || Projects.get_assignment(uuid) do
+      %Assignment{project_uuid: project_uuid} = a
+      when project_uuid == socket.assigns.project.uuid ->
+        a
+
+      _ ->
+        nil
+    end
+  end
+
+  # The "Use as description" offer: only when the task has no description
+  # of its own and a note has a summary to give it.
+  defp notes_summary_preview(socket, uuid) do
+    case find_displayed_assignment(socket, uuid) do
+      %Assignment{} = a ->
+        description = a.description || (a.task && a.task.description)
+
+        case TaskNotes.display_summary(description, TaskNotes.latest(uuid)) do
+          %{source: source, text: text} when source in [:redirect, :agent] -> text
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  # SortableGrid drop handler. Validates the new order against the
+  # project's assignments, applies positions atomically, and pushes a
+  # `sortable:flash` back so the dragged card flashes green/red. This
+  # session reloads explicitly (immediate feedback); OTHER open views
+  # (and gantt charts) reload off the `:assignment_reordered` broadcast.
+  # Refused unless the manual order is on screen: under "Newest first" a
+  # drop describes nothing. The drag handles are already hidden then, but
+  # hiding a control has never been the control. (A drop under a STATUS
+  # lens is fine — `merge_visible_order/2` folds it into the whole plan.)
+
   defp comments_available? do
     Code.ensure_loaded?(PhoenixKitComments) and PhoenixKitComments.enabled?()
   end
@@ -2374,7 +2549,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       assign(socket,
         project_comment_count: project_count,
-        assignment_comment_counts: assignment_counts
+        assignment_comment_counts: assignment_counts,
+        assignment_note_counts: TaskNotes.count_for_assignments(assignment_uuids)
       )
     else
       socket
@@ -2419,9 +2595,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            |> List.flatten()
            |> Enum.map(& &1.uuid))
 
+      per_task = Ledger.totals_for_assignments(displayed)
+
       assign(socket,
         ledger_totals: Ledger.totals_for_project(project.uuid),
-        ledger_minutes: Ledger.time_for_assignments(displayed),
+        ledger_minutes: Map.new(per_task, fn {uuid, t} -> {uuid, t.minutes} end),
+        ledger_tokens: Map.new(per_task, fn {uuid, t} -> {uuid, t.tokens} end),
         # Cheap availability probe for the Invoice-effort button — the
         # click re-runs the FULL guard chain (authz + profile + rate).
         invoice_ready?:
@@ -2429,7 +2608,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :edit_settings)
       )
     else
-      assign(socket, ledger_totals: nil, ledger_minutes: %{}, invoice_ready?: false)
+      assign(socket,
+        ledger_totals: nil,
+        ledger_minutes: %{},
+        ledger_tokens: %{},
+        invoice_ready?: false
+      )
     end
   end
 
@@ -3170,6 +3354,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name="hero-check-circle" class="w-3.5 h-3.5" /> {gettext("Completed")}
               </span>
             <% end %>
+            <%!-- Ongoing work never completes on its own (the project's
+                 `completion` setting): every task done is "all caught up". --%>
+            <%= if Project.ongoing?(@project) and is_nil(@project.completed_at) do %>
+              <span class="badge badge-ghost gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
+                <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Ongoing")}
+              </span>
+              <span :if={@total_tasks > 0 and @done_tasks == @total_tasks} class="badge badge-success badge-outline gap-1">
+                <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("All caught up")}
+              </span>
+            <% end %>
             <%= if @project.archived_at do %>
               <span class="badge badge-ghost gap-1">
                 <.icon name="hero-archive-box" class="w-3.5 h-3.5" /> {gettext("Archived")}
@@ -3276,11 +3470,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     </button>
                     <button
                       type="button"
-                      phx-click="review_submission"
-                      phx-value-uuid={a.uuid}
-                      phx-value-decision="rejected"
-                      phx-disable-with={gettext("Rejecting…")}
-                      data-confirm={gettext("Reject this submission?")}
+                      {ConfirmAction.ask("review_submission",
+                        uuid: a.uuid,
+                        decision: "rejected",
+                        title: gettext("Reject submission"),
+                        message: gettext("Reject this submission?"),
+                        confirm: gettext("Reject")
+                      )}
                       class="btn btn-ghost btn-xs"
                     >
                       {gettext("Reject")}
@@ -3362,7 +3558,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     name="status"
                     value={status}
                     checked={@health && @health["status"] == status}
-                    class="radio radio-sm"
+                    class="radio radio-primary radio-sm"
                     required
                   />
                   <span class="text-sm font-medium">{health_label(status)}</span>
@@ -3437,7 +3633,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 id={"log-time-billable-#{@project.uuid}"}
                 name="billable"
                 label={gettext("Billable")}
-                class="checkbox-sm"
+                class="checkbox-primary checkbox-sm"
                 wrapper_class="gap-2"
               />
               <div class="modal-action">
@@ -3647,7 +3843,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- Schedule summary + progress as ONE card: the progress bar is the
            card's bottom edge (a thin flush strip), so the two read as a unit. --%>
       <% show_schedule = @fx.scheduling and @project.started_at != nil and @schedule != nil %>
-      <% show_progress = @fx.tasks and @total_tasks > 0 and not @is_template %>
+      <%!-- Ongoing work has no finish line, so no bar towards one (Max,
+           2026-10-05); the header's badges say Ongoing / All caught up. --%>
+      <% show_progress = @fx.tasks and @total_tasks > 0 and not @is_template and not Project.ongoing?(@project) %>
       <% show_effort = @fx.ledger and @ledger_totals != nil %>
       <%= if show_schedule or show_progress or show_effort do %>
         <div class="bg-base-200/50 rounded-t-lg overflow-hidden">
@@ -3699,12 +3897,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   )}
                 </span>
               </div>
-              <%= if @ledger_totals.tokens > 0 or @ledger_totals.cost_cents > 0 do %>
+              <%!-- AI effort, apart from people's: tokens and cost as before, and
+                   the minutes an agent reported over the API (never billable). --%>
+              <%= if @ledger_totals.tokens > 0 or @ledger_totals.cost_cents > 0 or @ledger_totals.ai_minutes > 0 do %>
                 <span class="text-base-content/40">·</span>
                 <div class="flex items-center gap-2">
                   <.icon name="hero-cpu-chip" class="w-4 h-4 text-base-content/60" />
                   <span class="text-base-content/60">{gettext("AI:")}</span>
-                  <span class="font-medium">{format_tokens(@ledger_totals.tokens)}</span>
+                  <span :if={@ledger_totals.ai_minutes > 0} class="font-medium">
+                    {format_minutes(@ledger_totals.ai_minutes)}
+                  </span>
+                  <span :if={@ledger_totals.tokens > 0} class="font-medium">
+                    {format_tokens(@ledger_totals.tokens)}
+                  </span>
                   <span :if={@ledger_totals.cost_cents > 0} class="text-base-content/50">
                     ({format_cents(@ledger_totals.cost_cents)})
                   </span>
@@ -3986,19 +4191,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                  project — keeps it + its tasks (V127). --%>
                             <.table_row_menu_button
                               :if={@fx.subprojects}
-                              phx-click="detach_subproject"
-                              phx-value-uuid={a.uuid}
-                              phx-disable-with={gettext("Detaching…")}
-                              data-confirm={gettext("Make \"%{name}\" a standalone project? It keeps all its tasks — it just won't be a sub-project anymore.", name: Project.localized_name(child, sp_lang))}
+                              {ConfirmAction.ask("detach_subproject",
+                                uuid: a.uuid,
+                                title: gettext("Make standalone"),
+                                message: gettext("Make \"%{name}\" a standalone project? It keeps all its tasks — it just won't be a sub-project anymore.", name: Project.localized_name(child, sp_lang)),
+                                confirm: gettext("Make standalone")
+                              )}
                               icon="hero-arrow-up-on-square"
                               label={gettext("Make standalone")}
                             />
                             <.table_row_menu_divider />
                             <.table_row_menu_button
-                              phx-click="remove_assignment"
-                              phx-value-uuid={a.uuid}
-                              phx-disable-with={gettext("Removing…")}
-                              data-confirm={gettext("Remove sub-project \"%{name}\" and everything inside it?", name: Project.localized_name(child, sp_lang))}
+                              {ConfirmAction.ask("remove_assignment",
+                                uuid: a.uuid,
+                                title: gettext("Remove sub-project"),
+                                message: gettext("Remove sub-project \"%{name}\" and everything inside it?", name: Project.localized_name(child, sp_lang)),
+                                confirm: gettext("Remove")
+                              )}
                               icon="hero-trash"
                               label={gettext("Remove")}
                               variant="error"
@@ -4022,6 +4231,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                         <span class="badge badge-outline badge-sm gap-1">
                           <.icon name="hero-rectangle-stack" class="w-3 h-3" />
                           {gettext("%{done}/%{total} tasks", done: sp_summary.done, total: sp_summary.total)}
+                        </span>
+                        <%!-- An ongoing child never completes: its row stays open,
+                             and when every task is done it says so. --%>
+                        <span :if={Project.ongoing?(child)} class="badge badge-ghost badge-sm gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
+                          <.icon name="hero-arrow-path" class="w-3 h-3" /> {gettext("Ongoing")}
+                        </span>
+                        <span :if={Project.ongoing?(child) and sp_summary.total > 0 and sp_summary.done == sp_summary.total} class="badge badge-success badge-outline badge-sm gap-1">
+                          <.icon name="hero-check" class="w-3 h-3" /> {gettext("All caught up")}
                         </span>
                         <% {sp_hv, sp_hu} = humanize_hours(sp_summary.total_hours) %>
                         <span :if={sp_summary.total_hours > 0} class="badge badge-ghost badge-sm gap-1">
@@ -4116,6 +4333,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       comments_enabled={@comments_enabled}
                                       assignment_comment_counts={@assignment_comment_counts}
                                       ledger_minutes={@ledger_minutes}
+                                      ledger_tokens={@ledger_tokens}
+                                      assignment_note_counts={@assignment_note_counts}
                                       assignment_labels={@assignment_labels}
                                       deps_by_assignment={@deps_by_assignment}
                                     />
@@ -4140,6 +4359,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       comments_enabled={@comments_enabled}
                       assignment_comment_counts={@assignment_comment_counts}
                       ledger_minutes={@ledger_minutes}
+                      ledger_tokens={@ledger_tokens}
+                      assignment_note_counts={@assignment_note_counts}
                       assignment_labels={@assignment_labels}
                       deps_by_assignment={@deps_by_assignment}
                     />
@@ -4417,7 +4638,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid,
               "mode" => @embed_mode,
               "pubsub_topic" => @embed_pubsub_topic,
-              "frame_ref" => @embed_frame_ref
+              "frame_ref" => @embed_frame_ref,
+              # Where the host's own pages are, for a tab that wants to send
+              # someone there (the CRM's "add a task from this meeting")
+              # without naming this module's routes itself.
+              "host_paths" => %{"new_task" => Paths.new_assignment(@project.uuid)}
             })}
         </div>
       <% end %>
@@ -4499,23 +4724,80 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <:title>
           <span class="flex flex-col min-w-0">
             <span class="text-xs font-normal uppercase tracking-wide text-base-content/60">
-              <%= if @comments_resource.type == "project" do %>
-                {gettext("Project")}
-              <% else %>
-                {gettext("Task")}
+              <%= case @comments_resource.type do %>
+                <% "project" -> %>
+                  {gettext("Project")}
+                <% "notes" -> %>
+                  {gettext("Agent notes")}
+                <% _ -> %>
+                  {gettext("Task")}
               <% end %>
             </span>
             <span class="truncate">{@comments_resource.title}</span>
           </span>
         </:title>
+        <%!-- The notes thread is the same component on its own anchor
+             (`TaskNotes.resource_type/0`): a person may add to it from
+             here, but the agent's keys (kind, usage, the key) are
+             decorations — server-set, never claimable from the form. The
+             usage line above each note is rendered through the component's
+             decoration registry. --%>
+        <% notes? = @comments_resource.type == "notes" %>
+        <%!-- A person changing the direction after an attempt ("no, that's
+             wrong — do X"): a `redirect` note, which the API hands an agent
+             FIRST on the next read. Only people write these; the summary
+             line is what the agent follows. --%>
+        <form
+          :if={notes?}
+          id={"redirect-#{@comments_resource.uuid}"}
+          phx-submit="save_redirect"
+          class="flex flex-col gap-2 rounded-box border border-warning/40 bg-warning/5 p-3 mb-3"
+        >
+          <input type="hidden" name="uuid" value={@comments_resource.uuid} />
+          <.input
+            id={"redirect-summary-#{@comments_resource.uuid}"}
+            name="summary"
+            value=""
+            label={gettext("Change the direction")}
+            maxlength={TaskNotes.summary_max()}
+            class="input-sm"
+            placeholder={gettext("One line the next worker follows, e.g. \"Keep the old parser, fix the encoder\"")}
+          />
+          <.textarea
+            id={"redirect-content-#{@comments_resource.uuid}"}
+            name="content"
+            value=""
+            label={gettext("Why (optional)")}
+            rows={2}
+            class="textarea-sm"
+          />
+          <div class="flex items-center justify-between gap-2">
+            <button
+              :if={@notes_summary_preview}
+              type="button"
+              phx-click="adopt_summary"
+              phx-value-uuid={@comments_resource.uuid}
+              class="btn btn-ghost btn-xs"
+              title={gettext("Copy the latest summary into the task's description")}
+            >
+              <.icon name="hero-document-arrow-down" class="w-3.5 h-3.5" /> {gettext("Use as description")}
+            </button>
+            <span :if={is_nil(@notes_summary_preview)}></span>
+            <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-warning btn-xs">
+              {gettext("Set direction")}
+            </button>
+          </div>
+        </form>
         <.live_component
           module={PhoenixKitComments.Web.CommentsComponent}
           id={"comments-drawer-#{@comments_resource.type}-#{@comments_resource.uuid}"}
-          resource_type={@comments_resource.type}
+          resource_type={if notes?, do: TaskNotes.resource_type(), else: @comments_resource.type}
           resource_uuid={@comments_resource.uuid}
           current_user={assigns[:phoenix_kit_current_user]}
           title=""
-          show_likes={true}
+          show_likes={not notes?}
+          decoration_keys={if notes?, do: TaskNotes.decoration_keys(), else: []}
+          comment_decorations={if notes?, do: TaskNotes.decorations(TaskNotes.list(@comments_resource.uuid)), else: %{}}
         />
       </.modal>
 
@@ -4536,6 +4818,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
           })}
       <% end %>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

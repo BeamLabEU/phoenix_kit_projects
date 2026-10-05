@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 16
+  @current_version 20
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -113,6 +113,10 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v14_review_status(p)
     v15_ad_hoc_tasks(p)
     v16_fileless_whiteboards(p)
+    v17_api_keys(p, prefix)
+    v18_key_persons(p)
+    v19_agent_work(p)
+    v20_words_and_links(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -137,6 +141,24 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 20, do: down_v20(p)
+
+    if target < 19, do: down_v19(p)
+
+    if target < 18 do
+      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_api_keys_person_index")
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_api_keys
+        DROP COLUMN IF EXISTS user_uuid
+      """)
+    end
+
+    if target < 17 do
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_idempotency")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_keys")
+    end
 
     if target < 16 do
       # Boards without a file have no home in the old shape.
@@ -966,6 +988,150 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_portal_submissions
     ADD COLUMN IF NOT EXISTS submitted_by_uuid UUID
+    """)
+  end
+
+  # V17 — project API keys (the JSON API an outside agent drives a project
+  # with, `PhoenixKitProjects.Web.Api`). A key is its own principal in the
+  # project: a role of its own, scopes, and the identity the work ledger
+  # names for the usage it reports. `key_id` is the public half of the
+  # token (`pkp_<key_id>_<secret>`), unique and looked up on every call;
+  # only the secret's SHA-256 is stored. `created_by_uuid` is provenance —
+  # the person who minted it — and is not a foreign key on purpose: a key
+  # outlives the account that made it until someone revokes it.
+  #
+  # The idempotency table makes the agent's appends safe to retry: a POST
+  # that carries an `Idempotency-Key` stores its response under
+  # (key, header) and a replay answers with the stored response instead of
+  # a second ledger row or a second task. Rows cascade with their key.
+  defp v17_api_keys(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_api_keys (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      name VARCHAR(80) NOT NULL,
+      role VARCHAR(16) NOT NULL DEFAULT 'member',
+      key_id VARCHAR(24) NOT NULL,
+      secret_hash VARCHAR(64) NOT NULL,
+      scopes TEXT[] NOT NULL DEFAULT '{}',
+      created_by_uuid UUID,
+      last_used_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_api_keys_key_id_index
+    ON #{p}phoenix_kit_project_api_keys (key_id)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_api_keys_project_index
+    ON #{p}phoenix_kit_project_api_keys (project_uuid)
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_api_idempotency (
+      api_key_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_project_api_keys(uuid) ON DELETE CASCADE,
+      idempotency_key VARCHAR(128) NOT NULL,
+      status INTEGER NOT NULL,
+      body JSONB NOT NULL DEFAULT '{}',
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (api_key_uuid, idempotency_key)
+    )
+    """)
+  end
+
+  defp down_v20(p) do
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_interactions")
+
+    execute(
+      "ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS words_by_key_uuid"
+    )
+  end
+
+  defp down_v19(p) do
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_updated_index")
+
+    for col <-
+          ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
+      execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
+    end
+  end
+
+  # V20 — two corrections from the panel's sweep of V19 (2026-10-05).
+  # `words_by_key_uuid`: whose words a task's title and description are —
+  # the API key that wrote them last, or nil for a person's; the wording
+  # policy asks this, not who created the task (a person's rewording must
+  # stick). The task ↔ interaction link gets a table of its own: a link
+  # kept only as a mention token in the description vanished with any
+  # rewrite of the description.
+  defp v20_words_and_links(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS words_by_key_uuid UUID
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_task_interactions (
+      assignment_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE CASCADE,
+      interaction_uuid UUID NOT NULL,
+      added_by_uuid UUID,
+      added_by_key_uuid UUID,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (assignment_uuid, interaction_uuid)
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_task_interactions_interaction_index
+    ON #{p}phoenix_kit_project_task_interactions (interaction_uuid)
+    """)
+  end
+
+  # V19 — what an agent working a project over the API needs on a task
+  # (the first agent's review, 2026-10-05): who created it and who started
+  # it (a person and/or the key, for claims and for wording protection),
+  # `waiting_on` (blocked on someone — a badge, not a fourth status),
+  # `origin` (where a relayed item came from; `source` already means internal vs portal), a `checklist` (sub-items
+  # ticked one by one, JSONB `[{id, text, done, done_at}]`), and an index
+  # for `updated_since` polling. No foreign keys: provenance is history.
+  defp v19_agent_work(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS created_by_uuid UUID,
+      ADD COLUMN IF NOT EXISTS created_by_key_uuid UUID,
+      ADD COLUMN IF NOT EXISTS started_by_uuid UUID,
+      ADD COLUMN IF NOT EXISTS started_by_key_uuid UUID,
+      ADD COLUMN IF NOT EXISTS waiting_on VARCHAR(200),
+      ADD COLUMN IF NOT EXISTS origin VARCHAR(40),
+      ADD COLUMN IF NOT EXISTS checklist JSONB NOT NULL DEFAULT '[]'
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_updated_index
+    ON #{p}phoenix_kit_project_assignments (project_uuid, updated_at)
+    """)
+  end
+
+  # V18 — a key acts for a person. `user_uuid` names the member whose
+  # authority the key exercises: their current membership decides what the
+  # key may do and the activity feed names them. Nullable: a key with no
+  # person is a shared agent (a CI runner, a project-wide bot) that keeps
+  # its own stored role. Not a foreign key, like `created_by_uuid` — the
+  # row is audit history once the person is gone; the API refuses it.
+  defp v18_key_persons(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      ADD COLUMN IF NOT EXISTS user_uuid UUID
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_api_keys_person_index
+    ON #{p}phoenix_kit_project_api_keys (project_uuid, user_uuid)
     """)
   end
 

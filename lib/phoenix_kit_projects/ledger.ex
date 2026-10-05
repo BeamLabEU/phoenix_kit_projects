@@ -53,7 +53,8 @@ defmodule PhoenixKitProjects.Ledger do
       billable: Keyword.get(opts, :billable, false),
       source: Keyword.get(opts, :source, "manual"),
       started_at: Keyword.get(opts, :started_at),
-      ended_at: Keyword.get(opts, :ended_at)
+      ended_at: Keyword.get(opts, :ended_at),
+      metadata: Keyword.get(opts, :metadata, %{})
     })
   end
 
@@ -61,7 +62,9 @@ defmodule PhoenixKitProjects.Ledger do
   Records AI usage attributed to a project/task: a `tokens` entry plus a
   `cost` entry when `cost_cents` is POSITIVE, both `actor_kind: "ai_agent"`
   with shared metadata (`model`, `endpoint`, anything else passed).
-  Returns `{:ok, [entries]}`.
+  Options: `:assignment_uuid`; `:occurred_at` — when the work happened,
+  stored as the entries' `ended_at` (the API's batch reporting), default
+  nil. Returns `{:ok, [entries]}`.
 
   Zero/absent quantities are SKIPPED, not errors — `cost_cents: 0` is the
   normal shape for free/cached/local calls (panel round: `0` is truthy in
@@ -85,6 +88,7 @@ defmodule PhoenixKitProjects.Ledger do
       actor_kind: "ai_agent",
       actor_uuid: Map.get(usage, :agent_uuid) || Map.get(usage, "agent_uuid"),
       source: "ai",
+      ended_at: Keyword.get(opts, :occurred_at),
       metadata: metadata
     }
 
@@ -226,18 +230,194 @@ defmodule PhoenixKitProjects.Ledger do
     _ -> :skipped
   end
 
-  @doc "Entries for a project, newest first (capped)."
+  @doc "One entry by uuid, or nil."
+  @spec get_entry(binary()) :: WorkEntry.t() | nil
+  def get_entry(uuid) when is_binary(uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, _} -> RepoHelper.repo().get(WorkEntry, uuid)
+      :error -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  @doc """
+  Amends a time entry's minutes (and `ended_at`, kept at `started_at` plus
+  the new length when both are known). `billable:` changes the flag too.
+  Logs `projects.work_amended` with the figure before and after — the
+  ledger is append-only in spirit, so an amendment leaves its trace.
+  """
+  @spec update_time(WorkEntry.t() | binary(), pos_integer(), keyword()) ::
+          {:ok, WorkEntry.t()} | {:error, term()}
+  def update_time(entry_or_uuid, minutes, opts \\ [])
+
+  def update_time(uuid, minutes, opts) when is_binary(uuid) do
+    case get_entry(uuid) do
+      nil -> {:error, :not_found}
+      entry -> update_time(entry, minutes, opts)
+    end
+  end
+
+  def update_time(%WorkEntry{kind: "time"} = entry, minutes, opts)
+      when is_integer(minutes) and minutes > 0 do
+    attrs =
+      %{
+        amount: minutes,
+        ended_at: entry.started_at && DateTime.add(entry.started_at, minutes * 60)
+      }
+      |> maybe_put_billable(Keyword.get(opts, :billable))
+
+    entry
+    |> WorkEntry.changeset(attrs)
+    |> RepoHelper.repo().update()
+    |> case do
+      {:ok, updated} ->
+        Activity.log("projects.work_amended",
+          actor_uuid: Keyword.get(opts, :actor_uuid),
+          resource_type: "project",
+          resource_uuid: updated.project_uuid,
+          metadata: amendment_metadata(entry, updated, opts)
+        )
+
+        PubSub.broadcast_project(:work_logged, %{uuid: updated.project_uuid})
+        {:ok, updated}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  def update_time(%WorkEntry{}, _minutes, _opts), do: {:error, :invalid}
+
+  # What an amendment leaves in the feed: the figure before and after, whose
+  # row it was, and whatever the caller adds (`:metadata` — the API names
+  # its key there, so two keys minted by one person stay distinguishable).
+  defp amendment_metadata(entry, updated, opts) do
+    %{
+      "entry_uuid" => updated.uuid,
+      "kind" => updated.kind,
+      "amount_was" => plain(entry.amount),
+      "amount" => plain(updated.amount),
+      "actor_kind" => updated.actor_kind,
+      "actor_uuid" => updated.actor_uuid,
+      "assignment_uuid" => updated.assignment_uuid
+    }
+    |> Map.merge(Keyword.get(opts, :metadata) || %{})
+  end
+
+  @doc """
+  Amends a tokens or cost entry's amount — an agent's corrected estimate
+  beats a duplicated row. Logs `projects.work_amended` like `update_time/3`.
+  """
+  @spec update_amount(WorkEntry.t(), number(), keyword()) ::
+          {:ok, WorkEntry.t()} | {:error, term()}
+  def update_amount(%WorkEntry{kind: kind} = entry, amount, opts)
+      when kind in ["tokens", "cost"] and is_number(amount) and amount >= 0 do
+    entry
+    |> WorkEntry.changeset(%{amount: amount})
+    |> RepoHelper.repo().update()
+    |> case do
+      {:ok, updated} ->
+        Activity.log("projects.work_amended",
+          actor_uuid: Keyword.get(opts, :actor_uuid),
+          resource_type: "project",
+          resource_uuid: updated.project_uuid,
+          metadata: amendment_metadata(entry, updated, opts)
+        )
+
+        PubSub.broadcast_project(:work_logged, %{uuid: updated.project_uuid})
+        {:ok, updated}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  def update_amount(%WorkEntry{}, _amount, _opts), do: {:error, :invalid}
+
+  @doc """
+  Removes an entry. Logs `projects.work_removed` with what it held, so the
+  figure is still in the project's history.
+  """
+  @spec delete_entry(WorkEntry.t() | binary(), keyword()) ::
+          {:ok, WorkEntry.t()} | {:error, term()}
+  def delete_entry(entry_or_uuid, opts \\ [])
+
+  def delete_entry(uuid, opts) when is_binary(uuid) do
+    case get_entry(uuid) do
+      nil -> {:error, :not_found}
+      entry -> delete_entry(entry, opts)
+    end
+  end
+
+  def delete_entry(%WorkEntry{} = entry, opts) do
+    case RepoHelper.repo().delete(entry) do
+      {:ok, deleted} ->
+        Activity.log("projects.work_removed",
+          actor_uuid: Keyword.get(opts, :actor_uuid),
+          resource_type: "project",
+          resource_uuid: deleted.project_uuid,
+          metadata:
+            %{
+              "entry_uuid" => deleted.uuid,
+              "kind" => deleted.kind,
+              "amount" => plain(deleted.amount),
+              "actor_kind" => deleted.actor_kind,
+              "assignment_uuid" => deleted.assignment_uuid
+            }
+            |> Map.merge(Keyword.get(opts, :metadata) || %{})
+        )
+
+        PubSub.broadcast_project(:work_logged, %{uuid: deleted.project_uuid})
+        {:ok, deleted}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # "30", not "30.0000": the column's scale is not part of the figure.
+  defp plain(%Decimal{} = d), do: d |> Decimal.normalize() |> Decimal.to_string(:normal)
+  defp plain(other), do: to_string(other)
+
+  defp maybe_put_billable(attrs, billable) when is_boolean(billable),
+    do: Map.put(attrs, :billable, billable)
+
+  defp maybe_put_billable(attrs, _), do: attrs
+
+  @doc """
+  Entries for a project, newest first (capped by `:limit`, default 100).
+  `metadata: %{"interaction_uuid" => uuid}` keeps only the entries whose
+  metadata contains those pairs — how an extension finds the time it
+  logged against one of its own records.
+  """
   @spec list_entries(binary(), keyword()) :: [WorkEntry.t()]
   def list_entries(project_uuid, opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
-    RepoHelper.repo().all(
+    query =
       from(e in WorkEntry,
         where: e.project_uuid == ^project_uuid,
         order_by: [desc: e.inserted_at],
         limit: ^limit
       )
-    )
+
+    query =
+      case Keyword.get(opts, :metadata) do
+        match when is_map(match) and map_size(match) > 0 ->
+          where(query, [e], fragment("? @> ?", e.metadata, ^match))
+
+        _ ->
+          query
+      end
+
+    query =
+      case Keyword.get(opts, :assignment_uuid) do
+        uuid when is_binary(uuid) -> where(query, [e], e.assignment_uuid == ^uuid)
+        _ -> query
+      end
+
+    RepoHelper.repo().all(query)
   rescue
     _ -> []
   end
@@ -254,22 +434,26 @@ defmodule PhoenixKitProjects.Ledger do
       RepoHelper.repo().all(
         from(e in WorkEntry,
           where: e.project_uuid == ^project_uuid,
-          group_by: [e.kind, e.billable],
-          select: {e.kind, e.billable, sum(e.amount)}
+          group_by: [e.kind, e.billable, e.actor_kind],
+          select: {e.kind, e.billable, e.actor_kind, sum(e.amount)}
         )
       )
 
-    Enum.reduce(rows, empty_totals(), fn {kind, billable, sum}, acc ->
+    # `time_minutes` is PEOPLE's time, as it always was; an agent's minutes
+    # (`actor_kind: "ai_agent"`, reported over the API) are `ai_minutes`, so
+    # the one kind keeps one meaning and the split is by who did it.
+    Enum.reduce(rows, empty_totals(), fn {kind, billable, actor_kind, sum}, acc ->
       sum = Decimal.to_float(sum)
 
       acc =
-        case kind do
-          "time" -> Map.update!(acc, :time_minutes, &(&1 + sum))
-          "tokens" -> Map.update!(acc, :tokens, &(&1 + sum))
-          "cost" -> Map.update!(acc, :cost_cents, &(&1 + sum))
+        case {kind, actor_kind} do
+          {"time", "ai_agent"} -> Map.update!(acc, :ai_minutes, &(&1 + sum))
+          {"time", _} -> Map.update!(acc, :time_minutes, &(&1 + sum))
+          {"tokens", _} -> Map.update!(acc, :tokens, &(&1 + sum))
+          {"cost", _} -> Map.update!(acc, :cost_cents, &(&1 + sum))
         end
 
-      if kind == "time" and billable,
+      if kind == "time" and billable and actor_kind != "ai_agent",
         do: Map.update!(acc, :billable_minutes, &(&1 + sum)),
         else: acc
     end)
@@ -302,8 +486,49 @@ defmodule PhoenixKitProjects.Ledger do
     _ -> %{}
   end
 
+  @doc """
+  Minutes, tokens and cents per assignment for a DISPLAYED set — one query,
+  a `%{minutes, tokens, cost_cents}` per uuid asked about (zeros when
+  nothing is logged). The task row's chips and the API's `totals` read
+  this; `time_for_assignments/1` stays for callers that want minutes only.
+  """
+  @spec totals_for_assignments([binary()]) :: %{binary() => map()}
+  def totals_for_assignments([]), do: %{}
+
+  def totals_for_assignments(uuids) when is_list(uuids) do
+    rows =
+      RepoHelper.repo().all(
+        from(e in WorkEntry,
+          where: e.assignment_uuid in ^uuids,
+          group_by: [e.assignment_uuid, e.kind],
+          select: {e.assignment_uuid, e.kind, sum(e.amount)}
+        )
+      )
+
+    base = Map.new(uuids, &{&1, %{minutes: 0.0, tokens: 0.0, cost_cents: 0.0}})
+
+    Enum.reduce(rows, base, fn {uuid, kind, sum}, acc ->
+      key =
+        case kind do
+          "time" -> :minutes
+          "tokens" -> :tokens
+          "cost" -> :cost_cents
+        end
+
+      update_in(acc, [uuid, key], &(&1 + Decimal.to_float(sum)))
+    end)
+  rescue
+    _ -> Map.new(uuids, &{&1, %{minutes: 0.0, tokens: 0.0, cost_cents: 0.0}})
+  end
+
   defp empty_totals,
-    do: %{time_minutes: 0.0, tokens: 0.0, cost_cents: 0.0, billable_minutes: 0.0}
+    do: %{
+      time_minutes: 0.0,
+      ai_minutes: 0.0,
+      tokens: 0.0,
+      cost_cents: 0.0,
+      billable_minutes: 0.0
+    }
 
   defp insert_entry(project_or_uuid, attrs) do
     project_or_uuid

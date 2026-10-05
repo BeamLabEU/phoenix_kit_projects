@@ -38,8 +38,10 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ListUi
+  alias PhoenixKitWeb.TableColumns
 
   require Logger
 
@@ -57,12 +59,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   # Local/server search split — see TemplatesLive.
   @local_search_threshold 100
 
-  # Optional table columns (Title and Actions always render), toggleable
-  # from the Columns dropdown; persisted site-wide via ListUi. `uses` /
+  # Optional table columns (Title and Actions always render), each viewer's
+  # own choice through core's column picker (`ListUi` moduledoc). `uses` /
   # `last_used` count the assignments referencing each library task.
-  @optional_columns ~w(duration uses last_used created updated created_by)
   @default_columns ~w(duration)
-  @columns_key "projects_tasks_columns"
+  @columns_key "projects.tasks"
+  @column_events ~w(add_column remove_column reorder_columns reset_columns)
 
   @impl true
   def mount(_params, session, socket) do
@@ -107,8 +109,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         # flat-list load sets it — the Groups view's load never does.
         one_off_count: 0,
         local_search?: true,
-        visible_columns:
-          ListUi.read_visible_columns(@columns_key, @optional_columns, @default_columns),
         usage: %{},
         creators: %{},
         tasks: [],
@@ -117,11 +117,15 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         standalone: [],
         bulk_enabled?: true,
         captured_uuids: [],
-        show_reorder_modal: false
+        show_reorder_modal: false,
+        show_column_modal: false
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
+
+    # The viewer's columns, read once the embed user is known.
+    socket = assign(socket, visible_columns: ListUi.load_columns(socket, columns_spec()))
 
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
@@ -249,6 +253,21 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event("set_view", %{"view" => view}, socket) when view in @valid_views do
     # Switching view re-renders the table; the BulkSelectScope hook
     # re-derives selection from the (fresh) DOM checkboxes — no
@@ -364,19 +383,19 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     {:noreply, push_url_state(socket, [search: ListUi.coerce_search(params)], replace: true)}
   end
 
-  def handle_event("toggle_column", %{"col" => col}, socket) when col in @optional_columns do
-    new_visible =
-      ListUi.toggle_visible_column(
-        @columns_key,
-        @optional_columns,
-        socket.assigns.visible_columns,
-        col
-      )
+  def handle_event("open_column_modal", _params, socket),
+    do: {:noreply, assign(socket, show_column_modal: true)}
 
-    {:noreply, socket |> assign(visible_columns: new_visible) |> load_tasks()}
+  def handle_event("hide_column_modal", _params, socket),
+    do: {:noreply, assign(socket, show_column_modal: false)}
+
+  # Core's live column picker: every edit applies at once and is saved for
+  # the viewer. Reload so a newly-shown uses / created_by column gets its
+  # batched lookup map (hidden columns skip those queries).
+  def handle_event(event, params, socket) when event in @column_events do
+    socket = TableColumns.handle_event(event, params, socket, columns_spec(), :visible_columns)
+    {:noreply, load_tasks(socket)}
   end
-
-  def handle_event("toggle_column", _params, socket), do: {:noreply, socket}
 
   # Map gates atom coercion — see projects_live for the same shape.
   @reorder_strategies %{
@@ -733,7 +752,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                     options={sort_options()}
                     manual_field={:position}
                   />
-                  <ListUi.columns_control options={column_options()} visible={@visible_columns} />
+                  <ListUi.columns_button />
                   {view_switcher(assigns)}
                 </:trailing>
                 <:primary>
@@ -789,6 +808,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         noun_singular={gettext("task")}
         noun_plural={gettext("tasks")}
       />
+
+      <.column_settings_modal
+        show={@show_column_modal}
+        id="tasks-column-settings"
+        columns={columns_spec().columns}
+        selected={@visible_columns}
+      />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end
@@ -862,6 +889,11 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     ]
   end
 
+  defp columns_spec, do: ListUi.columns_spec(@columns_key, column_options(), @default_columns)
+
+  # Columns follow the catalogue's shape: Title is the lead column and takes
+  # the slack; every optional column is sized to its content and packed
+  # against the right edge, in the viewer's own order (`ListUi` moduledoc).
   defp render_tasks_table(assigns, lang) do
     draggable? =
       assigns.sort_by == :position and String.trim(assigns.search) == "" and
@@ -878,7 +910,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
          or a fully-loaded server page): a load-more-truncated page is
          a sparse subset, and the reorder handler renumbers only the
          dropped rows to 1..N, corrupting the hidden rows' order. --%>
-    <.table_default id="tasks-list" size="sm">
+    <.table_default id="tasks-list" size="sm" {ListUi.table_fit()}>
       <.table_default_header>
         <.table_default_row>
           <.drag_handle_header_cell :if={@draggable?} />
@@ -887,40 +919,13 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             id="tasks-select-all"
             aria_label={gettext("Select all tasks")}
           />
-          <.sort_header_cell field={:title} sort={%{by: @sort_by, dir: @sort_dir}}>
+          <.sort_header_cell field={:title} sort={%{by: @sort_by, dir: @sort_dir}} data-col-lead="true">
             {gettext("Title")}
           </.sort_header_cell>
-          <.sort_header_cell
-            :if={"duration" in @visible_columns}
-            field={:estimated_duration}
-            sort={%{by: @sort_by, dir: @sort_dir}}
-          >
-            {gettext("Duration")}
-          </.sort_header_cell>
-          <.table_default_header_cell :if={"uses" in @visible_columns} class="text-right">
-            {gettext("Uses")}
-          </.table_default_header_cell>
-          <.table_default_header_cell :if={"last_used" in @visible_columns}>
-            {gettext("Last used")}
-          </.table_default_header_cell>
-          <.sort_header_cell
-            :if={"created" in @visible_columns}
-            field={:inserted_at}
-            sort={%{by: @sort_by, dir: @sort_dir}}
-          >
-            {gettext("Created")}
-          </.sort_header_cell>
-          <.sort_header_cell
-            :if={"updated" in @visible_columns}
-            field={:updated_at}
-            sort={%{by: @sort_by, dir: @sort_dir}}
-          >
-            {gettext("Last edited")}
-          </.sort_header_cell>
-          <.table_default_header_cell :if={"created_by" in @visible_columns}>
-            {gettext("Created by")}
-          </.table_default_header_cell>
-          <.table_default_header_cell class="text-right whitespace-nowrap">{gettext("Actions")}</.table_default_header_cell>
+          <%= for col <- @visible_columns do %>
+            {column_header(assigns, col)}
+          <% end %>
+          <ListUi.actions_header_cell />
         </.table_default_row>
       </.table_default_header>
       <.sortable_tbody
@@ -935,7 +940,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         >
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={task.uuid} />
-          <.table_default_cell class="font-medium">
+          <.table_default_cell class="font-medium" data-col-lead="true">
             <.smart_link
               navigate={Paths.edit_task(task.uuid)}
               emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}
@@ -957,42 +962,9 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               </span>
             </div>
           </.table_default_cell>
-          <.table_default_cell :if={"duration" in @visible_columns}>
-            {format_duration(task)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"uses" in @visible_columns}
-            class="text-right tabular-nums text-base-content/70"
-          >
-            {get_in(@usage, [task.uuid, :count]) || 0}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"last_used" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {case get_in(@usage, [task.uuid, :last_used]) do
-              nil -> "—"
-              at -> L10n.format_date(at)
-            end}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"created" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {L10n.format_date(task.inserted_at)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"updated" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {L10n.format_date(task.updated_at)}
-          </.table_default_cell>
-          <.table_default_cell
-            :if={"created_by" in @visible_columns}
-            class="whitespace-nowrap text-base-content/70"
-          >
-            {Map.get(@creators, task.uuid) || "—"}
-          </.table_default_cell>
+          <%= for col <- @visible_columns do %>
+            {column_cell(assigns, col, task)}
+          <% end %>
           <.table_default_cell class="text-right whitespace-nowrap">
             <.table_row_menu id={"task-menu-#{task.uuid}"}>
               <.smart_menu_link
@@ -1011,10 +983,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               />
               <.table_row_menu_divider />
               <.table_row_menu_button
-                phx-click="delete"
-                phx-value-uuid={task.uuid}
-                phx-disable-with={gettext("Deleting…")}
-                data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, @lang))}
+                {ConfirmAction.ask("delete",
+                  uuid: task.uuid,
+                  title: gettext("Delete task"),
+                  message: gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, @lang)),
+                  confirm: gettext("Delete")
+                )}
                 icon="hero-trash"
                 label={gettext("Delete")}
                 variant="error"
@@ -1032,6 +1006,131 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       total={@filtered_count}
       noun_plural={gettext("tasks")}
     />
+    """
+  end
+
+  # One optional column's header cell, by id. Sortable columns keep core's
+  # sortable header; every one carries its fit class and drop priority.
+  defp column_header(assigns, "duration") do
+    ~H"""
+    <.sort_header_cell
+      field={:estimated_duration}
+      sort={%{by: @sort_by, dir: @sort_dir}}
+      {ListUi.column_attrs("duration")}
+    >
+      {gettext("Duration")}
+    </.sort_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "uses") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("uses", "text-right")}>
+      {gettext("Uses")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "last_used") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("last_used")}>
+      {gettext("Last used")}
+    </.table_default_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "created") do
+    ~H"""
+    <.sort_header_cell
+      field={:inserted_at}
+      sort={%{by: @sort_by, dir: @sort_dir}}
+      {ListUi.column_attrs("created")}
+    >
+      {gettext("Created")}
+    </.sort_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "updated") do
+    ~H"""
+    <.sort_header_cell
+      field={:updated_at}
+      sort={%{by: @sort_by, dir: @sort_dir}}
+      {ListUi.column_attrs("updated")}
+    >
+      {gettext("Last edited")}
+    </.sort_header_cell>
+    """
+  end
+
+  defp column_header(assigns, "created_by") do
+    ~H"""
+    <.table_default_header_cell {ListUi.column_attrs("created_by")}>
+      {gettext("Created by")}
+    </.table_default_header_cell>
+    """
+  end
+
+  # One optional column's body cell for `task`, by id — the same order as
+  # the header, which is what `fit` hides columns by.
+  defp column_cell(assigns, "duration", task) do
+    assigns = assign(assigns, task: task)
+
+    ~H"""
+    <.table_default_cell>{format_duration(@task)}</.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "uses", task) do
+    assigns = assign(assigns, task: task)
+
+    ~H"""
+    <.table_default_cell class="text-right tabular-nums text-base-content/70">
+      {get_in(@usage, [@task.uuid, :count]) || 0}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "last_used", task) do
+    assigns = assign(assigns, task: task)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {case get_in(@usage, [@task.uuid, :last_used]) do
+        nil -> "—"
+        at -> L10n.format_date(at)
+      end}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "created", task) do
+    assigns = assign(assigns, task: task)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {L10n.format_date(@task.inserted_at)}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "updated", task) do
+    assigns = assign(assigns, task: task)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {L10n.format_date(@task.updated_at)}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "created_by", task) do
+    assigns = assign(assigns, task: task)
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap text-base-content/70">
+      {Map.get(@creators, @task.uuid) || "—"}
+    </.table_default_cell>
     """
   end
 end

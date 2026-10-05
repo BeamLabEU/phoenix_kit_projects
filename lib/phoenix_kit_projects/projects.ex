@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects.Projects do
   require Logger
 
   alias PhoenixKit.Activity.Entry, as: ActivityEntry
+  alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
@@ -2469,7 +2470,14 @@ defmodule PhoenixKitProjects.Projects do
     # `progress_pct` is the average of the per-task sliders (completing a task
     # doesn't move its slider) — otherwise a "done" row would show 0%. For an
     # in-progress sub-project the rolled-up slider average is the right number.
-    progress = if status == "done", do: 100, else: rollup_val(summary, :progress_pct, 0)
+    # An ongoing child with every task done is "caught up": 100% on a row
+    # that is not done, so the parent stays open.
+    progress =
+      cond do
+        status == "done" -> 100
+        caught_up?(child, summary) -> 100
+        true -> rollup_val(summary, :progress_pct, 0)
+      end
 
     %{
       status: status,
@@ -2496,6 +2504,15 @@ defmodule PhoenixKitProjects.Projects do
       else: "todo"
   end
 
+  @doc "Whether an ongoing project has every task done — nothing open, nothing ended."
+  @spec caught_up?(Project.t()) :: boolean()
+  def caught_up?(%Project{} = project), do: caught_up?(project, project_summary(project))
+
+  defp caught_up?(project, summary) do
+    total = rollup_val(summary, :total, 0)
+    Project.ongoing?(project) and total > 0 and rollup_val(summary, :done, 0) == total
+  end
+
   defp rollup_val(nil, _key, default), do: default
   defp rollup_val(summary, key, _default) when is_map(summary), do: Map.fetch!(summary, key)
 
@@ -2505,6 +2522,12 @@ defmodule PhoenixKitProjects.Projects do
     done = Enum.count(assignments, &(&1.status == "done"))
 
     cond do
+      # Ongoing work never ends on its own: every task done is "all caught
+      # up", and the client's next idea reopens nothing because nothing
+      # closed. A person completes it by hand.
+      Project.ongoing?(project) ->
+        {:unchanged, project}
+
       total > 0 and done == total and project.completed_at == nil ->
         mark_completed(project)
 
@@ -2929,6 +2952,46 @@ defmodule PhoenixKitProjects.Projects do
     do_parent_chain(project_uuid, [], @max_parent_depth)
   end
 
+  @doc """
+  A project and every project nested under it, the root first — bounded to
+  #{@max_parent_depth} levels like `parent_chain/1`, so a walk over
+  persisted data can never spin.
+  """
+  @spec subtree_uuids(uuid()) :: [uuid()]
+  def subtree_uuids(project_uuid) when is_binary(project_uuid) do
+    do_subtree([project_uuid], [], @max_parent_depth)
+  end
+
+  defp do_subtree([], acc, _hops), do: Enum.reverse(acc)
+  defp do_subtree(level, acc, 0), do: Enum.reverse(Enum.reverse(level) ++ acc)
+
+  defp do_subtree(level, acc, hops) do
+    children =
+      repo().all(
+        from(a in Assignment,
+          where: a.project_uuid in ^level and not is_nil(a.child_project_uuid),
+          select: a.child_project_uuid
+        )
+      )
+      |> Enum.reject(&(&1 in acc or &1 in level))
+
+    do_subtree(children, Enum.reverse(level) ++ acc, hops - 1)
+  end
+
+  @doc "The sub-projects embedded directly in a project, in plan order."
+  @spec child_projects(uuid()) :: [Project.t()]
+  def child_projects(project_uuid) when is_binary(project_uuid) do
+    repo().all(
+      from(a in Assignment,
+        join: p in Project,
+        on: p.uuid == a.child_project_uuid,
+        where: a.project_uuid == ^project_uuid,
+        order_by: [asc: a.position, asc: a.inserted_at],
+        select: p
+      )
+    )
+  end
+
   defp do_parent_chain(_uuid, acc, 0), do: acc
 
   defp do_parent_chain(uuid, acc, hops) do
@@ -2983,9 +3046,24 @@ defmodule PhoenixKitProjects.Projects do
   defp do_create_subproject(%Project{} = parent, child_attrs) do
     parent_project_uuid = parent.uuid
 
+    # The child copies the parent's completion mode unless told otherwise:
+    # a copy, so changing the parent later never flips live children. The
+    # default (`auto`) is the absence of the key, so nothing is written for
+    # it — a clone's settings stay exactly what the template held.
+    settings =
+      case {Map.get(child_attrs, "settings", %{}), Project.completion(parent)} do
+        {%{"completion" => _} = given, _} -> given
+        {given, "manual"} -> Map.put(given, "completion", "manual")
+        {given, _} -> given
+      end
+
     attrs =
       child_attrs
-      |> Map.merge(%{"is_template" => to_string(parent.is_template), "start_mode" => "immediate"})
+      |> Map.merge(%{
+        "is_template" => to_string(parent.is_template),
+        "start_mode" => "immediate",
+        "settings" => settings
+      })
 
     repo().transaction(fn ->
       child =
@@ -3561,6 +3639,286 @@ defmodule PhoenixKitProjects.Projects do
       end
 
       {:ok, updated}
+    end
+  end
+
+  @doc """
+  Stamps server-owned provenance on a task — who created it, who started
+  it (a person and/or an API key) — without touching anything else and
+  without a broadcast: the row's content did not change.
+  """
+  @spec stamp_assignment(Assignment.t(), map()) :: {:ok, Assignment.t()} | {:error, term()}
+  def stamp_assignment(%Assignment{} = a, attrs) when is_map(attrs) do
+    a
+    |> Assignment.status_changeset(
+      Map.take(
+        attrs,
+        ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid words_by_key_uuid)a
+      )
+    )
+    |> repo().update()
+  end
+
+  @task_interactions "phoenix_kit_project_task_interactions"
+  @table_prefix Application.compile_env(:phoenix_kit, :prefix)
+
+  @doc """
+  Links a task to a client interaction (V20). The link is a row of its own
+  — a token kept only in the description vanished with any rewrite of it
+  (the panel's sweep) — and the description ALSO gains the mention token
+  `#[crm_interaction:uuid|label]` when it does not carry one, so the forms
+  and the backlink index see the link as they always did. Idempotent.
+  `opts`: `:actor_uuid`, `:key_uuid` (who added it).
+  """
+  @spec link_interaction(Assignment.t(), String.t(), String.t(), keyword()) ::
+          {:ok, Assignment.t()} | {:error, term()}
+  def link_interaction(%Assignment{} = a, interaction_uuid, label, opts \\ []) do
+    row = %{
+      assignment_uuid: Ecto.UUID.dump!(a.uuid),
+      interaction_uuid: Ecto.UUID.dump!(interaction_uuid),
+      added_by_uuid: opts |> Keyword.get(:actor_uuid) |> dump_uuid(),
+      added_by_key_uuid: opts |> Keyword.get(:key_uuid) |> dump_uuid(),
+      inserted_at: DateTime.utc_now() |> DateTime.truncate(:second)
+    }
+
+    # One transaction, the task row locked: two links at once both land
+    # their tokens, and a token that cannot be written leaves no join row.
+    repo().transaction(fn ->
+      fresh =
+        repo().one!(from(x in Assignment, where: x.uuid == ^a.uuid, lock: "FOR UPDATE"))
+        |> repo().preload(:task)
+
+      repo().insert_all(@task_interactions, [row], on_conflict: :nothing, prefix: @table_prefix)
+
+      case ensure_interaction_token(fresh, interaction_uuid, label, opts) do
+        {:ok, updated} -> updated
+        {:error, reason} -> repo().rollback(reason)
+      end
+    end)
+  end
+
+  @doc "Removes the link (the token stays in the text as plain history). `:ok` either way."
+  @spec unlink_interaction(Assignment.t(), String.t()) :: :ok
+  def unlink_interaction(%Assignment{} = a, interaction_uuid) do
+    repo().delete_all(
+      from(j in @task_interactions,
+        where:
+          j.assignment_uuid == type(^a.uuid, Ecto.UUID) and
+            j.interaction_uuid == type(^interaction_uuid, Ecto.UUID)
+      )
+      |> with_table_prefix()
+    )
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  @doc "The interaction uuids a task is linked to, oldest link first."
+  @spec interactions_of(Assignment.t() | binary()) :: [String.t()]
+  def interactions_of(%Assignment{uuid: uuid}), do: interactions_of(uuid)
+
+  def interactions_of(uuid) when is_binary(uuid) do
+    repo().all(
+      from(j in @task_interactions,
+        where: j.assignment_uuid == type(^uuid, Ecto.UUID),
+        order_by: [asc: j.inserted_at],
+        select: type(j.interaction_uuid, Ecto.UUID)
+      )
+      |> with_table_prefix()
+    )
+  rescue
+    _ -> []
+  end
+
+  @doc "Interaction uuids per task uuid for a displayed set, one query."
+  @spec interactions_for_assignments([binary()]) :: %{binary() => [String.t()]}
+  def interactions_for_assignments([]), do: %{}
+
+  def interactions_for_assignments(uuids) when is_list(uuids) do
+    repo().all(
+      from(j in @task_interactions,
+        where: j.assignment_uuid in type(^uuids, {:array, Ecto.UUID}),
+        order_by: [asc: j.inserted_at],
+        select: {type(j.assignment_uuid, Ecto.UUID), type(j.interaction_uuid, Ecto.UUID)}
+      )
+      |> with_table_prefix()
+    )
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+  rescue
+    _ -> %{}
+  end
+
+  @doc "The tasks linked to an interaction, as assignments (task preloaded), oldest link first."
+  @spec tasks_for_interaction(binary()) :: [Assignment.t()]
+  def tasks_for_interaction(interaction_uuid) when is_binary(interaction_uuid) do
+    uuids =
+      repo().all(
+        from(j in @task_interactions,
+          where: j.interaction_uuid == type(^interaction_uuid, Ecto.UUID),
+          order_by: [asc: j.inserted_at],
+          select: type(j.assignment_uuid, Ecto.UUID)
+        )
+        |> with_table_prefix()
+      )
+
+    by_uuid =
+      Assignment
+      |> where([a], a.uuid in ^uuids)
+      |> preload([:task, :child_project])
+      |> repo().all()
+      |> Map.new(&{&1.uuid, &1})
+
+    uuids |> Enum.map(&Map.get(by_uuid, &1)) |> Enum.reject(&is_nil/1)
+  rescue
+    _ -> []
+  end
+
+  @doc """
+  The description carries every linked interaction's token (one re-added
+  after a rewrite dropped it), so the mention index and the forms agree
+  with the join table. `labels` maps interaction uuid → label for new tokens.
+  """
+  @spec ensure_interaction_tokens(Assignment.t(), %{String.t() => String.t()}, keyword()) ::
+          {:ok, Assignment.t()}
+  def ensure_interaction_tokens(%Assignment{} = a, labels, opts \\ []) do
+    Enum.reduce(interactions_of(a), {:ok, a}, fn uuid, {:ok, acc} ->
+      case ensure_interaction_token(acc, uuid, Map.get(labels, uuid, "interaction"), opts) do
+        {:ok, next} -> {:ok, next}
+        _ -> {:ok, acc}
+      end
+    end)
+  end
+
+  # The token goes where the task's own words live: on the TASK row for a
+  # one-off task (what the API's title/description edits and the forms
+  # write), on the assignment for a shared library task — with a copy of
+  # the library text, so the override does not hide it.
+  defp ensure_interaction_token(%Assignment{} = a, interaction_uuid, label, opts) do
+    a = if Ecto.assoc_loaded?(a.task), do: a, else: repo().preload(a, :task)
+    {field_owner, description} = token_home(a)
+
+    linked? =
+      description
+      |> Token.parse()
+      |> Enum.any?(&(&1.type == "crm_interaction" and &1.uuid == interaction_uuid))
+
+    if linked? do
+      {:ok, a}
+    else
+      safe_label = label |> to_string() |> String.replace(~r/[|\]]/, " ") |> String.slice(0, 120)
+      token = "#[crm_interaction:#{interaction_uuid}|#{safe_label}]"
+      text = if description == "", do: token, else: description <> "\n" <> token
+
+      result =
+        case field_owner do
+          :task ->
+            with {:ok, _} <- update_task(a.task, %{description: text}, broadcast: false),
+                 do: {:ok, repo().preload(get_assignment(a.uuid) || a, :task, force: true)}
+
+          :assignment ->
+            update_assignment_form(a, %{description: text})
+        end
+
+      with {:ok, updated} <- result do
+        _ =
+          PhoenixKit.Mentions.sync("project_task", updated.uuid, text,
+            field: "description",
+            actor_uuid: Keyword.get(opts, :actor_uuid)
+          )
+
+        {:ok, updated}
+      end
+    end
+  end
+
+  defp token_home(%Assignment{task: %Task{ad_hoc: true} = task, description: nil}),
+    do: {:task, task.description || ""}
+
+  defp token_home(%Assignment{} = a),
+    do: {:assignment, a.description || library_description(a) || ""}
+
+  defp library_description(%Assignment{task: %Task{description: d}}) when is_binary(d), do: d
+
+  defp library_description(%Assignment{task_uuid: uuid}) when is_binary(uuid) do
+    case repo().get(Task, uuid) do
+      %Task{description: d} when is_binary(d) -> d
+      _ -> nil
+    end
+  end
+
+  defp library_description(_), do: nil
+
+  defp dump_uuid(nil), do: nil
+  defp dump_uuid(uuid), do: Ecto.UUID.dump!(uuid)
+
+  defp with_table_prefix(query),
+    do:
+      if(is_binary(@table_prefix),
+        do: Ecto.Query.put_query_prefix(query, @table_prefix),
+        else: query
+      )
+
+  @doc """
+  Ticks or unticks one checklist item under a row lock: the list is re-read
+  inside the transaction, so two sessions ticking different items at once
+  both land (the API's per-item PATCH). `{:error, :not_found}` for an id the
+  task does not carry.
+  """
+  @spec update_checklist_item(Assignment.t(), String.t(), boolean()) ::
+          {:ok, Assignment.t()} | {:error, term()}
+  def update_checklist_item(%Assignment{uuid: uuid}, item_id, done) when is_boolean(done) do
+    repo().transaction(fn ->
+      fresh = repo().one!(from(a in Assignment, where: a.uuid == ^uuid, lock: "FOR UPDATE"))
+      items = fresh.checklist || []
+
+      if Enum.any?(items, &(&1["id"] == item_id)) do
+        updated =
+          Enum.map(items, fn
+            %{"id" => ^item_id} = item -> item |> Map.put("done", done) |> Map.delete("done_at")
+            item -> item
+          end)
+
+        case update_assignment_form(fresh, %{checklist: updated}, broadcast: false) do
+          {:ok, saved} -> saved
+          {:error, reason} -> repo().rollback(reason)
+        end
+      else
+        repo().rollback(:not_found)
+      end
+    end)
+    |> tap(fn
+      {:ok, saved} ->
+        ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+          uuid: saved.uuid,
+          project_uuid: saved.project_uuid
+        })
+
+      _ ->
+        :ok
+    end)
+  end
+
+  @doc "When an ongoing project caught up: the latest completion among its tasks, nil when not caught up."
+  @spec caught_up_since(Project.t()) :: DateTime.t() | nil
+  def caught_up_since(%Project{} = project) do
+    if caught_up?(project) do
+      repo().one(
+        from(a in Assignment, where: a.project_uuid == ^project.uuid, select: max(a.completed_at))
+      )
+    end
+  rescue
+    _ -> nil
+  end
+
+  @doc "A position above every row of the project, for a task added at the top."
+  @spec top_assignment_position(uuid()) :: integer()
+  def top_assignment_position(project_uuid) do
+    case repo().one(
+           from(a in Assignment, where: a.project_uuid == ^project_uuid, select: min(a.position))
+         ) do
+      nil -> 0
+      min -> min - 1
     end
   end
 

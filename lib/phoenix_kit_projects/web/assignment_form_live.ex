@@ -84,6 +84,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  defp prefill_description(params) do
+    case Map.get(params, "description") do
+      text when is_binary(text) -> text |> String.trim() |> String.slice(0, 2000)
+      _ -> nil
+    end
+  end
+
   # The hub gate map for this form's project. Placeholder projects (the
   # not-found render window) fall back to catalog defaults.
   defp assign_fx(socket) do
@@ -162,7 +169,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               phx-value-uuid={@node.task.uuid}
               checked={not @effective_excluded?}
               disabled={@is_root or @ancestor_excluded?}
-              class="checkbox checkbox-sm shrink-0 mt-0.5"
+              class="checkbox checkbox-primary checkbox-sm shrink-0 mt-0.5"
             />
             <span class={["text-sm", @effective_excluded? && "line-through text-base-content/40"]}>
               {Task.localized_title(@node.task, @lang)}
@@ -363,7 +370,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           excluded_closure_uuids: MapSet.new()
         )
         |> assign_options()
-        |> assign_form(Projects.change_assignment(assignment))
+        # A `description` param (the CRM's "add a task from this meeting"
+        # hands over the meeting's `#` chip) prefills the description the
+        # way `title` prefills the title — nothing is saved until Save.
+        |> assign_form(
+          Projects.change_assignment(assignment, %{"description" => prefill_description(params)})
+        )
         |> assign_status_init(%Project{})
     end
   end
@@ -822,6 +834,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> clear_other_assignees(assign_type)
       |> strip_gated_attrs(fx)
       |> merge_attrs(socket)
+      |> fold_checklist(params, socket.assigns[:assignment])
 
     case {socket.assigns.live_action, task_mode} do
       {:new, "new"} -> save_with_new_task(socket, attrs, params)
@@ -975,6 +988,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         end)
         |> WSF.apply_mode(params, sp_source(socket))
 
+      attrs =
+        fold_completion(
+          attrs,
+          params,
+          if(socket.assigns.live_action == :new, do: nil, else: sp_source(socket))
+        )
+
       case socket.assigns.live_action do
         :new -> save_new_subproject(socket, attrs)
         :edit -> save_edit_subproject(socket, attrs)
@@ -1058,6 +1078,71 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp link_error_message(:not_found), do: gettext("That project no longer exists.")
   defp link_error_message(_), do: gettext("Could not nest that project.")
 
+  # The checklist as the form shows it: one line per item, `[x]` first
+  # when done.
+  defp checklist_text(items) when is_list(items) do
+    Enum.map_join(items, "\n", fn item ->
+      if(item["done"] == true, do: "[x] ", else: "[ ] ") <> (item["text"] || "")
+    end)
+  end
+
+  defp checklist_text(_), do: ""
+
+  # …and back: lines to items, keeping the ids of the items whose text did
+  # not change (a tick or an edit is an update, not a new item).
+  defp fold_checklist(attrs, %{"checklist_text" => text}, assignment) when is_binary(text) do
+    # Each existing item lends its id to the FIRST line with its text, so
+    # two lines that read the same stay two items.
+    existing = (assignment && assignment.checklist) || []
+
+    {items, _left} =
+      text
+      |> String.split(~r/\r?\n/)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.map_reduce(existing, fn line, pool ->
+        {done, rest} =
+          case Regex.run(~r/^\[(x|X| )?\]\s*(.*)$/, line) do
+            [_, mark, rest] -> {String.downcase(mark) == "x", rest}
+            _ -> {false, line}
+          end
+
+        {base, pool} =
+          case Enum.split_with(pool, &(&1["text"] == String.trim(rest))) do
+            {[match | rest_matches], others} -> {match, rest_matches ++ others}
+            {[], others} -> {%{}, others}
+          end
+
+        {%{
+           "id" => base["id"],
+           "text" => rest,
+           "done" => done,
+           "done_at" => if(done, do: base["done_at"])
+         }, pool}
+      end)
+
+    Map.put(attrs, "checklist", items)
+  end
+
+  defp fold_checklist(attrs, _params, _assignment), do: attrs
+
+  @doc false
+  def completion_options do
+    [
+      {gettext("When the last task is done"), "auto"},
+      {gettext("Only when someone ends it — ongoing work"), "manual"}
+    ]
+  end
+
+  # `completion` from the form into the project's settings, keeping every
+  # other key the project already holds.
+  defp fold_completion(attrs, %{"completion" => mode}, source) when mode in ["auto", "manual"] do
+    base = (source && source.settings) || %{}
+    Map.put(attrs, "settings", Map.put(base, "completion", mode))
+  end
+
+  defp fold_completion(attrs, _params, _source), do: attrs
+
   # The base struct the sub-project form edits (a fresh `%Project{}` on :new,
   # the embedded child on :edit). Read off the form's changeset data.
   defp sp_source(socket), do: socket.assigns.sp_form.source.data
@@ -1094,6 +1179,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # What a `#` in this form offers: the project's own records and its
+  # sub-projects' (`ResourceLinks.search_resources/2` narrows by it).
+  defp mention_context(%{uuid: uuid}) when is_binary(uuid), do: Jason.encode!(%{project: uuid})
+  defp mention_context(_), do: nil
+
   # Indexes the @ and # mentions in a saved description and delivers the
   # pings. Deliberately on the DURABLE save rather than on change: `sync`
   # returns only what is new, and notifying from a debounce would ping on
@@ -1101,6 +1191,31 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   #
   # Never allowed to fail the save. A mention that doesn't index is a
   # missing backlink; a save that rolls back because of one is lost work.
+  # The same, for a TASK's description: indexed under `project_task` (the
+  # type `ResourceLinks` resolves an assignment as), so a task whose text
+  # says "from this meeting" is listed on the meeting — and so a `#` in a
+  # task is a backlink at all, which it was not before V8 of the CRM asked.
+  defp sync_task_mentions(socket, assignment_uuid, description) when is_binary(description) do
+    case Mentions.sync("project_task", assignment_uuid, description,
+           field: "description",
+           actor_uuid: Activity.actor_uuid(socket)
+         ) do
+      {:ok, new} ->
+        Mentions.notify(new,
+          source_type: "project_task",
+          source_uuid: assignment_uuid,
+          preview: description
+        )
+
+      _ ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp sync_task_mentions(_socket, _uuid, _description), do: :ok
+
   defp sync_mentions(socket, %{uuid: uuid, description: description}) do
     case Mentions.sync("project", uuid, description,
            field: "description",
@@ -1268,6 +1383,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     case Projects.create_task_with_assignment(project.uuid, task_attrs, attrs) do
       {:ok, %{assignment: assignment}} ->
+        {:ok, _} =
+          Projects.stamp_assignment(assignment, %{created_by_uuid: Activity.actor_uuid(socket)})
+
         apply_pending_labels(socket, assignment)
 
         {flash_kind, flash_msg} =
@@ -1285,6 +1403,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
 
         flush_pending_deps(socket, assignment)
+        sync_task_mentions(socket, assignment.uuid, task_attrs["description"])
 
         {:noreply, socket |> put_flash(flash_kind, flash_msg) |> after_create(assignment)}
 
@@ -1604,7 +1723,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp save_edit(socket, attrs) do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
+        # A person saved the form: the title and description are theirs
+        # now, whatever key wrote them before.
+        _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
         apply_pending_labels(socket, updated)
+        sync_task_mentions(socket, updated.uuid, attrs["description"])
 
         Activity.log("projects.assignment_updated",
           actor_uuid: Activity.actor_uuid(socket),
@@ -1966,6 +2089,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 label={gettext("Description (optional)")}
                 rows="2"
                 mentions
+                data-mention-context={mention_context(@project)}
+              />
+              <%!-- How it ends. A new sub-project copies the parent's
+                   answer; the value is folded into the child's settings on
+                   save, never posted as the settings map itself (a posted
+                   map replaces every other key). --%>
+              <.select
+                name="completion"
+                label={gettext("Ends")}
+                value={if @live_action == :new, do: Project.completion(@project), else: Project.completion(@sp_form.source.data)}
+                options={completion_options()}
               />
 
               <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
@@ -2241,6 +2375,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 rows={3}
                 disabled={@current_lang in @ai_in_flight}
                 mentions
+                data-mention-context={mention_context(@project)}
               />
             </.multilang_fields_wrapper>
 
@@ -2274,6 +2409,26 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               />
             </div>
 
+            <%!-- What the first agent asked for (2026-10-05): whom the task
+                 waits on (a badge beside the status, not a fourth status),
+                 where a relayed item came from, and a checklist — sub-items
+                 ticked one by one, one per line here, "[x]" when done. --%>
+            <div class="flex gap-2">
+              <div class="flex-1">
+                <.input field={@form[:waiting_on]} label={gettext("Waiting on")} placeholder={gettext("e.g. the client")} maxlength="200" />
+              </div>
+              <div class="w-48">
+                <.input field={@form[:origin]} label={gettext("From")} placeholder={gettext("e.g. client, boss")} maxlength="40" />
+              </div>
+            </div>
+            <.textarea
+              name="checklist_text"
+              value={checklist_text(@form[:checklist].value)}
+              label={gettext("Checklist")}
+              rows="3"
+              placeholder={gettext("One item per line; start a line with [x] when it is done")}
+            />
+
             <%!-- Labels: plain checkboxes over the PROJECT's registry (managed
                  in the Modules panel); selection replaces the join rows on
                  save. Renders only when the flag is on AND labels exist. --%>
@@ -2289,7 +2444,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     name="labels[]"
                     value={label.uuid}
                     checked={label.uuid in @selected_labels}
-                    class="checkbox checkbox-xs"
+                    class="checkbox checkbox-primary checkbox-xs"
                   />
                   <span class={["badge badge-sm", label.color]}>{label.name}</span>
                 </label>
@@ -2317,7 +2472,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 name={@form[:counts_weekends].name}
                 value="true"
                 checked={@form[:counts_weekends].value == true or @form[:counts_weekends].value == "true"}
-                class="checkbox checkbox-sm"
+                class="checkbox checkbox-primary checkbox-sm"
               />
               <span class="text-sm">{gettext("Counts weekends (e.g. deliveries, external processes)")}</span>
             </label>
@@ -2349,7 +2504,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 name="add_to_library"
                 checked={@add_to_library}
                 label={gettext("Add to the task library")}
-                class="checkbox-sm"
+                class="checkbox-primary checkbox-sm"
               />
             <% end %>
           </div>
@@ -2544,7 +2699,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             </div>
             <input
               type="checkbox"
-              class="toggle toggle-warning"
+              class="toggle toggle-primary"
               checked={@assignment.board_published_at != nil}
               phx-click="toggle_board_published"
               aria-label={gettext("Publish to the public board")}
