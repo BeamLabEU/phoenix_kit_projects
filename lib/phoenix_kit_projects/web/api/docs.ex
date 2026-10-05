@@ -1231,7 +1231,9 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
 
     ## Links between records: the mention token
 
-    A task's link to a client interaction is a row of its own: `interaction: <uuid>` on
+    A task's link to a client interaction is a row of its own: the interaction may belong to the
+    project above the task's sub-project (the client sits on the parent) - the lookup walks up
+    within your reach, and an unknown one is a 404 before any task is created. `interaction: <uuid>` on
     `POST`/`PATCH /tasks`, or `POST /tasks/{id}/interactions/{uuid}` (and `DELETE` to unlink), or
     `tasks: [<uuid>]` on an interaction create or update. A task answers `interactions: [<uuid>]`;
     an interaction answers `tasks`. Rewriting a description never unlinks. The description also

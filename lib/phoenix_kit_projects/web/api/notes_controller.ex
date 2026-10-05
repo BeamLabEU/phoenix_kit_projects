@@ -104,7 +104,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
       json(conn, %{
         project_uuid: conn.assigns.pk_project.uuid,
         since: since,
-        now: DateTime.utc_now(),
+        now: DateTime.utc_now() |> DateTime.truncate(:second),
         notes: Enum.map(notes, &TaskNotes.to_json/1),
         count: length(notes)
       })

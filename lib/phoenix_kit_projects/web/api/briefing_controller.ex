@@ -65,7 +65,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         |> Enum.map(&%{uuid: &1.uuid, title: Assignment.label(&1), completed_at: &1.completed_at})
 
       json(conn, %{
-        now: DateTime.utc_now(),
+        now: DateTime.utc_now() |> DateTime.truncate(:second),
         since: since,
         project: %{
           uuid: project.uuid,
@@ -103,7 +103,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
          true <- Extensions.enabled?(project, ext.key),
          true <- ApiKey.scope?(key, provider.scopes().read),
          {:ok, %{interactions: rows}} <- list_interactions(provider, conn, since) do
-      %{interactions: rows}
+      # one line each: the bodies are the interaction's own read
+      %{interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"]))}
     else
       _ -> nil
     end

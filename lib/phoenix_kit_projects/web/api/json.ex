@@ -315,6 +315,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       amount: number(e.amount),
       task_uuid: e.assignment_uuid,
       actor: %{kind: e.actor_kind, uuid: e.actor_uuid},
+      billable: e.billable == true,
       note: e.note,
       note_uuid: m["note_uuid"],
       model: m["model"],

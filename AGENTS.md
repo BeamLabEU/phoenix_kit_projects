@@ -752,6 +752,20 @@ briefing orders mine → ready → waiting with `counts`, a `resume` pointer
 children in one pass. Not done: a batched "latest note per task" (50 open
 tasks = 50 comment reads; acceptable at one briefing per reset).
 
+**Round four (2026-10-05, the agent's third report):** the interaction
+lookup for a task in a sub-project walks up the parent chain within the
+key's reach to the project that holds the client (`interaction_label/2` in
+`TasksController`), and `POST /tasks` checks the interaction BEFORE creating
+the task (404, never a 201 without the link); `now` is floored to whole
+seconds wherever a poll reads it back (`updated_at` has no microseconds);
+`Json.entry/1` says `billable`; the briefing's client lines drop the bodies.
+**A deploy trap:** the extension registry is cached — after a provider
+change lands on dev, `Extensions.Registry.refresh()` over the node (the
+`/ext/companies` rows vanished from the guide until it ran; the CRM extension
+declares `api: [ProjectApi, CompanyApi]` and the stale list held one). The
+"events" extension was off on ANDI Manager although it had a planned event —
+switched on by hand.
+
 The earlier list, for the record:
 
 - **Sub-items**: a `parent_uuid` on a task or a checklist — a sub-project per

@@ -46,7 +46,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       json(conn, %{
         tasks: Enum.map(tasks, &Json.task(&1, totals[&1.uuid], labels[&1.uuid] || [])),
         count: length(tasks),
-        now: DateTime.utc_now()
+        # whole seconds, like `updated_at`: a `now` with microseconds skipped
+        # a change made in the same second
+        now: DateTime.utc_now() |> DateTime.truncate(:second)
       })
     else
       {:halt, conn} -> conn
@@ -112,6 +114,13 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     %{pk_api_key: key, pk_project: project} = conn.assigns
     params = Map.merge(params, position_attrs(project, params["position"]))
 
+    case check_interaction(conn, params["interaction"]) do
+      :ok -> do_create_checked(conn, key, project, params)
+      {:error, pair} -> pair
+    end
+  end
+
+  defp do_create_checked(conn, key, project, params) do
     with {:ok, title} <- required_string(params, "title"),
          {:ok, assignment_attrs} <- assignment_attrs(params) do
       task_attrs =
@@ -336,19 +345,56 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     end
   end
 
+  # An interaction belongs to the project that holds the client — often the
+  # parent of the sub-project the task sits in — so the lookup tries the
+  # task's project first, then each ancestor within the key's reach.
   defp interaction_label(conn, uuid) do
+    %{pk_api_key: key, pk_project: project} = conn.assigns
+
     with %{module: provider} <- Extensions.api_provider("interactions"),
-         true <- function_exported?(provider, :get, 2),
-         ctx = ExtController.ctx(conn),
-         # credo:disable-for-next-line Credo.Check.Refactor.Apply
-         {:ok, %{interaction: i}} <- apply(provider, :get, [ctx, uuid]) do
-      {:ok, i[:subject] || i[:type] || "interaction"}
+         true <- function_exported?(provider, :get, 2) do
+      candidates =
+        [project | Enum.reverse(Projects.parent_chain(project.uuid))]
+        |> Enum.filter(&Json.within_reach?(key, &1.uuid))
+
+      Enum.find_value(candidates, :error, fn p ->
+        ctx = ExtController.ctx(Json.rescope(conn, p))
+
+        # credo:disable-for-next-line Credo.Check.Refactor.Apply
+        case apply(provider, :get, [ctx, uuid]) do
+          {:ok, %{interaction: i}} -> {:ok, i[:subject] || i[:type] || "interaction"}
+          _ -> nil
+        end
+      end)
     else
       _ -> :error
     end
   rescue
     _ -> :error
   end
+
+  # A task created with an interaction that does not exist is refused
+  # before the task exists — never a 201 with no link.
+  defp check_interaction(_conn, nil), do: :ok
+
+  defp check_interaction(conn, uuid) when is_binary(uuid) do
+    case interaction_label(conn, uuid) do
+      {:ok, _} ->
+        :ok
+
+      :error ->
+        {:error,
+         Json.error_body(
+           404,
+           "not_found",
+           "No such interaction on this project or the projects above it.",
+           %{interaction: uuid}
+         )}
+    end
+  end
+
+  defp check_interaction(_conn, _),
+    do: {:error, Json.error_body(422, "validation_failed", "interaction must be a uuid.")}
 
   # Labels by name, when the project has labels on; a nil means "leave them".
   defp apply_labels(_project, _a, nil), do: :ok

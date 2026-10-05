@@ -12,7 +12,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Features, Labels, Ledger, Projects}
-  alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @base "/api/projects/v1"
 
@@ -293,7 +293,9 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
     assert Enum.sort(relabelled["labels"]) == ["Furniture", "Later"]
     assert length(Labels.list_for_project(project.uuid)) == 3
 
-    # updated_since: only what moved after the moment
+    # updated_since: what moved at or after the moment (inclusive — a change in
+    # the same second as `now` is never lost; the caller dedupes by uuid)
+    Process.sleep(1100)
     %{"now" => now} = c |> get("#{@base}/tasks") |> json_response(200)
     Process.sleep(1100)
 
@@ -389,12 +391,19 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
     def list(_ctx, params),
       do: {:ok, %{interactions: [%{uuid: "i-1", subject: "Call", since: params["since"]}]}}
 
-    def get(_ctx, "01a10000-0000-7000-8000-000000000001"),
-      do:
-        {:ok,
-         %{
-           interaction: %{uuid: "01a10000-0000-7000-8000-000000000001", subject: "Kickoff | call"}
-         }}
+    # the interaction belongs to ONE project (the test pins it): a lookup from a sub-project has to walk up
+    def get(%{project: %{uuid: uuid}}, "01a10000-0000-7000-8000-000000000001") do
+      if is_nil(Process.get(:fake_client_root)) or Process.get(:fake_client_root) == uuid,
+        do:
+          {:ok,
+           %{
+             interaction: %{
+               uuid: "01a10000-0000-7000-8000-000000000001",
+               subject: "Kickoff | call"
+             }
+           }},
+        else: {:error, {404, "not_found", "Not on this project.", nil}}
+    end
 
     def get(_ctx, _), do: {:error, {404, "not_found", "No such interaction.", nil}}
   end
@@ -535,6 +544,40 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
              c
              |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"interaction" => Ecto.UUID.generate()})
              |> json_response(404)
+
+    # from a sub-project, the client's interaction on the parent still links (the lookup walks up);
+    # an unknown one is refused before any task is created
+    Process.put(:fake_client_root, project.uuid)
+
+    %{"project" => child} =
+      c |> post_json("#{@base}/subprojects", %{"name" => "3D editor"}) |> json_response(201)
+
+    %{"task" => in_child} =
+      c
+      |> post_json(
+        "#{@base}/tasks",
+        %{"title" => "From the call, below", "project" => child["uuid"], "interaction" => uuid},
+        idem()
+      )
+      |> json_response(201)
+
+    assert in_child["interactions"] == [uuid]
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             c
+             |> post_json(
+               "#{@base}/tasks",
+               %{
+                 "title" => "Lost",
+                 "project" => child["uuid"],
+                 "interaction" => Ecto.UUID.generate()
+               },
+               idem()
+             )
+             |> json_response(404)
+
+    refute Enum.any?(Projects.list_assignments(child["uuid"]), &(Assignment.label(&1) == "Lost"))
+    Process.delete(:fake_client_root)
 
     # the client lines need the interactions scope: a key minted now carries it
     {:ok, _, reader} = ApiKeys.create(project, %{"name" => "Client reader"})
