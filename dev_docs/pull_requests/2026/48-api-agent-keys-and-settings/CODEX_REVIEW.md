@@ -1,0 +1,27 @@
+Static review of committed `HEAD`; tests were not run because the working tree changed concurrently during review.
+
+1. **Checked, sound.** `projects.ex:2519-2539` exits before either automatic completion or reopening when `Project.ongoing?/1`. An unfinished manual child with every task done rolls up as `in_progress` at 100%; it reads `done` only after explicit human completion sets `completed_at` (`projects.ex:2465-2495`).
+
+2. **Failing sequences.**
+
+   - Upgrade a task created by key K before V19; provenance remains nil. With `edit_foreign_text: false`, K gets 403 updating its title (`json.ex:419-422`). Even with `delete_tasks: "own"`, deletion gets 403 (`json.ex:426-430`). This contradicts “your own tasks are always yours to edit.”
+   - K creates a task, then a person rewrites it in the UI. `created_by_key_uuid` remains K, so K can overwrite the person’s wording despite the false policy. Ownership tracks creation, not the latest author.
+   - A person-started `in_progress` task can be completed or reopened by K: `may_take?/3` is checked only when transitioning *to* `in_progress` (`tasks_controller.ex:419-454`). K can also repeatedly take `todo → done` without claiming it.
+   - `PATCH {"interaction": uuid}` has empty `content`, bypasses `may_edit_text?/3`, then appends to the description (`tasks_controller.ex:165-175,233-240`).
+   - UI-created tasks otherwise correctly count as foreign. Checklist, labels, and non-text fields are outside the documented text policy; no delete bypass found.
+
+3. **Failing sequence.** Give role `member` permission on root R but deny `edit_tasks` on child C. `PATCH /tasks/<C-task>` authorizes against R before `fetch/2`, then rescopes to C without rechecking the action (`tasks_controller.ex:153-158,534-550`), so the edit succeeds. Reversing the floors incorrectly denies it. The same ordering affects show, transition, delete and checklist; ledger `task_time`, `task_usage`, and `task_index` (`ledger_controller.ex:30-32,49-51,83-87`); and task notes, including usage rights (`notes_controller.ex:28-33,51-57`). Child `tasks` is rechecked, but the root gate can still wrongly block a child where it is enabled; child ledger gates and role floors are not rechecked.
+
+4. **Checked, sound.** API-created nesting stops at depth 7, within the eight-hop ancestry window; project and task lookup use the same reach predicate. `GET /tasks?project=<own uuid>` is a normal no-op rescope. Archived descendants remain reachable, and template descendants are reachable from a template-root key; neither is filtered, but there is no project/task reach mismatch.
+
+5. **Failing sequence.** Two requests read checklist `[A=false,B=false]`; one patches A and the other B. Each rewrites the stale whole array (`tasks_controller.ex:384-397`), and `update_assignment_form/3` performs an unlocked update with no optimistic lock (`projects.ex:3632-3643`), so the last commit loses the other change. Setting `done: false` does clear `done_at`. Normalization drops arbitrary keys and rejects more than 50 items, including through `fold_checklist/3` (`assignment.ex:161-175,238-249`; `assignment_form_live.ex:1093-1118`).
+
+6. **Failing sequence.** A library task has description `"requirements"` and the assignment description is nil. Linking an interaction writes only the token to `assignment.description` (`projects.ex:3670-3685`), hiding the effective library description. `interaction_uuids/1` does not truly read both: once assignment text exists, `description(a)` and `a.description` are the same value (`json.ex:330-336`). An interaction-only patch bypasses both library-task and foreign-text checks. Cross-project UUIDs are correctly rejected: `ExtController.ctx/1` uses the fetched/rescoped project (`ext_controller.ex:104-112`).
+
+7. **Failing sequences.** Manager correction does preserve `billable`, because the controller supplies no `billable:` option. However, amendment activity records the accountable person but not API key UUID/name or the original actor UUID (`ledger.ex:261-287`); two manager keys minted by one person are indistinguishable. Also `/entries` silently returns only 200, while task entries filter only the newest 500 project-wide entries (`ledger_controller.ex:71-97`). Neither response exposes pagination, total count, or truncation; older task entries can disappear entirely.
+
+8. **Failing sequence.** Fifty open tasks plus ten children causes 60 obvious per-item reads: 50 comment queries and 10 `list_assignments` calls (`briefing_controller.ex:120-154`). Additionally, each child’s `caught_up?/1` invokes `project_summary/1`, adding roughly four queries per child before preload queries. Both are N+1; `count_for_assignments/1` does not help and there is no batched `latest`. Optional notes/client/events fail soft, but any child `list_assignments`/summary exception aborts the whole briefing with 500.
+
+9. **Failing sequence.** For R → C → grandchild G, a viewer authorized through R loses a `project_notes` anchor on G. `visible_resource_uuids/2` resolves only G’s immediate parent C, which is absent from the top-level accessible set (`resource_links.ex:227-260,273-283`). It should climb ancestry. Resolution itself correctly deep-links project notes to the project (`resource_links.ex:72-103`).
+
+10. **Checked, sound.** The only `ext.api` consumer wraps it with `List.wrap/1` (`extensions.ex:395-403`). The Modules panel does not assume an atom, and provider scopes/docs/actions consume flattened `api_providers/0`.
