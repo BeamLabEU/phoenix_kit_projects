@@ -2602,6 +2602,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                  the whole workflow-status section disappears; the save path
                  strips the field so a crafted submit can't set a source. --%>
             <.workflow_status_fields
+              class="border-t border-base-300 mt-6 pt-6"
               :if={@fx.statuses}
               statuses_available={@statuses_available}
               field={@form[:status_entity_uuid]}
