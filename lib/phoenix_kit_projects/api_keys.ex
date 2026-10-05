@@ -46,10 +46,6 @@ defmodule PhoenixKitProjects.ApiKeys do
   # `last_used_at` moves at most this often, so a busy agent is not a write
   # on the key row per request.
   @touch_interval_seconds 60
-  # A reservation still pending after this long belongs to a request that
-  # died (a killed node, a brutal kill of the handler): the next retry takes
-  # it over instead of answering 409 for ever.
-  @pending_ttl_seconds 120
 
   @type token :: String.t()
 
@@ -366,7 +362,8 @@ defmodule PhoenixKitProjects.ApiKeys do
          %{
            error: %{
              code: "in_progress",
-             message: "A request with this Idempotency-Key is still running; retry in a moment."
+             message:
+               "A request with this Idempotency-Key is still running, or was cut off before it answered. Retry in a moment; if it never clears, check what the first attempt did and use a new Idempotency-Key."
            }
          }}
 
@@ -399,34 +396,14 @@ defmodule PhoenixKitProjects.ApiKeys do
            api_key_uuid: key_uuid,
            idempotency_key: idempotency_key
          ) do
-      %ApiIdempotency{status: 0} -> take_over_stale(key_uuid, idempotency_key)
+      # Pending: the first request is running, or was cut off before it could
+      # answer. Age proves nothing about which (a slow database call or a slow
+      # extension provider outlives any timeout), and running the work a
+      # second time beside a live first run is the worse failure — so a
+      # pending row is never reclaimed by the clock.
+      %ApiIdempotency{status: 0} -> :pending
       %ApiIdempotency{} = stored -> {:stored, stored}
       nil -> :pending
-    end
-  end
-
-  # A pending row old enough to be abandoned is taken over atomically: the
-  # UPDATE matches only while the row is still pending and still stale, so
-  # of two retries racing for it exactly one is told "reserved".
-  defp take_over_stale(key_uuid, idempotency_key) do
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
-    cutoff = DateTime.add(now, -@pending_ttl_seconds, :second)
-
-    {count, _} =
-      RepoHelper.repo().update_all(
-        from(i in ApiIdempotency,
-          where:
-            i.api_key_uuid == ^key_uuid and i.idempotency_key == ^idempotency_key and
-              i.status == 0 and i.inserted_at < ^cutoff
-        ),
-        set: [inserted_at: now]
-      )
-
-    if count == 1 do
-      {:reserved,
-       %ApiIdempotency{api_key_uuid: key_uuid, idempotency_key: idempotency_key, status: 0}}
-    else
-      :pending
     end
   end
 

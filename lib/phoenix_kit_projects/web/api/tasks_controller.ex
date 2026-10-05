@@ -21,6 +21,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   alias PhoenixKit.Mentions
   alias PhoenixKitProjects.{Activity, Authz, Extensions, Features, Labels, Ledger, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
+  alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
   alias PhoenixKitProjects.Web.Api.ExtController
   alias PhoenixKitProjects.Web.Api.Json
 
@@ -28,6 +29,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   # The INTEGER columns (`estimated_duration`, `position`) hold int4; a
   # bound well inside it keeps a wild figure a 422 instead of an encode error.
   @max_int 1_000_000_000
+  # About eleven years of one task, in minutes.
+  @max_task_minutes 6_000_000
   @units ~w(minutes hours days weeks fortnights months years)
 
   @status_filters ~w(todo in_progress done open)
@@ -206,6 +209,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          :ok <- check_interaction(conn, params["interaction"]),
          :ok <- check_labels(params["labels"]),
          :ok <- check_checklist(params["checklist"]),
+         :ok <- precheck(a, content, assignment_attrs),
          {:ok, _} <- update_content(a, content),
          {:ok, _} <- update_fields(a, assignment_attrs),
          :ok <- stamp_words(a, key, content),
@@ -540,6 +544,28 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          "This task comes from the shared library; its title and description are edited there, not per project."
        )}
 
+  # Both rows' changesets are built and checked BEFORE either is written, so
+  # a rule only a changeset knows (a checklist over 50 items, a title over its
+  # length) is a 422 with nothing changed — not a new title beside a 422.
+  defp precheck(%Assignment{task: task} = a, content, attrs) do
+    fields = Map.merge(attrs, description_for_assignment(a, content))
+
+    [
+      map_size(content) > 0 && TaskSchema.changeset(task, content),
+      map_size(fields) > 0 && Assignment.changeset(a, fields)
+    ]
+    |> Enum.find_value(:ok, fn
+      %Ecto.Changeset{valid?: false} = cs -> {:error, cs}
+      _ -> nil
+    end)
+  end
+
+  defp description_for_assignment(%Assignment{description: d}, %{"description" => text})
+       when is_binary(d) and d != "",
+       do: %{"description" => text}
+
+  defp description_for_assignment(_a, _content), do: %{}
+
   defp update_content(_a, content) when map_size(content) == 0, do: {:ok, nil}
 
   defp update_content(%Assignment{task: task} = a, content) do
@@ -778,7 +804,11 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         :ok
     end
   rescue
-    _ -> :ok
+    e ->
+      # The action itself succeeded; what failed is the project-level
+      # follow-up (completion, the parent's rollup). Never invisible.
+      Logger.warning("[Projects.Api] completion sync failed: #{Exception.message(e)}")
+      :ok
   end
 
   # ── Shared ──────────────────────────────────────────────────────
@@ -932,6 +962,15 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
           %{position: ["must be an integer between #{-@max_int} and #{@max_int}"]}
         )
 
+      Map.has_key?(attrs, "estimated_duration") and
+          too_long_a_task?(attrs["estimated_duration"], attrs["estimated_duration_unit"]) ->
+        Json.error_body(
+          422,
+          "validation_failed",
+          "estimated_duration is longer than any task can be (about #{@max_task_minutes} minutes).",
+          %{estimated_duration: ["must be at most about #{@max_task_minutes} minutes"]}
+        )
+
       too_long?(attrs["waiting_on"], 200) ->
         Json.error_body(422, "validation_failed", "waiting_on must be at most 200 characters.", %{
           waiting_on: ["must be at most 200 characters"]
@@ -946,6 +985,14 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         nil
     end
   end
+
+  # The raw figure is bounded by the column; the figure in MINUTES is bounded
+  # here, where the unit is known, because the parent's rollup sums minutes
+  # into an int4.
+  defp too_long_a_task?(n, unit) when is_integer(n) and unit in @units,
+    do: TaskSchema.to_hours(n, unit, true) * 60 > @max_task_minutes
+
+  defp too_long_a_task?(_n, _unit), do: false
 
   defp too_long?(v, max) when is_binary(v), do: String.length(v) > max
   defp too_long?(_, _max), do: false

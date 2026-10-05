@@ -110,4 +110,78 @@ defmodule PhoenixKitProjects.Web.Review48LvTest do
     html = render_hook(view, "open_comments", %{"type" => "project", "uuid" => other.uuid})
     refute html =~ ~s|aria-label="Comments"|
   end
+
+  # ── An ordinary member, with the project's floors restricted ──────────────
+
+  describe "a member under restrictive floors" do
+    setup %{conn: conn} do
+      {:ok, _} = PhoenixKit.Settings.update_setting("comments_enabled", "true")
+      on_exit(fn -> PhoenixKit.Settings.update_setting("comments_enabled", "false") end)
+
+      project = fixture_project(%{"name" => "Restricted"})
+
+      {:ok, restricted} =
+        PhoenixKitProjects.Authz.set_overrides(project, %{"edit_tasks" => "managers"})
+
+      task = fixture_task(%{"title" => "Work"})
+
+      {:ok, a} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      member = member_conn(conn, project, "member")
+      manager = member_conn(conn, project, "manager")
+      {:ok, project: restricted, assignment: a, member: member, manager: manager}
+    end
+
+    defp member_conn(conn, project, role) do
+      uuid = embed_user_uuid!()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, uuid, role: role)
+      put_test_scope(conn, fake_scope(user_uuid: uuid, permissions: ["projects"]))
+    end
+
+    test "a member may not set a direction or adopt a summary; a manager may", ctx do
+      %{project: project, assignment: a} = ctx
+
+      {:ok, view, _} = live(ctx.member, "/en/admin/projects/#{project.uuid}")
+
+      html =
+        render_submit(view, "save_redirect", %{"uuid" => a.uuid, "summary" => "Go left instead"})
+
+      assert html =~ "You don&#39;t have permission to do that here."
+      assert PhoenixKitProjects.TaskNotes.latest(a.uuid).redirect == nil
+
+      render_click(view, "adopt_summary", %{"uuid" => a.uuid})
+      assert Projects.get_assignment(a.uuid).description in [nil, ""]
+
+      # the control: the same event from a manager is accepted
+      {:ok, mview, _} = live(ctx.manager, "/en/admin/projects/#{project.uuid}")
+      render_submit(mview, "save_redirect", %{"uuid" => a.uuid, "summary" => "Go left instead"})
+
+      assert %{redirect: %{metadata: %{"summary" => "Go left instead"}}} =
+               PhoenixKitProjects.TaskNotes.latest(a.uuid)
+    end
+
+    test "a new project saved by a member takes no completion, agent policy or settings from the post",
+         ctx do
+      {:ok, view, _} = live(ctx.member, "/en/admin/projects/new")
+
+      render_submit(view, "save", %{
+        "project" => %{
+          "name" => "Crafted by a member",
+          "settings" => %{"completion" => "manual", "agents" => %{"delete_tasks" => "any"}}
+        },
+        "completion" => "manual",
+        "agents" => %{"delete_tasks" => "any", "take_started_task" => "true"}
+      })
+
+      created = Enum.find(Projects.list_projects(), &(&1.name == "Crafted by a member"))
+      assert created
+      refute (created.settings || %{})["completion"] == "manual"
+      refute get_in(created.settings || %{}, ["agents", "delete_tasks"]) == "any"
+    end
+  end
 end

@@ -84,11 +84,12 @@ Fixes are in the working tree with tests; nothing is released.
 - **IMPROVEMENT - MEDIUM: the `/ext` provider's exception text went to the
   caller** (SQL, table and constraint names) and nothing to the log. Logged;
   the answer is a fixed sentence.
-- **BUG - MEDIUM: an abandoned idempotency reservation answered 409 for ever.**
-  A `status: 0` row is released only by `rescue`; a killed node or handler
-  left it, and every retry got `in_progress`. A pending row older than two
-  minutes is taken over atomically (one `UPDATE … WHERE status = 0 AND
-  inserted_at < cutoff`, so of two racing retries one wins).
+- ~~**BUG - MEDIUM: an abandoned idempotency reservation answered 409 for
+  ever.**~~ **Retracted (see "After the codex audit" below).** I added an
+  age-based takeover of a pending reservation; it was wrong. Age does not prove
+  the first request stopped, so it could run the same mutation twice beside a
+  live first run. Removed; the stuck-reservation case is back to a deliberate
+  recovery.
 - **BUG - MEDIUM: a personal key outlived its person's account.**
   `resolve/2` consulted only the membership; a deactivated user's key kept
   working, and on an "everyone" project a bare uuid still resolves to a viewer
@@ -186,3 +187,41 @@ authorizing handler), the token modal (the secret lives only in an assign — no
 in flash, PubSub, activity metadata or the DOM after dismiss), migration V17–V20
 (every statement guarded, `down/1` mirrors the order), mass assignment of the
 server-owned columns.
+
+## After the codex audit (`ca85176-release-audit/CODEX_REVIEW.md`)
+
+Codex re-checked this commit and held the release on four findings. All four
+were real; each now has a test that fails on the code it was found in.
+
+- **BUG - HIGH, mine: the reservation takeover could run the work twice** and
+  let the first request overwrite its successor's answer. Removed. A pending
+  row is never reclaimed by the clock; the 409 says it is running or was cut
+  off, and to check what the first attempt did and use a new `Idempotency-Key`
+  if it never clears. The remaining gap — a request killed between reserving
+  and answering leaves its key pending — is the honest cost, and is for a
+  deliberate recovery (a lease with a fenced owner, or per-mutation
+  serialisation), not a timer.
+- **BUG - MEDIUM: a PATCH could still persist text then 422** on a rule only
+  the assignment changeset knows (51 checklist items). `do_update` now builds
+  and checks both rows' changesets before writing either. Not a transaction:
+  the context writes broadcast before returning, and the house rule is
+  broadcasts after commit; a constraint the changeset cannot see (a DB-level
+  one) can still fail the second write.
+- **BUG - MEDIUM: a huge duration left the parent's rollup stale behind a 200.**
+  The API bounded the raw integer, not the minutes it becomes. Now: a duration
+  over about eleven years (6,000,000 minutes) is a 422 when its unit is in the
+  request; the rollup itself clamps to the int4 ceiling so a sum of large
+  figures (or one that came through the form) cannot raise; and the API's
+  completion sync logs the failure instead of swallowing it.
+- **BUG - MEDIUM: the generated contract still said `time:write`** for
+  `PATCH`/`DELETE /entries/{id}`. Both rows name both scopes by entry kind, so
+  `llms.txt` and `openapi.json` match what the controller enforces.
+- **Test gap codex named:** two LiveView tests with an ordinary member under
+  `edit_tasks: managers` — the redirect and adopt events are refused (and a
+  manager's accepted), and a new project saved by a member takes no completion,
+  agent policy or posted `settings`. **These pass on the pre-audit code** — they
+  pin the behaviour; they are not regressions for a bug. A denied
+  `manage_modules` *save on an existing project* is not reachable from the
+  router (`edit_settings` and `manage_modules` are both owner-only and neither
+  is overridable), so that branch is covered through the `:new` form, where
+  `can_manage_modules` is always false.

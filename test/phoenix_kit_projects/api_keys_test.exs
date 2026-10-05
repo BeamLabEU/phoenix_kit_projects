@@ -169,32 +169,45 @@ defmodule PhoenixKitProjects.ApiKeysTest do
     assert {:ok, 201, %{"n" => 4}} = ApiKeys.idempotent(other, "abc", fun)
   end
 
-  test "an abandoned reservation is taken over; a fresh one still answers 409", %{
+  test "a pending reservation is never reclaimed by age: a live request keeps its key", %{
     project: project
   } do
     {:ok, key, _} = ApiKeys.create(project, %{"name" => "k"})
-    fun = fn -> {201, %{"ran" => true}} end
+    parent = self()
 
-    # A request in flight: pending, young — a retry waits.
-    {1, _} =
-      PhoenixKit.RepoHelper.repo().insert_all(
-        PhoenixKitProjects.Schemas.ApiIdempotency,
-        [%{api_key_uuid: key.uuid, idempotency_key: "stuck", status: 0, body: %{}}]
-      )
+    first =
+      Task.async(fn ->
+        ApiKeys.idempotent(key, "live-slow", fn ->
+          send(parent, :reserved)
 
-    assert {:ok, 409, %{error: %{code: "in_progress"}}} = ApiKeys.idempotent(key, "stuck", fun)
+          receive do
+            :finish -> {201, %{"owner" => "first"}}
+          after
+            5_000 -> raise "test timed out"
+          end
+        end)
+      end)
 
-    # The handler died (the row is minutes old): the retry runs the work once
-    # and the answer is stored for the replay after it.
+    assert_receive :reserved, 1_000
+
+    # ten minutes "pass": a slow database call or provider outlives any timeout,
+    # so the clock must not hand the key to a second run of the same work
     PhoenixKit.RepoHelper.repo().update_all(
       from(i in PhoenixKitProjects.Schemas.ApiIdempotency,
-        where: i.api_key_uuid == ^key.uuid and i.idempotency_key == "stuck"
+        where: i.api_key_uuid == ^key.uuid and i.idempotency_key == "live-slow"
       ),
       set: [inserted_at: DateTime.add(DateTime.utc_now(), -600, :second)]
     )
 
-    assert {:ok, 201, %{"ran" => true}} = ApiKeys.idempotent(key, "stuck", fun)
-    assert {:replay, 201, %{"ran" => true}} = ApiKeys.idempotent(key, "stuck", fun)
+    assert {:ok, 409, %{error: %{code: "in_progress"}}} =
+             ApiKeys.idempotent(key, "live-slow", fn -> raise "must not run" end)
+
+    send(first.pid, :finish)
+    assert {:ok, 201, %{"owner" => "first"}} = Task.await(first)
+
+    # the first request's answer is the one that is stored and replayed
+    assert {:replay, 201, %{"owner" => "first"}} =
+             ApiKeys.idempotent(key, "live-slow", fn -> raise "must replay" end)
   end
 
   describe "a personal key needs its person's live account" do

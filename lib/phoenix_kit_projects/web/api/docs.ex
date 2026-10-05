@@ -978,7 +978,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "Correct an entry: `minutes` on a time entry, `amount` on a tokens or cost entry (a corrected estimate beats a second row). Your own entries when the project's agent policy allows (`agent_policy.amend_own_ledger`); a manager key corrects anyone's. The amendment is traced in the activity feed with your key named.",
         auth: true,
-        scope: "time:write",
+        scope: "time:write for a time entry, usage:write for a tokens or cost entry",
         action: "log_time",
         feature: "ledger",
         idempotency: nil,
@@ -1014,7 +1014,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "Remove an entry (time, tokens or cost) you recorded by mistake - your own under `amend_own_ledger`, anyone's with a manager key, never a billable one (403 `billable_entry`: amend it instead). What it held stays in the activity feed.",
         auth: true,
-        scope: "time:write",
+        scope: "time:write for a time entry, usage:write for a tokens or cost entry",
         action: "log_time",
         feature: "ledger",
         idempotency: nil,

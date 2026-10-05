@@ -2462,6 +2462,11 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
+  # The linking row's `estimated_duration` is an int4 of MINUTES; a child whose
+  # tasks add up past it (a few absurd estimates) rolls up to the column's
+  # ceiling rather than raising from the database and leaving the parent stale.
+  @max_rollup_minutes 2_147_483_647
+
   defp build_child_rollup(child, summary) do
     total_hours = rollup_val(summary, :total_hours, 0.0)
     status = rollup_status(child, summary)
@@ -2482,7 +2487,7 @@ defmodule PhoenixKitProjects.Projects do
     %{
       status: status,
       progress_pct: progress,
-      estimated_duration: round(total_hours * 60),
+      estimated_duration: min(round(total_hours * 60), @max_rollup_minutes),
       estimated_duration_unit: "minutes",
       track_progress: true,
       completed_at: child.completed_at

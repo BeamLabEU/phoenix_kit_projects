@@ -7,11 +7,14 @@ defmodule PhoenixKitProjects.Web.ApiReview48Test do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import Ecto.Query
+
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Ledger, Projects}
   alias PhoenixKitProjects.Schemas.{Assignment, WorkEntry}
   alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitProjects.Web.Api.Docs
 
   @base "/api/projects/v1"
 
@@ -283,6 +286,69 @@ defmodule PhoenixKitProjects.Web.ApiReview48Test do
                c |> get("#{@base}/tasks/#{t["uuid"]}") |> json_response(200)
     end
 
+    test "a PATCH the assignment changeset refuses (51 checklist items) changes nothing", %{
+      conn: conn,
+      token: token
+    } do
+      c = api(conn, token)
+      t = new_task(c, %{"title" => "Before"})
+      items = for n <- 1..51, do: %{"text" => "item #{n}"}
+
+      assert %{"error" => %{"code" => "validation_failed"}} =
+               c
+               |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{
+                 "title" => "After",
+                 "checklist" => items
+               })
+               |> json_response(422)
+
+      assert %{"task" => %{"title" => "Before"}} =
+               c |> get("#{@base}/tasks/#{t["uuid"]}") |> json_response(200)
+    end
+
+    test "a duration longer than any task is a 422; a huge rollup is clamped, not lost", %{
+      conn: conn,
+      project: project,
+      token: token
+    } do
+      c = api(conn, token)
+
+      {:ok, %{child_project: child}} =
+        Projects.create_subproject(project.uuid, %{"name" => "Child"})
+
+      assert %{"error" => %{"code" => "validation_failed"}} =
+               c
+               |> post_json(
+                 "#{@base}/tasks",
+                 %{
+                   "title" => "Huge",
+                   "project" => child.uuid,
+                   "estimated_duration" => 1_000_000_000,
+                   "estimated_duration_unit" => "hours"
+                 },
+                 idem()
+               )
+               |> json_response(422)
+
+      # a figure that got past the API (the form, an import) still cannot break the parent's row
+      t = new_task(c, %{"title" => "Odd", "project" => child.uuid})
+
+      {1, _} =
+        Repo.update_all(
+          from(a in Assignment, where: a.uuid == ^t["uuid"]),
+          set: [estimated_duration: 1_000_000_000, estimated_duration_unit: "hours"]
+        )
+
+      assert %{"task" => %{"status" => "in_progress"}} =
+               c
+               |> post_json("#{@base}/tasks/#{t["uuid"]}/start", %{}, idem())
+               |> json_response(200)
+
+      assert [row] = Projects.list_assignments(project.uuid)
+      assert row.estimated_duration == 2_147_483_647
+      assert row.status == "in_progress"
+    end
+
     test "a portal submission still in review is not reachable by its uuid", %{
       conn: conn,
       project: project,
@@ -306,6 +372,18 @@ defmodule PhoenixKitProjects.Web.ApiReview48Test do
 
       assert %Assignment{review_status: "pending"} = Projects.get_assignment(t["uuid"])
       _ = project
+    end
+  end
+
+  describe "the generated contract" do
+    test "names the scope a correction needs by the entry's kind" do
+      for id <- ["amendEntry", "removeEntry"] do
+        endpoint = Enum.find(Docs.endpoints(), &(&1.id == id))
+        assert endpoint.scope =~ "time:write"
+        assert endpoint.scope =~ "usage:write"
+      end
+
+      assert Docs.llms_txt() =~ "usage:write for a tokens or cost entry"
     end
   end
 end

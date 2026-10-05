@@ -153,7 +153,11 @@ messages are English and locale-free on purpose (a machine contract).
 (key, `Idempotency-Key` header); a replay answers the stored response with an
 `Idempotent-Replayed: true` header. **Required** on the ledger POSTs (appends
 nobody can undo), honoured on task create and transitions. Panel: the one
-thing to block v1 on.
+thing to block v1 on. A retry that arrives while the first request with that key
+is still running answers 409 `in_progress` and runs nothing; the key is never
+handed to a second run by the clock, because a slow call is indistinguishable
+from a dead one. If it never clears, look at what the first attempt did and
+send the next attempt with a new `Idempotency-Key`.
 
 ## Records an extension puts on the API
 
