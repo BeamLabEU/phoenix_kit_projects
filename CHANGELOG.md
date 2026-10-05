@@ -1,5 +1,96 @@
 # Changelog
 
+## 0.29.0 - 2026-10-05
+
+PR #48 plus its post-merge reviews
+(`dev_docs/pull_requests/2026/48-api-agent-keys-and-settings/`, and the release
+audit `dev_docs/pull_requests/2026/ca85176-release-audit/`).
+
+### Added
+
+- **A JSON API an outside AI agent drives a project with**
+  (`/api/projects/v1`, `dev_docs/guides/api.md`). Per-project API keys
+  (`pkp_<key_id>_<secret>`, only the SHA-256 of the secret stored, shown once,
+  rotate / revoke, a per-key rate limit) that are their own principal — a role
+  of their own, never owner, plus scopes — or a **personal** key that acts for
+  a member with that person's current role (never above manager) and ends when
+  they leave the project or their account is deactivated or deleted.
+  Tasks (list with `updated_since`, create, patch, start / complete / reopen,
+  delete under policy, checklist ticks, labels by name), notes on a task and on
+  the project, time and token / cost entries with corrections, sub-projects,
+  events, the CRM's records through `/ext/:resource`, and `GET /briefing` for
+  recovery after a context reset. The contract is generated from one table as
+  `llms.txt` and `openapi.json`, served without a key. Appends take an
+  `Idempotency-Key`.
+- **Keys on the Modules & Features page and a "Your API key" page**: presets, a
+  key ID that cannot be mistaken for the token, a setup prompt to paste to an
+  AI.
+- **Ongoing projects** (`completion`: `auto` | `manual`) and the **agent
+  policy** (`take_started_task`, `edit_foreign_text`, `delete_tasks`,
+  `amend_own_ledger`) as project settings, on the project form and over the API.
+- **Task notes**: an agent's long record apart from the discussion — a
+  required one-line summary, an outcome, refs, next steps and usage whose
+  figures are ledger rows — with a person's "change the direction" redirect.
+- **Task provenance and fields**: who created and started a task, `waiting_on`,
+  `origin`, a checklist, and the link between a task and a CRM interaction.
+- **Extension API providers** (`Extensions.ApiProvider`): an extension may put
+  one of its records on the API.
+
+### Changed
+
+- **Requires `phoenix_kit` >= 2.49.0** (pin `>= 2.49.0 and < 3.0.0`): the project
+  Activity page is drawn by core's `activity_list/1`.
+- **Schema chain V16 → V20** — run `mix phoenix_kit.update`. V17 API keys and
+  the idempotency store, V18 keys that act for a person, V19 the agent's task
+  columns and a polling index, V20 `words_by_key_uuid` and the task ↔
+  interaction join table.
+- The list pages, tables, column picker, confirm dialogs, drawers and toggles
+  move onto core's current components; destructive actions ask through core's
+  confirm modal.
+
+### Fixed
+
+- **The Templates list deleted any project** by uuid; it now deletes templates
+  only.
+- **A crafted `project[settings]` post** bypassed the manage-modules rule, and
+  the project form wrote a mount-time copy of the settings back over newer
+  changes from the Modules panel; the form drops a posted `settings` map and
+  folds onto the project as it is at save time.
+- The project page's comments drawer opened any record by uuid; it now opens
+  this project or one of its tasks. Setting a direction and adopting a summary
+  answer to the project's `edit_tasks` floor.
+- The `#` typeahead dropped a member's sub-projects.
+- **API:** amending minutes erased an entry's `occurred_at`; a correction
+  needed `time:write` whatever the row's kind (now `usage:write` for tokens and
+  cost, and the generated contract says so); figures past the column, and a
+  malformed note `refs`, were 500s and are 422s; a sub-project's rollup row
+  could be completed or edited as a task; a description PATCH was lost on a task
+  made in the form; a PATCH refused by the assignment's rules (an over-long
+  `waiting_on`, 51 checklist items) still changed the title; a pending portal
+  submission was reachable by uuid; an extension provider's exception text went
+  to the caller.
+- **A sub-project's rollup duration** clamps to the column's ceiling instead of
+  raising and leaving the parent row stale; a failed completion sync is logged.
+- **Idempotency**: two retries in flight cannot both run the work, and a request
+  that died mid-work no longer leaves its key stuck for ever. A retry that
+  cannot take the key's Postgres session advisory lock knows the first request
+  is alive and answers 409 `in_progress`; when the first request's process dies
+  its connection closes, the lock goes, and the next retry takes the key over
+  and runs the work. This needs session-stable connections (not a
+  transaction-pooling proxy). Not closed: a request that died after its work
+  committed and before its answer was stored is run again.
+- A personal key outlived its person's account; deleting a user now revokes
+  their keys on every project.
+
+### Known, not in this release
+
+Open and recorded in the reviews: an `Idempotency-Key` carries no request
+fingerprint and the store has no retention; the claim check on a task is
+read-then-write; the link / unlink endpoints do not apply `edit_foreign_text`;
+a few N+1 reads on API list endpoints; the sub-project "Ends" select is not
+`manage_modules`-gated; a person's form save clears an agent's wording claim
+even when the text did not change.
+
 ## 0.28.0 - 2026-10-01
 
 PR #47 plus its post-merge review
