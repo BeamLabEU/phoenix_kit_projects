@@ -11,13 +11,20 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
       path the kit's own AI calls take.
 
   Both require an `Idempotency-Key`: these are appends, and a retried
-  timeout must not record the work twice.
+  timeout must not record the work twice. Both take an optional
+  `occurred_at` (ISO 8601) — when the work happened, for an agent that
+  reports in batches after the fact — stored as the entry's `ended_at`
+  and echoed back; `recorded_at` stays the server's receipt time.
   """
 
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKitProjects.Ledger
   alias PhoenixKitProjects.Web.Api.{Json, TasksController}
+
+  # How far ahead of the server's clock an `occurred_at` may be: an agent's
+  # clock skew, not a report from the future.
+  @future_tolerance_seconds 300
 
   def task_time(conn, %{"id" => id} = params) do
     with {:ok, conn} <- checks(conn, "time:write", :log_time),
@@ -67,59 +74,71 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   end
 
   defp record_time(conn, assignment_uuid, params) do
+    with {:ok, minutes} <- validate_minutes(params["minutes"]),
+         {:ok, occurred_at} <- validate_occurred_at(params["occurred_at"]) do
+      do_record_time(conn, assignment_uuid, minutes, occurred_at, params)
+    else
+      {:error, pair} -> pair
+    end
+  end
+
+  defp validate_minutes(minutes) when is_integer(minutes) and minutes > 0, do: {:ok, minutes}
+
+  defp validate_minutes(_) do
+    {:error,
+     Json.error_body(
+       422,
+       "validation_failed",
+       "minutes must be a positive integer (whole minutes).",
+       %{minutes: ["must be a positive integer"]}
+     )}
+  end
+
+  defp do_record_time(conn, assignment_uuid, minutes, occurred_at, params) do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
-    case params["minutes"] do
-      minutes when is_integer(minutes) and minutes > 0 ->
-        case Ledger.log_time(project.uuid, minutes,
-               assignment_uuid: assignment_uuid,
-               note: string_or_nil(params["note"]),
-               billable: false,
-               actor_kind: "ai_agent",
-               actor_uuid: key.uuid,
-               source: "ai",
-               metadata: %{"api_key_name" => key.name, "via" => "api"}
-             ) do
-          {:ok, entry} ->
-            {201,
-             %{
-               entry: %{
-                 uuid: entry.uuid,
-                 kind: "time",
-                 minutes: minutes,
-                 task_uuid: assignment_uuid,
-                 note: entry.note,
-                 recorded_at: entry.inserted_at
-               }
-             }}
+    case Ledger.log_time(project.uuid, minutes,
+           assignment_uuid: assignment_uuid,
+           note: string_or_nil(params["note"]),
+           billable: false,
+           actor_kind: "ai_agent",
+           actor_uuid: key.uuid,
+           source: "ai",
+           ended_at: occurred_at,
+           metadata: %{"api_key_name" => key.name, "via" => "api"}
+         ) do
+      {:ok, entry} ->
+        {201,
+         %{
+           entry: %{
+             uuid: entry.uuid,
+             kind: "time",
+             minutes: minutes,
+             task_uuid: assignment_uuid,
+             note: entry.note,
+             occurred_at: entry.ended_at,
+             recorded_at: entry.inserted_at
+           }
+         }}
 
-          {:error, %Ecto.Changeset{} = cs} ->
-            Json.changeset_error(cs)
+      {:error, %Ecto.Changeset{} = cs} ->
+        Json.changeset_error(cs)
 
-          {:error, reason} ->
-            Json.error_body(
-              422,
-              "validation_failed",
-              "Could not record the time: #{inspect(reason)}."
-            )
-        end
-
-      _ ->
+      {:error, reason} ->
         Json.error_body(
           422,
           "validation_failed",
-          "minutes must be a positive integer (whole minutes).",
-          %{
-            minutes: ["must be a positive integer"]
-          }
+          "Could not record the time: #{inspect(reason)}."
         )
     end
   end
 
   defp record_usage(conn, assignment_uuid, params) do
-    case validate_usage(params["tokens"], params["cost_cents"]) do
+    with {:ok, tokens, cost} <- validate_usage(params["tokens"], params["cost_cents"]),
+         {:ok, occurred_at} <- validate_occurred_at(params["occurred_at"]) do
+      do_record_usage(conn, assignment_uuid, tokens, cost, occurred_at, params)
+    else
       {:error, pair} -> pair
-      {:ok, tokens, cost} -> do_record_usage(conn, assignment_uuid, tokens, cost, params)
     end
   end
 
@@ -153,7 +172,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     end
   end
 
-  defp do_record_usage(conn, assignment_uuid, tokens, cost, params) do
+  defp do_record_usage(conn, assignment_uuid, tokens, cost, occurred_at, params) do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
     usage =
@@ -167,7 +186,10 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
       |> maybe_put(:model, string_or_nil(params["model"]))
       |> Map.reject(fn {_k, v} -> is_nil(v) end)
 
-    case Ledger.record_ai(project.uuid, usage, assignment_uuid: assignment_uuid) do
+    case Ledger.record_ai(project.uuid, usage,
+           assignment_uuid: assignment_uuid,
+           occurred_at: occurred_at
+         ) do
       {:ok, entries} ->
         {201,
          %{
@@ -178,6 +200,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
                  kind: e.kind,
                  amount: Decimal.to_float(e.amount),
                  task_uuid: assignment_uuid,
+                 occurred_at: e.ended_at,
                  recorded_at: e.inserted_at
                }
              end)
@@ -196,6 +219,28 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
           "Could not record the usage: #{inspect(reason)}."
         )
     end
+  end
+
+  # `occurred_at`: absent → nil (the entry carries only its receipt time);
+  # an ISO 8601 datetime → UTC, whole seconds, not meaningfully in the
+  # future. Anything else is a 422 that names the field.
+  defp validate_occurred_at(nil), do: {:ok, nil}
+
+  defp validate_occurred_at(value) when is_binary(value) do
+    with {:ok, dt, _offset} <- DateTime.from_iso8601(value),
+         dt = DateTime.truncate(dt, :second),
+         true <- DateTime.diff(dt, DateTime.utc_now(), :second) <= @future_tolerance_seconds do
+      {:ok, dt}
+    else
+      false -> {:error, occurred_at_error("must not be in the future")}
+      _ -> {:error, occurred_at_error("must be an ISO 8601 datetime, e.g. 2026-10-05T14:30:00Z")}
+    end
+  end
+
+  defp validate_occurred_at(_), do: {:error, occurred_at_error("must be an ISO 8601 datetime")}
+
+  defp occurred_at_error(why) do
+    Json.error_body(422, "validation_failed", "occurred_at #{why}.", %{occurred_at: [why]})
   end
 
   defp string_or_nil(v) when is_binary(v) and v != "", do: v

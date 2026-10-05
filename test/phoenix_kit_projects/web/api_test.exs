@@ -158,6 +158,7 @@ defmodule PhoenixKitProjects.Web.ApiTest do
     assert %{
              "error" => %{
                "code" => "invalid_transition",
+               "message" => "The task is in_progress; from there it can only go to done or todo.",
                "details" => %{"allowed_transitions" => allowed}
              }
            } =
@@ -333,6 +334,98 @@ defmodule PhoenixKitProjects.Web.ApiTest do
 
     assert %{"error" => %{"code" => "validation_failed", "details" => %{"minutes" => _}}} =
              c |> post_json("#{@base}/time", %{minutes: 1.5}, idem()) |> json_response(422)
+  end
+
+  test "occurred_at dates a batch-reported entry; a bad or future one is 422", %{
+    conn: conn,
+    token: token,
+    project: project,
+    assignment: a
+  } do
+    c = api(conn, token)
+
+    %{"entry" => %{"occurred_at" => "2026-10-04T09:15:00Z", "recorded_at" => recorded_at}} =
+      c
+      |> post_json(
+        "#{@base}/tasks/#{a.uuid}/time",
+        %{minutes: 4, occurred_at: "2026-10-04T11:15:00+02:00"},
+        idem()
+      )
+      |> json_response(201)
+
+    assert recorded_at != "2026-10-04T09:15:00Z"
+
+    %{"entries" => [%{"occurred_at" => "2026-10-04T09:20:00Z"}]} =
+      c
+      |> post_json("#{@base}/usage", %{tokens: 50, occurred_at: "2026-10-04T09:20:00Z"}, idem())
+      |> json_response(201)
+
+    # Without it the entry carries only its receipt time.
+    %{"entry" => %{"occurred_at" => nil}} =
+      c |> post_json("#{@base}/time", %{minutes: 1}, idem()) |> json_response(201)
+
+    assert project.uuid
+           |> Ledger.list_entries()
+           |> Enum.map(& &1.ended_at)
+           |> Enum.sort()
+           |> Enum.map(&(&1 && DateTime.to_iso8601(&1))) ==
+             [nil, "2026-10-04T09:15:00Z", "2026-10-04T09:20:00Z"]
+
+    for bad <- ["yesterday", 17, "2026-10-04"] do
+      assert %{"error" => %{"code" => "validation_failed", "details" => %{"occurred_at" => _}}} =
+               c
+               |> post_json("#{@base}/time", %{minutes: 1, occurred_at: bad}, idem())
+               |> json_response(422)
+    end
+
+    future = DateTime.utc_now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+
+    assert %{"error" => %{"details" => %{"occurred_at" => ["must not be in the future"]}}} =
+             c
+             |> post_json("#{@base}/usage", %{tokens: 1, occurred_at: future}, idem())
+             |> json_response(422)
+  end
+
+  # ── Rate limit ──────────────────────────────────────────────────
+
+  test "a key over its window answers 429 with Retry-After; the limit is per key",
+       %{conn: conn, token: token, project: project} do
+    previous = Application.get_env(:phoenix_kit_projects, :api_rate_limit)
+    Application.put_env(:phoenix_kit_projects, :api_rate_limit, limit: 3, window_ms: 60_000)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:phoenix_kit_projects, :api_rate_limit, previous),
+        else: Application.delete_env(:phoenix_kit_projects, :api_rate_limit)
+    end)
+
+    c = api(conn, token)
+
+    remaining =
+      for _ <- 1..3 do
+        resp = get(c, "#{@base}/me")
+        assert json_response(resp, 200)
+        assert get_resp_header(resp, "x-ratelimit-limit") == ["3"]
+        resp |> get_resp_header("x-ratelimit-remaining") |> hd()
+      end
+
+    assert remaining == ["2", "1", "0"]
+
+    denied = get(c, "#{@base}/me")
+
+    assert %{"error" => %{"code" => "rate_limited", "details" => %{"retry_after_seconds" => s}}} =
+             json_response(denied, 429)
+
+    assert s >= 1
+    assert get_resp_header(denied, "retry-after") == ["#{s}"]
+    assert get_resp_header(denied, "x-ratelimit-remaining") == ["0"]
+
+    # The docs tell the agent the live figure, and the limit is per key: a
+    # second key of the same project is untouched.
+    assert conn |> get("#{@base}/llms.txt") |> response(200) =~ "3 calls per 60 seconds"
+
+    {:ok, _, other} = ApiKeys.create(project, %{"name" => "other"})
+    assert conn |> api(other) |> get("#{@base}/me") |> json_response(200)
   end
 
   # ── Project ─────────────────────────────────────────────────────

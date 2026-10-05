@@ -75,14 +75,34 @@ messages are English and locale-free on purpose (a machine contract).
 nobody can undo), honoured on task create and transitions. Panel: the one
 thing to block v1 on.
 
-## Not in v1, planned
+## Rate limit
+
+`Web.Api.RateLimit`: a fixed window per key on core's Hammer ETS backend (the
+one the portal's limiter shares), applied in `Web.Api.Auth` right after the
+key is known — before any controller, so a refused call is never stored as an
+idempotent reply. Default 300 calls per 60 s;
+`config :phoenix_kit_projects, :api_rate_limit, limit: 300, window_ms: 60_000`,
+`limit: nil` switches it off. Every authenticated response carries
+`X-RateLimit-Limit` / `X-RateLimit-Remaining`; over the limit is 429
+`rate_limited` with `Retry-After` (seconds) and the same figure in `details`.
+A limiter failure denies, as the house rule for abuse controls says. The
+docs print the live figure, so an agent reads what applies on this site.
+
+## When the work happened
+
+The four ledger POSTs take an optional `occurred_at` (ISO 8601, any offset,
+truncated to the second, at most 5 minutes ahead of the server's clock). It is
+stored as the entry's `ended_at` and echoed as `occurred_at`; `inserted_at`
+stays the receipt time (`recorded_at`). Nothing groups entries by it yet —
+totals are lifetime — but a batch reported the morning after keeps its real
+date on the row for when a period report exists.
+
+## Not in v1
 
 - **Webhooks** on task events (the module already broadcasts them on PubSub) —
-  so an agent can be handed a task instead of polling.
-- **Rate limiting** per key (core's `RateLimiter` is per-feature; a key limit
-  belongs beside it).
-- **A running timer** for people; `occurred_at` on usage posts for batch
-  reporting (server receipt time is used today).
+  so an agent can be handed a task instead of polling. Logged as an idea in
+  AGENTS.md on 2026-10-05; Max: skip for now.
+- **A running timer** for people.
 - **Agent as a member kind** (assignable, mentionable) if agents must outlive
   people as first-class participants — the key principal is the step before it.
 

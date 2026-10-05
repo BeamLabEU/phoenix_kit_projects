@@ -62,7 +62,9 @@ defmodule PhoenixKitProjects.Ledger do
   Records AI usage attributed to a project/task: a `tokens` entry plus a
   `cost` entry when `cost_cents` is POSITIVE, both `actor_kind: "ai_agent"`
   with shared metadata (`model`, `endpoint`, anything else passed).
-  Returns `{:ok, [entries]}`.
+  Options: `:assignment_uuid`; `:occurred_at` — when the work happened,
+  stored as the entries' `ended_at` (the API's batch reporting), default
+  nil. Returns `{:ok, [entries]}`.
 
   Zero/absent quantities are SKIPPED, not errors — `cost_cents: 0` is the
   normal shape for free/cached/local calls (panel round: `0` is truthy in
@@ -86,6 +88,7 @@ defmodule PhoenixKitProjects.Ledger do
       actor_kind: "ai_agent",
       actor_uuid: Map.get(usage, :agent_uuid) || Map.get(usage, "agent_uuid"),
       source: "ai",
+      ended_at: Keyword.get(opts, :occurred_at),
       metadata: metadata
     }
 

@@ -7,6 +7,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
   OpenAPI 3.1 document for tooling. Both are served without a key.
   """
 
+  alias PhoenixKitProjects.Web.Api.RateLimit
+
   @version "v1"
   @base_path "/api/projects/#{@version}"
 
@@ -307,7 +309,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "what the time went on"
-          }
+          },
+          occurred_at_param()
         ],
         example: ~s({"minutes": 12, "note": "wrote and ran the tests"})
       },
@@ -330,7 +333,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             required: true,
             doc: "positive whole minutes"
           },
-          %{name: "note", in: :body, type: "string", required: false, doc: ""}
+          %{name: "note", in: :body, type: "string", required: false, doc: ""},
+          occurred_at_param()
         ],
         example: ~s({"minutes": 5, "note": "planning"})
       },
@@ -367,7 +371,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "the model used, for the record"
-          }
+          },
+          occurred_at_param()
         ],
         example: ~s({"tokens": 18422, "cost_cents": 7, "model": "claude-sonnet-5-5"})
       },
@@ -385,9 +390,11 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         params: [
           %{name: "tokens", in: :body, type: "integer", required: false, doc: ""},
           %{name: "cost_cents", in: :body, type: "integer", required: false, doc: ""},
-          %{name: "model", in: :body, type: "string", required: false, doc: ""}
+          %{name: "model", in: :body, type: "string", required: false, doc: ""},
+          occurred_at_param()
         ],
-        example: ~s({"tokens": 900, "model": "claude-haiku-4-5"})
+        example:
+          ~s({"tokens": 900, "model": "claude-haiku-4-5", "occurred_at": "2026-10-05T14:30:00Z"})
       },
       %{
         id: "llmsTxt",
@@ -418,6 +425,17 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     ]
   end
 
+  defp occurred_at_param do
+    %{
+      name: "occurred_at",
+      in: :body,
+      type: "string",
+      required: false,
+      doc:
+        "ISO 8601 datetime of when the work happened, for reporting in batches after the fact; default: now (the receipt time). Not in the future."
+    }
+  end
+
   @errors [
     {401, "unauthorized",
      "The key is missing, malformed, unknown, revoked or expired. Do not retry; tell your operator."},
@@ -434,6 +452,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     {422, "validation_failed",
      "A field is missing or has the wrong shape; `details` names the fields and, for closed sets, the allowed values. Fix the request; do not retry it unchanged."},
     {422, "idempotency_key_required", "This POST needs an Idempotency-Key header."},
+    {429, "rate_limited",
+     "The key has used its calls for the current window. Wait the `Retry-After` seconds, then retry the same request (same Idempotency-Key). Nothing was done."},
     {500, "(any)",
      "Retry with backoff and the SAME Idempotency-Key; the response will be replayed if the first attempt did land."}
   ]
@@ -523,6 +543,11 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       from `available_workflow_statuses`. Tasks have only todo / in_progress / done.
     - **Who did it:** your time and usage are recorded as this key (AI time, apart from people's;
       never billable). Task changes are logged under the person who minted the key, with the key named.
+    - **When it happened:** time and usage carry the receipt time unless you send `occurred_at`
+      (ISO 8601, not in the future) — do so when you report in a batch after the work.
+    - **Rate limit:** #{RateLimit.describe()} per key, counted on every call. Every response carries `X-RateLimit-Limit` and
+      `X-RateLimit-Remaining`; a 429 carries `Retry-After` in seconds. Poll `/tasks` no more than
+      once a minute.
     - **Stability:** within `#{@version}`, changes are additive. Program against error `code`s, not messages.
 
     ## Errors
@@ -531,7 +556,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
 
     #{Enum.join(error_lines, "\n")}
 
-    Retry only 5xx (with backoff, same Idempotency-Key). Never retry 401, 403, 404 or 422 unchanged.
+    Retry only 429 (after `Retry-After`) and 5xx (with backoff), both with the same Idempotency-Key.
+    Never retry 401, 403, 404 or 422 unchanged.
 
     ## Endpoints
 
@@ -731,6 +757,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         },
         "422" => %{
           description: "Validation failed",
+          content: %{"application/json" => %{schema: %{"$ref" => "#/components/schemas/Error"}}}
+        },
+        "429" => %{
+          description: "Rate limited: wait Retry-After seconds, then retry the same request",
+          headers: %{
+            "Retry-After" => %{schema: %{type: "integer"}, description: "seconds to wait"}
+          },
           content: %{"application/json" => %{schema: %{"$ref" => "#/components/schemas/Error"}}}
         }
       },

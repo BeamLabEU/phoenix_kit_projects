@@ -7,6 +7,12 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   revoked, expired — a caller cannot tell them apart, on purpose). A key
   whose project is gone answers 401 too.
 
+  Then the key's rate limit (`Web.Api.RateLimit`): every authenticated
+  response carries `x-ratelimit-limit` and `x-ratelimit-remaining`; a key
+  over its window answers 429 `rate_limited` with `retry-after` (seconds)
+  before any controller runs, so a refused call is never stored as an
+  idempotent response.
+
   `last_used_at` is touched here, throttled by `ApiKeys.touch_last_used/1`.
   """
 
@@ -15,7 +21,7 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   import Plug.Conn
 
   alias PhoenixKitProjects.{ApiKeys, Features, Projects}
-  alias PhoenixKitProjects.Web.Api.Json
+  alias PhoenixKitProjects.Web.Api.{Json, RateLimit}
 
   @impl true
   def init(opts), do: opts
@@ -25,12 +31,20 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
     with {:ok, token} <- bearer(conn),
          {:ok, key} <- ApiKeys.authenticate(token),
          %{} = project <- Projects.get_project(key.project_uuid) || :no_project do
-      key = ApiKeys.touch_last_used(key)
-
       conn
-      |> assign(:pk_api_key, key)
-      |> assign(:pk_project, project)
-      |> assign(:pk_fx, Features.gates(project))
+      |> rate_limit(key)
+      |> case do
+        {:ok, conn} ->
+          key = ApiKeys.touch_last_used(key)
+
+          conn
+          |> assign(:pk_api_key, key)
+          |> assign(:pk_project, project)
+          |> assign(:pk_fx, Features.gates(project))
+
+        {:halt, conn} ->
+          conn
+      end
     else
       _ ->
         conn
@@ -40,6 +54,39 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
           "A valid project API key is required: Authorization: Bearer pkp_…"
         )
         |> halt()
+    end
+  end
+
+  defp rate_limit(conn, key) do
+    case RateLimit.hit(key) do
+      :off ->
+        {:ok, conn}
+
+      {:allow, remaining} ->
+        {:ok, conn |> limit_headers() |> put_resp_header("x-ratelimit-remaining", "#{remaining}")}
+
+      {:deny, retry_after_ms} ->
+        seconds = max(div(retry_after_ms + 999, 1000), 1)
+
+        {:halt,
+         conn
+         |> limit_headers()
+         |> put_resp_header("x-ratelimit-remaining", "0")
+         |> put_resp_header("retry-after", "#{seconds}")
+         |> Json.error(
+           :too_many_requests,
+           "rate_limited",
+           "This key has used its #{RateLimit.describe()}; wait #{seconds}s and retry the same request.",
+           %{retry_after_ms: retry_after_ms, retry_after_seconds: seconds}
+         )
+         |> halt()}
+    end
+  end
+
+  defp limit_headers(conn) do
+    case RateLimit.config() do
+      %{limit: limit} -> put_resp_header(conn, "x-ratelimit-limit", "#{limit}")
+      nil -> conn
     end
   end
 

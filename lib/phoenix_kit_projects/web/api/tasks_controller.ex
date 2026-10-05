@@ -185,7 +185,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         Json.error_body(
           409,
           "invalid_transition",
-          "A #{a.status} task cannot move to #{to}.",
+          "The task is #{a.status}; from there it can only go to #{Enum.join(allowed, " or ")}.",
           %{from: a.status, allowed_transitions: allowed}
         )
 

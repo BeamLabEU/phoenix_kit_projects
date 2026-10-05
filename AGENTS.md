@@ -650,9 +650,21 @@ contract is generated from `Web.Api.Docs.endpoints/0` as `llms.txt` and
 `openapi.json`; **never add an endpoint the table does not list**. Ledger
 appends require an `Idempotency-Key` (`ApiKeys.idempotent/3`); an agent's
 minutes are `kind: "time"` by an `ai_agent` actor, never billable, summed as
-`ai_minutes`. The routes come from `Web.Routes.generate/1` and are mirrored
-in `test/support/test_router.ex`; the test endpoint parses JSON for them.
-Not yet: webhooks, per-key rate limits, `occurred_at` on usage posts.
+`ai_minutes`, and both appends take an optional `occurred_at` (stored as the
+entry's `ended_at`; `inserted_at` stays the receipt time). Every key has a
+rate limit (`Web.Api.RateLimit`, a bucket per key on core's Hammer backend,
+`config :phoenix_kit_projects, :api_rate_limit, limit: 300, window_ms: 60_000`;
+`limit: nil` turns it off) applied in the auth plug, so a 429 is never stored
+as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
+mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
+them.
+
+Idea, not built (2026-10-05, Max: skip for now): **webhooks** on task events,
+so an agent is handed a task instead of polling — the module already
+broadcasts every task change on `PhoenixKitProjects.PubSub`, so a webhook
+would be a subscriber that POSTs to a URL stored on the key (with a signing
+secret, retries with backoff, and a delivery log). Until then an agent polls
+`GET /tasks?status=open` no more than once a minute.
 
 
 | Feature | The constraint that must hold | Guide |
