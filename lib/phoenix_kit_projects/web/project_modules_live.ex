@@ -105,6 +105,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
        flag_groups: [],
        presets: [],
        api_keys: [],
+       key_people: [],
        api_token: nil,
        api_key_form: nil,
        show_revoked: false
@@ -134,6 +135,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
         portal: nil,
         board_exposure: 0,
         api_keys: [],
+        key_people: [],
         api_token: nil,
         api_key_form: nil,
         show_revoked: false
@@ -204,6 +206,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       portal: PhoenixKitProjects.Portal.get_portal(project.uuid),
       board_exposure: PhoenixKitProjects.Portal.board_exposure_count(project.uuid),
       api_keys: ApiKeys.list_for_project(project.uuid),
+      key_people: ApiKeyPanel.people(project.uuid),
       # The token just minted or rotated, shown once; nil otherwise.
       api_token: socket.assigns[:api_token],
       # The new-key panel's state while it is open; nil when closed.
@@ -497,6 +500,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
         "scopes" => ApiKeyPanel.scopes_for(preset, api_key_scopes(params))
       }
       |> maybe_put_expiry(ApiKeyPanel.expires_at(Map.get(params, "expires")))
+      |> maybe_put_person(Map.get(params, "user"), socket.assigns.key_people)
 
     case ApiKeys.create(socket.assigns.project, attrs, actor_opts(socket)) do
       {:ok, key, token} ->
@@ -550,6 +554,15 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
 
   defp maybe_put_expiry(attrs, %DateTime{} = at), do: Map.put(attrs, "expires_at", at)
   defp maybe_put_expiry(attrs, _), do: attrs
+
+  # Only a current member can be acted for; anything else is a shared key.
+  defp maybe_put_person(attrs, user_uuid, people) when is_binary(user_uuid) do
+    if List.keymember?(people, user_uuid, 0),
+      do: Map.put(attrs, "user_uuid", user_uuid),
+      else: attrs
+  end
+
+  defp maybe_put_person(attrs, _, _), do: attrs
 
   # The scope checkboxes post as `scope[<name>]`; the changeset validates
   # against the closed set anyway, so an unknown name never gets through.
@@ -946,6 +959,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
       >
         <:subtitle>
           {gettext("Keys an AI agent or a script uses to work on this project over its JSON API: read and create tasks, move them, log time, tokens and cost.")}
+          {gettext("Every member mints their own personal key on the project's \"Your API key\" page; this is the whole list, shared agents included.")}
         </:subtitle>
         <:actions>
           <.button type="button" size="sm" phx-click="toggle_api_key_form">
@@ -989,11 +1003,21 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                 placeholder={gettext("e.g. Claude runner")}
               />
             </div>
+            <div class="w-52">
+              <.select
+                id={"new-api-key-user-#{@project.uuid}"}
+                name="user"
+                label={gettext("Acts for")}
+                value={@api_key_form["user"]}
+                class="select-sm"
+                options={[{gettext("Nobody — a shared agent"), ""} | @key_people]}
+              />
+            </div>
             <div class="w-36">
               <.select
                 id={"new-api-key-role-#{@project.uuid}"}
                 name="role"
-                label={gettext("Role")}
+                label={if @api_key_form["user"] == "", do: gettext("Role"), else: gettext("Role, at most")}
                 value={@api_key_form["role"]}
                 class="select-sm"
                 options={for role <- ApiKey.roles(), do: {role, role}}
@@ -1070,6 +1094,9 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   <span :if={key.revoked_at} class="badge badge-error badge-outline badge-xs">
                     {gettext("revoked")}
                   </span>
+                </div>
+                <div class="text-xs text-base-content/70 mt-0.5 truncate">
+                  {ApiKeyPanel.kind_label(key, Map.new(@key_people))}
                 </div>
                 <div class="font-mono text-xs text-base-content/60 mt-0.5 truncate">
                   {gettext("ID")} {ApiKeyPanel.display_id(key)}
@@ -1160,98 +1187,15 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             else: gettext("Show revoked keys (%{count})", count: revoked_count)}
         </button>
 
-        <%!-- The setup prompt behind each live row's "Copy setup prompt":
-             the same text as the creation modal's, with the token's place
-             held — it is not stored. --%>
-        <div class="hidden">
-          <textarea
-            :for={key <- Enum.reject(@api_keys, & &1.revoked_at)}
-            id={"api-key-prompt-#{key.uuid}"}
-            readonly
-          >{ApiKeyPanel.setup_prompt(project_name(@project), key, nil)}</textarea>
-        </div>
+        <.api_key_prompts keys={@api_keys} project_name={project_name(@project)} />
       </.form_section>
 
-      <.modal
-        :if={@api_token}
-        show
+      <.api_token_modal
+        :if={@project}
         id={"api-token-#{@project.uuid}"}
-        on_close="dismiss_api_token"
-        max_width="lg"
-      >
-        <:title>
-          {if @api_token.action == :rotated,
-            do: gettext("Key rotated — copy the new token now"),
-            else: gettext("Key created — copy it now")}
-        </:title>
-        <div class="flex flex-col gap-4">
-          <p class="text-sm">
-            {gettext("This is the only time the token is shown; only its hash is stored. Lose it and you rotate the key.")}
-          </p>
-          <div class="flex flex-col gap-1">
-            <span class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
-              {gettext("Token for \"%{name}\"", name: @api_token.key.name)}
-            </span>
-            <div class="flex items-center gap-2">
-              <input
-                id="api-token-value"
-                type="text"
-                readonly
-                value={@api_token.token}
-                class="input input-sm input-bordered font-mono text-xs w-full"
-              />
-              <button
-                type="button"
-                id="api-token-copy"
-                phx-hook="CopyToClipboard"
-                data-copy-target="#api-token-value"
-                class="btn btn-sm btn-primary whitespace-nowrap"
-              >
-                <span data-copy-idle>{gettext("Copy token")}</span>
-                <span data-copy-feedback class="hidden">{gettext("Copied!")}</span>
-              </button>
-            </div>
-          </div>
-          <div class="flex flex-col gap-1">
-            <span class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
-              {gettext("Set up your AI")}
-            </span>
-            <p class="text-xs text-base-content/60">
-              {gettext("Paste this to your AI as its first message. It carries the token, so treat the paste like the token itself.")}
-            </p>
-            <textarea
-              id="api-token-prompt"
-              readonly
-              rows="9"
-              class="textarea textarea-bordered textarea-sm font-mono text-xs w-full leading-snug"
-            >{ApiKeyPanel.setup_prompt(project_name(@project), @api_token.key, @api_token.token)}</textarea>
-            <div>
-              <button
-                type="button"
-                id="api-token-prompt-copy"
-                phx-hook="CopyToClipboard"
-                data-copy-target="#api-token-prompt"
-                class="btn btn-sm"
-              >
-                <span data-copy-idle>{gettext("Copy setup prompt")}</span>
-                <span data-copy-feedback class="hidden">{gettext("Copied!")}</span>
-              </button>
-            </div>
-          </div>
-          <p class="text-xs text-base-content/60">
-            <a href={Docs.url("/llms.txt")} target="_blank" rel="noopener" class="link link-hover">
-              {gettext("Agent guide")}
-            </a>
-            <span class="opacity-40">·</span>
-            <a href={Docs.url("/openapi.json")} target="_blank" rel="noopener" class="link link-hover">
-              {gettext("OpenAPI spec")}
-            </a>
-          </p>
-        </div>
-        <:actions>
-          <.button type="button" phx-click="dismiss_api_token">{gettext("Done — I saved it")}</.button>
-        </:actions>
-      </.modal>
+        api_token={@api_token}
+        project_name={project_name(@project)}
+      />
 
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>

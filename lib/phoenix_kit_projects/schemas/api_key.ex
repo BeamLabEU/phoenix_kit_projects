@@ -4,11 +4,21 @@ defmodule PhoenixKitProjects.Schemas.ApiKey do
   an outside agent presents to drive this project over the JSON API
   (`PhoenixKitProjects.Web.Api`).
 
-  A key is its own principal in the project — it holds a `role` of its own
-  (never owner) and a set of `scopes`, and it is what the work ledger names
-  as the actor of the usage it reports. `created_by_uuid` is provenance: the
-  person who minted it, who the activity log names as accountable for what
-  the key does. Removing that person does not stop the key; revoking does.
+  A key is one of two kinds (`kind/1`):
+
+    * **personal** — `user_uuid` names the member the key acts for. What it
+      may do is that person's CURRENT membership role, capped by the key's
+      stored `role` and never above manager (`ApiKeys.effective_role/2`);
+      the activity feed names the person, with the key in the metadata.
+      When the person leaves the project the key stops working.
+    * **shared** — no person: a project-wide agent (a CI runner). Its stored
+      `role` is the authority, never owner, and `created_by_uuid` — the
+      person who minted it — is who the feed names as accountable.
+
+  Either way the work ledger names the KEY as the actor of the time and
+  usage it reports (`actor_kind: "ai_agent"`). `created_by_uuid` and
+  `user_uuid` are provenance, not foreign keys: the row is audit history
+  once the person is gone. Revoking is what ends a key.
 
   The token the agent holds is `pkp_<key_id>_<secret>`: `key_id` is public
   (indexed, shown in the key list) and finds the row; only the secret is
@@ -41,6 +51,7 @@ defmodule PhoenixKitProjects.Schemas.ApiKey do
     field(:secret_hash, :string)
     field(:scopes, {:array, :string}, default: @scopes)
     field(:created_by_uuid, UUIDv7)
+    field(:user_uuid, UUIDv7)
     field(:last_used_at, :utc_datetime)
     field(:expires_at, :utc_datetime)
     field(:revoked_at, :utc_datetime)
@@ -75,7 +86,15 @@ defmodule PhoenixKitProjects.Schemas.ApiKey do
   @doc "Creation: name, role, scopes and the owning project; the credential fields are server-set."
   def create_changeset(key, attrs) do
     key
-    |> cast(attrs, [:project_uuid, :name, :role, :scopes, :created_by_uuid, :expires_at])
+    |> cast(attrs, [
+      :project_uuid,
+      :name,
+      :role,
+      :scopes,
+      :created_by_uuid,
+      :user_uuid,
+      :expires_at
+    ])
     |> update_change(:name, &String.trim/1)
     |> validate_required([:project_uuid, :name, :role, :key_id, :secret_hash])
     |> validate_length(:name, min: 1, max: 80)
@@ -102,6 +121,20 @@ defmodule PhoenixKitProjects.Schemas.ApiKey do
       end
     end)
   end
+
+  @doc "`:personal` when the key acts for a person, else `:shared`."
+  @spec kind(t()) :: :personal | :shared
+  def kind(%__MODULE__{user_uuid: uuid}) when is_binary(uuid), do: :personal
+  def kind(%__MODULE__{}), do: :shared
+
+  @doc """
+  The person the activity feed names for what the key does: the one it
+  acts for, else the one who minted it; nil for a shared key minted by a
+  script with nobody behind it.
+  """
+  @spec accountable_uuid(t()) :: String.t() | nil
+  def accountable_uuid(%__MODULE__{user_uuid: uuid}) when is_binary(uuid), do: uuid
+  def accountable_uuid(%__MODULE__{created_by_uuid: uuid}), do: uuid
 
   @doc "Whether the key may be used now: not revoked, not past its expiry."
   @spec active?(t(), DateTime.t()) :: boolean()

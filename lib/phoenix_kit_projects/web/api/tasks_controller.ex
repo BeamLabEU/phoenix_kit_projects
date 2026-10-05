@@ -18,7 +18,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   alias PhoenixKit.Mentions
   alias PhoenixKitProjects.{Activity, Ledger, Projects}
-  alias PhoenixKitProjects.Schemas.Assignment
+  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment}
   alias PhoenixKitProjects.Web.Api.Json
 
   @priorities ~w(urgent high normal low)
@@ -80,7 +80,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       case Projects.create_task_with_assignment(project.uuid, task_attrs, assignment_attrs) do
         {:ok, %{assignment: a}} ->
           Activity.log("projects.assignment_created",
-            actor_uuid: key.created_by_uuid,
+            actor_uuid: ApiKey.accountable_uuid(key),
             resource_type: "assignment",
             resource_uuid: a.uuid,
             metadata: api_metadata(key, %{"task" => title})
@@ -122,7 +122,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          {:ok, _} <- update_content(a, content),
          {:ok, _} <- update_fields(a, assignment_attrs) do
       Activity.log("projects.assignment_updated",
-        actor_uuid: key.created_by_uuid,
+        actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
         resource_uuid: a.uuid,
         metadata: api_metadata(key, %{"fields" => Map.keys(Map.merge(content, assignment_attrs))})
@@ -145,7 +145,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   defp sync_mentions(assignment_uuid, description, key) when is_binary(description) do
     Mentions.sync("project_task", assignment_uuid, description,
       field: "description",
-      actor_uuid: key.created_by_uuid
+      actor_uuid: ApiKey.accountable_uuid(key)
     )
   rescue
     _ -> :ok
@@ -217,7 +217,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         case result do
           {:ok, _} ->
             Activity.log(action,
-              actor_uuid: key.created_by_uuid,
+              actor_uuid: ApiKey.accountable_uuid(key),
               resource_type: "assignment",
               resource_uuid: a.uuid,
               target_uuid: Activity.assignee_target_uuid(a),
@@ -244,7 +244,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   defp apply_transition(a, "done", key),
-    do: {"projects.assignment_completed", Projects.complete_assignment(a, key.created_by_uuid)}
+    do:
+      {"projects.assignment_completed",
+       Projects.complete_assignment(a, ApiKey.accountable_uuid(key))}
 
   defp apply_transition(a, "todo", _key),
     do: {"projects.assignment_reopened", Projects.reopen_assignment(a)}
@@ -255,7 +257,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     case Projects.recompute_project_completion(project.uuid) do
       {:completed, p} ->
         Activity.log("projects.project_completed",
-          actor_uuid: key.created_by_uuid,
+          actor_uuid: ApiKey.accountable_uuid(key),
           resource_type: "project",
           resource_uuid: p.uuid,
           metadata: api_metadata(key, %{"name" => p.name})
@@ -263,7 +265,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
       {:reopened, p} ->
         Activity.log("projects.project_reopened",
-          actor_uuid: key.created_by_uuid,
+          actor_uuid: ApiKey.accountable_uuid(key),
           resource_type: "project",
           resource_uuid: p.uuid,
           metadata: api_metadata(key, %{"name" => p.name})

@@ -21,7 +21,7 @@ defmodule PhoenixKitProjects.Members do
 
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.{Activity, ApiKeys}
   alias PhoenixKitProjects.PubSub
   alias PhoenixKitProjects.Schemas.ProjectMember
 
@@ -395,6 +395,11 @@ defmodule PhoenixKitProjects.Members do
       log_member("projects.member_removed", project_uuid, removed, actor_uuid, %{
         "role" => removed.role
       })
+
+      # Their personal keys would be refused from now on anyway
+      # (`ApiKeys.resolve/2`); revoking makes it visible and keeps an old
+      # secret from waking up if they are added back.
+      ApiKeys.revoke_for_user(project_uuid, removed.user_uuid, actor_uuid: actor_uuid)
 
       PubSub.broadcast_project(:project_members_changed, %{uuid: project_uuid})
     end)

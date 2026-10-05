@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   use Phoenix.Controller, formats: [:json]
 
+  alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.TaskNotes
   alias PhoenixKitProjects.Web.Api.{Json, TasksController}
 
@@ -143,12 +144,17 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
     end
   end
 
-  # The comment's author is the person who minted the key — the API's
-  # accountable person. A key minted with nobody behind it (a script over
-  # the node) cannot write notes.
-  defp accountable(%{created_by_uuid: uuid}) when is_binary(uuid), do: {:ok, uuid}
+  # The comment's author is the person the key acts for, else the one who
+  # minted it. A key with nobody behind it (a script over the node) cannot
+  # write notes.
+  defp accountable(key) do
+    case ApiKey.accountable_uuid(key) do
+      uuid when is_binary(uuid) -> {:ok, uuid}
+      _ -> no_person()
+    end
+  end
 
-  defp accountable(_key) do
+  defp no_person do
     {:error,
      Json.error_body(
        403,

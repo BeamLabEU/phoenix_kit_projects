@@ -14,7 +14,9 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
 
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  alias PhoenixKit.Users.Auth
   alias PhoenixKit.Utils.Routes
+  alias PhoenixKitProjects.Members
   alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.Api.Docs
 
@@ -95,6 +97,58 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
 
   def expires_at(_, _), do: nil
 
+  @doc "A person's name for the key pages: first and last name, else the email, else a dash."
+  @spec user_name(map() | String.t() | nil) :: String.t()
+  def user_name(uuid) when is_binary(uuid), do: user_name(Auth.get_user(uuid))
+
+  def user_name(%{} = user) do
+    [Map.get(user, :first_name), Map.get(user, :last_name)]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" ")
+    |> case do
+      "" -> Map.get(user, :email) || "—"
+      full -> full
+    end
+  end
+
+  def user_name(_), do: "—"
+
+  @doc "The project's members as `{user_uuid, name}`, owners first — the \"For\" choices and the rows' names."
+  @spec people(String.t()) :: [{String.t(), String.t()}]
+  def people(project_uuid) do
+    project_uuid
+    |> Members.list_members()
+    |> Enum.map(&{&1.user_uuid, user_name(&1.user || %{uuid: &1.user_uuid})})
+  end
+
+  @doc ~S|"Personal · acts for Max Don" or "Shared agent" — the row's kind line.|
+  @spec kind_label(ApiKey.t(), map()) :: String.t()
+  def kind_label(%ApiKey{user_uuid: uuid}, names) when is_binary(uuid) do
+    gettext("Personal · acts for %{name}", name: Map.get(names, uuid) || user_name(uuid))
+  end
+
+  def kind_label(_key, _names), do: gettext("Shared agent")
+
+  @doc """
+  What "Create my key" mints for `user` on a project where their role is
+  `role` (an atom from `Authz.effective_role/2`): named after them, the cap
+  at their own role (manager at most — the effective role is derived at
+  each call anyway), every scope, no expiry.
+  """
+  @spec personal_attrs(map(), atom() | nil) :: map()
+  def personal_attrs(user, role) do
+    %{
+      "name" => gettext("%{name}'s AI", name: user_name(user)),
+      "role" => personal_cap(role),
+      "scopes" => ApiKey.scopes(),
+      "user_uuid" => Map.get(user, :uuid)
+    }
+  end
+
+  defp personal_cap(role) when role in [:owner, :manager], do: "manager"
+  defp personal_cap(:viewer), do: "viewer"
+  defp personal_cap(_), do: "member"
+
   @doc "The site's absolute URL for a docs suffix (`/llms.txt`, `/me`, …)."
   @spec absolute(String.t()) :: String.t()
   def absolute(suffix), do: Routes.base_url() <> Docs.url(suffix)
@@ -106,6 +160,18 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
   """
   @spec setup_prompt(String.t(), ApiKey.t(), String.t() | nil) :: String.t()
   def setup_prompt(project_name, %ApiKey{} = key, token) do
+    acting_line =
+      case key.user_uuid do
+        uuid when is_binary(uuid) ->
+          gettext(
+            "You act for %{name} on this project — their AI, with their role (never above manager). Say so when it matters.",
+            name: user_name(uuid)
+          )
+
+        _ ->
+          gettext("This key is a shared agent on the project, not a person's.")
+      end
+
     token_line =
       case token do
         t when is_binary(t) and t != "" ->
@@ -126,6 +192,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
       gettext("Agent guide (read it first): %{url}", url: absolute("/llms.txt")),
       gettext("OpenAPI: %{url}", url: absolute("/openapi.json")),
       token_line,
+      acting_line,
       "",
       gettext(
         "Send the token as an Authorization: Bearer header on every call and keep it out of chat, logs and output. Start with GET /me to confirm the project and what this key may do, and stay within its scopes. Log your time, tokens and cost as you work. On a 401 stop and tell me — the key may have been rotated or revoked. Ask me before destructive or bulk actions."
@@ -146,6 +213,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
   def new_form do
     %{
       "name" => "",
+      "user" => "",
       "role" => "member",
       "expires" => "never",
       "preset" => "full",
@@ -166,13 +234,20 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
     form =
       previous
       |> Map.put("name", Map.get(params, "name", previous["name"]))
+      |> Map.put("user", Map.get(params, "user", previous["user"]))
       |> Map.put("role", Map.get(params, "role", previous["role"]))
       |> Map.put("expires", Map.get(params, "expires", previous["expires"]))
       |> Map.put("preset", Map.get(params, "preset", previous["preset"]))
       |> Map.put("scope", scope_ticks(params, previous))
 
-    if form["role"] == "viewer" and previous["role"] != "viewer" and form["preset"] == "full",
-      do: Map.put(form, "preset", "read"),
+    form =
+      if form["role"] == "viewer" and previous["role"] != "viewer" and form["preset"] == "full",
+        do: Map.put(form, "preset", "read"),
+        else: form
+
+    # Picking a person turns the role into a cap; "at most manager" is no cap.
+    if form["user"] != "" and previous["user"] == "",
+      do: Map.put(form, "role", "manager"),
       else: form
   end
 

@@ -94,6 +94,7 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/:id/edit", ProjectFormLive, :edit)
       live("/:id/modules", ProjectModulesLive, :edit)
       live("/:id/members", ProjectMembersLive, :edit)
+      live("/:id/api", ProjectApiLive, :show)
       live("/:id/files", ProjectFilesLive, :edit)
       live("/:id/activity", ProjectActivityLive, :index)
       # The project page's top-level tabs (the `:tab` catch-all is last, below).

@@ -28,6 +28,7 @@ defmodule PhoenixKitProjects.Web.Components do
       import PhoenixKitProjects.Web.Components.SmartMenuLink
       import PhoenixKitProjects.Web.Components.PopupHost
       import PhoenixKitProjects.Web.Components.QuickAddComposer
+      import PhoenixKitProjects.Web.Components.ApiTokenModal
       # A destructive action that asks through core's confirm modal.
       import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
       # Renders @ and # mentions inside any free text, resolved for the

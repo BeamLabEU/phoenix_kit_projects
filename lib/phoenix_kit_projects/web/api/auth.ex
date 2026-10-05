@@ -5,7 +5,9 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   project's feature gates on the conn (`:pk_api_key`, `:pk_project`,
   `:pk_fx`), or one 401 for every refusal (missing, malformed, unknown,
   revoked, expired — a caller cannot tell them apart, on purpose). A key
-  whose project is gone answers 401 too.
+  whose project is gone answers 401 too. A personal key whose person has
+  left the project is a 403 `membership_ended` — that one the caller may
+  know, it is their own membership.
 
   Then the key's rate limit (`Web.Api.RateLimit`): every authenticated
   response carries `x-ratelimit-limit` and `x-ratelimit-remaining`; a key
@@ -30,7 +32,8 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   def call(conn, _opts) do
     with {:ok, token} <- bearer(conn),
          {:ok, key} <- ApiKeys.authenticate(token),
-         %{} = project <- Projects.get_project(key.project_uuid) || :no_project do
+         %{} = project <- Projects.get_project(key.project_uuid) || :no_project,
+         {:ok, key} <- ApiKeys.resolve(key, project) do
       conn
       |> rate_limit(key)
       |> case do
@@ -46,6 +49,15 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
           conn
       end
     else
+      {:error, :membership_ended} ->
+        conn
+        |> Json.error(
+          :forbidden,
+          "membership_ended",
+          "This key acts for a person who is no longer a member of the project."
+        )
+        |> halt()
+
       _ ->
         conn
         |> Json.error(

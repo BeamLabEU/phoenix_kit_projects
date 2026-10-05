@@ -840,6 +840,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             label={gettext("Members")}
           />
           <.smart_menu_link
+            :if={not @is_template}
+            navigate={Paths.api(@project.uuid)}
+            emit={{PhoenixKitProjects.Web.ProjectApiLive, %{"id" => @project.uuid}}}
+            embed_mode={@embed_mode}
+            popup={false}
+            icon="hero-key"
+            label={gettext("Your API key")}
+          />
+          <.smart_menu_link
             :if={not @is_template and @fx_files}
             navigate={Paths.files(@project.uuid)}
             emit={{PhoenixKitProjects.Web.ProjectFilesLive, %{"id" => @project.uuid}}}

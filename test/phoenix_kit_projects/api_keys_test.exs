@@ -3,11 +3,87 @@ defmodule PhoenixKitProjects.ApiKeysTest do
 
   use PhoenixKitProjects.DataCase, async: false
 
-  alias PhoenixKitProjects.{ApiKeys, Authz}
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKitProjects.{ApiKeys, Authz, Members}
   alias PhoenixKitProjects.Schemas.ApiKey
 
   setup do
     {:ok, project: fixture_project()}
+  end
+
+  defp user_fixture do
+    {:ok, user} =
+      Auth.register_user(%{
+        email: "keys-#{System.unique_integer([:positive])}@example.com",
+        password: "ValidPassword123!"
+      })
+
+    user
+  end
+
+  describe "a personal key acts for a member" do
+    test "its role is the person's current membership, capped by the key and by manager",
+         %{project: project} do
+      owner = user_fixture()
+      {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+
+      {:ok, key, _} =
+        ApiKeys.create(project, %{"name" => "Owner's AI", "user_uuid" => owner.uuid},
+          actor_uuid: owner.uuid
+        )
+
+      assert ApiKey.kind(key) == :personal
+      assert ApiKey.accountable_uuid(key) == owner.uuid
+      # an owner's key acts as a manager, never as the owner
+      assert {:ok, "manager"} = ApiKeys.effective_role(key, project)
+      assert {:ok, %ApiKey{role: "manager"}} = ApiKeys.resolve(key, project)
+
+      # demotion propagates at once; a viewer cap holds whatever the membership says
+      {:ok, _} = Members.add_member(project, user_fixture().uuid, role: "owner")
+      {:ok, _} = Members.change_role(project, owner.uuid, "viewer")
+      assert {:ok, "viewer"} = ApiKeys.effective_role(key, project)
+
+      {:ok, capped, _} =
+        ApiKeys.create(project, %{
+          "name" => "Read-only AI",
+          "role" => "viewer",
+          "user_uuid" => owner.uuid
+        })
+
+      {:ok, _} = Members.change_role(project, owner.uuid, "manager")
+      assert {:ok, "viewer"} = ApiKeys.effective_role(capped, project)
+      assert {:ok, "manager"} = ApiKeys.effective_role(key, project)
+
+      # a shared key keeps its stored role and names its minter
+      {:ok, shared, _} = ApiKeys.create(project, %{"name" => "CI", "role" => "member"})
+      assert ApiKey.kind(shared) == :shared
+      assert {:ok, "member"} = ApiKeys.effective_role(shared, project)
+      assert ApiKey.accountable_uuid(shared) == nil
+    end
+
+    test "leaving the project ends the person's keys", %{project: project} do
+      owner = user_fixture()
+      member = user_fixture()
+      {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+      {:ok, _} = Members.add_member(project, member.uuid, role: "member")
+
+      {:ok, key, token} =
+        ApiKeys.create(project, %{"name" => "Mine", "user_uuid" => member.uuid})
+
+      {:ok, other, _} = ApiKeys.create(project, %{"name" => "Theirs", "user_uuid" => owner.uuid})
+      assert [%ApiKey{uuid: uuid}] = ApiKeys.list_for_user(project.uuid, member.uuid)
+      assert uuid == key.uuid
+
+      {:ok, _} = Members.remove_member(project, member.uuid, actor_uuid: owner.uuid)
+
+      assert ApiKeys.list_for_user(project.uuid, member.uuid) == []
+      assert {:error, :revoked} = ApiKeys.authenticate(token)
+      assert_activity_logged("projects.api_key_revoked", resource_uuid: project.uuid)
+      assert ApiKeys.get(other.uuid).revoked_at == nil
+
+      # a key that somehow outlives the membership is refused at resolve time
+      assert {:error, :membership_ended} = ApiKeys.effective_role(key, project)
+    end
   end
 
   test "create, authenticate, list, revoke", %{project: project} do

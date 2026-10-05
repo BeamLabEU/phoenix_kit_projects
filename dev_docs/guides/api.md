@@ -14,16 +14,37 @@ The agent-facing contract is **generated from one table of endpoints**
 `GET /api/projects/v1/openapi.json`. Change the table, and both documents
 follow; never write an endpoint the table does not list.
 
-## Keys live on the project
+## Keys live on the project, and act for a person
 
-`phoenix_kit_project_api_keys` (chain V17), managed on the project's Modules &
-Features page by anyone who may `manage_modules`. One key = one project. A key
-has a **name** (what the agent is called), a **role** of its own — `manager`,
-`member` or `viewer`, never owner — and **scopes** (`tasks:read`, `tasks:write`,
-`time:write`, `usage:write`, `project:write`; a metering-only key carries just
-the last two). `created_by_uuid` is provenance, not an FK: the key does not
-depend on that person staying a member (panel: a key that silently died with its
-sponsor's role was the trap of the "creator capped by role" model).
+`phoenix_kit_project_api_keys` (chain V17, `user_uuid` in V18). One key = one
+project. A key has a **name** (what the agent is called), a stored **role** —
+`manager`, `member` or `viewer`, never owner — and **scopes** (`tasks:read`,
+`tasks:write`, `time:write`, `usage:write`, `project:write`, plus what extension
+providers declare; a metering-only key carries just time and usage). A key is one
+of two kinds (`ApiKey.kind/1`):
+
+- **personal** — `user_uuid` names the member it acts for. The role it acts
+  with is that person's CURRENT membership (`Authz.effective_role/2`), capped by
+  the stored role and never above manager (`ApiKeys.effective_role/2`; the auth
+  plug calls `resolve/2` on every request). Demotion applies on the next call;
+  once the person is off the project the key answers `403 membership_ended`,
+  and `Members.remove_member/3` revokes their keys outright so an old secret
+  cannot wake up when they are re-added. Every member mints, rotates and revokes
+  their own personal keys on the project's **Your API key** page
+  (`/projects/:id/api`, from the header ⋮ menu; `Web.ProjectApiLive`): one
+  click, named "<Name>'s AI", cap at their role, every scope, no expiry. Nobody
+  sees anyone else's keys there.
+- **shared** — no person: a CI runner, "ANDI agent". Its stored role is the
+  authority. Only the owner's **API access** section on Modules & Features
+  (`manage_modules`) mints these, and that section is the project's whole list,
+  both kinds, with an **Acts for** choice on the form (a member, or "Nobody — a
+  shared agent") and a kind line on each row.
+
+`created_by_uuid` (the minter) and `user_uuid` are provenance, not FKs: the row
+is audit history once the person is gone. (Panel, 2026-10-05, three seats
+converged: a separate acts-for field; the role derived from membership for a
+person's key, stored for a shared one; self-service for every role; a page off
+the ⋮ menu rather than a tab or a card under the task list.)
 
 The token is `pkp_<key_id>_<secret>`. `key_id` is public (unique index, the
 lookup), the secret is 32 random bytes and only its SHA-256 is stored; the
@@ -54,9 +75,12 @@ shape came from a three-seat UX panel on 2026-10-05.)
   `statuses`.
 - **Attribution:** ledger entries the key reports are `actor_kind: "ai_agent"`,
   `actor_uuid: key.uuid`, `source: "ai"`. Activity entries for task changes
-  carry `actor_uuid: key.created_by_uuid` — the accountable person — with
-  `metadata.via = "api"`, `metadata.api_key` and `metadata.api_key_name`, so
-  the feed can tell the agent from the person. (Core's activity actor renders
+  carry `actor_uuid: ApiKey.accountable_uuid(key)` — the person the key acts
+  for, else its minter — with `metadata.via = "api"`, `metadata.api_key` and
+  `metadata.api_key_name`, so the feed can tell the agent from the person.
+  `/me` returns `acting_for` (`{uuid, name}`, null for a shared agent), the
+  key's `kind`, and the role it acts with right now; the setup prompt tells the
+  agent whom it acts for. (Core's activity actor renders
   as a user; a key uuid there would read "User 1a2b…".)
 - **Agent time** is `kind: "time"` by an `ai_agent` actor, never billable
   (`billable` from the agent is ignored) — `Ledger.totals_for_project/1` splits
@@ -112,8 +136,8 @@ linked both ways. `GET /tasks/:id/notes` lists them oldest first with
 /tasks/:id` carries `direction`, `last_outcome`, `latest_agent_note`,
 `display_summary` and `totals`. A key cannot write a `redirect`; a person
 does, from the notes drawer. Notes need the comments module switched on
-(`403 feature_disabled`, feature `notes`); a key minted with nobody behind
-it (no `created_by_uuid`) cannot write notes (`403 forbidden`).
+(`403 feature_disabled`, feature `notes`); a key with nobody behind it (no
+person acted for and no minter) cannot write notes (`403 forbidden`).
 
 ## Rate limit
 

@@ -76,7 +76,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/me",
         summary:
-          "Who this key is: its name, role and scopes, the project, which features are on, the actions the role allows, and where these docs are. Read this first.",
+          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent), the role it acts with right now, its scopes, the project, which features are on, the actions the role allows, and where these docs are. Read this first.",
         auth: true,
         scope: nil,
         action: nil,
@@ -634,7 +634,10 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     - **Workflow statuses belong to the project**, not to tasks: `POST /project/status`, with a slug
       from `available_workflow_statuses`. Tasks have only todo / in_progress / done.
     - **Who did it:** your time and usage are recorded as this key (AI time, apart from people's;
-      never billable). Task changes are logged under the person who minted the key, with the key named.
+      never billable). Task changes are logged under the person this key acts for (`acting_for`
+      in /me; for a shared agent, the person who minted it), with the key named — you are their
+      AI, say so when it matters. A personal key acts with that person's current project role,
+      never above manager; once they leave the project every call answers 403 `membership_ended`.
     - **When it happened:** time and usage carry the receipt time unless you send `occurred_at`
       (ISO 8601, not in the future) — do so when you report in a batch after the work.
     - **Notes, not essays, in the description:** the task's `description` is the short human text.
@@ -722,7 +725,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "http",
             scheme: "bearer",
             description:
-              "A project API key, `pkp_…`, minted on the project's Modules & Features page."
+              "A project API key, `pkp_…`: a member's own key from the project's \"Your API key\" page, or a shared agent's from Modules & Features."
           }
         },
         schemas: %{

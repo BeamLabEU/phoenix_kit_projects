@@ -161,7 +161,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
   # `projects/:id/:tab` catch-all — declared after every literal sibling
   # route, so a key that reuses one would deep-link to the wrong page
   # while the strip's data-url named this tab). Reserved, refused here.
-  @reserved_tab_keys ~w(edit files activity members modules board gantt calendar tasks comments new)
+  @reserved_tab_keys ~w(edit files activity members modules api board gantt calendar tasks comments new)
 
   @doc "The URL segments a contributed tab key may not reuse."
   @spec reserved_tab_keys() :: [String.t()]

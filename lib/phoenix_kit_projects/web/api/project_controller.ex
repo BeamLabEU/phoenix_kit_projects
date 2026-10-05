@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKitProjects.{Activity, Projects, Statuses}
+  alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.Api.{Json, TasksController}
 
   def show(conn, _params) do
@@ -50,7 +51,7 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
         case Statuses.set_current_status(project, slug) do
           {:ok, updated} ->
             Activity.log("projects.project_status_changed",
-              actor_uuid: key.created_by_uuid,
+              actor_uuid: ApiKey.accountable_uuid(key),
               resource_type: "project",
               resource_uuid: project.uuid,
               metadata: TasksController.api_metadata(key, %{"status" => slug})

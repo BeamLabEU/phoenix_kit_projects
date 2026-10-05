@@ -22,6 +22,45 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanelTest do
     assert ApiKeyPanel.access_label(["time:write"]) == "Custom · 1 scope"
   end
 
+  test "a personal key is named after the person, capped at their role, and the prompt says so" do
+    user = %{uuid: Ecto.UUID.generate(), first_name: "Max", last_name: "Don", email: "m@x.ee"}
+
+    assert %{"name" => "Max Don's AI", "role" => "manager", "user_uuid" => uuid} =
+             ApiKeyPanel.personal_attrs(user, :owner)
+
+    assert uuid == user.uuid
+    assert ApiKeyPanel.personal_attrs(user, :viewer)["role"] == "viewer"
+    assert ApiKeyPanel.personal_attrs(user, :member)["role"] == "member"
+
+    assert ApiKeyPanel.personal_attrs(%{uuid: uuid, email: "m@x.ee"}, nil)["name"] ==
+             "m@x.ee's AI"
+
+    names = %{uuid => "Max Don"}
+
+    assert ApiKeyPanel.kind_label(%ApiKey{user_uuid: uuid}, names) ==
+             "Personal · acts for Max Don"
+
+    assert ApiKeyPanel.kind_label(%ApiKey{}, names) == "Shared agent"
+
+    prompt =
+      ApiKeyPanel.setup_prompt("ANDI", %ApiKey{name: "x", key_id: "k", user_uuid: uuid}, nil)
+
+    assert prompt =~ "API token: <paste"
+    # the name is looked up; an unknown uuid reads as a dash rather than crashing
+    assert prompt =~ "You act for — on this project"
+
+    shared = ApiKeyPanel.setup_prompt("ANDI", %ApiKey{name: "x", key_id: "k"}, "tok")
+    assert shared =~ "shared agent on the project"
+  end
+
+  test "picking a person on the form lifts the role to the manager cap once" do
+    form = ApiKeyPanel.form_from(%{"user" => "u1"}, ApiKeyPanel.new_form())
+    assert form["role"] == "manager"
+    form = ApiKeyPanel.form_from(%{"role" => "viewer"}, form)
+    assert form["role"] == "viewer"
+    assert form["preset"] == "read"
+  end
+
   test "expiry choices become a date from now, never is nil" do
     now = ~U[2026-10-05 12:00:00Z]
     assert ApiKeyPanel.expires_at("never", now) == nil

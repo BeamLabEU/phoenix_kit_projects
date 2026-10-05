@@ -9,6 +9,7 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKitProjects.Extensions
+  alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.Api.Json
 
   def index(conn, %{"resource" => resource} = params) do
@@ -103,7 +104,7 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
     %{
       project: conn.assigns.pk_project,
       key: key,
-      user_uuid: key.created_by_uuid,
+      user_uuid: ApiKey.accountable_uuid(key),
       actor: %{kind: "ai_agent", uuid: key.uuid}
     }
   end

@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 17
+  @current_version 18
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -114,6 +114,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v15_ad_hoc_tasks(p)
     v16_fileless_whiteboards(p)
     v17_api_keys(p, prefix)
+    v18_key_persons(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -138,6 +139,15 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 18 do
+      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_api_keys_person_index")
+
+      execute("""
+      ALTER TABLE #{p}phoenix_kit_project_api_keys
+        DROP COLUMN IF EXISTS user_uuid
+      """)
+    end
 
     if target < 17 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_idempotency")
@@ -1026,6 +1036,24 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (api_key_uuid, idempotency_key)
     )
+    """)
+  end
+
+  # V18 — a key acts for a person. `user_uuid` names the member whose
+  # authority the key exercises: their current membership decides what the
+  # key may do and the activity feed names them. Nullable: a key with no
+  # person is a shared agent (a CI runner, a project-wide bot) that keeps
+  # its own stored role. Not a foreign key, like `created_by_uuid` — the
+  # row is audit history once the person is gone; the API refuses it.
+  defp v18_key_persons(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      ADD COLUMN IF NOT EXISTS user_uuid UUID
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_api_keys_person_index
+    ON #{p}phoenix_kit_project_api_keys (project_uuid, user_uuid)
     """)
   end
 

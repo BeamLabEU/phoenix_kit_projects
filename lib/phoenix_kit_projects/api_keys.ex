@@ -10,13 +10,19 @@ defmodule PhoenixKitProjects.ApiKeys do
   into its key: the public `key_id` finds the row, the secret is compared
   in constant time against the hash, and a revoked or expired key is refused.
 
-  The key is its own principal: `Authz.can_role?/3` answers what it may do
-  from its stored role, the ledger names it as the actor of the usage it
-  reports, and the activity log names the person who minted it
-  (`created_by_uuid`) as accountable, with the key in the metadata. A key
-  does not depend on that person's membership — revoking is how it ends
-  (`revoke/2`); `rotate/2` replaces the secret on the same row so the key's
-  history stays one agent.
+  A key is **personal** or **shared** (`ApiKey.kind/1`). A personal key acts
+  for a member (`user_uuid`): `effective_role/2` reads that person's current
+  membership, capped by the key's stored role and never above manager, and
+  refuses the key once the person is off the project (`resolve/2` is what the
+  API plug calls; `Members.remove_member/3` also revokes their keys). A
+  shared key has no person — its stored role is the authority. Either way
+  the ledger names the key as the actor of the usage it reports, and the
+  activity log names `ApiKey.accountable_uuid/1` (the person acted for, else
+  the minter) with the key in the metadata. `revoke/2` ends a key;
+  `rotate/2` replaces the secret on the same row so its history stays one
+  agent. Every member may mint, rotate and revoke their own personal keys
+  (`list_for_user/2`); the project's whole list is for whoever may
+  `manage_modules`.
 
   `idempotent/3` is the retry guard for the API's appends: a response stored
   under (key, `Idempotency-Key`) is answered again on replay.
@@ -27,8 +33,11 @@ defmodule PhoenixKitProjects.ApiKeys do
   require Logger
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.{Activity, Authz}
   alias PhoenixKitProjects.Schemas.{ApiIdempotency, ApiKey}
+
+  # Strongest first; anything unrecognised ranks as the weakest.
+  @role_rank %{"owner" => 0, "manager" => 1, "member" => 2, "viewer" => 3}
 
   @token_prefix "pkp"
   @key_id_bytes 9
@@ -45,6 +54,64 @@ defmodule PhoenixKitProjects.ApiKeys do
     RepoHelper.repo().all(
       from(k in ApiKey, where: k.project_uuid == ^project_uuid, order_by: [desc: k.inserted_at])
     )
+  end
+
+  @doc "The live (not revoked) keys acting for `user_uuid` on a project, newest first."
+  @spec list_for_user(binary(), binary()) :: [ApiKey.t()]
+  def list_for_user(project_uuid, user_uuid)
+      when is_binary(project_uuid) and is_binary(user_uuid) do
+    RepoHelper.repo().all(
+      from(k in ApiKey,
+        where:
+          k.project_uuid == ^project_uuid and k.user_uuid == ^user_uuid and
+            is_nil(k.revoked_at),
+        order_by: [desc: k.inserted_at]
+      )
+    )
+  end
+
+  def list_for_user(_, _), do: []
+
+  @doc """
+  The role a key acts with on `project` right now. A shared key: its stored
+  role. A personal key: the person's current membership (`Authz.effective_role/2`),
+  capped by the stored role and by manager — `{:error, :membership_ended}`
+  when they are no longer on the project.
+  """
+  @spec effective_role(ApiKey.t(), map()) :: {:ok, String.t()} | {:error, :membership_ended}
+  def effective_role(%ApiKey{user_uuid: nil, role: role}, _project), do: {:ok, role}
+
+  def effective_role(%ApiKey{user_uuid: user_uuid, role: cap}, project) do
+    case Authz.effective_role(project, user_uuid) do
+      nil -> {:error, :membership_ended}
+      role -> {:ok, weaker(Atom.to_string(role), cap)}
+    end
+  end
+
+  @doc "The key with its `role` set to `effective_role/2`, for one request."
+  @spec resolve(ApiKey.t(), map()) :: {:ok, ApiKey.t()} | {:error, :membership_ended}
+  def resolve(%ApiKey{} = key, project) do
+    with {:ok, role} <- effective_role(key, project), do: {:ok, %{key | role: role}}
+  end
+
+  # The weakest of the three: owner is not a key role, so the strongest a
+  # key acts with is manager.
+  defp weaker(role, cap) do
+    Enum.max_by(["manager", cap, role], &Map.get(@role_rank, &1, 3))
+  end
+
+  @doc "Revokes every live key acting for `user_uuid` on the project — when they leave it."
+  @spec revoke_for_user(binary(), binary(), keyword()) :: :ok
+  def revoke_for_user(project_uuid, user_uuid, opts \\ []) do
+    project_uuid
+    |> list_for_user(user_uuid)
+    |> Enum.each(&revoke(&1, Keyword.put(opts, :reason, "membership_ended")))
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("ApiKeys.revoke_for_user failed: #{Exception.message(e)}")
+      :ok
   end
 
   @doc "A key by uuid, or nil."
@@ -64,9 +131,10 @@ defmodule PhoenixKitProjects.ApiKeys do
 
   @doc """
   Mints a key for `project`. `attrs`: `"name"` (required), `"role"` (default
-  `"member"`), `"scopes"` (default every scope), `"expires_at"`. Options:
-  `:actor_uuid` — the person minting it, recorded as `created_by_uuid` and
-  as the activity's actor.
+  `"member"`; for a personal key the cap), `"scopes"` (default every scope),
+  `"expires_at"`, `"user_uuid"` (the member the key acts for — absent for a
+  shared agent). Options: `:actor_uuid` — the person minting it, recorded
+  as `created_by_uuid` and as the activity's actor.
 
   Returns `{:ok, key, token}`; the token is the only time the secret exists
   in the clear.
@@ -84,6 +152,7 @@ defmodule PhoenixKitProjects.ApiKeys do
       |> Map.put("project_uuid", project_uuid)
       |> Map.put("created_by_uuid", actor_uuid)
       |> Map.put_new("scopes", ApiKey.scopes())
+      |> default_cap()
 
     changeset =
       %ApiKey{}
@@ -96,7 +165,12 @@ defmodule PhoenixKitProjects.ApiKeys do
           actor_uuid: actor_uuid,
           resource_type: "project",
           resource_uuid: project_uuid,
-          metadata: %{"api_key" => key.uuid, "name" => key.name, "role" => key.role}
+          metadata: %{
+            "api_key" => key.uuid,
+            "name" => key.name,
+            "role" => key.role,
+            "user" => key.user_uuid
+          }
         )
 
         {:ok, key, token}
@@ -105,6 +179,13 @@ defmodule PhoenixKitProjects.ApiKeys do
         error
     end
   end
+
+  # A personal key's stored role is a cap: left unsaid, it caps at nothing
+  # below manager. A shared key's stored role is its authority: member.
+  defp default_cap(%{"user_uuid" => uuid} = attrs) when is_binary(uuid) and uuid != "",
+    do: Map.put_new(attrs, "role", "manager")
+
+  defp default_cap(attrs), do: Map.put_new(attrs, "role", "member")
 
   @doc """
   Replaces the key's secret on the same row and returns the new token; the
@@ -146,7 +227,14 @@ defmodule PhoenixKitProjects.ApiKeys do
           actor_uuid: Keyword.get(opts, :actor_uuid),
           resource_type: "project",
           resource_uuid: key.project_uuid,
-          metadata: %{"api_key" => key.uuid, "name" => key.name}
+          metadata:
+            %{"api_key" => key.uuid, "name" => key.name}
+            |> Map.merge(
+              case Keyword.get(opts, :reason) do
+                nil -> %{}
+                reason -> %{"reason" => reason}
+              end
+            )
         )
 
         {:ok, key}

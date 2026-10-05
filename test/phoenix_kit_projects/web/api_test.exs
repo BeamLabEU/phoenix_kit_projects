@@ -12,7 +12,8 @@ defmodule PhoenixKitProjects.Web.ApiTest do
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Features, Ledger, Projects, TaskNotes}
+  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Features, Ledger, Members, Projects}
+  alias PhoenixKitProjects.TaskNotes
   alias PhoenixKitProjects.Test.Repo
 
   @base "/api/projects/v1"
@@ -50,6 +51,74 @@ defmodule PhoenixKitProjects.Web.ApiTest do
   defp idem, do: [{"idempotency-key", Ecto.UUID.generate()}]
 
   # ── Auth ────────────────────────────────────────────────────────
+
+  test "a personal key says whom it acts for, acts with their role, and dies with their membership",
+       %{conn: conn, project: project} do
+    {:ok, owner} =
+      Auth.register_user(%{
+        email: "owner-#{System.unique_integer([:positive])}@example.com",
+        password: "ValidPassword123!",
+        first_name: "Max",
+        last_name: "Don"
+      })
+
+    {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
+    {:ok, _} = Members.add_member(project, fixture_user_uuid(), role: "owner")
+
+    {:ok, key, token} =
+      ApiKeys.create(project, %{"name" => "Max Don's AI", "user_uuid" => owner.uuid},
+        actor_uuid: owner.uuid
+      )
+
+    me = conn |> api(token) |> get("#{@base}/me") |> json_response(200)
+    assert me["key"]["kind"] == "personal"
+    assert me["key"]["role"] == "manager"
+    assert me["acting_for"] == %{"uuid" => owner.uuid, "name" => "Max Don"}
+    assert "manage_members" not in me["allowed_actions"]
+
+    # a task the key creates is logged under the person
+    %{"task" => task} =
+      conn
+      |> api(token)
+      |> post_json("#{@base}/tasks", %{"title" => "By Max's AI"}, idem())
+      |> json_response(201)
+
+    entry = assert_activity_logged("projects.assignment_created", resource_uuid: task["uuid"])
+    assert Ecto.UUID.cast!(entry.actor_uuid) == owner.uuid
+    assert entry.metadata["api_key"] == key.uuid
+
+    # demoted: the same key is a viewer now
+    {:ok, _} = Members.change_role(project, owner.uuid, "viewer")
+    me = conn |> api(token) |> get("#{@base}/me") |> json_response(200)
+    assert me["key"]["role"] == "viewer"
+
+    # gone: refused, and told why
+    {:ok, _} = Members.remove_member(project, owner.uuid)
+
+    assert %{"error" => %{"code" => "unauthorized"}} =
+             conn |> api(token) |> get("#{@base}/me") |> json_response(401)
+
+    # a key that was not revoked with the membership is still refused, as a 403
+    {:ok, back} = Members.add_member(project, owner.uuid, role: "member")
+    {:ok, key2, token2} = ApiKeys.create(project, %{"name" => "Again", "user_uuid" => owner.uuid})
+    assert conn |> api(token2) |> get("#{@base}/me") |> json_response(200)
+    Repo.delete!(back)
+
+    assert %{"error" => %{"code" => "membership_ended"}} =
+             conn |> api(token2) |> get("#{@base}/me") |> json_response(403)
+
+    assert ApiKeys.get(key2.uuid).revoked_at == nil
+  end
+
+  defp fixture_user_uuid do
+    {:ok, user} =
+      Auth.register_user(%{
+        email: "second-#{System.unique_integer([:positive])}@example.com",
+        password: "ValidPassword123!"
+      })
+
+    user.uuid
+  end
 
   test "no key, a wrong key and a revoked key all answer the same 401", %{
     conn: conn,

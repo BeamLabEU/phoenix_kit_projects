@@ -121,6 +121,56 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
       refute html =~ "project-api-key-add-"
     end
 
+    test "a key minted for a member acts for them; the row says so", %{
+      conn: conn,
+      project: project
+    } do
+      alias PhoenixKit.Users.Auth
+      alias PhoenixKitProjects.Members
+
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "for-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!",
+          first_name: "Maria",
+          last_name: "Kottel"
+        })
+
+      {:ok, _} = Members.add_member(project, user.uuid, role: "member")
+
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
+      html = render_click(view, "toggle_api_key_form", %{})
+      assert html =~ "Nobody — a shared agent"
+      assert html =~ "Maria Kottel"
+
+      html =
+        render_submit(view, "create_api_key", %{
+          "name" => "Maria's AI",
+          "user" => user.uuid,
+          "role" => "member",
+          "preset" => "full",
+          "expires" => "never"
+        })
+
+      assert [key] = ApiKeys.list_for_project(project.uuid)
+      assert key.user_uuid == user.uuid
+      assert html =~ "Personal · acts for Maria Kottel"
+      assert html =~ "You act for Maria Kottel on this project"
+
+      # a uuid that is not a member's is ignored: the key is a shared agent
+      render_submit(view, "create_api_key", %{
+        "name" => "Bot",
+        "user" => Ecto.UUID.generate(),
+        "role" => "member",
+        "preset" => "full",
+        "expires" => "never"
+      })
+
+      assert bot = Enum.find(ApiKeys.list_for_project(project.uuid), &(&1.name == "Bot"))
+      assert bot.user_uuid == nil
+      assert render(view) =~ "Shared agent"
+    end
+
     test "revoked keys are hidden until asked for", %{conn: conn, project: project} do
       {:ok, live_key, _} = ApiKeys.create(project, %{"name" => "Live one"})
       {:ok, gone, _} = ApiKeys.create(project, %{"name" => "Old one"})
