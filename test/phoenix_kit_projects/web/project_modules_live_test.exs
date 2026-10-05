@@ -66,6 +66,79 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
     refute Features.on?(project.uuid, "view_calendar")
   end
 
+  describe "API access" do
+    alias PhoenixKitProjects.ApiKeys
+
+    test "a key made from the panel with the Read-only preset and a 30-day expiry, then the token modal",
+         %{conn: conn, project: project} do
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
+      assert html =~ "No keys yet"
+      assert html =~ "/api/projects/v1/llms.txt"
+      assert html =~ "/api/projects/v1/openapi.json"
+      refute html =~ "project-api-key-add-"
+
+      html = render_click(view, "toggle_api_key_form", %{})
+      assert html =~ "project-api-key-add-"
+      assert html =~ "Full access"
+
+      render_change(view, "api_key_form_change", %{"name" => "Reader", "preset" => "read"})
+
+      html =
+        render_submit(view, "create_api_key", %{
+          "name" => "Reader",
+          "role" => "member",
+          "preset" => "read",
+          "expires" => "30"
+        })
+
+      assert [key] = ApiKeys.list_for_project(project.uuid)
+      assert key.name == "Reader"
+      assert key.scopes == Enum.filter(key.scopes, &String.ends_with?(&1, ":read"))
+      assert key.scopes != []
+      assert DateTime.diff(key.expires_at, DateTime.utc_now(), :day) in 29..30
+
+      # the modal: token, the prompt with the token embedded, the links
+      assert html =~ "Key created — copy it now"
+      assert html =~ ~s(id="api-token-value")
+      assert html =~ "pkp_#{key.key_id}_"
+      assert html =~ ~s(id="api-token-prompt")
+      assert html =~ "Agent guide (read it first)"
+      assert html =~ "Done — I saved it"
+
+      html = render_click(view, "dismiss_api_token", %{})
+      refute html =~ "api-token-value"
+
+      # the row: the ID without an ellipsis, the preset word, no stacked scopes
+      assert html =~ "ID pkp_#{key.key_id}"
+      refute html =~ "pkp_#{key.key_id}_…"
+      assert html =~ "Read-only ·"
+      assert html =~ "Never used"
+      assert html =~ "Expires"
+      # the row's own prompt, token's place held
+      assert html =~ ~s(id="api-key-prompt-#{key.uuid}")
+      assert html =~ "Copy setup prompt"
+      # the panel closed on success
+      refute html =~ "project-api-key-add-"
+    end
+
+    test "revoked keys are hidden until asked for", %{conn: conn, project: project} do
+      {:ok, live_key, _} = ApiKeys.create(project, %{"name" => "Live one"})
+      {:ok, gone, _} = ApiKeys.create(project, %{"name" => "Old one"})
+      {:ok, _} = ApiKeys.revoke(gone, [])
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
+      assert html =~ "Live one"
+      refute html =~ "Old one"
+      assert html =~ "Show revoked keys (1)"
+      assert html =~ ~s(id="api-key-menu-#{live_key.uuid}")
+
+      html = render_click(view, "toggle_revoked_keys", %{})
+      assert html =~ "Old one"
+      assert html =~ "Hide revoked keys"
+      refute html =~ ~s(id="api-key-menu-#{gone.uuid}")
+    end
+  end
+
   test "a scope without the projects permission is bounced", %{project: project} do
     conn =
       Phoenix.ConnTest.build_conn()

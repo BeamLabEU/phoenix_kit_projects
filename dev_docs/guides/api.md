@@ -31,6 +31,19 @@ token is shown once, at creation and at **rotation**, which replaces the secret
 on the same row so the key's ledger history stays one agent. **Revoke** ends it.
 `last_used_at` is touched at most once a minute. `expires_at` is optional.
 
+The page shows each key as a row — name and role, the public ID
+(`pkp_<key_id>`, never the token), an **access** preset read back from the
+scopes (Full access / Read-only / Metering / Custom · N scopes), last use and
+expiry — with Rotate, Revoke and **Copy setup prompt** in its menu. A new key
+is minted behind "New key": name, role, expiry (never / 30 / 90 / 365 days)
+and a preset, with the seven scopes shown only under Custom. Creation and
+rotation open a modal with the token, a **setup prompt** for the agent (base
+URL, the agent guide, "start with GET /me", the token) and the reference
+links; the same prompt without the token is behind every row's menu. The
+"For your AI" strip under the section title links `/llms.txt` and
+`/openapi.json` at all times. (`Web.ApiKeyPanel` holds the pure parts; the
+shape came from a three-seat UX panel on 2026-10-05.)
+
 ## The key is its own principal
 
 - **Authorisation:** `Authz.can_role?(project, key.role, action)` — the role
