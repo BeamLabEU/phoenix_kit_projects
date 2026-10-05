@@ -2625,66 +2625,60 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </div>
         </div>
 
-        <%!-- What this project can DO lives here too, rather than behind a
-             separate menu entry. The creation form already asks these
-             questions in its Features and Extensions drawers; splitting
-             them onto their own page after creation was the asymmetry —
-             "edit the project" and "change what the project is" are the
-             same errand.
-
-             Embedded rather than moved: this page is 600 lines with its own
-             events, PubSub and per-extension config forms, and the module
-             already supports mounting it off-router. --%>
-        <%!-- Rendered only when the viewer may actually manage modules.
-             The embedded LV enforces that itself, but its refusal is a
-             REDIRECT — inside a host page that navigates the whole edit
-             form away, so a manager who can rename a project but not
-             change its modules would be bounced out of editing it.
-
-             Identity has to be threaded explicitly: an embed mounts
-             off-router, so the hooks that build a scope never run and the
-             LV rebuilds it from this uuid. --%>
-        <div :if={@live_action == :edit and @can_manage_modules} class="card bg-base-100 shadow">
-          <div class="card-body">
-            {live_render(@socket, PhoenixKitProjects.Web.ProjectModulesLive,
-              id: "edit-modules-#{@project.uuid}",
-              session: %{
-                "id" => @project.uuid,
-                "embedded_in_form" => true,
-                "current_user_uuid" => @current_user_uuid,
-                "wrapper_class" => "flex flex-col gap-6"
-              }
-            )}
-          </div>
-        </div>
-
-        <%!-- Last, so the page reads in order: what the project is called,
-             how it behaves, what it can do — then Save. The modules panel
-             above writes immediately and needs no Save of its own; this
-             button belongs to the fields, and putting it before the panel
-             made the page look like it had ended and then carried on. --%>
-        <%!-- :edit only. The creation form has its own action row further
-             up; without this guard the new-project page renders two. --%>
-        <.form_actions
-          :if={@live_action == :edit}
-          class="gap-2"
-          submit_label={gettext("Save")}
-          submitting_label={gettext("Saving…")}
-          submit_class="btn btn-primary btn-sm"
-          submit_disabled={@ai_in_flight != []}
-        >
-          <:cancel>
-          <button
-            type="button"
-            phx-click="cancel"
-            data-confirm={@dirty? && gettext("Discard your changes?")}
-            class="btn btn-ghost btn-sm"
-          >
-            {gettext("Cancel")}
-          </button>
-          </:cancel>
-        </.form_actions>
       </.form>
+
+      <%!-- Modules & Features, embedded — OUTSIDE the project form, where
+           its own forms (labels, extension settings, API keys) can post:
+           a <form> inside a <form> is invalid HTML and the browser drops
+           the inner one, so "Create key" was submitting the project form
+           and navigating away with nothing created (Max, 2026-10-05).
+           Rendered only when the viewer may actually manage modules. The
+           embedded LV enforces that itself, but its refusal is a REDIRECT —
+           inside a host page that navigates the whole edit form away, so a
+           manager who can rename a project but not change its modules
+           would be bounced out of editing it. Identity has to be threaded
+           explicitly: an embed mounts off-router, so the hooks that build
+           a scope never run and the LV rebuilds it from this uuid. --%>
+      <div :if={@live_action == :edit and @can_manage_modules} class="card bg-base-100 shadow">
+        <div class="card-body">
+          {live_render(@socket, PhoenixKitProjects.Web.ProjectModulesLive,
+            id: "edit-modules-#{@project.uuid}",
+            session: %{
+              "id" => @project.uuid,
+              "embedded_in_form" => true,
+              "current_user_uuid" => @current_user_uuid,
+              "wrapper_class" => "flex flex-col gap-6"
+            }
+          )}
+        </div>
+      </div>
+
+      <%!-- Last, so the page reads in order: what the project is called,
+           how it behaves, what it can do — then Save. The modules panel
+           above writes immediately and needs no Save of its own; this
+           button belongs to the fields, and putting it before the panel
+           made the page look like it had ended and then carried on. It
+           sits after the form, so the submit button names it (`form=`).
+           :edit only — the creation form has its own action row. --%>
+      <div :if={@live_action == :edit} class="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          phx-click="cancel"
+          data-confirm={@dirty? && gettext("Discard your changes?")}
+          class="btn btn-ghost btn-sm"
+        >
+          {gettext("Cancel")}
+        </button>
+        <button
+          type="submit"
+          form="project-form"
+          class="btn btn-primary btn-sm"
+          disabled={@ai_in_flight != []}
+          phx-disable-with={gettext("Saving…")}
+        >
+          {gettext("Save")}
+        </button>
+      </div>
 
       <%!-- Outside the project form on purpose: nested <form> elements are
            invalid HTML, so the browser silently drops the inner one — its
