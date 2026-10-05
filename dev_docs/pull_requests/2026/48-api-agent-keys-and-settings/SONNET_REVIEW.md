@@ -225,3 +225,40 @@ were real; each now has a test that fails on the code it was found in.
   router (`edit_settings` and `manage_modules` are both owner-only and neither
   is overridable), so that branch is covered through the `:new` form, where
   `can_manage_modules` is always false.
+
+## The stuck-key gap, closed properly (after the codex audit)
+
+Removing the age-based takeover left a request killed between reserving its
+idempotency key and answering with a key that answered 409 for ever. That is
+fixed by making "is the first request alive?" a database fact:
+
+- `ApiKeys.idempotent/3` pins one connection (`Repo.checkout/2`, with a 10
+  minute limit — a default checkout is dropped after 15 s, which I verified
+  would have killed a slow request's connection and lock halfway) and takes a
+  Postgres **session advisory lock** named by (key, header) for the length of
+  the work.
+- A retry that cannot take the lock knows the first request is alive and
+  answers 409 `in_progress`; it runs nothing, however old the row is.
+- When the first request's process dies, its connection closes (verified: a
+  killed client makes Postgrex disconnect it) and Postgres drops the lock. The
+  next retry finds a pending row and a free lock — the owner is provably gone —
+  takes the reservation over and runs the work. Two live requests cannot
+  coexist, so the first one overwriting its successor's answer (codex's second
+  point) cannot happen either.
+- **What this does not close:** a request that died after its work committed
+  and before its answer was stored is run again. That is the window every
+  scheme without a single transaction around work-plus-answer leaves; it is now
+  narrow (between the commit and one `UPDATE`) instead of "every kill". It also
+  needs session-stable connections: PgBouncer in transaction mode would make
+  the lock meaningless (documented in the function and `api.md`).
+- Tests: `idempotency_liveness_test.exs` runs on real pool connections
+  (sandbox in `:auto`, cleaning up what it commits): a live holder keeps its
+  key and its answer is the one replayed; a **killed process** leaves nothing
+  stuck and the retry runs once (this test fails on the previous code); a
+  request slower than the pool's 15 s checkout limit keeps its lock. The two
+  shared-sandbox tests that used to fake "a request in flight" with a status-0
+  row now hold the lock from a separate session
+  (`test/support/idempotency_hold.ex`) — the sandbox shares one connection and
+  an advisory lock is reentrant within a session, so a second request in the
+  test process would always "get" the lock.
+

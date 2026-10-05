@@ -154,10 +154,17 @@ messages are English and locale-free on purpose (a machine contract).
 `Idempotent-Replayed: true` header. **Required** on the ledger POSTs (appends
 nobody can undo), honoured on task create and transitions. Panel: the one
 thing to block v1 on. A retry that arrives while the first request with that key
-is still running answers 409 `in_progress` and runs nothing; the key is never
-handed to a second run by the clock, because a slow call is indistinguishable
-from a dead one. If it never clears, look at what the first attempt did and
-send the next attempt with a new `Idempotency-Key`.
+is still running answers 409 `in_progress` and runs nothing. "Still running" is
+a database fact, not a timer: the request pins a connection and holds a Postgres
+session advisory lock on (key, header) while it works, so a slow call is never
+mistaken for a dead one. If the request dies (a crash, a kill, the node going
+down) its connection closes, Postgres drops the lock, and the next retry takes
+the key over and runs the work — never two runs side by side, never a key stuck
+for ever. The one window no scheme closes: a request that died *after* its
+work committed and *before* its answer was stored is run again by the retry, so
+after a crash an agent that cares should check what the first attempt did. The
+connection must be session-stable — a transaction-pooling proxy (PgBouncer's
+transaction mode) between the app and Postgres would make the lock meaningless.
 
 ## Records an extension puts on the API
 

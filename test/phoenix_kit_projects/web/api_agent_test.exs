@@ -11,7 +11,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{ApiKeys, Features, Labels, Ledger, Projects}
+  alias PhoenixKitProjects.{ApiKeys, Features, IdempotencyHold, Labels, Ledger, Projects}
   alias PhoenixKitProjects.Schemas.{ApiIdempotency, Assignment, Project}
   alias PhoenixKitProjects.Test.Repo
 
@@ -715,12 +715,35 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
     assert pending.status == 0
 
+    # a LIVE first request holds the key's lock (a session of its own)
+    holder = IdempotencyHold.hold(pending.api_key_uuid, "held")
+
     assert %{"error" => %{"code" => "in_progress"}} =
              c
              |> post_json("#{@base}/tasks", %{"title" => "Twice"}, [{"idempotency-key", "held"}])
              |> json_response(409)
 
     refute Enum.any?(Projects.list_assignments(project.uuid), &(Assignment.label(&1) == "Twice"))
+
+    # the first request dies: its connection closes, the lock goes, the retry
+    # finds a pending row nobody holds and runs the work — once
+    IdempotencyHold.release(holder)
+
+    assert %{"task" => %{"title" => "Twice"}} =
+             c
+             |> post_json("#{@base}/tasks", %{"title" => "Twice"}, [{"idempotency-key", "held"}])
+             |> json_response(201)
+
+    assert %{"task" => %{"title" => "Twice"}} =
+             replay =
+             c
+             |> post_json("#{@base}/tasks", %{"title" => "Twice"}, [{"idempotency-key", "held"}])
+             |> json_response(201)
+
+    assert replay
+
+    assert Enum.count(Projects.list_assignments(project.uuid), &(Assignment.label(&1) == "Twice")) ==
+             1
   end
 
   test "ledger corrections: own entries under the policy, any for a manager key", %{

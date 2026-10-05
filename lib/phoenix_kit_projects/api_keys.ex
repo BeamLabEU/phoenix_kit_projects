@@ -46,6 +46,8 @@ defmodule PhoenixKitProjects.ApiKeys do
   # `last_used_at` moves at most this often, so a busy agent is not a write
   # on the key row per request.
   @touch_interval_seconds 60
+  # How long one idempotent request may hold its connection (and so its lock).
+  @lock_timeout :timer.minutes(10)
 
   @type token :: String.t()
 
@@ -339,6 +341,23 @@ defmodule PhoenixKitProjects.ApiKeys do
   Runs `fun` once per (key, `idempotency_key`): the first call runs it and
   stores its `{status, body}`; a replay answers `{:replay, status, body}`
   without running it. With no idempotency key the call just runs.
+
+  **Who is running it is a database fact, not a clock.** The call pins one
+  connection (`Repo.checkout/2`) and takes a Postgres SESSION advisory lock
+  named by (key, header) for as long as the work runs. A second request for
+  the same pair that cannot take the lock knows the first is alive — a slow
+  call and a dead one look alike to a timer, never to the lock — and answers
+  409 `in_progress`. When the first request's process dies (a crash, a
+  kill, a node going down) its connection closes and Postgres drops the
+  lock, so the next retry finds a pending row and a free lock: the owner is
+  provably gone, and the retry takes the reservation over and runs the work.
+  Never two runs side by side, never a key stuck for ever.
+
+  What remains is the one window no scheme closes: a request that died
+  AFTER its work committed and BEFORE its answer was stored is run again by
+  the retry. Needs session-stable connections — a transaction-pooling proxy
+  (PgBouncer's transaction mode) between the app and Postgres would make
+  the lock meaningless.
   """
   @spec idempotent(ApiKey.t(), String.t() | nil, (-> {integer(), map()})) ::
           {:ok, integer(), map()} | {:replay, integer(), map()}
@@ -346,30 +365,75 @@ defmodule PhoenixKitProjects.ApiKeys do
 
   def idempotent(%ApiKey{uuid: key_uuid}, idempotency_key, fun)
       when is_binary(idempotency_key) do
-    # The key is RESERVED before the work runs (a pending row, status 0),
-    # so two retries in flight at once cannot both run it: the second
-    # finds the row and answers 409 until the first has stored its
-    # response. A 5xx frees the key again so a retry may run the work.
+    # The checkout is the lease: it must outlive any request, and the pool's
+    # default 15 s would drop a slow one's connection (and lock) mid-work.
+    RepoHelper.repo().checkout(
+      fn ->
+        case advisory_lock(key_uuid, idempotency_key) do
+          :locked ->
+            try do
+              locked(key_uuid, idempotency_key, fun)
+            after
+              advisory_unlock(key_uuid, idempotency_key)
+            end
+
+          :busy ->
+            {:ok, 409,
+             %{
+               error: %{
+                 code: "in_progress",
+                 message:
+                   "A request with this Idempotency-Key is still running; retry in a moment."
+               }
+             }}
+
+          :unavailable ->
+            wrap(fun.())
+        end
+      end,
+      timeout: @lock_timeout
+    )
+  end
+
+  # Holding the lock, no other live request has this pair. The key is
+  # RESERVED before the work runs (a pending row, status 0); a pending row
+  # found here belongs to a request that died (it would hold the lock
+  # otherwise), so it is taken over. A 5xx frees the key again so a retry
+  # may run the work.
+  defp locked(key_uuid, idempotency_key, fun) do
     case reserve(key_uuid, idempotency_key) do
-      {:reserved, row} ->
-        run_reserved(row, fun)
-
-      {:stored, %ApiIdempotency{status: status, body: body}} ->
-        {:replay, status, body}
-
-      :pending ->
-        {:ok, 409,
-         %{
-           error: %{
-             code: "in_progress",
-             message:
-               "A request with this Idempotency-Key is still running, or was cut off before it answered. Retry in a moment; if it never clears, check what the first attempt did and use a new Idempotency-Key."
-           }
-         }}
-
-      :unavailable ->
-        wrap(fun.())
+      {:reserved, row} -> run_reserved(row, fun)
+      {:stored, %ApiIdempotency{status: status, body: body}} -> {:replay, status, body}
+      :unavailable -> wrap(fun.())
     end
+  end
+
+  @doc false
+  # The lock's name; public so the tests can hold it from another session.
+  @spec lock_name(binary(), String.t()) :: String.t()
+  def lock_name(key_uuid, idempotency_key), do: "pkp_idem:#{key_uuid}:#{idempotency_key}"
+
+  defp advisory_lock(key_uuid, idempotency_key) do
+    case RepoHelper.repo().query("SELECT pg_try_advisory_lock(hashtextextended($1, 0))", [
+           lock_name(key_uuid, idempotency_key)
+         ]) do
+      {:ok, %{rows: [[true]]}} -> :locked
+      {:ok, %{rows: [[false]]}} -> :busy
+      _ -> :unavailable
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects.ApiKeys] idempotency lock unavailable: #{Exception.message(e)}")
+      :unavailable
+  end
+
+  # Best effort: if the connection is gone the lock went with it.
+  defp advisory_unlock(key_uuid, idempotency_key) do
+    RepoHelper.repo().query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [
+      lock_name(key_uuid, idempotency_key)
+    ])
+  rescue
+    _ -> :ok
   end
 
   defp reserve(key_uuid, idempotency_key) do
@@ -378,12 +442,8 @@ defmodule PhoenixKitProjects.ApiKeys do
     row = %{api_key_uuid: key_uuid, idempotency_key: idempotency_key, status: 0, body: %{}}
 
     case RepoHelper.repo().insert_all(ApiIdempotency, [row], on_conflict: :nothing) do
-      {1, _} ->
-        {:reserved,
-         %ApiIdempotency{api_key_uuid: key_uuid, idempotency_key: idempotency_key, status: 0}}
-
-      _ ->
-        existing(key_uuid, idempotency_key)
+      {1, _} -> {:reserved, pending_row(key_uuid, idempotency_key)}
+      _ -> existing(key_uuid, idempotency_key)
     end
   rescue
     e ->
@@ -396,16 +456,16 @@ defmodule PhoenixKitProjects.ApiKeys do
            api_key_uuid: key_uuid,
            idempotency_key: idempotency_key
          ) do
-      # Pending: the first request is running, or was cut off before it could
-      # answer. Age proves nothing about which (a slow database call or a slow
-      # extension provider outlives any timeout), and running the work a
-      # second time beside a live first run is the worse failure — so a
-      # pending row is never reclaimed by the clock.
-      %ApiIdempotency{status: 0} -> :pending
+      # Pending, and we hold the lock: the request that reserved it is gone.
+      %ApiIdempotency{status: 0} -> {:reserved, pending_row(key_uuid, idempotency_key)}
       %ApiIdempotency{} = stored -> {:stored, stored}
-      nil -> :pending
+      # Freed between the conflict and the read (a 5xx released it): ours now.
+      nil -> reserve(key_uuid, idempotency_key)
     end
   end
+
+  defp pending_row(key_uuid, idempotency_key),
+    do: %ApiIdempotency{api_key_uuid: key_uuid, idempotency_key: idempotency_key, status: 0}
 
   # The work runs exactly once; what it answered is stored under the
   # reservation. A 5xx or a crash frees the reservation and the answer

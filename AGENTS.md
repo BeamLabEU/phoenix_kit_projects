@@ -432,7 +432,7 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.Portal` | `phoenix_kit_project_portals` |
 | `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
 | `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — a project's API keys, the credentials of `Web.Api`) |
-| `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation, answered 409 `in_progress` until its request stores a response — never reclaimed by age) |
+| `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation; who holds it is a Postgres session advisory lock pinned for the request, so a live holder is 409 `in_progress` and a dead one's row is taken over — see `ApiKeys.idempotent/3`) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
 

@@ -6,7 +6,7 @@ defmodule PhoenixKitProjects.ApiKeysTest do
   import Ecto.Query
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{ApiKeys, Authz, Members}
+  alias PhoenixKitProjects.{ApiKeys, Authz, IdempotencyHold, Members}
   alias PhoenixKitProjects.Schemas.ApiKey
 
   setup do
@@ -169,45 +169,43 @@ defmodule PhoenixKitProjects.ApiKeysTest do
     assert {:ok, 201, %{"n" => 4}} = ApiKeys.idempotent(other, "abc", fun)
   end
 
-  test "a pending reservation is never reclaimed by age: a live request keeps its key", %{
+  test "a live holder keeps its key; a dead one's pending row is taken over once", %{
     project: project
   } do
     {:ok, key, _} = ApiKeys.create(project, %{"name" => "k"})
-    parent = self()
+    counter = :counters.new(1, [])
 
-    first =
-      Task.async(fn ->
-        ApiKeys.idempotent(key, "live-slow", fn ->
-          send(parent, :reserved)
+    fun = fn ->
+      :counters.add(counter, 1, 1)
+      {201, %{"ran" => :counters.get(counter, 1)}}
+    end
 
-          receive do
-            :finish -> {201, %{"owner" => "first"}}
-          after
-            5_000 -> raise "test timed out"
-          end
-        end)
-      end)
+    # a first request reserved the key and is alive (it holds the lock)
+    {1, _} =
+      PhoenixKit.RepoHelper.repo().insert_all(
+        PhoenixKitProjects.Schemas.ApiIdempotency,
+        [%{api_key_uuid: key.uuid, idempotency_key: "k1", status: 0, body: %{}}]
+      )
 
-    assert_receive :reserved, 1_000
+    holder = IdempotencyHold.hold(key.uuid, "k1")
 
-    # ten minutes "pass": a slow database call or provider outlives any timeout,
-    # so the clock must not hand the key to a second run of the same work
+    # however old its row gets, a live request is never run beside
     PhoenixKit.RepoHelper.repo().update_all(
       from(i in PhoenixKitProjects.Schemas.ApiIdempotency,
-        where: i.api_key_uuid == ^key.uuid and i.idempotency_key == "live-slow"
+        where: i.api_key_uuid == ^key.uuid and i.idempotency_key == "k1"
       ),
-      set: [inserted_at: DateTime.add(DateTime.utc_now(), -600, :second)]
+      set: [inserted_at: DateTime.add(DateTime.utc_now(), -3_600, :second)]
     )
 
-    assert {:ok, 409, %{error: %{code: "in_progress"}}} =
-             ApiKeys.idempotent(key, "live-slow", fn -> raise "must not run" end)
+    assert {:ok, 409, %{error: %{code: "in_progress"}}} = ApiKeys.idempotent(key, "k1", fun)
+    assert :counters.get(counter, 1) == 0
 
-    send(first.pid, :finish)
-    assert {:ok, 201, %{"owner" => "first"}} = Task.await(first)
+    # it dies: the lock goes with its connection, and the pending row is ours
+    IdempotencyHold.release(holder)
 
-    # the first request's answer is the one that is stored and replayed
-    assert {:replay, 201, %{"owner" => "first"}} =
-             ApiKeys.idempotent(key, "live-slow", fn -> raise "must replay" end)
+    assert {:ok, 201, %{"ran" => 1}} = ApiKeys.idempotent(key, "k1", fun)
+    assert {:replay, 201, %{"ran" => 1}} = ApiKeys.idempotent(key, "k1", fun)
+    assert :counters.get(counter, 1) == 1
   end
 
   describe "a personal key needs its person's live account" do
