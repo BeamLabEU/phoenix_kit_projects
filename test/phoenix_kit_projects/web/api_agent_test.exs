@@ -12,7 +12,8 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Features, Labels, Ledger, Projects}
-  alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitProjects.Schemas.{ApiIdempotency, Assignment, Project}
+  alias PhoenixKitProjects.Test.Repo
 
   @base "/api/projects/v1"
 
@@ -495,7 +496,9 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
     end)
 
     {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "crm_client")
-    c = api(conn, token)
+    # the link needs the interactions scope: a key minted now carries it (the setup's does not)
+    {:ok, _, scoped} = ApiKeys.create(project, %{"name" => "Linker", "role" => "manager"})
+    c = api(conn, scoped)
     uuid = "01a10000-0000-7000-8000-000000000001"
 
     %{"task" => t} =
@@ -635,6 +638,89 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
     # the briefing lists what is coming up
     %{"events" => [%{"uuid" => ^uuid}]} = c |> get("#{@base}/briefing") |> json_response(200)
+  end
+
+  test "bad shapes are refused, not dropped: checklist, done, labels, completion, a bad interaction on update",
+       %{
+         conn: conn,
+         project: project,
+         token: token
+       } do
+    c = api(conn, token)
+    {:ok, _} = Features.set_flags(project, %{"labels" => true})
+
+    %{"task" => t} =
+      c
+      |> post_json(
+        "#{@base}/tasks",
+        %{"title" => "Shapes", "checklist" => [%{"text" => "one"}]},
+        idem()
+      )
+      |> json_response(201)
+
+    assert %{"error" => %{"code" => "validation_failed", "details" => %{"checklist" => _}}} =
+             c
+             |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"checklist" => "x"})
+             |> json_response(422)
+
+    %{"task" => %{"checklist_items" => [item]}} =
+      c |> get("#{@base}/tasks/#{t["uuid"]}") |> json_response(200)
+
+    assert %{"error" => %{"code" => "validation_failed", "details" => %{"done" => _}}} =
+             c
+             |> patch_json("#{@base}/tasks/#{t["uuid"]}/checklist/#{item["id"]}", %{
+               "done" => "yes"
+             })
+             |> json_response(422)
+
+    long = String.duplicate("x", 61)
+
+    assert %{"error" => %{"code" => "validation_failed", "details" => %{"labels" => _}}} =
+             c
+             |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"labels" => [long]})
+             |> json_response(422)
+
+    assert %{"error" => %{"code" => "validation_failed"}} =
+             c
+             |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"labels" => "furniture"})
+             |> json_response(422)
+
+    assert %{"error" => %{"code" => "validation_failed", "details" => %{"completion" => _}}} =
+             c
+             |> post_json("#{@base}/subprojects", %{"name" => "Odd", "completion" => "bogus"})
+             |> json_response(422)
+
+    # an unknown interaction on update is refused BEFORE the text changes
+    assert %{"error" => %{"code" => "not_found"}} =
+             c
+             |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{
+               "title" => "Renamed",
+               "interaction" => Ecto.UUID.generate()
+             })
+             |> json_response(404)
+
+    assert %{"task" => %{"title" => "Shapes"}} =
+             c |> get("#{@base}/tasks/#{t["uuid"]}") |> json_response(200)
+
+    # a retry while the first is still running answers 409, never a second task
+    {:ok, pending} =
+      %ApiIdempotency{}
+      |> ApiIdempotency.changeset(%{
+        api_key_uuid: elem(ApiKeys.authenticate(token), 1).uuid,
+        idempotency_key: "held",
+        status: 0,
+        body: %{}
+      })
+      |> Repo.insert()
+
+    assert pending.status == 0
+
+    assert %{"error" => %{"code" => "in_progress"}} =
+             c
+             |> post_json("#{@base}/tasks", %{"title" => "Twice"}, [{"idempotency-key", "held"}])
+             |> json_response(409)
+
+    refute Enum.any?(Projects.list_assignments(project.uuid), &(Assignment.label(&1) == "Twice"))
   end
 
   test "ledger corrections: own entries under the policy, any for a manager key", %{

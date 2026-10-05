@@ -127,6 +127,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
   end
 
   @doc false
+  @spec parse_since(term()) :: DateTime.t() | nil
   def parse_since(since) when is_binary(since) do
     case DateTime.from_iso8601(since) do
       {:ok, dt, _} -> dt

@@ -1091,28 +1091,34 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # …and back: lines to items, keeping the ids of the items whose text did
   # not change (a tick or an edit is an update, not a new item).
   defp fold_checklist(attrs, %{"checklist_text" => text}, assignment) when is_binary(text) do
-    existing = ((assignment && assignment.checklist) || []) |> Map.new(&{&1["text"], &1})
+    # Each existing item lends its id to the FIRST line with its text, so
+    # two lines that read the same stay two items.
+    existing = (assignment && assignment.checklist) || []
 
-    items =
+    {items, _left} =
       text
       |> String.split(~r/\r?\n/)
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
-      |> Enum.map(fn line ->
+      |> Enum.map_reduce(existing, fn line, pool ->
         {done, rest} =
           case Regex.run(~r/^\[(x|X| )?\]\s*(.*)$/, line) do
             [_, mark, rest] -> {String.downcase(mark) == "x", rest}
             _ -> {false, line}
           end
 
-        base = Map.get(existing, String.trim(rest), %{})
+        {base, pool} =
+          case Enum.split_with(pool, &(&1["text"] == String.trim(rest))) do
+            {[match | rest_matches], others} -> {match, rest_matches ++ others}
+            {[], others} -> {%{}, others}
+          end
 
-        %{
-          "id" => base["id"],
-          "text" => rest,
-          "done" => done,
-          "done_at" => if(done, do: base["done_at"])
-        }
+        {%{
+           "id" => base["id"],
+           "text" => rest,
+           "done" => done,
+           "done_at" => if(done, do: base["done_at"])
+         }, pool}
       end)
 
     Map.put(attrs, "checklist", items)
@@ -1719,7 +1725,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {:ok, updated} ->
         # A person saved the form: the title and description are theirs
         # now, whatever key wrote them before.
-        {:ok, _} = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
+        _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
         apply_pending_labels(socket, updated)
         sync_task_mentions(socket, updated.uuid, attrs["description"])
 

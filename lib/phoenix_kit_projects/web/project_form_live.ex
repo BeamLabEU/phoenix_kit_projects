@@ -832,7 +832,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         merge_attrs(attrs, socket)
         |> clear_other_assignees(assign_type)
         |> maybe_apply_status_mode(params, socket.assigns.project, fx)
-        |> apply_project_type(params, socket.assigns.project)
+        |> apply_project_type(
+          params,
+          socket.assigns.project,
+          socket.assigns[:can_manage_modules] == true
+        )
         |> strip_gated_project_attrs(fx)
 
       socket =
@@ -1212,7 +1216,13 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # settings JSONB beside the status-mode key, so the fold starts from
   # whatever the earlier folds built (never from an empty map: a posted
   # settings map replaces every key the project holds).
-  defp apply_project_type(attrs, params, project) do
+  defp apply_project_type(attrs, params, project, can_manage?)
+
+  # Without `manage_modules` the controls are not on the page, and a
+  # crafted post must not reach the settings either.
+  defp apply_project_type(attrs, _params, _project, false), do: attrs
+
+  defp apply_project_type(attrs, params, project, true) do
     base = Map.get(attrs, "settings") || (project && project.settings) || %{}
 
     settings =
@@ -2625,6 +2635,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                  should be a setting"). Ongoing work never completes on its
                  own; every task done is "all caught up". --%>
             <.select
+              :if={@can_manage_modules}
               name="completion"
               label={gettext("Ends")}
               value={Project.completion(@project)}
@@ -2639,7 +2650,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                  module serves a locked-down client project and an open
                  sandbox. --%>
             <% policy = Project.agent_policy(@project) %>
-            <fieldset class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+            <fieldset :if={@can_manage_modules} class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
               <legend class="px-1 text-sm font-medium">{gettext("What an AI agent may do here")}</legend>
               <label :for={{key, label} <- agent_policy_switches()} class="flex items-center gap-2 cursor-pointer text-sm">
                 <input type="hidden" name={"agents[#{key}]"} value="false" />

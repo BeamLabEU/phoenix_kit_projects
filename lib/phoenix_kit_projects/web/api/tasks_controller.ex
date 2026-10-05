@@ -16,8 +16,10 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   use Phoenix.Controller, formats: [:json]
 
+  require Logger
+
   alias PhoenixKit.Mentions
-  alias PhoenixKitProjects.{Activity, Extensions, Features, Labels, Ledger, Projects}
+  alias PhoenixKitProjects.{Activity, Authz, Extensions, Features, Labels, Ledger, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Web.Api.ExtController
   alias PhoenixKitProjects.Web.Api.Json
@@ -42,9 +44,14 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       uuids = Enum.map(tasks, & &1.uuid)
       totals = Ledger.totals_for_assignments(uuids)
       labels = Labels.labels_for_assignments(uuids)
+      links = Projects.interactions_for_assignments(uuids)
 
       json(conn, %{
-        tasks: Enum.map(tasks, &Json.task(&1, totals[&1.uuid], labels[&1.uuid] || [])),
+        tasks:
+          Enum.map(
+            tasks,
+            &Json.task(&1, totals[&1.uuid], labels[&1.uuid] || [], links[&1.uuid] || [])
+          ),
         count: length(tasks),
         # whole seconds, like `updated_at`: a `now` with microseconds skipped
         # a change made in the same second
@@ -114,8 +121,11 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     %{pk_api_key: key, pk_project: project} = conn.assigns
     params = Map.merge(params, position_attrs(project, params["position"]))
 
-    case check_interaction(conn, params["interaction"]) do
-      :ok -> do_create_checked(conn, key, project, params)
+    with :ok <- check_interaction(conn, params["interaction"]),
+         :ok <- check_labels(params["labels"]),
+         :ok <- check_checklist(params["checklist"]) do
+      do_create_checked(conn, key, project, params)
+    else
       {:error, pair} -> pair
     end
   end
@@ -138,7 +148,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
           sync_mentions(a.uuid, task_attrs["description"], key)
 
-          {:ok, _} =
+          # provenance and links after the row exists; the interaction was
+          # checked before, so a failure here is a store problem, logged
+          _ =
             Projects.stamp_assignment(a, %{
               created_by_uuid: ApiKey.accountable_uuid(key),
               created_by_key_uuid: key.uuid,
@@ -146,7 +158,14 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
             })
 
           apply_labels(project, a, params["labels"])
-          link_interaction(conn, a, params["interaction"])
+
+          case link_interaction(conn, a, params["interaction"]) do
+            :ok ->
+              :ok
+
+            {:error, {_status, body}} ->
+              Logger.warning("[Projects.Api] link after create failed: #{inspect(body)}")
+          end
 
           {201, %{task: Json.task(Projects.get_assignment(a.uuid))}}
 
@@ -180,17 +199,24 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     with :ok <- content_editable(a, content),
          :ok <- text_policy(key, a, project, content),
          {:ok, assignment_attrs} <- assignment_attrs(params),
+         :ok <- check_interaction(conn, params["interaction"]),
+         :ok <- check_labels(params["labels"]),
+         :ok <- check_checklist(params["checklist"]),
          {:ok, _} <- update_content(a, content),
          {:ok, _} <- update_fields(a, assignment_attrs),
          :ok <- stamp_words(a, key, content),
          :ok <- keep_interaction_tokens(conn, a),
          :ok <- apply_labels(project, a, params["labels"]),
          :ok <- link_interaction(conn, a, params["interaction"]) do
+      changed =
+        Map.keys(Map.merge(content, assignment_attrs)) ++
+          Enum.filter(["labels", "interaction"], &Map.has_key?(params, &1))
+
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
         resource_uuid: a.uuid,
-        metadata: api_metadata(key, %{"fields" => Map.keys(Map.merge(content, assignment_attrs))})
+        metadata: api_metadata(key, %{"fields" => changed})
       )
 
       if Map.has_key?(content, "description"),
@@ -323,8 +349,12 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks) do
       case link_interaction(conn, a, uuid) do
-        :ok -> json(conn, %{task: Json.task(Projects.get_assignment(a.uuid) || a)})
-        {:error, {status, body}} -> conn |> put_status(status) |> json(body)
+        :ok ->
+          log_link(conn, a, uuid, "linked")
+          json(conn, %{task: Json.task(Projects.get_assignment(a.uuid) || a)})
+
+        {:error, {status, body}} ->
+          conn |> put_status(status) |> json(body)
       end
     else
       {:halt, conn} -> conn
@@ -338,6 +368,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks) do
       :ok = Projects.unlink_interaction(a, uuid)
+      log_link(conn, a, uuid, "unlinked")
       json(conn, %{task: Json.task(Projects.get_assignment(a.uuid) || a)})
     else
       {:halt, conn} -> conn
@@ -348,14 +379,30 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   # An interaction belongs to the project that holds the client — often the
   # parent of the sub-project the task sits in — so the lookup tries the
   # task's project first, then each ancestor within the key's reach.
+  defp log_link(conn, a, uuid, what) do
+    key = conn.assigns.pk_api_key
+
+    Activity.log("projects.assignment_updated",
+      actor_uuid: ApiKey.accountable_uuid(key),
+      resource_type: "assignment",
+      resource_uuid: a.uuid,
+      metadata:
+        api_metadata(key, %{"fields" => ["interactions"], "interaction" => uuid, "change" => what})
+    )
+  end
+
   defp interaction_label(conn, uuid) do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
-    with %{module: provider} <- Extensions.api_provider("interactions"),
-         true <- function_exported?(provider, :get, 2) do
+    with %{ext: ext, module: provider} <- Extensions.api_provider("interactions"),
+         true <- function_exported?(provider, :get, 2),
+         true <- ApiKey.scope?(key, provider.scopes().read) do
       candidates =
         [project | Enum.reverse(Projects.parent_chain(project.uuid))]
-        |> Enum.filter(&Json.within_reach?(key, &1.uuid))
+        |> Enum.filter(fn p ->
+          Json.within_reach?(key, p.uuid) and Extensions.enabled?(p, ext.key) and
+            Authz.can_role?(p, key.role, :view)
+        end)
 
       Enum.find_value(candidates, :error, fn p ->
         ctx = ExtController.ctx(Json.rescope(conn, p))
@@ -401,13 +448,59 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp apply_labels(project, a, names) when is_list(names) do
     if Features.on?(project, "labels") do
-      Labels.set_assignment_labels(a, Labels.ensure_by_names(project, names))
+      Labels.set_assignment_labels(a, Labels.ensure_by_names(project, names, label_opts(a)))
     end
 
     :ok
   end
 
   defp apply_labels(_project, _a, _), do: :ok
+
+  # The key behind a label made on the fly, in its activity row.
+  defp label_opts(a) do
+    case Projects.get_assignment(a.uuid) do
+      %Assignment{created_by_uuid: uuid, created_by_key_uuid: key_uuid} ->
+        [actor_uuid: uuid, metadata: %{"via" => "api", "api_key" => key_uuid}]
+
+      _ ->
+        []
+    end
+  end
+
+  # A checklist is a list of items, or absent — never a string.
+  defp check_checklist(nil), do: :ok
+  defp check_checklist(items) when is_list(items), do: :ok
+
+  defp check_checklist(_),
+    do:
+      {:error,
+       Json.error_body(422, "validation_failed", "checklist must be a list of items.", %{
+         checklist: ["must be a list"]
+       })}
+
+  # Label names: a list of strings, each 1–60 characters (the registry's
+  # cap); anything else is a 422 rather than a silent drop.
+  defp check_labels(nil), do: :ok
+
+  defp check_labels(names) when is_list(names) do
+    bad = Enum.reject(names, &(is_binary(&1) and String.length(String.trim(&1)) in 1..60))
+
+    if bad == [],
+      do: :ok,
+      else:
+        {:error,
+         Json.error_body(
+           422,
+           "validation_failed",
+           "labels must be names of 1 to 60 characters.",
+           %{
+             labels: Enum.map(bad, &inspect/1)
+           }
+         )}
+  end
+
+  defp check_labels(_),
+    do: {:error, Json.error_body(422, "validation_failed", "labels must be a list of names.")}
 
   # `position: "top"` puts the new task above every other row; anything
   # else (or nothing) appends, as a form does.
@@ -508,25 +601,34 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp do_checklist_item(conn, a, item_id, params) do
     key = conn.assigns.pk_api_key
-    done = params["done"] in [true, "true"]
 
-    if Enum.any?(a.checklist || [], &(&1["id"] == item_id)) do
-      case Projects.update_checklist_item(a, item_id, done) do
-        {:ok, saved} ->
-          Activity.log("projects.assignment_updated",
-            actor_uuid: ApiKey.accountable_uuid(key),
-            resource_type: "assignment",
-            resource_uuid: a.uuid,
-            metadata: api_metadata(key, %{"fields" => ["checklist"]})
-          )
+    case Map.get(params, "done") do
+      done when done in [true, false, "true", "false"] ->
+        case Projects.update_checklist_item(a, item_id, done in [true, "true"]) do
+          {:ok, saved} ->
+            Activity.log("projects.assignment_updated",
+              actor_uuid: ApiKey.accountable_uuid(key),
+              resource_type: "assignment",
+              resource_uuid: a.uuid,
+              metadata: api_metadata(key, %{"fields" => ["checklist"], "item" => item_id})
+            )
 
-          {200, %{task: Json.task(Projects.get_assignment(saved.uuid) || saved)}}
+            {200, %{task: Json.task(Projects.get_assignment(saved.uuid) || saved)}}
 
-        {:error, %Ecto.Changeset{} = cs} ->
-          Json.changeset_error(cs)
-      end
-    else
-      Json.error_body(404, "not_found", "No such checklist item on this task.")
+          {:error, :not_found} ->
+            Json.error_body(404, "not_found", "No such checklist item on this task.")
+
+          {:error, %Ecto.Changeset{} = cs} ->
+            Json.changeset_error(cs)
+
+          {:error, _} ->
+            Json.error_body(409, "conflict", "The checklist could not be updated.")
+        end
+
+      _ ->
+        Json.error_body(422, "validation_failed", "done must be true or false.", %{
+          done: ["is required"]
+        })
     end
   end
 

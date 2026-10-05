@@ -3681,10 +3681,20 @@ defmodule PhoenixKitProjects.Projects do
       inserted_at: DateTime.utc_now() |> DateTime.truncate(:second)
     }
 
-    repo().insert_all(@task_interactions, [row], on_conflict: :nothing, prefix: @table_prefix)
-    ensure_interaction_token(a, interaction_uuid, label, opts)
-  rescue
-    e -> {:error, e}
+    # One transaction, the task row locked: two links at once both land
+    # their tokens, and a token that cannot be written leaves no join row.
+    repo().transaction(fn ->
+      fresh =
+        repo().one!(from(x in Assignment, where: x.uuid == ^a.uuid, lock: "FOR UPDATE"))
+        |> repo().preload(:task)
+
+      repo().insert_all(@task_interactions, [row], on_conflict: :nothing, prefix: @table_prefix)
+
+      case ensure_interaction_token(fresh, interaction_uuid, label, opts) do
+        {:ok, updated} -> updated
+        {:error, reason} -> repo().rollback(reason)
+      end
+    end)
   end
 
   @doc "Removes the link (the token stays in the text as plain history). `:ok` either way."
@@ -3719,6 +3729,24 @@ defmodule PhoenixKitProjects.Projects do
     )
   rescue
     _ -> []
+  end
+
+  @doc "Interaction uuids per task uuid for a displayed set, one query."
+  @spec interactions_for_assignments([binary()]) :: %{binary() => [String.t()]}
+  def interactions_for_assignments([]), do: %{}
+
+  def interactions_for_assignments(uuids) when is_list(uuids) do
+    repo().all(
+      from(j in @task_interactions,
+        where: j.assignment_uuid in type(^uuids, {:array, Ecto.UUID}),
+        order_by: [asc: j.inserted_at],
+        select: {type(j.assignment_uuid, Ecto.UUID), type(j.interaction_uuid, Ecto.UUID)}
+      )
+      |> with_table_prefix()
+    )
+    |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+  rescue
+    _ -> %{}
   end
 
   @doc "The tasks linked to an interaction, as assignments (task preloaded), oldest link first."
@@ -3851,13 +3879,23 @@ defmodule PhoenixKitProjects.Projects do
             item -> item
           end)
 
-        case update_assignment_form(fresh, %{checklist: updated}) do
+        case update_assignment_form(fresh, %{checklist: updated}, broadcast: false) do
           {:ok, saved} -> saved
           {:error, reason} -> repo().rollback(reason)
         end
       else
         repo().rollback(:not_found)
       end
+    end)
+    |> tap(fn
+      {:ok, saved} ->
+        ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+          uuid: saved.uuid,
+          project_uuid: saved.project_uuid
+        })
+
+      _ ->
+        :ok
     end)
   end
 

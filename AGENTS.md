@@ -714,13 +714,12 @@ and kept through a note's usage; `GET /entries` and `GET /tasks/{id}/entries`
 `GET /events`, `GET /events/{id}` (`Web.Api.EventsController`, needs the
 events extension); the briefing carries `client.interactions` (the Client
 extension's provider, `since`-narrowed) and `events` (the next five).
-**Task ↔ interaction**: `Projects.link_assignment_to/5` appends the mention
-token `#[type:uuid|label]` to a task's description and re-syncs the index —
+**Task ↔ interaction**: first as a mention token appended to the
+description, then (V20, below) as a join table with the token kept in step —
 `interaction: <uuid>` on `POST`/`PATCH /tasks` (the provider's `get/2`
 supplies the label), `tasks: [<uuid>]` on the CRM's interaction create/update
-(`ProjectsLink.link_task/3`), `interactions: [uuid]` on a task
-(`Json.interaction_uuids/1` parses the tokens), `tasks: [{uuid, title}]` on
-an interaction (core's `Mentions.list_backlinks/3`). An extension's `api:`
+(`ProjectsLink.link_task/3`), `interactions: [uuid]` on a task, `tasks:
+[{uuid, title}]` on an interaction. An extension's `api:`
 may now be a LIST of providers (`Extension.normalize_api/2`); the CRM adds
 `PhoenixKitCRM.CompanyApi` (`/ext/companies`, the client and its people, on
 the interactions scopes). The UI: no progress bar on an ongoing project; a

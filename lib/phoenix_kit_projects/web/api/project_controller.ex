@@ -65,6 +65,11 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
           name: ["can't be blank"]
         })
 
+      not is_nil(params["completion"]) and params["completion"] not in ["auto", "manual"] ->
+        Json.error_body(422, "validation_failed", "completion must be auto or manual.", %{
+          completion: ["auto", "manual"]
+        })
+
       length(Projects.parent_chain(parent.uuid)) >= @max_nesting ->
         Json.error_body(
           422,

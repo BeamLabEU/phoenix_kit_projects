@@ -43,6 +43,7 @@ defmodule PhoenixKitProjects.Web.Api.EventsController do
   end
 
   @doc false
+  @spec event_json(map()) :: map()
   def event_json(e) do
     %{
       uuid: e.uuid,

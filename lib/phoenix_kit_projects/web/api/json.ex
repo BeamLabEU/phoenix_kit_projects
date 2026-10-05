@@ -230,8 +230,8 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   from `Ledger.totals_for_assignments/1`: pass the batch for a list, or
   nothing for one task.
   """
-  @spec task(Assignment.t(), map() | nil) :: map()
-  def task(%Assignment{} = a, totals \\ nil, labels \\ nil) do
+  @spec task(Assignment.t(), map() | nil, [map()] | nil, [String.t()] | nil) :: map()
+  def task(%Assignment{} = a, totals \\ nil, labels \\ nil, interactions \\ nil) do
     totals =
       (totals || Map.get(Ledger.totals_for_assignments([a.uuid]), a.uuid))
       |> whole_totals()
@@ -264,7 +264,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       words_by: if(a.words_by_key_uuid, do: %{key: a.words_by_key_uuid}, else: %{person: true}),
-      interactions: interaction_uuids(a),
+      interactions: interactions || interaction_uuids(a),
       library_task: library_task?(a),
       completed_at: a.completed_at,
       inserted_at: a.inserted_at,

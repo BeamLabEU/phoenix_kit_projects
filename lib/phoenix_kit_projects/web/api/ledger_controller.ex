@@ -114,14 +114,17 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     end
   end
 
-  # Corrections. `PATCH /entries/:id` amends a time entry's minutes;
+  # Corrections. `PATCH /entries/:id` amends a time entry's minutes or a
+  # tokens/cost entry's amount;
   # `DELETE /entries/:id` removes any entry. The key may touch its own
   # rows when the project's `amend_own_ledger` policy allows, and a
   # manager key any row; either leaves a trace in the activity feed
   # (`projects.work_amended` / `work_removed`).
   def update_entry(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- checks(conn, "time:write", :log_time),
+    with {:ok, conn} <- Json.require_scope(conn, "time:write"),
          {:ok, conn, entry} <- own_entry(conn, id),
+         {:ok, conn} <- Json.require_feature(conn, :ledger),
+         {:ok, conn} <- Json.require_action(conn, :log_time),
          {:ok, figure} <- amendment(entry, params) do
       key = conn.assigns.pk_api_key
       actor = ApiKey.accountable_uuid(key)
@@ -174,8 +177,10 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     do: Ledger.update_amount(entry, amount, actor_uuid: actor, metadata: meta)
 
   def delete_entry(conn, %{"id" => id}) do
-    with {:ok, conn} <- checks(conn, "time:write", :log_time),
+    with {:ok, conn} <- Json.require_scope(conn, "time:write"),
          {:ok, conn, entry} <- own_entry(conn, id),
+         {:ok, conn} <- Json.require_feature(conn, :ledger),
+         {:ok, conn} <- Json.require_action(conn, :log_time),
          {:ok, conn} <- not_billable(conn, entry) do
       key = conn.assigns.pk_api_key
 

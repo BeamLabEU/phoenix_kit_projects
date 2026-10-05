@@ -306,33 +306,93 @@ defmodule PhoenixKitProjects.ApiKeys do
 
   def idempotent(%ApiKey{uuid: key_uuid}, idempotency_key, fun)
       when is_binary(idempotency_key) do
+    # The key is RESERVED before the work runs (a pending row, status 0),
+    # so two retries in flight at once cannot both run it: the second
+    # finds the row and answers 409 until the first has stored its
+    # response. A 5xx frees the key again so a retry may run the work.
+    case reserve(key_uuid, idempotency_key) do
+      {:reserved, row} ->
+        run_reserved(row, fun)
+
+      {:stored, %ApiIdempotency{status: status, body: body}} ->
+        {:replay, status, body}
+
+      :pending ->
+        {:ok, 409,
+         %{
+           error: %{
+             code: "in_progress",
+             message: "A request with this Idempotency-Key is still running; retry in a moment."
+           }
+         }}
+
+      :unavailable ->
+        wrap(fun.())
+    end
+  end
+
+  defp reserve(key_uuid, idempotency_key) do
+    # `insert_all` with `on_conflict: :nothing` says how many rows it
+    # wrote: one means the key is ours, zero means a row is there already.
+    row = %{api_key_uuid: key_uuid, idempotency_key: idempotency_key, status: 0, body: %{}}
+
+    case RepoHelper.repo().insert_all(ApiIdempotency, [row], on_conflict: :nothing) do
+      {1, _} ->
+        {:reserved,
+         %ApiIdempotency{api_key_uuid: key_uuid, idempotency_key: idempotency_key, status: 0}}
+
+      _ ->
+        existing(key_uuid, idempotency_key)
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects.ApiKeys] idempotency store unavailable: #{Exception.message(e)}")
+      :unavailable
+  end
+
+  defp existing(key_uuid, idempotency_key) do
     case RepoHelper.repo().get_by(ApiIdempotency,
            api_key_uuid: key_uuid,
            idempotency_key: idempotency_key
          ) do
-      %ApiIdempotency{status: status, body: body} ->
-        {:replay, status, body}
-
-      nil ->
-        {status, body} = fun.()
-
-        if status < 500 do
-          %ApiIdempotency{}
-          |> ApiIdempotency.changeset(%{
-            api_key_uuid: key_uuid,
-            idempotency_key: idempotency_key,
-            status: status,
-            body: body
-          })
-          |> RepoHelper.repo().insert(on_conflict: :nothing)
-        end
-
-        {:ok, status, body}
+      %ApiIdempotency{status: 0} -> :pending
+      %ApiIdempotency{} = stored -> {:stored, stored}
+      nil -> :pending
     end
+  end
+
+  # The work runs exactly once; what it answered is stored under the
+  # reservation. A 5xx or a crash frees the reservation and the answer
+  # (or the raise) goes out as it is — never a second run.
+  defp run_reserved(row, fun) do
+    {status, body} = fun.()
+
+    if status < 500 do
+      RepoHelper.repo().update_all(
+        from(i in ApiIdempotency,
+          where: i.api_key_uuid == ^row.api_key_uuid and i.idempotency_key == ^row.idempotency_key
+        ),
+        set: [status: status, body: body]
+      )
+    else
+      release(row)
+    end
+
+    {:ok, status, body}
   rescue
     e ->
-      Logger.warning("[Projects.ApiKeys] idempotency store failed: #{Exception.message(e)}")
-      wrap(fun.())
+      release(row)
+      reraise e, __STACKTRACE__
+  end
+
+  defp release(row) do
+    RepoHelper.repo().delete_all(
+      from(i in ApiIdempotency,
+        where: i.api_key_uuid == ^row.api_key_uuid and i.idempotency_key == ^row.idempotency_key
+      )
+    )
+  rescue
+    _ -> :ok
   end
 
   defp wrap({status, body}), do: {:ok, status, body}

@@ -63,8 +63,15 @@ defmodule PhoenixKitProjects.Labels do
       case Map.get(existing, String.downcase(name)) do
         nil ->
           case create(project, %{name: name}, opts) do
-            {:ok, label} -> [label.uuid]
-            _ -> []
+            {:ok, label} ->
+              [label.uuid]
+
+            # the other request won the race: the row is there now
+            {:error, _} ->
+              project.uuid
+              |> list_for_project()
+              |> Enum.filter(&(String.downcase(&1.name) == String.downcase(name)))
+              |> Enum.map(& &1.uuid)
           end
 
         uuid ->
