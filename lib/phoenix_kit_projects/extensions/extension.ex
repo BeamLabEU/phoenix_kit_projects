@@ -107,7 +107,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
           notification_types: [map()],
           on_enable: {module(), atom()} | nil,
           on_disable: {module(), atom()} | nil,
-          api: module() | nil,
+          api: module() | [module()] | nil,
           data_retention: :keep,
           default_enabled: boolean(),
           category: String.t() | nil,
@@ -234,6 +234,15 @@ defmodule PhoenixKitProjects.Extensions.Extension do
   # ── Lifecycle callbacks ────────────────────────────────────────────
 
   defp normalize_api(nil, _source), do: nil
+
+  # Several resources from one extension: a list of provider modules.
+  defp normalize_api(mods, source) when is_list(mods) do
+    case mods |> Enum.map(&normalize_api(&1, source)) |> Enum.reject(&is_nil/1) do
+      [] -> nil
+      [one] -> one
+      many -> many
+    end
+  end
 
   defp normalize_api(mod, source) when is_atom(mod) do
     if Code.ensure_loaded?(mod) and function_exported?(mod, :resource, 0) do

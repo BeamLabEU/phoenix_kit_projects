@@ -153,10 +153,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
           {201,
            %{
              note: TaskNotes.to_json(note),
-             entries:
-               Enum.map(entries, fn e ->
-                 %{uuid: e.uuid, kind: e.kind, amount: Decimal.to_float(e.amount)}
-               end)
+             entries: Enum.map(entries, &Json.entry/1)
            }}
 
         {:error, :content_too_long} ->
@@ -230,7 +227,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
          cost_cents: cost,
          minutes: minutes,
          model: if(is_binary(usage["model"]) and usage["model"] != "", do: usage["model"]),
-         occurred_at: occurred_at
+         occurred_at: occurred_at,
+         estimated: usage["estimated"] in [true, "true"]
        }}
     end
   end

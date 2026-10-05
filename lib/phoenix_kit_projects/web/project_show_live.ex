@@ -3843,7 +3843,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- Schedule summary + progress as ONE card: the progress bar is the
            card's bottom edge (a thin flush strip), so the two read as a unit. --%>
       <% show_schedule = @fx.scheduling and @project.started_at != nil and @schedule != nil %>
-      <% show_progress = @fx.tasks and @total_tasks > 0 and not @is_template %>
+      <%!-- Ongoing work has no finish line, so no bar towards one (Max,
+           2026-10-05); the header's badges say Ongoing / All caught up. --%>
+      <% show_progress = @fx.tasks and @total_tasks > 0 and not @is_template and not Project.ongoing?(@project) %>
       <% show_effort = @fx.ledger and @ledger_totals != nil %>
       <%= if show_schedule or show_progress or show_effort do %>
         <div class="bg-base-200/50 rounded-t-lg overflow-hidden">
@@ -4229,6 +4231,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                         <span class="badge badge-outline badge-sm gap-1">
                           <.icon name="hero-rectangle-stack" class="w-3 h-3" />
                           {gettext("%{done}/%{total} tasks", done: sp_summary.done, total: sp_summary.total)}
+                        </span>
+                        <%!-- An ongoing child never completes: its row stays open,
+                             and when every task is done it says so. --%>
+                        <span :if={Project.ongoing?(child)} class="badge badge-ghost badge-sm gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
+                          <.icon name="hero-arrow-path" class="w-3 h-3" /> {gettext("Ongoing")}
+                        </span>
+                        <span :if={Project.ongoing?(child) and sp_summary.total > 0 and sp_summary.done == sp_summary.total} class="badge badge-success badge-outline badge-sm gap-1">
+                          <.icon name="hero-check" class="w-3 h-3" /> {gettext("All caught up")}
                         </span>
                         <% {sp_hv, sp_hu} = humanize_hours(sp_summary.total_hours) %>
                         <span :if={sp_summary.total_hours > 0} class="badge badge-ghost badge-sm gap-1">

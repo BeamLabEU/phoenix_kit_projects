@@ -342,6 +342,172 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
       c |> get("#{@base}/briefing?limit=1") |> json_response(200)
   end
 
+  defmodule FakeInteractions do
+    @moduledoc false
+    def resource, do: "interactions"
+    def scopes, do: %{read: "interactions:read", write: "interactions:write"}
+    def action, do: :log_interaction
+
+    def list(_ctx, params),
+      do: {:ok, %{interactions: [%{uuid: "i-1", subject: "Call", since: params["since"]}]}}
+
+    def get(_ctx, "01a10000-0000-7000-8000-000000000001"),
+      do:
+        {:ok,
+         %{
+           interaction: %{uuid: "01a10000-0000-7000-8000-000000000001", subject: "Kickoff | call"}
+         }}
+
+    def get(_ctx, _), do: {:error, {404, "not_found", "No such interaction.", nil}}
+  end
+
+  defmodule FakeClient do
+    @moduledoc false
+    def phoenix_kit_project_extensions do
+      [
+        %{
+          key: "crm_client",
+          name: "Client",
+          description: "A test client extension",
+          permission_actions: [:view, :log_interaction],
+          api: PhoenixKitProjects.Web.ApiAgentTest.FakeInteractions
+        }
+      ]
+    end
+  end
+
+  test "entries can be read back, with the estimate flag and who recorded them", %{
+    conn: conn,
+    token: token,
+    key: key
+  } do
+    c = api(conn, token)
+
+    %{"task" => t} =
+      c |> post_json("#{@base}/tasks", %{"title" => "Costly"}, idem()) |> json_response(201)
+
+    %{"entries" => [e | _]} =
+      c
+      |> post_json(
+        "#{@base}/tasks/#{t["uuid"]}/usage",
+        %{"tokens" => 800, "model" => "claude", "estimated" => true},
+        idem()
+      )
+      |> json_response(201)
+
+    assert e["estimated"] == true
+    assert e["model"] == "claude"
+    assert e["actor"] == %{"kind" => "ai_agent", "uuid" => key.uuid}
+
+    %{"entries" => on_task, "task_uuid" => _} =
+      c |> get("#{@base}/tasks/#{t["uuid"]}/entries") |> json_response(200)
+
+    assert Enum.map(on_task, & &1["uuid"]) == [e["uuid"]]
+
+    %{"entries" => all} = c |> get("#{@base}/entries") |> json_response(200)
+    assert e["uuid"] in Enum.map(all, & &1["uuid"])
+
+    # a note's usage keeps the flag too, and its entries are whole numbers
+    %{"note" => note, "entries" => [ne | _]} =
+      c
+      |> post_json(
+        "#{@base}/tasks/#{t["uuid"]}/notes",
+        %{"summary" => "Guessed", "usage" => %{"tokens" => 10, "estimated" => true}},
+        idem()
+      )
+      |> json_response(201)
+
+    assert note["usage"]["estimated"] == true
+    assert ne["amount"] === 10
+    assert ne["estimated"] == true
+
+    me = c |> get("#{@base}/me") |> json_response(200)
+    assert Map.has_key?(me["features"], "labels")
+  end
+
+  test "a task links to a client interaction with a mention token; the briefing carries the client",
+       %{
+         conn: conn,
+         project: project,
+         token: token
+       } do
+    previous = Application.get_env(:phoenix_kit_projects, :extension_providers, [])
+    Application.put_env(:phoenix_kit_projects, :extension_providers, [FakeClient | previous])
+    PhoenixKitProjects.Extensions.Registry.refresh()
+
+    on_exit(fn ->
+      Application.put_env(:phoenix_kit_projects, :extension_providers, previous)
+      PhoenixKitProjects.Extensions.Registry.refresh()
+    end)
+
+    {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "crm_client")
+    c = api(conn, token)
+    uuid = "01a10000-0000-7000-8000-000000000001"
+
+    %{"task" => t} =
+      c
+      |> post_json("#{@base}/tasks", %{"title" => "From the call", "interaction" => uuid}, idem())
+      |> json_response(201)
+
+    assert t["interactions"] == [uuid]
+
+    assert Projects.get_assignment(t["uuid"]).description =~
+             "#[crm_interaction:#{uuid}|Kickoff   call]"
+
+    # linking again is a no-op; an unknown interaction is a 404
+    %{"task" => again} =
+      c
+      |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"interaction" => uuid})
+      |> json_response(200)
+
+    assert again["interactions"] == [uuid]
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             c
+             |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"interaction" => Ecto.UUID.generate()})
+             |> json_response(404)
+
+    # the client lines need the interactions scope: a key minted now carries it
+    {:ok, _, reader} = ApiKeys.create(project, %{"name" => "Client reader"})
+    b = conn |> api(reader) |> get("#{@base}/briefing") |> json_response(200)
+    assert [%{"subject" => "Call"}] = b["client"]["interactions"]
+    assert b["events"] == []
+  end
+
+  test "planned events are readable once the extension is on", %{
+    conn: conn,
+    project: project,
+    token: token
+  } do
+    c = api(conn, token)
+
+    assert %{"error" => %{"code" => "feature_disabled"}} =
+             c |> get("#{@base}/events") |> json_response(403)
+
+    {:ok, _} = PhoenixKitProjects.Extensions.enable(project, "events")
+
+    {:ok, event} =
+      PhoenixKitProjects.ProjectEvents.create(project, %{
+        title: "Review with the client",
+        starts_at: DateTime.add(DateTime.utc_now(), 3600),
+        all_day: false
+      })
+
+    %{"events" => [%{"uuid" => uuid, "title" => "Review with the client"}], "count" => 1} =
+      c |> get("#{@base}/events") |> json_response(200)
+
+    assert uuid == event.uuid
+
+    assert %{"event" => %{"uuid" => ^uuid}} =
+             c |> get("#{@base}/events/#{uuid}") |> json_response(200)
+
+    assert %{"error" => %{"code" => "not_found"}} =
+             c |> get("#{@base}/events/#{Ecto.UUID.generate()}") |> json_response(404)
+
+    # the briefing lists what is coming up
+    %{"events" => [%{"uuid" => ^uuid}]} = c |> get("#{@base}/briefing") |> json_response(200)
+  end
+
   test "ledger corrections: own entries under the policy, any for a manager key", %{
     conn: conn,
     project: project,

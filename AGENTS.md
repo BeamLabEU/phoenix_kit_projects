@@ -705,6 +705,27 @@ carries the columns. What landed:
 Not built, by choice: a fourth lifecycle status (waiting is a badge), a
 parent task (the checklist is the sub-item), typed file refs, ETags (an
 `updated_since` poll is enough), a claim history (the current holder only).
+
+**The second sweep (2026-10-05, same agent, three reports):** `estimated`
+echoed on every entry (`Json.entry/1`: actor, note_uuid, model, estimated)
+and kept through a note's usage; `GET /entries` and `GET /tasks/{id}/entries`
+(the read behind a correction); `/me.features` is the whole gates map;
+`subproject` (`{completion, caught_up, completed_at}`) on a nested row;
+`GET /events`, `GET /events/{id}` (`Web.Api.EventsController`, needs the
+events extension); the briefing carries `client.interactions` (the Client
+extension's provider, `since`-narrowed) and `events` (the next five).
+**Task ↔ interaction**: `Projects.link_assignment_to/5` appends the mention
+token `#[type:uuid|label]` to a task's description and re-syncs the index —
+`interaction: <uuid>` on `POST`/`PATCH /tasks` (the provider's `get/2`
+supplies the label), `tasks: [<uuid>]` on the CRM's interaction create/update
+(`ProjectsLink.link_task/3`), `interactions: [uuid]` on a task
+(`Json.interaction_uuids/1` parses the tokens), `tasks: [{uuid, title}]` on
+an interaction (core's `Mentions.list_backlinks/3`). An extension's `api:`
+may now be a LIST of providers (`Extension.normalize_api/2`); the CRM adds
+`PhoenixKitCRM.CompanyApi` (`/ext/companies`, the client and its people, on
+the interactions scopes). The UI: no progress bar on an ongoing project; a
+nested ongoing row says Ongoing / All caught up.
+
 The earlier list, for the record:
 
 - **Sub-items**: a `parent_uuid` on a task or a checklist — a sub-project per

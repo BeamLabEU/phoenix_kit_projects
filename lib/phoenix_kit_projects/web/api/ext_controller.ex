@@ -100,7 +100,8 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
          )}
   end
 
-  defp ctx(conn) do
+  @doc false
+  def ctx(conn) do
     key = conn.assigns.pk_api_key
 
     %{

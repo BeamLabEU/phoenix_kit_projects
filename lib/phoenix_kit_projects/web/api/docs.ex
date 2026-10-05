@@ -235,6 +235,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         idempotency: :optional,
         params: [
           %{
+            name: "interaction",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a client interaction's uuid this task came out of (the interaction then lists it); the link is a mention token in the description"
+          },
+          %{
             name: "position",
             in: :body,
             type: "string",
@@ -331,6 +339,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         feature: "tasks",
         idempotency: :optional,
         params: [
+          %{
+            name: "interaction",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "link the task to a client interaction (added, never removed here)"
+          },
           %{
             name: "origin",
             in: :body,
@@ -827,6 +842,90 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         example: nil
       },
       %{
+        id: "listEntries",
+        method: "GET",
+        path: "/entries",
+        summary:
+          "The project's ledger entries, newest first (200 at most): time, tokens and cost, who recorded each, the task and the note it belongs to, whether it was an estimate. The read behind a correction: find the uuid, then PATCH or DELETE /entries/{id}.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: "ledger",
+        idempotency: nil,
+        params: [
+          %{
+            name: "project",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "a sub-project's uuid"
+          }
+        ],
+        example: nil
+      },
+      %{
+        id: "listTaskEntries",
+        method: "GET",
+        path: "/tasks/{id}/entries",
+        summary: "The ledger entries on one task, newest first.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: "ledger",
+        idempotency: nil,
+        params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
+        example: nil
+      },
+      %{
+        id: "listEvents",
+        method: "GET",
+        path: "/events",
+        summary:
+          "The project's planned events - meetings, milestones, reviews - in time order: the plan an interaction's event_uuid points at. Needs the events extension on the project.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: "events",
+        idempotency: nil,
+        params: [
+          %{
+            name: "from",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "ISO 8601; events starting at or after"
+          },
+          %{
+            name: "until",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "ISO 8601; events starting before"
+          },
+          %{
+            name: "project",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "a sub-project's uuid"
+          }
+        ],
+        example: nil
+      },
+      %{
+        id: "getEvent",
+        method: "GET",
+        path: "/events/{id}",
+        summary: "One planned event of this project.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: "events",
+        idempotency: nil,
+        params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
+        example: nil
+      },
+      %{
         id: "amendEntry",
         method: "PATCH",
         path: "/entries/{id}",
@@ -1040,6 +1139,10 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
 
     ## Settings that shape what you may do
 
+    `features` on /me is every gate of the task tracker (`labels`, `dependencies`, `subprojects`,
+    …); `extensions` says which records exist beyond tasks (`crm_client` for the client's
+    interactions and company, `events` for the planned events).
+
     `/me` and `/project` carry `agent_policy`, the project's own answers to four questions:
     `take_started_task` (may you start a task someone else started - else 409 `already_started`),
     `edit_foreign_text` (may you reword a task you did not create - else 403 `foreign_text`; your
@@ -1068,12 +1171,24 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       task's status or `progress_pct` - finish the task with `/complete` as usual.
     - `position: "top"` on create puts the task above every row.
 
+    ## Links between records: the mention token
+
+    A task links to another record the way a person does in the forms: a **mention token** in
+    its description, `#[<type>:<uuid>|<label>]`. The types: `project`, `project_task`,
+    `crm_interaction` (a client interaction). The record on the other end lists what links to it:
+    an interaction's `tasks` are the tasks whose description carries its token. You never write
+    the token yourself: pass `interaction: <uuid>` on `POST`/`PATCH /tasks` (the task gains the
+    token, labelled with the interaction's subject) or `tasks: [<uuid>]` on an interaction create
+    or update; a task answers `interactions: [<uuid>]`. For a note, a ref `{type: "interaction",
+    id: <uuid>}` is the convention; it is not resolved.
+
     ## Picking up after a reset, and polling
 
     `GET /briefing` is the one read that restores your state: the project and its policy, the
     open tasks (direction, last outcome, latest note's summary and next steps, who started
-    them, what they wait on, checklist counts), the sub-projects, and the project's notes since
-    a moment. Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
+    them, what they wait on, checklist counts), the sub-projects, the project's notes since a
+    moment, the client's latest interactions (`client.interactions`, when the Client extension
+    is on) and the next planned events (`events`). Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
     once a minute; it answers only what changed (and `now` for the next round).
 
     What is not about one task - a decision, research the client asked for, the state you were
@@ -1100,8 +1215,9 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       when that project is a sub-project whose row was the parent's last open one, the parent
       completes too; reopening the task reopens them. Mean it: a throwaway task you complete can
       close a real project.
-    - **Tokens and cost you cannot see:** send `estimated: true` on a usage post when the figures
-      are your estimate rather than a count; the entry keeps the flag.
+    - **Tokens and cost you cannot see:** send `estimated: true` on a usage post (or in a note's
+      `usage`) when the figures are your estimate rather than a count; every entry answers with
+      `estimated`, `model`, who recorded it and the note it came with.
     - **Workflow statuses belong to the project**, not to tasks: `POST /project/status`, with a slug
       from `available_workflow_statuses`. Tasks have only todo / in_progress / done.
     - **Who did it:** your time and usage are recorded as this key (AI time, apart from people's;
@@ -1115,7 +1231,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       Everything long — reasoning, what you changed, what came out — goes to `POST /tasks/{id}/notes`
       with a one-line `summary` (240 characters at most), your `outcome` for the attempt,
       `next_steps` (2000 at most), `refs` (commits, branches, PRs; 20 at most) and the `usage`
-      it cost, all in one call; the `body` is the long text and has no fixed cap, but a human
+      it cost, all in one call; `content` is the long text and has no fixed cap, but a human
       reads it, so keep it to what the next worker needs. Before you work on a task, `GET /tasks/{id}`: if
       `direction` is set, a person changed the direction after an earlier attempt — follow it, the
       older notes are context; `last_outcome` and `latest_agent_note` say where the last worker stopped.
@@ -1143,7 +1259,10 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `task_uuid`, `child_project_uuid`, `library_task`, `completed_at`, `inserted_at`, `updated_at`,
     `totals` (`minutes`, `tokens`, `cost_cents` logged on the task — sums over the ledger).
     Plus `waiting_on`, `origin`, `labels` (names), `checklist` (`{done, total}`), `created_by` and
-    `started_by` (`{person, key}` uuids - null for a person's own doing), `updated_at`.
+    `started_by` (`{person, key}` uuids - null for a person's own doing), `interactions` (the
+    client interactions it links), `updated_at`; on a `subproject` row, `subproject`
+    (`{completion, caught_up, completed_at}` of the nested project - an ongoing child reads
+    in_progress at 100% when caught up, this says so).
     `GET /tasks/{id}` adds `checklist_items` (`[{id, text, done, done_at}]`), `direction` (the latest redirect, or null), `last_outcome`,
     `latest_agent_note`, `display_summary` (`text` + `source`: description | redirect | agent) and
     `notes_url`. A `subproject` row is a nested project: its lifecycle is its own, the row's status

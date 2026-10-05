@@ -3658,6 +3658,43 @@ defmodule PhoenixKitProjects.Projects do
     |> repo().update()
   end
 
+  @doc """
+  Links a task to a record the way the forms do: its description gains the
+  record's mention token (`#[type:uuid|label]`) when it does not carry one,
+  and the mention index is rebuilt, so the record lists the task among what
+  links to it. Idempotent. Returns the (possibly unchanged) task.
+  """
+  @spec link_assignment_to(Assignment.t(), String.t(), String.t(), String.t(), keyword()) ::
+          {:ok, Assignment.t()} | {:error, term()}
+  def link_assignment_to(%Assignment{} = a, type, target_uuid, label, opts \\ []) do
+    description = a.description || ""
+
+    linked? =
+      description
+      |> Token.parse()
+      |> Enum.any?(&(&1.type == type and &1.uuid == target_uuid))
+
+    if linked? do
+      {:ok, a}
+    else
+      safe_label = label |> to_string() |> String.replace(~r/[|\]]/, " ") |> String.slice(0, 120)
+      token = "#[#{type}:#{target_uuid}|#{safe_label}]"
+      text = if description == "", do: token, else: description <> "\n" <> token
+
+      with {:ok, updated} <- update_assignment_form(a, %{description: text}) do
+        _ =
+          PhoenixKit.Mentions.sync("project_task", updated.uuid, text,
+            field: "description",
+            actor_uuid: Keyword.get(opts, :actor_uuid)
+          )
+
+        {:ok, updated}
+      end
+    end
+  rescue
+    e -> {:error, e}
+  end
+
   @doc "A position above every row of the project, for a task added at the top."
   @spec top_assignment_position(uuid()) :: integer()
   def top_assignment_position(project_uuid) do

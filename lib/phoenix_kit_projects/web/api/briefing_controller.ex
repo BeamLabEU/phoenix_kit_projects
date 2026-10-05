@@ -11,9 +11,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   use Phoenix.Controller, formats: [:json]
 
-  alias PhoenixKitProjects.{Labels, Projects, TaskNotes}
-  alias PhoenixKitProjects.Schemas.{Assignment, Project}
-  alias PhoenixKitProjects.Web.Api.{Json, NotesController}
+  alias PhoenixKitProjects.{Extensions, Labels, ProjectEvents, Projects, TaskNotes}
+  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
+  alias PhoenixKitProjects.Web.Api.{EventsController, ExtController, Json, NotesController}
 
   @max_tasks 50
   @max_notes 20
@@ -61,11 +61,50 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         truncated: length(open) > length(shown),
         tasks: Enum.map(shown, &brief_task(&1, labels[&1.uuid] || [])),
         subprojects: Enum.map(Projects.child_projects(project.uuid), &brief_subproject/1),
-        project_notes: Enum.map(notes, &brief_note/1)
+        project_notes: Enum.map(notes, &brief_note/1),
+        client: client_lines(conn, since),
+        events: upcoming_events(project)
       })
     else
       {:halt, conn} -> conn
     end
+  end
+
+  # The client's latest interactions — the four calls today an agent would
+  # otherwise not learn about — through the extension's provider when the
+  # Client extension is on and the key may read it; `since` narrows them.
+  defp client_lines(conn, since) do
+    %{pk_api_key: key, pk_project: project} = conn.assigns
+
+    with %{ext: ext, module: provider} <- Extensions.api_provider("interactions"),
+         true <- Extensions.enabled?(project, ext.key),
+         true <- ApiKey.scope?(key, provider.scopes().read),
+         {:ok, %{interactions: rows}} <- list_interactions(provider, conn, since) do
+      %{interactions: rows}
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # credo:disable-for-next-line Credo.Check.Refactor.Apply
+  defp list_interactions(provider, conn, since) do
+    params = %{"limit" => "5"}
+    params = if since, do: Map.put(params, "since", DateTime.to_iso8601(since)), else: params
+    apply(provider, :list, [ExtController.ctx(conn), params])
+  end
+
+  defp upcoming_events(project) do
+    if Extensions.enabled?(project, "events") do
+      project.uuid
+      |> ProjectEvents.list_for_project(from: DateTime.utc_now(), limit: 5)
+      |> Enum.map(&EventsController.event_json/1)
+    else
+      []
+    end
+  rescue
+    _ -> []
   end
 
   defp limit(v) when is_binary(v) do

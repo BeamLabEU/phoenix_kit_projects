@@ -494,6 +494,7 @@ defmodule PhoenixKitProjects.TaskNotes do
         base_meta
         |> Map.merge(%{tokens: tokens, cost_cents: cost, agent_uuid: actor.uuid})
         |> maybe_put(:model, usage[:model])
+        |> maybe_put(:estimated, if(usage[:estimated] == true, do: true))
 
       Ledger.record_ai(project_uuid, payload,
         assignment_uuid: target.assignment_uuid,
@@ -546,7 +547,7 @@ defmodule PhoenixKitProjects.TaskNotes do
     usage = Map.new(usage, fn {k, v} -> {to_atom_key(k), v} end)
 
     if Enum.any?([:tokens, :cost_cents, :minutes], &positive?(usage[&1])),
-      do: Map.take(usage, [:tokens, :cost_cents, :minutes, :model, :occurred_at]),
+      do: Map.take(usage, [:tokens, :cost_cents, :minutes, :model, :occurred_at, :estimated]),
       else: nil
   end
 
@@ -563,6 +564,7 @@ defmodule PhoenixKitProjects.TaskNotes do
       "minutes" -> :minutes
       "model" -> :model
       "occurred_at" -> :occurred_at
+      "estimated" -> :estimated
       _other -> :ignored
     end
   end

@@ -65,6 +65,42 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     end
   end
 
+  # Reads: the entries on a task, or on the project (`project` picks a
+  # sub-project), newest first — what an agent needs after a reset to find
+  # the uuid of the row it wants to correct.
+  def index(conn, params) do
+    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
+         {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_feature(conn, :ledger),
+         {:ok, conn} <- Json.require_action(conn, :view) do
+      entries = Ledger.list_entries(conn.assigns.pk_project.uuid, limit: 200)
+      json(conn, %{entries: Enum.map(entries, &Json.entry/1), count: length(entries)})
+    else
+      {:halt, conn} -> conn
+    end
+  end
+
+  def task_index(conn, %{"id" => id}) do
+    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
+         {:ok, conn} <- Json.require_feature(conn, :ledger),
+         {:ok, conn} <- Json.require_action(conn, :view),
+         {:ok, conn, a} <- TasksController.fetch(conn, id) do
+      entries =
+        conn.assigns.pk_project.uuid
+        |> Ledger.list_entries(limit: 500)
+        |> Enum.filter(&(&1.assignment_uuid == a.uuid))
+
+      json(conn, %{
+        task_uuid: a.uuid,
+        entries: Enum.map(entries, &Json.entry/1),
+        count: length(entries)
+      })
+    else
+      {:halt, conn} -> conn
+      {:error, :not_found} -> TasksController.not_found(conn)
+    end
+  end
+
   # Corrections. `PATCH /entries/:id` amends a time entry's minutes;
   # `DELETE /entries/:id` removes any entry. The key may touch its own
   # rows when the project's `amend_own_ledger` policy allows, and a
@@ -78,7 +114,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
              actor_uuid: ApiKey.accountable_uuid(conn.assigns.pk_api_key)
            ) do
         {:ok, e} ->
-          json(conn, %{entry: entry_json(e)})
+          json(conn, %{entry: Json.entry(e)})
 
         {:error, :invalid} ->
           Json.error(conn, :conflict, "conflict", "Only a time entry's minutes can be amended.")
@@ -140,17 +176,6 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
            "No such ledger entry within this key's reach."
          )}
     end
-  end
-
-  defp entry_json(e) do
-    %{
-      uuid: e.uuid,
-      kind: e.kind,
-      amount: Json.number(e.amount),
-      task_uuid: e.assignment_uuid,
-      occurred_at: e.ended_at,
-      recorded_at: e.inserted_at
-    }
   end
 
   defp checks(conn, scope, action) do
@@ -281,17 +306,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
       {:ok, entries} ->
         {201,
          %{
-           entries:
-             Enum.map(entries, fn e ->
-               %{
-                 uuid: e.uuid,
-                 kind: e.kind,
-                 amount: Json.number(e.amount),
-                 task_uuid: assignment_uuid,
-                 occurred_at: e.ended_at,
-                 recorded_at: e.inserted_at
-               }
-             end)
+           entries: Enum.map(entries, &Json.entry/1)
          }}
 
       {:error, :nothing_to_record} ->

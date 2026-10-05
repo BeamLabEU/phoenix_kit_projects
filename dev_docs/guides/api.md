@@ -124,6 +124,12 @@ and/or a key), `waiting_on`, `origin`, labels by name and a checklist;
 notes, `updated_since` the poll. AGENTS.md ("What the first agent on the API
 asked for") has the map from each ask to its code.
 
+Records link by **mention token** (`#[type:uuid|label]` in a task's
+description — the forms' own way): `interaction:` on a task, `tasks:` on an
+interaction, read back as `interactions` / `tasks`. The ledger is readable
+(`GET /entries`, `GET /tasks/{id}/entries`), events too (`GET /events`), and
+the briefing carries the client's latest interactions and the next events.
+
 ## The calls
 
 `GET /me` is the entry point (key, project, features on, `allowed_actions`,

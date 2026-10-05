@@ -36,14 +36,9 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
       },
       acting_for: acting_for(key),
       project: Json.project(project),
-      features: %{
-        tasks: Map.get(fx, :tasks, false),
-        ledger: Map.get(fx, :ledger, false),
-        statuses: Map.get(fx, :statuses, false),
-        estimates: Map.get(fx, :estimates, false),
-        priorities: Map.get(fx, :priorities, false),
-        progress: Map.get(fx, :progress, false)
-      },
+      # Every gate of the task tracker (labels, dependencies, subprojects,
+      # … included) — the guide names them and an agent reads them here.
+      features: fx,
       extensions: Extensions.enabled_map(project.uuid),
       agent_policy: Project.agent_policy(project),
       allowed_actions: allowed,

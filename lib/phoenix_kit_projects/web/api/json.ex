@@ -243,6 +243,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       totals: totals,
       uuid: a.uuid,
       kind: if(a.child_project_uuid, do: "subproject", else: "task"),
+      # a nested project's own answers — a caught-up ongoing child reads
+      # as in_progress at 100% on its row, this says why
+      subproject: subproject_state(a),
       title: Assignment.label(a),
       description: description(a),
       status: a.status,
@@ -260,6 +263,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       checklist: checklist,
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
+      interactions: interaction_uuids(a),
       library_task: library_task?(a),
       completed_at: a.completed_at,
       inserted_at: a.inserted_at,
@@ -295,6 +299,42 @@ defmodule PhoenixKitProjects.Web.Api.Json do
 
   defp library_task?(%Assignment{task: %Task{ad_hoc: ad_hoc}}), do: not ad_hoc
   defp library_task?(_), do: false
+
+  @doc """
+  A ledger entry as JSON: what it holds, who recorded it, the task it is on,
+  the note it came with, and whether the figure was an estimate.
+  """
+  @spec entry(map()) :: map()
+  def entry(e) do
+    m = e.metadata || %{}
+
+    %{
+      uuid: e.uuid,
+      kind: e.kind,
+      amount: number(e.amount),
+      task_uuid: e.assignment_uuid,
+      actor: %{kind: e.actor_kind, uuid: e.actor_uuid},
+      note: e.note,
+      note_uuid: m["note_uuid"],
+      model: m["model"],
+      estimated: m["estimated"] == true,
+      occurred_at: e.ended_at,
+      recorded_at: e.inserted_at
+    }
+  end
+
+  @doc "The interactions a task's description links with `#[crm_interaction:…]` tokens."
+  @spec interaction_uuids(Assignment.t()) :: [String.t()]
+  def interaction_uuids(%Assignment{} = a) do
+    [description(a), a.description]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.flat_map(&PhoenixKit.Mentions.Token.parse/1)
+    |> Enum.filter(&(&1.type == "crm_interaction"))
+    |> Enum.map(& &1.uuid)
+    |> Enum.uniq()
+  rescue
+    _ -> []
+  end
 
   @doc "A ledger amount as JSON: whole numbers stay integers (`12`, not `12.0`); a fraction stays a float."
   @spec number(Decimal.t() | number() | nil) :: number() | nil
@@ -354,6 +394,22 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       completed_at: p.completed_at,
       archived_at: p.archived_at
     }
+  end
+
+  defp subproject_state(%Assignment{child_project_uuid: nil}), do: nil
+
+  defp subproject_state(%Assignment{child_project_uuid: uuid}) do
+    case Projects.get_project(uuid) do
+      nil ->
+        nil
+
+      child ->
+        %{
+          completion: Project.completion(child),
+          caught_up: Projects.caught_up?(child),
+          completed_at: child.completed_at
+        }
+    end
   end
 
   @doc "Whether the key may change this task's words: it created the task, or the project allows it."

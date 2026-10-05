@@ -17,8 +17,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKit.Mentions
-  alias PhoenixKitProjects.{Activity, Features, Labels, Ledger, Projects}
+  alias PhoenixKitProjects.{Activity, Extensions, Features, Labels, Ledger, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
+  alias PhoenixKitProjects.Web.Api.ExtController
   alias PhoenixKitProjects.Web.Api.Json
 
   @priorities ~w(urgent high normal low)
@@ -134,6 +135,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
             })
 
           apply_labels(project, a, params["labels"])
+          link_interaction(conn, a, params["interaction"])
 
           {201, %{task: Json.task(Projects.get_assignment(a.uuid))}}
 
@@ -169,7 +171,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          {:ok, assignment_attrs} <- assignment_attrs(params),
          {:ok, _} <- update_content(a, content),
          {:ok, _} <- update_fields(a, assignment_attrs),
-         :ok <- apply_labels(project, a, params["labels"]) do
+         :ok <- apply_labels(project, a, params["labels"]),
+         :ok <- link_interaction(conn, a, params["interaction"]) do
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
@@ -218,6 +221,54 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
            "This task's title and description were written by someone else; the project does not let an agent reword them.",
            %{policy: "edit_foreign_text"}
          )}
+  end
+
+  # `interaction: <uuid>` links the task to a client interaction the way
+  # the meeting's "Add task" button does — a mention token in the
+  # description — so the interaction lists it among what came out of it.
+  # The uuid must be an interaction of this project (the CRM provider
+  # answers for it); its subject is the token's label.
+  defp link_interaction(_conn, _a, nil), do: :ok
+
+  defp link_interaction(conn, a, uuid) when is_binary(uuid) do
+    key = conn.assigns.pk_api_key
+
+    case interaction_label(conn, uuid) do
+      {:ok, label} ->
+        case Projects.link_assignment_to(a, "crm_interaction", uuid, label,
+               actor_uuid: ApiKey.accountable_uuid(key)
+             ) do
+          {:ok, _} ->
+            :ok
+
+          {:error, _} ->
+            {:error,
+             Json.error_body(422, "validation_failed", "The interaction could not be linked.")}
+        end
+
+      :error ->
+        {:error,
+         Json.error_body(404, "not_found", "No such interaction on this project.", %{
+           interaction: uuid
+         })}
+    end
+  end
+
+  defp link_interaction(_conn, _a, _),
+    do: {:error, Json.error_body(422, "validation_failed", "interaction must be a uuid.")}
+
+  defp interaction_label(conn, uuid) do
+    with %{module: provider} <- Extensions.api_provider("interactions"),
+         true <- function_exported?(provider, :get, 2),
+         ctx = ExtController.ctx(conn),
+         # credo:disable-for-next-line Credo.Check.Refactor.Apply
+         {:ok, %{interaction: i}} <- apply(provider, :get, [ctx, uuid]) do
+      {:ok, i[:subject] || i[:type] || "interaction"}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
   end
 
   # Labels by name, when the project has labels on; a nil means "leave them".

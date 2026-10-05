@@ -395,8 +395,12 @@ defmodule PhoenixKitProjects.Extensions do
   @spec api_providers() :: [%{ext: Extension.t(), module: module()}]
   def api_providers do
     Registry.list()
-    |> Enum.filter(&(is_atom(&1.api) and not is_nil(&1.api)))
-    |> Enum.map(&%{ext: &1, module: &1.api})
+    |> Enum.flat_map(fn ext ->
+      ext.api
+      |> List.wrap()
+      |> Enum.filter(&(is_atom(&1) and not is_nil(&1)))
+      |> Enum.map(&%{ext: ext, module: &1})
+    end)
   end
 
   @doc "The provider serving `/ext/<resource>`, or nil."
