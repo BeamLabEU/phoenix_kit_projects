@@ -1,7 +1,8 @@
 defmodule PhoenixKitProjects.Web.Routes do
   @moduledoc """
   Route contributions beyond the admin tabs (which auto-generate from
-  `admin_tabs/0` / `user_dashboard_tabs/0`): the PUBLIC portal surface.
+  `admin_tabs/0` / `user_dashboard_tabs/0`): the PUBLIC portal surface and
+  the JSON API (`PhoenixKitProjects.Web.Api`, under `/api/projects/v1`).
 
   `generate/1` is core's `compile_module_public_routes` hook — the AST
   splices into the host router at top level, before the `/:locale` public
@@ -19,6 +20,45 @@ defmodule PhoenixKitProjects.Web.Routes do
       # search indexing (panel #10).
       pipeline :pk_projects_portal do
         plug(PhoenixKitProjects.Web.PortalHeaders)
+      end
+
+      # The JSON API an outside agent drives a project with. Bearer-token
+      # auth (`Web.Api.Auth`), no session, no CSRF, no locale segment — a
+      # machine contract, and the error messages are English on purpose.
+      pipeline :pk_projects_api do
+        plug(:accepts, ["json"])
+        plug(PhoenixKitProjects.Web.Api.Auth)
+      end
+
+      pipeline :pk_projects_api_docs do
+        plug(:accepts, ["json", "text", "markdown"])
+      end
+
+      scope unquote(url_prefix) <> "/api/projects/v1", PhoenixKitProjects.Web.Api do
+        pipe_through([:pk_projects_api_docs])
+
+        get("/llms.txt", DocsController, :llms_txt)
+        get("/openapi.json", DocsController, :openapi)
+      end
+
+      scope unquote(url_prefix) <> "/api/projects/v1", PhoenixKitProjects.Web.Api do
+        pipe_through([:pk_projects_api])
+
+        get("/me", MeController, :show)
+        get("/project", ProjectController, :show)
+        post("/project/status", ProjectController, :set_status)
+        get("/tasks", TasksController, :index)
+        post("/tasks", TasksController, :create)
+        get("/tasks/:id", TasksController, :show)
+        patch("/tasks/:id", TasksController, :update)
+        post("/tasks/:id/transition", TasksController, :transition)
+        post("/tasks/:id/start", TasksController, :start)
+        post("/tasks/:id/complete", TasksController, :complete)
+        post("/tasks/:id/reopen", TasksController, :reopen)
+        post("/tasks/:id/time", LedgerController, :task_time)
+        post("/tasks/:id/usage", LedgerController, :task_usage)
+        post("/time", LedgerController, :project_time)
+        post("/usage", LedgerController, :project_usage)
       end
 
       scope unquote(url_prefix) do

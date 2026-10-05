@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 16
+  @current_version 17
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -113,6 +113,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v14_review_status(p)
     v15_ad_hoc_tasks(p)
     v16_fileless_whiteboards(p)
+    v17_api_keys(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -137,6 +138,11 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 17 do
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_idempotency")
+      execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_keys")
+    end
 
     if target < 16 do
       # Boards without a file have no home in the old shape.
@@ -966,6 +972,60 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_portal_submissions
     ADD COLUMN IF NOT EXISTS submitted_by_uuid UUID
+    """)
+  end
+
+  # V17 — project API keys (the JSON API an outside agent drives a project
+  # with, `PhoenixKitProjects.Web.Api`). A key is its own principal in the
+  # project: a role of its own, scopes, and the identity the work ledger
+  # names for the usage it reports. `key_id` is the public half of the
+  # token (`pkp_<key_id>_<secret>`), unique and looked up on every call;
+  # only the secret's SHA-256 is stored. `created_by_uuid` is provenance —
+  # the person who minted it — and is not a foreign key on purpose: a key
+  # outlives the account that made it until someone revokes it.
+  #
+  # The idempotency table makes the agent's appends safe to retry: a POST
+  # that carries an `Idempotency-Key` stores its response under
+  # (key, header) and a replay answers with the stored response instead of
+  # a second ledger row or a second task. Rows cascade with their key.
+  defp v17_api_keys(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_api_keys (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      name VARCHAR(80) NOT NULL,
+      role VARCHAR(16) NOT NULL DEFAULT 'member',
+      key_id VARCHAR(24) NOT NULL,
+      secret_hash VARCHAR(64) NOT NULL,
+      scopes TEXT[] NOT NULL DEFAULT '{}',
+      created_by_uuid UUID,
+      last_used_at TIMESTAMPTZ,
+      expires_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_api_keys_key_id_index
+    ON #{p}phoenix_kit_project_api_keys (key_id)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_api_keys_project_index
+    ON #{p}phoenix_kit_project_api_keys (project_uuid)
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_api_idempotency (
+      api_key_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_project_api_keys(uuid) ON DELETE CASCADE,
+      idempotency_key VARCHAR(128) NOT NULL,
+      status INTEGER NOT NULL,
+      body JSONB NOT NULL DEFAULT '{}',
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (api_key_uuid, idempotency_key)
+    )
     """)
   end
 

@@ -3727,12 +3727,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   )}
                 </span>
               </div>
-              <%= if @ledger_totals.tokens > 0 or @ledger_totals.cost_cents > 0 do %>
+              <%!-- AI effort, apart from people's: tokens and cost as before, and
+                   the minutes an agent reported over the API (never billable). --%>
+              <%= if @ledger_totals.tokens > 0 or @ledger_totals.cost_cents > 0 or @ledger_totals.ai_minutes > 0 do %>
                 <span class="text-base-content/40">·</span>
                 <div class="flex items-center gap-2">
                   <.icon name="hero-cpu-chip" class="w-4 h-4 text-base-content/60" />
                   <span class="text-base-content/60">{gettext("AI:")}</span>
-                  <span class="font-medium">{format_tokens(@ledger_totals.tokens)}</span>
+                  <span :if={@ledger_totals.ai_minutes > 0} class="font-medium">
+                    {format_minutes(@ledger_totals.ai_minutes)}
+                  </span>
+                  <span :if={@ledger_totals.tokens > 0} class="font-medium">
+                    {format_tokens(@ledger_totals.tokens)}
+                  </span>
                   <span :if={@ledger_totals.cost_cents > 0} class="text-base-content/50">
                     ({format_cents(@ledger_totals.cost_cents)})
                   </span>

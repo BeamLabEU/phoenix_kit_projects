@@ -53,7 +53,8 @@ defmodule PhoenixKitProjects.Ledger do
       billable: Keyword.get(opts, :billable, false),
       source: Keyword.get(opts, :source, "manual"),
       started_at: Keyword.get(opts, :started_at),
-      ended_at: Keyword.get(opts, :ended_at)
+      ended_at: Keyword.get(opts, :ended_at),
+      metadata: Keyword.get(opts, :metadata, %{})
     })
   end
 
@@ -254,22 +255,26 @@ defmodule PhoenixKitProjects.Ledger do
       RepoHelper.repo().all(
         from(e in WorkEntry,
           where: e.project_uuid == ^project_uuid,
-          group_by: [e.kind, e.billable],
-          select: {e.kind, e.billable, sum(e.amount)}
+          group_by: [e.kind, e.billable, e.actor_kind],
+          select: {e.kind, e.billable, e.actor_kind, sum(e.amount)}
         )
       )
 
-    Enum.reduce(rows, empty_totals(), fn {kind, billable, sum}, acc ->
+    # `time_minutes` is PEOPLE's time, as it always was; an agent's minutes
+    # (`actor_kind: "ai_agent"`, reported over the API) are `ai_minutes`, so
+    # the one kind keeps one meaning and the split is by who did it.
+    Enum.reduce(rows, empty_totals(), fn {kind, billable, actor_kind, sum}, acc ->
       sum = Decimal.to_float(sum)
 
       acc =
-        case kind do
-          "time" -> Map.update!(acc, :time_minutes, &(&1 + sum))
-          "tokens" -> Map.update!(acc, :tokens, &(&1 + sum))
-          "cost" -> Map.update!(acc, :cost_cents, &(&1 + sum))
+        case {kind, actor_kind} do
+          {"time", "ai_agent"} -> Map.update!(acc, :ai_minutes, &(&1 + sum))
+          {"time", _} -> Map.update!(acc, :time_minutes, &(&1 + sum))
+          {"tokens", _} -> Map.update!(acc, :tokens, &(&1 + sum))
+          {"cost", _} -> Map.update!(acc, :cost_cents, &(&1 + sum))
         end
 
-      if kind == "time" and billable,
+      if kind == "time" and billable and actor_kind != "ai_agent",
         do: Map.update!(acc, :billable_minutes, &(&1 + sum)),
         else: acc
     end)
@@ -303,7 +308,13 @@ defmodule PhoenixKitProjects.Ledger do
   end
 
   defp empty_totals,
-    do: %{time_minutes: 0.0, tokens: 0.0, cost_cents: 0.0, billable_minutes: 0.0}
+    do: %{
+      time_minutes: 0.0,
+      ai_minutes: 0.0,
+      tokens: 0.0,
+      cost_cents: 0.0,
+      billable_minutes: 0.0
+    }
 
   defp insert_entry(project_or_uuid, attrs) do
     project_or_uuid

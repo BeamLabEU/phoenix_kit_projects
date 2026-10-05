@@ -301,6 +301,26 @@ defmodule PhoenixKitProjects.Authz do
   end
 
   @doc """
+  May a principal holding `role` on `project` perform `action`? The floor
+  check alone — no membership lookup, no relationship grant, no admin
+  override — for a principal that IS its role: a project API key
+  (`Schemas.ApiKey`), whose role is stored on the key rather than resolved
+  from a person. `role` may be an atom or its string; an unknown role or
+  action is a hard no.
+  """
+  @spec can_role?(map() | nil, atom() | String.t(), atom()) :: boolean()
+  def can_role?(project, role, action) when is_atom(action) do
+    case to_role_atom(role) do
+      nil -> false
+      role_atom -> not is_nil(project) and meets_floor?(role_atom, floor_for(project, action))
+    end
+  rescue
+    _ -> false
+  end
+
+  def can_role?(_project, _role, _action), do: false
+
+  @doc """
   The role a user effectively holds on a project: the STRONGEST of their
   direct membership and every group grant that matches them (their teams,
   their departments, their site roles). Always an ATOM from `roles/0`, or

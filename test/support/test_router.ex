@@ -22,6 +22,42 @@ defmodule PhoenixKitProjects.Test.Router do
     plug(:protect_from_forgery)
   end
 
+  pipeline :pk_projects_api do
+    plug(:accepts, ["json"])
+    plug(PhoenixKitProjects.Web.Api.Auth)
+  end
+
+  pipeline :pk_projects_api_docs do
+    plug(:accepts, ["json", "text", "markdown"])
+  end
+
+  scope "/api/projects/v1", PhoenixKitProjects.Web.Api do
+    pipe_through([:pk_projects_api_docs])
+
+    get("/llms.txt", DocsController, :llms_txt)
+    get("/openapi.json", DocsController, :openapi)
+  end
+
+  scope "/api/projects/v1", PhoenixKitProjects.Web.Api do
+    pipe_through([:pk_projects_api])
+
+    get("/me", MeController, :show)
+    get("/project", ProjectController, :show)
+    post("/project/status", ProjectController, :set_status)
+    get("/tasks", TasksController, :index)
+    post("/tasks", TasksController, :create)
+    get("/tasks/:id", TasksController, :show)
+    patch("/tasks/:id", TasksController, :update)
+    post("/tasks/:id/transition", TasksController, :transition)
+    post("/tasks/:id/start", TasksController, :start)
+    post("/tasks/:id/complete", TasksController, :complete)
+    post("/tasks/:id/reopen", TasksController, :reopen)
+    post("/tasks/:id/time", LedgerController, :task_time)
+    post("/tasks/:id/usage", LedgerController, :task_usage)
+    post("/time", LedgerController, :project_time)
+    post("/usage", LedgerController, :project_usage)
+  end
+
   scope "/en/admin/projects", PhoenixKitProjects.Web do
     pipe_through(:browser)
 

@@ -202,7 +202,13 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
 
     test "empty project rolls up to zeros", %{project: project} do
       assert Ledger.totals_for_project(project.uuid) ==
-               %{time_minutes: 0.0, tokens: 0.0, cost_cents: 0.0, billable_minutes: 0.0}
+               %{
+                 time_minutes: 0.0,
+                 ai_minutes: 0.0,
+                 tokens: 0.0,
+                 cost_cents: 0.0,
+                 billable_minutes: 0.0
+               }
     end
 
     test "time_for_assignments groups only the requested time entries",

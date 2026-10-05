@@ -20,6 +20,8 @@ defmodule PhoenixKitProjects.Test.Endpoint do
 
   socket("/live", Phoenix.LiveView.Socket, websocket: [connect_info: [session: @session_options]])
 
+  # The API controllers read JSON bodies; a host endpoint parses them, this one must too.
+  plug(Plug.Parsers, parsers: [:urlencoded, :multipart, :json], json_decoder: Jason)
   plug(Plug.Session, @session_options)
   plug(PhoenixKitProjects.Test.Router)
 end

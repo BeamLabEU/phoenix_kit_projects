@@ -431,6 +431,8 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.Label` | `phoenix_kit_project_labels` |
 | `Schemas.Portal` | `phoenix_kit_project_portals` |
 | `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
+| `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — a project's API keys, the credentials of `Web.Api`) |
+| `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
 
 All UUIDv7 PKs; every table-backed schema applies `use PhoenixKit.SchemaPrefix`
@@ -519,6 +521,10 @@ browsing the public portal is a visitor.
 - `projects.project_archived/unarchived`
 - `projects.template_created/updated/deleted`, `projects.project_created_from_template`
 - `projects.task_created/updated/deleted`, `projects.task_promoted`
+- `projects.api_key_created/rotated/revoked` (resource: the project); `projects.project_status_changed`
+  (the workflow status set over the API). Every entry the API writes carries
+  `metadata.via = "api"`, `metadata.api_key` and `metadata.api_key_name`, with the
+  key's minter as `actor_uuid`.
 - `projects.task_dependency_added/removed`, `projects.dependency_added/removed`
 - `projects.assignment_created/updated/started/completed/reopened/removed`
 - `projects.assignment_progress_updated`, `projects.assignment_duration_changed`,
@@ -630,6 +636,24 @@ surfaces as a pool timeout that reads like flakiness.
 slider-audit coalescing window (runtime default 1s) so tests can wait it out.
 
 ## Feature notes
+
+### The JSON API (`/api/projects/v1`)
+
+The surface an outside agent drives ONE project with — `dev_docs/guides/api.md`
+is the full account. In short: per-project API keys (`ApiKeys`, minted on the
+Modules & Features page) are their own principal — a role of their own, never
+owner, plus scopes — authorised by `Authz.can_role?/3` (the project's floors
+and overrides, nothing else) and the project's feature gates; `Web.Api.Auth`
+is the bearer plug, `Web.Api.Json` the shared checks and shapes, the
+controllers call the same context functions the LiveViews do. The agent-facing
+contract is generated from `Web.Api.Docs.endpoints/0` as `llms.txt` and
+`openapi.json`; **never add an endpoint the table does not list**. Ledger
+appends require an `Idempotency-Key` (`ApiKeys.idempotent/3`); an agent's
+minutes are `kind: "time"` by an `ai_agent` actor, never billable, summed as
+`ai_minutes`. The routes come from `Web.Routes.generate/1` and are mirrored
+in `test/support/test_router.ex`; the test endpoint parses JSON for them.
+Not yet: webhooks, per-key rate limits, `occurred_at` on usage posts.
+
 
 | Feature | The constraint that must hold | Guide |
 |---|---|---|
