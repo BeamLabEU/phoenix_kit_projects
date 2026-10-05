@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
   alias PhoenixKitProjects.{Attachments, Authz, Extensions, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Live.Components.MediaSelectorModal
@@ -114,6 +115,21 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
   # ── Events ──────────────────────────────────────────────────────
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(remove_file))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event("open_picker", _params, socket) do
     with_upload_authz(socket, fn ->
       case Attachments.ensure_folder(socket.assigns.project, Activity.actor_uuid(socket)) do
@@ -263,10 +279,12 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs btn-circle text-error"
-                  phx-click="remove_file"
-                  phx-value-uuid={file.uuid}
-                  phx-disable-with="…"
-                  data-confirm={gettext("Remove this file from the project?")}
+                  {ConfirmAction.ask("remove_file",
+                    uuid: file.uuid,
+                    title: gettext("Remove file"),
+                    message: gettext("Remove this file from the project?"),
+                    confirm: gettext("Remove")
+                  )}
                   aria-label={gettext("Remove file")}
                 >
                   <.icon name="hero-x-mark" class="w-4 h-4" />
@@ -287,6 +305,7 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
           phoenix_kit_current_user={assigns[:phoenix_kit_current_user]}
         />
       <% end %>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

@@ -27,6 +27,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Label
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -206,6 +207,21 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
   # ── Events ──────────────────────────────────────────────────────
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete_label))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event("toggle_ext", %{"key" => key}, socket) do
     with_authz(socket, fn ->
       project = socket.assigns.project
@@ -740,10 +756,12 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
               {label.name}
               <button
                 type="button"
-                phx-click="delete_label"
-                phx-disable-with={gettext("Removing…")}
-                phx-value-uuid={label.uuid}
-                data-confirm={gettext("Remove the \"%{name}\" label from this project?", name: label.name)}
+                {ConfirmAction.ask("delete_label",
+                  uuid: label.uuid,
+                  title: gettext("Remove label"),
+                  message: gettext("Remove the \"%{name}\" label from this project?", name: label.name),
+                  confirm: gettext("Remove")
+                )}
                 aria-label={gettext("Remove %{name}", name: label.name)}
                 class="cursor-pointer opacity-60 hover:opacity-100"
               >
@@ -780,6 +798,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
             </.button>
           </form>
       </.form_section>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

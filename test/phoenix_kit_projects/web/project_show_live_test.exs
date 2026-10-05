@@ -1000,11 +1000,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       view |> element(~s(button[phx-click="open_review"])) |> render_click()
 
+      # Reject asks first (core's confirm modal), then the confirmed action runs.
       view
       |> element(
-        ~s(button[phx-click="review_submission"][phx-value-uuid="#{pending.uuid}"][phx-value-decision="rejected"])
+        ~s(button[phx-value-event="review_submission"][phx-value-uuid="#{pending.uuid}"][phx-value-decision="rejected"])
       )
       |> render_click()
+
+      render_click(view, "confirm_action_ok", %{})
 
       all = view |> element("button[phx-value-tab=all]") |> render_click()
       refute pending.uuid in list_rows(all)

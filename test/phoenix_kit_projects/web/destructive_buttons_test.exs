@@ -60,9 +60,20 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
       assert_disable_with(html, "start_task")
     end
 
-    test "remove_assignment button", %{conn: conn, project: project} do
+    # Remove asks first through core's confirm modal (`Components.ConfirmAction`):
+    # the row button only opens the question, so it carries no disable-with —
+    # the double-click guard is the modal itself, whose confirm takes the
+    # pending action out of the socket, so a second click finds nothing to run.
+    test "remove_assignment button asks first", %{conn: conn, project: project} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert_disable_with(html, "remove_assignment")
+
+      tags = Regex.scan(~r/<[a-z]+\s[^>]*phx-value-event="remove_assignment"[^>]*>/s, html)
+      assert tags != [], "expected a button that asks to remove the assignment"
+
+      for [tag] <- tags do
+        assert tag =~ ~s(phx-click="request_confirm")
+        refute tag =~ "data-confirm="
+      end
     end
 
     test "toggle_tracking button (track-off branch)", %{conn: conn, project: project} do

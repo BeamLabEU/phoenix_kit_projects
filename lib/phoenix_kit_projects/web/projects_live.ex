@@ -36,6 +36,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ListUi
   alias PhoenixKitWeb.TableColumns
@@ -266,6 +267,21 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   @impl true
+
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
 
   # Sort selector fires `sort_form` for both field changes (via the
   # form's phx-change) and direction toggles (via the button's
@@ -669,6 +685,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         columns={columns_spec().columns}
         selected={@visible_columns}
       />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end
@@ -773,10 +790,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
               />
               <.table_row_menu_divider />
               <.table_row_menu_button
-                phx-click="delete"
-                phx-value-uuid={p.uuid}
-                phx-disable-with={gettext("Deleting…")}
-                data-confirm={gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, @lang))}
+                {ConfirmAction.ask("delete",
+                  uuid: p.uuid,
+                  title: gettext("Delete project"),
+                  message: gettext("Delete project \"%{name}\"? All assignments will be removed.", name: Project.localized_name(p, @lang)),
+                  confirm: gettext("Delete")
+                )}
                 icon="hero-trash"
                 label={gettext("Delete")}
                 variant="error"

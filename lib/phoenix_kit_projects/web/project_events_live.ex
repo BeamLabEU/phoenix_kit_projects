@@ -15,9 +15,13 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  # A destructive action that asks through core's confirm modal.
+  import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
+
   alias PhoenixKitProjects.{L10n, ProjectEvents, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.ProjectEvent
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -80,6 +84,21 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   # ── Events ──────────────────────────────────────────────────────
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete_event))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event("open_new_event", _params, socket) do
     {:noreply, assign(socket, modal_open: true, modal_date: socket.assigns.today)}
   end
@@ -421,10 +440,12 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               variant="ghost"
               size="sm"
               class="text-error"
-              phx-click="delete_event"
-              phx-disable-with={gettext("Deleting…")}
-              phx-value-uuid={@selected.uuid}
-              data-confirm={gettext("Remove \"%{title}\"?", title: @selected.title)}
+              {ConfirmAction.ask("delete_event",
+                uuid: @selected.uuid,
+                title: gettext("Remove event"),
+                message: gettext("Remove \"%{title}\"?", title: @selected.title),
+                confirm: gettext("Remove")
+              )}
             >
               <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Remove")}
             </.button>
@@ -534,6 +555,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
           </form>
         </.modal>
       <% end %>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

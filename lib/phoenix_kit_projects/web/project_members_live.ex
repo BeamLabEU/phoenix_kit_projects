@@ -30,6 +30,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -233,6 +234,21 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
   # ── Events ──────────────────────────────────────────────────────
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(revoke_grant remove_member))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event("validate_add", params, socket) do
     {:noreply,
      assign(socket,
@@ -592,10 +608,12 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                   variant="ghost"
                   size="xs"
                   class="btn-circle text-error"
-                  phx-click="revoke_grant"
-                  phx-disable-with={gettext("Removing…")}
-                  phx-value-uuid={grant.uuid}
-                  data-confirm={gettext("Remove this group's access?")}
+                  {ConfirmAction.ask("revoke_grant",
+                    uuid: grant.uuid,
+                    title: gettext("Remove access"),
+                    message: gettext("Remove this group's access?"),
+                    confirm: gettext("Remove")
+                  )}
                   aria-label={gettext("Remove access")}
                 >
                   <.icon name="hero-x-mark" class="w-4 h-4" />
@@ -634,10 +652,12 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
                 variant="ghost"
                 size="xs"
                 class="btn-circle text-error"
-                phx-click="remove_member"
-                phx-value-user={member.user_uuid}
-                phx-disable-with="…"
-                data-confirm={gettext("Remove this member from the project?")}
+                {ConfirmAction.ask("remove_member",
+                  user: member.user_uuid,
+                  title: gettext("Remove member"),
+                  message: gettext("Remove this member from the project?"),
+                  confirm: gettext("Remove")
+                )}
                 aria-label={gettext("Remove member")}
               >
                 <.icon name="hero-x-mark" class="w-4 h-4" />
@@ -646,6 +666,7 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
           </div>
         </div>
       <% end %>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end

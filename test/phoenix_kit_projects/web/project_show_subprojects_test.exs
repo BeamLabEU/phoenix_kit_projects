@@ -130,10 +130,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
 
     {:ok, view, _html} = live(conn, path(parent))
 
-    html =
-      view
-      |> element(~s([phx-click="remove_assignment"][phx-value-uuid="#{link.uuid}"]))
-      |> render_click()
+    # Remove asks first (core's confirm modal), then the confirmed action runs.
+    view
+    |> element(~s([phx-value-event="remove_assignment"][phx-value-uuid="#{link.uuid}"]))
+    |> render_click()
+
+    html = render_click(view, "confirm_action_ok", %{})
 
     assert html =~ "Task removed."
     refute html =~ "Doomed"

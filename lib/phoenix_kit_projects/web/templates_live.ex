@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ListUi
   alias PhoenixKitWeb.TableColumns
@@ -226,6 +227,21 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
   end
 
   @impl true
+
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
 
   # Sort selector fires `sort_form` for both field changes (form
   # phx-change) and direction toggles (button phx-click). One event,
@@ -550,6 +566,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         columns={columns_spec().columns}
         selected={@visible_columns}
       />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end
@@ -634,10 +651,12 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
               />
               <.table_row_menu_divider />
               <.table_row_menu_button
-                phx-click="delete"
-                phx-value-uuid={t.uuid}
-                phx-disable-with={gettext("Deleting…")}
-                data-confirm={gettext("Delete template \"%{name}\"?", name: Project.localized_name(t, @lang))}
+                {ConfirmAction.ask("delete",
+                  uuid: t.uuid,
+                  title: gettext("Delete template"),
+                  message: gettext("Delete template \"%{name}\"?", name: Project.localized_name(t, @lang)),
+                  confirm: gettext("Delete")
+                )}
                 icon="hero-trash"
                 label={gettext("Delete")}
                 variant="error"

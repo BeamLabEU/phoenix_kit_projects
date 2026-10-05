@@ -38,6 +38,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ListUi
   alias PhoenixKitWeb.TableColumns
@@ -252,6 +253,21 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(delete))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event("set_view", %{"view" => view}, socket) when view in @valid_views do
     # Switching view re-renders the table; the BulkSelectScope hook
     # re-derives selection from the (fresh) DOM checkboxes — no
@@ -799,6 +815,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         columns={columns_spec().columns}
         selected={@visible_columns}
       />
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end
@@ -966,10 +983,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
               />
               <.table_row_menu_divider />
               <.table_row_menu_button
-                phx-click="delete"
-                phx-value-uuid={task.uuid}
-                phx-disable-with={gettext("Deleting…")}
-                data-confirm={gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, @lang))}
+                {ConfirmAction.ask("delete",
+                  uuid: task.uuid,
+                  title: gettext("Delete task"),
+                  message: gettext("Delete task \"%{title}\"? Assignments using it will also be removed.", title: TaskSchema.localized_title(task, @lang)),
+                  confirm: gettext("Delete")
+                )}
                 icon="hero-trash"
                 label={gettext("Delete")}
                 variant="error"

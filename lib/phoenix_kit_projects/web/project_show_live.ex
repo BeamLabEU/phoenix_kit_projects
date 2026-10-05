@@ -70,6 +70,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Statuses
   }
 
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
 
   alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
@@ -870,9 +871,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               />
             <% else %>
               <.table_row_menu_button
-                phx-click="archive_project"
-                phx-disable-with={gettext("Archiving…")}
-                data-confirm={gettext("Archive this project? It will be hidden from the main lists but kept in the database.")}
+                {ConfirmAction.ask("archive_project",
+                  title: gettext("Archive project"),
+                  message: gettext("Archive this project? It will be hidden from the main lists but kept in the database."),
+                  confirm: gettext("Archive")
+                )}
                 icon="hero-archive-box"
                 label={gettext("Archive")}
               />
@@ -1199,10 +1202,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 />
                 <.table_row_menu_divider />
                 <.table_row_menu_button
-                  phx-click="remove_assignment"
-                  phx-value-uuid={@a.uuid}
-                  phx-disable-with={gettext("Removing…")}
-                  data-confirm={gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(@a.task, L10n.current_content_lang()))}
+                  {ConfirmAction.ask("remove_assignment",
+                    uuid: @a.uuid,
+                    title: gettext("Remove task"),
+                    message: gettext("Remove \"%{title}\"?", title: TaskSchema.localized_title(@a.task, L10n.current_content_lang())),
+                    confirm: gettext("Remove")
+                  )}
                   icon="hero-trash"
                   label={gettext("Remove")}
                   variant="error"
@@ -1472,6 +1477,27 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           update_progress toggle_tracking remove_assignment save_duration)
 
   @impl true
+  # A destructive action asks first through core's confirm modal
+  # (`Components.ConfirmAction`); only these events may be put behind it.
+  def handle_event("request_confirm", params, socket),
+    do:
+      {:noreply,
+       ConfirmAction.request(
+         socket,
+         params,
+         ~w(archive_project remove_assignment review_submission detach_subproject)
+       )}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
   def handle_event(event, params, socket) do
     case Map.get(@gated_events, event) do
       nil ->
@@ -3276,11 +3302,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     </button>
                     <button
                       type="button"
-                      phx-click="review_submission"
-                      phx-value-uuid={a.uuid}
-                      phx-value-decision="rejected"
-                      phx-disable-with={gettext("Rejecting…")}
-                      data-confirm={gettext("Reject this submission?")}
+                      {ConfirmAction.ask("review_submission",
+                        uuid: a.uuid,
+                        decision: "rejected",
+                        title: gettext("Reject submission"),
+                        message: gettext("Reject this submission?"),
+                        confirm: gettext("Reject")
+                      )}
                       class="btn btn-ghost btn-xs"
                     >
                       {gettext("Reject")}
@@ -3986,19 +4014,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                  project — keeps it + its tasks (V127). --%>
                             <.table_row_menu_button
                               :if={@fx.subprojects}
-                              phx-click="detach_subproject"
-                              phx-value-uuid={a.uuid}
-                              phx-disable-with={gettext("Detaching…")}
-                              data-confirm={gettext("Make \"%{name}\" a standalone project? It keeps all its tasks — it just won't be a sub-project anymore.", name: Project.localized_name(child, sp_lang))}
+                              {ConfirmAction.ask("detach_subproject",
+                                uuid: a.uuid,
+                                title: gettext("Make standalone"),
+                                message: gettext("Make \"%{name}\" a standalone project? It keeps all its tasks — it just won't be a sub-project anymore.", name: Project.localized_name(child, sp_lang)),
+                                confirm: gettext("Make standalone")
+                              )}
                               icon="hero-arrow-up-on-square"
                               label={gettext("Make standalone")}
                             />
                             <.table_row_menu_divider />
                             <.table_row_menu_button
-                              phx-click="remove_assignment"
-                              phx-value-uuid={a.uuid}
-                              phx-disable-with={gettext("Removing…")}
-                              data-confirm={gettext("Remove sub-project \"%{name}\" and everything inside it?", name: Project.localized_name(child, sp_lang))}
+                              {ConfirmAction.ask("remove_assignment",
+                                uuid: a.uuid,
+                                title: gettext("Remove sub-project"),
+                                message: gettext("Remove sub-project \"%{name}\" and everything inside it?", name: Project.localized_name(child, sp_lang)),
+                                confirm: gettext("Remove")
+                              )}
                               icon="hero-trash"
                               label={gettext("Remove")}
                               variant="error"
@@ -4536,6 +4568,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
           })}
       <% end %>
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
     </div>
     """
   end
