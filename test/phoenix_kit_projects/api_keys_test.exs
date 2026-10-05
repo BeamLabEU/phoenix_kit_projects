@@ -3,6 +3,8 @@ defmodule PhoenixKitProjects.ApiKeysTest do
 
   use PhoenixKitProjects.DataCase, async: false
 
+  import Ecto.Query
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Authz, Members}
   alias PhoenixKitProjects.Schemas.ApiKey
@@ -165,6 +167,68 @@ defmodule PhoenixKitProjects.ApiKeysTest do
     # Another key with the same header is its own series.
     {:ok, other, _} = ApiKeys.create(project, %{"name" => "k2"})
     assert {:ok, 201, %{"n" => 4}} = ApiKeys.idempotent(other, "abc", fun)
+  end
+
+  test "an abandoned reservation is taken over; a fresh one still answers 409", %{
+    project: project
+  } do
+    {:ok, key, _} = ApiKeys.create(project, %{"name" => "k"})
+    fun = fn -> {201, %{"ran" => true}} end
+
+    # A request in flight: pending, young — a retry waits.
+    {1, _} =
+      PhoenixKit.RepoHelper.repo().insert_all(
+        PhoenixKitProjects.Schemas.ApiIdempotency,
+        [%{api_key_uuid: key.uuid, idempotency_key: "stuck", status: 0, body: %{}}]
+      )
+
+    assert {:ok, 409, %{error: %{code: "in_progress"}}} = ApiKeys.idempotent(key, "stuck", fun)
+
+    # The handler died (the row is minutes old): the retry runs the work once
+    # and the answer is stored for the replay after it.
+    PhoenixKit.RepoHelper.repo().update_all(
+      from(i in PhoenixKitProjects.Schemas.ApiIdempotency,
+        where: i.api_key_uuid == ^key.uuid and i.idempotency_key == "stuck"
+      ),
+      set: [inserted_at: DateTime.add(DateTime.utc_now(), -600, :second)]
+    )
+
+    assert {:ok, 201, %{"ran" => true}} = ApiKeys.idempotent(key, "stuck", fun)
+    assert {:replay, 201, %{"ran" => true}} = ApiKeys.idempotent(key, "stuck", fun)
+  end
+
+  describe "a personal key needs its person's live account" do
+    test "a deactivated account's key is refused at resolve", %{project: project} do
+      user = user_fixture()
+      {:ok, _} = Members.add_member(project, user.uuid, role: "owner")
+      {:ok, key, _} = ApiKeys.create(project, %{"name" => "Mine", "user_uuid" => user.uuid})
+      assert {:ok, _} = ApiKeys.resolve(key, project)
+
+      {:ok, _} =
+        user |> Ecto.Changeset.change(is_active: false) |> PhoenixKit.RepoHelper.repo().update()
+
+      assert {:error, :account_inactive} = ApiKeys.resolve(key, project)
+
+      # a shared key has no account to check
+      {:ok, shared, _} = ApiKeys.create(project, %{"name" => "CI"})
+      assert {:ok, _} = ApiKeys.resolve(shared, project)
+    end
+
+    test "deleting the account revokes its keys on every project", %{project: project} do
+      other = fixture_project()
+      user = user_fixture()
+      {:ok, _} = Members.add_member(project, user.uuid, role: "member")
+      {:ok, a, token} = ApiKeys.create(project, %{"name" => "A", "user_uuid" => user.uuid})
+      {:ok, b, _} = ApiKeys.create(other, %{"name" => "B", "user_uuid" => user.uuid})
+      {:ok, shared, _} = ApiKeys.create(project, %{"name" => "CI"})
+
+      :ok = Members.handle_user_deletion(user.uuid)
+
+      assert {:error, :revoked} = ApiKeys.authenticate(token)
+      assert %DateTime{} = ApiKeys.get(a.uuid).revoked_at
+      assert %DateTime{} = ApiKeys.get(b.uuid).revoked_at
+      assert ApiKeys.get(shared.uuid).revoked_at == nil
+    end
   end
 
   test "last_used_at moves at most once a minute", %{project: project} do

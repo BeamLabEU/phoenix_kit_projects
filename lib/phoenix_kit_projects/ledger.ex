@@ -260,11 +260,11 @@ defmodule PhoenixKitProjects.Ledger do
 
   def update_time(%WorkEntry{kind: "time"} = entry, minutes, opts)
       when is_integer(minutes) and minutes > 0 do
+    # `ended_at` follows the new length only when the entry has a start; an
+    # API entry has none, and its `ended_at` IS the reported `occurred_at`.
     attrs =
-      %{
-        amount: minutes,
-        ended_at: entry.started_at && DateTime.add(entry.started_at, minutes * 60)
-      }
+      %{amount: minutes}
+      |> maybe_put_ended_at(entry, minutes)
       |> maybe_put_billable(Keyword.get(opts, :billable))
 
     entry
@@ -288,6 +288,11 @@ defmodule PhoenixKitProjects.Ledger do
   end
 
   def update_time(%WorkEntry{}, _minutes, _opts), do: {:error, :invalid}
+
+  defp maybe_put_ended_at(attrs, %WorkEntry{started_at: %DateTime{} = started}, minutes),
+    do: Map.put(attrs, :ended_at, DateTime.add(started, minutes * 60))
+
+  defp maybe_put_ended_at(attrs, _entry, _minutes), do: attrs
 
   # What an amendment leaves in the feed: the figure before and after, whose
   # row it was, and whatever the caller adds (`:metadata` — the API names

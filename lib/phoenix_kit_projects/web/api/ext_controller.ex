@@ -8,6 +8,8 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
 
   use Phoenix.Controller, formats: [:json]
 
+  require Logger
+
   alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.Api.Json
@@ -135,6 +137,13 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
     end
   rescue
     e ->
-      {:error, {500, "provider_failed", "The extension failed: #{Exception.message(e)}", nil}}
+      # What went wrong stays in the log: a provider's exception can name
+      # SQL, tables and constraints, none of which an API caller should read.
+      Logger.error(
+        "[Projects.Api] extension provider #{inspect(provider)}.#{fun} failed: " <>
+          Exception.format(:error, e, __STACKTRACE__)
+      )
+
+      {:error, {500, "provider_failed", "The extension failed to answer this call.", nil}}
   end
 end

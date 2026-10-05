@@ -442,6 +442,11 @@ defmodule PhoenixKitProjects.Members do
   """
   @spec handle_user_deletion(binary()) :: :ok
   def handle_user_deletion(user_uuid) do
+    # Their personal API keys die with the account: the membership rows
+    # cascade away, but on an "everyone" project a bare uuid still resolves
+    # to a viewer seat, so the keys must be revoked, not merely orphaned.
+    ApiKeys.revoke_all_for_user(user_uuid)
+
     memberships =
       RepoHelper.repo().all(from(m in ProjectMember, where: m.user_uuid == ^user_uuid))
 

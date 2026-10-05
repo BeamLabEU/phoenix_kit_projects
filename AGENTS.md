@@ -432,7 +432,8 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.Portal` | `phoenix_kit_project_portals` |
 | `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
 | `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — a project's API keys, the credentials of `Web.Api`) |
-| `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`) |
+| `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation, taken over once it is older than two minutes) |
+| (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
 
 All UUIDv7 PKs; every table-backed schema applies `use PhoenixKit.SchemaPrefix`
@@ -545,7 +546,7 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V16**. `mix phoenix_kit.update` applies it
+`phoenix_kit_projects`, currently **V20**. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against
 `migrated_version_runtime/1`; tests run it through
 `PhoenixKitProjects.Test.SchemaMigration`, keyed on

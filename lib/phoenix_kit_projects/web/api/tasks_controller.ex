@@ -25,6 +25,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   alias PhoenixKitProjects.Web.Api.Json
 
   @priorities ~w(urgent high normal low)
+  # The INTEGER columns (`estimated_duration`, `position`) hold int4; a
+  # bound well inside it keeps a wild figure a 422 instead of an encode error.
+  @max_int 1_000_000_000
   @units ~w(minutes hours days weeks fortnights months years)
 
   @status_filters ~w(todo in_progress done open)
@@ -196,7 +199,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     %{pk_api_key: key, pk_project: project} = conn.assigns
     content = Map.take(params, ["title", "description"])
 
-    with :ok <- content_editable(a, content),
+    with :ok <- not_subproject_row(a),
+         :ok <- content_editable(a, content),
          :ok <- text_policy(key, a, project, content),
          {:ok, assignment_attrs} <- assignment_attrs(params),
          :ok <- check_interaction(conn, params["interaction"]),
@@ -509,6 +513,20 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp position_attrs(_project, _), do: %{}
 
+  # A sub-project's linking row carries the child's rollup (status,
+  # progress, duration); it is changed through the child project, never
+  # edited or moved on its own.
+  defp not_subproject_row(%Assignment{child_project_uuid: nil}), do: :ok
+  defp not_subproject_row(_a), do: {:error, subproject_row_error()}
+
+  defp subproject_row_error do
+    Json.error_body(
+      409,
+      "subproject",
+      "This row is a sub-project: its status and figures come from the child project, not from here."
+    )
+  end
+
   defp content_editable(_a, content) when map_size(content) == 0, do: :ok
 
   defp content_editable(%Assignment{task: %{ad_hoc: true}}, _content), do: :ok
@@ -523,7 +541,26 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
        )}
 
   defp update_content(_a, content) when map_size(content) == 0, do: {:ok, nil}
-  defp update_content(%Assignment{task: task}, content), do: Projects.update_task(task, content)
+
+  defp update_content(%Assignment{task: task} = a, content) do
+    with {:ok, updated} <- Projects.update_task(task, content),
+         :ok <- sync_assignment_description(a, content) do
+      {:ok, updated}
+    end
+  end
+
+  # A one-off made on the form carries its description on the assignment
+  # too, and the reads prefer that copy — so a reword must reach both, or
+  # the PATCH answers 200 and the old text keeps showing.
+  defp sync_assignment_description(%Assignment{description: d} = a, %{"description" => text})
+       when is_binary(d) and d != "" do
+    case Projects.update_assignment_form(a, %{"description" => text}) do
+      {:ok, _} -> :ok
+      {:error, _} = error -> error
+    end
+  end
+
+  defp sync_assignment_description(_a, _content), do: :ok
 
   defp update_fields(_a, attrs) when map_size(attrs) == 0, do: {:ok, nil}
   defp update_fields(a, attrs), do: Projects.update_assignment_form(a, attrs)
@@ -640,6 +677,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     allowed = Map.get(Json.transitions(), a.status, [])
 
     cond do
+      not is_nil(a.child_project_uuid) ->
+        subproject_row_error()
+
       (to == "in_progress" or a.status == "in_progress") and not Json.may_take?(key, a, project) ->
         Json.error_body(
           409,
@@ -754,6 +794,11 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
     case Projects.get_assignment(id) do
+      # A portal submission still in review is not work yet (every list
+      # leaves it out); it is not reachable by its uuid either.
+      %Assignment{review_status: status} when status not in [nil, "accepted"] ->
+        {:error, :not_found}
+
       %Assignment{project_uuid: pid} = a when pid == project.uuid ->
         {:ok, conn, a}
 
@@ -858,25 +903,55 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
            }
          )}
 
-      Map.has_key?(attrs, "estimated_duration") and
-          not integer_in?(attrs["estimated_duration"], 1, nil) ->
-        {:error,
-         Json.error_body(
-           422,
-           "validation_failed",
-           "estimated_duration must be a positive integer.",
-           %{
-             estimated_duration: ["must be a positive integer"]
-           }
-         )}
+      error = size_error(attrs) ->
+        {:error, error}
 
       true ->
         {:ok, attrs}
     end
   end
 
+  # The figures and lengths the columns bound: an int4 that overflows or a
+  # string past its varchar is a 422 here, never a raise from the database.
+  defp size_error(attrs) do
+    cond do
+      Map.has_key?(attrs, "estimated_duration") and
+          not integer_in?(attrs["estimated_duration"], 1, @max_int) ->
+        Json.error_body(
+          422,
+          "validation_failed",
+          "estimated_duration must be a positive integer, at most #{@max_int}.",
+          %{estimated_duration: ["must be a positive integer, at most #{@max_int}"]}
+        )
+
+      Map.has_key?(attrs, "position") and not integer_in?(attrs["position"], -@max_int, @max_int) ->
+        Json.error_body(
+          422,
+          "validation_failed",
+          "position must be an integer between #{-@max_int} and #{@max_int}.",
+          %{position: ["must be an integer between #{-@max_int} and #{@max_int}"]}
+        )
+
+      too_long?(attrs["waiting_on"], 200) ->
+        Json.error_body(422, "validation_failed", "waiting_on must be at most 200 characters.", %{
+          waiting_on: ["must be at most 200 characters"]
+        })
+
+      too_long?(attrs["origin"], 40) ->
+        Json.error_body(422, "validation_failed", "origin must be at most 40 characters.", %{
+          origin: ["must be at most 40 characters"]
+        })
+
+      true ->
+        nil
+    end
+  end
+
+  defp too_long?(v, max) when is_binary(v), do: String.length(v) > max
+  defp too_long?(_, _max), do: false
+
   defp integer_in?(v, min, max) when is_integer(v),
-    do: v >= min and (is_nil(max) or v <= max)
+    do: v >= min and v <= max
 
   defp integer_in?(_, _, _), do: false
 

@@ -1514,7 +1514,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # so the lifecycle FLAG was the only thing between a viewer and starting
     # somebody else's project. Same floor as archiving — the other
     # irreversible thing that happens to the container rather than to a task.
-    "confirm_start_project" => :edit_settings
+    "confirm_start_project" => :edit_settings,
+    # A redirect sets where the work goes next (an agent reads it first) and
+    # adopting a summary rewrites the description: both are edits to the task.
+    "save_redirect" => :edit_tasks,
+    "adopt_summary" => :edit_tasks
   }
 
   # Task-scoped events carry the task's uuid, and the task is what makes
@@ -2302,11 +2306,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        when type in ["project", "assignment", "notes"] do
     title = Map.get(params, "title", "")
 
-    {:noreply,
-     assign(socket,
-       comments_resource: %{type: type, uuid: uuid, title: title},
-       notes_summary_preview: if(type == "notes", do: notes_summary_preview(socket, uuid))
-     )}
+    # The drawer shows (and posts to) whatever record the uuid names, so the
+    # uuid must be THIS project or one of ITS tasks — never another project's.
+    if comments_target?(socket, type, uuid) do
+      {:noreply,
+       assign(socket,
+         comments_resource: %{type: type, uuid: uuid, title: title},
+         notes_summary_preview: if(type == "notes", do: notes_summary_preview(socket, uuid))
+       )}
+    else
+      {:noreply, socket}
+    end
   end
 
   # A person's "no, that's wrong — do X": a redirect note, written as the
@@ -2314,7 +2324,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # reloads off the comments broadcast.
   defp gated_handle_event("save_redirect", %{"uuid" => uuid} = params, socket) do
     with %Assignment{} = a <- find_displayed_assignment(socket, uuid),
-         {:ok, fields} <- TaskNotes.validate(params, "redirect"),
+         {:ok, fields} <- TaskNotes.validate(Map.take(params, ~w(summary content)), "redirect"),
          {:ok, _} <-
            TaskNotes.create(a, fields,
              user_uuid: Activity.actor_uuid(socket),
@@ -2472,6 +2482,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # admin-enabled. Off-by-default `enabled?/0` rescues any error
   # (missing tables, sandbox-down) and returns false, so this stays
   # safe in early-install or test environments.
+  defp comments_target?(socket, "project", uuid), do: uuid == socket.assigns.project.uuid
+
+  defp comments_target?(socket, _task_type, uuid),
+    do: find_displayed_assignment(socket, uuid) != nil
+
   # A task on this page, by uuid — the displayed set first (no query),
   # else the store, and only if it belongs to this project.
   defp find_displayed_assignment(socket, uuid) do

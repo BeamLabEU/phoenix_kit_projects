@@ -19,7 +19,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   use Phoenix.Controller, formats: [:json]
 
-  alias PhoenixKitProjects.Schemas.ApiKey
+  alias PhoenixKitProjects.Schemas.{ApiKey, WorkEntry}
   alias PhoenixKitProjects.TaskNotes
   alias PhoenixKitProjects.Web.Api.{Json, TasksController}
 
@@ -218,9 +218,11 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
   defp parse_usage(nil), do: {:ok, nil}
 
   defp parse_usage(usage) when is_map(usage) do
-    with {:ok, tokens} <- non_negative(usage["tokens"], "usage.tokens"),
-         {:ok, cost} <- non_negative(usage["cost_cents"], "usage.cost_cents"),
-         {:ok, minutes} <- non_negative(usage["minutes"], "usage.minutes"),
+    with {:ok, tokens} <- non_negative(usage["tokens"], "usage.tokens", WorkEntry.max_amount()),
+         {:ok, cost} <-
+           non_negative(usage["cost_cents"], "usage.cost_cents", WorkEntry.max_amount()),
+         {:ok, minutes} <-
+           non_negative(usage["minutes"], "usage.minutes", WorkEntry.max_minutes()),
          {:ok, occurred_at} <- occurred_at(usage["occurred_at"]) do
       {:ok,
        %{
@@ -241,15 +243,18 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
          usage: ["must be an object"]
        })}
 
-  defp non_negative(nil, _field), do: {:ok, nil}
-  defp non_negative(n, _field) when is_integer(n) and n >= 0, do: {:ok, n}
+  defp non_negative(nil, _field, _max), do: {:ok, nil}
+  defp non_negative(n, _field, max) when is_integer(n) and n >= 0 and n <= max, do: {:ok, n}
 
-  defp non_negative(_, field),
+  defp non_negative(_, field, max),
     do:
       {:error,
-       Json.error_body(422, "validation_failed", "#{field} must be a non-negative integer.", %{
-         field => ["must be a non-negative integer"]
-       })}
+       Json.error_body(
+         422,
+         "validation_failed",
+         "#{field} must be a non-negative integer, at most #{max}.",
+         %{field => ["must be a non-negative integer, at most #{max}"]}
+       )}
 
   defp occurred_at(nil), do: {:ok, nil}
 

@@ -303,7 +303,11 @@ defmodule PhoenixKitProjects.ResourceLinks do
     case accessible do
       :none -> :none
       :all -> subtree
-      uuids -> Enum.filter(subtree, &(&1 in uuids))
+      # `list_projects_for/1` lists top-level projects only, so a member of
+      # the field's own project reaches its whole subtree (the same climb
+      # `visible_resource_uuids/2` makes); anything else keeps only what
+      # is individually accessible.
+      uuids -> if uuid in uuids, do: subtree, else: Enum.filter(subtree, &(&1 in uuids))
     end
     |> case do
       [] -> :none

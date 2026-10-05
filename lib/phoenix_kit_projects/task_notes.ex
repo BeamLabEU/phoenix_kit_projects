@@ -296,19 +296,25 @@ defmodule PhoenixKitProjects.TaskNotes do
 
   defp ref_error({_ref, idx}), do: "refs[#{idx}] must be an object"
 
-  defp type_error(type) do
-    if Regex.match?(~r/\A[a-z][a-z0-9_-]{0,31}\z/, to_string(type || "")),
+  # `type` and `id` arrive from JSON: anything but a string (an id may be a
+  # whole number) is the field's own message, never a raise in `to_string/1`.
+  defp type_error(type) when is_binary(type) do
+    if Regex.match?(~r/\A[a-z][a-z0-9_-]{0,31}\z/, type),
       do: nil,
       else: "type must be a slug (a-z, 0-9, _ -), 1–32 characters"
   end
 
-  defp id_error(id) do
-    id = to_string(id || "")
+  defp type_error(_), do: "type must be a slug (a-z, 0-9, _ -), 1–32 characters"
 
+  defp id_error(id) when is_integer(id), do: id_error(Integer.to_string(id))
+
+  defp id_error(id) when is_binary(id) do
     if id == "" or String.length(id) > 256,
       do: "id is required, at most 256 characters",
       else: nil
   end
+
+  defp id_error(_), do: "id is required, a string of at most 256 characters"
 
   defp url_error(nil), do: nil
 

@@ -828,15 +828,19 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       fx = save_time_fx(socket)
       socket = assign(socket, fx: fx)
 
+      # No field of this form posts `project[settings]`: the settings are
+      # folded below, server-side, from the project as it is NOW (the
+      # Modules panel writes the same JSONB from another page, and a
+      # mount-time copy would silently revert it). A posted map is dropped.
+      project = fresh_project(socket.assigns.project)
+
       attrs =
-        merge_attrs(attrs, socket)
+        attrs
+        |> Map.delete("settings")
+        |> merge_attrs(socket)
         |> clear_other_assignees(assign_type)
-        |> maybe_apply_status_mode(params, socket.assigns.project, fx)
-        |> apply_project_type(
-          params,
-          socket.assigns.project,
-          socket.assigns[:can_manage_modules] == true
-        )
+        |> maybe_apply_status_mode(params, project, fx)
+        |> apply_project_type(params, project, socket.assigns[:can_manage_modules] == true)
         |> strip_gated_project_attrs(fx)
 
       socket =
@@ -1204,6 +1208,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
          put_flash(socket, :error, gettext("Could not create the default statuses entity."))}
     end
   end
+
+  defp fresh_project(%Project{uuid: uuid} = project) when is_binary(uuid),
+    do: Projects.get_project(uuid) || project
+
+  defp fresh_project(project), do: project
 
   defp save_time_fx(socket) do
     case socket.assigns[:project] do

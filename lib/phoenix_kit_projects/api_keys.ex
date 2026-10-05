@@ -33,6 +33,7 @@ defmodule PhoenixKitProjects.ApiKeys do
   require Logger
 
   alias PhoenixKit.RepoHelper
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Activity, Authz}
   alias PhoenixKitProjects.Schemas.{ApiIdempotency, ApiKey}
 
@@ -45,6 +46,10 @@ defmodule PhoenixKitProjects.ApiKeys do
   # `last_used_at` moves at most this often, so a busy agent is not a write
   # on the key row per request.
   @touch_interval_seconds 60
+  # A reservation still pending after this long belongs to a request that
+  # died (a killed node, a brutal kill of the handler): the next retry takes
+  # it over instead of answering 409 for ever.
+  @pending_ttl_seconds 120
 
   @type token :: String.t()
 
@@ -88,10 +93,28 @@ defmodule PhoenixKitProjects.ApiKeys do
     end
   end
 
-  @doc "The key with its `role` set to `effective_role/2`, for one request."
-  @spec resolve(ApiKey.t(), map()) :: {:ok, ApiKey.t()} | {:error, :membership_ended}
+  @doc """
+  The key with its `role` set to `effective_role/2`, for one request. A
+  personal key also needs its person's ACCOUNT to be live: a deactivated or
+  deleted user's key is `{:error, :account_inactive}` (the API answers it
+  with the one 401), whatever the project's "everyone" visibility would
+  still hand an arbitrary uuid.
+  """
+  @spec resolve(ApiKey.t(), map()) ::
+          {:ok, ApiKey.t()} | {:error, :membership_ended | :account_inactive}
   def resolve(%ApiKey{} = key, project) do
-    with {:ok, role} <- effective_role(key, project), do: {:ok, %{key | role: role}}
+    with :ok <- account_live(key),
+         {:ok, role} <- effective_role(key, project),
+         do: {:ok, %{key | role: role}}
+  end
+
+  defp account_live(%ApiKey{user_uuid: nil}), do: :ok
+
+  defp account_live(%ApiKey{user_uuid: user_uuid}) do
+    case Auth.get_user(user_uuid) do
+      %{is_active: true} -> :ok
+      _ -> {:error, :account_inactive}
+    end
   end
 
   # The weakest of the three: owner is not a key role, so the strongest a
@@ -113,6 +136,27 @@ defmodule PhoenixKitProjects.ApiKeys do
       Logger.warning("ApiKeys.revoke_for_user failed: #{Exception.message(e)}")
       :ok
   end
+
+  @doc """
+  Revokes every live personal key acting for `user_uuid`, on every project —
+  the account is being deleted. `revoke_for_user/3` is the per-project form
+  for leaving one project.
+  """
+  @spec revoke_all_for_user(binary()) :: :ok
+  def revoke_all_for_user(user_uuid) when is_binary(user_uuid) do
+    RepoHelper.repo().all(
+      from(k in ApiKey, where: k.user_uuid == ^user_uuid and is_nil(k.revoked_at))
+    )
+    |> Enum.each(&revoke(&1, reason: "user_deleted"))
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("ApiKeys.revoke_all_for_user failed: #{Exception.message(e)}")
+      :ok
+  end
+
+  def revoke_all_for_user(_), do: :ok
 
   @doc "A key by uuid, or nil."
   @spec get(binary()) :: ApiKey.t() | nil
@@ -355,9 +399,34 @@ defmodule PhoenixKitProjects.ApiKeys do
            api_key_uuid: key_uuid,
            idempotency_key: idempotency_key
          ) do
-      %ApiIdempotency{status: 0} -> :pending
+      %ApiIdempotency{status: 0} -> take_over_stale(key_uuid, idempotency_key)
       %ApiIdempotency{} = stored -> {:stored, stored}
       nil -> :pending
+    end
+  end
+
+  # A pending row old enough to be abandoned is taken over atomically: the
+  # UPDATE matches only while the row is still pending and still stale, so
+  # of two retries racing for it exactly one is told "reserved".
+  defp take_over_stale(key_uuid, idempotency_key) do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    cutoff = DateTime.add(now, -@pending_ttl_seconds, :second)
+
+    {count, _} =
+      RepoHelper.repo().update_all(
+        from(i in ApiIdempotency,
+          where:
+            i.api_key_uuid == ^key_uuid and i.idempotency_key == ^idempotency_key and
+              i.status == 0 and i.inserted_at < ^cutoff
+        ),
+        set: [inserted_at: now]
+      )
+
+    if count == 1 do
+      {:reserved,
+       %ApiIdempotency{api_key_uuid: key_uuid, idempotency_key: idempotency_key, status: 0}}
+    else
+      :pending
     end
   end
 

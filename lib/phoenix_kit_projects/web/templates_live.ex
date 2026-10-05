@@ -401,10 +401,10 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
   def handle_event("delete", %{"uuid" => uuid}, socket) do
     case Projects.get_project(uuid) do
-      nil ->
-        {:noreply, put_flash(socket, :error, gettext("Template not found."))}
-
-      template ->
+      # This handler deletes TEMPLATES: a uuid naming a real project is the
+      # same answer as no uuid, so the template list is not a way to delete
+      # (or probe for) a project the sender has no relationship to.
+      %Project{is_template: true} = template ->
         case Projects.delete_project(template) do
           {:ok, _} ->
             Activity.log("projects.template_deleted",
@@ -430,6 +430,9 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
 
             {:noreply, put_flash(socket, :error, gettext("Could not delete template."))}
         end
+
+      _ ->
+        {:noreply, put_flash(socket, :error, gettext("Template not found."))}
     end
   end
 

@@ -20,12 +20,14 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKitProjects.{Ledger, Projects}
-  alias PhoenixKitProjects.Schemas.{ApiKey, Project}
+  alias PhoenixKitProjects.Schemas.{ApiKey, Project, WorkEntry}
   alias PhoenixKitProjects.Web.Api.{Json, TasksController}
 
   # How far ahead of the server's clock an `occurred_at` may be: an agent's
   # clock skew, not a report from the future.
   @future_tolerance_seconds 300
+  @max_minutes WorkEntry.max_minutes()
+  @max_amount WorkEntry.max_amount()
 
   def task_time(conn, %{"id" => id} = params) do
     with {:ok, conn} <- Json.require_scope(conn, "time:write"),
@@ -121,8 +123,9 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   # manager key any row; either leaves a trace in the activity feed
   # (`projects.work_amended` / `work_removed`).
   def update_entry(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "time:write"),
+    with {:ok, conn} <- any_write_scope(conn),
          {:ok, conn, entry} <- own_entry(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, entry_scope(entry)),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :log_time),
          {:ok, figure} <- amendment(entry, params) do
@@ -154,7 +157,8 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   defp amendment(%{kind: "time"}, params), do: validate_minutes(params["minutes"])
 
   defp amendment(%{kind: kind}, %{"amount" => amount})
-       when kind in ["tokens", "cost"] and is_integer(amount) and amount >= 0,
+       when kind in ["tokens", "cost"] and is_integer(amount) and amount > 0 and
+              amount <= @max_amount,
        do: {:ok, amount}
 
   defp amendment(%{kind: kind}, _params) when kind in ["tokens", "cost"],
@@ -163,7 +167,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
        Json.error_body(
          422,
          "validation_failed",
-         "amount (a whole non-negative number) is required for a #{kind} entry.",
+         "amount (a whole number from 1 to #{@max_amount}) is required for a #{kind} entry.",
          %{amount: ["is required"]}
        )}
 
@@ -177,8 +181,9 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     do: Ledger.update_amount(entry, amount, actor_uuid: actor, metadata: meta)
 
   def delete_entry(conn, %{"id" => id}) do
-    with {:ok, conn} <- Json.require_scope(conn, "time:write"),
+    with {:ok, conn} <- any_write_scope(conn),
          {:ok, conn, entry} <- own_entry(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, entry_scope(entry)),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :log_time),
          {:ok, conn} <- not_billable(conn, entry) do
@@ -195,6 +200,19 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
       {:halt, conn} -> conn
     end
   end
+
+  # A correction needs the scope its row was written under: `time:write`
+  # for minutes, `usage:write` for tokens and cost. The first check (before
+  # the row is looked up) only asks for either, so a key with neither learns
+  # nothing about which entries exist.
+  defp any_write_scope(conn) do
+    if ApiKey.scope?(conn.assigns.pk_api_key, "usage:write"),
+      do: {:ok, conn},
+      else: Json.require_scope(conn, "time:write")
+  end
+
+  defp entry_scope(%{kind: "time"}), do: "time:write"
+  defp entry_scope(_entry), do: "usage:write"
 
   # A billable row is never erased over the API — amend it to what it
   # should be (the feed keeps the before and after); a person removes it
@@ -263,15 +281,17 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     end
   end
 
-  defp validate_minutes(minutes) when is_integer(minutes) and minutes > 0, do: {:ok, minutes}
+  defp validate_minutes(minutes)
+       when is_integer(minutes) and minutes > 0 and minutes <= @max_minutes,
+       do: {:ok, minutes}
 
   defp validate_minutes(_) do
     {:error,
      Json.error_body(
        422,
        "validation_failed",
-       "minutes must be a positive integer (whole minutes).",
-       %{minutes: ["must be a positive integer"]}
+       "minutes must be a positive integer (whole minutes), at most #{@max_minutes}.",
+       %{minutes: ["must be a positive integer, at most #{@max_minutes}"]}
      )}
   end
 
@@ -325,20 +345,11 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
 
   defp validate_usage(tokens, cost) do
     cond do
-      not (is_nil(tokens) or (is_integer(tokens) and tokens >= 0)) ->
-        {:error,
-         Json.error_body(422, "validation_failed", "tokens must be a non-negative integer.", %{
-           tokens: ["must be a non-negative integer"]
-         })}
+      not figure?(tokens) ->
+        {:error, figure_error(:tokens, "tokens")}
 
-      not (is_nil(cost) or (is_integer(cost) and cost >= 0)) ->
-        {:error,
-         Json.error_body(
-           422,
-           "validation_failed",
-           "cost_cents must be a non-negative integer (whole cents).",
-           %{cost_cents: ["must be a non-negative integer"]}
-         )}
+      not figure?(cost) ->
+        {:error, figure_error(:cost_cents, "cost_cents (whole cents)")}
 
       (tokens || 0) == 0 and (cost || 0) == 0 ->
         {:error,
@@ -351,6 +362,18 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
       true ->
         {:ok, tokens, cost}
     end
+  end
+
+  defp figure?(nil), do: true
+  defp figure?(n), do: is_integer(n) and n >= 0 and n <= @max_amount
+
+  defp figure_error(field, label) do
+    Json.error_body(
+      422,
+      "validation_failed",
+      "#{label} must be a non-negative integer, at most #{@max_amount}.",
+      %{field => ["must be a non-negative integer, at most #{@max_amount}"]}
+    )
   end
 
   defp do_record_usage(conn, assignment_uuid, tokens, cost, occurred_at, params) do

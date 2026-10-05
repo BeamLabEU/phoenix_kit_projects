@@ -44,6 +44,12 @@ defmodule PhoenixKitProjects.Schemas.WorkEntry do
     timestamps(type: :utc_datetime)
   end
 
+  # `amount` is NUMERIC(14,4): ten whole digits. A larger figure is a
+  # changeset error here, never a `numeric field overflow` raised from the
+  # database; a minutes figure is held far lower (about two years of work).
+  @max_amount 9_999_999_999
+  @max_minutes 1_000_000
+
   @required ~w(project_uuid kind amount)a
   @optional ~w(assignment_uuid actor_kind actor_uuid started_at ended_at note source billable metadata)a
 
@@ -54,10 +60,18 @@ defmodule PhoenixKitProjects.Schemas.WorkEntry do
     |> validate_inclusion(:actor_kind, @actor_kinds)
     |> validate_inclusion(:kind, @kinds)
     |> validate_inclusion(:source, @sources)
-    |> validate_number(:amount, greater_than: 0)
+    |> validate_number(:amount, greater_than: 0, less_than_or_equal_to: @max_amount)
     |> foreign_key_constraint(:project_uuid)
     |> foreign_key_constraint(:assignment_uuid)
   end
+
+  @doc "The largest tokens / cost-cents figure one entry holds."
+  @spec max_amount() :: pos_integer()
+  def max_amount, do: @max_amount
+
+  @doc "The most minutes one time entry holds."
+  @spec max_minutes() :: pos_integer()
+  def max_minutes, do: @max_minutes
 
   def actor_kinds, do: @actor_kinds
   def kinds, do: @kinds
