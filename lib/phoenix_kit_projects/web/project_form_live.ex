@@ -1719,12 +1719,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     parts |> Enum.reject(&is_nil/1) |> Enum.join(" · ")
   end
 
-  # The Customize drawers dress like the page's own cards (`card bg-base-100
-  # shadow`): core's accordion draws only a `border-base-200` line, which on
-  # a dark theme is a hair off the page's own colour — Max, 2026-10-05: "it's
-  # kind of hard to tell where the drawer is". A literal string, so Tailwind's
-  # scanner sees the classes.
-  @drawer_class "border-base-300 shadow"
+  # The Customize drawers take the shape of core's own collapsibles
+  # (`collapse collapse-arrow bg-base-200`, Settings → Media and friends): a
+  # panel one shade apart from the page. Core's accordion draws
+  # `bg-base-100` with a `border-base-200` line, which on a dark theme is a
+  # hair off the page's own colour — Max, 2026-10-05: "it's kind of hard to
+  # tell where the drawer is". A literal string, so Tailwind's scanner sees
+  # the class.
+  @drawer_class "bg-base-200"
 
   defp drawer_class, do: @drawer_class
 
