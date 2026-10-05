@@ -230,18 +230,33 @@ defmodule PhoenixKitProjects.Ledger do
     _ -> :skipped
   end
 
-  @doc "Entries for a project, newest first (capped)."
+  @doc """
+  Entries for a project, newest first (capped by `:limit`, default 100).
+  `metadata: %{"interaction_uuid" => uuid}` keeps only the entries whose
+  metadata contains those pairs — how an extension finds the time it
+  logged against one of its own records.
+  """
   @spec list_entries(binary(), keyword()) :: [WorkEntry.t()]
   def list_entries(project_uuid, opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
-    RepoHelper.repo().all(
+    query =
       from(e in WorkEntry,
         where: e.project_uuid == ^project_uuid,
         order_by: [desc: e.inserted_at],
         limit: ^limit
       )
-    )
+
+    query =
+      case Keyword.get(opts, :metadata) do
+        match when is_map(match) and map_size(match) > 0 ->
+          where(query, [e], fragment("? @> ?", e.metadata, ^match))
+
+        _ ->
+          query
+      end
+
+    RepoHelper.repo().all(query)
   rescue
     _ -> []
   end
