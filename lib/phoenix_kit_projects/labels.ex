@@ -43,6 +43,36 @@ defmodule PhoenixKitProjects.Labels do
     |> tap_label("projects.label_created", project.uuid, opts)
   end
 
+  @doc """
+  The label uuids for `names` on a project — existing ones by name (case
+  folded), the rest created. Blank names are dropped; at most 20 names.
+  """
+  @spec ensure_by_names(map(), [String.t()], keyword()) :: [binary()]
+  def ensure_by_names(project, names, opts \\ []) when is_list(names) do
+    wanted =
+      names
+      |> Enum.filter(&is_binary/1)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.uniq_by(&String.downcase/1)
+      |> Enum.take(20)
+
+    existing = Map.new(list_for_project(project.uuid), &{String.downcase(&1.name), &1.uuid})
+
+    Enum.flat_map(wanted, fn name ->
+      case Map.get(existing, String.downcase(name)) do
+        nil ->
+          case create(project, %{name: name}, opts) do
+            {:ok, label} -> [label.uuid]
+            _ -> []
+          end
+
+        uuid ->
+          [uuid]
+      end
+    end)
+  end
+
   @doc "Deletes a label (join rows cascade)."
   @spec delete(Label.t(), keyword()) :: :ok | {:error, term()}
   def delete(%Label{} = label, opts \\ []) do

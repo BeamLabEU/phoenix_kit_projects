@@ -151,6 +151,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         idempotency: :optional,
         params: [
           %{
+            name: "completion",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "`auto` (ends when its last task is done) or `manual` (ongoing); left out, it copies the parent's"
+          },
+          %{
             name: "name",
             in: :body,
             type: "string",
@@ -189,6 +197,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         idempotency: nil,
         params: [
           %{
+            name: "updated_since",
+            in: :query,
+            type: "string",
+            required: false,
+            doc:
+              "ISO 8601; only the tasks changed after that moment - remember the `now` of your last answer"
+          },
+          %{
             name: "project",
             in: :query,
             type: "string",
@@ -218,6 +234,42 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         feature: "tasks",
         idempotency: :optional,
         params: [
+          %{
+            name: "position",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "`top` to put it above every row; otherwise it is appended"
+          },
+          %{
+            name: "origin",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "where it came from - `client`, `boss` (40 characters at most)"
+          },
+          %{
+            name: "waiting_on",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "whom it waits on; a badge beside the status, not a status"
+          },
+          %{
+            name: "labels",
+            in: :body,
+            type: "array",
+            required: false,
+            doc:
+              "label names; existing ones are reused, new ones created (needs the project's labels feature)"
+          },
+          %{
+            name: "checklist",
+            in: :body,
+            type: "array",
+            required: false,
+            doc: "sub-items: [{text, done?}] - ticked one by one, never driving progress_pct"
+          },
           %{
             name: "project",
             in: :body,
@@ -279,6 +331,35 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         feature: "tasks",
         idempotency: :optional,
         params: [
+          %{
+            name: "origin",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "where it came from; empty or null clears it"
+          },
+          %{
+            name: "waiting_on",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "whom it waits on; empty or null clears it (the task resumes)"
+          },
+          %{
+            name: "labels",
+            in: :body,
+            type: "array",
+            required: false,
+            doc: "the full list of label names to set (a replace, not a merge)"
+          },
+          %{
+            name: "checklist",
+            in: :body,
+            type: "array",
+            required: false,
+            doc:
+              "the full checklist [{id?, text, done?}] - keep the ids to keep the items; or tick one item with PATCH /tasks/{id}/checklist/{item}"
+          },
           %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
           %{name: "title", in: :body, type: "string", required: false, doc: ""},
           %{name: "description", in: :body, type: "string", required: false, doc: ""},
@@ -368,6 +449,44 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         idempotency: :optional,
         params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
         example: nil
+      },
+      %{
+        id: "deleteTask",
+        method: "DELETE",
+        path: "/tasks/{id}",
+        summary:
+          "Delete a task, when the project's agent policy allows it (`agent_policy.delete_tasks`: none | own | any - `own` means a task this key created). A sub-project row is not deleted here.",
+        auth: true,
+        scope: "tasks:write",
+        action: "delete_tasks",
+        feature: "tasks",
+        idempotency: nil,
+        params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
+        example: nil
+      },
+      %{
+        id: "tickChecklistItem",
+        method: "PATCH",
+        path: "/tasks/{id}/checklist/{item}",
+        summary:
+          "Tick or untick one checklist item by its id, without rewriting the list (safe when two sessions tick different items).",
+        auth: true,
+        scope: "tasks:write",
+        action: "edit_tasks",
+        feature: "tasks",
+        idempotency: :optional,
+        params: [
+          %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
+          %{
+            name: "item",
+            in: :path,
+            type: "string",
+            required: true,
+            doc: "the item's id from checklist_items"
+          },
+          %{name: "done", in: :body, type: "boolean", required: true, doc: ""}
+        ],
+        example: ~s({"done": true})
       },
       %{
         id: "logTaskTime",
@@ -590,6 +709,167 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
           ~s({"summary": "Moved the import to the batch API; tests green", "outcome": "done", "content": "## What I tried\\n…", "next_steps": "Deploy to dev and watch the queue", "refs": [{"type": "commit", "id": "a1b2c3d", "url": "https://github.com/acme/app/commit/a1b2c3d"}, {"type": "pr", "id": "42", "label": "Batch import"}], "usage": {"tokens": 18422, "cost_cents": 7, "minutes": 12, "model": "claude-sonnet-5-5"}})
       },
       %{
+        id: "listProjectNotes",
+        method: "GET",
+        path: "/notes",
+        summary:
+          "The project's own notes - decisions, research, the block you were in before a reset - oldest first; `since` keeps only the newer ones. Task notes stay under /tasks/{id}/notes.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: nil,
+        idempotency: nil,
+        params: [
+          %{
+            name: "since",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "ISO 8601; only notes after that moment"
+          },
+          %{
+            name: "project",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "a sub-project's uuid"
+          }
+        ],
+        example: nil
+      },
+      %{
+        id: "createProjectNote",
+        method: "POST",
+        path: "/notes",
+        summary:
+          "A note on the project itself, the same shape as a task note (summary, outcome, next_steps, refs, usage); its usage lands in the ledger with no task. Use it for what is not about one task.",
+        auth: true,
+        scope: "tasks:write",
+        action: "comment",
+        feature: nil,
+        idempotency: :required,
+        params: [
+          %{
+            name: "summary",
+            in: :body,
+            type: "string",
+            required: true,
+            doc: "one line, 240 characters at most"
+          },
+          %{name: "content", in: :body, type: "string", required: false, doc: "the long text"},
+          %{
+            name: "outcome",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "done | partial | blocked | failed | needs_review"
+          },
+          %{
+            name: "next_steps",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "2000 characters at most"
+          },
+          %{name: "refs", in: :body, type: "array", required: false, doc: "as on a task note"},
+          %{
+            name: "usage",
+            in: :body,
+            type: "object",
+            required: false,
+            doc: "{tokens, cost_cents, minutes, model, occurred_at} - needs usage:write"
+          },
+          %{
+            name: "project",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "a sub-project's uuid"
+          }
+        ],
+        example:
+          ~s({"summary": "Rooms dropdown: the client wants the list, not a search", "outcome": "done"})
+      },
+      %{
+        id: "briefing",
+        method: "GET",
+        path: "/briefing",
+        summary:
+          "Everything to pick the project up in one read: the project (completion mode, caught up?, what an agent may do), the open tasks with direction, last outcome, latest note summary and next steps, who started them, what they wait on, their checklist counts; the sub-projects one line each; the project's notes since a moment. Capped at 50 tasks by priority then position (`truncated` says so). Read this first after a context reset.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: "tasks",
+        idempotency: nil,
+        params: [
+          %{
+            name: "since",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "ISO 8601; project notes after that moment"
+          },
+          %{
+            name: "limit",
+            in: :query,
+            type: "integer",
+            required: false,
+            doc: "open tasks to return, 50 at most"
+          },
+          %{
+            name: "project",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "a sub-project's uuid"
+          }
+        ],
+        example: nil
+      },
+      %{
+        id: "amendEntry",
+        method: "PATCH",
+        path: "/entries/{id}",
+        summary:
+          "Correct a time entry's minutes. Your own entries when the project's agent policy allows (`agent_policy.amend_own_ledger`); a manager key corrects anyone's. The amendment is traced in the activity feed.",
+        auth: true,
+        scope: "time:write",
+        action: "log_time",
+        feature: "ledger",
+        idempotency: nil,
+        params: [
+          %{
+            name: "id",
+            in: :path,
+            type: "uuid",
+            required: true,
+            doc: "the entry's uuid from the post that made it"
+          },
+          %{
+            name: "minutes",
+            in: :body,
+            type: "integer",
+            required: true,
+            doc: "the corrected whole minutes"
+          }
+        ],
+        example: ~s({"minutes": 25})
+      },
+      %{
+        id: "removeEntry",
+        method: "DELETE",
+        path: "/entries/{id}",
+        summary:
+          "Remove an entry (time, tokens or cost) you recorded by mistake - your own under `amend_own_ledger`, anyone's with a manager key. What it held stays in the activity feed.",
+        auth: true,
+        scope: "time:write",
+        action: "log_time",
+        feature: "ledger",
+        idempotency: nil,
+        params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
+        example: nil
+      },
+      %{
         id: "llmsTxt",
         method: "GET",
         path: "/llms.txt",
@@ -641,6 +921,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
      "This key acts for a person who is no longer a member of the project. Do not retry; tell your operator."},
     {404, "not_found",
      "No such task, or no such project within this key's reach (its own project and the sub-projects under it). Reload /tasks or /project."},
+    {403, "foreign_text",
+     "The task's title or description were written by someone else and the project does not let an agent reword them (agent_policy.edit_foreign_text). Leave the words; add a note."},
+    {403, "delete_not_allowed",
+     "The project's agent policy does not let this key delete that task (agent_policy.delete_tasks)."},
+    {403, "amend_not_allowed",
+     "The entry is not this key's, or the project does not let an agent correct its own (agent_policy.amend_own_ledger)."},
+    {409, "already_started",
+     "Someone else started this task and the project does not let an agent take it over (agent_policy.take_started_task); `details.started_by` says who. Pick another task."},
     {409, "invalid_transition",
      "The task cannot move from its current status to the one asked; `details.allowed_transitions` lists what it can do. Reload the task, then pick one of those."},
     {409, "library_task",
@@ -750,6 +1038,49 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `{"name": "…"}` → `POST /tasks` `{"title": "…", "project": "<its uuid>"}` for each task → work
     through them with `/tasks/{id}/start`, notes, time and `/complete` as usual.
 
+    ## Settings that shape what you may do
+
+    `/me` and `/project` carry `agent_policy`, the project's own answers to four questions:
+    `take_started_task` (may you start a task someone else started - else 409 `already_started`),
+    `edit_foreign_text` (may you reword a task you did not create - else 403 `foreign_text`; your
+    own tasks are always yours to edit), `delete_tasks` (`none` | `own` | `any`), and
+    `amend_own_ledger` (may you correct or remove your own time and usage entries; a manager key
+    corrects anyone's). Every task says who created it and who started it (`created_by`,
+    `started_by`: a person and/or a key - compare the key with yours from /me). Read the policy
+    once; do not probe for 403s.
+
+    `completion` on a project is how it ends: `auto` completes it when its last open row is done;
+    `manual` is ongoing work - every task done is `caught_up: true`, never completed, and the
+    client's next idea is just the next task. An ongoing sub-project never completes its parent.
+    New sub-projects copy the parent's mode unless you pass `completion`.
+
+    ## On a task: waiting, origin, labels, a checklist
+
+    - `waiting_on` - whom the task waits on ("the client", "the boss"). A badge beside the status,
+      not a status: a waiting task is still todo or in_progress. Clear it when the wait is over.
+    - `origin` - where a relayed item came from ("client", "boss"); 40 characters.
+    - `labels` - the project's labels by name (needs the labels feature); on create or update, the
+      full list to set. New names are created for you.
+    - `checklist` - sub-items ticked one by one: four questions relayed from a client are one
+      task with four items, not four tasks and not a sub-project. Create with `checklist:
+      [{text}]`, tick with `PATCH /tasks/{id}/checklist/{item}`; the task shows `checklist:
+      {done, total}` on the list and `checklist_items` on the detail. Ticking never moves the
+      task's status or `progress_pct` - finish the task with `/complete` as usual.
+    - `position: "top"` on create puts the task above every row.
+
+    ## Picking up after a reset, and polling
+
+    `GET /briefing` is the one read that restores your state: the project and its policy, the
+    open tasks (direction, last outcome, latest note's summary and next steps, who started
+    them, what they wait on, checklist counts), the sub-projects, and the project's notes since
+    a moment. Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
+    once a minute; it answers only what changed (and `now` for the next round).
+
+    What is not about one task - a decision, research the client asked for, the state you were
+    in before a context reset - goes to `POST /notes`, the project's own notes, same shape as a
+    task note; `GET /notes?since=` reads them back. Keep the daily story there, keep task notes
+    on their tasks.
+
     ## Rules that trip agents up
 
     - **Units:** `minutes` are whole minutes (not hours, not decimals); `tokens` whole counts;
@@ -811,7 +1142,9 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `priority`, `progress_pct`, `estimated_duration`, `estimated_duration_unit`, `position`,
     `task_uuid`, `child_project_uuid`, `library_task`, `completed_at`, `inserted_at`, `updated_at`,
     `totals` (`minutes`, `tokens`, `cost_cents` logged on the task — sums over the ledger).
-    `GET /tasks/{id}` adds `direction` (the latest redirect, or null), `last_outcome`,
+    Plus `waiting_on`, `origin`, `labels` (names), `checklist` (`{done, total}`), `created_by` and
+    `started_by` (`{person, key}` uuids - null for a person's own doing), `updated_at`.
+    `GET /tasks/{id}` adds `checklist_items` (`[{id, text, done, done_at}]`), `direction` (the latest redirect, or null), `last_outcome`,
     `latest_agent_note`, `display_summary` (`text` + `source`: description | redirect | agent) and
     `notes_url`. A `subproject` row is a nested project: its lifecycle is its own, the row's status
     and progress roll up from it, and its tasks are reached with `project=<child_project_uuid>`

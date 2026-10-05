@@ -79,6 +79,7 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
         attrs =
           %{"name" => String.trim(name)}
           |> maybe_put("description", params["description"])
+          |> maybe_put_completion(params["completion"])
 
         case Projects.create_subproject(parent.uuid, attrs) do
           {:ok, %{child_project: child, assignment: link}} ->
@@ -107,6 +108,12 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
         end
     end
   end
+
+  # `completion` names how the child ends; left out, it copies the parent's.
+  defp maybe_put_completion(attrs, mode) when mode in ["auto", "manual"],
+    do: Map.put(attrs, "settings", %{"completion" => mode})
+
+  defp maybe_put_completion(attrs, _), do: attrs
 
   defp maybe_put(attrs, _k, v) when not is_binary(v) or v == "", do: attrs
   defp maybe_put(attrs, k, v), do: Map.put(attrs, k, v)

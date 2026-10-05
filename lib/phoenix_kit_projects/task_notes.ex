@@ -87,11 +87,27 @@ defmodule PhoenixKitProjects.TaskNotes do
 
   @doc "A task's notes, oldest first, authors preloaded. Empty when comments are absent."
   @spec list(binary()) :: [map()]
-  def list(assignment_uuid) when is_binary(assignment_uuid) do
-    PhoenixKitComments.list_comments(@resource_type, assignment_uuid,
-      status: "published",
-      preload: [:user]
-    )
+  def list(assignment_uuid) when is_binary(assignment_uuid),
+    do: list_on(@resource_type, assignment_uuid)
+
+  @project_resource_type "project_notes"
+
+  @doc "The comments anchor type of a PROJECT's notes: decisions, research, the in-flight block."
+  @spec project_resource_type() :: String.t()
+  def project_resource_type, do: @project_resource_type
+
+  @doc "A project's own notes (not its tasks'), oldest first; `since` keeps only the newer ones."
+  @spec list_for_project(binary(), DateTime.t() | nil) :: [map()]
+  def list_for_project(project_uuid, since \\ nil) when is_binary(project_uuid) do
+    @project_resource_type
+    |> list_on(project_uuid)
+    |> Enum.filter(fn note ->
+      is_nil(since) or DateTime.compare(note.inserted_at, since) == :gt
+    end)
+  end
+
+  defp list_on(type, uuid) do
+    PhoenixKitComments.list_comments(type, uuid, status: "published", preload: [:user])
   rescue
     _ -> []
   catch
@@ -353,25 +369,57 @@ defmodule PhoenixKitProjects.TaskNotes do
   @spec create(Assignment.t(), map(), keyword()) ::
           {:ok, %{note: map(), entries: [map()]}} | {:error, term()}
   def create(%Assignment{} = assignment, fields, opts) do
+    create_on(
+      %{
+        anchor_type: @resource_type,
+        anchor_uuid: assignment.uuid,
+        project_uuid: assignment.project_uuid,
+        assignment_uuid: assignment.uuid
+      },
+      fields,
+      opts
+    )
+  end
+
+  @doc """
+  Writes a note on the PROJECT itself — the same shape, the same ledger
+  rows for its usage, no task. Options as `create/3`.
+  """
+  @spec create_for_project(map(), map(), keyword()) ::
+          {:ok, %{note: map(), entries: [map()]}} | {:error, term()}
+  def create_for_project(%{uuid: project_uuid}, fields, opts) do
+    create_on(
+      %{
+        anchor_type: @project_resource_type,
+        anchor_uuid: project_uuid,
+        project_uuid: project_uuid,
+        assignment_uuid: nil
+      },
+      fields,
+      opts
+    )
+  end
+
+  defp create_on(target, fields, opts) do
     user_uuid = Keyword.fetch!(opts, :user_uuid)
     kind = Keyword.get(opts, :kind, "agent_note")
 
     cond do
       not available?() -> {:error, :unavailable}
       kind not in @kinds -> {:error, :invalid_kind}
-      true -> insert(assignment, fields, kind, user_uuid, opts)
+      true -> insert(target, fields, kind, user_uuid, opts)
     end
   end
 
-  defp insert(assignment, fields, kind, user_uuid, opts) do
+  defp insert(target, fields, kind, user_uuid, opts) do
     repo = RepoHelper.repo()
     label = Keyword.get(opts, :label)
     actor = Keyword.get(opts, :actor) || %{kind: "user", uuid: user_uuid}
     extra = Keyword.get(opts, :metadata, %{})
 
     repo.transaction(fn ->
-      with {:ok, note} <- insert_note(assignment, fields, kind, user_uuid, label, extra),
-           {:ok, entries} <- record_usage(assignment, fields[:usage], note, actor, user_uuid),
+      with {:ok, note} <- insert_note(target, fields, kind, user_uuid, label, extra),
+           {:ok, entries} <- record_usage(target, fields[:usage], note, actor, user_uuid),
            {:ok, note} <- link_entries(note, entries) do
         %{note: repo.preload(note, [:user]), entries: entries}
       else
@@ -380,7 +428,7 @@ defmodule PhoenixKitProjects.TaskNotes do
     end)
   end
 
-  defp insert_note(assignment, fields, kind, user_uuid, label, extra) do
+  defp insert_note(target, fields, kind, user_uuid, label, extra) do
     metadata =
       extra
       |> Map.new(fn {k, v} -> {to_string(k), v} end)
@@ -402,7 +450,7 @@ defmodule PhoenixKitProjects.TaskNotes do
       }
       |> maybe_attribution(label)
 
-    PhoenixKitComments.create_comment(@resource_type, assignment.uuid, user_uuid, attrs)
+    PhoenixKitComments.create_comment(target.anchor_type, target.anchor_uuid, user_uuid, attrs)
   end
 
   defp maybe_attribution(attrs, label) when is_binary(label) and label != "",
@@ -425,19 +473,19 @@ defmodule PhoenixKitProjects.TaskNotes do
   # (one row per non-zero figure), minutes through `log_time/3` — never
   # billable, the actor is the agent (the key) or the person. Every row
   # names the note.
-  defp record_usage(_assignment, nil, _note, _actor, _user_uuid), do: {:ok, []}
+  defp record_usage(_target, nil, _note, _actor, _user_uuid), do: {:ok, []}
 
-  defp record_usage(assignment, usage, note, actor, user_uuid) do
-    project_uuid = assignment.project_uuid
+  defp record_usage(target, usage, note, actor, user_uuid) do
+    project_uuid = target.project_uuid
     base_meta = %{"note_uuid" => note.uuid, "entered_by_uuid" => user_uuid, "via" => "api"}
 
-    with {:ok, ai_entries} <- record_ai(project_uuid, assignment, usage, actor, base_meta),
-         {:ok, time_entries} <- record_minutes(project_uuid, assignment, usage, actor, base_meta) do
+    with {:ok, ai_entries} <- record_ai(project_uuid, target, usage, actor, base_meta),
+         {:ok, time_entries} <- record_minutes(project_uuid, target, usage, actor, base_meta) do
       {:ok, ai_entries ++ time_entries}
     end
   end
 
-  defp record_ai(project_uuid, assignment, usage, actor, base_meta) do
+  defp record_ai(project_uuid, target, usage, actor, base_meta) do
     tokens = usage[:tokens] || 0
     cost = usage[:cost_cents] || 0
 
@@ -448,7 +496,7 @@ defmodule PhoenixKitProjects.TaskNotes do
         |> maybe_put(:model, usage[:model])
 
       Ledger.record_ai(project_uuid, payload,
-        assignment_uuid: assignment.uuid,
+        assignment_uuid: target.assignment_uuid,
         occurred_at: usage[:occurred_at]
       )
     else
@@ -456,10 +504,10 @@ defmodule PhoenixKitProjects.TaskNotes do
     end
   end
 
-  defp record_minutes(project_uuid, assignment, %{minutes: minutes} = usage, actor, meta)
+  defp record_minutes(project_uuid, target, %{minutes: minutes} = usage, actor, meta)
        when is_integer(minutes) and minutes > 0 do
     case Ledger.log_time(project_uuid, minutes,
-           assignment_uuid: assignment.uuid,
+           assignment_uuid: target.assignment_uuid,
            billable: false,
            actor_kind: ledger_actor_kind(actor.kind),
            actor_uuid: actor.uuid,

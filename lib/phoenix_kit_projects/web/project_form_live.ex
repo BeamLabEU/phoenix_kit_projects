@@ -297,6 +297,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     _ -> []
   end
 
+  defp agent_policy_switches do
+    [
+      {"take_started_task", gettext("Take over a task someone else started")},
+      {"edit_foreign_text", gettext("Reword tasks it did not create")},
+      {"amend_own_ledger", gettext("Amend or remove its own time and usage entries")}
+    ]
+  end
+
   defp default_authz_choices do
     Map.new(overridable_authz_actions(), fn %{settings_key: key, default: default} ->
       {key, default}
@@ -824,6 +832,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         merge_attrs(attrs, socket)
         |> clear_other_assignees(assign_type)
         |> maybe_apply_status_mode(params, socket.assigns.project, fx)
+        |> apply_project_type(params, socket.assigns.project)
         |> strip_gated_project_attrs(fx)
 
       socket =
@@ -1198,6 +1207,46 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       _ -> Features.default_gates()
     end
   end
+
+  # How the project ends and what an agent may do — both live in the
+  # settings JSONB beside the status-mode key, so the fold starts from
+  # whatever the earlier folds built (never from an empty map: a posted
+  # settings map replaces every key the project holds).
+  defp apply_project_type(attrs, params, project) do
+    base = Map.get(attrs, "settings") || (project && project.settings) || %{}
+
+    settings =
+      base
+      |> put_completion(Map.get(params, "completion"))
+      |> put_agent_policy(Map.get(params, "agents"))
+
+    if settings == base and not Map.has_key?(attrs, "settings"),
+      do: attrs,
+      else: Map.put(attrs, "settings", settings)
+  end
+
+  defp put_completion(settings, mode) when mode in ["auto", "manual"],
+    do: Map.put(settings, "completion", mode)
+
+  defp put_completion(settings, _), do: settings
+
+  defp put_agent_policy(settings, %{} = posted) do
+    policy =
+      Map.new(Project.agent_policy_defaults(), fn {key, default} ->
+        {key, policy_param(key, Map.get(posted, key), default)}
+      end)
+
+    Map.put(settings, "agents", policy)
+  end
+
+  defp put_agent_policy(settings, _), do: settings
+
+  defp policy_param("delete_tasks", v, default),
+    do: if(v in Project.delete_choices(), do: v, else: default)
+
+  defp policy_param(_key, "true", _default), do: true
+  defp policy_param(_key, "false", _default), do: false
+  defp policy_param(_key, _v, default), do: default
 
   # The status translation-mode fold also writes into settings — it rides
   # the same statuses gate as the source field (panel R3-5).
@@ -2221,6 +2270,56 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <div :if={"start" in @top_blocks} id="create-top-start" class="card bg-base-100 shadow">
             <div class="card-body flex flex-col gap-3">
               <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
+
+            <%!-- How the project ends (Max, 2026-10-05: "some projects have a
+                 defined end while this one is more of an ongoing one… it
+                 should be a setting"). Ongoing work never completes on its
+                 own; every task done is "all caught up". --%>
+            <.select
+              name="completion"
+              label={gettext("Ends")}
+              value={Project.completion(@project)}
+              options={[
+                {gettext("When the last task is done"), "auto"},
+                {gettext("Only when someone ends it — ongoing work"), "manual"}
+              ]}
+            />
+
+            <%!-- What an AI agent on the API may do here. Every row is a
+                 project setting (`Project.agent_policy/1`), so the same
+                 module serves a locked-down client project and an open
+                 sandbox. --%>
+            <% policy = Project.agent_policy(@project) %>
+            <fieldset class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+              <legend class="px-1 text-sm font-medium">{gettext("What an AI agent may do here")}</legend>
+              <label :for={{key, label} <- agent_policy_switches()} class="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="hidden" name={"agents[#{key}]"} value="false" />
+                <input
+                  type="checkbox"
+                  name={"agents[#{key}]"}
+                  value="true"
+                  checked={policy[key] == true}
+                  class="checkbox checkbox-primary checkbox-sm"
+                />
+                <span>{label}</span>
+              </label>
+              <div class="w-72">
+                <.select
+                  name="agents[delete_tasks]"
+                  label={gettext("Delete tasks")}
+                  value={policy["delete_tasks"]}
+                  class="select-sm"
+                  options={[
+                    {gettext("Never"), "none"},
+                    {gettext("Only the ones it created"), "own"},
+                    {gettext("Any task"), "any"}
+                  ]}
+                />
+              </div>
+              <p class="text-xs opacity-60">
+                {gettext("An agent always acts with the role of the person its key acts for; these rows narrow what it may do on top of that.")}
+              </p>
+            </fieldset>
             </div>
           </div>
 

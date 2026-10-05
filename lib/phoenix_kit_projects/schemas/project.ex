@@ -182,8 +182,67 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # reverting to fully open, and a template clone losing the floors it
     # was supposed to carry. Values are re-validated at read time
     # (Authz.current_overrides/1 drops anything off-vocabulary).
-    "authz" => &is_map/1
+    "authz" => &is_map/1,
+    # How the project ends: "auto" — when its last open row is done (the
+    # default); "manual" — never on its own, ongoing work a person ends.
+    # Copied onto a sub-project at creation (`Projects.create_subproject/2`).
+    "completion" => &__MODULE__.completion_mode?/1,
+    # What an AI agent on the API may do here (`agent_policy/1` fills the
+    # defaults): take over a task someone else started, reword tasks it
+    # did not create, delete tasks, amend its own ledger entries.
+    "agents" => &is_map/1
   }
+
+  @completion_modes ~w(auto manual)
+  @agent_policy_defaults %{
+    "take_started_task" => false,
+    "edit_foreign_text" => false,
+    "delete_tasks" => "none",
+    "amend_own_ledger" => true
+  }
+  @delete_choices ~w(none own any)
+
+  @doc false
+  def completion_mode?(v), do: v in @completion_modes
+
+  @doc "The completion modes: `auto` (the last task done ends it) and `manual` (ongoing)."
+  @spec completion_modes() :: [String.t()]
+  def completion_modes, do: @completion_modes
+
+  @doc ~S|How this project ends — `"auto"` unless its settings say `"manual"`.|
+  @spec completion(t() | map() | nil) :: String.t()
+  def completion(%{settings: %{"completion" => "manual"}}), do: "manual"
+  def completion(_), do: "auto"
+
+  @doc "Whether the project is ongoing work that never completes on its own."
+  @spec ongoing?(t() | map() | nil) :: boolean()
+  def ongoing?(project), do: completion(project) == "manual"
+
+  @doc "The agent policy with every key present, off-vocabulary values replaced by the default."
+  @spec agent_policy(t() | map() | nil) :: %{String.t() => boolean() | String.t()}
+  def agent_policy(%{settings: %{"agents" => %{} = stored}}) do
+    Map.new(@agent_policy_defaults, fn {key, default} ->
+      {key, policy_value(key, Map.get(stored, key), default)}
+    end)
+  end
+
+  def agent_policy(_), do: @agent_policy_defaults
+
+  @doc "The agent policy's keys and defaults, for a form."
+  @spec agent_policy_defaults() :: %{String.t() => boolean() | String.t()}
+  def agent_policy_defaults, do: @agent_policy_defaults
+
+  @doc "The choices for `delete_tasks`."
+  @spec delete_choices() :: [String.t()]
+  def delete_choices, do: @delete_choices
+
+  defp policy_value("delete_tasks", v, default),
+    do: if(v in @delete_choices, do: v, else: default)
+
+  defp policy_value(_key, v, _default) when is_boolean(v), do: v
+  defp policy_value(_key, "true", _default), do: true
+  defp policy_value(_key, "false", _default), do: false
+  defp policy_value(_key, _v, default), do: default
 
   # At most one of team/department/person (mirrors the DB CHECK + the
   # assignments table's validator) so changesets fail fast with a friendly

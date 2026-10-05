@@ -97,6 +97,20 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     # has already been accepted.
     field(:review_status, :string, default: "accepted")
 
+    # V19 — what an agent needs on a task. Provenance: the person and/or
+    # the API key that created and (last) started it. `waiting_on`: whom
+    # the task waits for, nil when it does not — a badge beside the three
+    # statuses, not a fourth. `origin`: where a relayed item came from
+    # ("client", "boss"). `checklist`: sub-items ticked one by one,
+    # `[%{"id", "text", "done", "done_at"}]`, never driving `progress_pct`.
+    field(:created_by_uuid, UUIDv7)
+    field(:created_by_key_uuid, UUIDv7)
+    field(:started_by_uuid, UUIDv7)
+    field(:started_by_key_uuid, UUIDv7)
+    field(:waiting_on, :string)
+    field(:origin, :string)
+    field(:checklist, {:array, :map}, default: [])
+
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
 
@@ -131,11 +145,46 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   @required ~w(project_uuid status)a
   @optional ~w(task_uuid child_project_uuid position description estimated_duration
                estimated_duration_unit counts_weekends progress_pct track_progress priority
-               translations assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
+               translations assigned_team_uuid assigned_department_uuid assigned_person_uuid
+               waiting_on origin checklist)a
 
-  # Server-only fields: set by trusted server code (completion tracking),
-  # never cast from untrusted form params. Use `status_changeset/2`.
-  @server_only ~w(completed_by_uuid completed_at)a
+  # Server-only fields: set by trusted server code (completion tracking,
+  # provenance), never cast from untrusted form params. Use `status_changeset/2`.
+  @server_only ~w(completed_by_uuid completed_at created_by_uuid created_by_key_uuid
+                  started_by_uuid started_by_key_uuid)a
+
+  @checklist_max 50
+  @checklist_text_max 500
+
+  @doc ~S|A checklist item as stored: `%{"id", "text", "done", "done_at"}`.|
+  @spec checklist_item(map()) :: map() | nil
+  def checklist_item(%{} = item) do
+    text = item["text"] || item[:text]
+
+    if is_binary(text) and String.trim(text) != "" do
+      done = (item["done"] || item[:done]) in [true, "true"]
+
+      %{
+        "id" => item["id"] || item[:id] || Ecto.UUID.generate(),
+        "text" => text |> String.trim() |> String.slice(0, @checklist_text_max),
+        "done" => done,
+        "done_at" =>
+          if(done,
+            do: item["done_at"] || item[:done_at] || DateTime.to_iso8601(DateTime.utc_now())
+          )
+      }
+    end
+  end
+
+  def checklist_item(_), do: nil
+
+  @doc "How many items are done, and how many there are."
+  @spec checklist_counts(t()) :: %{done: non_neg_integer(), total: non_neg_integer()}
+  def checklist_counts(%__MODULE__{checklist: items}) when is_list(items) do
+    %{done: Enum.count(items, &(&1["done"] == true)), total: length(items)}
+  end
+
+  def checklist_counts(_), do: %{done: 0, total: 0}
 
   @doc """
   Form-facing changeset. Does NOT allow setting `completed_by_uuid` or
@@ -170,6 +219,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_inclusion(:estimated_duration_unit, @duration_units)
     |> validate_number(:progress_pct, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
     |> validate_translations_shape()
+    |> validate_length(:waiting_on, max: 200)
+    |> validate_length(:origin, max: 40)
+    |> normalize_checklist()
     |> assoc_constraint(:project)
     |> assoc_constraint(:task)
     |> assoc_constraint(:child_project)
@@ -179,6 +231,25 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
       message: single_assignee_message()
     )
     |> task_xor_child_constraints()
+  end
+
+  # The checklist as stored: blank items dropped, ids kept or minted,
+  # `done_at` stamped when an item turns done; at most #{@checklist_max}.
+  defp normalize_checklist(changeset) do
+    case get_change(changeset, :checklist) do
+      nil ->
+        changeset
+
+      items when is_list(items) ->
+        items = items |> Enum.map(&checklist_item/1) |> Enum.reject(&is_nil/1)
+
+        if length(items) > @checklist_max,
+          do: add_error(changeset, :checklist, "at most #{@checklist_max} items"),
+          else: put_change(changeset, :checklist, items)
+
+      _ ->
+        add_error(changeset, :checklist, "must be a list of items")
+    end
   end
 
   @doc """

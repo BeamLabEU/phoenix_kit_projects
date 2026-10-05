@@ -2469,7 +2469,14 @@ defmodule PhoenixKitProjects.Projects do
     # `progress_pct` is the average of the per-task sliders (completing a task
     # doesn't move its slider) — otherwise a "done" row would show 0%. For an
     # in-progress sub-project the rolled-up slider average is the right number.
-    progress = if status == "done", do: 100, else: rollup_val(summary, :progress_pct, 0)
+    # An ongoing child with every task done is "caught up": 100% on a row
+    # that is not done, so the parent stays open.
+    progress =
+      cond do
+        status == "done" -> 100
+        caught_up?(child, summary) -> 100
+        true -> rollup_val(summary, :progress_pct, 0)
+      end
 
     %{
       status: status,
@@ -2496,6 +2503,15 @@ defmodule PhoenixKitProjects.Projects do
       else: "todo"
   end
 
+  @doc "Whether an ongoing project has every task done — nothing open, nothing ended."
+  @spec caught_up?(Project.t()) :: boolean()
+  def caught_up?(%Project{} = project), do: caught_up?(project, project_summary(project))
+
+  defp caught_up?(project, summary) do
+    total = rollup_val(summary, :total, 0)
+    Project.ongoing?(project) and total > 0 and rollup_val(summary, :done, 0) == total
+  end
+
   defp rollup_val(nil, _key, default), do: default
   defp rollup_val(summary, key, _default) when is_map(summary), do: Map.fetch!(summary, key)
 
@@ -2505,6 +2521,12 @@ defmodule PhoenixKitProjects.Projects do
     done = Enum.count(assignments, &(&1.status == "done"))
 
     cond do
+      # Ongoing work never ends on its own: every task done is "all caught
+      # up", and the client's next idea reopens nothing because nothing
+      # closed. A person completes it by hand.
+      Project.ongoing?(project) ->
+        {:unchanged, project}
+
       total > 0 and done == total and project.completed_at == nil ->
         mark_completed(project)
 
@@ -3023,9 +3045,24 @@ defmodule PhoenixKitProjects.Projects do
   defp do_create_subproject(%Project{} = parent, child_attrs) do
     parent_project_uuid = parent.uuid
 
+    # The child copies the parent's completion mode unless told otherwise:
+    # a copy, so changing the parent later never flips live children. The
+    # default (`auto`) is the absence of the key, so nothing is written for
+    # it — a clone's settings stay exactly what the template held.
+    settings =
+      case {Map.get(child_attrs, "settings", %{}), Project.completion(parent)} do
+        {%{"completion" => _} = given, _} -> given
+        {given, "manual"} -> Map.put(given, "completion", "manual")
+        {given, _} -> given
+      end
+
     attrs =
       child_attrs
-      |> Map.merge(%{"is_template" => to_string(parent.is_template), "start_mode" => "immediate"})
+      |> Map.merge(%{
+        "is_template" => to_string(parent.is_template),
+        "start_mode" => "immediate",
+        "settings" => settings
+      })
 
     repo().transaction(fn ->
       child =
@@ -3601,6 +3638,34 @@ defmodule PhoenixKitProjects.Projects do
       end
 
       {:ok, updated}
+    end
+  end
+
+  @doc """
+  Stamps server-owned provenance on a task — who created it, who started
+  it (a person and/or an API key) — without touching anything else and
+  without a broadcast: the row's content did not change.
+  """
+  @spec stamp_assignment(Assignment.t(), map()) :: {:ok, Assignment.t()} | {:error, term()}
+  def stamp_assignment(%Assignment{} = a, attrs) when is_map(attrs) do
+    a
+    |> Assignment.status_changeset(
+      Map.take(
+        attrs,
+        ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid)a
+      )
+    )
+    |> repo().update()
+  end
+
+  @doc "A position above every row of the project, for a task added at the top."
+  @spec top_assignment_position(uuid()) :: integer()
+  def top_assignment_position(project_uuid) do
+    case repo().one(
+           from(a in Assignment, where: a.project_uuid == ^project_uuid, select: min(a.position))
+         ) do
+      nil -> 0
+      min -> min - 1
     end
   end
 

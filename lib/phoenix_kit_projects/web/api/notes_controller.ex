@@ -90,13 +90,59 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   defp require_usage_rights(conn, _), do: {:ok, conn}
 
+  # ── The project's own notes ──────────────────────────────────────
+
+  @doc false
+  def project_index(conn, params) do
+    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
+         {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- require_notes(conn),
+         {:ok, conn} <- Json.require_action(conn, :view) do
+      since = parse_since(params["since"])
+      notes = TaskNotes.list_for_project(conn.assigns.pk_project.uuid, since)
+
+      json(conn, %{
+        project_uuid: conn.assigns.pk_project.uuid,
+        since: since,
+        now: DateTime.utc_now(),
+        notes: Enum.map(notes, &TaskNotes.to_json/1),
+        count: length(notes)
+      })
+    else
+      {:halt, conn} -> conn
+    end
+  end
+
+  @doc false
+  def project_create(conn, params) do
+    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
+         {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- require_notes(conn),
+         {:ok, conn} <- Json.require_action(conn, :comment),
+         {:ok, conn} <- require_usage_rights(conn, params["usage"]) do
+      Json.idempotent(conn, [required: true], fn -> do_create(conn, nil, params) end)
+    else
+      {:halt, conn} -> conn
+    end
+  end
+
+  @doc false
+  def parse_since(since) when is_binary(since) do
+    case DateTime.from_iso8601(since) do
+      {:ok, dt, _} -> dt
+      _ -> nil
+    end
+  end
+
+  def parse_since(_), do: nil
+
   defp do_create(conn, a, params) do
     key = conn.assigns.pk_api_key
 
     with {:ok, usage} <- parse_usage(params["usage"]),
          {:ok, fields} <- validate(Map.put(params, "usage", usage)),
          {:ok, user_uuid} <- accountable(key) do
-      case TaskNotes.create(a, fields,
+      case write_note(a, conn.assigns.pk_project, fields,
              user_uuid: user_uuid,
              kind: "agent_note",
              label: key.name,
@@ -143,6 +189,11 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
       {:error, details} -> {:error, details}
     end
   end
+
+  defp write_note(nil, project, fields, opts),
+    do: TaskNotes.create_for_project(project, fields, opts)
+
+  defp write_note(a, _project, fields, opts), do: TaskNotes.create(a, fields, opts)
 
   # The comment's author is the person the key acts for, else the one who
   # minted it. A key with nobody behind it (a script over the node) cannot

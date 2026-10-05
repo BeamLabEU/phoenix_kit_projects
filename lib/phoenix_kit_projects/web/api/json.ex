@@ -12,7 +12,17 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
-  alias PhoenixKitProjects.{ApiKeys, Authz, Features, Ledger, Projects, Statuses, TaskNotes}
+  alias PhoenixKitProjects.{
+    ApiKeys,
+    Authz,
+    Features,
+    Labels,
+    Ledger,
+    Projects,
+    Statuses,
+    TaskNotes
+  }
+
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Api.Docs
 
@@ -221,10 +231,13 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   nothing for one task.
   """
   @spec task(Assignment.t(), map() | nil) :: map()
-  def task(%Assignment{} = a, totals \\ nil) do
+  def task(%Assignment{} = a, totals \\ nil, labels \\ nil) do
     totals =
       (totals || Map.get(Ledger.totals_for_assignments([a.uuid]), a.uuid))
       |> whole_totals()
+
+    labels = labels || Map.get(Labels.labels_for_assignments([a.uuid]), a.uuid, [])
+    checklist = Assignment.checklist_counts(a)
 
     %{
       totals: totals,
@@ -241,6 +254,12 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       position: a.position,
       task_uuid: a.task_uuid,
       child_project_uuid: a.child_project_uuid,
+      waiting_on: a.waiting_on,
+      origin: a.origin,
+      labels: Enum.map(labels, & &1.name),
+      checklist: checklist,
+      created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
+      started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       library_task: library_task?(a),
       completed_at: a.completed_at,
       inserted_at: a.inserted_at,
@@ -261,6 +280,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     display = TaskNotes.display_summary(description(a), latest)
 
     %{
+      checklist_items: a.checklist || [],
       direction: latest.redirect && TaskNotes.to_json(latest.redirect),
       last_outcome: latest.agent && latest.agent.metadata["outcome"],
       latest_agent_note: latest.agent && TaskNotes.to_json(latest.agent),
@@ -304,6 +324,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       archived_at: p.archived_at,
       workflow_status: p.current_status_slug,
       available_workflow_statuses: statuses,
+      completion: Project.completion(p),
+      caught_up: Projects.caught_up?(p),
+      agent_policy: Project.agent_policy(p),
       parent_uuid: parent_uuid(p),
       subprojects: Enum.map(Projects.child_projects(p.uuid), &subproject/1)
     }
@@ -326,8 +349,35 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       name: p.name,
       description: p.description,
       workflow_status: p.current_status_slug,
+      completion: Project.completion(p),
+      caught_up: Projects.caught_up?(p),
       completed_at: p.completed_at,
       archived_at: p.archived_at
     }
+  end
+
+  @doc "Whether the key may change this task's words: it created the task, or the project allows it."
+  @spec may_edit_text?(ApiKey.t(), Assignment.t(), map()) :: boolean()
+  def may_edit_text?(%ApiKey{uuid: key_uuid}, %Assignment{} = a, project) do
+    a.created_by_key_uuid == key_uuid or
+      Project.agent_policy(project)["edit_foreign_text"] == true
+  end
+
+  @doc "Whether the key may delete this task under the project's `delete_tasks` policy."
+  @spec may_delete?(ApiKey.t(), Assignment.t(), map()) :: boolean()
+  def may_delete?(%ApiKey{uuid: key_uuid}, %Assignment{} = a, project) do
+    case Project.agent_policy(project)["delete_tasks"] do
+      "any" -> true
+      "own" -> a.created_by_key_uuid == key_uuid
+      _ -> false
+    end
+  end
+
+  @doc "Whether the key may start a task someone else has started (a claim)."
+  @spec may_take?(ApiKey.t(), Assignment.t(), map()) :: boolean()
+  def may_take?(%ApiKey{uuid: key_uuid}, %Assignment{} = a, project) do
+    (is_nil(a.started_by_uuid) and is_nil(a.started_by_key_uuid)) or
+      a.started_by_key_uuid == key_uuid or
+      Project.agent_policy(project)["take_started_task"] == true
   end
 end

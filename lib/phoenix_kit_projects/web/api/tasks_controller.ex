@@ -17,8 +17,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKit.Mentions
-  alias PhoenixKitProjects.{Activity, Ledger, Projects}
-  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment}
+  alias PhoenixKitProjects.{Activity, Features, Labels, Ledger, Projects}
+  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Web.Api.Json
 
   @priorities ~w(urgent high normal low)
@@ -36,13 +36,33 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         conn.assigns.pk_project.uuid
         |> Projects.list_assignments()
         |> filter_status(params["status"])
+        |> filter_since(params["updated_since"])
 
-      totals = Ledger.totals_for_assignments(Enum.map(tasks, & &1.uuid))
-      json(conn, %{tasks: Enum.map(tasks, &Json.task(&1, totals[&1.uuid])), count: length(tasks)})
+      uuids = Enum.map(tasks, & &1.uuid)
+      totals = Ledger.totals_for_assignments(uuids)
+      labels = Labels.labels_for_assignments(uuids)
+
+      json(conn, %{
+        tasks: Enum.map(tasks, &Json.task(&1, totals[&1.uuid], labels[&1.uuid] || [])),
+        count: length(tasks),
+        now: DateTime.utc_now()
+      })
     else
       {:halt, conn} -> conn
     end
   end
+
+  # `updated_since`: only the rows touched after that moment (strictly),
+  # for a poll that remembers the `now` of its last answer. An unreadable
+  # value is ignored rather than refused — a poll must not stall on it.
+  defp filter_since(tasks, since) when is_binary(since) do
+    case DateTime.from_iso8601(since) do
+      {:ok, dt, _} -> Enum.filter(tasks, &(DateTime.compare(&1.updated_at, dt) == :gt))
+      _ -> tasks
+    end
+  end
+
+  defp filter_since(tasks, _), do: tasks
 
   # A filter nobody recognises used to answer the whole list, which an
   # agent read as "no tasks match" or "every task matches" at random.
@@ -88,6 +108,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp do_create(conn, params) do
     %{pk_api_key: key, pk_project: project} = conn.assigns
+    params = Map.merge(params, position_attrs(project, params["position"]))
 
     with {:ok, title} <- required_string(params, "title"),
          {:ok, assignment_attrs} <- assignment_attrs(params) do
@@ -105,6 +126,14 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
           )
 
           sync_mentions(a.uuid, task_attrs["description"], key)
+
+          {:ok, _} =
+            Projects.stamp_assignment(a, %{
+              created_by_uuid: ApiKey.accountable_uuid(key),
+              created_by_key_uuid: key.uuid
+            })
+
+          apply_labels(project, a, params["labels"])
 
           {201, %{task: Json.task(Projects.get_assignment(a.uuid))}}
 
@@ -132,13 +161,15 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   defp do_update(conn, %Assignment{} = a, params) do
-    key = conn.assigns.pk_api_key
+    %{pk_api_key: key, pk_project: project} = conn.assigns
     content = Map.take(params, ["title", "description"])
 
     with :ok <- content_editable(a, content),
+         :ok <- text_policy(key, a, project, content),
          {:ok, assignment_attrs} <- assignment_attrs(params),
          {:ok, _} <- update_content(a, content),
-         {:ok, _} <- update_fields(a, assignment_attrs) do
+         {:ok, _} <- update_fields(a, assignment_attrs),
+         :ok <- apply_labels(project, a, params["labels"]) do
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
@@ -170,6 +201,44 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   defp sync_mentions(_uuid, _description, _key), do: :ok
+
+  # The project's `edit_foreign_text` policy: a task's words belong to
+  # whoever wrote them; an agent rewords only what it created unless the
+  # project says otherwise.
+  defp text_policy(_key, _a, _project, content) when map_size(content) == 0, do: :ok
+
+  defp text_policy(key, a, project, _content) do
+    if Json.may_edit_text?(key, a, project),
+      do: :ok,
+      else:
+        {:error,
+         Json.error_body(
+           403,
+           "foreign_text",
+           "This task's title and description were written by someone else; the project does not let an agent reword them.",
+           %{policy: "edit_foreign_text"}
+         )}
+  end
+
+  # Labels by name, when the project has labels on; a nil means "leave them".
+  defp apply_labels(_project, _a, nil), do: :ok
+
+  defp apply_labels(project, a, names) when is_list(names) do
+    if Features.on?(project, "labels") do
+      Labels.set_assignment_labels(a, Labels.ensure_by_names(project, names))
+    end
+
+    :ok
+  end
+
+  defp apply_labels(_project, _a, _), do: :ok
+
+  # `position: "top"` puts the new task above every other row; anything
+  # else (or nothing) appends, as a form does.
+  defp position_attrs(project, "top"),
+    do: %{"position" => Projects.top_assignment_position(project.uuid)}
+
+  defp position_attrs(_project, _), do: %{}
 
   defp content_editable(_a, content) when map_size(content) == 0, do: :ok
 
@@ -203,14 +272,115 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   def start(conn, params), do: transition(conn, Map.put(params, "status", "in_progress"))
+
+  def delete(conn, %{"id" => id}) do
+    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
+         {:ok, conn} <- Json.require_feature(conn, :tasks),
+         {:ok, conn} <- Json.require_action(conn, :delete_tasks),
+         {:ok, conn, a} <- fetch(conn, id) do
+      %{pk_api_key: key, pk_project: project} = conn.assigns
+
+      cond do
+        not is_nil(a.child_project_uuid) ->
+          Json.error(conn, :conflict, "subproject", "A sub-project is not deleted here.")
+
+        not Json.may_delete?(key, a, project) ->
+          Json.error(
+            conn,
+            :forbidden,
+            "delete_not_allowed",
+            "The project does not let an agent delete this task (policy delete_tasks: #{Project.agent_policy(project)["delete_tasks"]}).",
+            %{policy: "delete_tasks"}
+          )
+
+        true ->
+          case Projects.delete_assignment(a) do
+            {:ok, _} ->
+              Activity.log("projects.assignment_removed",
+                actor_uuid: ApiKey.accountable_uuid(key),
+                resource_type: "assignment",
+                resource_uuid: a.uuid,
+                metadata: api_metadata(key, %{"task" => Assignment.label(a)})
+              )
+
+              sync_project_completion(conn)
+              json(conn, %{deleted: a.uuid})
+
+            {:error, _} ->
+              Json.error(conn, :conflict, "conflict", "The task could not be deleted.")
+          end
+      end
+    else
+      {:halt, conn} -> conn
+      {:error, :not_found} -> not_found(conn)
+    end
+  end
+
+  # One checklist item, ticked or unticked, without rewriting the list:
+  # two sessions may tick different items at once.
+  def checklist_item(conn, %{"id" => id, "item" => item_id} = params) do
+    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
+         {:ok, conn} <- Json.require_feature(conn, :tasks),
+         {:ok, conn} <- Json.require_action(conn, :edit_tasks),
+         {:ok, conn, a} <- fetch(conn, id) do
+      Json.idempotent(conn, [], fn -> do_checklist_item(conn, a, item_id, params) end)
+    else
+      {:halt, conn} -> conn
+      {:error, :not_found} -> not_found(conn)
+    end
+  end
+
+  defp do_checklist_item(conn, a, item_id, params) do
+    key = conn.assigns.pk_api_key
+    items = a.checklist || []
+
+    if Enum.any?(items, &(&1["id"] == item_id)) do
+      done = params["done"] in [true, "true"]
+
+      updated =
+        Enum.map(items, fn
+          %{"id" => ^item_id} = item -> item |> Map.put("done", done) |> Map.delete("done_at")
+          item -> item
+        end)
+
+      case Projects.update_assignment_form(a, %{checklist: updated}) do
+        {:ok, saved} ->
+          Activity.log("projects.assignment_updated",
+            actor_uuid: ApiKey.accountable_uuid(key),
+            resource_type: "assignment",
+            resource_uuid: a.uuid,
+            metadata: api_metadata(key, %{"fields" => ["checklist"]})
+          )
+
+          {200, %{task: Json.task(Projects.get_assignment(saved.uuid) || saved)}}
+
+        {:error, %Ecto.Changeset{} = cs} ->
+          Json.changeset_error(cs)
+      end
+    else
+      Json.error_body(404, "not_found", "No such checklist item on this task.")
+    end
+  end
+
   def complete(conn, params), do: transition(conn, Map.put(params, "status", "done"))
   def reopen(conn, params), do: transition(conn, Map.put(params, "status", "todo"))
 
   defp do_transition(conn, %Assignment{} = a, to) do
-    key = conn.assigns.pk_api_key
+    %{pk_api_key: key, pk_project: project} = conn.assigns
     allowed = Map.get(Json.transitions(), a.status, [])
 
     cond do
+      to == "in_progress" and not Json.may_take?(key, a, project) ->
+        Json.error_body(
+          409,
+          "already_started",
+          "Someone else started this task; the project does not let an agent take it over (policy take_started_task).",
+          %{
+            started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
+            policy: "take_started_task"
+          }
+        )
+
       to not in Json.lifecycle() ->
         Json.error_body(
           422,
@@ -254,11 +424,16 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   # The same moves the project page makes, with the same side effects: a
   # start keeps the progress unless the task had been finished, a completion
   # stamps who and when (the key's minter), a reopen clears both.
-  defp apply_transition(a, "in_progress", _key) do
+  defp apply_transition(a, "in_progress", key) do
     pct = if a.progress_pct == 100, do: 0, else: a.progress_pct
 
     {"projects.assignment_started",
-     Projects.update_assignment_status(a, %{status: "in_progress", progress_pct: pct})}
+     Projects.update_assignment_status(a, %{
+       status: "in_progress",
+       progress_pct: pct,
+       started_by_uuid: ApiKey.accountable_uuid(key),
+       started_by_key_uuid: key.uuid
+     })}
   end
 
   defp apply_transition(a, "done", key),
@@ -373,6 +548,10 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       |> maybe_put("progress_pct", params["progress_pct"])
       |> maybe_put("estimated_duration", params["estimated_duration"])
       |> maybe_put("estimated_duration_unit", params["estimated_duration_unit"])
+      |> maybe_put_text("waiting_on", params)
+      |> maybe_put_text("origin", params)
+      |> maybe_put_list("checklist", params["checklist"])
+      |> maybe_put("position", params["position"] |> then(&if(is_integer(&1), do: &1)))
 
     cond do
       Map.has_key?(attrs, "priority") and attrs["priority"] not in @priorities ->
@@ -433,4 +612,16 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp maybe_put(map, _k, nil), do: map
   defp maybe_put(map, k, v), do: Map.put(map, k, v)
+
+  # A text field an agent may clear: present and blank or null → nil.
+  defp maybe_put_text(map, k, params) do
+    case Map.fetch(params, k) do
+      {:ok, v} when is_binary(v) -> Map.put(map, k, if(String.trim(v) == "", do: nil, else: v))
+      {:ok, nil} -> Map.put(map, k, nil)
+      _ -> map
+    end
+  end
+
+  defp maybe_put_list(map, k, v) when is_list(v), do: Map.put(map, k, v)
+  defp maybe_put_list(map, _k, _v), do: map
 end

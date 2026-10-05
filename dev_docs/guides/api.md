@@ -109,6 +109,21 @@ it can reach. A key minted on a child does not reach its parent. The agent guide
 has a "Sub-projects" section teaching the pattern: one sub-project per piece of
 work, tasks created with `project` set to it.
 
+## What a project's settings decide for an agent
+
+Two keys in the project's `settings` JSONB (the form's edit card, chain V19 for
+the task columns): **`completion`** — `auto` (the default: the last open row
+done completes the project and the completion climbs) or `manual` (ongoing
+work: never completes on its own, every task done is `caught_up`, an ongoing
+child never completes its parent; copied to new sub-projects) — and
+**`agents`** — `take_started_task`, `edit_foreign_text`, `delete_tasks`
+(`none` | `own` | `any`), `amend_own_ledger`, read back as `agent_policy` on
+`/me` and `/project`. Tasks carry who created and who started them (a person
+and/or a key), `waiting_on`, `origin`, labels by name and a checklist;
+`GET /briefing` is the recovery read, `POST`/`GET /notes` the project's own
+notes, `updated_since` the poll. AGENTS.md ("What the first agent on the API
+asked for") has the map from each ask to its code.
+
 ## The calls
 
 `GET /me` is the entry point (key, project, features on, `allowed_actions`,

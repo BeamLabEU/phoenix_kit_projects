@@ -659,14 +659,53 @@ as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
 mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
 them.
 
-### What the first agent on the API asked for (2026-10-05, not built)
+### What the first agent on the API asked for (2026-10-05) — built, as settings
 
 The 3D-editor session's Claude read the guide, ran 27 calls on ANDI Manager
-and reviewed the API from the agent's seat. Fixed the same day: unknown
-`status` filter → 422, `membership_ended` in the error list, `extensions` on
-`/me`, whole-number amounts, `estimated` on usage, the replay header and the
-completion climb documented. Still open, each a design decision for Max/the
-boss:
+and reviewed the API from the agent's seat. Max: *"go ahead and build
+everything that the other AI needs… make sure that everything is
+controllable via settings. We want projects to be very flexible."* A
+three-seat panel (grok, zai, codex) converged on the shape; chain **V19**
+carries the columns. What landed:
+
+- **`completion`** on a project (`settings["completion"]`: `auto` | `manual`,
+  `Project.completion/1`, `ongoing?/1`): ongoing work never completes on its
+  own — `decide_completion/1` leaves it, every task done is **caught up**
+  (`Projects.caught_up?/1`; the rollup row reads 100% but not done, so an
+  ongoing child never completes its parent). Copied onto a sub-project at
+  creation (`create_subproject/2`, the form, `POST /subprojects completion`).
+  The project form's "Ends" select; the sub-project form's too; "Ongoing" /
+  "All caught up" badges in the header.
+- **`agents` policy** (`settings["agents"]`, `Project.agent_policy/1` with
+  defaults): `take_started_task` (false), `edit_foreign_text` (false),
+  `delete_tasks` (`none` | `own` | `any`), `amend_own_ledger` (true). The
+  project form's "What an AI agent may do here" card; `/me` and `/project`
+  carry `agent_policy`. Enforced in the API: 409 `already_started`, 403
+  `foreign_text`, 403 `delete_not_allowed`, 403 `amend_not_allowed`.
+- **Provenance** on a task: `created_by_uuid` / `created_by_key_uuid`,
+  `started_by_uuid` / `started_by_key_uuid` (server-only fields,
+  `Projects.stamp_assignment/2`; the form and the API stamp them).
+- **`waiting_on`**, **`origin`** (`source` was taken — it means internal vs
+  portal), **`checklist`** (`[{id, text, done, done_at}]`, ≤ 50 items, ids
+  minted by the changeset, never driving `progress_pct`); form fields and
+  row badges; `PATCH /tasks/{id}/checklist/{item}` ticks one item.
+- **Labels by name** on the API (`Labels.ensure_by_names/3`, creates the
+  missing ones when the flag is on); `position: "top"` on create
+  (`Projects.top_assignment_position/1`); `updated_since` on `GET /tasks`
+  (strict, with `now` in the answer; index on `(project_uuid, updated_at)`).
+- **Project notes**: `TaskNotes.create_for_project/3`, `list_for_project/2`
+  on the comments anchor `project_notes` (registered in `ResourceLinks.types`);
+  `POST /notes`, `GET /notes?since=`.
+- **`GET /briefing`**: project + policy, open tasks (≤ 50, priority then
+  position, `truncated`) with direction / last outcome / latest note / who
+  started / waiting / checklist counts, sub-projects one line each, project
+  notes since. **Ledger corrections**: `PATCH /entries/{id}` (minutes),
+  `DELETE /entries/{id}`. **`DELETE /tasks/{id}`** under the policy.
+
+Not built, by choice: a fourth lifecycle status (waiting is a badge), a
+parent task (the checklist is the sub-item), typed file refs, ETags (an
+`updated_since` poll is enough), a claim history (the current holder only).
+The earlier list, for the record:
 
 - **Sub-items**: a `parent_uuid` on a task or a checklist — a sub-project per
   client question is too heavy (its own workflow status and ledger).

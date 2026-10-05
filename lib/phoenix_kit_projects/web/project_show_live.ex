@@ -1263,6 +1263,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <%!-- Meta row: duration, assignee, completed by. Each chip is
                feature-gated via @fx (Step 4 enforcement threading). --%>
           <div class="flex flex-wrap items-center gap-2 text-xs">
+            <%!-- What an agent (or a person) set on the task: whom it waits
+                 on, where it came from, how far its checklist is. --%>
+            <span :if={@a.waiting_on} class="badge badge-sm badge-warning gap-1" title={gettext("Waiting on someone else")}>
+              <.icon name="hero-pause-circle" class="w-3 h-3" /> {gettext("Waiting on %{who}", who: @a.waiting_on)}
+            </span>
+            <span :if={@a.origin} class="badge badge-sm badge-ghost" title={gettext("Where this came from")}>
+              {gettext("from %{origin}", origin: @a.origin)}
+            </span>
+            <% checklist = Assignment.checklist_counts(@a) %>
+            <span :if={checklist.total > 0} class="badge badge-sm badge-outline gap-1" title={gettext("Checklist")}>
+              <.icon name="hero-list-bullet" class="w-3 h-3" /> {checklist.done}/{checklist.total}
+            </span>
             <%= if @fx.estimates and @editing_duration_uuid == @a.uuid do %>
               <% prefill_dur = @a.estimated_duration || @a.task.estimated_duration %>
               <% prefill_unit = @a.estimated_duration_unit || @a.task.estimated_duration_unit || "hours" %>
@@ -1772,7 +1784,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       a ->
         new_pct = if a.progress_pct == 100, do: 0, else: a.progress_pct
-        attrs = %{status: "in_progress", progress_pct: new_pct}
+
+        attrs = %{
+          status: "in_progress",
+          progress_pct: new_pct,
+          started_by_uuid: Activity.actor_uuid(socket),
+          started_by_key_uuid: nil
+        }
 
         socket
         |> update_assignment_with_activity(a, attrs, "projects.assignment_started",
@@ -3334,6 +3352,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <%= if @project.completed_at do %>
               <span class="badge badge-success gap-1">
                 <.icon name="hero-check-circle" class="w-3.5 h-3.5" /> {gettext("Completed")}
+              </span>
+            <% end %>
+            <%!-- Ongoing work never completes on its own (the project's
+                 `completion` setting): every task done is "all caught up". --%>
+            <%= if Project.ongoing?(@project) and is_nil(@project.completed_at) do %>
+              <span class="badge badge-ghost gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
+                <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Ongoing")}
+              </span>
+              <span :if={@total_tasks > 0 and @done_tasks == @total_tasks} class="badge badge-success badge-outline gap-1">
+                <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("All caught up")}
               </span>
             <% end %>
             <%= if @project.archived_at do %>

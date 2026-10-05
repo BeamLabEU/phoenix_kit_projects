@@ -9,7 +9,7 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKitProjects.{ApiKeys, Authz, Extensions}
-  alias PhoenixKitProjects.Schemas.ApiKey
+  alias PhoenixKitProjects.Schemas.{ApiKey, Project}
   alias PhoenixKitProjects.Web.Api.{Docs, Json}
   alias PhoenixKitProjects.Web.ApiKeyPanel
 
@@ -45,6 +45,7 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
         progress: Map.get(fx, :progress, false)
       },
       extensions: Extensions.enabled_map(project.uuid),
+      agent_policy: Project.agent_policy(project),
       allowed_actions: allowed,
       all_scopes: ApiKey.scopes(),
       docs: %{llms_txt: Docs.url("/llms.txt"), openapi: Docs.url("/openapi.json")}

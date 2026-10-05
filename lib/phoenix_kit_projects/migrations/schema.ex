@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 18
+  @current_version 19
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -115,6 +115,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v16_fileless_whiteboards(p)
     v17_api_keys(p, prefix)
     v18_key_persons(p)
+    v19_agent_work(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -139,6 +140,15 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # V9 is a DATA backfill — rolling it back would delete memberships
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
+
+    if target < 19 do
+      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_updated_index")
+
+      for col <-
+            ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
+        execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
+      end
+    end
 
     if target < 18 do
       execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_api_keys_person_index")
@@ -1036,6 +1046,31 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (api_key_uuid, idempotency_key)
     )
+    """)
+  end
+
+  # V19 — what an agent working a project over the API needs on a task
+  # (the first agent's review, 2026-10-05): who created it and who started
+  # it (a person and/or the key, for claims and for wording protection),
+  # `waiting_on` (blocked on someone — a badge, not a fourth status),
+  # `origin` (where a relayed item came from; `source` already means internal vs portal), a `checklist` (sub-items
+  # ticked one by one, JSONB `[{id, text, done, done_at}]`), and an index
+  # for `updated_since` polling. No foreign keys: provenance is history.
+  defp v19_agent_work(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS created_by_uuid UUID,
+      ADD COLUMN IF NOT EXISTS created_by_key_uuid UUID,
+      ADD COLUMN IF NOT EXISTS started_by_uuid UUID,
+      ADD COLUMN IF NOT EXISTS started_by_key_uuid UUID,
+      ADD COLUMN IF NOT EXISTS waiting_on VARCHAR(200),
+      ADD COLUMN IF NOT EXISTS origin VARCHAR(40),
+      ADD COLUMN IF NOT EXISTS checklist JSONB NOT NULL DEFAULT '[]'
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_updated_index
+    ON #{p}phoenix_kit_project_assignments (project_uuid, updated_at)
     """)
   end
 

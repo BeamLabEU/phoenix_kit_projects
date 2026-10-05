@@ -19,7 +19,8 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
 
   use Phoenix.Controller, formats: [:json]
 
-  alias PhoenixKitProjects.Ledger
+  alias PhoenixKitProjects.{Ledger, Projects}
+  alias PhoenixKitProjects.Schemas.{ApiKey, Project}
   alias PhoenixKitProjects.Web.Api.{Json, TasksController}
 
   # How far ahead of the server's clock an `occurred_at` may be: an agent's
@@ -62,6 +63,94 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     else
       {:halt, conn} -> conn
     end
+  end
+
+  # Corrections. `PATCH /entries/:id` amends a time entry's minutes;
+  # `DELETE /entries/:id` removes any entry. The key may touch its own
+  # rows when the project's `amend_own_ledger` policy allows, and a
+  # manager key any row; either leaves a trace in the activity feed
+  # (`projects.work_amended` / `work_removed`).
+  def update_entry(conn, %{"id" => id} = params) do
+    with {:ok, conn} <- checks(conn, "time:write", :log_time),
+         {:ok, conn, entry} <- own_entry(conn, id),
+         {:ok, minutes} <- validate_minutes(params["minutes"]) do
+      case Ledger.update_time(entry, minutes,
+             actor_uuid: ApiKey.accountable_uuid(conn.assigns.pk_api_key)
+           ) do
+        {:ok, e} ->
+          json(conn, %{entry: entry_json(e)})
+
+        {:error, :invalid} ->
+          Json.error(conn, :conflict, "conflict", "Only a time entry's minutes can be amended.")
+
+        {:error, _} ->
+          Json.error(conn, :conflict, "conflict", "The entry could not be amended.")
+      end
+    else
+      {:halt, conn} -> conn
+      {:error, {status, body}} -> conn |> put_status(status) |> json(body)
+    end
+  end
+
+  def delete_entry(conn, %{"id" => id}) do
+    with {:ok, conn} <- checks(conn, "time:write", :log_time),
+         {:ok, conn, entry} <- own_entry(conn, id) do
+      case Ledger.delete_entry(entry,
+             actor_uuid: ApiKey.accountable_uuid(conn.assigns.pk_api_key)
+           ) do
+        {:ok, _} -> json(conn, %{deleted: entry.uuid})
+        {:error, _} -> Json.error(conn, :conflict, "conflict", "The entry could not be removed.")
+      end
+    else
+      {:halt, conn} -> conn
+    end
+  end
+
+  # The entry, when it is within reach and the key may correct it.
+  defp own_entry(conn, id) do
+    %{pk_api_key: key} = conn.assigns
+
+    with %{} = entry <- Ledger.get_entry(id) || :not_found,
+         true <- Json.within_reach?(key, entry.project_uuid) || :not_found,
+         %{} = project <- Projects.get_project(entry.project_uuid) || :not_found do
+      own? = entry.actor_kind == "ai_agent" and entry.actor_uuid == key.uuid
+
+      allowed? =
+        key.role == "manager" or
+          (own? and Project.agent_policy(project)["amend_own_ledger"] == true)
+
+      if allowed?,
+        do: {:ok, Json.rescope(conn, project), entry},
+        else:
+          {:halt,
+           Json.error(
+             conn,
+             :forbidden,
+             "amend_not_allowed",
+             "This entry is not this key's, or the project does not let an agent correct its own entries (policy amend_own_ledger); a manager key may correct any.",
+             %{policy: "amend_own_ledger"}
+           )}
+    else
+      :not_found ->
+        {:halt,
+         Json.error(
+           conn,
+           :not_found,
+           "not_found",
+           "No such ledger entry within this key's reach."
+         )}
+    end
+  end
+
+  defp entry_json(e) do
+    %{
+      uuid: e.uuid,
+      kind: e.kind,
+      amount: Json.number(e.amount),
+      task_uuid: e.assignment_uuid,
+      occurred_at: e.ended_at,
+      recorded_at: e.inserted_at
+    }
   end
 
   defp checks(conn, scope, action) do

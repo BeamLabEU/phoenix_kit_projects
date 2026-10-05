@@ -46,7 +46,14 @@ defmodule PhoenixKitProjects.ResourceLinks do
   def types do
     # `project_task_notes` is the comments anchor of a task's notes thread
     # (`TaskNotes`); it resolves exactly as the task does.
-    %{"project" => __MODULE__, "project_task" => __MODULE__, "project_task_notes" => __MODULE__}
+    # `project_notes` is the anchor of a project's own notes; it resolves
+    # as the project does.
+    %{
+      "project" => __MODULE__,
+      "project_task" => __MODULE__,
+      "project_task_notes" => __MODULE__,
+      "project_notes" => __MODULE__
+    }
   end
 
   # ── Resolve ─────────────────────────────────────────────────────────
