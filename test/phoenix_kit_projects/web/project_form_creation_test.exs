@@ -49,10 +49,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
 
     assert html =~ "Choose a starting point"
     assert html =~ "Public intake"
-    # The chips are gone — plain-language outcome lines replace them; and
-    # a card whose required extensions aren't installed (CRM/billing are
-    # absent in this env) hides entirely rather than making a promise it
-    # can't keep.
+    # Four cards: Simple checklist, Team project, Public intake, Just a
+    # space. The "Client project" card went on 2026-10-05 (it was Team
+    # project plus two seeded links nobody could tell apart from it); the
+    # chips are gone — plain-language outcome lines replace them.
+    assert html =~ "Team project"
     refute html =~ "Client project"
     assert html =~ "Public submission form"
     # The HOUSE multilang pattern: the same translatable name/description

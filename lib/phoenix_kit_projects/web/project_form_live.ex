@@ -1727,9 +1727,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   defp receipt_reveal_class("standard"),
     do: "hidden group-has-[[data-arch=standard]:checked]/kind:block"
 
-  defp receipt_reveal_class("client_hub"),
-    do: "hidden group-has-[[data-arch=client-hub]:checked]/kind:block"
-
   defp receipt_reveal_class("public_intake"),
     do: "hidden group-has-[[data-arch=public-intake]:checked]/kind:block"
 

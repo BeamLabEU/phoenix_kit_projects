@@ -311,7 +311,7 @@ defmodule PhoenixKitProjects.LifecycleFlagTest do
     end
 
     test "the other task archetypes suppress nothing" do
-      for key <- ~w(standard client_hub public_intake),
+      for key <- ~w(standard public_intake),
           archetype = PhoenixKitProjects.Archetypes.get(key),
           archetype != nil do
         assert archetype.extensions_off == []

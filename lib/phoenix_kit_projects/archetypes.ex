@@ -45,12 +45,17 @@ defmodule PhoenixKitProjects.Archetypes do
 
   # The 2026-08-07 five-AI quorum spec: FOUR intent-named cards (the
   # "Full tracker" density card folded into Customize) — plus, since the
-  # project page became top-level tabs (2026-09-05), a fifth for a
-  # project with no task list at all. Each carries two
-  # plain-language OUTCOME lines replacing the internal-vocabulary
-  # chips. `requires_extensions: true` hides a card entirely when none
-  # of its extension seeds is installed (Codex's rule — a Client card
-  # that can't link a client is a lie).
+  # project page became top-level tabs (2026-09-05), one for a project
+  # with no task list at all. Four again since 2026-10-05: the "Client
+  # project" card went. It was Team project with every flag on and a CRM
+  # client + billing customer seeded, and nobody could say what made it a
+  # different kind of project (the boss, via Max) — the two links are one
+  # tick each under Customize → Extensions on any card, and the "full"
+  # preset stays a preset. Each card carries two plain-language OUTCOME
+  # lines replacing the internal-vocabulary chips. `requires_extensions:
+  # true` hides a card entirely when none of its extension seeds is
+  # installed (Codex's rule — a card that cannot keep its promise is a
+  # lie; Public intake without the portal).
   @archetypes [
     %{
       key: "quick_todo",
@@ -81,18 +86,6 @@ defmodule PhoenixKitProjects.Archetypes do
       extensions: [],
       extensions_off: [],
       requires_extensions: false
-    },
-    %{
-      key: "client_hub",
-      name: gettext_noop("Client project"),
-      description:
-        gettext_noop("Work you deliver to a client — linked client, billable time, invoicing."),
-      outcomes: [gettext_noop("Linked client record"), gettext_noop("Billable time & invoicing")],
-      icon: "hero-briefcase",
-      preset: "full",
-      extensions: ~w(crm_client billing_customer),
-      extensions_off: [],
-      requires_extensions: true
     },
     %{
       key: "public_intake",
