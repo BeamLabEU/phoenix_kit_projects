@@ -1719,6 +1719,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     parts |> Enum.reject(&is_nil/1) |> Enum.join(" · ")
   end
 
+  # The Customize drawers dress like the page's own cards (`card bg-base-100
+  # shadow`): core's accordion draws only a `border-base-200` line, which on
+  # a dark theme is a hair off the page's own colour — Max, 2026-10-05: "it's
+  # kind of hard to tell where the drawer is". A literal string, so Tailwind's
+  # scanner sees the classes.
+  @drawer_class "border-base-300 shadow"
+
+  defp drawer_class, do: @drawer_class
+
   # LITERAL class strings per archetype key — Tailwind's scanner needs
   # them verbatim in source (an interpolated variant never compiles).
   defp receipt_reveal_class("quick_todo"),
@@ -2242,7 +2251,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                entirely (and out of their own summaries). --%>
 
           <%!-- 1. What it starts from — template, timing, statuses. --%>
-          <.accordion :if={setup_section_shown?(assigns)} id="create-start" cue={true}>
+          <.accordion :if={setup_section_shown?(assigns)} id="create-start" cue={true} class={drawer_class()}>
             <:title>
               {gettext("Start from")}
               <span class="ml-2 text-xs font-normal opacity-50">{setup_summary(assigns)}</span>
@@ -2289,7 +2298,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                rather than in their own drawer: "who is on this project" and
                "what can they do" is one question, and the roles picked
                above are exactly what the floors below apply to. --%>
-          <.accordion :if={"people" not in @top_blocks} id="create-people" cue={true}>
+          <.accordion :if={"people" not in @top_blocks} id="create-people" cue={true} class={drawer_class()}>
             <:title>
               {gettext("People & permissions")}
               <span class="ml-2 text-xs font-normal opacity-50">{people_summary(assigns)}</span>
@@ -2320,6 +2329,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             :if={@flag_defs != [] or Enum.any?(@ext_types, &(&1.key == "tasks"))}
             id="create-features"
             cue={true}
+            class={drawer_class()}
           >
             <:title>
               {gettext("Task features")}
@@ -2390,7 +2400,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                hunting for "publish documents" thinks in package names).
                Inline config stays inert until its toggle is on: pure CSS
                reveal, and the server ignores unchecked rows at save. --%>
-          <.accordion :if={@ext_types != []} id="create-extensions" cue={true}>
+          <.accordion :if={@ext_types != []} id="create-extensions" cue={true} class={drawer_class()}>
             <:title>
               {gettext("Extensions")}
               <span class="ml-2 text-xs font-normal opacity-50">{extensions_summary(assigns)}</span>
