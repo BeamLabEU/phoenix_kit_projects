@@ -3390,7 +3390,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     name="status"
                     value={status}
                     checked={@health && @health["status"] == status}
-                    class="radio radio-sm"
+                    class="radio radio-primary radio-sm"
                     required
                   />
                   <span class="text-sm font-medium">{health_label(status)}</span>
@@ -3465,7 +3465,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 id={"log-time-billable-#{@project.uuid}"}
                 name="billable"
                 label={gettext("Billable")}
-                class="checkbox-sm"
+                class="checkbox-primary checkbox-sm"
                 wrapper_class="gap-2"
               />
               <div class="modal-action">

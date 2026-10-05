@@ -503,7 +503,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               name="all_day"
               checked
               label={gettext("All day")}
-              class="checkbox-sm"
+              class="checkbox-primary checkbox-sm"
               wrapper_class="gap-2"
             />
             <div class="flex items-start gap-2">

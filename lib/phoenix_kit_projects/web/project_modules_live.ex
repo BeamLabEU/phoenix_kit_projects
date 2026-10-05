@@ -729,7 +729,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
                   </span>
                   <input
                     type="checkbox"
-                    class="toggle toggle-sm"
+                    class="toggle toggle-primary toggle-sm"
                     checked={on}
                     disabled={unmet != []}
                     phx-click="toggle_flag"

@@ -162,7 +162,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               phx-value-uuid={@node.task.uuid}
               checked={not @effective_excluded?}
               disabled={@is_root or @ancestor_excluded?}
-              class="checkbox checkbox-sm shrink-0 mt-0.5"
+              class="checkbox checkbox-primary checkbox-sm shrink-0 mt-0.5"
             />
             <span class={["text-sm", @effective_excluded? && "line-through text-base-content/40"]}>
               {Task.localized_title(@node.task, @lang)}
@@ -2289,7 +2289,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     name="labels[]"
                     value={label.uuid}
                     checked={label.uuid in @selected_labels}
-                    class="checkbox checkbox-xs"
+                    class="checkbox checkbox-primary checkbox-xs"
                   />
                   <span class={["badge badge-sm", label.color]}>{label.name}</span>
                 </label>
@@ -2317,7 +2317,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 name={@form[:counts_weekends].name}
                 value="true"
                 checked={@form[:counts_weekends].value == true or @form[:counts_weekends].value == "true"}
-                class="checkbox checkbox-sm"
+                class="checkbox checkbox-primary checkbox-sm"
               />
               <span class="text-sm">{gettext("Counts weekends (e.g. deliveries, external processes)")}</span>
             </label>
@@ -2349,7 +2349,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 name="add_to_library"
                 checked={@add_to_library}
                 label={gettext("Add to the task library")}
-                class="checkbox-sm"
+                class="checkbox-primary checkbox-sm"
               />
             <% end %>
           </div>
@@ -2544,7 +2544,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             </div>
             <input
               type="checkbox"
-              class="toggle toggle-warning"
+              class="toggle toggle-primary"
               checked={@assignment.board_published_at != nil}
               phx-click="toggle_board_published"
               aria-label={gettext("Publish to the public board")}

@@ -525,7 +525,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               field={@form[:ad_hoc]}
               label={gettext("One-off task")}
               title={gettext("Hidden from the task library and its pickers; the projects using it are unaffected.")}
-              class="checkbox-sm"
+              class="checkbox-primary checkbox-sm"
             />
 
             <div class="divider text-xs text-base-content/50 my-1">{gettext("Default assignment (optional)")}</div>

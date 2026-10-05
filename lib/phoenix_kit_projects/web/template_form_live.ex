@@ -375,7 +375,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
             <.checkbox
               field={@form[:counts_weekends]}
               label={gettext("Count weekends in schedule")}
-              class="checkbox-sm"
+              class="checkbox-primary checkbox-sm"
             />
 
             <%!-- Workflow status — a template is a project, so it picks the

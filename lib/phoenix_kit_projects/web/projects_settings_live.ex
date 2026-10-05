@@ -628,7 +628,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
       name={@field}
       checked={@on}
       label={@label}
-      class="checkbox-sm"
+      class="checkbox-primary checkbox-sm"
       wrapper_class="gap-2"
       phx-click={@event}
       phx-value-field={@field}
@@ -674,7 +674,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
               <span class="text-sm">{block.label}</span>
               <input
                 type="checkbox"
-                class="toggle toggle-sm"
+                class="toggle toggle-primary toggle-sm"
                 checked={block.key in @creation_top_blocks}
                 phx-click="toggle_creation_block"
                 phx-value-key={block.key}
@@ -724,7 +724,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
             name="use_status_translations"
             checked={@use_status_translations}
             label={gettext("Show translated status titles by default")}
-            class="checkbox-sm"
+            class="checkbox-primary checkbox-sm"
             phx-click="toggle_status_translations"
           >
             <:description>

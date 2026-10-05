@@ -2294,7 +2294,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   :if={@flag_states["scheduling"] != false}
                   field={@form[:counts_weekends]}
                   label={gettext("Count weekends in schedule")}
-                  class="checkbox-sm"
+                  class="checkbox-primary checkbox-sm"
                 />
               </div>
             </:content>
@@ -2364,7 +2364,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                     name="ext[tasks]"
                     value="true"
                     checked={tasks_on?(assigns)}
-                    class="toggle toggle-sm"
+                    class="toggle toggle-primary toggle-sm"
                   />
                 </label>
                 <div
@@ -2391,7 +2391,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                         name={"flag[#{flag.key}]"}
                         value="true"
                         checked={@flag_states[flag.key]}
-                        class="toggle toggle-sm"
+                        class="toggle toggle-primary toggle-sm"
                       />
                     </label>
                   </div>
@@ -2441,7 +2441,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                           value="true"
                           checked={@ext_states[ext.key]}
                           data-ext-toggle
-                          class="toggle toggle-sm"
+                          class="toggle toggle-primary toggle-sm"
                         />
                       </label>
                       <%!-- The extension's OWN capability flags, revealed
@@ -2465,7 +2465,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                             name={"flag[#{flag.key}]"}
                             value="true"
                             checked={@flag_states[flag.key]}
-                            class="toggle toggle-sm"
+                            class="toggle toggle-primary toggle-sm"
                           />
                         </label>
                       </div>
@@ -2560,7 +2560,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               :if={@fx.scheduling}
               field={@form[:counts_weekends]}
               label={gettext("Count weekends in schedule")}
-              class="checkbox-sm"
+              class="checkbox-primary checkbox-sm"
             />
             <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
 
