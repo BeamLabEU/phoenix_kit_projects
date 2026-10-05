@@ -113,6 +113,22 @@ defmodule PhoenixKitProjects.Web.ProjectFormCreationTest do
       assert cue_marked(view) == []
     end
 
+    # …and a change that Start-from does show (Simple checklist turns
+    # scheduling off) still cues it, then clears when switched back.
+    test "switching the starting point cues Start-from, and switching back clears", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/en/admin/projects/new")
+
+      render_change(view, "validate", %{
+        full_params("events", false)
+        | "archetype" => "quick_todo"
+      })
+
+      assert "create-start" in cue_marked(view)
+
+      render_change(view, "validate", %{full_params("events", false) | "archetype" => "standard"})
+      refute "create-start" in cue_marked(view)
+    end
+
     defp cue_marked(view) do
       :sys.get_state(view.pid).socket.assigns.cue_marked |> MapSet.to_list() |> Enum.sort()
     end
