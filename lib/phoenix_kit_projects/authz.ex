@@ -58,6 +58,7 @@ defmodule PhoenixKitProjects.Authz do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.Extensions
   alias PhoenixKitProjects.Schemas.Project
 
   @roles [:owner, :manager, :member, :viewer]
@@ -371,7 +372,7 @@ defmodule PhoenixKitProjects.Authz do
   defp to_role_atom(_), do: nil
 
   defp floor_for(project, action) do
-    default = Map.get(@role_floors, action)
+    default = Map.get(@role_floors, action) || extension_floor(action)
 
     case Map.get(@overridable, action) do
       nil ->
@@ -386,6 +387,22 @@ defmodule PhoenixKitProjects.Authz do
 
         Map.get(choices, override, default)
     end
+  end
+
+  # An action an installed extension declares in its `permission_actions`
+  # (the CRM's `log_interaction`) floors at member — "no restrictions on
+  # the work" applies to an extension's work too. Anything undeclared
+  # stays nil: fail-closed.
+  defp extension_floor(action) do
+    declared? =
+      Extensions.Registry.list()
+      |> Enum.any?(fn ext ->
+        Enum.any?(ext.permission_actions, &(to_string(&1) == to_string(action)))
+      end)
+
+    if declared?, do: :member, else: nil
+  rescue
+    _ -> nil
   end
 
   defp meets_floor?(_role, nil), do: false

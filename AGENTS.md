@@ -693,6 +693,30 @@ author may edit or delete it through the comments UI (the ledger rows
 stay); Summarize through the AI module is not built — `display_summary`
 and "Use as description" are the honest TLDR until it is.
 
+### An extension's record on the API (`/ext/:resource`, 2026-10-05)
+
+Max: "make sure that all the stuff is editable via the API because my AI
+knows stuff about the meeting". A meeting is the CRM's row, and this
+module never names a CRM function — so an extension may put ONE of its
+records on this API by declaring `api: Module` in its
+`phoenix_kit_project_extensions/0` map; the module follows
+`Extensions.ApiProvider` (`resource/0`, `scopes/0`, `action/0`, `list/2`,
+`get/2`, `create/2`, `update/3`, `docs/0`). `Web.Api.ExtController` serves
+`GET/POST /ext/<resource>` and `GET/PATCH /ext/<resource>/:id` with the
+usual three checks first — the provider's scope (its scopes join
+`ApiKey.scopes/0`, so the key panel offers them), the extension enabled on
+the project (else 403 `feature_disabled` naming the extension key), the
+key's role at the provider's action (an action an installed extension
+declares in `permission_actions` floors at member — `Authz.floor_for/2`'s
+"future refinement", done) — then `apply/3` into the provider with a
+`ctx` (project, key, accountable person, agent actor). The provider's
+`docs/0` rows join `Docs.endpoints/0`, so `llms.txt` and `openapi.json`
+carry the resource. `Extensions.config/3` is what a provider reads to know
+the project's client. The CRM's `PhoenixKitCRM.ProjectApi` is the first:
+`/ext/interactions`. `test/phoenix_kit_projects/web/api_ext_test.exs`
+proves the mechanism with a fake provider registered through
+`config :phoenix_kit_projects, :extension_providers`.
+
 ### Tasks and `#` mentions
 
 A task's description goes through core's mentions (`<.translatable_field

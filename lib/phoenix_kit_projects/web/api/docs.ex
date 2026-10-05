@@ -52,9 +52,24 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
           example: String.t() | nil
         }
 
-  @doc "Every endpoint, in the order the docs list them."
+  @doc "Every endpoint, in the order the docs list them: this module's, then the extension providers' (`/ext/…`)."
   @spec endpoints() :: [endpoint()]
   def endpoints do
+    static_endpoints() ++ provider_endpoints()
+  end
+
+  # Rows an extension's API provider documents itself with; a provider
+  # that fails to answer costs only its own rows.
+  defp provider_endpoints do
+    PhoenixKitProjects.Extensions.api_providers()
+    |> Enum.flat_map(fn %{module: mod} ->
+      if function_exported?(mod, :docs, 0), do: List.wrap(mod.docs()), else: []
+    end)
+  rescue
+    _ -> []
+  end
+
+  defp static_endpoints do
     [
       %{
         id: "getMe",

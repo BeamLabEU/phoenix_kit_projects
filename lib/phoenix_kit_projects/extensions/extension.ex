@@ -80,6 +80,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
             notification_types: [],
             on_enable: nil,
             on_disable: nil,
+            api: nil,
             data_retention: :keep,
             default_enabled: false,
             category: nil,
@@ -106,6 +107,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
           notification_types: [map()],
           on_enable: {module(), atom()} | nil,
           on_disable: {module(), atom()} | nil,
+          api: module() | nil,
           data_retention: :keep,
           default_enabled: boolean(),
           category: String.t() | nil,
@@ -140,6 +142,9 @@ defmodule PhoenixKitProjects.Extensions.Extension do
          notification_types: List.wrap(map[:notification_types]),
          on_enable: normalize_callback(map[:on_enable], source, :on_enable),
          on_disable: normalize_callback(map[:on_disable], source, :on_disable),
+         # A record of this extension on the projects JSON API — see
+         # `PhoenixKitProjects.Extensions.ApiProvider`.
+         api: normalize_api(map[:api], source),
          data_retention: :keep,
          default_enabled: map[:default_enabled] == true,
          category: map[:category] && to_string(map[:category]),
@@ -227,6 +232,29 @@ defmodule PhoenixKitProjects.Extensions.Extension do
   end
 
   # ── Lifecycle callbacks ────────────────────────────────────────────
+
+  defp normalize_api(nil, _source), do: nil
+
+  defp normalize_api(mod, source) when is_atom(mod) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, :resource, 0) do
+      mod
+    else
+      Logger.warning(
+        "[Projects.Extensions] Dropping api provider #{inspect(mod)} from #{inspect(source)} " <>
+          "(not loaded, or no resource/0)"
+      )
+
+      nil
+    end
+  end
+
+  defp normalize_api(other, source) do
+    Logger.warning(
+      "[Projects.Extensions] Dropping invalid api #{inspect(other)} from #{inspect(source)} (want a module)"
+    )
+
+    nil
+  end
 
   defp normalize_callback(nil, _source, _name), do: nil
 

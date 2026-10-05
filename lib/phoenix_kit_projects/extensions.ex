@@ -367,6 +367,52 @@ defmodule PhoenixKitProjects.Extensions do
     end
   end
 
+  @doc """
+  An enabled extension instance's config on a project (`%{}` when it is
+  not enabled or has none) — the Client extension's `company_uuid`, say.
+  What a provider (`ApiProvider`) reads to know the project's client.
+  """
+  @spec config(map() | binary(), String.t(), String.t()) :: map()
+  def config(project_or_uuid, ext_key, instance_key \\ @default_instance)
+
+  def config(%{uuid: uuid}, ext_key, instance_key), do: config(uuid, ext_key, instance_key)
+
+  def config(project_uuid, ext_key, instance_key) when is_binary(project_uuid) do
+    case get_row(project_uuid, ext_key, instance_key) do
+      %ProjectModule{enabled: true, config: config} when is_map(config) -> config
+      _ -> %{}
+    end
+  rescue
+    _ -> %{}
+  end
+
+  def config(_, _, _), do: %{}
+
+  @doc """
+  The API providers the catalog's extensions declare
+  (`PhoenixKitProjects.Extensions.ApiProvider`), as `%{ext, module}`.
+  """
+  @spec api_providers() :: [%{ext: Extension.t(), module: module()}]
+  def api_providers do
+    Registry.list()
+    |> Enum.filter(&(is_atom(&1.api) and not is_nil(&1.api)))
+    |> Enum.map(&%{ext: &1, module: &1.api})
+  end
+
+  @doc "The provider serving `/ext/<resource>`, or nil."
+  @spec api_provider(String.t()) :: %{ext: Extension.t(), module: module()} | nil
+  def api_provider(resource) when is_binary(resource) do
+    Enum.find(api_providers(), fn %{module: mod} -> safe_resource(mod) == resource end)
+  end
+
+  def api_provider(_), do: nil
+
+  defp safe_resource(mod) do
+    mod.resource()
+  rescue
+    _ -> nil
+  end
+
   defp fetch_type(ext_key) do
     case Registry.get(ext_key) do
       nil -> {:error, :unknown_extension}

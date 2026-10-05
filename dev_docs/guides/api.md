@@ -75,6 +75,17 @@ messages are English and locale-free on purpose (a machine contract).
 nobody can undo), honoured on task create and transitions. Panel: the one
 thing to block v1 on.
 
+## Records an extension puts on the API
+
+`/ext/<resource>`: an extension declares `api: Module` on its extension map
+and implements `PhoenixKitProjects.Extensions.ApiProvider`; this module
+serves list / get / create / update under its own checks (the provider's
+scopes, the extension on the project, the provider's action at the member
+floor) and the provider's `docs/0` rows join the generated docs. The CRM's
+`/ext/interactions` (a project's meetings, calls, messages: type, subject,
+body, when, duration, parties, the planned event they are the record of) is
+the first.
+
 ## Task notes
 
 `TaskNotes` (see AGENTS.md "Task notes"): `POST /tasks/:id/notes` takes

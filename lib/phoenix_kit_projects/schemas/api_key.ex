@@ -54,7 +54,23 @@ defmodule PhoenixKitProjects.Schemas.ApiKey do
 
   @doc "Every scope a key may carry."
   @spec scopes() :: [String.t()]
-  def scopes, do: @scopes
+  def scopes, do: @scopes ++ provider_scopes()
+
+  # The scopes extension API providers declare (`interactions:read` …),
+  # offered on the key panel and accepted by the changeset. Read at call
+  # time: the catalog is discovered at runtime.
+  defp provider_scopes do
+    PhoenixKitProjects.Extensions.api_providers()
+    |> Enum.flat_map(fn %{module: mod} ->
+      case mod.scopes() do
+        %{read: r, write: w} -> [r, w]
+        _ -> []
+      end
+    end)
+    |> Enum.uniq()
+  rescue
+    _ -> []
+  end
 
   @doc "Creation: name, role, scopes and the owning project; the credential fields are server-set."
   def create_changeset(key, attrs) do
@@ -77,7 +93,9 @@ defmodule PhoenixKitProjects.Schemas.ApiKey do
 
   defp validate_scopes(changeset) do
     validate_change(changeset, :scopes, fn :scopes, scopes ->
-      case {scopes, Enum.reject(scopes, &(&1 in @scopes))} do
+      known = scopes()
+
+      case {scopes, Enum.reject(scopes, &(&1 in known))} do
         {[], _} -> [scopes: "must name at least one scope"]
         {_, []} -> []
         {_, unknown} -> [scopes: "unknown: #{Enum.join(unknown, ", ")}"]
