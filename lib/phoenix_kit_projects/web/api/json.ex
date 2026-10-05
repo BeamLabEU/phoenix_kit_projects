@@ -12,8 +12,6 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
-  alias PhoenixKit.Mentions.Token
-
   alias PhoenixKitProjects.{
     ApiKeys,
     Authz,
@@ -265,6 +263,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       checklist: checklist,
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
+      words_by: if(a.words_by_key_uuid, do: %{key: a.words_by_key_uuid}, else: %{person: true}),
       interactions: interaction_uuids(a),
       library_task: library_task?(a),
       completed_at: a.completed_at,
@@ -325,18 +324,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     }
   end
 
-  @doc "The interactions a task's description links with `#[crm_interaction:…]` tokens."
+  @doc "The interactions a task is linked to (the join table, V20), oldest link first."
   @spec interaction_uuids(Assignment.t()) :: [String.t()]
-  def interaction_uuids(%Assignment{} = a) do
-    [description(a), a.description]
-    |> Enum.filter(&is_binary/1)
-    |> Enum.flat_map(&Token.parse/1)
-    |> Enum.filter(&(&1.type == "crm_interaction"))
-    |> Enum.map(& &1.uuid)
-    |> Enum.uniq()
-  rescue
-    _ -> []
-  end
+  def interaction_uuids(%Assignment{} = a), do: Projects.interactions_of(a)
 
   @doc "A ledger amount as JSON: whole numbers stay integers (`12`, not `12.0`); a fraction stays a float."
   @spec number(Decimal.t() | number() | nil) :: number() | nil
@@ -368,6 +358,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       available_workflow_statuses: statuses,
       completion: Project.completion(p),
       caught_up: Projects.caught_up?(p),
+      caught_up_since: Projects.caught_up_since(p),
       agent_policy: Project.agent_policy(p),
       parent_uuid: parent_uuid(p),
       subprojects: Enum.map(Projects.child_projects(p.uuid), &subproject/1)
@@ -409,15 +400,15 @@ defmodule PhoenixKitProjects.Web.Api.Json do
         %{
           completion: Project.completion(child),
           caught_up: Projects.caught_up?(child),
+          caught_up_since: Projects.caught_up_since(child),
           completed_at: child.completed_at
         }
     end
   end
 
-  @doc "Whether the key may change this task's words: it created the task, or the project allows it."
-  @spec may_edit_text?(ApiKey.t(), Assignment.t(), map()) :: boolean()
+  @doc "Whether the key may change this task's words: they are its own (it wrote them last), or the project allows it."
   def may_edit_text?(%ApiKey{uuid: key_uuid}, %Assignment{} = a, project) do
-    a.created_by_key_uuid == key_uuid or
+    a.words_by_key_uuid == key_uuid or
       Project.agent_policy(project)["edit_foreign_text"] == true
   end
 

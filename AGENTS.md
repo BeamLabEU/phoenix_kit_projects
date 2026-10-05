@@ -726,6 +726,32 @@ may now be a LIST of providers (`Extension.normalize_api/2`); the CRM adds
 the interactions scopes). The UI: no progress bar on an ongoing project; a
 nested ongoing row says Ongoing / All caught up.
 
+**The panel's sweep of all that (2026-10-05, grok + zai on the surface,
+codex on the repo) and what changed — chain V20:** wording ownership follows
+the LAST human edit, not creation (`words_by_key_uuid`: the key that wrote
+the title/description last, nil for a person's; the form's save clears it,
+the API's text edits stamp it; `Json.may_edit_text?/3`); the task ↔
+interaction link is a table (`phoenix_kit_project_task_interactions`,
+`Projects.link_interaction/4`, `unlink_interaction/2`, `interactions_of/1`,
+`tasks_for_interaction/1`; `POST`/`DELETE /tasks/{id}/interactions/{uuid}`)
+and the token in the text is kept in step with it (`ensure_interaction_tokens/3`
+after an API description rewrite; the token lives on the one-off TASK's
+description, on the assignment's — with a copy of the library text — for a
+shared task); claims hold for every move out of `in_progress` by another
+actor, not only the start; every task-level API action rescopes to the
+task's project BEFORE its feature and role gates (codex: a child's floors
+were checked against the root); a checklist tick is one row-locked update
+(`Projects.update_checklist_item/3`); `ResourceLinks.visible_resource_uuids/2`
+climbs the whole ancestry (a grandchild's records were invisible to a root
+member); ledger reads say `limit`/`truncated`, task entries are queried by
+`assignment_uuid`, amendments name the key in the trace, tokens/cost entries
+take `amount` (`Ledger.update_amount/3`), a billable row is never removed
+over the API (403 `billable_entry`); `updated_since` is inclusive; the
+briefing orders mine → ready → waiting with `counts`, a `resume` pointer
+(this key's latest note), `done_today`, `caught_up_since`, and summarises
+children in one pass. Not done: a batched "latest note per task" (50 open
+tasks = 50 comment reads; acceptable at one briefing per reset).
+
 The earlier list, for the record:
 
 - **Sub-items**: a `parent_uuid` on a task or a checklist — a sub-project per

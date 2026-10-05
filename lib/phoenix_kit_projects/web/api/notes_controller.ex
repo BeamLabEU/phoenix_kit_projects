@@ -27,10 +27,10 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   def index(conn, %{"id" => id}) do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
+         {:ok, conn, a} <- TasksController.fetch(conn, id),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- require_notes(conn),
-         {:ok, conn} <- Json.require_action(conn, :view),
-         {:ok, conn, a} <- TasksController.fetch(conn, id) do
+         {:ok, conn} <- Json.require_action(conn, :view) do
       notes = TaskNotes.list(a.uuid)
       latest = TaskNotes.latest(notes)
 
@@ -50,11 +50,11 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   def create(conn, %{"id" => id} = params) do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
+         {:ok, conn, a} <- TasksController.fetch(conn, id),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks),
-         {:ok, conn} <- require_usage_rights(conn, params["usage"]),
-         {:ok, conn, a} <- TasksController.fetch(conn, id) do
+         {:ok, conn} <- require_usage_rights(conn, params["usage"]) do
       Json.idempotent(conn, [required: true], fn -> do_create(conn, a, params) end)
     else
       {:halt, conn} -> conn

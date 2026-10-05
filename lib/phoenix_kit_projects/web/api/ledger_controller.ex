@@ -28,8 +28,10 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   @future_tolerance_seconds 300
 
   def task_time(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- checks(conn, "time:write", :log_time),
-         {:ok, conn, a} <- TasksController.fetch(conn, id) do
+    with {:ok, conn} <- Json.require_scope(conn, "time:write"),
+         {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_feature(conn, :ledger),
+         {:ok, conn} <- Json.require_action(conn, :log_time) do
       Json.idempotent(conn, [required: true], fn -> record_time(conn, a.uuid, params) end)
     else
       {:halt, conn} -> conn
@@ -47,8 +49,10 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   end
 
   def task_usage(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- checks(conn, "usage:write", :log_time),
-         {:ok, conn, a} <- TasksController.fetch(conn, id) do
+    with {:ok, conn} <- Json.require_scope(conn, "usage:write"),
+         {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_feature(conn, :ledger),
+         {:ok, conn} <- Json.require_action(conn, :log_time) do
       Json.idempotent(conn, [required: true], fn -> record_usage(conn, a.uuid, params) end)
     else
       {:halt, conn} -> conn
@@ -73,8 +77,16 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
          {:ok, conn} <- Json.scope_project(conn, params),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :view) do
-      entries = Ledger.list_entries(conn.assigns.pk_project.uuid, limit: 200)
-      json(conn, %{entries: Enum.map(entries, &Json.entry/1), count: length(entries)})
+      limit = page_limit(params["limit"])
+      entries = Ledger.list_entries(conn.assigns.pk_project.uuid, limit: limit + 1)
+      {page, more} = Enum.split(entries, limit)
+
+      json(conn, %{
+        entries: Enum.map(page, &Json.entry/1),
+        count: length(page),
+        limit: limit,
+        truncated: more != []
+      })
     else
       {:halt, conn} -> conn
     end
@@ -82,18 +94,19 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
 
   def task_index(conn, %{"id" => id}) do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
+         {:ok, conn, a} <- TasksController.fetch(conn, id),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
-         {:ok, conn} <- Json.require_action(conn, :view),
-         {:ok, conn, a} <- TasksController.fetch(conn, id) do
+         {:ok, conn} <- Json.require_action(conn, :view) do
       entries =
-        conn.assigns.pk_project.uuid
-        |> Ledger.list_entries(limit: 500)
-        |> Enum.filter(&(&1.assignment_uuid == a.uuid))
+        Ledger.list_entries(conn.assigns.pk_project.uuid, assignment_uuid: a.uuid, limit: 501)
+
+      {page, more} = Enum.split(entries, 500)
 
       json(conn, %{
         task_uuid: a.uuid,
-        entries: Enum.map(entries, &Json.entry/1),
-        count: length(entries)
+        entries: Enum.map(page, &Json.entry/1),
+        count: length(page),
+        truncated: more != []
       })
     else
       {:halt, conn} -> conn
@@ -109,18 +122,13 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   def update_entry(conn, %{"id" => id} = params) do
     with {:ok, conn} <- checks(conn, "time:write", :log_time),
          {:ok, conn, entry} <- own_entry(conn, id),
-         {:ok, minutes} <- validate_minutes(params["minutes"]) do
-      case Ledger.update_time(entry, minutes,
-             actor_uuid: ApiKey.accountable_uuid(conn.assigns.pk_api_key)
-           ) do
-        {:ok, e} ->
-          json(conn, %{entry: Json.entry(e)})
+         {:ok, figure} <- amendment(entry, params) do
+      key = conn.assigns.pk_api_key
+      actor = ApiKey.accountable_uuid(key)
 
-        {:error, :invalid} ->
-          Json.error(conn, :conflict, "conflict", "Only a time entry's minutes can be amended.")
-
-        {:error, _} ->
-          Json.error(conn, :conflict, "conflict", "The entry could not be amended.")
+      case amend(entry, figure, actor, TasksController.api_metadata(key, %{})) do
+        {:ok, e} -> json(conn, %{entry: Json.entry(e)})
+        {:error, _} -> Json.error(conn, :conflict, "conflict", "The entry could not be amended.")
       end
     else
       {:halt, conn} -> conn
@@ -128,11 +136,52 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     end
   end
 
+  # `limit` on the project list: 200 by default, 1000 at most; the answer
+  # says `truncated` when older rows exist beyond it.
+  defp page_limit(v) when is_binary(v) do
+    case Integer.parse(v) do
+      {n, ""} when n > 0 -> min(n, 1000)
+      _ -> 200
+    end
+  end
+
+  defp page_limit(_), do: 200
+
+  # A time entry takes `minutes`; a tokens or cost entry takes `amount`.
+  defp amendment(%{kind: "time"}, params), do: validate_minutes(params["minutes"])
+
+  defp amendment(%{kind: kind}, %{"amount" => amount})
+       when kind in ["tokens", "cost"] and is_integer(amount) and amount >= 0,
+       do: {:ok, amount}
+
+  defp amendment(%{kind: kind}, _params) when kind in ["tokens", "cost"],
+    do:
+      {:error,
+       Json.error_body(
+         422,
+         "validation_failed",
+         "amount (a whole non-negative number) is required for a #{kind} entry.",
+         %{amount: ["is required"]}
+       )}
+
+  defp amendment(_entry, _params),
+    do: {:error, Json.error_body(409, "conflict", "This kind of entry cannot be amended.")}
+
+  defp amend(%{kind: "time"} = entry, minutes, actor, meta),
+    do: Ledger.update_time(entry, minutes, actor_uuid: actor, metadata: meta)
+
+  defp amend(entry, amount, actor, meta),
+    do: Ledger.update_amount(entry, amount, actor_uuid: actor, metadata: meta)
+
   def delete_entry(conn, %{"id" => id}) do
     with {:ok, conn} <- checks(conn, "time:write", :log_time),
-         {:ok, conn, entry} <- own_entry(conn, id) do
+         {:ok, conn, entry} <- own_entry(conn, id),
+         {:ok, conn} <- not_billable(conn, entry) do
+      key = conn.assigns.pk_api_key
+
       case Ledger.delete_entry(entry,
-             actor_uuid: ApiKey.accountable_uuid(conn.assigns.pk_api_key)
+             actor_uuid: ApiKey.accountable_uuid(key),
+             metadata: TasksController.api_metadata(key, %{})
            ) do
         {:ok, _} -> json(conn, %{deleted: entry.uuid})
         {:error, _} -> Json.error(conn, :conflict, "conflict", "The entry could not be removed.")
@@ -141,6 +190,21 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
       {:halt, conn} -> conn
     end
   end
+
+  # A billable row is never erased over the API — amend it to what it
+  # should be (the feed keeps the before and after); a person removes it
+  # from the interface if it must go.
+  defp not_billable(conn, %{billable: true}) do
+    {:halt,
+     Json.error(
+       conn,
+       :forbidden,
+       "billable_entry",
+       "A billable entry is not removed over the API; amend it instead, or ask a person."
+     )}
+  end
+
+  defp not_billable(conn, _entry), do: {:ok, conn}
 
   # The entry, when it is within reach and the key may correct it.
   defp own_entry(conn, id) do

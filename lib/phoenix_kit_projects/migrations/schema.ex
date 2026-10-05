@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 19
+  @current_version 20
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -116,6 +116,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v17_api_keys(p, prefix)
     v18_key_persons(p)
     v19_agent_work(p)
+    v20_words_and_links(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -141,14 +142,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
 
-    if target < 19 do
-      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_updated_index")
+    if target < 20, do: down_v20(p)
 
-      for col <-
-            ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
-        execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
-      end
-    end
+    if target < 19, do: down_v19(p)
 
     if target < 18 do
       execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_api_keys_person_index")
@@ -1046,6 +1042,53 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (api_key_uuid, idempotency_key)
     )
+    """)
+  end
+
+  defp down_v20(p) do
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_interactions")
+
+    execute(
+      "ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS words_by_key_uuid"
+    )
+  end
+
+  defp down_v19(p) do
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_updated_index")
+
+    for col <-
+          ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
+      execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
+    end
+  end
+
+  # V20 — two corrections from the panel's sweep of V19 (2026-10-05).
+  # `words_by_key_uuid`: whose words a task's title and description are —
+  # the API key that wrote them last, or nil for a person's; the wording
+  # policy asks this, not who created the task (a person's rewording must
+  # stick). The task ↔ interaction link gets a table of its own: a link
+  # kept only as a mention token in the description vanished with any
+  # rewrite of the description.
+  defp v20_words_and_links(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS words_by_key_uuid UUID
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_task_interactions (
+      assignment_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE CASCADE,
+      interaction_uuid UUID NOT NULL,
+      added_by_uuid UUID,
+      added_by_key_uuid UUID,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (assignment_uuid, interaction_uuid)
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_task_interactions_interaction_index
+    ON #{p}phoenix_kit_project_task_interactions (interaction_uuid)
     """)
   end
 

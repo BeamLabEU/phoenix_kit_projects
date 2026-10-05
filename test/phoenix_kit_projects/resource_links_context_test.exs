@@ -85,6 +85,33 @@ defmodule PhoenixKitProjects.ResourceLinksContextTest do
     assert titles(theirs) == ["ANDI Website", "ANDI landing"]
   end
 
+  test "a member of the root sees a grandchild's records too", %{main: main, editor: editor} do
+    {:ok, %{child_project: deeper}} =
+      Projects.create_subproject(editor.uuid, %{"name" => "Walls"})
+
+    task = fixture_task(%{"title" => "ANDI plaster"})
+
+    {:ok, a} =
+      Projects.create_assignment(%{
+        "project_uuid" => deeper.uuid,
+        "task_uuid" => task.uuid,
+        "status" => "todo"
+      })
+
+    {:ok, user} =
+      Auth.register_user(%{
+        email: "root-#{System.unique_integer([:positive])}@example.com",
+        password: "ValidPassword123!"
+      })
+
+    member = fake_scope(user_uuid: user.uuid, email: user.email, permissions: ["projects"])
+    {:ok, _} = Members.add_member(main, user.uuid, role: "member")
+
+    # the project two levels down and its task
+    assert Enum.sort(ResourceLinks.visible_resource_uuids([deeper.uuid, a.uuid], scope: member)) ==
+             Enum.sort([deeper.uuid, a.uuid])
+  end
+
   test "subtree_uuids walks down, root first", %{main: main, editor: editor} do
     {:ok, %{child_project: deeper}} =
       Projects.create_subproject(editor.uuid, %{"name" => "Walls"})

@@ -28,22 +28,41 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       since = NotesController.parse_since(params["since"])
       limit = limit(params["limit"])
 
-      open =
-        project.uuid
-        |> Projects.list_assignments()
-        |> Enum.reject(&(&1.status == "done"))
+      key = conn.assigns.pk_api_key
+      all = Projects.list_assignments(project.uuid)
+      {done, open} = Enum.split_with(all, &(&1.status == "done"))
 
-      shown =
-        open
-        |> Enum.sort_by(&{Map.get(@priority_rank, &1.priority, 2), &1.position})
-        |> Enum.take(limit)
+      # What to do next, in order: what this key already has in hand, what
+      # is ready, what waits on someone — priority then position inside
+      # each; done today last, as a tail of ids and titles.
+      mine =
+        Enum.filter(open, &(&1.status == "in_progress" and &1.started_by_key_uuid == key.uuid))
+
+      waiting = Enum.filter(open, &(is_binary(&1.waiting_on) and &1 not in mine))
+      ready = Enum.reject(open, &(&1 in mine or &1 in waiting))
+
+      ordered =
+        Enum.sort_by(mine, &rank/1) ++
+          Enum.sort_by(ready, &rank/1) ++ Enum.sort_by(waiting, &rank/1)
+
+      shown = Enum.take(ordered, limit)
 
       labels = Labels.labels_for_assignments(Enum.map(shown, & &1.uuid))
+      briefs = Enum.map(shown, &brief_task(&1, labels[&1.uuid] || []))
 
       notes =
         if TaskNotes.available?(),
           do: project.uuid |> TaskNotes.list_for_project(since) |> Enum.take(-@max_notes),
           else: []
+
+      day_ago = DateTime.add(DateTime.utc_now(), -86_400)
+
+      done_today =
+        done
+        |> Enum.filter(&(&1.completed_at && DateTime.compare(&1.completed_at, day_ago) == :gt))
+        |> Enum.sort_by(& &1.completed_at, {:desc, DateTime})
+        |> Enum.take(20)
+        |> Enum.map(&%{uuid: &1.uuid, title: Assignment.label(&1), completed_at: &1.completed_at})
 
       json(conn, %{
         now: DateTime.utc_now(),
@@ -53,14 +72,18 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
           name: project.name,
           completion: Project.completion(project),
           caught_up: Projects.caught_up?(project),
+          caught_up_since: Projects.caught_up_since(project),
           completed_at: project.completed_at,
           workflow_status: project.current_status_slug,
           agent_policy: Project.agent_policy(project)
         },
         open_total: length(open),
         truncated: length(open) > length(shown),
-        tasks: Enum.map(shown, &brief_task(&1, labels[&1.uuid] || [])),
-        subprojects: Enum.map(Projects.child_projects(project.uuid), &brief_subproject/1),
+        counts: %{mine: length(mine), ready: length(ready), waiting: length(waiting)},
+        resume: resume(briefs, notes, key),
+        tasks: briefs,
+        done_today: done_today,
+        subprojects: brief_subprojects(project),
         project_notes: Enum.map(notes, &brief_note/1),
         client: client_lines(conn, since),
         events: upcoming_events(project)
@@ -108,6 +131,56 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
     _ -> []
   end
 
+  defp rank(a), do: {Map.get(@priority_rank, a.priority, 2), a.position}
+
+  # Where this key left off: its latest note, on a task or on the project —
+  # the thing to read first after a context reset.
+  defp resume(briefs, project_notes, key) do
+    from_tasks =
+      briefs
+      |> Enum.filter(&(&1.latest_agent_note && &1.latest_agent_note.key == key.uuid))
+      |> Enum.map(&Map.put(&1.latest_agent_note, :task_uuid, &1.uuid))
+
+    from_project =
+      project_notes
+      |> Enum.filter(&((&1.metadata || %{})["api_key"] == key.uuid))
+      |> Enum.map(fn n -> n |> brief_note() |> Map.put(:task_uuid, nil) end)
+
+    (from_tasks ++ from_project)
+    |> Enum.max_by(& &1.at, DateTime, fn -> nil end)
+  end
+
+  # Every child summarised in ONE pass (`project_summaries/1`), not a list
+  # of tasks per child; a child that fails to summarise is left out rather
+  # than taking the briefing down.
+  defp brief_subprojects(project) do
+    children = Projects.child_projects(project.uuid)
+
+    summaries =
+      children
+      |> Projects.project_summaries()
+      |> Enum.zip(children)
+      |> Map.new(fn {sm, c} -> {c.uuid, sm} end)
+
+    Enum.map(children, fn p ->
+      sm = Map.get(summaries, p.uuid) || %{}
+      total = Map.get(sm, :total, 0)
+      done = Map.get(sm, :done, 0)
+      caught_up = Project.ongoing?(p) and total > 0 and done == total
+
+      %{
+        uuid: p.uuid,
+        name: p.name,
+        completion: Project.completion(p),
+        caught_up: caught_up,
+        completed_at: p.completed_at,
+        open_count: total - done
+      }
+    end)
+  rescue
+    _ -> []
+  end
+
   defp limit(v) when is_binary(v) do
     case Integer.parse(v) do
       {n, ""} when n > 0 -> min(n, @max_tasks)
@@ -141,6 +214,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       latest_agent_note:
         agent &&
           %{
+            uuid: latest.agent.uuid,
+            key: agent["api_key"],
             summary: agent["summary"],
             outcome: agent["outcome"],
             next_steps: agent["next_steps"],
@@ -150,25 +225,13 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
     }
   end
 
-  defp brief_subproject(%Project{} = p) do
-    open = p.uuid |> Projects.list_assignments() |> Enum.count(&(&1.status != "done"))
-
-    %{
-      uuid: p.uuid,
-      name: p.name,
-      completion: Project.completion(p),
-      caught_up: Projects.caught_up?(p),
-      completed_at: p.completed_at,
-      open_count: open
-    }
-  end
-
   defp brief_note(note) do
     m = note.metadata || %{}
 
     %{
       uuid: note.uuid,
       kind: m["kind"] || "note",
+      key: m["api_key"],
       summary: m["summary"] || String.slice(note.content || "", 0, 240),
       outcome: m["outcome"],
       next_steps: m["next_steps"],

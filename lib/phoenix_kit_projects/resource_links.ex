@@ -254,9 +254,9 @@ defmodule PhoenixKitProjects.ResourceLinks do
 
         Enum.filter(uuids, fn uuid ->
           cond do
-            project_uuid = Map.get(task_projects, uuid) -> MapSet.member?(allowed, project_uuid)
+            project_uuid = Map.get(task_projects, uuid) -> project_visible?(project_uuid, allowed)
             MapSet.member?(allowed, uuid) -> true
-            parent = Map.get(parents, uuid) -> MapSet.member?(allowed, parent)
+            parent = Map.get(parents, uuid) -> project_visible?(parent, allowed)
             true -> false
           end
         end)
@@ -265,6 +265,14 @@ defmodule PhoenixKitProjects.ResourceLinks do
     e ->
       Logger.warning("[Projects.ResourceLinks] visibility failed: #{Exception.message(e)}")
       []
+  end
+
+  # A project is visible when it, or any project above it, is accessible:
+  # a grandchild's visibility is its root's (the panel's sweep found the
+  # one-hop version losing it).
+  defp project_visible?(project_uuid, allowed) do
+    MapSet.member?(allowed, project_uuid) or
+      Enum.any?(Projects.parent_chain(project_uuid), &MapSet.member?(allowed, &1.uuid))
   end
 
   # For each uuid that is a sub-project, the project it hangs under. Only

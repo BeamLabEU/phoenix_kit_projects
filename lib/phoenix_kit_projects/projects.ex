@@ -3653,36 +3653,146 @@ defmodule PhoenixKitProjects.Projects do
     |> Assignment.status_changeset(
       Map.take(
         attrs,
-        ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid)a
+        ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid words_by_key_uuid)a
       )
     )
     |> repo().update()
   end
 
+  @task_interactions "phoenix_kit_project_task_interactions"
+  @table_prefix Application.compile_env(:phoenix_kit, :prefix)
+
   @doc """
-  Links a task to a record the way the forms do: its description gains the
-  record's mention token (`#[type:uuid|label]`) when it does not carry one,
-  and the mention index is rebuilt, so the record lists the task among what
-  links to it. Idempotent. Returns the (possibly unchanged) task.
+  Links a task to a client interaction (V20). The link is a row of its own
+  — a token kept only in the description vanished with any rewrite of it
+  (the panel's sweep) — and the description ALSO gains the mention token
+  `#[crm_interaction:uuid|label]` when it does not carry one, so the forms
+  and the backlink index see the link as they always did. Idempotent.
+  `opts`: `:actor_uuid`, `:key_uuid` (who added it).
   """
-  @spec link_assignment_to(Assignment.t(), String.t(), String.t(), String.t(), keyword()) ::
+  @spec link_interaction(Assignment.t(), String.t(), String.t(), keyword()) ::
           {:ok, Assignment.t()} | {:error, term()}
-  def link_assignment_to(%Assignment{} = a, type, target_uuid, label, opts \\ []) do
-    description = a.description || ""
+  def link_interaction(%Assignment{} = a, interaction_uuid, label, opts \\ []) do
+    row = %{
+      assignment_uuid: Ecto.UUID.dump!(a.uuid),
+      interaction_uuid: Ecto.UUID.dump!(interaction_uuid),
+      added_by_uuid: opts |> Keyword.get(:actor_uuid) |> dump_uuid(),
+      added_by_key_uuid: opts |> Keyword.get(:key_uuid) |> dump_uuid(),
+      inserted_at: DateTime.utc_now() |> DateTime.truncate(:second)
+    }
+
+    repo().insert_all(@task_interactions, [row], on_conflict: :nothing, prefix: @table_prefix)
+    ensure_interaction_token(a, interaction_uuid, label, opts)
+  rescue
+    e -> {:error, e}
+  end
+
+  @doc "Removes the link (the token stays in the text as plain history). `:ok` either way."
+  @spec unlink_interaction(Assignment.t(), String.t()) :: :ok
+  def unlink_interaction(%Assignment{} = a, interaction_uuid) do
+    repo().delete_all(
+      from(j in @task_interactions,
+        where:
+          j.assignment_uuid == type(^a.uuid, Ecto.UUID) and
+            j.interaction_uuid == type(^interaction_uuid, Ecto.UUID)
+      )
+      |> with_table_prefix()
+    )
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  @doc "The interaction uuids a task is linked to, oldest link first."
+  @spec interactions_of(Assignment.t() | binary()) :: [String.t()]
+  def interactions_of(%Assignment{uuid: uuid}), do: interactions_of(uuid)
+
+  def interactions_of(uuid) when is_binary(uuid) do
+    repo().all(
+      from(j in @task_interactions,
+        where: j.assignment_uuid == type(^uuid, Ecto.UUID),
+        order_by: [asc: j.inserted_at],
+        select: type(j.interaction_uuid, Ecto.UUID)
+      )
+      |> with_table_prefix()
+    )
+  rescue
+    _ -> []
+  end
+
+  @doc "The tasks linked to an interaction, as assignments (task preloaded), oldest link first."
+  @spec tasks_for_interaction(binary()) :: [Assignment.t()]
+  def tasks_for_interaction(interaction_uuid) when is_binary(interaction_uuid) do
+    uuids =
+      repo().all(
+        from(j in @task_interactions,
+          where: j.interaction_uuid == type(^interaction_uuid, Ecto.UUID),
+          order_by: [asc: j.inserted_at],
+          select: type(j.assignment_uuid, Ecto.UUID)
+        )
+        |> with_table_prefix()
+      )
+
+    by_uuid =
+      Assignment
+      |> where([a], a.uuid in ^uuids)
+      |> preload([:task, :child_project])
+      |> repo().all()
+      |> Map.new(&{&1.uuid, &1})
+
+    uuids |> Enum.map(&Map.get(by_uuid, &1)) |> Enum.reject(&is_nil/1)
+  rescue
+    _ -> []
+  end
+
+  @doc """
+  The description carries every linked interaction's token (one re-added
+  after a rewrite dropped it), so the mention index and the forms agree
+  with the join table. `labels` maps interaction uuid → label for new tokens.
+  """
+  @spec ensure_interaction_tokens(Assignment.t(), %{String.t() => String.t()}, keyword()) ::
+          {:ok, Assignment.t()}
+  def ensure_interaction_tokens(%Assignment{} = a, labels, opts \\ []) do
+    Enum.reduce(interactions_of(a), {:ok, a}, fn uuid, {:ok, acc} ->
+      case ensure_interaction_token(acc, uuid, Map.get(labels, uuid, "interaction"), opts) do
+        {:ok, next} -> {:ok, next}
+        _ -> {:ok, acc}
+      end
+    end)
+  end
+
+  # The token goes where the task's own words live: on the TASK row for a
+  # one-off task (what the API's title/description edits and the forms
+  # write), on the assignment for a shared library task — with a copy of
+  # the library text, so the override does not hide it.
+  defp ensure_interaction_token(%Assignment{} = a, interaction_uuid, label, opts) do
+    a = if Ecto.assoc_loaded?(a.task), do: a, else: repo().preload(a, :task)
+    {field_owner, description} = token_home(a)
 
     linked? =
       description
       |> Token.parse()
-      |> Enum.any?(&(&1.type == type and &1.uuid == target_uuid))
+      |> Enum.any?(&(&1.type == "crm_interaction" and &1.uuid == interaction_uuid))
 
     if linked? do
       {:ok, a}
     else
       safe_label = label |> to_string() |> String.replace(~r/[|\]]/, " ") |> String.slice(0, 120)
-      token = "#[#{type}:#{target_uuid}|#{safe_label}]"
+      token = "#[crm_interaction:#{interaction_uuid}|#{safe_label}]"
       text = if description == "", do: token, else: description <> "\n" <> token
 
-      with {:ok, updated} <- update_assignment_form(a, %{description: text}) do
+      result =
+        case field_owner do
+          :task ->
+            with {:ok, _} <- update_task(a.task, %{description: text}, broadcast: false),
+                 do: {:ok, repo().preload(get_assignment(a.uuid) || a, :task, force: true)}
+
+          :assignment ->
+            update_assignment_form(a, %{description: text})
+        end
+
+      with {:ok, updated} <- result do
         _ =
           PhoenixKit.Mentions.sync("project_task", updated.uuid, text,
             field: "description",
@@ -3692,8 +3802,75 @@ defmodule PhoenixKitProjects.Projects do
         {:ok, updated}
       end
     end
+  end
+
+  defp token_home(%Assignment{task: %Task{ad_hoc: true} = task, description: nil}),
+    do: {:task, task.description || ""}
+
+  defp token_home(%Assignment{} = a),
+    do: {:assignment, a.description || library_description(a) || ""}
+
+  defp library_description(%Assignment{task: %Task{description: d}}) when is_binary(d), do: d
+
+  defp library_description(%Assignment{task_uuid: uuid}) when is_binary(uuid) do
+    case repo().get(Task, uuid) do
+      %Task{description: d} when is_binary(d) -> d
+      _ -> nil
+    end
+  end
+
+  defp library_description(_), do: nil
+
+  defp dump_uuid(nil), do: nil
+  defp dump_uuid(uuid), do: Ecto.UUID.dump!(uuid)
+
+  defp with_table_prefix(query),
+    do:
+      if(is_binary(@table_prefix),
+        do: Ecto.Query.put_query_prefix(query, @table_prefix),
+        else: query
+      )
+
+  @doc """
+  Ticks or unticks one checklist item under a row lock: the list is re-read
+  inside the transaction, so two sessions ticking different items at once
+  both land (the API's per-item PATCH). `{:error, :not_found}` for an id the
+  task does not carry.
+  """
+  @spec update_checklist_item(Assignment.t(), String.t(), boolean()) ::
+          {:ok, Assignment.t()} | {:error, term()}
+  def update_checklist_item(%Assignment{uuid: uuid}, item_id, done) when is_boolean(done) do
+    repo().transaction(fn ->
+      fresh = repo().one!(from(a in Assignment, where: a.uuid == ^uuid, lock: "FOR UPDATE"))
+      items = fresh.checklist || []
+
+      if Enum.any?(items, &(&1["id"] == item_id)) do
+        updated =
+          Enum.map(items, fn
+            %{"id" => ^item_id} = item -> item |> Map.put("done", done) |> Map.delete("done_at")
+            item -> item
+          end)
+
+        case update_assignment_form(fresh, %{checklist: updated}) do
+          {:ok, saved} -> saved
+          {:error, reason} -> repo().rollback(reason)
+        end
+      else
+        repo().rollback(:not_found)
+      end
+    end)
+  end
+
+  @doc "When an ongoing project caught up: the latest completion among its tasks, nil when not caught up."
+  @spec caught_up_since(Project.t()) :: DateTime.t() | nil
+  def caught_up_since(%Project{} = project) do
+    if caught_up?(project) do
+      repo().one(
+        from(a in Assignment, where: a.project_uuid == ^project.uuid, select: max(a.completed_at))
+      )
+    end
   rescue
-    e -> {:error, e}
+    _ -> nil
   end
 
   @doc "A position above every row of the project, for a task added at the top."

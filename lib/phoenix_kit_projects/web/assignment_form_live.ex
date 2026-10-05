@@ -1717,6 +1717,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp save_edit(socket, attrs) do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
+        # A person saved the form: the title and description are theirs
+        # now, whatever key wrote them before.
+        {:ok, _} = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
         apply_pending_labels(socket, updated)
         sync_task_mentions(socket, updated.uuid, attrs["description"])
 

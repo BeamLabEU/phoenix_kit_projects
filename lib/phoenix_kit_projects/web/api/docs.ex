@@ -504,6 +504,45 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         example: ~s({"done": true})
       },
       %{
+        id: "linkInteraction",
+        method: "POST",
+        path: "/tasks/{id}/interactions/{interaction}",
+        summary:
+          "Link a task to a client interaction it came out of. A row of its own, so a rewrite of the description never unlinks; the description also carries the mention token so the forms show it. Idempotent.",
+        auth: true,
+        scope: "tasks:write",
+        action: "edit_tasks",
+        feature: "tasks",
+        idempotency: nil,
+        params: [
+          %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
+          %{
+            name: "interaction",
+            in: :path,
+            type: "uuid",
+            required: true,
+            doc: "an interaction of this project"
+          }
+        ],
+        example: nil
+      },
+      %{
+        id: "unlinkInteraction",
+        method: "DELETE",
+        path: "/tasks/{id}/interactions/{interaction}",
+        summary: "Remove the link (the token in the text stays as history).",
+        auth: true,
+        scope: "tasks:write",
+        action: "edit_tasks",
+        feature: "tasks",
+        idempotency: nil,
+        params: [
+          %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
+          %{name: "interaction", in: :path, type: "uuid", required: true, doc: ""}
+        ],
+        example: nil
+      },
+      %{
         id: "logTaskTime",
         method: "POST",
         path: "/tasks/{id}/time",
@@ -854,6 +893,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         idempotency: nil,
         params: [
           %{
+            name: "limit",
+            in: :query,
+            type: "integer",
+            required: false,
+            doc: "200 by default, 1000 at most; `truncated` says when older rows exist beyond it"
+          },
+          %{
             name: "project",
             in: :query,
             type: "string",
@@ -930,7 +976,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "PATCH",
         path: "/entries/{id}",
         summary:
-          "Correct a time entry's minutes. Your own entries when the project's agent policy allows (`agent_policy.amend_own_ledger`); a manager key corrects anyone's. The amendment is traced in the activity feed.",
+          "Correct an entry: `minutes` on a time entry, `amount` on a tokens or cost entry (a corrected estimate beats a second row). Your own entries when the project's agent policy allows (`agent_policy.amend_own_ledger`); a manager key corrects anyone's. The amendment is traced in the activity feed with your key named.",
         auth: true,
         scope: "time:write",
         action: "log_time",
@@ -948,8 +994,15 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             name: "minutes",
             in: :body,
             type: "integer",
-            required: true,
-            doc: "the corrected whole minutes"
+            required: false,
+            doc: "for a time entry: the corrected whole minutes"
+          },
+          %{
+            name: "amount",
+            in: :body,
+            type: "integer",
+            required: false,
+            doc: "for a tokens or cost entry: the corrected whole figure"
           }
         ],
         example: ~s({"minutes": 25})
@@ -959,7 +1012,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "DELETE",
         path: "/entries/{id}",
         summary:
-          "Remove an entry (time, tokens or cost) you recorded by mistake - your own under `amend_own_ledger`, anyone's with a manager key. What it held stays in the activity feed.",
+          "Remove an entry (time, tokens or cost) you recorded by mistake - your own under `amend_own_ledger`, anyone's with a manager key, never a billable one (403 `billable_entry`: amend it instead). What it held stays in the activity feed.",
         auth: true,
         scope: "time:write",
         action: "log_time",
@@ -1024,10 +1077,12 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
      "The task's title or description were written by someone else and the project does not let an agent reword them (agent_policy.edit_foreign_text). Leave the words; add a note."},
     {403, "delete_not_allowed",
      "The project's agent policy does not let this key delete that task (agent_policy.delete_tasks)."},
+    {403, "billable_entry",
+     "A billable time entry is never removed over the API; amend it, or ask a person."},
     {403, "amend_not_allowed",
      "The entry is not this key's, or the project does not let an agent correct its own (agent_policy.amend_own_ledger)."},
     {409, "already_started",
-     "Someone else started this task and the project does not let an agent take it over (agent_policy.take_started_task); `details.started_by` says who. Pick another task."},
+     "Someone else started this task and the project does not let an agent take it over (agent_policy.take_started_task): you may not start, finish or reopen it; `details.started_by` says who. Pick another task."},
     {409, "invalid_transition",
      "The task cannot move from its current status to the one asked; `details.allowed_transitions` lists what it can do. Reload the task, then pick one of those."},
     {409, "library_task",
@@ -1144,9 +1199,12 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     interactions and company, `events` for the planned events).
 
     `/me` and `/project` carry `agent_policy`, the project's own answers to four questions:
-    `take_started_task` (may you start a task someone else started - else 409 `already_started`),
-    `edit_foreign_text` (may you reword a task you did not create - else 403 `foreign_text`; your
-    own tasks are always yours to edit), `delete_tasks` (`none` | `own` | `any`), and
+    `take_started_task` (may you move a task someone else started - start, finish or reopen it -
+    else 409 `already_started`; a task nobody started, or that you started, is yours to move),
+    `edit_foreign_text` (may you reword a task whose words are not yours - else 403 `foreign_text`;
+    a task's title and description belong to whoever wrote them LAST: words you wrote are yours
+    until a person rewords them in the form, and then they are the person's - `words_by` on the
+    task says which), `delete_tasks` (`none` | `own` | `any` - own means created by your key), and
     `amend_own_ledger` (may you correct or remove your own time and usage entries; a manager key
     corrects anyone's). Every task says who created it and who started it (`created_by`,
     `started_by`: a person and/or a key - compare the key with yours from /me). Read the policy
@@ -1173,23 +1231,28 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
 
     ## Links between records: the mention token
 
-    A task links to another record the way a person does in the forms: a **mention token** in
-    its description, `#[<type>:<uuid>|<label>]`. The types: `project`, `project_task`,
-    `crm_interaction` (a client interaction). The record on the other end lists what links to it:
-    an interaction's `tasks` are the tasks whose description carries its token. You never write
-    the token yourself: pass `interaction: <uuid>` on `POST`/`PATCH /tasks` (the task gains the
-    token, labelled with the interaction's subject) or `tasks: [<uuid>]` on an interaction create
-    or update; a task answers `interactions: [<uuid>]`. For a note, a ref `{type: "interaction",
-    id: <uuid>}` is the convention; it is not resolved.
+    A task's link to a client interaction is a row of its own: `interaction: <uuid>` on
+    `POST`/`PATCH /tasks`, or `POST /tasks/{id}/interactions/{uuid}` (and `DELETE` to unlink), or
+    `tasks: [<uuid>]` on an interaction create or update. A task answers `interactions: [<uuid>]`;
+    an interaction answers `tasks`. Rewriting a description never unlinks. The description also
+    carries the **mention token** the forms use, `#[crm_interaction:<uuid>|<label>]` (other types:
+    `project`, `project_task`), so people see the link in the text; you never write the token
+    yourself. For a note, a ref `{type: "interaction", id: <uuid>}` is the convention; it is not
+    resolved.
 
     ## Picking up after a reset, and polling
 
-    `GET /briefing` is the one read that restores your state: the project and its policy, the
-    open tasks (direction, last outcome, latest note's summary and next steps, who started
-    them, what they wait on, checklist counts), the sub-projects, the project's notes since a
-    moment, the client's latest interactions (`client.interactions`, when the Client extension
-    is on) and the next planned events (`events`). Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
-    once a minute; it answers only what changed (and `now` for the next round).
+    `GET /briefing` is the one read that restores your state. Read `resume` first: your own
+    latest note (its task, summary and next steps) - where you left off. Then `tasks`, in the
+    order to work them: what your key already has in progress, then what is ready (priority,
+    then position), then what waits on someone; `counts` says how many of each, `open_total` and
+    `truncated` whether the list was cut. `done_today` is a tail of what was finished in the
+    last day (for the daily story). Then the project and its policy, the sub-projects one line
+    each, the project's notes since a moment, the client's latest interactions
+    (`client.interactions`, when the Client extension is on) and the next planned events
+    (`events`). Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
+    once a minute; it answers what changed at or after that moment (inclusive, so a change in
+    the same second is never lost - dedupe by uuid) and `now` for the next round.
 
     What is not about one task - a decision, research the client asked for, the state you were
     in before a context reset - goes to `POST /notes`, the project's own notes, same shape as a
@@ -1259,10 +1322,11 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `task_uuid`, `child_project_uuid`, `library_task`, `completed_at`, `inserted_at`, `updated_at`,
     `totals` (`minutes`, `tokens`, `cost_cents` logged on the task — sums over the ledger).
     Plus `waiting_on`, `origin`, `labels` (names), `checklist` (`{done, total}`), `created_by` and
-    `started_by` (`{person, key}` uuids - null for a person's own doing), `interactions` (the
-    client interactions it links), `updated_at`; on a `subproject` row, `subproject`
-    (`{completion, caught_up, completed_at}` of the nested project - an ongoing child reads
-    in_progress at 100% when caught up, this says so).
+    `started_by` (`{person, key}` uuids - null for a person's own doing), `words_by` (`{key}` when
+    an API key wrote the title and description last, `{person: true}` otherwise), `interactions`
+    (the client interactions it links), `updated_at`; on a `subproject` row, `subproject`
+    (`{completion, caught_up, caught_up_since, completed_at}` of the nested project - an ongoing
+    child reads in_progress at 100% when caught up, this says so).
     `GET /tasks/{id}` adds `checklist_items` (`[{id, text, done, done_at}]`), `direction` (the latest redirect, or null), `last_outcome`,
     `latest_agent_note`, `display_summary` (`text` + `source`: description | redirect | agent) and
     `notes_url`. A `subproject` row is a nested project: its lifecycle is its own, the row's status

@@ -141,9 +141,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
     assert started["started_by"]["key"] == key.uuid
 
-    # B cannot restart it (reopen first: start is only allowed from todo or done)
-    b |> post_json("#{@base}/tasks/#{t["uuid"]}/reopen", %{}, idem()) |> json_response(200)
-
+    # B may not move A's in-progress task at all — not reopen it, not finish it
     assert %{
              "error" => %{
                "code" => "already_started",
@@ -151,10 +149,23 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
              }
            } =
              b
-             |> post_json("#{@base}/tasks/#{t["uuid"]}/start", %{}, idem())
+             |> post_json("#{@base}/tasks/#{t["uuid"]}/reopen", %{}, idem())
              |> json_response(409)
 
     assert k == key.uuid
+
+    assert %{"error" => %{"code" => "already_started"}} =
+             b
+             |> post_json("#{@base}/tasks/#{t["uuid"]}/complete", %{}, idem())
+             |> json_response(409)
+
+    # A puts it back; B still may not start it
+    a |> post_json("#{@base}/tasks/#{t["uuid"]}/reopen", %{}, idem()) |> json_response(200)
+
+    assert %{"error" => %{"code" => "already_started"}} =
+             b
+             |> post_json("#{@base}/tasks/#{t["uuid"]}/start", %{}, idem())
+             |> json_response(409)
 
     # B may not reword A's task, may set its own fields
     assert %{"error" => %{"code" => "foreign_text"}} =
@@ -166,6 +177,15 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
              b
              |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"waiting_on" => "the client"})
              |> json_response(200)
+
+    # a person rewords A's task in the form: the words are theirs now, A may not reword
+    {:ok, _} =
+      Projects.stamp_assignment(Projects.get_assignment(t["uuid"]), %{words_by_key_uuid: nil})
+
+    assert %{"error" => %{"code" => "foreign_text"}} =
+             a
+             |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"title" => "Mine again"})
+             |> json_response(403)
 
     # the project opens both
     project = set_policy(project, %{"take_started_task" => true, "edit_foreign_text" => true})
@@ -340,6 +360,24 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
     %{"tasks" => [_], "truncated" => true} =
       c |> get("#{@base}/briefing?limit=1") |> json_response(200)
+
+    # the agent's own in-progress task comes first, its latest note is the resume pointer, done today is a tail
+    c |> post_json("#{@base}/tasks/#{t["uuid"]}/start", %{}, idem()) |> json_response(200)
+
+    %{"task" => other} =
+      c
+      |> post_json("#{@base}/tasks", %{"title" => "Third", "priority" => "urgent"}, idem())
+      |> json_response(201)
+
+    c |> post_json("#{@base}/tasks/#{other["uuid"]}/complete", %{}, idem()) |> json_response(200)
+
+    b2 = c |> get("#{@base}/briefing") |> json_response(200)
+    assert hd(b2["tasks"])["uuid"] == t["uuid"]
+    assert b2["counts"]["mine"] == 1
+    assert b2["resume"]["task_uuid"] == t["uuid"]
+    assert b2["resume"]["summary"] == "Waiting on the CIX set"
+    assert [%{"uuid" => done_uuid}] = b2["done_today"]
+    assert done_uuid == other["uuid"]
   end
 
   defmodule FakeInteractions do
@@ -404,8 +442,15 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
     assert Enum.map(on_task, & &1["uuid"]) == [e["uuid"]]
 
-    %{"entries" => all} = c |> get("#{@base}/entries") |> json_response(200)
+    %{"entries" => all, "truncated" => false, "limit" => 200} =
+      c |> get("#{@base}/entries") |> json_response(200)
+
     assert e["uuid"] in Enum.map(all, & &1["uuid"])
+
+    c |> post_json("#{@base}/usage", %{"tokens" => 5}, idem()) |> json_response(201)
+
+    %{"entries" => [_], "truncated" => true} =
+      c |> get("#{@base}/entries?limit=1") |> json_response(200)
 
     # a note's usage keeps the flag too, and its entries are whole numbers
     %{"note" => note, "entries" => [ne | _]} =
@@ -451,7 +496,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
     assert t["interactions"] == [uuid]
 
-    assert Projects.get_assignment(t["uuid"]).description =~
+    assert Projects.get_assignment(t["uuid"]).task.description =~
              "#[crm_interaction:#{uuid}|Kickoff   call]"
 
     # linking again is a no-op; an unknown interaction is a 404
@@ -461,6 +506,30 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
       |> json_response(200)
 
     assert again["interactions"] == [uuid]
+
+    # a rewrite of the description does not unlink: the join is the truth and the token comes back
+    %{"task" => rewritten} =
+      c
+      |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"description" => "Rewritten"})
+      |> json_response(200)
+
+    assert rewritten["interactions"] == [uuid]
+
+    assert Projects.get_assignment(t["uuid"]).task.description =~
+             "Rewritten\n#[crm_interaction:#{uuid}|"
+
+    # the explicit link and unlink calls
+    %{"task" => unlinked} =
+      c |> delete("#{@base}/tasks/#{t["uuid"]}/interactions/#{uuid}") |> json_response(200)
+
+    assert unlinked["interactions"] == []
+
+    %{"task" => relinked} =
+      c
+      |> post_json("#{@base}/tasks/#{t["uuid"]}/interactions/#{uuid}", %{})
+      |> json_response(200)
+
+    assert relinked["interactions"] == [uuid]
 
     assert %{"error" => %{"code" => "not_found"}} =
              c
@@ -540,5 +609,28 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
     assert %{"error" => %{"code" => "not_found"}} =
              a |> delete("#{@base}/entries/#{Ecto.UUID.generate()}") |> json_response(404)
+
+    # a tokens entry takes `amount`; a billable row is never erased over the API
+    %{"entries" => [tok | _]} =
+      b
+      |> post_json("#{@base}/usage", %{"tokens" => 900, "estimated" => true}, idem())
+      |> json_response(201)
+
+    _ = set_policy(project, %{"amend_own_ledger" => true})
+
+    assert %{"entry" => %{"amount" => 450}} =
+             b
+             |> patch_json("#{@base}/entries/#{tok["uuid"]}", %{"amount" => 450})
+             |> json_response(200)
+
+    {:ok, billable} =
+      Ledger.log_time(project.uuid, 30,
+        billable: true,
+        actor_kind: "user",
+        actor_uuid: Ecto.UUID.generate()
+      )
+
+    assert %{"error" => %{"code" => "billable_entry"}} =
+             a |> delete("#{@base}/entries/#{billable.uuid}") |> json_response(403)
   end
 end

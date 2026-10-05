@@ -276,14 +276,7 @@ defmodule PhoenixKitProjects.Ledger do
           actor_uuid: Keyword.get(opts, :actor_uuid),
           resource_type: "project",
           resource_uuid: updated.project_uuid,
-          metadata: %{
-            "entry_uuid" => updated.uuid,
-            "kind" => updated.kind,
-            "amount_was" => plain(entry.amount),
-            "amount" => plain(updated.amount),
-            "actor_kind" => updated.actor_kind,
-            "assignment_uuid" => updated.assignment_uuid
-          }
+          metadata: amendment_metadata(entry, updated, opts)
         )
 
         PubSub.broadcast_project(:work_logged, %{uuid: updated.project_uuid})
@@ -295,6 +288,52 @@ defmodule PhoenixKitProjects.Ledger do
   end
 
   def update_time(%WorkEntry{}, _minutes, _opts), do: {:error, :invalid}
+
+  # What an amendment leaves in the feed: the figure before and after, whose
+  # row it was, and whatever the caller adds (`:metadata` — the API names
+  # its key there, so two keys minted by one person stay distinguishable).
+  defp amendment_metadata(entry, updated, opts) do
+    %{
+      "entry_uuid" => updated.uuid,
+      "kind" => updated.kind,
+      "amount_was" => plain(entry.amount),
+      "amount" => plain(updated.amount),
+      "actor_kind" => updated.actor_kind,
+      "actor_uuid" => updated.actor_uuid,
+      "assignment_uuid" => updated.assignment_uuid
+    }
+    |> Map.merge(Keyword.get(opts, :metadata) || %{})
+  end
+
+  @doc """
+  Amends a tokens or cost entry's amount — an agent's corrected estimate
+  beats a duplicated row. Logs `projects.work_amended` like `update_time/3`.
+  """
+  @spec update_amount(WorkEntry.t(), number(), keyword()) ::
+          {:ok, WorkEntry.t()} | {:error, term()}
+  def update_amount(%WorkEntry{kind: kind} = entry, amount, opts)
+      when kind in ["tokens", "cost"] and is_number(amount) and amount >= 0 do
+    entry
+    |> WorkEntry.changeset(%{amount: amount})
+    |> RepoHelper.repo().update()
+    |> case do
+      {:ok, updated} ->
+        Activity.log("projects.work_amended",
+          actor_uuid: Keyword.get(opts, :actor_uuid),
+          resource_type: "project",
+          resource_uuid: updated.project_uuid,
+          metadata: amendment_metadata(entry, updated, opts)
+        )
+
+        PubSub.broadcast_project(:work_logged, %{uuid: updated.project_uuid})
+        {:ok, updated}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  def update_amount(%WorkEntry{}, _amount, _opts), do: {:error, :invalid}
 
   @doc """
   Removes an entry. Logs `projects.work_removed` with what it held, so the
@@ -318,13 +357,15 @@ defmodule PhoenixKitProjects.Ledger do
           actor_uuid: Keyword.get(opts, :actor_uuid),
           resource_type: "project",
           resource_uuid: deleted.project_uuid,
-          metadata: %{
-            "entry_uuid" => deleted.uuid,
-            "kind" => deleted.kind,
-            "amount" => plain(deleted.amount),
-            "actor_kind" => deleted.actor_kind,
-            "assignment_uuid" => deleted.assignment_uuid
-          }
+          metadata:
+            %{
+              "entry_uuid" => deleted.uuid,
+              "kind" => deleted.kind,
+              "amount" => plain(deleted.amount),
+              "actor_kind" => deleted.actor_kind,
+              "assignment_uuid" => deleted.assignment_uuid
+            }
+            |> Map.merge(Keyword.get(opts, :metadata) || %{})
         )
 
         PubSub.broadcast_project(:work_logged, %{uuid: deleted.project_uuid})
@@ -368,6 +409,12 @@ defmodule PhoenixKitProjects.Ledger do
 
         _ ->
           query
+      end
+
+    query =
+      case Keyword.get(opts, :assignment_uuid) do
+        uuid when is_binary(uuid) -> where(query, [e], e.assignment_uuid == ^uuid)
+        _ -> query
       end
 
     RepoHelper.repo().all(query)

@@ -107,6 +107,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:created_by_key_uuid, UUIDv7)
     field(:started_by_uuid, UUIDv7)
     field(:started_by_key_uuid, UUIDv7)
+    # Whose words the title and description are: the API key that wrote
+    # them last, nil for a person's (V20). The wording policy's test.
+    field(:words_by_key_uuid, UUIDv7)
     field(:waiting_on, :string)
     field(:origin, :string)
     field(:checklist, {:array, :map}, default: [])
@@ -151,7 +154,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   # Server-only fields: set by trusted server code (completion tracking,
   # provenance), never cast from untrusted form params. Use `status_changeset/2`.
   @server_only ~w(completed_by_uuid completed_at created_by_uuid created_by_key_uuid
-                  started_by_uuid started_by_key_uuid)a
+                  started_by_uuid started_by_key_uuid words_by_key_uuid)a
 
   @checklist_max 50
   @checklist_text_max 500

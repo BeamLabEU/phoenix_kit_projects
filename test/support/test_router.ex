@@ -50,6 +50,8 @@ defmodule PhoenixKitProjects.Test.Router do
     post("/notes", NotesController, :project_create)
     delete("/tasks/:id", TasksController, :delete)
     patch("/tasks/:id/checklist/:item", TasksController, :checklist_item)
+    post("/tasks/:id/interactions/:interaction", TasksController, :link)
+    delete("/tasks/:id/interactions/:interaction", TasksController, :unlink)
     get("/entries", LedgerController, :index)
     get("/tasks/:id/entries", LedgerController, :task_index)
     get("/events", EventsController, :index)
