@@ -28,7 +28,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
 
   def task_time(conn, %{"id" => id} = params) do
     with {:ok, conn} <- checks(conn, "time:write", :log_time),
-         {:ok, a} <- TasksController.fetch(conn, id) do
+         {:ok, conn, a} <- TasksController.fetch(conn, id) do
       Json.idempotent(conn, [required: true], fn -> record_time(conn, a.uuid, params) end)
     else
       {:halt, conn} -> conn
@@ -37,18 +37,17 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   end
 
   def project_time(conn, params) do
-    case checks(conn, "time:write", :log_time) do
-      {:ok, conn} ->
-        Json.idempotent(conn, [required: true], fn -> record_time(conn, nil, params) end)
-
-      {:halt, conn} ->
-        conn
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- checks(conn, "time:write", :log_time) do
+      Json.idempotent(conn, [required: true], fn -> record_time(conn, nil, params) end)
+    else
+      {:halt, conn} -> conn
     end
   end
 
   def task_usage(conn, %{"id" => id} = params) do
     with {:ok, conn} <- checks(conn, "usage:write", :log_time),
-         {:ok, a} <- TasksController.fetch(conn, id) do
+         {:ok, conn, a} <- TasksController.fetch(conn, id) do
       Json.idempotent(conn, [required: true], fn -> record_usage(conn, a.uuid, params) end)
     else
       {:halt, conn} -> conn
@@ -57,12 +56,11 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   end
 
   def project_usage(conn, params) do
-    case checks(conn, "usage:write", :log_time) do
-      {:ok, conn} ->
-        Json.idempotent(conn, [required: true], fn -> record_usage(conn, nil, params) end)
-
-      {:halt, conn} ->
-        conn
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- checks(conn, "usage:write", :log_time) do
+      Json.idempotent(conn, [required: true], fn -> record_usage(conn, nil, params) end)
+    else
+      {:halt, conn} -> conn
     end
   end
 

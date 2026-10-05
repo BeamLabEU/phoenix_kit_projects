@@ -105,7 +105,11 @@ defmodule PhoenixKitProjects.ResourceLinks do
   # ── Search (the `#` typeahead) ──────────────────────────────────────
 
   @doc """
-  Projects and tasks matching `query`, scoped to the SEARCHER.
+  Projects and tasks matching `query`, scoped to the SEARCHER — and, when
+  the field says where it is (`opts[:context]`, `%{"project" => uuid}`),
+  to that project and the sub-projects under it: a `#` typed inside a
+  project links its own work, not another main project's (Max,
+  2026-10-05). The context narrows; the scope still decides access.
 
   Never offers something the searcher cannot open: the typeahead is the
   first place a leak would appear, and it is the easiest one to miss
@@ -116,7 +120,10 @@ defmodule PhoenixKitProjects.ResourceLinks do
     scope = Keyword.get(opts, :scope) || Keyword.get(opts, :user_uuid)
     lang = L10n.current_content_lang()
 
-    accessible = accessible_project_uuids(scope)
+    accessible =
+      scope
+      |> accessible_project_uuids()
+      |> narrow_to_context(Keyword.get(opts, :context))
 
     if accessible == :none, do: [], else: do_search(query, accessible, lang)
   rescue
@@ -273,6 +280,24 @@ defmodule PhoenixKitProjects.ResourceLinks do
   # `:all` for a site admin, `:none` for someone with no identity, else the
   # concrete set. Returning `:all` rather than every uuid keeps the admin
   # path from loading the whole table to answer "yes".
+  # The project the field belongs to and everything nested under it,
+  # intersected with what the searcher may see.
+  defp narrow_to_context(accessible, %{"project" => uuid}) when is_binary(uuid) do
+    subtree = Projects.subtree_uuids(uuid)
+
+    case accessible do
+      :none -> :none
+      :all -> subtree
+      uuids -> Enum.filter(subtree, &(&1 in uuids))
+    end
+    |> case do
+      [] -> :none
+      narrowed -> narrowed
+    end
+  end
+
+  defp narrow_to_context(accessible, _context), do: accessible
+
   defp accessible_project_uuids(nil), do: :none
 
   defp accessible_project_uuids(scope) do

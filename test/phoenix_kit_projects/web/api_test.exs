@@ -50,6 +50,165 @@ defmodule PhoenixKitProjects.Web.ApiTest do
 
   defp idem, do: [{"idempotency-key", Ecto.UUID.generate()}]
 
+  # ── Sub-projects: the key's reach ───────────────────────────────
+
+  describe "sub-projects" do
+    test "a key reaches its project and everything nested under it, and can nest more", %{
+      conn: conn,
+      project: project,
+      token: token
+    } do
+      c = api(conn, token)
+
+      # the root knows it is the root
+      %{"project" => root} = c |> get("#{@base}/project") |> json_response(200)
+      assert root["parent_uuid"] == nil
+      assert root["subprojects"] == []
+
+      # create one
+      assert %{"error" => %{"code" => "validation_failed"}} =
+               c |> post_json("#{@base}/subprojects", %{}) |> json_response(422)
+
+      %{"project" => child, "task" => row} =
+        c
+        |> post_json("#{@base}/subprojects", %{
+          "name" => "3D editor",
+          "description" => "The editor"
+        })
+        |> json_response(201)
+
+      assert child["name"] == "3D editor"
+      assert child["parent_uuid"] == project.uuid
+      assert row["kind"] == "subproject"
+      assert row["child_project_uuid"] == child["uuid"]
+
+      entry = assert_activity_logged("projects.subproject_created", resource_uuid: row["uuid"])
+      assert entry.metadata["via"] == "api"
+
+      %{"project" => root} = c |> get("#{@base}/project") |> json_response(200)
+      assert [%{"uuid" => child_uuid, "name" => "3D editor"}] = root["subprojects"]
+      assert child_uuid == child["uuid"]
+
+      # read the child through the param
+      %{"project" => again} =
+        c |> get("#{@base}/project?project=#{child_uuid}") |> json_response(200)
+
+      assert again["uuid"] == child_uuid
+
+      # a task inside it, listed inside it and not on the parent
+      %{"task" => task} =
+        c
+        |> post_json(
+          "#{@base}/tasks",
+          %{"title" => "Draw the walls", "project" => child_uuid},
+          idem()
+        )
+        |> json_response(201)
+
+      %{"tasks" => inside} =
+        c |> get("#{@base}/tasks?project=#{child_uuid}") |> json_response(200)
+
+      assert Enum.map(inside, & &1["uuid"]) == [task["uuid"]]
+
+      %{"tasks" => outside} = c |> get("#{@base}/tasks") |> json_response(200)
+      refute task["uuid"] in Enum.map(outside, & &1["uuid"])
+      assert row["uuid"] in Enum.map(outside, & &1["uuid"])
+
+      # task-level calls find it without the param and act in its project
+      assert %{"task" => %{"uuid" => _}} =
+               c |> get("#{@base}/tasks/#{task["uuid"]}") |> json_response(200)
+
+      assert %{"task" => %{"status" => "done"}} =
+               c
+               |> post_json("#{@base}/tasks/#{task["uuid"]}/complete", %{}, idem())
+               |> json_response(200)
+
+      assert %{"entry" => _} =
+               c
+               |> post_json("#{@base}/tasks/#{task["uuid"]}/time", %{"minutes" => 7}, idem())
+               |> json_response(201)
+
+      assert %{"entry" => _} =
+               c
+               |> post_json("#{@base}/time", %{"minutes" => 5, "project" => child_uuid}, idem())
+               |> json_response(201)
+
+      assert Ledger.totals_for_project(child_uuid).ai_minutes == 12.0
+      assert Ledger.totals_for_project(project.uuid).ai_minutes == 0.0
+
+      # nest one level deeper, from the child
+      %{"project" => grandchild} =
+        c
+        |> post_json("#{@base}/subprojects", %{"name" => "Walls", "project" => child_uuid})
+        |> json_response(201)
+
+      assert grandchild["parent_uuid"] == child_uuid
+
+      # llms.txt teaches it and openapi lists it
+      llms = conn |> get("#{@base}/llms.txt") |> response(200)
+      assert llms =~ "## Sub-projects"
+      assert llms =~ "POST /subprojects"
+      assert llms =~ "project=<child_project_uuid>"
+      spec = conn |> get("#{@base}/openapi.json") |> json_response(200)
+      assert Map.has_key?(spec["paths"], "/subprojects")
+    end
+
+    test "outside the reach is a 404; the gate and the depth hold", %{
+      conn: conn,
+      project: project,
+      token: token
+    } do
+      c = api(conn, token)
+      other = fixture_project()
+
+      assert %{"error" => %{"code" => "not_found"}} =
+               c |> get("#{@base}/project?project=#{other.uuid}") |> json_response(404)
+
+      assert %{"error" => %{"code" => "not_found"}} =
+               c
+               |> post_json("#{@base}/tasks", %{"title" => "x", "project" => other.uuid}, idem())
+               |> json_response(404)
+
+      # a key minted on a child does not reach its parent, nor the parent's tasks
+      {:ok, %{child_project: child}} =
+        Projects.create_subproject(project.uuid, %{"name" => "Leaf"})
+
+      {:ok, _, leaf_token} = ApiKeys.create(child, %{"name" => "Leaf runner"})
+      leaf = api(conn, leaf_token)
+
+      assert %{"error" => %{"code" => "not_found"}} =
+               leaf |> get("#{@base}/project?project=#{project.uuid}") |> json_response(404)
+
+      [parent_task] =
+        Projects.list_assignments(project.uuid) |> Enum.reject(& &1.child_project_uuid)
+
+      assert %{"error" => %{"code" => "not_found"}} =
+               leaf |> get("#{@base}/tasks/#{parent_task.uuid}") |> json_response(404)
+
+      # the parent's key reaches the child's tasks
+      %{"task" => t} =
+        c
+        |> post_json(
+          "#{@base}/tasks",
+          %{"title" => "In the leaf", "project" => child.uuid},
+          idem()
+        )
+        |> json_response(201)
+
+      assert %{"task" => %{"uuid" => _}} =
+               leaf |> get("#{@base}/tasks/#{t["uuid"]}") |> json_response(200)
+
+      # the sub-projects feature off: no creating, the existing ones still reachable
+      {:ok, _} = Features.set_flags(project, %{"subprojects" => false})
+
+      assert %{"error" => %{"code" => "feature_disabled"}} =
+               c |> post_json("#{@base}/subprojects", %{"name" => "No"}) |> json_response(403)
+
+      assert %{"project" => _} =
+               c |> get("#{@base}/project?project=#{child.uuid}") |> json_response(200)
+    end
+  end
+
   # ── Auth ────────────────────────────────────────────────────────
 
   test "a personal key says whom it acts for, acts with their role, and dies with their membership",

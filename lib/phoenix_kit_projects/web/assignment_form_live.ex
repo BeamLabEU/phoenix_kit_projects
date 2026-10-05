@@ -1106,6 +1106,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # What a `#` in this form offers: the project's own records and its
+  # sub-projects' (`ResourceLinks.search_resources/2` narrows by it).
+  defp mention_context(%{uuid: uuid}) when is_binary(uuid), do: Jason.encode!(%{project: uuid})
+  defp mention_context(_), do: nil
+
   # Indexes the @ and # mentions in a saved description and delivers the
   # pings. Deliberately on the DURABLE save rather than on change: `sync`
   # returns only what is new, and notifying from a debounce would ping on
@@ -2005,6 +2010,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 label={gettext("Description (optional)")}
                 rows="2"
                 mentions
+                data-mention-context={mention_context(@project)}
               />
 
               <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
@@ -2280,6 +2286,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 rows={3}
                 disabled={@current_lang in @ai_in_flight}
                 mentions
+                data-mention-context={mention_context(@project)}
               />
             </.multilang_fields_wrapper>
 

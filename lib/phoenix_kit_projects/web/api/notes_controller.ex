@@ -30,7 +30,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :view),
-         {:ok, a} <- TasksController.fetch(conn, id) do
+         {:ok, conn, a} <- TasksController.fetch(conn, id) do
       notes = TaskNotes.list(a.uuid)
       latest = TaskNotes.latest(notes)
 
@@ -54,7 +54,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks),
          {:ok, conn} <- require_usage_rights(conn, params["usage"]),
-         {:ok, a} <- TasksController.fetch(conn, id) do
+         {:ok, conn, a} <- TasksController.fetch(conn, id) do
       Json.idempotent(conn, [required: true], fn -> do_create(conn, a, params) end)
     else
       {:halt, conn} -> conn

@@ -13,7 +13,7 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
   alias PhoenixKitProjects.Web.Api.Json
 
   def index(conn, %{"resource" => resource} = params) do
-    case prepare(conn, resource, :read) do
+    case prepare(conn, resource, :read, params) do
       {:ok, conn, provider} ->
         call(conn, provider, :list, [ctx(conn), Map.drop(params, ["resource"])])
 
@@ -30,7 +30,7 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
   end
 
   def create(conn, %{"resource" => resource} = params) do
-    case prepare(conn, resource, :write) do
+    case prepare(conn, resource, :write, params) do
       {:ok, conn, provider} ->
         attrs = Map.drop(params, ["resource"])
 
@@ -62,10 +62,11 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
     end
   end
 
-  # The provider for `resource`, or 404; then the scope, the extension on
-  # the project, and the role floor — reads need `:view`, writes the
+  # The provider for `resource`, or 404; then the scope, the project
+  # (`project` picks a sub-project within reach for list and create), the
+  # extension on it, and the role floor — reads need `:view`, writes the
   # provider's own action.
-  defp prepare(conn, resource, mode) do
+  defp prepare(conn, resource, mode, params \\ %{}) do
     case Extensions.api_provider(resource) do
       nil ->
         {:halt,
@@ -77,6 +78,7 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
         action = if mode == :read, do: :view, else: provider.action()
 
         with {:ok, conn} <- Json.require_scope(conn, scope),
+             {:ok, conn} <- Json.scope_project(conn, params),
              {:ok, conn} <- require_extension(conn, ext.key),
              {:ok, conn} <- Json.require_action(conn, action) do
           {:ok, conn, provider}

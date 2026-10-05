@@ -26,6 +26,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   def index(conn, params) do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
+         {:ok, conn} <- Json.scope_project(conn, params),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view) do
       tasks =
@@ -50,7 +51,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view),
-         {:ok, a} <- fetch(conn, id) do
+         {:ok, conn, a} <- fetch(conn, id) do
       json(conn, %{task: Map.merge(Json.task(a), Json.task_detail(a))})
     else
       {:halt, conn} -> conn
@@ -60,6 +61,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   def create(conn, params) do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
+         {:ok, conn} <- Json.scope_project(conn, params),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :create_tasks) do
       Json.idempotent(conn, [], fn -> do_create(conn, params) end)
@@ -105,7 +107,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks),
-         {:ok, a} <- fetch(conn, id) do
+         {:ok, conn, a} <- fetch(conn, id) do
       Json.idempotent(conn, [], fn -> do_update(conn, a, params) end)
     else
       {:halt, conn} -> conn
@@ -176,7 +178,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :update_status),
-         {:ok, a} <- fetch(conn, id) do
+         {:ok, conn, a} <- fetch(conn, id) do
       Json.idempotent(conn, [], fn -> do_transition(conn, a, params["status"]) end)
     else
       {:halt, conn} -> conn
@@ -280,11 +282,33 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   # ── Shared ──────────────────────────────────────────────────────
 
-  @doc false
+  @doc """
+  The task `id` names, when its project is within the key's reach — the
+  key's own project or a sub-project under it — with the request pointed
+  at that project (`Json.rescope/2`), whose `tasks` gate must be on.
+  """
+  @spec fetch(Plug.Conn.t(), String.t()) ::
+          {:ok, Plug.Conn.t(), Assignment.t()} | {:halt, Plug.Conn.t()} | {:error, :not_found}
   def fetch(conn, id) do
+    %{pk_api_key: key, pk_project: project} = conn.assigns
+
     case Projects.get_assignment(id) do
-      %Assignment{project_uuid: pid} = a when pid == conn.assigns.pk_project.uuid -> {:ok, a}
-      _ -> {:error, :not_found}
+      %Assignment{project_uuid: pid} = a when pid == project.uuid ->
+        {:ok, conn, a}
+
+      %Assignment{project_uuid: pid} = a ->
+        with true <- Json.within_reach?(key, pid),
+             %{} = child <- Projects.get_project(pid),
+             conn = Json.rescope(conn, child),
+             {:ok, conn} <- Json.require_feature(conn, :tasks) do
+          {:ok, conn, a}
+        else
+          {:halt, conn} -> {:halt, conn}
+          _ -> {:error, :not_found}
+        end
+
+      _ ->
+        {:error, :not_found}
     end
   rescue
     _ -> {:error, :not_found}
@@ -292,7 +316,13 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   @doc false
   def not_found(conn),
-    do: Json.error(conn, :not_found, "not_found", "No such task in this project.")
+    do:
+      Json.error(
+        conn,
+        :not_found,
+        "not_found",
+        "No such task in this project or the sub-projects under it."
+      )
 
   @doc false
   def api_metadata(key, extra),

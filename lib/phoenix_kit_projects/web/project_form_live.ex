@@ -1753,6 +1753,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # Indexes the description's mentions and delivers its pings, on the
   # durable save. Never allowed to cost the save: a missing backlink is a
   # smaller loss than a rolled-back project.
+  # A `#` in the project's own description offers the project's records
+  # and its sub-projects' — nothing on a new project, which has none yet.
+  defp mention_context(%{uuid: uuid}) when is_binary(uuid), do: Jason.encode!(%{project: uuid})
+  defp mention_context(_), do: nil
+
   defp sync_mentions(socket, project) do
     case Mentions.sync("project", project.uuid, project.description,
            field: "description",
@@ -2084,7 +2089,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               rows={4}
               disabled={@current_lang in @ai_in_flight}
               mentions
-              />
+              data-mention-context={mention_context(assigns[:project])}
+            />
           </.multilang_fields_wrapper>
     </div>
     """

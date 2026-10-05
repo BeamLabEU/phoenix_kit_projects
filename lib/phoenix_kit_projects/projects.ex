@@ -2929,6 +2929,46 @@ defmodule PhoenixKitProjects.Projects do
     do_parent_chain(project_uuid, [], @max_parent_depth)
   end
 
+  @doc """
+  A project and every project nested under it, the root first — bounded to
+  #{@max_parent_depth} levels like `parent_chain/1`, so a walk over
+  persisted data can never spin.
+  """
+  @spec subtree_uuids(uuid()) :: [uuid()]
+  def subtree_uuids(project_uuid) when is_binary(project_uuid) do
+    do_subtree([project_uuid], [], @max_parent_depth)
+  end
+
+  defp do_subtree([], acc, _hops), do: Enum.reverse(acc)
+  defp do_subtree(level, acc, 0), do: Enum.reverse(Enum.reverse(level) ++ acc)
+
+  defp do_subtree(level, acc, hops) do
+    children =
+      repo().all(
+        from(a in Assignment,
+          where: a.project_uuid in ^level and not is_nil(a.child_project_uuid),
+          select: a.child_project_uuid
+        )
+      )
+      |> Enum.reject(&(&1 in acc or &1 in level))
+
+    do_subtree(children, Enum.reverse(level) ++ acc, hops - 1)
+  end
+
+  @doc "The sub-projects embedded directly in a project, in plan order."
+  @spec child_projects(uuid()) :: [Project.t()]
+  def child_projects(project_uuid) when is_binary(project_uuid) do
+    repo().all(
+      from(a in Assignment,
+        join: p in Project,
+        on: p.uuid == a.child_project_uuid,
+        where: a.project_uuid == ^project_uuid,
+        order_by: [asc: a.position, asc: a.inserted_at],
+        select: p
+      )
+    )
+  end
+
   defp do_parent_chain(_uuid, acc, 0), do: acc
 
   defp do_parent_chain(uuid, acc, hops) do

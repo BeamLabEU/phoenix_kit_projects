@@ -96,7 +96,16 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         action: "view",
         feature: nil,
         idempotency: nil,
-        params: [],
+        params: [
+          %{
+            name: "project",
+            in: :query,
+            type: "string",
+            required: false,
+            doc:
+              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+          }
+        ],
         example: nil
       },
       %{
@@ -112,6 +121,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         idempotency: :optional,
         params: [
           %{
+            name: "project",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+          },
+          %{
             name: "status",
             in: :body,
             type: "string",
@@ -120,6 +137,44 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
           }
         ],
         example: ~s({"status": "in_review"})
+      },
+      %{
+        id: "createSubproject",
+        method: "POST",
+        path: "/subprojects",
+        summary:
+          "Create a sub-project: a new project nested in this one, appearing on its task list as a row of kind `subproject`. Group a piece of work (a feature, a deliverable) under one, then create its tasks with `project` set to the new uuid. Answers with the new project and the row that links it.",
+        auth: true,
+        scope: "tasks:write",
+        action: "create_tasks",
+        feature: "subprojects",
+        idempotency: :optional,
+        params: [
+          %{
+            name: "name",
+            in: :body,
+            type: "string",
+            required: true,
+            doc: "the sub-project's name"
+          },
+          %{
+            name: "description",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "what it is for, short"
+          },
+          %{
+            name: "project",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "nest it under a sub-project within reach instead of the key's own project (at most 7 levels down)"
+          }
+        ],
+        example:
+          ~s({"name": "3D editor", "description": "The furniture editor and everything it needs."})
       },
       %{
         id: "listTasks",
@@ -133,6 +188,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         feature: "tasks",
         idempotency: nil,
         params: [
+          %{
+            name: "project",
+            in: :query,
+            type: "string",
+            required: false,
+            doc:
+              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+          },
           %{
             name: "status",
             in: :query,
@@ -155,6 +218,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         feature: "tasks",
         idempotency: :optional,
         params: [
+          %{
+            name: "project",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+          },
           %{name: "title", in: :body, type: "string", required: true, doc: "up to a short line"},
           %{name: "description", in: :body, type: "string", required: false, doc: ""},
           %{
@@ -342,6 +413,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         idempotency: :required,
         params: [
           %{
+            name: "project",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+          },
+          %{
             name: "minutes",
             in: :body,
             type: "integer",
@@ -403,6 +482,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         feature: "ledger",
         idempotency: :required,
         params: [
+          %{
+            name: "project",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+          },
           %{name: "tokens", in: :body, type: "integer", required: false, doc: ""},
           %{name: "cost_cents", in: :body, type: "integer", required: false, doc: ""},
           %{name: "model", in: :body, type: "string", required: false, doc: ""},
@@ -601,7 +688,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     # Projects API #{@version}
 
     > The JSON API an agent drives one project with: read and create tasks, move them through
-    > their lifecycle, and report the minutes, tokens and cost of the work. One key = one project.
+    > their lifecycle, and report the minutes, tokens and cost of the work. One key = one project
+    > and every sub-project nested under it.
 
     Base URL: `#{base}` (relative to this site). Every path below is under it.
     Send and accept JSON (`Content-Type: application/json`). Ids are UUIDs.
@@ -618,6 +706,31 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `GET /me` tells you the project, which features are on (`features`), what your role may do
     (`allowed_actions`), the scopes your key carries, and the project's workflow statuses.
     The live set of calls that will work for you follows from that; read it before anything else.
+
+    ## Sub-projects: grouping work, and how far your key reaches
+
+    A project can nest projects. On the parent's task list a nested one is a row of kind
+    `subproject`; the nested project has its own tasks, workflow status, time and usage, and
+    rolls its progress up into that row. Use one sub-project per piece of work that has many
+    tasks (a feature, a deliverable, a test campaign) so the parent's list stays readable and
+    the group's totals are one row.
+
+    Your key reaches its own project **and everything nested under it**, with the same role
+    and scopes everywhere. To work in a sub-project:
+
+    - `GET /project` lists `subprojects` (uuid, name, status); `parent_uuid` says where you are.
+    - Project-level calls take `project` — `GET /project?project=…`, `GET /tasks?project=…`,
+      and `project` in the body of `POST /tasks`, `POST /time`, `POST /usage`,
+      `POST /project/status`, `POST /subprojects` (and the `/ext/…` lists and creates).
+      Without it they act on the key's own project.
+    - Task-level calls (`/tasks/{id}…`) need nothing extra: a task is found anywhere within
+      reach, and the call acts in that task's project (its features and role floors apply).
+    - `POST /subprojects` creates one (`name`, optional `description`); nest deeper by passing
+      `project`. A project outside your reach — a sibling, a parent — is a 404.
+
+    Typical start: `GET /project` → no sub-project for the work yet → `POST /subprojects`
+    `{"name": "…"}` → `POST /tasks` `{"title": "…", "project": "<its uuid>"}` for each task → work
+    through them with `/tasks/{id}/start`, notes, time and `/complete` as usual.
 
     ## Rules that trip agents up
 
@@ -671,8 +784,9 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `totals` (`minutes`, `tokens`, `cost_cents` logged on the task — sums over the ledger).
     `GET /tasks/{id}` adds `direction` (the latest redirect, or null), `last_outcome`,
     `latest_agent_note`, `display_summary` (`text` + `source`: description | redirect | agent) and
-    `notes_url`. A `subproject` row is a nested project; its lifecycle is its own and it cannot be
-    edited here.
+    `notes_url`. A `subproject` row is a nested project: its lifecycle is its own, the row's status
+    and progress roll up from it, and its tasks are reached with `project=<child_project_uuid>`
+    (see Sub-projects above).
 
     Machine-readable description: `GET #{base}/openapi.json`.
     """

@@ -12,7 +12,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
-  alias PhoenixKitProjects.{ApiKeys, Authz, Ledger, Statuses, TaskNotes}
+  alias PhoenixKitProjects.{ApiKeys, Authz, Features, Ledger, Projects, Statuses, TaskNotes}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Api.Docs
 
@@ -58,6 +58,63 @@ defmodule PhoenixKitProjects.Web.Api.Json do
              scope: scope
            }
          )}
+  end
+
+  @doc """
+  A key reaches its own project and every sub-project nested under it.
+  `project_uuid` is within reach when it is the key's project or one of
+  its descendants (the parent chain walked up to the key's project).
+  """
+  @spec within_reach?(ApiKey.t(), String.t()) :: boolean()
+  def within_reach?(%ApiKey{project_uuid: root}, root), do: true
+
+  def within_reach?(%ApiKey{project_uuid: root}, project_uuid) when is_binary(project_uuid) do
+    project_uuid |> Projects.parent_chain() |> Enum.any?(&(&1.uuid == root))
+  rescue
+    _ -> false
+  end
+
+  def within_reach?(_key, _), do: false
+
+  @doc """
+  Points the request at `params["project"]` when it names a sub-project
+  within the key's reach (else 404 `not_found`); without the param the
+  request stays on the key's own project. Project-level calls take it;
+  task-level calls find their project through the task (`rescope/2`).
+  """
+  @spec scope_project(Plug.Conn.t(), map()) :: {:ok, Plug.Conn.t()} | {:halt, Plug.Conn.t()}
+  def scope_project(conn, params) do
+    case Map.get(params, "project") do
+      uuid when is_binary(uuid) and uuid != "" ->
+        if uuid == conn.assigns.pk_project.uuid do
+          {:ok, conn}
+        else
+          case within_reach?(conn.assigns.pk_api_key, uuid) && Projects.get_project(uuid) do
+            %Project{} = project -> {:ok, rescope(conn, project)}
+            _ -> {:halt, no_such_project(conn)}
+          end
+        end
+
+      _ ->
+        {:ok, conn}
+    end
+  end
+
+  @doc "The request now acts on `project` (a sub-project within reach): its feature gates and role floors apply."
+  @spec rescope(Plug.Conn.t(), Project.t()) :: Plug.Conn.t()
+  def rescope(conn, %Project{} = project) do
+    conn
+    |> assign(:pk_project, project)
+    |> assign(:pk_fx, Features.gates(project))
+  end
+
+  defp no_such_project(conn) do
+    error(
+      conn,
+      :not_found,
+      "not_found",
+      "No such project within this key's reach: the key's own project or a sub-project nested under it."
+    )
   end
 
   @doc "The key's role must meet `action`'s floor on this project, else 403 `forbidden`."
@@ -234,9 +291,31 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       completed_at: p.completed_at,
       archived_at: p.archived_at,
       workflow_status: p.current_status_slug,
-      available_workflow_statuses: statuses
+      available_workflow_statuses: statuses,
+      parent_uuid: parent_uuid(p),
+      subprojects: Enum.map(Projects.child_projects(p.uuid), &subproject/1)
     }
   rescue
     _ -> %{uuid: p.uuid, name: p.name}
+  end
+
+  defp parent_uuid(%Project{uuid: uuid}) do
+    case Projects.parent_chain(uuid) do
+      [] -> nil
+      chain -> List.last(chain).uuid
+    end
+  end
+
+  # A nested project as its parent lists it: enough to pick one and pass
+  # it as `project`; `GET /project?project=<uuid>` has the rest.
+  defp subproject(%Project{} = p) do
+    %{
+      uuid: p.uuid,
+      name: p.name,
+      description: p.description,
+      workflow_status: p.current_status_slug,
+      completed_at: p.completed_at,
+      archived_at: p.archived_at
+    }
   end
 end

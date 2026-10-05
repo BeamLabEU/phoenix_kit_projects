@@ -87,6 +87,28 @@ shape came from a three-seat UX panel on 2026-10-05.)
   it out as `ai_minutes`, and invoicing already bills human actors only. Panel
   2:1 for one kind split by actor over a new kind.
 
+## Reach: the project and everything nested under it
+
+A key is minted on one project and reaches that project **and every
+sub-project nested under it** (Max, 2026-10-05: *"ideally the api would be able
+to control everything in its project and everything in the children projects as
+well"*), with the same resolved role and scopes throughout. `Json.within_reach?/2`
+walks the target's `Projects.parent_chain/1` up to the key's project (eight
+hops at most). Project-level calls take a `project` param (`Json.scope_project/2`
+re-points `pk_project` and `pk_fx` at a sub-project within reach, 404
+otherwise): `GET /project`, `POST /project/status`, `GET`/`POST /tasks`,
+`POST /time`, `POST /usage`, `POST /subprojects` and the `/ext/…` lists and
+creates. Task-level calls need nothing: `TasksController.fetch/2` finds a task
+anywhere within reach and rescopes the request to its project (whose `tasks`
+gate must be on), so features and role floors are the child's. `GET /project`
+carries `parent_uuid` and `subprojects` (direct children); `POST /subprojects`
+creates one through `Projects.create_subproject/2` (feature `subprojects`,
+action `create_tasks`, activity `projects.subproject_created` with the API
+metadata), at most seven levels down so what the API creates stays within what
+it can reach. A key minted on a child does not reach its parent. The agent guide
+has a "Sub-projects" section teaching the pattern: one sub-project per piece of
+work, tasks created with `project` set to it.
+
 ## The calls
 
 `GET /me` is the entry point (key, project, features on, `allowed_actions`,

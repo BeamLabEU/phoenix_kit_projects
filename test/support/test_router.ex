@@ -44,6 +44,7 @@ defmodule PhoenixKitProjects.Test.Router do
     get("/me", MeController, :show)
     get("/project", ProjectController, :show)
     post("/project/status", ProjectController, :set_status)
+    post("/subprojects", ProjectController, :create_subproject)
     get("/tasks", TasksController, :index)
     post("/tasks", TasksController, :create)
     get("/tasks/:id", TasksController, :show)
