@@ -7,15 +7,18 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
 
   use Phoenix.Controller, formats: [:json]
 
-  alias PhoenixKitProjects.{ApiKeys, Authz}
+  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions}
   alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.Api.{Docs, Json}
 
   def show(conn, _params) do
     %{pk_api_key: key, pk_project: project, pk_fx: fx} = conn.assigns
 
+    # This module's actions plus what the extension API providers ask for
+    # (the CRM's `log_interaction`), so /me says the whole truth.
     allowed =
-      Authz.actions()
+      (Authz.actions() ++ Enum.map(Extensions.api_providers(), & &1.module.action()))
+      |> Enum.uniq()
       |> Enum.filter(&Authz.can_role?(project, key.role, &1))
       |> Enum.map(&Atom.to_string/1)
 
