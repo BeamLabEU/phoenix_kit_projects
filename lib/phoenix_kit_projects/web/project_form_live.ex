@@ -2271,55 +2271,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             <div class="card-body flex flex-col gap-3">
               <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
 
-            <%!-- How the project ends (Max, 2026-10-05: "some projects have a
-                 defined end while this one is more of an ongoing one… it
-                 should be a setting"). Ongoing work never completes on its
-                 own; every task done is "all caught up". --%>
-            <.select
-              name="completion"
-              label={gettext("Ends")}
-              value={Project.completion(@project)}
-              options={[
-                {gettext("When the last task is done"), "auto"},
-                {gettext("Only when someone ends it — ongoing work"), "manual"}
-              ]}
-            />
-
-            <%!-- What an AI agent on the API may do here. Every row is a
-                 project setting (`Project.agent_policy/1`), so the same
-                 module serves a locked-down client project and an open
-                 sandbox. --%>
-            <% policy = Project.agent_policy(@project) %>
-            <fieldset class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
-              <legend class="px-1 text-sm font-medium">{gettext("What an AI agent may do here")}</legend>
-              <label :for={{key, label} <- agent_policy_switches()} class="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="hidden" name={"agents[#{key}]"} value="false" />
-                <input
-                  type="checkbox"
-                  name={"agents[#{key}]"}
-                  value="true"
-                  checked={policy[key] == true}
-                  class="checkbox checkbox-primary checkbox-sm"
-                />
-                <span>{label}</span>
-              </label>
-              <div class="w-72">
-                <.select
-                  name="agents[delete_tasks]"
-                  label={gettext("Delete tasks")}
-                  value={policy["delete_tasks"]}
-                  class="select-sm"
-                  options={[
-                    {gettext("Never"), "none"},
-                    {gettext("Only the ones it created"), "own"},
-                    {gettext("Any task"), "any"}
-                  ]}
-                />
-              </div>
-              <p class="text-xs opacity-60">
-                {gettext("An agent always acts with the role of the person its key acts for; these rows narrow what it may do on top of that.")}
-              </p>
-            </fieldset>
             </div>
           </div>
 
@@ -2668,6 +2619,56 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               class="checkbox-primary checkbox-sm"
             />
             <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
+
+            <%!-- How the project ends (Max, 2026-10-05: "some projects have a
+                 defined end while this one is more of an ongoing one… it
+                 should be a setting"). Ongoing work never completes on its
+                 own; every task done is "all caught up". --%>
+            <.select
+              name="completion"
+              label={gettext("Ends")}
+              value={Project.completion(@project)}
+              options={[
+                {gettext("When the last task is done"), "auto"},
+                {gettext("Only when someone ends it — ongoing work"), "manual"}
+              ]}
+            />
+
+            <%!-- What an AI agent on the API may do here. Every row is a
+                 project setting (`Project.agent_policy/1`), so the same
+                 module serves a locked-down client project and an open
+                 sandbox. --%>
+            <% policy = Project.agent_policy(@project) %>
+            <fieldset class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+              <legend class="px-1 text-sm font-medium">{gettext("What an AI agent may do here")}</legend>
+              <label :for={{key, label} <- agent_policy_switches()} class="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="hidden" name={"agents[#{key}]"} value="false" />
+                <input
+                  type="checkbox"
+                  name={"agents[#{key}]"}
+                  value="true"
+                  checked={policy[key] == true}
+                  class="checkbox checkbox-primary checkbox-sm"
+                />
+                <span>{label}</span>
+              </label>
+              <div class="w-72">
+                <.select
+                  name="agents[delete_tasks]"
+                  label={gettext("Delete tasks")}
+                  value={policy["delete_tasks"]}
+                  class="select-sm"
+                  options={[
+                    {gettext("Never"), "none"},
+                    {gettext("Only the ones it created"), "own"},
+                    {gettext("Any task"), "any"}
+                  ]}
+                />
+              </div>
+              <p class="text-xs opacity-60">
+                {gettext("An agent always acts with the role of the person its key acts for; these rows narrow what it may do on top of that.")}
+              </p>
+            </fieldset>
 
             <%!-- Assignee (V128) — same polymorphic team/department/person
                  picker tasks use. Non-translatable, so it lives outside the

@@ -29,6 +29,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormNestingTest do
     {panel, _} = :binary.match(html, ~s(id="edit-modules-#{project.uuid}"))
 
     assert panel > form_close
+    # the project's own settings sit in the form: how it ends, what an agent may do
+    inside_form = binary_part(html, form_open, form_close - form_open)
+    assert inside_form =~ ~s(name="completion")
+    assert inside_form =~ "What an AI agent may do here"
+    assert inside_form =~ ~s(name="agents[delete_tasks]")
     # no form of the panel's is nested in the project form
     inside = binary_part(html, form_open, form_close - form_open)
     refute inside =~ "<form"
