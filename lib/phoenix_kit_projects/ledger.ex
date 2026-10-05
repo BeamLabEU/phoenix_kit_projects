@@ -230,6 +230,120 @@ defmodule PhoenixKitProjects.Ledger do
     _ -> :skipped
   end
 
+  @doc "One entry by uuid, or nil."
+  @spec get_entry(binary()) :: WorkEntry.t() | nil
+  def get_entry(uuid) when is_binary(uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, _} -> RepoHelper.repo().get(WorkEntry, uuid)
+      :error -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  @doc """
+  Amends a time entry's minutes (and `ended_at`, kept at `started_at` plus
+  the new length when both are known). `billable:` changes the flag too.
+  Logs `projects.work_amended` with the figure before and after — the
+  ledger is append-only in spirit, so an amendment leaves its trace.
+  """
+  @spec update_time(WorkEntry.t() | binary(), pos_integer(), keyword()) ::
+          {:ok, WorkEntry.t()} | {:error, term()}
+  def update_time(entry_or_uuid, minutes, opts \\ [])
+
+  def update_time(uuid, minutes, opts) when is_binary(uuid) do
+    case get_entry(uuid) do
+      nil -> {:error, :not_found}
+      entry -> update_time(entry, minutes, opts)
+    end
+  end
+
+  def update_time(%WorkEntry{kind: "time"} = entry, minutes, opts)
+      when is_integer(minutes) and minutes > 0 do
+    attrs =
+      %{
+        amount: minutes,
+        ended_at: entry.started_at && DateTime.add(entry.started_at, minutes * 60)
+      }
+      |> maybe_put_billable(Keyword.get(opts, :billable))
+
+    entry
+    |> WorkEntry.changeset(attrs)
+    |> RepoHelper.repo().update()
+    |> case do
+      {:ok, updated} ->
+        Activity.log("projects.work_amended",
+          actor_uuid: Keyword.get(opts, :actor_uuid),
+          resource_type: "project",
+          resource_uuid: updated.project_uuid,
+          metadata: %{
+            "entry_uuid" => updated.uuid,
+            "kind" => updated.kind,
+            "amount_was" => plain(entry.amount),
+            "amount" => plain(updated.amount),
+            "actor_kind" => updated.actor_kind,
+            "assignment_uuid" => updated.assignment_uuid
+          }
+        )
+
+        PubSub.broadcast_project(:work_logged, %{uuid: updated.project_uuid})
+        {:ok, updated}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  def update_time(%WorkEntry{}, _minutes, _opts), do: {:error, :invalid}
+
+  @doc """
+  Removes an entry. Logs `projects.work_removed` with what it held, so the
+  figure is still in the project's history.
+  """
+  @spec delete_entry(WorkEntry.t() | binary(), keyword()) ::
+          {:ok, WorkEntry.t()} | {:error, term()}
+  def delete_entry(entry_or_uuid, opts \\ [])
+
+  def delete_entry(uuid, opts) when is_binary(uuid) do
+    case get_entry(uuid) do
+      nil -> {:error, :not_found}
+      entry -> delete_entry(entry, opts)
+    end
+  end
+
+  def delete_entry(%WorkEntry{} = entry, opts) do
+    case RepoHelper.repo().delete(entry) do
+      {:ok, deleted} ->
+        Activity.log("projects.work_removed",
+          actor_uuid: Keyword.get(opts, :actor_uuid),
+          resource_type: "project",
+          resource_uuid: deleted.project_uuid,
+          metadata: %{
+            "entry_uuid" => deleted.uuid,
+            "kind" => deleted.kind,
+            "amount" => plain(deleted.amount),
+            "actor_kind" => deleted.actor_kind,
+            "assignment_uuid" => deleted.assignment_uuid
+          }
+        )
+
+        PubSub.broadcast_project(:work_logged, %{uuid: deleted.project_uuid})
+        {:ok, deleted}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  # "30", not "30.0000": the column's scale is not part of the figure.
+  defp plain(%Decimal{} = d), do: d |> Decimal.normalize() |> Decimal.to_string(:normal)
+  defp plain(other), do: to_string(other)
+
+  defp maybe_put_billable(attrs, billable) when is_boolean(billable),
+    do: Map.put(attrs, :billable, billable)
+
+  defp maybe_put_billable(attrs, _), do: attrs
+
   @doc """
   Entries for a project, newest first (capped by `:limit`, default 100).
   `metadata: %{"interaction_uuid" => uuid}` keeps only the entries whose
