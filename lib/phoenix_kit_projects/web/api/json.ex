@@ -12,6 +12,8 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   import Plug.Conn
   import Phoenix.Controller, only: [json: 2]
 
+  alias PhoenixKit.Mentions.Token
+
   alias PhoenixKitProjects.{
     ApiKeys,
     Authz,
@@ -328,7 +330,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   def interaction_uuids(%Assignment{} = a) do
     [description(a), a.description]
     |> Enum.filter(&is_binary/1)
-    |> Enum.flat_map(&PhoenixKit.Mentions.Token.parse/1)
+    |> Enum.flat_map(&Token.parse/1)
     |> Enum.filter(&(&1.type == "crm_interaction"))
     |> Enum.map(& &1.uuid)
     |> Enum.uniq()

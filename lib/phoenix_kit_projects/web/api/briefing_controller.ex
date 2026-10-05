@@ -88,10 +88,11 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
     _ -> nil
   end
 
-  # credo:disable-for-next-line Credo.Check.Refactor.Apply
+  # The provider is another application's module, reached by name.
   defp list_interactions(provider, conn, since) do
     params = %{"limit" => "5"}
     params = if since, do: Map.put(params, "since", DateTime.to_iso8601(since)), else: params
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
     apply(provider, :list, [ExtController.ctx(conn), params])
   end
 

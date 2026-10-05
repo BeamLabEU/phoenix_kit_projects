@@ -8,6 +8,7 @@ defmodule PhoenixKitProjects.Projects do
   require Logger
 
   alias PhoenixKit.Activity.Entry, as: ActivityEntry
+  alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
