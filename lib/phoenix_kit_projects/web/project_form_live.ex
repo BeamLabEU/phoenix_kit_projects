@@ -2625,10 +2625,35 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </div>
         </div>
 
+        <%!-- Cancel + Save belong to the FIELDS above: the modules panel
+             below writes immediately and has nothing to save, and a Save
+             row under it read as if it applied to the panel — "I doubt the
+             API key will be removed if I click cancel" (Max, 2026-10-05).
+             :edit only — the creation form has its own action row. --%>
+        <.form_actions
+          :if={@live_action == :edit}
+          class="gap-2"
+          submit_label={gettext("Save")}
+          submitting_label={gettext("Saving…")}
+          submit_class="btn btn-primary btn-sm"
+          submit_disabled={@ai_in_flight != []}
+        >
+          <:cancel>
+            <button
+              type="button"
+              phx-click="cancel"
+              data-confirm={@dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm"
+            >
+              {gettext("Cancel")}
+            </button>
+          </:cancel>
+        </.form_actions>
       </.form>
 
-      <%!-- Modules & Features, embedded — OUTSIDE the project form, where
-           its own forms (labels, extension settings, API keys) can post:
+      <%!-- Modules & Features, embedded — OUTSIDE the project form (and
+           after its Save row), where its own forms (labels, extension
+           settings, API keys) can post:
            a <form> inside a <form> is invalid HTML and the browser drops
            the inner one, so "Create key" was submitting the project form
            and navigating away with nothing created (Max, 2026-10-05).
@@ -2653,32 +2678,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         </div>
       </div>
 
-      <%!-- Last, so the page reads in order: what the project is called,
-           how it behaves, what it can do — then Save. The modules panel
-           above writes immediately and needs no Save of its own; this
-           button belongs to the fields, and putting it before the panel
-           made the page look like it had ended and then carried on. It
-           sits after the form, so the submit button names it (`form=`).
-           :edit only — the creation form has its own action row. --%>
-      <div :if={@live_action == :edit} class="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          phx-click="cancel"
-          data-confirm={@dirty? && gettext("Discard your changes?")}
-          class="btn btn-ghost btn-sm"
-        >
-          {gettext("Cancel")}
-        </button>
-        <button
-          type="submit"
-          form="project-form"
-          class="btn btn-primary btn-sm"
-          disabled={@ai_in_flight != []}
-          phx-disable-with={gettext("Saving…")}
-        >
-          {gettext("Save")}
-        </button>
-      </div>
 
       <%!-- Outside the project form on purpose: nested <form> elements are
            invalid HTML, so the browser silently drops the inner one — its

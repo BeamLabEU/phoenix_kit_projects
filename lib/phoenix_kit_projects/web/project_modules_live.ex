@@ -632,7 +632,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLive do
         <div :if={@embedded_in_form}>
           <h2 class="text-sm font-semibold">{gettext("Modules & features")}</h2>
           <p class="text-xs opacity-60">
-            {gettext("Choose what this project uses — from a simple to-do list to a full tracker.")}
+            {gettext("Choose what this project uses — from a simple to-do list to a full tracker. Changes here apply at once; the Save button above is for the fields.")}
           </p>
         </div>
 

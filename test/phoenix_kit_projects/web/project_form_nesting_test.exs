@@ -15,7 +15,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormNestingTest do
     {:ok, conn: put_test_scope(conn, fake_scope()), project: fixture_project()}
   end
 
-  test "the modules panel and its forms sit after the project form; Save still names it", %{
+  test "the modules panel and its forms sit after the project form and its Save row", %{
     conn: conn,
     project: project
   } do
@@ -32,7 +32,27 @@ defmodule PhoenixKitProjects.Web.ProjectFormNestingTest do
     # no form of the panel's is nested in the project form
     inside = binary_part(html, form_open, form_close - form_open)
     refute inside =~ "<form"
-    # the Save button outside the form still submits it
-    assert html =~ ~s(form="project-form")
+    # Save belongs to the fields: inside the form, before the panel; nothing after it
+    {save, _} = :binary.match(inside, "Saving…")
+    assert save > 0
+    refute binary_part(html, panel, byte_size(html) - panel) =~ "Saving…"
+  end
+
+  test "embedded in the form, the panel says its changes apply at once", %{
+    conn: conn,
+    project: project
+  } do
+    {:ok, view, _} =
+      live_isolated(conn, PhoenixKitProjects.Web.ProjectModulesLive,
+        session: %{
+          "id" => project.uuid,
+          "embedded_in_form" => true,
+          "current_user_uuid" => embed_user_uuid!()
+        }
+      )
+
+    html = render(view)
+    assert html =~ "Changes here apply at once"
+    refute html =~ "Saving…"
   end
 end
