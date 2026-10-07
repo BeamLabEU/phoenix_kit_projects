@@ -205,6 +205,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
               "ISO 8601; only the tasks changed after that moment - remember the `now` of your last answer"
           },
           %{
+            name: "due_before",
+            in: :query,
+            type: "string",
+            required: false,
+            doc:
+              "`YYYY-MM-DD`; only the tasks whose `end_date` is on or before that day - with `status=open`, what is still owed by then"
+          },
+          %{
             name: "project",
             in: :query,
             type: "string",
@@ -255,6 +263,20 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "where it came from - `client`, `boss` (40 characters at most)"
+          },
+          %{
+            name: "start_date",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "the day work on it starts, `YYYY-MM-DD`; optional, and may stand alone"
+          },
+          %{
+            name: "end_date",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "the day it is due, `YYYY-MM-DD`; never before `start_date`"
           },
           %{
             name: "waiting_on",
@@ -352,6 +374,20 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "where it came from; empty or null clears it"
+          },
+          %{
+            name: "start_date",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "`YYYY-MM-DD`; empty or null clears it"
+          },
+          %{
+            name: "end_date",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "`YYYY-MM-DD`, never before `start_date`; empty or null clears it"
           },
           %{
             name: "waiting_on",
@@ -1220,6 +1256,11 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     - `waiting_on` - whom the task waits on ("the client", "the boss"). A badge beside the status,
       not a status: a waiting task is still todo or in_progress. Clear it when the wait is over.
     - `origin` - where a relayed item came from ("client", "boss"); 40 characters.
+    - `start_date`, `end_date` - the task's own days, `YYYY-MM-DD`, both optional and either may
+      stand alone; the end is never before the start. A day, not a moment: no time and no zone.
+      A dated task sits on those days in the calendar and the timeline; an undated one is still
+      placed by its duration and its place in the order. `overdue` is true once the end date has
+      passed and the task is not done. `GET /tasks?due_before=<day>&status=open` is what is owed.
     - `labels` - the project's labels by name (needs the labels feature); on create or update, the
       full list to set. New names are created for you.
     - `checklist` - sub-items ticked one by one: four questions relayed from a client are one
@@ -1324,7 +1365,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `priority`, `progress_pct`, `estimated_duration`, `estimated_duration_unit`, `position`,
     `task_uuid`, `child_project_uuid`, `library_task`, `completed_at`, `inserted_at`, `updated_at`,
     `totals` (`minutes`, `tokens`, `cost_cents` logged on the task — sums over the ledger).
-    Plus `waiting_on`, `origin`, `labels` (names), `checklist` (`{done, total}`), `created_by` and
+    Plus `waiting_on`, `origin`, `start_date`, `end_date`, `overdue`, `labels` (names), `checklist` (`{done, total}`), `created_by` and
     `started_by` (`{person, key}` uuids - null for a person's own doing), `words_by` (`{key}` when
     an API key wrote the title and description last, `{person: true}` otherwise), `interactions`
     (the client interactions it links), `updated_at`; on a `subproject` row, `subproject`

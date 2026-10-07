@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 20
+  @current_version 21
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -117,6 +117,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v18_key_persons(p)
     v19_agent_work(p)
     v20_words_and_links(p)
+    v21_task_dates(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -142,18 +143,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
 
-    if target < 20, do: down_v20(p)
+    down_task_columns(p, target)
 
-    if target < 19, do: down_v19(p)
-
-    if target < 18 do
-      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_api_keys_person_index")
-
-      execute("""
-      ALTER TABLE #{p}phoenix_kit_project_api_keys
-        DROP COLUMN IF EXISTS user_uuid
-      """)
-    end
+    if target < 18, do: down_v18(p)
 
     if target < 17 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_idempotency")
@@ -1045,6 +1037,37 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     """)
   end
 
+  # V19–V21 each added columns to the assignments table (and V20 the link
+  # table); newest first.
+  defp down_task_columns(p, target) do
+    if target < 21, do: down_v21(p)
+    if target < 20, do: down_v20(p)
+    if target < 19, do: down_v19(p)
+    :ok
+  end
+
+  defp down_v18(p) do
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_api_keys_person_index")
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      DROP COLUMN IF EXISTS user_uuid
+    """)
+  end
+
+  defp down_v21(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_dates_check
+    """)
+
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_end_date_index")
+
+    for col <- ~w(start_date end_date) do
+      execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
+    end
+  end
+
   defp down_v20(p) do
     execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_interactions")
 
@@ -1060,6 +1083,41 @@ defmodule PhoenixKitProjects.Migrations.Schema do
           ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
       execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
     end
+  end
+
+  # V21 — a task's own dates (Max, 2026-10-06: "build a start date and an
+  # end date"). Until now a task's days were only ever computed from its
+  # duration and its place in the order; an ongoing project has no anchor
+  # to compute from, so nothing there could carry a date. Two optional
+  # calendar dates (no time, no zone: "by Thursday" means Thursday
+  # wherever the reader sits); either may stand alone; the end is never
+  # before the start. A partial index serves "what is due".
+  defp v21_task_dates(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS start_date DATE,
+      ADD COLUMN IF NOT EXISTS end_date DATE
+    """)
+
+    execute("""
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'phoenix_kit_project_assignments_dates_check'
+      ) THEN
+        ALTER TABLE #{p}phoenix_kit_project_assignments
+          ADD CONSTRAINT phoenix_kit_project_assignments_dates_check
+          CHECK (start_date IS NULL OR end_date IS NULL OR end_date >= start_date);
+      END IF;
+    END $$;
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_end_date_index
+    ON #{p}phoenix_kit_project_assignments (project_uuid, end_date)
+    WHERE end_date IS NOT NULL
+    """)
   end
 
   # V20 — two corrections from the panel's sweep of V19 (2026-10-05).

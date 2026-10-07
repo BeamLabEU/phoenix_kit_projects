@@ -206,6 +206,17 @@ idempotent reply. Default 300 calls per 60 s;
 A limiter failure denies, as the house rule for abuse controls says. The
 docs print the live figure, so an agent reads what applies on this site.
 
+## A task's own dates
+
+`start_date` and `end_date` on a task are calendar days (`YYYY-MM-DD`), both
+optional, either alone, the end never before the start; null or an empty
+string clears one. They are not moments: no time and no zone. A dated task
+sits on those days in the calendar and the timeline; an undated one is still
+placed by its duration and its place in the order. `overdue` is true once the
+end date has passed and the task is not done; the briefing counts those in
+`counts.overdue`, and `GET /tasks?due_before=<day>&status=open` lists what is
+owed by a day. A value that is not a day is a 422 with nothing written.
+
 ## When the work happened
 
 The four ledger POSTs take an optional `occurred_at` (ISO 8601, any offset,

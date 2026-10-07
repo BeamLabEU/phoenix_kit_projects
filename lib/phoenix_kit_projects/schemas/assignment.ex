@@ -113,6 +113,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:waiting_on, :string)
     field(:origin, :string)
     field(:checklist, {:array, :map}, default: [])
+    # The task's own dates (V21): optional calendar days, either alone.
+    field(:start_date, :date)
+    field(:end_date, :date)
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
@@ -149,7 +152,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   @optional ~w(task_uuid child_project_uuid position description estimated_duration
                estimated_duration_unit counts_weekends progress_pct track_progress priority
                translations assigned_team_uuid assigned_department_uuid assigned_person_uuid
-               waiting_on origin checklist)a
+               waiting_on origin checklist start_date end_date)a
 
   # Server-only fields: set by trusted server code (completion tracking,
   # provenance), never cast from untrusted form params. Use `status_changeset/2`.
@@ -225,6 +228,11 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_length(:waiting_on, max: 200)
     |> validate_length(:origin, max: 40)
     |> normalize_checklist()
+    |> validate_dates()
+    |> check_constraint(:end_date,
+      name: :phoenix_kit_project_assignments_dates_check,
+      message: dates_message()
+    )
     |> assoc_constraint(:project)
     |> assoc_constraint(:task)
     |> assoc_constraint(:child_project)
@@ -235,6 +243,30 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     )
     |> task_xor_child_constraints()
   end
+
+  defp validate_dates(changeset) do
+    with %Date{} = from <- get_field(changeset, :start_date),
+         %Date{} = to <- get_field(changeset, :end_date),
+         :lt <- Date.compare(to, from) do
+      add_error(changeset, :end_date, dates_message())
+    else
+      _ -> changeset
+    end
+  end
+
+  defp dates_message, do: gettext("must not be before the start date")
+
+  @doc """
+  True when the task has an end date that has passed and it is not done.
+  `today` is the reader's day (defaults to the UTC day).
+  """
+  @spec overdue?(t(), Date.t()) :: boolean()
+  def overdue?(assignment, today \\ Date.utc_today())
+
+  def overdue?(%__MODULE__{end_date: %Date{} = d, status: status}, %Date{} = today),
+    do: status != "done" and Date.compare(d, today) == :lt
+
+  def overdue?(_, _), do: false
 
   # The checklist as stored: blank items dropped, ids kept or minted,
   # `done_at` stamped when an item turns done; at most #{@checklist_max}.

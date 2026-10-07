@@ -40,12 +40,14 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          {:ok, conn} <- Json.scope_project(conn, params),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view),
-         {:ok, conn} <- known_status(conn, params["status"]) do
+         {:ok, conn} <- known_status(conn, params["status"]),
+         {:ok, due} <- due_before(conn, params["due_before"]) do
       tasks =
         conn.assigns.pk_project.uuid
         |> Projects.list_assignments()
         |> filter_status(params["status"])
         |> filter_since(params["updated_since"])
+        |> filter_due(due)
 
       uuids = Enum.map(tasks, & &1.uuid)
       totals = Ledger.totals_for_assignments(uuids)
@@ -80,6 +82,46 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   defp filter_since(tasks, _), do: tasks
+
+  # `due_before`: the tasks whose end date is on or before that day, done
+  # ones included (filter with `status=open` for what is still owed). A
+  # value that is not a date is refused - unlike a poll's `updated_since`,
+  # a wrong answer here reads as "nothing is due".
+  defp due_before(_conn, nil), do: {:ok, nil}
+
+  defp due_before(conn, value) do
+    case parse_date(value) do
+      {:ok, %Date{} = d} ->
+        {:ok, d}
+
+      _ ->
+        {:halt,
+         Json.error(
+           conn,
+           :unprocessable_entity,
+           "validation_failed",
+           "due_before must be a date, YYYY-MM-DD.",
+           %{due_before: ["must be a date, YYYY-MM-DD"]}
+         )}
+    end
+  end
+
+  defp filter_due(tasks, nil), do: tasks
+
+  defp filter_due(tasks, %Date{} = d),
+    do: Enum.filter(tasks, &(&1.end_date && Date.compare(&1.end_date, d) != :gt))
+
+  # A calendar day as an agent sends it: `YYYY-MM-DD`; null or blank clears.
+  defp parse_date(nil), do: {:ok, nil}
+
+  defp parse_date(v) when is_binary(v) do
+    case String.trim(v) do
+      "" -> {:ok, nil}
+      s -> with {:error, _} <- Date.from_iso8601(s), do: :error
+    end
+  end
+
+  defp parse_date(_), do: :error
 
   # A filter nobody recognises used to answer the whole list, which an
   # agent read as "no tasks match" or "every task matches" at random.
@@ -898,7 +940,44 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       |> maybe_put_list("checklist", params["checklist"])
       |> maybe_put("position", params["position"] |> then(&if(is_integer(&1), do: &1)))
 
+    with {:ok, attrs} <- put_date(attrs, "start_date", params),
+         {:ok, attrs} <- put_date(attrs, "end_date", params) do
+      checked_attrs(attrs)
+    end
+  end
+
+  # A date an agent may set or clear; anything that is not a day is a 422.
+  defp put_date(attrs, field, params) do
+    case Map.fetch(params, field) do
+      :error ->
+        {:ok, attrs}
+
+      {:ok, value} ->
+        case parse_date(value) do
+          {:ok, date} ->
+            {:ok, Map.put(attrs, field, date)}
+
+          :error ->
+            {:error,
+             Json.error_body(422, "validation_failed", "#{field} must be a date, YYYY-MM-DD.", %{
+               field => ["must be a date, YYYY-MM-DD"]
+             })}
+        end
+    end
+  end
+
+  defp checked_attrs(attrs) do
     cond do
+      match?(%Date{}, attrs["start_date"]) and match?(%Date{}, attrs["end_date"]) and
+          Date.compare(attrs["end_date"], attrs["start_date"]) == :lt ->
+        {:error,
+         Json.error_body(
+           422,
+           "validation_failed",
+           "end_date must not be before start_date.",
+           %{end_date: ["must not be before the start date"]}
+         )}
+
       Map.has_key?(attrs, "priority") and attrs["priority"] not in @priorities ->
         {:error,
          Json.error_body(

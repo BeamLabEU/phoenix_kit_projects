@@ -1271,6 +1271,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <span :if={@a.origin} class="badge badge-sm badge-ghost" title={gettext("Where this came from")}>
               {gettext("from %{origin}", origin: @a.origin)}
             </span>
+            <% dates = task_dates_label(@a) %>
+            <% overdue = Assignment.overdue?(@a) %>
+            <span
+              :if={dates}
+              class={["badge badge-sm gap-1", if(overdue, do: "badge-error", else: "badge-outline")]}
+              title={if(overdue, do: gettext("Past its end date"), else: gettext("The task's dates"))}
+            >
+              <.icon name="hero-calendar-days" class="w-3 h-3" /> {dates}
+            </span>
             <% checklist = Assignment.checklist_counts(@a) %>
             <span :if={checklist.total > 0} class="badge badge-sm badge-outline gap-1" title={gettext("Checklist")}>
               <.icon name="hero-list-bullet" class="w-3 h-3" /> {checklist.done}/{checklist.total}
@@ -2656,6 +2665,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp health_label("some_risk"), do: gettext("Some risk")
   defp health_label("concerned"), do: gettext("Concerned")
   defp health_label(other), do: other
+
+  # A task's own dates as its row says them: the range, or the one it has.
+  defp task_dates_label(%Assignment{start_date: nil, end_date: nil}), do: nil
+
+  defp task_dates_label(%Assignment{start_date: %Date{} = from, end_date: %Date{} = to}) do
+    if Date.compare(from, to) == :eq,
+      do: L10n.format_date(from),
+      else: "#{L10n.format_date(from)} – #{L10n.format_date(to)}"
+  end
+
+  defp task_dates_label(%Assignment{start_date: %Date{} = from}),
+    do: gettext("from %{date}", date: L10n.format_date(from))
+
+  defp task_dates_label(%Assignment{end_date: %Date{} = to}),
+    do: gettext("due %{date}", date: L10n.format_date(to))
+
+  defp task_dates_label(_), do: nil
 
   # A tab whose view flag is off resolves to :list — applied to the mount's
   # route-derived tab (a bookmarked /gantt URL on a timeline-off project) and

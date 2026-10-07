@@ -2409,6 +2409,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               />
             </div>
 
+            <%!-- The task's own dates (Max, 2026-10-06): optional, either
+                 alone. A dated task sits on these days in the calendar and
+                 the timeline instead of where its duration would put it. --%>
+            <div class="flex gap-2">
+              <div class="flex-1">
+                <.input field={@form[:start_date]} type="date" label={gettext("Start date")} />
+              </div>
+              <div class="flex-1">
+                <.input field={@form[:end_date]} type="date" label={gettext("End date")} />
+              </div>
+            </div>
+
             <%!-- What the first agent asked for (2026-10-05): whom the task
                  waits on (a badge beside the status, not a fourth status),
                  where a relayed item came from, and a checklist — sub-items

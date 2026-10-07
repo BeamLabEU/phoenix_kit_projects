@@ -546,7 +546,7 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V20**. `mix phoenix_kit.update` applies it
+`phoenix_kit_projects`, currently **V21**. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against
 `migrated_version_runtime/1`; tests run it through
 `PhoenixKitProjects.Test.SchemaMigration`, keyed on
@@ -792,6 +792,39 @@ The earlier list, for the record:
   does the same; whether an API completion should stop at the sub-project, or
   whether a project with no open rows of its own should complete at all, is
   the open question. Documented in the guide for now.
+
+### A task's own dates (V21, 2026-10-06)
+
+Max: *"build a start date and an end date."* Until V21 a task's days were
+only ever computed — duration plus its place in the order, walked from the
+project's start by `ScheduleLayout` — and an ongoing project has no start
+to walk from, so nothing there could carry a date.
+
+- **Two optional columns on the assignment**, `start_date` and `end_date`
+  (`DATE`: a day, no time and no zone — "by Thursday" is Thursday wherever
+  the reader sits). Either may stand alone; a check constraint and
+  `Assignment.validate_dates/1` keep the end from preceding the start.
+  They are ordinary form fields (cast in `changeset/2`), ungated like
+  `waiting_on` and the checklist: blank costs nothing on the row.
+- **`Assignment.overdue?/2`**: the end date has passed and the task is not
+  done. The row's date badge turns red on it; the API answers it as
+  `overdue` and counts it in the briefing.
+- **The schedule honours them** (`ScheduleLayout.pin_dates/2`): a dated
+  task sits on its days instead of where the walk put it — both dates:
+  that range; only a start: its computed length from that day, one day at
+  least; only an end: that one day. The walk itself is not moved (the
+  order still says what follows what), and every ancestor sub-project's
+  span is widened to cover it. A pinned span carries `pinned: {from, to}`;
+  `CalendarDisplay.task_events/4` draws those days as they are rather than
+  converting the instants into the viewer's zone (which added a day east
+  of UTC and lost one west of it — the test walks four offsets).
+- **API**: `start_date` / `end_date` on create and PATCH (`YYYY-MM-DD`;
+  null or empty clears; anything else, or an end before the start, is a
+  422 before any write), both plus `overdue` on every task row and in the
+  briefing, `counts.overdue` there, and `GET /tasks?due_before=<day>`.
+- Not done: dates on a sub-project's row (its span is its children's), a
+  date on a library task (a template has no calendar), and a "due this
+  week" view in the UI — the calendar and the badge are the view for now.
 
 ### Task notes: the long record, apart from the discussion (2026-10-05)
 

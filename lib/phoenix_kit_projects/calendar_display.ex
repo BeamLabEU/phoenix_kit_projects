@@ -208,7 +208,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       the configured marker).
   """
   @spec task_events(
-          [{map(), %{start: NaiveDateTime.t(), end: NaiveDateTime.t()}}],
+          [{map(), PhoenixKitProjects.ScheduleLayout.span()}],
           String.t() | nil,
           String.t(),
           keyword()
@@ -221,8 +221,18 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     Enum.map_reduce(items_with_spans, %{}, fn {item, span}, meta ->
       %{assignment: a, project: project} = item
 
-      start_d = to_date(naive_to_utc(span.start), offset)
-      end_d = exclusive_end_date(start_d, span.end, offset)
+      # a task with its own dates occupies those days wherever the viewer
+      # sits; a computed span is an instant, read in the viewer's frame
+      {start_d, end_d} =
+        case span do
+          %{pinned: {from, to}} ->
+            {from, Date.add(to, 1)}
+
+          _ ->
+            start_d = to_date(naive_to_utc(span.start), offset)
+            {start_d, exclusive_end_date(start_d, span.end, offset)}
+        end
+
       {bg, text} = color_for(project.uuid)
       late? = task_late?(a, span, now)
 

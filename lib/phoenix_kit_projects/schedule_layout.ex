@@ -32,7 +32,17 @@ defmodule PhoenixKitProjects.ScheduleLayout do
           position: integer() | nil
         }
 
-  @type span :: %{start: NaiveDateTime.t(), end: NaiveDateTime.t()}
+  @typedoc """
+  A scheduled span. `pinned` is there only for a task that carries its own
+  dates (`start_date` / `end_date`): the calendar days it occupies,
+  inclusive — a consumer drawing whole days in a viewer's timezone uses
+  those rather than converting the instants.
+  """
+  @type span :: %{
+          required(:start) => NaiveDateTime.t(),
+          required(:end) => NaiveDateTime.t(),
+          optional(:pinned) => {Date.t(), Date.t()}
+        }
 
   @doc """
   Flattens `project`'s assignment tree and computes each item's scheduled
@@ -45,6 +55,12 @@ defmodule PhoenixKitProjects.ScheduleLayout do
   consumers, not reordered here. A sub-project's span covers its children's
   walk, so top-level spans stay correct even when a consumer only renders
   the top level.
+
+  A task with its own dates sits on them instead of where the walk put it
+  (both dates: that range; only a start: its computed length from that day,
+  one day at least; only an end: that one day). The rest of the walk is
+  not moved by it - the order still says what follows what - and a
+  sub-project's span is widened to cover a pinned task inside it.
   """
   @spec tree(Project.t()) :: {[item()], %{String.t() => span()}}
   def tree(%Project{} = project) do
@@ -81,7 +97,63 @@ defmodule PhoenixKitProjects.ScheduleLayout do
         min_span: {:second, 0}
       )
 
-    {items, layout}
+    {items, pin_dates(items, layout)}
+  end
+
+  # Puts every task that carries its own dates on them, then widens each
+  # ancestor's span to cover it.
+  defp pin_dates(items, layout) do
+    by_uuid = Map.new(items, &{&1.uuid, &1})
+
+    Enum.reduce(items, layout, fn it, acc ->
+      case pinned_span(it.assignment, Map.get(acc, it.uuid)) do
+        nil -> acc
+        span -> acc |> Map.put(it.uuid, span) |> widen_ancestors(it.parent_uuid, span, by_uuid)
+      end
+    end)
+  end
+
+  defp pinned_span(%Assignment{child_project_uuid: child}, _span) when not is_nil(child), do: nil
+  defp pinned_span(%Assignment{start_date: nil, end_date: nil}, _span), do: nil
+  defp pinned_span(_a, nil), do: nil
+
+  defp pinned_span(%Assignment{start_date: %Date{} = from, end_date: %Date{} = to}, _span),
+    do: day_span(from, to)
+
+  defp pinned_span(%Assignment{start_date: %Date{} = from, end_date: nil}, span) do
+    days = span.end |> NaiveDateTime.diff(span.start, :second) |> Kernel./(86_400) |> ceil()
+    day_span(from, Date.add(from, max(days, 1) - 1))
+  end
+
+  defp pinned_span(%Assignment{start_date: nil, end_date: %Date{} = to}, _span),
+    do: day_span(to, to)
+
+  defp day_span(%Date{} = from, %Date{} = to) do
+    to = if Date.compare(to, from) == :lt, do: from, else: to
+
+    %{
+      start: NaiveDateTime.new!(from, ~T[00:00:00]),
+      end: NaiveDateTime.new!(Date.add(to, 1), ~T[00:00:00]),
+      pinned: {from, to}
+    }
+  end
+
+  defp widen_ancestors(layout, nil, _span, _by_uuid), do: layout
+
+  defp widen_ancestors(layout, parent_uuid, span, by_uuid) do
+    case {Map.get(layout, parent_uuid), Map.get(by_uuid, parent_uuid)} do
+      {%{start: s, end: e} = parent, %{parent_uuid: up}} ->
+        wide = %{
+          parent
+          | start: Enum.min([s, span.start], NaiveDateTime),
+            end: Enum.max([e, span.end], NaiveDateTime)
+        }
+
+        layout |> Map.put(parent_uuid, wide) |> widen_ancestors(up, wide, by_uuid)
+
+      _ ->
+        layout
+    end
   end
 
   # The anchor for the sequential walk: the real start when running, the

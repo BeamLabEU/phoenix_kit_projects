@@ -79,7 +79,12 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         },
         open_total: length(open),
         truncated: length(open) > length(shown),
-        counts: %{mine: length(mine), ready: length(ready), waiting: length(waiting)},
+        counts: %{
+          mine: length(mine),
+          ready: length(ready),
+          waiting: length(waiting),
+          overdue: Enum.count(open, &Assignment.overdue?/1)
+        },
         resume: resume(briefs, notes, key),
         tasks: briefs,
         done_today: done_today,
@@ -217,6 +222,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       position: a.position,
       waiting_on: a.waiting_on,
       origin: a.origin,
+      start_date: a.start_date,
+      end_date: a.end_date,
+      overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
       checklist: Assignment.checklist_counts(a),
       interactions: Projects.interactions_of(a),
