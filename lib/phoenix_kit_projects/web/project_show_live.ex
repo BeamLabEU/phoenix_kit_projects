@@ -4207,7 +4207,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             data-sortable-handle=".pk-drag-handle"
           >
             <%= for a <- @visible_assignments do %>
-              <div id={"task-#{a.uuid}"} class="relative flex gap-4 py-3 scroll-mt-24 sortable-item" data-id={a.uuid}>
+              <%!-- The row a link named (`focus_task/2`) takes focus as the
+                   page mounts, which is what scrolls it into view: the
+                   URL's fragment is gone by then (the tab sync rewrites
+                   the address) and LiveView has no scroll command. --%>
+              <div
+                id={"task-#{a.uuid}"}
+                class="relative flex gap-4 py-3 scroll-mt-24 focus:outline-none sortable-item"
+                data-id={a.uuid}
+                tabindex={assigns[:focus_task] == a.uuid && "-1"}
+                phx-mounted={assigns[:focus_task] == a.uuid && Phoenix.LiveView.JS.focus()}
+              >
                 <%!-- Status dot on the timeline --%>
                 <div class="relative z-10 shrink-0 flex flex-col items-center">
                   <div class={"w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold #{AssignmentStatusBadge.color(a.status)} #{AssignmentStatusBadge.text_color(a.status)} #{AssignmentStatusBadge.ring(a.status)}"}>
