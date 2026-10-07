@@ -822,6 +822,22 @@ to walk from, so nothing there could carry a date.
   null or empty clears; anything else, or an end before the start, is a
   422 before any write), both plus `overdue` on every task row and in the
   briefing, `counts.overdue` there, and `GET /tasks?due_before=<day>`.
+- **Assignee over the API (2026-10-07)**: `Web.Api.Assignee` reads
+  (`to_json/1`), sets (`attrs/2` from a request's `assignee`: `me`, a
+  person's uuid, `{"team"|"department": uuid}`, null) and filters
+  (`filter/3`); `GET /people` lists who a task can be for, names only.
+  The feature and the `assign_tasks` action are checked only when the
+  field is sent. Nothing is assigned by default.
+- **A link to a task opens it (2026-10-07)**: `ResourceLinks` resolves a
+  task to `<project>/tasks?task=<uuid>#task-<uuid>`; `ProjectShowLive`
+  rings the row (`focus_task/2`, widening the lens if it hid the row) and
+  hands `PopupHostLive` an `"open"` session entry, which it sends itself
+  as an `:opened` once subscribed (no race with the page's own broadcast).
+- **Ongoing on the start bar (2026-10-07)**: the Ongoing / All caught up
+  badges sit on the start bar, which for an unstarted ongoing project is
+  only the Start button (no "set up tasks, then start"); the header keeps
+  them only when the project has no lifecycle. The list's connector rail
+  needs two rows: through a lone sub-project it read as a dependency.
 - Not done: dates on a sub-project's row (its span is its children's), a
   date on a library task (a template has no calendar), and a "due this
   week" view in the UI — the calendar and the badge are the view for now.

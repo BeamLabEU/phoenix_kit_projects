@@ -22,6 +22,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   alias PhoenixKitProjects.{Activity, Authz, Extensions, Features, Labels, Ledger, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
+  alias PhoenixKitProjects.Web.Api.Assignee
   alias PhoenixKitProjects.Web.Api.ExtController
   alias PhoenixKitProjects.Web.Api.Json
 
@@ -41,10 +42,10 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view),
          {:ok, conn} <- known_status(conn, params["status"]),
-         {:ok, due} <- due_before(conn, params["due_before"]) do
+         {:ok, due} <- due_before(conn, params["due_before"]),
+         {:ok, tasks} <- assigned_to(conn, params["assignee"]) do
       tasks =
-        conn.assigns.pk_project.uuid
-        |> Projects.list_assignments()
+        tasks
         |> filter_status(params["status"])
         |> filter_since(params["updated_since"])
         |> filter_due(due)
@@ -67,6 +68,16 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       })
     else
       {:halt, conn} -> conn
+    end
+  end
+
+  # `assignee`: `me`, `none` or a person's uuid (see `Assignee.filter/3`).
+  defp assigned_to(conn, value) do
+    tasks = Projects.list_assignments(conn.assigns.pk_project.uuid)
+
+    case Assignee.filter(tasks, conn.assigns.pk_api_key, value) do
+      {:ok, tasks} -> {:ok, tasks}
+      {:error, {status, body}} -> {:halt, conn |> put_status(status) |> json(body)}
     end
   end
 
@@ -180,7 +191,10 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp do_create_checked(conn, key, project, params) do
     with {:ok, title} <- required_string(params, "title"),
-         {:ok, assignment_attrs} <- assignment_attrs(params) do
+         {:ok, assignment_attrs} <- assignment_attrs(params),
+         {:ok, assignee} <- Assignee.attrs(conn, params) do
+      assignment_attrs = Map.merge(assignment_attrs, assignee)
+
       task_attrs =
         %{"title" => title, "ad_hoc" => true}
         |> maybe_put("description", params["description"])
@@ -224,7 +238,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
           Json.error_body(404, "not_found", "The key's project is gone.")
       end
     else
-      {:error, {422, _} = pair} -> pair
+      {:error, {status, _} = pair} when is_integer(status) -> pair
     end
   end
 
@@ -248,6 +262,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          :ok <- content_editable(a, content),
          :ok <- text_policy(key, a, project, content),
          {:ok, assignment_attrs} <- assignment_attrs(params),
+         {:ok, assignee} <- Assignee.attrs(conn, params),
+         assignment_attrs = Map.merge(assignment_attrs, assignee),
          :ok <- check_interaction(conn, params["interaction"]),
          :ok <- check_labels(params["labels"]),
          :ok <- check_checklist(params["checklist"]),

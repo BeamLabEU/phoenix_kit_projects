@@ -13,7 +13,14 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   alias PhoenixKitProjects.{Extensions, Labels, ProjectEvents, Projects, TaskNotes}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
-  alias PhoenixKitProjects.Web.Api.{EventsController, ExtController, Json, NotesController}
+
+  alias PhoenixKitProjects.Web.Api.{
+    Assignee,
+    EventsController,
+    ExtController,
+    Json,
+    NotesController
+  }
 
   @max_tasks 50
   @max_notes 20
@@ -48,7 +55,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       shown = Enum.take(ordered, limit)
 
       labels = Labels.labels_for_assignments(Enum.map(shown, & &1.uuid))
-      briefs = Enum.map(shown, &brief_task(&1, labels[&1.uuid] || []))
+      me = Assignee.person_uuid(key)
+      briefs = Enum.map(shown, &brief_task(&1, labels[&1.uuid] || [], me))
 
       notes =
         if TaskNotes.available?(),
@@ -81,6 +89,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         truncated: length(open) > length(shown),
         counts: %{
           mine: length(mine),
+          # open tasks assigned to the person this key acts for
+          assigned_to_me: Enum.count(open, &(is_binary(me) and &1.assigned_person_uuid == me)),
           ready: length(ready),
           waiting: length(waiting),
           overdue: Enum.count(open, &Assignment.overdue?/1)
@@ -207,7 +217,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   defp limit(_), do: @max_tasks
 
-  defp brief_task(%Assignment{} = a, labels) do
+  defp brief_task(%Assignment{} = a, labels, me) do
     latest =
       if TaskNotes.available?(), do: TaskNotes.latest(a.uuid), else: %{redirect: nil, agent: nil}
 
@@ -228,6 +238,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       labels: Enum.map(labels, & &1.name),
       checklist: Assignment.checklist_counts(a),
       interactions: Projects.interactions_of(a),
+      assignee: Assignee.to_json(a),
+      assigned_to_me: is_binary(me) and a.assigned_person_uuid == me,
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       direction: latest.redirect && brief_note(latest.redirect),

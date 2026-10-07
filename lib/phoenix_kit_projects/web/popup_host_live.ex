@@ -139,7 +139,10 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     placement = decode_placement(Map.get(session, "placement"))
     max_width = decode_max_width(Map.get(session, "max_width"), placement)
 
-    if connected?(socket), do: ProjectsPubSub.subscribe(topic)
+    if connected?(socket) do
+      ProjectsPubSub.subscribe(topic)
+      open_first(Map.get(session, "open"))
+    end
 
     root_view =
       decode_root_view(Map.get(session, "root_view"), topic, host_locale, host_current_user_uuid)
@@ -272,6 +275,22 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     |> Base.url_encode64(padding: false)
     |> binary_part(0, 12)
   end
+
+  # `session["open"]` (`%{"lv" => module name, "session" => map}`): a frame
+  # to open as soon as the host is up - a page reached through a link to
+  # one record opens that record. Goes through the same `:opened` message
+  # a click sends, so the whitelist and the sanitizing apply unchanged.
+  defp open_first(%{"lv" => lv, "session" => %{} = child_session}) when is_binary(lv) do
+    send(
+      self(),
+      {:projects, :opened,
+       %{lv: String.to_existing_atom(lv), session: child_session, frame_ref: nil}}
+    )
+  rescue
+    ArgumentError -> :ok
+  end
+
+  defp open_first(_), do: :ok
 
   @impl true
   def handle_info({:projects, :opened, %{lv: lv, session: child_session} = payload}, socket)

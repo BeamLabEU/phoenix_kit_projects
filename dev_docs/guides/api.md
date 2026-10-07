@@ -206,6 +206,22 @@ idempotent reply. Default 300 calls per 60 s;
 A limiter failure denies, as the house rule for abuse controls says. The
 docs print the live figure, so an agent reads what applies on this site.
 
+## Who a task is for
+
+`assignee` on a task is who it is for: `{kind, uuid, name}` with kind
+`person`, `team` or `department`, or null. On create and PATCH it takes
+`"me"` (the staff person of the user a personal key acts for; a 422 for a
+shared agent), a person's uuid, `{"team": uuid}` or `{"department": uuid}`;
+null clears it and leaving it out changes nothing. One assignee at a time,
+as in the form. It needs the `assignees` feature (403 `feature_disabled`)
+and the `assign_tasks` action, checked only when the field is sent, so a
+plain create still works with the feature off. `GET /people?q=` lists who
+a task can be for, by uuid and name and never by email. `GET
+/tasks?assignee=me|none|<person uuid>` filters; the briefing rows carry
+`assignee` and `assigned_to_me`, and `counts.assigned_to_me`. `/me` gives
+`acting_for.person_uuid`. A sub-project row answers its nested project's
+assignee. Nothing is assigned by default: an agent passes `"me"`.
+
 ## A task's own dates
 
 `start_date` and `end_date` on a task are calendar days (`YYYY-MM-DD`), both

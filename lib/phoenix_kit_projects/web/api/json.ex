@@ -24,7 +24,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   }
 
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
-  alias PhoenixKitProjects.Web.Api.Docs
+  alias PhoenixKitProjects.Web.Api.{Assignee, Docs}
 
   @lifecycle ~w(todo in_progress done)
   @transitions %{
@@ -264,6 +264,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
       checklist: checklist,
+      # who it is FOR (a person, a team or a department), apart from who
+      # made it and who started it
+      assignee: Assignee.to_json(a),
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       words_by: if(a.words_by_key_uuid, do: %{key: a.words_by_key_uuid}, else: %{person: true}),

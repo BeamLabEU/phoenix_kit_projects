@@ -10,7 +10,7 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
 
   alias PhoenixKitProjects.{ApiKeys, Authz, Extensions}
   alias PhoenixKitProjects.Schemas.{ApiKey, Project}
-  alias PhoenixKitProjects.Web.Api.{Docs, Json}
+  alias PhoenixKitProjects.Web.Api.{Assignee, Docs, Json}
   alias PhoenixKitProjects.Web.ApiKeyPanel
 
   def show(conn, _params) do
@@ -48,8 +48,9 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
   end
 
   # The person a personal key acts for; a shared agent has none.
-  defp acting_for(%ApiKey{user_uuid: uuid}) when is_binary(uuid) do
-    %{uuid: uuid, name: ApiKeyPanel.user_name(uuid)}
+  defp acting_for(%ApiKey{user_uuid: uuid} = key) when is_binary(uuid) do
+    # `person_uuid`: their staff record, what `assignee: "me"` resolves to
+    %{uuid: uuid, name: ApiKeyPanel.user_name(uuid), person_uuid: Assignee.person_uuid(key)}
   end
 
   defp acting_for(_key), do: nil

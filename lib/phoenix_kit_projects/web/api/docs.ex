@@ -76,13 +76,35 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/me",
         summary:
-          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent), the role it acts with right now, its scopes, the project, which features are on, the actions the role allows, and where these docs are. Read this first.",
+          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent; its `person_uuid` is what `assignee: me` resolves to), the role it acts with right now, its scopes, the project, which features are on, the actions the role allows, and where these docs are. Read this first.",
         auth: true,
         scope: nil,
         action: nil,
         feature: nil,
         idempotency: nil,
         params: [],
+        example: nil
+      },
+      %{
+        id: "listPeople",
+        method: "GET",
+        path: "/people",
+        summary:
+          "Who a task can be for: the staff people (`me: true` on the one this key acts for), teams and departments, by uuid and name. Use it to assign a task to a colleague you were given by name.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: "assignees",
+        idempotency: nil,
+        params: [
+          %{
+            name: "q",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "part of a name; narrows all three lists"
+          }
+        ],
         example: nil
       },
       %{
@@ -205,6 +227,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
               "ISO 8601; only the tasks changed after that moment - remember the `now` of your last answer"
           },
           %{
+            name: "assignee",
+            in: :query,
+            type: "string",
+            required: false,
+            doc:
+              "`me`, `none` (unassigned) or a person's uuid; only the tasks assigned to that person"
+          },
+          %{
             name: "due_before",
             in: :query,
             type: "string",
@@ -235,7 +265,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/tasks",
         summary:
-          "Create a task at the bottom of the plan. It starts as todo, unassigned, and is NOT started — call /tasks/{id}/start to begin it.",
+          "Create a task at the bottom of the plan. It starts as todo and is NOT started — call /tasks/{id}/start to begin it. It is unassigned unless you pass `assignee`.",
         auth: true,
         scope: "tasks:write",
         action: "create_tasks",
@@ -263,6 +293,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "where it came from - `client`, `boss` (40 characters at most)"
+          },
+          %{
+            name: "assignee",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "who the task is for: `me` (the person this key acts for), a person's uuid from GET /people, or `{\"team\": uuid}` / `{\"department\": uuid}`; one assignee at a time. Needs the assignees feature and the assign_tasks action"
           },
           %{
             name: "start_date",
@@ -374,6 +412,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "where it came from; empty or null clears it"
+          },
+          %{
+            name: "assignee",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "as on create; null clears it, leaving it out keeps it"
           },
           %{
             name: "start_date",
@@ -1256,6 +1301,16 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     - `waiting_on` - whom the task waits on ("the client", "the boss"). A badge beside the status,
       not a status: a waiting task is still todo or in_progress. Clear it when the wait is over.
     - `origin` - where a relayed item came from ("client", "boss"); 40 characters.
+    - `assignee` - who the task is FOR, apart from who made it (`created_by`) and who started it
+      (`started_by`). On every row: `{kind, uuid, name}` (kind is person, team or department) or
+      null. To set it on create or PATCH: `"me"` (the person this key acts for - `/me` gives their
+      `acting_for.person_uuid`), a person's uuid from `GET /people`, `{"team": uuid}` or
+      `{"department": uuid}`; null clears it; leaving the field out changes nothing. A task has one
+      assignee. A task you create is unassigned unless you say so: when the work is the person's
+      you act for, pass `assignee: "me"`; when they relay a task for a colleague, look the
+      colleague up in `GET /people?q=<name>`. `GET /tasks?assignee=me` is that person's list, and
+      the briefing marks those rows `assigned_to_me` and counts them. Needs the assignees feature
+      and the `assign_tasks` action.
     - `start_date`, `end_date` - the task's own days, `YYYY-MM-DD`, both optional and either may
       stand alone; the end is never before the start. A day, not a moment: no time and no zone.
       A dated task sits on those days in the calendar and the timeline; an undated one is still

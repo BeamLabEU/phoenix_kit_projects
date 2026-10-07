@@ -380,7 +380,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             |> WebHelpers.attach_open_embed_hook()
 
           {:ok,
-           socket |> load_assignments() |> load_comment_counts() |> load_ledger() |> load_labels()}
+           socket
+           |> load_assignments()
+           |> load_comment_counts()
+           |> load_ledger()
+           |> load_labels()
+           |> focus_task(Map.get(params, "task"))}
         else
           {:ok,
            socket
@@ -390,6 +395,37 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         end
     end
   end
+
+  # `?task=<uuid>` (what a link to a task carries, see `ResourceLinks`):
+  # the row is ringed, the lens widens if it was hiding the row, the URL's
+  # `#task-<uuid>` scrolls to it, and the page's drawer opens the task
+  # (`popup_open/1`). A uuid that is not a row of this project is ignored.
+  defp focus_task(socket, uuid) when is_binary(uuid) do
+    case Enum.find(socket.assigns.assignments, &(&1.uuid == uuid)) do
+      nil ->
+        socket
+
+      a ->
+        socket = assign(socket, focus_task: a.uuid)
+
+        if Enum.any?(socket.assigns.visible_assignments, &(&1.uuid == a.uuid)),
+          do: socket,
+          else: socket |> assign(list_status: "all") |> apply_list_lens()
+    end
+  end
+
+  defp focus_task(socket, _uuid), do: socket
+
+  # The form the drawer opens with when the page was reached through a
+  # link to a task: the same edit form the row's title opens.
+  defp popup_open(%{focus_task: uuid, project: project}) when is_binary(uuid) do
+    %{
+      "lv" => Atom.to_string(PhoenixKitProjects.Web.AssignmentFormLive),
+      "session" => %{"live_action" => "edit", "project_id" => project.uuid, "id" => uuid}
+    }
+  end
+
+  defp popup_open(_assigns), do: nil
 
   # The assigns a mount needs to render nothing and redirect. Shared by the
   # missing-project branch and the refused-:view branch so the two stay
@@ -3396,8 +3432,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               </span>
             <% end %>
             <%!-- Ongoing work never completes on its own (the project's
-                 `completion` setting): every task done is "all caught up". --%>
-            <%= if Project.ongoing?(@project) and is_nil(@project.completed_at) do %>
+                 `completion` setting): every task done is "all caught up".
+                 The badges sit on the start bar below (Max, 2026-10-07);
+                 here only when that bar is not shown (no lifecycle). --%>
+            <%= if Project.ongoing?(@project) and is_nil(@project.completed_at) and not @fx.lifecycle do %>
               <span class="badge badge-ghost gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
                 <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Ongoing")}
               </span>
@@ -3789,6 +3827,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         :if={@is_template or @fx.lifecycle}
         class="flex flex-wrap items-center gap-3 bg-base-200 rounded-lg px-4 py-3"
       >
+        <%!-- Ongoing work says so here, on the line that says where the
+             project stands, not as a tag beside the title. --%>
+        <% ongoing_open? = not @is_template and Project.ongoing?(@project) and is_nil(@project.completed_at) %>
+        <span :if={ongoing_open?} class="badge badge-ghost gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
+          <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Ongoing")}
+        </span>
+        <span :if={ongoing_open? and @total_tasks > 0 and @done_tasks == @total_tasks} class="badge badge-success badge-outline gap-1">
+          <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("All caught up")}
+        </span>
         <%= cond do %>
           <% @is_template -> %>
             <.icon name="hero-document-duplicate" class="w-5 h-5 text-info" />
@@ -3852,6 +3899,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             >
               {gettext("Start now")}
             </button>
+          <% ongoing_open? -> %>
+            <%!-- Ongoing work has no setup phase to finish first: tasks
+                 come and go for as long as it runs, so no "set up tasks,
+                 then start" - only the button. --%>
+            <button
+              type="button"
+              phx-click="open_start_modal"
+              class="btn btn-success btn-xs ml-auto"
+            >
+              <.icon name="hero-play" class="w-4 h-4" /> {gettext("Start project")}
+            </button>
           <% true -> %>
             <.icon name="hero-clock" class="w-5 h-5 text-warning" />
             <span class="text-sm">{gettext("Not started — set up tasks, then start")}</span>
@@ -3885,7 +3943,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            card's bottom edge (a thin flush strip), so the two read as a unit. --%>
       <% show_schedule = @fx.scheduling and @project.started_at != nil and @schedule != nil %>
       <%!-- Ongoing work has no finish line, so no bar towards one (Max,
-           2026-10-05); the header's badges say Ongoing / All caught up. --%>
+           2026-10-05); the start bar's badges say Ongoing / All caught up. --%>
       <% show_progress = @fx.tasks and @total_tasks > 0 and not @is_template and not Project.ongoing?(@project) %>
       <% show_effort = @fx.ledger and @ledger_totals != nil %>
       <%= if show_schedule or show_progress or show_effort do %>
@@ -4123,9 +4181,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                and with scheduling OFF (a checklist) there is no walk at all,
                only a list whose order is yours to arrange. So it renders
                only when both hold. Dragging shares the first condition,
-               not the second — a checklist is still reorderable. --%>
+               not the second — a checklist is still reorderable. And a
+               single row has nothing to run after: the line through a
+               lone sub-project read as "this depends on something". --%>
           <div
-            :if={@list_manual? and @list_whole? and @fx.scheduling}
+            :if={@list_manual? and @list_whole? and @fx.scheduling and length(@visible_assignments) > 1}
             class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"
           >
           </div>
@@ -4147,7 +4207,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             data-sortable-handle=".pk-drag-handle"
           >
             <%= for a <- @visible_assignments do %>
-              <div class="relative flex gap-4 py-3 sortable-item" data-id={a.uuid}>
+              <div id={"task-#{a.uuid}"} class="relative flex gap-4 py-3 scroll-mt-24 sortable-item" data-id={a.uuid}>
                 <%!-- Status dot on the timeline --%>
                 <div class="relative z-10 shrink-0 flex flex-col items-center">
                   <div class={"w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold #{AssignmentStatusBadge.color(a.status)} #{AssignmentStatusBadge.text_color(a.status)} #{AssignmentStatusBadge.ring(a.status)}"}>
@@ -4160,7 +4220,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 </div>
 
                 <%!-- Card --%>
-                <div class={"flex-1 card bg-base-100 shadow-sm border #{if not @is_template and a.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"}"}>
+                <%!-- `min-w-0`: a flex child is as wide as its content unless told
+                     otherwise, and one long line inside (an expanded
+                     sub-project's task) pushed the page sideways. --%>
+                <div class={[
+                  "flex-1 min-w-0 card bg-base-100 shadow-sm border",
+                  if(not @is_template and a.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"),
+                  assigns[:focus_task] == a.uuid && "ring-2 ring-primary"
+                ]}>
                   <%= if Assignment.subproject?(a) do %>
                     <div class="card-body py-3 px-4 gap-2">
                       <% sp_lang = L10n.current_content_lang() %>
@@ -4316,7 +4383,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       </div>
 
                       <%!-- Expanded: the child's own task list + add-dependency --%>
-                      <div :if={sp_expanded?} class="mt-2 rounded-lg bg-base-200/60 p-3 flex flex-col gap-2">
+                      <div :if={sp_expanded?} class="mt-2 rounded-lg bg-base-200/60 p-3 flex flex-col gap-2 min-w-0">
                         <% child_tasks = Map.get(@subproject_child_tasks, a.uuid, []) %>
                         <%= if child_tasks == [] do %>
                           <p class="text-xs text-base-content/50">
@@ -4351,7 +4418,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                 </div>
                               <% else %>
                                 <%!-- Same task card as the top-level timeline, just inset. --%>
-                                <div class="relative flex gap-3">
+                                <div class="relative flex gap-3 min-w-0">
                                   <div class="relative z-10 shrink-0 flex flex-col items-center">
                                     <div class={"w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold #{AssignmentStatusBadge.color(ct.status)} #{AssignmentStatusBadge.text_color(ct.status)} #{AssignmentStatusBadge.ring(ct.status)}"}>
                                       <%= if ct.status == "done" do %>
@@ -4361,7 +4428,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       <% end %>
                                     </div>
                                   </div>
-                                  <div class={"flex-1 card bg-base-100 shadow-sm border #{if ct.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"}"}>
+                                  <div class={"flex-1 min-w-0 card bg-base-100 shadow-sm border #{if ct.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"}"}>
                                     <.task_body
                                       a={ct}
                                       scope={@phoenix_kit_current_scope}
@@ -4853,6 +4920,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           session: %{
             "pubsub_topic" => @embed_pubsub_topic,
             "placement" => "end",
+            "open" => popup_open(assigns),
             "wrapper_class" => "contents",
             "locale" => L10n.current_content_lang(),
             "current_user_uuid" =>

@@ -42,6 +42,7 @@ defmodule PhoenixKitProjects.Test.Router do
     pipe_through([:pk_projects_api])
 
     get("/me", MeController, :show)
+    get("/people", PeopleController, :index)
     get("/project", ProjectController, :show)
     post("/project/status", ProjectController, :set_status)
     post("/subprojects", ProjectController, :create_subproject)

@@ -94,9 +94,11 @@ defmodule PhoenixKitProjects.ResourceLinks do
          %{
            title: title,
            full_title: title,
-           # A task has no page of its own: it lives on its project's hub,
-           # so the link goes there rather than nowhere.
-           path: "#{@base}/#{assignment.project_uuid}"
+           # A task has no page of its own: it lives on its project's
+           # Tasks tab. The link names the task, so the page scrolls to
+           # the row and opens it (`ProjectShowLive.focus_task/2`).
+           path:
+             "#{@base}/#{assignment.project_uuid}/tasks?task=#{assignment.uuid}#task-#{assignment.uuid}"
          }}
       end)
 
