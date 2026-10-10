@@ -11,6 +11,7 @@ defmodule PhoenixKitProjects.Integration.RefsIntegrationTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Paths, Projects, ResourceLinks}
+  alias PhoenixKitProjects.Migrations.Schema
   alias PhoenixKitProjects.Schemas.Assignment
   alias PhoenixKitProjects.Test.Repo
 
@@ -143,14 +144,14 @@ defmodule PhoenixKitProjects.Integration.RefsIntegrationTest do
       Repo.query!("ALTER TABLE phoenix_kit_projects ENABLE TRIGGER pkp_project_key_default")
       assert Enum.all?(uuids, &is_nil(Projects.get_project(&1).key))
 
-      PhoenixKitProjects.Migrations.Schema.backfill_project_keys(Repo, "public")
+      Schema.backfill_project_keys(Repo, "public")
 
       [newer, older] = Enum.map(uuids, &Projects.get_project(&1).key)
       assert {older, newer} == {"BM2", "BM3"}
       assert Projects.get_project("BM3").uuid == hd(uuids)
 
       # and again changes nothing
-      PhoenixKitProjects.Migrations.Schema.backfill_project_keys(Repo, "public")
+      Schema.backfill_project_keys(Repo, "public")
       assert Projects.get_project(hd(uuids)).key == "BM3"
     end
 
