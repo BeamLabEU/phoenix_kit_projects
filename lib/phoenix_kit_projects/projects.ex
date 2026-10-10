@@ -1685,7 +1685,7 @@ defmodule PhoenixKitProjects.Projects do
         where(
           query,
           [p],
-          ilike(p.name, ^pattern) or ilike(p.description, ^pattern) or
+          ilike(p.name, ^pattern) or ilike(p.description, ^pattern) or ilike(p.key, ^pattern) or
             fragment(
               "EXISTS (SELECT 1 FROM jsonb_each(?) AS t WHERE t.value->>'name' ILIKE ? OR t.value->>'description' ILIKE ?)",
               p.translations,

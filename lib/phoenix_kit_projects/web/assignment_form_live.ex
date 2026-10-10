@@ -524,7 +524,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # unresolved child — deleted under the row — has none); an assignment's
   # task is text, since the assignment has no page.
   defp child_crumbs(%Project{uuid: nil}, _name), do: []
-  defp child_crumbs(%Project{uuid: uuid}, name), do: [%{label: name, path: Paths.project(uuid)}]
+  defp child_crumbs(%Project{} = child, name), do: [%{label: name, path: Paths.project(child)}]
 
   defp task_crumbs(nil), do: []
   defp task_crumbs(task_name), do: [%{label: task_name}]

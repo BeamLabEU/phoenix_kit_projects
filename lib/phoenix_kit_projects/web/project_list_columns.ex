@@ -39,11 +39,11 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   @sql_sorts ~w(position name inserted_at updated_at)a
   @computed_sorts ~w(state progress tasks open_tasks overdue next_due next_event subprojects
                      members owner assignee started eta completed hours billable_hours
-                     tokens cost last_activity mode health created_by external_id ext)a
+                     tokens cost last_activity mode health created_by external_id key ext)a
   @sort_fields @sql_sorts ++ @computed_sorts
 
   @states ~w(running setup scheduled overdue completed)
-  @default_columns ~w(status progress tasks hours updated)
+  @default_columns ~w(key status progress tasks hours updated)
 
   @type spec :: %{
           id: String.t(),
@@ -82,6 +82,8 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   @spec specs() :: [spec()]
   def specs do
     [
+      # The project's short name (`ANDI`, `PhoenixKitProjects.Refs`).
+      col("key", gettext("Key"), nil, :key),
       col("status", gettext("Status"), nil, :state),
       col("progress", gettext("Progress"), :tasks, :progress),
       col("tasks", gettext("Tasks"), :tasks, :tasks, :right),
@@ -222,6 +224,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   def sort_value(:completed, p, _m, _ext), do: p.completed_at
   def sort_value(:mode, p, _m, _ext), do: Project.completion(p)
   def sort_value(:external_id, p, _m, _ext), do: text(p.external_id)
+  def sort_value(:key, p, _m, _ext), do: text(p.key)
 
   def sort_value(:health, p, _m, _ext) do
     case Health.get(p) do

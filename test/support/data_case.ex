@@ -92,8 +92,15 @@ defmodule PhoenixKitProjects.DataCase do
     project
   end
 
-  @doc "A project key no other fixture has: `F` and a counter in base 36."
-  def unique_key, do: "F" <> Integer.to_string(System.unique_integer([:positive]), 36)
+  @doc """
+  A project key no other fixture has: `F` and nine random letters and
+  digits. Random rather than a counter, so it cannot meet a key some
+  earlier run left committed (a test that leaves the sandbox).
+  """
+  def unique_key do
+    "F" <>
+      (9 |> :crypto.strong_rand_bytes() |> Base.encode32(padding: false) |> binary_part(0, 9))
+  end
 
   @doc "Creates a Template Project (`is_template = true`) with a unique name."
   def fixture_template(attrs \\ %{}) do

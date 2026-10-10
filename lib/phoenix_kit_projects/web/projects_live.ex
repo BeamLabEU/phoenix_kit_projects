@@ -1131,7 +1131,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         <.sortable_row
           :for={p <- @projects}
           item_id={p.uuid}
-          data-search={ListUi.search_haystack(p, ["name", "description"])}
+          data-search={ListUi.search_haystack(p, ["name", "description"]) <> " " <> String.downcase(p.key || "")}
         >
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={p.uuid} />
@@ -1435,6 +1435,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   defp column_cell(assigns, "created_by", p),
     do: text_cell(assigns, Columns.get(assigns.metrics, :creators, p))
+
+  defp column_cell(assigns, "key", p), do: text_cell(assigns, p.key, "font-mono text-xs")
 
   defp column_cell(assigns, "external_id", p),
     do: text_cell(assigns, p.external_id, "font-mono text-xs")

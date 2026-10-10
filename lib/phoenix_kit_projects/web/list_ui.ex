@@ -91,6 +91,7 @@ defmodule PhoenixKitProjects.Web.ListUi do
   """
   @spec column_priority(String.t()) :: pos_integer()
   def column_priority("status"), do: 1
+  def column_priority("key"), do: 2
   # An extension's column (the client) says whose the project is: it goes
   # just after what the project is.
   def column_priority("ext:" <> _), do: 2
