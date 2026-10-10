@@ -114,6 +114,10 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:origin, :string)
     field(:checklist, {:array, :map}, default: [])
     # The task's own dates (V21): optional calendar days, either alone.
+    # The task's number in its project (`ANDI-42` is number 42 of the
+    # project keyed `ANDI`; chain V22). The database hands it out on insert
+    # and never reuses one — never cast.
+    field(:number, :integer, read_after_writes: true)
     field(:start_date, :date)
     field(:end_date, :date)
 
@@ -286,6 +290,30 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
         add_error(changeset, :checklist, "must be a list of items")
     end
   end
+
+  @doc """
+  What this row is called: a task's ref (`ANDI-42` — its project's key and
+  its number there), and for a sub-project row the CHILD's own key, since
+  work is logged against the child and not against the row that embeds it.
+  `nil` until the project (or child) is loaded or keyed.
+  """
+  @spec ref(t()) :: String.t() | nil
+  def ref(%__MODULE__{child_project_uuid: child, child_project: %{key: key}})
+      when is_binary(child) and is_binary(key),
+      do: key
+
+  def ref(%__MODULE__{child_project_uuid: nil} = a), do: row_ref(a)
+  def ref(_), do: nil
+
+  @doc """
+  The row's own `KEY-number` in the project that lists it — for a task the
+  same as `ref/1`; for a sub-project row, its place in the parent's list.
+  """
+  @spec row_ref(t()) :: String.t() | nil
+  def row_ref(%__MODULE__{number: number, project: %{key: key}}),
+    do: PhoenixKitProjects.Refs.task_ref(key, number)
+
+  def row_ref(_), do: nil
 
   @doc """
   Changeset for the parent-side linking assignment of a **sub-project**.

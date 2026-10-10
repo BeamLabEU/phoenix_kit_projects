@@ -105,6 +105,11 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # external system; holds an id, UUID, or slug. No UI — set programmatically
     # by host apps/integrations. Indexed for lookup; not unique.
     field(:external_id, :string)
+    # The short name people use instead of the uuid (`ANDI`, chain V22;
+    # `PhoenixKitProjects.Refs`). Unique across every key any project has
+    # had; the database fills a placeholder when none is given, hence
+    # `read_after_writes`.
+    field(:key, :string, read_after_writes: true)
 
     # Polymorphic assignee (V128) — at most one of team/department/person, the
     # same shape `Assignment` uses. A sub-project is a project, so this covers
@@ -124,7 +129,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
   end
 
   @required ~w(name start_mode)a
-  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
+  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id key assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
   @spec changeset(t(), map(), keyword()) :: Ecto.Changeset.t()
   def changeset(project, attrs, opts \\ []) do
@@ -138,6 +143,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_required([:counts_weekends])
     |> validate_length(:name, min: 1, max: 255)
     |> validate_length(:external_id, max: 255)
+    |> validate_key()
     |> validate_inclusion(:start_mode, @start_modes)
     |> validate_translations_shape()
     |> sanitize_settings()
@@ -151,6 +157,59 @@ defmodule PhoenixKitProjects.Schemas.Project do
       message: single_assignee_message()
     )
     |> maybe_require_date(opts)
+  end
+
+  # A key is stored upper-cased; a blank one is left for the database to
+  # fill (a placeholder) rather than refused, so a form may leave it empty.
+  # Both constraint names report the same thing: the registry's is raised by
+  # the trigger for a key that is (or was) another project's.
+  defp validate_key(changeset) do
+    changeset
+    |> update_change(:key, &PhoenixKitProjects.Refs.normalize_key/1)
+    |> keep_key_when_blank()
+    |> validate_change(:key, fn :key, key ->
+      if is_nil(key) or PhoenixKitProjects.Refs.valid_key?(key) do
+        []
+      else
+        [key: {key_format_message(), [validation: :format]}]
+      end
+    end)
+    |> unique_constraint(:key,
+      name: :phoenix_kit_project_keys_pkey,
+      message: key_taken_message()
+    )
+    |> unique_constraint(:key,
+      name: :phoenix_kit_projects_key_index,
+      message: key_taken_message()
+    )
+  end
+
+  # A keyed project never loses its key to an emptied field: the database
+  # would hand it a placeholder, i.e. rename it behind the editor's back.
+  defp keep_key_when_blank(%Ecto.Changeset{data: %{key: current}} = changeset)
+       when is_binary(current) do
+    case fetch_change(changeset, :key) do
+      {:ok, nil} -> delete_change(changeset, :key)
+      _ -> changeset
+    end
+  end
+
+  defp keep_key_when_blank(changeset), do: changeset
+
+  defp key_format_message do
+    Gettext.dgettext(
+      PhoenixKitProjects.Gettext,
+      "default",
+      "2 to 10 letters and digits, at least one letter, and not a word the address bar already uses (new, tasks, …)."
+    )
+  end
+
+  defp key_taken_message do
+    Gettext.dgettext(
+      PhoenixKitProjects.Gettext,
+      "default",
+      "This key is, or was, another project's."
+    )
   end
 
   # The recognised keys in the `settings` JSONB and their value guards.

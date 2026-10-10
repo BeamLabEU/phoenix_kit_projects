@@ -76,7 +76,14 @@ defmodule PhoenixKitProjects.DataCase do
             "name" => "Project #{System.unique_integer([:positive])}",
             "status" => "active",
             "start_mode" => "immediate",
-            "is_template" => "false"
+            "is_template" => "false",
+            # A key of its own rather than the one the name suggests: two
+            # async tests that both got "P1" would wait on each other's
+            # open sandbox transaction at the key registry, and deadlock
+            # when each then created a second project. A test of the
+            # suggestion itself calls `create_project/1` (in a file that is
+            # not async).
+            "key" => unique_key()
           },
           attrs
         )
@@ -84,6 +91,9 @@ defmodule PhoenixKitProjects.DataCase do
 
     project
   end
+
+  @doc "A project key no other fixture has: `F` and a counter in base 36."
+  def unique_key, do: "F" <> Integer.to_string(System.unique_integer([:positive]), 36)
 
   @doc "Creates a Template Project (`is_template = true`) with a unique name."
   def fixture_template(attrs \\ %{}) do

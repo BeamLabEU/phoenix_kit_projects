@@ -774,7 +774,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           <.bulk_select_cell :if={@bulk_enabled?} value={p.uuid} />
           <.table_default_cell class="font-medium" data-col-lead="true">
             <.smart_link
-              navigate={Paths.project(p.uuid)}
+              navigate={Paths.project(p)}
               emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
               embed_mode={@embed_mode}
               class="link link-hover"

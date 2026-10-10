@@ -363,6 +363,7 @@ lib/phoenix_kit_projects/
 ├── schedule_layout.ex, running_tiers.ex, assignees.ex
 │                            # Durations→dates walk, tiering, effective-assignee resolution
 ├── calendar_display.ex, gantt_display.ex   # The two display-settings customizers
+├── refs.ex, project_move.ex # Short names (key / `KEY-42`); moving a project in the tree
 ├── activity.ex, pub_sub.ex, resource_links.ex, errors.ex, paths.ex
 ├── gettext.ex, l10n.ex      # Own backend + content-locale helpers
 ├── ai_translatable.ex, ai_translate_binding.ex, dashboard_widgets.ex
@@ -433,6 +434,7 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
 | `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — a project's API keys, the credentials of `Web.Api`) |
 | `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation; who holds it is a Postgres session advisory lock pinned for the request, so a live holder is 409 `in_progress` and a dead one's row is taken over — see `ApiKeys.idempotent/3`) |
+| (no schema modules) | `phoenix_kit_project_keys` (V22 — every key a project has had; trigger-maintained) and `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
 
@@ -546,7 +548,7 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V21**. `mix phoenix_kit.update` applies it
+`phoenix_kit_projects`, currently **V22**. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against
 `migrated_version_runtime/1`; tests run it through
 `PhoenixKitProjects.Test.SchemaMigration`, keyed on
@@ -792,6 +794,86 @@ The earlier list, for the record:
   does the same; whether an API completion should stop at the sub-project, or
   whether a project with no open rows of its own should complete at all, is
   the open question. Documented in the guide for now.
+
+### Short names: a project's key, a task's ref (V22, 2026-10-10)
+
+The boss, via Max: *"everything uses the UUID, which is very not user
+friendly. Ideally, we'd have better internal structures, kind of like Jira
+style."* The plan went to codex, grok, zai and gemini first; what they
+agreed on is what is built, and where they corrected it is marked.
+
+- **A project has a `key`** (`ANDI`, 2–10 of `A-Z0-9` with a letter) and
+  **a task a `number`** in its project; `ANDI-42` is the task's **ref**
+  (`PhoenixKitProjects.Refs`: the shape, the one strict parser — a uuid, a
+  key or `KEY-number`, nothing looser — and the key a name suggests). The
+  uuid stays the identity of every row and valid everywhere; code that
+  STORES a pointer stores the uuid.
+- **One key per project, sub-projects included** (all four seats): a
+  sub-project can be moved out or under another project, and its refs must
+  not change when it does. A sub-project's row on the parent's list is
+  called by the CHILD's key (`Assignment.ref/1`); its own place in that
+  list is `row_ref/1` (grok: an agent handed the row's number would log
+  work against the linking row).
+- **The database owns both rules** (codex, grok, gemini: the next insert
+  path will not call the context function). `phoenix_kit_project_keys` is
+  every key any project has had; a trigger on the projects table registers
+  a key when it is set and refuses another project's, raising the
+  registry's primary-key name so `Project.changeset/2` reports it as a
+  unique violation. A row outlives its project: a renamed-from key keeps
+  resolving (`Projects.project_by_key/1`, `former_keys/1`) and neither it
+  nor a deleted project's key is ever handed on. A second trigger numbers
+  every new assignment from `phoenix_kit_project_task_counters` — its own
+  table (grok), so numbering never locks the project row a form is saving.
+  Numbers are never reused.
+- **Where a key comes from.** `Projects.create_project/2` suggests one from
+  the name for a real project (`ANDI Manager` → `ANDI`, `3D editor` →
+  `3DE`, `PhoenixKit` → `PK`, `Kitchen` → `KIT`, a taken one → `KIT2`); the
+  form shows the suggestion and takes a typed one; a project inserted with
+  none gets a placeholder from a sequence (`P7`, and `TPL7` for a template,
+  which therefore never squats a key a project would want — the panel's
+  answer to "should templates have keys"). An emptied key field never
+  renames a keyed project (`keep_key_when_blank/1`).
+- **Lookups take either.** `Projects.get_project/1` and `get_assignment/1`
+  answer for a uuid or a ref and `nil` for anything else (they used to
+  raise on a non-uuid), so every page's `:id` segment and every API path
+  param resolves both. Resolve first, then authorize: a foreign ref is the
+  same not-found as an unknown one.
+- **Where it shows.** `Paths.*` take a project struct and then spell the
+  key (`/admin/projects/ANDI/tasks?task=ANDI-42`); the project page mirrors
+  that address into the bar; `<.ref_chip>` on task rows, board cards, the
+  sub-project row, the page header and the task drawer; the `#` search
+  finds a typed ref; a link to a task carries it. The API answers `key`,
+  `ref`, `number`, `parent_ref` and its guide has a "Short names" section.
+- **Tests that create projects by name are not async.** Two sandboxed
+  transactions inserting the same suggested key wait on each other at the
+  registry and deadlock once each creates a second project;
+  `fixture_project/1` passes a key of its own (`DataCase.unique_key/0`).
+- **Not built, on purpose:** a ref for anything but projects and tasks
+  (the panel: notes, ledger rows and events are quoted as their task);
+  moving a task between projects (when it comes: a new number in the
+  destination and the old ref kept as an alias, never a renumber);
+  releasing a key on archive.
+
+### Moving a project in the tree (2026-10-10)
+
+Max could not find how to take the "3D editor" sub-project out of its
+parent: the only way was "Make standalone" in the row menu of the PARENT's
+task list, and it left the project with no members, none of the parent's
+modules and its agent's key behind.
+
+- `Projects.move_project/2` — to the top level or under another project,
+  in one transaction under the sub-project link lock (from one parent to
+  another in one step; a refusal rolls the old link back).
+- `PhoenixKitProjects.ProjectMove` — `preview/2` says what the old parent
+  has that the project does not (members, module rows, the live keys of
+  its ancestors, which reach it only while it is nested there) and where
+  it could go; `run/4` checks the mover (`:edit_settings` on the project,
+  `:edit_tasks` on a new parent) and carries what was ticked, each thing
+  only where the mover may grant it. `ApiKeys.move/3` points a key at the
+  project and keeps its token.
+- `Web.Components.MoveProject` — the dialog, in `ConfirmAction`'s shape
+  (one modal, one event clause per page): on the project's own ⋮ menu, on
+  a sub-project's row ("Move out…") and on a row of the projects list.
 
 ### A task's own dates (V21, 2026-10-06)
 

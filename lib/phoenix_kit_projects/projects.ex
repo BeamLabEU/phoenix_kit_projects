@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Projects do
   alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Refs
   alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, TaskDependency}
 
   # Dialyzer loses opacity on `MapSet.t()` whenever an empty MapSet
@@ -954,12 +955,83 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_filter_status(q, slug) when is_binary(slug),
     do: where(q, [p], p.current_status_slug == ^slug)
 
-  @doc "Fetches a project by uuid, or `nil` if not found."
-  @spec get_project(uuid()) :: Project.t() | nil
-  def get_project(uuid), do: repo().get(Project, uuid)
-  @doc "Fetches a project by uuid. Raises if not found."
-  @spec get_project!(uuid()) :: Project.t()
-  def get_project!(uuid), do: repo().get!(Project, uuid)
+  @doc """
+  Fetches a project by uuid or by key (`ANDI`, a current or former one —
+  `PhoenixKitProjects.Refs`), or `nil`. Anything that is neither answers
+  `nil` rather than raising, so a page can take its `:id` segment as typed.
+  """
+  @spec get_project(uuid() | String.t()) :: Project.t() | nil
+  def get_project(id) do
+    case Refs.parse(id) do
+      {:uuid, uuid} -> repo().get(Project, uuid)
+      {:project, key} -> project_by_key(key)
+      _ -> nil
+    end
+  end
+
+  @doc "Fetches a project by uuid or key. Raises if not found."
+  @spec get_project!(uuid() | String.t()) :: Project.t()
+  def get_project!(id) do
+    case get_project(id) do
+      %Project{} = project -> project
+      nil -> raise Ecto.NoResultsError, queryable: Project
+    end
+  end
+
+  @doc """
+  The project a key names — its current key or one it was renamed from
+  (the registry keeps every key a project has had, chain V22). `nil` for
+  an unknown key and for one whose project is gone.
+  """
+  @spec project_by_key(String.t()) :: Project.t() | nil
+  def project_by_key(key) when is_binary(key) do
+    key = Refs.normalize_key(key)
+
+    key &&
+      repo().one(
+        from(p in Project,
+          join: k in "phoenix_kit_project_keys",
+          on: k.project_uuid == p.uuid,
+          where: k.key == ^key,
+          limit: 1
+        )
+      )
+  end
+
+  def project_by_key(_), do: nil
+
+  @doc """
+  The keys a project answered to before its current one, newest first —
+  they keep resolving (`project_by_key/1`) and are never handed to
+  another project.
+  """
+  @spec former_keys(Project.t()) :: [String.t()]
+  def former_keys(%Project{uuid: uuid, key: current}) do
+    repo().all(
+      from(k in "phoenix_kit_project_keys",
+        where: k.project_uuid == type(^uuid, UUIDv7) and k.key != ^(current || ""),
+        order_by: [desc: k.inserted_at],
+        select: k.key
+      )
+    )
+  end
+
+  @doc """
+  The key `name` suggests for a new project, free of every key in use or
+  retired (`Refs.suggest_key/2`'s rule).
+  """
+  @spec suggest_project_key(String.t() | nil) :: String.t()
+  def suggest_project_key(name) do
+    taken = MapSet.new(repo().all(from(k in "phoenix_kit_project_keys", select: k.key)))
+    Refs.suggest_key(name, &MapSet.member?(taken, &1))
+  end
+
+  @doc """
+  The task a ref names (`ANDI-42`, through the project's current or a
+  former key) or a uuid; `nil` otherwise. Preloaded like `get_assignment/1`.
+  """
+  @spec assignment_by_ref(term()) :: Assignment.t() | nil
+  def assignment_by_ref(ref), do: get_assignment(ref)
 
   @doc """
   Fetches multiple projects by uuid in a single query, returning a
@@ -1033,7 +1105,7 @@ defmodule PhoenixKitProjects.Projects do
     is_template? = template_attr?(attrs)
     attrs = put_default_position(attrs, fn -> next_project_position(is_template?) end)
 
-    with {:ok, project} <- %Project{} |> Project.changeset(attrs) |> repo().insert() do
+    with {:ok, project} <- insert_project(attrs, is_template?) do
       # Hub membership (P2a): the creator holds the first owner seat. Only
       # real (non-template) projects get members; best-effort so a members
       # hiccup never fails the create. `:actor_uuid` is the LV-layer opt.
@@ -1049,6 +1121,36 @@ defmodule PhoenixKitProjects.Projects do
       end
 
       {:ok, project}
+    end
+  end
+
+  # A real project with no key given gets the one its name suggests
+  # (`suggest_project_key/1`); a template is left to the database's
+  # placeholder (`TPL7`), so it never squats a key a project would want.
+  # Two creates suggesting the same key at once: the loser's insert is
+  # refused by the registry and it suggests again.
+  defp insert_project(attrs, is_template?, attempts \\ 3) do
+    given = Refs.normalize_key(Map.get(attrs, "key") || Map.get(attrs, :key))
+
+    if is_template? or given do
+      %Project{} |> Project.changeset(attrs) |> repo().insert()
+    else
+      name = Map.get(attrs, "name") || Map.get(attrs, :name)
+      key_field = if Enum.any?(Map.keys(attrs), &is_atom/1), do: :key, else: "key"
+      keyed = Map.put(attrs, key_field, suggest_project_key(name))
+
+      case %Project{} |> Project.changeset(keyed) |> repo().insert() do
+        {:error, %Ecto.Changeset{errors: errors}} = error ->
+          if attempts > 1 and Keyword.has_key?(errors, :key) and
+               Keyword.keys(errors) == [:key] do
+            insert_project(attrs, is_template?, attempts - 1)
+          else
+            error
+          end
+
+        ok ->
+          ok
+      end
     end
   end
 
@@ -2611,6 +2713,10 @@ defmodule PhoenixKitProjects.Projects do
 
   @assignment_preloads [
     :task,
+    # The row's own project, for its key: a task's ref is `KEY-number`
+    # (`Assignment.ref/1`), and a list can mix a parent's rows with its
+    # sub-projects'. One read for the whole list.
+    :project,
     # Deep-preload the embedded child's assignee (V128) so a sub-project row can
     # show who the sub-project is assigned to.
     {:child_project, [:assigned_team, :assigned_department, assigned_person: [:user]]},
@@ -2624,8 +2730,11 @@ defmodule PhoenixKitProjects.Projects do
 
   @doc "Fetches a project with its assignee associations preloaded (V128)."
   @spec get_project_with_assignee(uuid()) :: Project.t() | nil
-  def get_project_with_assignee(uuid) do
-    Project |> preload(^@assignee_preloads) |> repo().get(uuid)
+  def get_project_with_assignee(id) do
+    case get_project(id) do
+      nil -> nil
+      project -> repo().preload(project, @assignee_preloads)
+    end
   end
 
   @doc "Lists assignments within a project, ordered by position, with related records preloaded."
@@ -2750,10 +2859,22 @@ defmodule PhoenixKitProjects.Projects do
 
   @doc "Fetches an assignment by uuid with related records preloaded, or `nil` if not found."
   @spec get_assignment(uuid()) :: Assignment.t() | nil
-  def get_assignment(uuid) do
-    Assignment
-    |> preload(^@assignment_preloads)
-    |> repo().get(uuid)
+  def get_assignment(id) do
+    case Refs.parse(id) do
+      {:uuid, uuid} ->
+        Assignment |> preload(^@assignment_preloads) |> repo().get(uuid)
+
+      {:task, key, number} ->
+        with %Project{uuid: project_uuid} <- project_by_key(key) do
+          Assignment
+          |> where([a], a.project_uuid == ^project_uuid and a.number == ^number)
+          |> preload(^@assignment_preloads)
+          |> repo().one()
+        end
+
+      _ ->
+        nil
+    end
   end
 
   @doc """

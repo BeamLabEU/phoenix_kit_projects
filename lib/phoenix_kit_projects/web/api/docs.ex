@@ -1232,7 +1232,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     > and every sub-project nested under it.
 
     Base URL: `#{base}` (relative to this site). Every path below is under it.
-    Send and accept JSON (`Content-Type: application/json`). Ids are UUIDs.
+    Send and accept JSON (`Content-Type: application/json`). Ids are UUIDs; a project and a
+    task also have a short name (see "Short names").
 
     ## Authentication
 
@@ -1247,6 +1248,23 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     (`features` for the task calls, `extensions` for the `/ext/…` records), what your role may do
     (`allowed_actions`), the scopes your key carries, and the project's workflow statuses.
     The live set of calls that will work for you follows from that; read it before anything else.
+
+    ## Short names: a project's key, a task's ref
+
+    Every project has a `key` (`ANDI`) and every task a `ref` — the key and the task's number
+    in that project (`ANDI-42`). They are what people say and what belongs in a commit message,
+    a branch name or a note: `ANDI-42: fix the hinge offset`.
+
+    - Wherever a task's uuid goes in a path, its ref works too: `GET /tasks/ANDI-42`,
+      `POST /tasks/ANDI-42/start`. Wherever `project` takes a uuid, the key works: `?project=3DE`.
+      Case does not matter. A ref outside your reach is the same 404 as one that does not exist.
+    - A task answers `ref`, `number` and `uuid`; a project `key` and `uuid`. A sub-project has
+      its OWN key and numbers its tasks from 1; its row on the parent's list answers the child's
+      key as `ref` (log work against the child's tasks, not the row) and its own place in the
+      parent's list as `parent_ref`.
+    - The uuid is the identity and never changes. A ref is a name: a project's key can be
+      renamed (the old one keeps resolving, and is never given to another project), so STORE
+      uuids and SHOW refs. A number is never reused; a deleted task leaves a gap.
 
     ## Sub-projects: grouping work, and how far your key reaches
 

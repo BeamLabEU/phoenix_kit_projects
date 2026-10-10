@@ -31,7 +31,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
   require Logger
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.{Authz, L10n, Projects}
+  alias PhoenixKitProjects.{Authz, L10n, Projects, Refs}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @base "/admin/projects"
@@ -79,26 +79,27 @@ defmodule PhoenixKitProjects.ResourceLinks do
       |> Map.new(fn project ->
         title = Project.localized_name(project, lang)
 
-        {project.uuid, %{title: title, full_title: title, path: "#{@base}/#{project.uuid}"}}
+        {project.uuid,
+         %{title: title, full_title: title, path: "#{@base}/#{project.key || project.uuid}"}}
       end)
 
     tasks =
       Assignment
       |> where([a], a.uuid in ^uuids)
-      |> preload(:task)
+      |> preload([:task, :project])
       |> repo().all()
       |> Map.new(fn assignment ->
         title = Assignment.label(assignment)
+        ref = task_ref(assignment)
 
         {assignment.uuid,
          %{
            title: title,
-           full_title: title,
+           full_title: if(ref, do: "#{ref} · #{title}", else: title),
            # A task has no page of its own: it lives on its project's
            # Tasks tab. The link names the task, so the page scrolls to
            # the row and opens it (`ProjectShowLive.focus_task/2`).
-           path:
-             "#{@base}/#{assignment.project_uuid}/tasks?task=#{assignment.uuid}#task-#{assignment.uuid}"
+           path: raw_task_path(assignment, ref)
          }}
       end)
 
@@ -110,6 +111,16 @@ defmodule PhoenixKitProjects.ResourceLinks do
   end
 
   def resolve_comment_resources(_), do: %{}
+
+  defp task_ref(%{project: %{key: key}, number: number}), do: Refs.task_ref(key, number)
+  defp task_ref(_), do: nil
+
+  # RAW like every path here (see `resolve_comment_resources/1`), so it is
+  # spelled out rather than taken from `Paths.task/2`, which prefixes.
+  defp raw_task_path(%{project: project} = assignment, ref) do
+    segment = (is_map(project) && project.key) || assignment.project_uuid
+    "#{@base}/#{segment}/tasks?task=#{ref || assignment.uuid}#task-#{assignment.uuid}"
+  end
 
   # ── Search (the `#` typeahead) ──────────────────────────────────────
 
@@ -152,7 +163,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
     Project
     |> where([p], p.is_template == false and is_nil(p.archived_at))
     |> scope_to(accessible, :uuid)
-    |> match_name(query)
+    |> match_name_or_key(query)
     |> limit(@search_limit)
     |> repo().all()
     |> Enum.map(fn project ->
@@ -160,7 +171,8 @@ defmodule PhoenixKitProjects.ResourceLinks do
         type: "project",
         uuid: project.uuid,
         title: Project.localized_name(project, lang),
-        subtitle: gettext("Project")
+        subtitle:
+          if(project.key, do: "#{project.key} · #{gettext("Project")}", else: gettext("Project"))
       }
     end)
   end
@@ -174,7 +186,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
     # the assignment, not the task. The task's column is `title`, not
     # `name` — an assignment has no name of its own.
     |> where([a, _t], a.project_uuid in ^accessible_list(accessible))
-    |> where([_a, t], ilike(t.title, ^"%#{escape_like(query)}%"))
+    |> match_title_or_ref(query)
     |> limit(@search_limit)
     |> preload([:task, :project])
     |> repo().all()
@@ -192,18 +204,43 @@ defmodule PhoenixKitProjects.ResourceLinks do
     end)
   end
 
-  defp task_subtitle(%{project: %{} = project}) do
-    gettext("Task in %{project}",
-      project: Project.localized_name(project, L10n.current_content_lang())
-    )
+  # A typed ref (`ANDI-42`) finds exactly that task, next to whatever the
+  # same text matches in a title.
+  defp match_title_or_ref(queryable, query) do
+    pattern = "%#{escape_like(query)}%"
+
+    case Refs.parse(query) do
+      {:task, key, number} ->
+        from([a, t] in queryable,
+          join: p in assoc(a, :project),
+          where: ilike(t.title, ^pattern) or (p.key == ^key and a.number == ^number)
+        )
+
+      _ ->
+        where(queryable, [_a, t], ilike(t.title, ^pattern))
+    end
+  end
+
+  defp task_subtitle(%{project: %{} = project} = assignment) do
+    place =
+      gettext("Task in %{project}",
+        project: Project.localized_name(project, L10n.current_content_lang())
+      )
+
+    case task_ref(assignment) do
+      nil -> place
+      ref -> "#{ref} · #{place}"
+    end
   end
 
   defp task_subtitle(_), do: gettext("Task")
 
-  defp match_name(queryable, ""), do: queryable
+  defp match_name_or_key(queryable, ""), do: queryable
 
-  defp match_name(queryable, query) do
-    where(queryable, [p], ilike(p.name, ^"%#{escape_like(query)}%"))
+  defp match_name_or_key(queryable, query) do
+    pattern = "%#{escape_like(query)}%"
+    key = Refs.normalize_key(query)
+    where(queryable, [p], ilike(p.name, ^pattern) or p.key == ^key)
   end
 
   # `%` and `_` are LIKE wildcards: unescaped, a single `%` matches every

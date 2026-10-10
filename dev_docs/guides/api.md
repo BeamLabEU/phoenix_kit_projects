@@ -109,6 +109,26 @@ it can reach. A key minted on a child does not reach its parent. The agent guide
 has a "Sub-projects" section teaching the pattern: one sub-project per piece of
 work, tasks created with `project` set to it.
 
+## Short names: keys and refs
+
+A project has a **key** (`ANDI`) and a task a **number** in its project; together
+they are the task's **ref**, `ANDI-42` (`PhoenixKitProjects.Refs`, chain V22;
+Max for the boss, 2026-10-10: *"everything uses the UUID, which is very not user
+friendly… kind of like Jira style"*). The uuid stays the identity; a ref is a
+locator on top of it.
+
+- `Projects.get_project/1` and `get_assignment/1` take a uuid or a ref, so every
+  path param resolves either (`TasksController.fetch/2` — resolve first, then
+  hold the result to the key's reach, so a foreign ref is the same 404 as an
+  unknown one) and so does `project` (`Json.scope_project/2`).
+- `Json.task/4` answers `ref`, `number` and — for a sub-project row —
+  `parent_ref`: there `ref` is the CHILD's key, so an agent that takes the row's
+  ref logs against the child and not against the linking row (grok's point on the
+  design panel). `Json.project/1` answers `key`.
+- A key can be renamed; the registry (`phoenix_kit_project_keys`) keeps every key
+  a project has had and never hands one on, a deleted project's included. The
+  agent guide says: store uuids, show refs.
+
 ## What a project's settings decide for an agent
 
 Two keys in the project's `settings` JSONB (the form's edit card, chain V19 for

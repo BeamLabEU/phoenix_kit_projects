@@ -5,7 +5,11 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
   branches not naturally hit by the LV smoke tests.
   """
 
-  use PhoenixKitProjects.DataCase, async: true
+  # Not async: these tests create projects whose keys come from their
+  # names, and two sandboxed transactions inserting the same key wait on
+  # each other at the key registry (chain V22) — a deadlock once each
+  # creates a second one.
+  use PhoenixKitProjects.DataCase, async: false
 
   alias PhoenixKitProjects.Projects
 

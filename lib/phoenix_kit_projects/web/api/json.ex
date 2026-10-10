@@ -95,14 +95,21 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   @spec scope_project(Plug.Conn.t(), map()) :: {:ok, Plug.Conn.t()} | {:halt, Plug.Conn.t()}
   def scope_project(conn, params) do
     case Map.get(params, "project") do
-      uuid when is_binary(uuid) and uuid != "" ->
-        if uuid == conn.assigns.pk_project.uuid do
-          {:ok, conn}
-        else
-          case within_reach?(conn.assigns.pk_api_key, uuid) && Projects.get_project(uuid) do
-            %Project{} = project -> {:ok, rescope(conn, project)}
-            _ -> {:halt, no_such_project(conn)}
-          end
+      ref when is_binary(ref) and ref != "" ->
+        # A uuid or a key (`ANDI`): resolved first, then held to the key's
+        # reach, so a key that names somebody else's project answers the
+        # same 404 as one that names nothing.
+        case Projects.get_project(ref) do
+          %Project{uuid: uuid} when uuid == conn.assigns.pk_project.uuid ->
+            {:ok, conn}
+
+          %Project{uuid: uuid} = project ->
+            if within_reach?(conn.assigns.pk_api_key, uuid),
+              do: {:ok, rescope(conn, project)},
+              else: {:halt, no_such_project(conn)}
+
+          _ ->
+            {:halt, no_such_project(conn)}
         end
 
       _ ->
@@ -242,6 +249,12 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     %{
       totals: totals,
       uuid: a.uuid,
+      # the short name: `ANDI-42` for a task; for a sub-project row the
+      # CHILD's key (work goes to the child — `parent_ref` is the row's
+      # own place in this list). Accepted wherever a task uuid is.
+      ref: Assignment.ref(a),
+      number: a.number,
+      parent_ref: if(a.child_project_uuid, do: Assignment.row_ref(a)),
       kind: if(a.child_project_uuid, do: "subproject", else: "task"),
       # a nested project's own answers — a caught-up ongoing child reads
       # as in_progress at 100% on its row, this says why
@@ -355,6 +368,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
 
     %{
       uuid: p.uuid,
+      key: p.key,
       name: p.name,
       description: p.description,
       start_mode: p.start_mode,
@@ -371,7 +385,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       subprojects: Enum.map(Projects.child_projects(p.uuid), &subproject/1)
     }
   rescue
-    _ -> %{uuid: p.uuid, name: p.name}
+    _ -> %{uuid: p.uuid, key: p.key, name: p.name}
   end
 
   defp parent_uuid(%Project{uuid: uuid}) do
@@ -386,6 +400,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   defp subproject(%Project{} = p) do
     %{
       uuid: p.uuid,
+      key: p.key,
       name: p.name,
       description: p.description,
       workflow_status: p.current_status_slug,

@@ -64,7 +64,7 @@ defmodule PhoenixKitProjects.Web.Crumbs do
 
   def project(%Project{} = project, lang, scope) do
     (viewable_chain(project, scope) ++ [project])
-    |> Enum.map(&%{label: Project.localized_name(&1, lang), path: Paths.project(&1.uuid)})
+    |> Enum.map(&%{label: Project.localized_name(&1, lang), path: Paths.project(&1)})
   end
 
   @doc """
@@ -113,7 +113,7 @@ defmodule PhoenixKitProjects.Web.Crumbs do
         page_crumbs:
           project
           |> viewable_chain(scope)
-          |> Enum.map(&%{label: Project.localized_name(&1, lang), path: Paths.project(&1.uuid)})
+          |> Enum.map(&%{label: Project.localized_name(&1, lang), path: Paths.project(&1)})
       ]
   end
 

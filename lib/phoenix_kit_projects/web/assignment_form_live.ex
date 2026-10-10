@@ -472,6 +472,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
         |> assign(edit_titles(task_name))
         |> assign(
+          # `ANDI-42`, beside the heading: the name to quote for this task.
+          task_ref: PhoenixKitProjects.Refs.task_ref(project.key, assignment.number),
           kind: "task",
           sp_form: to_form(Projects.change_project(%Project{}), as: :subproject),
           sp_mode: "new",
@@ -2028,6 +2030,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {@project.name}
           </button>
         </:back_link>
+        <:actions :if={assigns[:task_ref]}>
+          <.ref_chip ref={assigns[:task_ref]} size="md" />
+        </:actions>
       </.page_header>
 
       <%= if @kind == "subproject" do %>

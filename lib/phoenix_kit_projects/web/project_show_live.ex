@@ -75,6 +75,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Refs
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
   alias PhoenixKitProjects.TaskNotes
@@ -396,12 +397,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # `?task=<uuid>` (what a link to a task carries, see `ResourceLinks`):
+  # `?task=<uuid or ANDI-42>` (what a link to a task carries, see `Paths.task/2`):
   # the row is ringed, the lens widens if it was hiding the row, the URL's
   # `#task-<uuid>` scrolls to it, and the page's drawer opens the task
   # (`popup_open/1`). A uuid that is not a row of this project is ignored.
-  defp focus_task(socket, uuid) when is_binary(uuid) do
-    case Enum.find(socket.assigns.assignments, &(&1.uuid == uuid)) do
+  defp focus_task(socket, ref) when is_binary(ref) do
+    case find_task(socket.assigns.assignments, ref, socket.assigns.project) do
       nil ->
         socket
 
@@ -415,6 +416,22 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   defp focus_task(socket, _uuid), do: socket
+
+  # By uuid, or by ref (`ANDI-42`) when the key is this project's — its
+  # current one or one it was renamed from.
+  defp find_task(assignments, ref, project) do
+    case Refs.parse(ref) do
+      {:uuid, uuid} ->
+        Enum.find(assignments, &(&1.uuid == uuid))
+
+      {:task, key, number} ->
+        if key == project.key or key in Projects.former_keys(project),
+          do: Enum.find(assignments, &(&1.number == number))
+
+      _ ->
+        nil
+    end
+  end
 
   # The form the drawer opens with when the page was reached through a
   # link to a task: the same edit form the row's title opens.
@@ -830,6 +847,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   """
   def header_toolbar(assigns) do
     ~H"""
+        <%!-- The project's key, beside its name (the breadcrumb on the
+             standalone page, the h1 in an embed). --%>
+        <.ref_chip :if={not @is_template} ref={@project.key} size="md" />
         <%!-- Inline workflow-status picker (the current value). The
              status-list *source* is chosen on the new/edit form (and the
              global default in Settings), not here. Hidden when no
@@ -1185,6 +1205,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name="hero-bars-3" class="w-4 h-4" />
               </span>
               <.assignment_status_badge :if={not @is_template} status={@a.status} />
+              <.ref_chip :if={not @is_template} ref={Refs.task_ref(@project.key, @a.number)} />
               <%!-- Title links to the same edit form as the row menu's
                    Edit — clicking a name anywhere should go somewhere. --%>
               <.smart_link
@@ -2914,20 +2935,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   (unreachable after resolution) falls back to the bare project page.
   """
   @spec tab_url(atom() | String.t(), map(), [map()]) :: String.t()
-  def tab_url(:list, project, _ext_tabs), do: Paths.project_tasks(project.uuid)
-  def tab_url(:board, project, _ext_tabs), do: Paths.project_board(project.uuid)
-  def tab_url(:gantt, project, _ext_tabs), do: Paths.project_gantt(project.uuid)
-  def tab_url(:calendar, project, _ext_tabs), do: Paths.project_calendar(project.uuid)
-  def tab_url(:comments, project, _ext_tabs), do: Paths.project_comments(project.uuid)
+  def tab_url(:list, project, _ext_tabs), do: Paths.project_tasks(project)
+  def tab_url(:board, project, _ext_tabs), do: Paths.project_board(project)
+  def tab_url(:gantt, project, _ext_tabs), do: Paths.project_gantt(project)
+  def tab_url(:calendar, project, _ext_tabs), do: Paths.project_calendar(project)
+  def tab_url(:comments, project, _ext_tabs), do: Paths.project_comments(project)
 
   def tab_url("ext:" <> _ = id, project, ext_tabs) do
     case Enum.find(ext_tabs, &(&1.id == id)) do
-      %{slug: slug} -> Paths.project_ext_tab(project.uuid, slug)
-      nil -> Paths.project(project.uuid)
+      %{slug: slug} -> Paths.project_ext_tab(project, slug)
+      nil -> Paths.project(project)
     end
   end
 
-  def tab_url(_tab, project, _ext_tabs), do: Paths.project(project.uuid)
+  def tab_url(_tab, project, _ext_tabs), do: Paths.project(project)
 
   defp do_start_project(socket, started_at) do
     case Projects.start_project(socket.assigns.project, started_at) do
@@ -4290,6 +4311,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             <.icon name="hero-folder" class="w-3 h-3" /> {gettext("Sub-project")}
                           </span>
                           <.assignment_status_badge :if={not @is_template} status={a.status} />
+                          <%!-- A sub-project is known by its OWN key, not by
+                               the number its row has in this list. --%>
+                          <.ref_chip :if={not @is_template} ref={child.key} />
                           <%!-- Name opens the child project, same as the
                                row's Open action. --%>
                           <.smart_link
@@ -4608,6 +4632,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   </div>
 
                   <div class="flex flex-wrap items-center gap-1">
+                    <.ref_chip ref={Assignment.ref(a)} />
                     <span
                       :if={@fx.priorities and a.priority != "normal"}
                       class={["badge badge-xs gap-1", priority_class(a.priority)]}

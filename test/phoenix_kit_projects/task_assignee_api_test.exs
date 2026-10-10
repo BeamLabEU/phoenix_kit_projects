@@ -232,7 +232,9 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       a = task(project, "Linked")
 
       assert %{path: path} = ResourceLinks.resolve_comment_resources([a.uuid])[a.uuid]
-      assert path == "/admin/projects/#{project.uuid}/tasks?task=#{a.uuid}#task-#{a.uuid}"
+      # spelled with the project's key and the task's ref (chain V22); the
+      # fragment is the row's DOM id, always the uuid
+      assert path == "/admin/projects/#{project.key}/tasks?task=#{project.key}-1#task-#{a.uuid}"
     end
 
     test "the page rings the row, shows it through the lens and opens it", %{conn: conn} do

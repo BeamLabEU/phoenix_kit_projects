@@ -536,7 +536,34 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> WebHelpers.close_or_navigate(Paths.projects())
   end
 
-  defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
+  defp assign_form(socket, cs),
+    do: assign(socket, form: to_form(cs), key_field: key_field(socket, cs))
+
+  # What the Key input says under itself (`PhoenixKitProjects.Refs`): for a
+  # new project the key its name suggests — what it gets if the field is
+  # left empty; for an existing one the keys it was renamed from, which
+  # keep working. A template has no key of its own to choose.
+  defp key_field(socket, %Ecto.Changeset{data: data} = cs) do
+    cond do
+      Ecto.Changeset.get_field(cs, :is_template) ->
+        nil
+
+      is_nil(data.uuid) ->
+        %{
+          suggestion: Projects.suggest_project_key(Ecto.Changeset.get_field(cs, :name)),
+          former: []
+        }
+
+      true ->
+        former =
+          case socket.assigns[:key_field] do
+            %{former: former, for: uuid} when uuid == data.uuid -> former
+            _ -> Projects.former_keys(data)
+          end
+
+        %{suggestion: data.key, former: former, for: data.uuid}
+    end
+  end
 
   # Assignee picker state (V128). `assign_type` ("" / "team" / "department" /
   # "person") drives which staff `<.select>` shows; the staff option lists are
@@ -2105,6 +2132,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   attr(:primary_language, :string, required: true)
   attr(:ai_in_flight, :list, required: true)
   attr(:ai_translate, :any, required: true)
+  attr(:key_field, :any, default: nil)
 
   defp translatable_card(assigns) do
     ~H"""
@@ -2160,6 +2188,37 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               data-mention-context={mention_context(assigns[:project])}
             />
           </.multilang_fields_wrapper>
+
+          <%!-- The project's short name (`ANDI`): its tasks are ANDI-1,
+               ANDI-2, … in links, search and on the API. Not translated,
+               so it sits under the language tabs' fields. --%>
+          <div :if={@key_field} class="card-body pt-0">
+            <.input
+              field={@form[:key]}
+              type="text"
+              label={gettext("Key")}
+              placeholder={@key_field.suggestion}
+              maxlength="10"
+              autocomplete="off"
+              phx-debounce="300"
+              class="font-mono uppercase w-40"
+            />
+            <p class="text-xs text-base-content/60 -mt-1">
+              <%= if @form.source.data.uuid do %>
+                {gettext("The short name of this project: its tasks are %{example}, and the key works in links and on the API. You can change it — the old key keeps working.",
+                  example: "#{@form[:key].value || @key_field.suggestion}-1"
+                )}
+                <span :if={@key_field.former != []}>
+                  {gettext("Also answers to: %{keys}.", keys: Enum.join(@key_field.former, ", "))}
+                </span>
+              <% else %>
+                {gettext("The short name of this project: its tasks will be %{example}, … Leave it empty to get %{suggestion}.",
+                  example: "#{@key_field.suggestion}-1",
+                  suggestion: @key_field.suggestion
+                )}
+              <% end %>
+            </p>
+          </div>
     </div>
     """
   end
@@ -2192,6 +2251,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <%!-- The house pattern: the SAME multilang tabs card every other
                create form uses — all languages fillable from the start. --%>
           <.translatable_card
+          key_field={assigns[:key_field]}
             form={@form}
             multilang_enabled={@multilang_enabled}
             language_tabs={@language_tabs}
@@ -2612,6 +2672,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
              primary-column inputs for `lang_*` JSONB inputs. --%>
         <%= if @live_action == :edit do %>
           <.translatable_card
+          key_field={assigns[:key_field]}
             form={@form}
             multilang_enabled={@multilang_enabled}
             language_tabs={@language_tabs}

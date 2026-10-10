@@ -979,7 +979,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                 <div class="flex flex-col gap-2 mt-2">
                   <.smart_link
                     :for={a <- Enum.take(@my_assignments, 6)}
-                    navigate={Paths.project(a.project.uuid)}
+                    navigate={Paths.project(a.project)}
                     emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => a.project.uuid}}}
                     embed_mode={@embed_mode}
                     class="flex items-start gap-2 p-2 rounded hover:bg-base-200 transition"
@@ -1011,7 +1011,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                 <div class="flex flex-col gap-1 mt-2">
                   <.smart_link
                     :for={p <- @completed_projects}
-                    navigate={Paths.project(p.uuid)}
+                    navigate={Paths.project(p)}
                     emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
                     embed_mode={@embed_mode}
                     class="flex items-center gap-2 p-2 rounded hover:bg-base-200 transition"
@@ -1041,7 +1041,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   <div class="text-xs text-base-content/50 uppercase tracking-wide mt-2">{gettext("In setup")}</div>
                   <.smart_link
                     :for={p <- @setup_projects}
-                    navigate={Paths.project(p.uuid)}
+                    navigate={Paths.project(p)}
                     emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
                     embed_mode={@embed_mode}
                     class="flex items-center gap-2 p-2 rounded hover:bg-base-200 transition"
@@ -1055,7 +1055,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   <div class="text-xs text-base-content/50 uppercase tracking-wide mt-2">{gettext("Scheduled")}</div>
                   <.smart_link
                     :for={p <- @upcoming_projects}
-                    navigate={Paths.project(p.uuid)}
+                    navigate={Paths.project(p)}
                     emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
                     embed_mode={@embed_mode}
                     class="flex items-center gap-2 p-2 rounded hover:bg-base-200 transition"

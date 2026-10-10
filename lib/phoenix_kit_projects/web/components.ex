@@ -29,6 +29,7 @@ defmodule PhoenixKitProjects.Web.Components do
       import PhoenixKitProjects.Web.Components.PopupHost
       import PhoenixKitProjects.Web.Components.QuickAddComposer
       import PhoenixKitProjects.Web.Components.ApiTokenModal
+      import PhoenixKitProjects.Web.Components.RefChip
       # A destructive action that asks through core's confirm modal.
       import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
       # The "Move…" dialog (a project to another place in the tree).
