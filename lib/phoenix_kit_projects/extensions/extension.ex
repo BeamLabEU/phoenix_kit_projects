@@ -56,6 +56,12 @@ defmodule PhoenixKitProjects.Extensions.Extension do
       `%{source, id, title, label, starts_at, ends_at | nil, all_day, status,
       location, url, updated_at}` — `status: "cancelled"` is the one value
       the hub treats specially. Nothing is copied: the hub asks each time.
+    * `project_columns` — `{module, function}` called with a LIST of project
+      uuids: columns of the extension's own on the projects list (the CRM's
+      Client, say), read in one go for the whole page. Answers
+      `[%{key, label, values: %{project_uuid => %{text, url | nil}}}]`; the
+      list offers each as an optional column it can sort and filter by.
+      Values for a project the extension is off on are dropped by the hub.
     * `on_enable` / `on_disable` — `{module, function}` called with
       `(project_uuid, config)` after a successful toggle. Best-effort:
       failures are logged, never abort the toggle.
@@ -90,6 +96,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
             on_disable: nil,
             api: nil,
             calendar: nil,
+            project_columns: nil,
             data_retention: :keep,
             default_enabled: false,
             category: nil,
@@ -118,6 +125,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
           on_disable: {module(), atom()} | nil,
           api: module() | [module()] | nil,
           calendar: {module(), atom()} | nil,
+          project_columns: {module(), atom()} | nil,
           data_retention: :keep,
           default_enabled: boolean(),
           category: String.t() | nil,
@@ -156,6 +164,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
          # `PhoenixKitProjects.Extensions.ApiProvider`.
          api: normalize_api(map[:api], source),
          calendar: normalize_callback(map[:calendar], source, :calendar),
+         project_columns: normalize_callback(map[:project_columns], source, :project_columns),
          data_retention: :keep,
          default_enabled: map[:default_enabled] == true,
          category: map[:category] && to_string(map[:category]),

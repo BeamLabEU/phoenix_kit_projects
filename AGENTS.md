@@ -258,7 +258,9 @@ Repo-local aliases:
   depth level; feeds `project_tree_summaries/1` and `ScheduleLayout.trees/1`),
   `Projects.list_all_dependencies/1` on a LIST, `Extensions.enabled_map/1` +
   `Features.gates/1` / `flags/1` (one context read), `Portal.review_details_for/1`,
-  `Attachments.download_urls/1`, `Grants.subject_reaches/1`. Ecto preloads are
+  `Attachments.download_urls/1`, `Grants.subject_reaches/1`, `ListMetrics.load/3`
+  (the projects list's columns, one family of reads per column group) and
+  `Extensions.project_columns/2`. Ecto preloads are
   statements too, so assert N-independence, never an exact count. Known and
   left (low weight, one-off or a handful of rows): `Web.Crumbs`' per-ancestor
   `Authz.can?` for non-admins, `PortalLinks`' per-slug `Portal.resolve/2` in
@@ -375,6 +377,7 @@ lib/phoenix_kit_projects/
     ├── crumbs.ex        # page_section / page_crumbs / page_title
     ├── helpers.ex       # embed identity, translate_catalog/1, smart-link glue
     ├── list_ui.ex       # column visibility, search coercion, client haystacks
+    ├── project_list_columns.ex  # the projects list's columns as data: families, sorts, filters
     ├── routes.ex        # the public portal routes (route_module/0)
     ├── *_live.ex        # the LiveViews (below)
     └── widgets/*.ex     # the dashboards LiveComponents
@@ -1158,3 +1161,59 @@ briefing gained `client.planned` (the provider's list with
 - **Dashboards catalog strings are untranslatable from here.**
   `phoenix_kit_dashboards` translates provider strings through its own backend.
   **Trigger:** that helper honouring a provider backend.
+
+## The projects list: columns, sorts and filters (2026-10-10)
+
+The boss asked for "way more columns" on the projects list — the client,
+task counts — and to filter and sort by them. Three pieces:
+
+- **`ListMetrics.load(projects, families, opts)`** reads what the columns
+  show for a whole page of projects. Columns are grouped into FAMILIES
+  (`:tasks`, `:due`, `:events`, `:members`, `:assignee`, `:ledger`,
+  `:activity`, `:creators`, `:parents`, `:ext`); only the families behind
+  the visible columns, the active sort and the set filters are read, each
+  in a fixed number of statements (`batched_list_metrics_test.exs`).
+  Progress and task counts come from the TREE summary (a done task is 100
+  whatever its slider says, a sub-project rolls into its parent) — the flat
+  `project_summaries/1` sums the raw sliders and disagrees with the project
+  page for a task completed without moving its slider.
+- **`Web.ProjectListColumns`** is the roster as data: a column's label,
+  family, sort and alignment (`specs/0`), the in-memory `sort/5` (nil last
+  whichever way, ties by name) and `filter/4`. **To add a column:** one
+  entry in `specs/0`, a `sort_value/4` clause if it sorts, a
+  `column_cell/3` clause in `ProjectsLive`, and a `ListUi.column_priority/1`
+  line if "dropped first" is wrong for it. A row-menu item goes in
+  `render_projects_table/3`'s `<.table_row_menu>`.
+- **Extension columns.** An extension declaration may carry
+  `project_columns: {module, fun}`; `fun.(project_uuids)` answers
+  `[%{key, label, values: %{project_uuid => %{text, url | nil}}}]`.
+  `Extensions.project_columns/2` calls each provider once per load, drops
+  the values of projects the extension is off on (one read of the
+  enablement rows), hides a sibling module's column from a viewer without
+  that module's permission, and rescues a failing provider to nothing. The
+  list offers each as column `ext:<ext_key>:<key>` — shown by default,
+  sortable by its text, filterable by its distinct values. The CRM's Client
+  is the first (`PhoenixKitCRM.ProjectColumns`).
+
+**Two shapes of load.** The four database sorts (`position`, `name`,
+`inserted_at`, `updated_at`) with no panel filter keep the old behaviour:
+everything rendered at or below 100 projects, SQL search + load-more above.
+Any other sort, or any panel filter, loads the whole visible set (searched
+in SQL past the threshold), reads the families the sort and the filters
+need, filters and sorts in memory and slices to the load-more cap. Fine at
+tens to hundreds of projects; if a site ever holds thousands, the answer is
+SQL aggregates per sort, not a bigger slice.
+
+**State lives in the URL** through `UrlState` in `:history` mode (the list
+is embeddable — no `handle_params/3`): `sort`, `dir`, `sortx` (which
+extension column `sort=ext` means), `state`, `who` (`mine` or a user uuid),
+`overdue`, `mode`, `archived` (`no`/`all`/`only`), `subs` (sub-projects
+listed flat, each prefixed with its parent), `xcol` + `xval` (one extension
+column's value). Open-ended values (`who`, `sortx`, `xcol`, `xval`) are
+only ever compared against what was loaded — never turned into atoms or
+queries. Drag-reorder stays on only for the manual sort with no search, no
+filter, no archived view and no sub-projects, as before.
+
+The viewer scope is applied in the database query before anything else, so
+no sort, filter or listing switch can show a non-admin a project they do
+not hold (`projects_list_columns_live_test.exs`, "scoping").

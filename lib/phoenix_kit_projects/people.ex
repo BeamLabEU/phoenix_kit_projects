@@ -145,6 +145,23 @@ defmodule PhoenixKitProjects.People do
     _ -> %{}
   end
 
+  @doc """
+  The display names of a set of people in one read, `%{uuid => name}` —
+  trashed people included (an assignment keeps naming whoever holds it).
+  Unknown uuids are simply absent.
+  """
+  @spec person_names([binary()]) :: %{binary() => String.t()}
+  def person_names([]), do: %{}
+
+  def person_names(uuids) when is_list(uuids) do
+    from(p in Person, where: p.uuid in ^uuids)
+    |> preload(:user)
+    |> RepoHelper.repo().all()
+    |> Map.new(&{&1.uuid, display_name(&1)})
+  rescue
+    _ -> %{}
+  end
+
   @doc "A person's team memberships with `team: [:department]` preloaded."
   @spec list_memberships_for_person(binary()) :: [TeamMembership.t()]
   def list_memberships_for_person(person_uuid) do

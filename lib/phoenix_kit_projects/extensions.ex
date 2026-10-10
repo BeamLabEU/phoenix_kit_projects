@@ -455,6 +455,120 @@ defmodule PhoenixKitProjects.Extensions do
   def calendar_changed(_), do: :ok
 
   @doc """
+  The columns the catalog's extensions put on the projects list
+  (`Extension`'s `project_columns:` — the CRM's Client, say), read for a
+  whole page of projects at once: every provider is called ONCE with the
+  uuid list, and one read of the enablement rows drops the values of the
+  projects an extension is off on. Each column comes back as
+  `%{id: "ext:<ext_key>:<key>", ext_key, key, label, values: %{project_uuid
+  => %{text, url}}}`; with `[]` it is the columns alone, for the picker.
+
+  With a `scope`, an extension whose site module the viewer cannot reach
+  contributes nothing (the same gate the project page puts on its tabs).
+  A provider that raises, or answers something else, contributes nothing —
+  the list must still render.
+  """
+  @spec project_columns([binary()], term()) :: [map()]
+  def project_columns(project_uuids, scope \\ nil) when is_list(project_uuids) do
+    providers =
+      Enum.filter(Registry.list_available(), fn ext ->
+        match?({_, _}, ext.project_columns) and
+          (is_nil(scope) or Registry.visible_for_scope?(ext, scope))
+      end)
+
+    enabled = enabled_projects(providers, project_uuids)
+
+    Enum.flat_map(providers, fn ext ->
+      on = Map.get(enabled, ext.key, %{})
+
+      ext
+      |> provider_columns(project_uuids)
+      |> Enum.map(fn col ->
+        %{col | values: Map.filter(col.values, fn {uuid, _} -> Map.has_key?(on, uuid) end)}
+      end)
+    end)
+  rescue
+    e ->
+      Logger.warning("[Projects.Extensions] project_columns failed: #{Exception.message(e)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  # `%{ext_key => %{project_uuid => true}}` for the projects it is on for — an explicit
+  # row wins, otherwise the catalog default. One read for every provider.
+  defp enabled_projects([], _uuids), do: %{}
+  defp enabled_projects(_providers, []), do: %{}
+
+  defp enabled_projects(providers, project_uuids) do
+    keys = Enum.map(providers, & &1.key)
+
+    rows =
+      RepoHelper.repo().all(
+        from(pm in ProjectModule,
+          where:
+            pm.project_uuid in ^project_uuids and pm.ext_key in ^keys and
+              pm.instance_key == ^@default_instance,
+          select: {pm.ext_key, pm.project_uuid, pm.enabled}
+        )
+      )
+
+    explicit = Map.new(rows, fn {key, uuid, enabled} -> {{key, uuid}, enabled} end)
+
+    Map.new(providers, fn ext ->
+      on =
+        for uuid <- project_uuids,
+            Map.get(explicit, {ext.key, uuid}, ext.default_enabled),
+            into: %{},
+            do: {uuid, true}
+
+      {ext.key, on}
+    end)
+  end
+
+  defp provider_columns(%Extension{project_columns: {mod, fun}, key: ext_key}, project_uuids) do
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    case apply(mod, fun, [project_uuids]) do
+      columns when is_list(columns) ->
+        columns |> Enum.map(&project_column(&1, ext_key)) |> Enum.reject(&is_nil/1)
+
+      _ ->
+        []
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "[Projects.Extensions] columns provider of #{ext_key} failed: #{Exception.message(e)}"
+      )
+
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  # The least a column must be: a key, a label and a map of values; a value
+  # is kept when it has text to show.
+  defp project_column(%{key: key, label: label, values: %{} = values}, ext_key)
+       when is_binary(key) and key != "" and is_binary(label) do
+    %{
+      id: "ext:#{ext_key}:#{key}",
+      ext_key: ext_key,
+      key: key,
+      label: label,
+      values:
+        for {uuid, %{text: text} = value} <- values,
+            is_binary(uuid),
+            is_binary(text),
+            into: %{} do
+          url = Map.get(value, :url)
+          {uuid, %{text: text, url: if(is_binary(url), do: url)}}
+        end
+    }
+  end
+
+  defp project_column(_other, _ext_key), do: nil
+
+  @doc """
   The API providers the catalog's extensions declare
   (`PhoenixKitProjects.Extensions.ApiProvider`), as `%{ext, module}`.
   """

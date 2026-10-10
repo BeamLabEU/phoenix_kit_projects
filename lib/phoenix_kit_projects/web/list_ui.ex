@@ -91,10 +91,20 @@ defmodule PhoenixKitProjects.Web.ListUi do
   """
   @spec column_priority(String.t()) :: pos_integer()
   def column_priority("status"), do: 1
-  def column_priority(id) when id in ~w(tasks uses duration), do: 2
-  def column_priority(id) when id in ~w(updated last_used), do: 3
-  def column_priority("created"), do: 4
-  def column_priority(id) when id in ~w(created_by weekends), do: 5
+  # An extension's column (the client) says whose the project is: it goes
+  # just after what the project is.
+  def column_priority("ext:" <> _), do: 2
+  def column_priority(id) when id in ~w(tasks uses duration progress overdue), do: 2
+  def column_priority(id) when id in ~w(updated last_used hours open_tasks next_due), do: 3
+
+  def column_priority(id)
+      when id in ~w(created eta started completed last_activity next_event billable_hours),
+      do: 4
+
+  def column_priority(id)
+      when id in ~w(created_by weekends owner assignee members subprojects mode health),
+      do: 5
+
   def column_priority(_id), do: 6
 
   @doc """
@@ -131,6 +141,35 @@ defmodule PhoenixKitProjects.Web.ListUi do
     </button>
     """
   end
+
+  @doc ~S|Minutes as "2h 30m" — the wording the project page uses for logged time.|
+  @spec format_minutes(number()) :: String.t()
+  def format_minutes(minutes) do
+    m = round(minutes)
+    h = div(m, 60)
+    rest = rem(m, 60)
+
+    cond do
+      h == 0 -> gettext("%{m}m", m: rest)
+      rest == 0 -> gettext("%{h}h", h: h)
+      true -> gettext("%{h}h %{m}m", h: h, m: rest)
+    end
+  end
+
+  @doc ~S|A token count as "3.9M tokens" / "13.3k tokens".|
+  @spec format_tokens(number()) :: String.t()
+  def format_tokens(t) when t >= 1_000_000,
+    do: gettext("%{n}M tokens", n: Float.round(t / 1_000_000, 1))
+
+  def format_tokens(t) when t >= 1_000, do: gettext("%{n}k tokens", n: Float.round(t / 1_000, 1))
+  def format_tokens(t), do: gettext("%{n} tokens", n: round(t))
+
+  @doc """
+  Cents as a dollar string. The ledger stores cents unit-agnostically; the
+  display currency is the same v1 simplification the project page makes.
+  """
+  @spec format_cents(number()) :: String.t()
+  def format_cents(cents), do: "$" <> :erlang.float_to_binary(cents / 100, decimals: 2)
 
   @doc """
   Coerces the search event payload to a binary. A forged `search[x]=y`

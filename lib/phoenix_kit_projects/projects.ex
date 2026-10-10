@@ -823,6 +823,9 @@ defmodule PhoenixKitProjects.Projects do
     * `:archived` — `false` (default) hides archived; `true` shows only
       archived; `:all` returns both.
     * `:include_templates` — default `false`.
+    * `:include_subprojects` — default `false`: a project nested under
+      another is reached through its parent. `true` lists them flat beside
+      the top-level ones (the projects list's "include sub-projects").
   """
   @spec list_projects(keyword()) :: [Project.t()]
   def list_projects(opts \\ []) do
@@ -835,7 +838,7 @@ defmodule PhoenixKitProjects.Projects do
 
     Project
     |> maybe_exclude_templates(include_templates)
-    |> exclude_subprojects()
+    |> maybe_exclude_subprojects(Keyword.get(opts, :include_subprojects, false))
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> maybe_search_name_description(Keyword.get(opts, :search))
@@ -933,6 +936,9 @@ defmodule PhoenixKitProjects.Projects do
   # until somebody decides", so it has to hold everywhere the plan is
   # measured, not only where it is listed.
   defp accepted_only(q), do: where(q, [a], a.review_status == "accepted")
+
+  defp maybe_exclude_subprojects(q, true), do: q
+  defp maybe_exclude_subprojects(q, _), do: exclude_subprojects(q)
 
   defp exclude_subprojects(q) do
     children =
@@ -1418,7 +1424,7 @@ defmodule PhoenixKitProjects.Projects do
 
     Project
     |> maybe_exclude_templates(include_templates)
-    |> exclude_subprojects()
+    |> maybe_exclude_subprojects(Keyword.get(opts, :include_subprojects, false))
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> maybe_search_name_description(Keyword.get(opts, :search))
