@@ -1323,6 +1323,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   defp task_label(nil), do: gettext("The project itself")
   defp task_label(%{title: nil}), do: gettext("A removed task")
+  defp task_label(%{title: title, ref: ref}) when is_binary(ref), do: "#{ref} · #{title}"
   defp task_label(%{title: title}), do: title
 
   # ── The timesheet ──
@@ -1484,7 +1485,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
                     embed_mode={@embed_mode}
                     class="link link-hover"
                   >
-                    {row.task.title}
+                    <.ref_chip ref={row.task[:ref]} /> {row.task.title}
                   </.smart_link>
                 <% else %>
                   <span class="text-base-content/50">{task_label(row.task)}</span>

@@ -64,6 +64,7 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
     Enum.map(summary.by_task, fn row ->
       %{
         task_uuid: row.task && row.task.uuid,
+        ref: row.task && row.task[:ref],
         title: row.task && row.task.title,
         project_uuid: row.project.uuid,
         minutes: Json.number(row.minutes),

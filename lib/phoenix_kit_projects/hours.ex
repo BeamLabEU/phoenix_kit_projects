@@ -306,7 +306,7 @@ defmodule PhoenixKitProjects.Hours do
         entry: e,
         at: e.ended_at || e.started_at || e.inserted_at,
         worker: Map.fetch!(workers, actor_key(e.actor_kind, e.actor_uuid)),
-        task: e.assignment_uuid && %{uuid: e.assignment_uuid, title: tasks[e.assignment_uuid]},
+        task: e.assignment_uuid && task_map(e.assignment_uuid, tasks),
         project: %{uuid: e.project_uuid, name: projects[e.project_uuid]}
       }
     end)
@@ -512,9 +512,7 @@ defmodule PhoenixKitProjects.Hours do
 
   defp task_row(row, tasks, projects) do
     %{
-      task:
-        row.assignment_uuid &&
-          %{uuid: row.assignment_uuid, title: tasks[row.assignment_uuid]},
+      task: row.assignment_uuid && task_map(row.assignment_uuid, tasks),
       project: %{uuid: row.project_uuid, name: projects[row.project_uuid]},
       minutes: to_float(row.minutes),
       billable_minutes: to_float(row.billable_minutes),
@@ -798,6 +796,13 @@ defmodule PhoenixKitProjects.Hours do
 
   # ── Names ───────────────────────────────────────────────────────────
 
+  # A task as the page, the report and the API name it: its title and its
+  # ref. A task that is gone keeps its uuid and has neither.
+  defp task_map(uuid, tasks) do
+    info = Map.get(tasks, uuid, %{})
+    %{uuid: uuid, title: info[:title], ref: info[:ref]}
+  end
+
   defp task_titles(uuids, lang) do
     case uuids |> Enum.reject(&is_nil/1) |> Enum.uniq() do
       [] ->
@@ -806,9 +811,10 @@ defmodule PhoenixKitProjects.Hours do
       uuids ->
         lang = lang || L10n.current_content_lang()
 
-        from(a in Assignment, where: a.uuid in ^uuids, preload: [:task, :child_project])
+        # `:project` for the row's ref (`ANDI-42`, `Assignment.ref/1`).
+        from(a in Assignment, where: a.uuid in ^uuids, preload: [:task, :child_project, :project])
         |> RepoHelper.repo().all()
-        |> Map.new(&{&1.uuid, Assignment.label(&1, lang)})
+        |> Map.new(&{&1.uuid, %{title: Assignment.label(&1, lang), ref: Assignment.ref(&1)}})
     end
   end
 

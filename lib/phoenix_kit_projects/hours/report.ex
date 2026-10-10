@@ -113,6 +113,7 @@ defmodule PhoenixKitProjects.Hours.Report do
 
   defp task_title(nil), do: gettext("The project itself")
   defp task_title(%{title: nil}), do: gettext("A removed task")
+  defp task_title(%{title: title, ref: ref}) when is_binary(ref), do: "#{ref} · #{title}"
   defp task_title(%{title: title}), do: title
 
   defp entries_section(%{entries: []}), do: []

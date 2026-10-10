@@ -197,20 +197,12 @@ defmodule PhoenixKitProjects.Schemas.Project do
   defp keep_key_when_blank(changeset), do: changeset
 
   defp key_format_message do
-    Gettext.dgettext(
-      PhoenixKitProjects.Gettext,
-      "default",
+    gettext(
       "2 to 10 letters and digits, at least one letter, and not a word the address bar already uses (new, tasks, …)."
     )
   end
 
-  defp key_taken_message do
-    Gettext.dgettext(
-      PhoenixKitProjects.Gettext,
-      "default",
-      "This key is, or was, another project's."
-    )
-  end
+  defp key_taken_message, do: gettext("This key is, or was, another project's.")
 
   # The recognised keys in the `settings` JSONB and their value guards.
   # `settings` is cast from the form, so without this a crafted post could
