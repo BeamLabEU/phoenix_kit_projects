@@ -36,7 +36,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
-  alias PhoenixKitProjects.Web.Components.ConfirmAction
+  alias PhoenixKitProjects.Web.Components.{ConfirmAction, MoveProject}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ListUi
   alias PhoenixKitWeb.TableColumns
@@ -282,6 +282,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
     end
   end
+
+  # The "Move…" dialog: nest a project under another (it then leaves this
+  # list, which the reload shows).
+  def handle_event(event, params, socket)
+      when event in ~w(move_project_open move_project_change move_project_submit move_project_close),
+      do:
+        MoveProject.handle_event(event, params, socket, fn socket, _ -> load_projects(socket) end)
 
   # Sort selector fires `sort_form` for both field changes (via the
   # form's phx-change) and direction toggles (via the button's
@@ -686,6 +693,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         selected={@visible_columns}
       />
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
+      <.move_project_modal move={assigns[:move_project]} />
     </div>
     """
   end
@@ -787,6 +795,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 embed_mode={@embed_mode}
                 icon="hero-pencil"
                 label={gettext("Edit")}
+              />
+              <.table_row_menu_button
+                phx-click="move_project_open"
+                phx-value-uuid={p.uuid}
+                icon="hero-arrows-right-left"
+                label={gettext("Move…")}
               />
               <.table_row_menu_divider />
               <.table_row_menu_button

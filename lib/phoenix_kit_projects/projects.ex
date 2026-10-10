@@ -3288,6 +3288,118 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
+  @doc """
+  The assignment that embeds `project_uuid` in its parent's plan, or `nil`
+  for a top-level project. A project has at most one (the partial unique
+  index on `child_project_uuid`).
+  """
+  @spec subproject_link(uuid()) :: Assignment.t() | nil
+  def subproject_link(project_uuid) when is_binary(project_uuid) do
+    repo().one(from(a in Assignment, where: a.child_project_uuid == ^project_uuid, limit: 1))
+  end
+
+  @doc """
+  Moves a project to another place in the tree: `:top` makes it a
+  top-level project (what `detach_subproject/1` does from the parent's
+  side), a project uuid nests it under that project — whether it was
+  top-level or another project's sub-project before. The project keeps its
+  tasks, its own sub-projects, members, keys and ledger; only the row that
+  embeds it in a parent's plan is removed and (for a new parent) written
+  again at the end of that parent's list.
+
+  One transaction under the same advisory lock as `link_subproject/2`, so a
+  move can never leave the project with two parents or lose it between
+  them, and two crossing moves cannot close a cycle.
+
+  Returns `{:ok, %{project: p, from: old_parent | nil, to: new_parent | nil}}`.
+  Errors: `:not_found`, `:already_there` (the target is where it already
+  is), and `link_subproject/2`'s `:self_link`, `:kind_mismatch`,
+  `:archived`, `:would_create_cycle`.
+  """
+  @spec move_project(uuid(), :top | uuid()) ::
+          {:ok, %{project: Project.t(), from: Project.t() | nil, to: Project.t() | nil}}
+          | {:error, atom() | Ecto.Changeset.t()}
+  def move_project(project_uuid, target) when is_binary(project_uuid) do
+    repo().transaction(fn ->
+      repo().query!("SELECT pg_advisory_xact_lock($1)", [@subproject_link_lock])
+
+      with {:ok, project} <- fetch_project(project_uuid),
+           link = subproject_link(project_uuid),
+           {:ok, to} <- move_target(target, project, link),
+           :ok <- drop_link(link),
+           {:ok, new_link} <- place_under(to, project) do
+        from = link && get_project(link.project_uuid)
+        %{project: project, from: from, to: to, old_link: link, new_link: new_link}
+      else
+        {:error, reason} -> repo().rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, %{old_link: old_link, new_link: new_link} = result} ->
+        after_move(result.project, old_link, new_link)
+        {:ok, Map.drop(result, [:old_link, :new_link])}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp move_target(:top, _project, nil), do: {:error, :already_there}
+  defp move_target(:top, _project, _link), do: {:ok, nil}
+
+  defp move_target(parent_uuid, _project, %Assignment{project_uuid: parent_uuid}),
+    do: {:error, :already_there}
+
+  defp move_target(parent_uuid, project, _link) when is_binary(parent_uuid) do
+    with {:ok, parent} <- fetch_project(parent_uuid),
+         :ok <- validate_link(parent, project) do
+      {:ok, parent}
+    end
+  end
+
+  defp move_target(_target, _project, _link), do: {:error, :not_found}
+
+  defp drop_link(nil), do: :ok
+
+  defp drop_link(%Assignment{} = link) do
+    case repo().delete(link) do
+      {:ok, _} -> :ok
+      {:error, cs} -> {:error, cs}
+    end
+  end
+
+  defp place_under(nil, _project), do: {:ok, nil}
+
+  defp place_under(%Project{} = parent, %Project{} = project) do
+    with {:ok, %{assignment: link}} <- do_link_subproject(parent, project), do: {:ok, link}
+  end
+
+  # Broadcasts and rollups run on the committed state, like
+  # `link_subproject/2` and `detach_subproject/1`: the old parent has one row
+  # fewer, the new one a row more, and every project list is nudged because
+  # the project entered or left the top level.
+  defp after_move(%Project{} = project, old_link, new_link) do
+    if old_link do
+      ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
+        uuid: old_link.uuid,
+        project_uuid: old_link.project_uuid
+      })
+
+      recompute_project_completion(old_link.project_uuid)
+    end
+
+    if new_link do
+      ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+        uuid: new_link.uuid,
+        project_uuid: new_link.project_uuid
+      })
+
+      recompute_project_completion(new_link.project_uuid)
+    end
+
+    ProjectsPubSub.broadcast_project(:project_updated, project_payload(project))
+  end
+
   # Ancestor project uuids of `project_uuid`, walking up the linking-assignment
   # chain (parent of X = the project whose linking row embeds X). Order
   # unspecified; guards against a corrupt cycle by tracking visited uuids.

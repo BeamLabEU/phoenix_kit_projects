@@ -287,6 +287,38 @@ defmodule PhoenixKitProjects.ApiKeys do
   end
 
   @doc """
+  Points a live key at another project: the token stays the one its holder
+  already has, and from now on it reaches `project` (and what is nested
+  under it) instead of where it was minted. For a project that is moved out
+  from under the project its agent's key belongs to — the key would
+  otherwise stop reaching it. Refused for a revoked key. Options:
+  `:actor_uuid`.
+  """
+  @spec move(ApiKey.t(), map() | binary(), keyword()) ::
+          {:ok, ApiKey.t()} | {:error, :revoked | Ecto.Changeset.t()}
+  def move(%ApiKey{revoked_at: %DateTime{}}, _project, _opts), do: {:error, :revoked}
+
+  def move(%ApiKey{} = key, project_or_uuid, opts) do
+    to_uuid = project_uuid(project_or_uuid)
+    from_uuid = key.project_uuid
+
+    case RepoHelper.repo().update(Ecto.Changeset.change(key, project_uuid: to_uuid)) do
+      {:ok, moved} ->
+        Activity.log("projects.api_key_moved",
+          actor_uuid: Keyword.get(opts, :actor_uuid),
+          resource_type: "project",
+          resource_uuid: to_uuid,
+          metadata: %{"api_key" => moved.uuid, "name" => moved.name, "from_project" => from_uuid}
+        )
+
+        {:ok, moved}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
   The key a presented token belongs to, if it is well-formed, known, not
   revoked and not expired. Every refusal is the same `{:error, reason}`
   shape; the API answers all of them with one 401, so a caller cannot tell

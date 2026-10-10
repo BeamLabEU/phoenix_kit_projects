@@ -70,7 +70,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Statuses
   }
 
-  alias PhoenixKitProjects.Web.Components.ConfirmAction
+  alias PhoenixKitProjects.Web.Components.{ConfirmAction, MoveProject}
   alias PhoenixKitProjects.Web.Crumbs
 
   alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
@@ -912,6 +912,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             icon="hero-heart"
             label={gettext("Set health")}
           />
+          <%!-- Out of its parent, or under another project — with what it
+               takes along (`Components.MoveProject`). --%>
+          <.table_row_menu_button
+            :if={is_nil(@project.archived_at)}
+            phx-click="move_project_open"
+            phx-value-uuid={@project.uuid}
+            icon="hero-arrows-right-left"
+            label={gettext("Move…")}
+          />
           <%= if not @is_template do %>
             <.table_row_menu_divider />
             <%= if @project.archived_at do %>
@@ -1595,6 +1604,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
     end
   end
+
+  # The "Move…" dialog — this project (its ⋮ menu) or one of its
+  # sub-projects (the row's). `ProjectMove.run/4` checks the mover.
+  def handle_event(event, params, socket)
+      when event in ~w(move_project_open move_project_change move_project_submit move_project_close),
+      do: MoveProject.handle_event(event, params, socket, &after_project_move/2)
 
   def handle_event(event, params, socket) do
     case Map.get(@gated_events, event) do
@@ -3254,6 +3269,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp invoice_error(_), do: gettext("Could not create the draft invoice.")
 
+  # This project moved: its trail and its place changed, so the page is
+  # opened afresh (an embed just reloads its plan). A sub-project moved
+  # out of this one: its row is gone.
+  defp after_project_move(socket, %{project: %{uuid: uuid}}) do
+    if uuid == socket.assigns.project.uuid and socket.assigns[:embed_mode] != :emit do
+      push_navigate(socket, to: Paths.project(uuid))
+    else
+      socket |> sync_project_completion() |> load_assignments()
+    end
+  end
+
   # ── Work-ledger helpers (Step 10) ────────────────────────────────
 
   defp do_save_work_entry(socket, params, record) do
@@ -4305,18 +4331,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                               icon="hero-pencil"
                               label={gettext("Edit")}
                             />
-                            <%!-- Pop the sub-project back out as a standalone
-                                 project — keeps it + its tasks (V127). --%>
+                            <%!-- Out as its own project, or under another one —
+                                 keeps it + its tasks, and offers what it takes
+                                 along (`Components.MoveProject`). --%>
                             <.table_row_menu_button
                               :if={@fx.subprojects}
-                              {ConfirmAction.ask("detach_subproject",
-                                uuid: a.uuid,
-                                title: gettext("Make standalone"),
-                                message: gettext("Make \"%{name}\" a standalone project? It keeps all its tasks — it just won't be a sub-project anymore.", name: Project.localized_name(child, sp_lang)),
-                                confirm: gettext("Make standalone")
-                              )}
-                              icon="hero-arrow-up-on-square"
-                              label={gettext("Make standalone")}
+                              phx-click="move_project_open"
+                              phx-value-uuid={child.uuid}
+                              icon="hero-arrows-right-left"
+                              label={gettext("Move out…")}
                             />
                             <.table_row_menu_divider />
                             <.table_row_menu_button
@@ -4938,6 +4961,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           })}
       <% end %>
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
+      <.move_project_modal move={assigns[:move_project]} />
     </div>
     """
   end

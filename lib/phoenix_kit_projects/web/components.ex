@@ -31,6 +31,8 @@ defmodule PhoenixKitProjects.Web.Components do
       import PhoenixKitProjects.Web.Components.ApiTokenModal
       # A destructive action that asks through core's confirm modal.
       import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
+      # The "Move…" dialog (a project to another place in the tree).
+      import PhoenixKitProjects.Web.Components.MoveProject, only: [move_project_modal: 1]
       # Renders @ and # mentions inside any free text, resolved for the
       # viewer looking at it.
       import PhoenixKitWeb.Components.Core.MentionText
