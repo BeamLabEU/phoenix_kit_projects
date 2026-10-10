@@ -164,6 +164,15 @@ defmodule PhoenixKitProjects.Integration.RefsIntegrationTest do
         [project.uuid]
       )
 
+      # Made within one second: give each its own moment, so "the order they
+      # were made" is not left to the uuid tiebreak.
+      for {task, n} <- Enum.with_index(tasks) do
+        Repo.query!(
+          "UPDATE phoenix_kit_project_assignments SET inserted_at = now() - ($2::int * interval '1 minute') WHERE uuid::text = $1",
+          [task.uuid, 10 - n]
+        )
+      end
+
       Repo.query!("DELETE FROM phoenix_kit_project_task_counters WHERE project_uuid::text = $1", [
         project.uuid
       ])
