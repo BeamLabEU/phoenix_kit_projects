@@ -38,6 +38,13 @@ defmodule PhoenixKitProjects.RefsTest do
       assert Refs.suggest_key("API") == "API2"
     end
 
+    test "ten thousand taken forms still give a valid key" do
+      key = Refs.suggest_key("Kitchen", &String.starts_with?(&1, "KIT"))
+      assert Refs.valid_key?(key)
+      refute String.starts_with?(key, "KIT")
+      refute Refs.reserved?(42)
+    end
+
     test "the number fits inside the length cap" do
       long = "ABCDEFGHIJ"
       assert Refs.suggest_key("ab cd ef gh ij", &(&1 == "ACEGI")) == "ACEGI2"

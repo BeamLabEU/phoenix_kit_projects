@@ -65,6 +65,7 @@ defmodule PhoenixKitProjects.Refs do
   @doc "Is `key` one of the reserved URL words."
   @spec reserved?(String.t()) :: boolean()
   def reserved?(key) when is_binary(key), do: String.upcase(key) in @reserved
+  def reserved?(_), do: false
 
   @doc ~S|A task's ref: `"ANDI-42"`. `nil` when either part is missing.|
   @spec task_ref(String.t() | nil, integer() | nil) :: String.t() | nil
@@ -186,8 +187,18 @@ defmodule PhoenixKitProjects.Refs do
         suffix = Integer.to_string(n)
         candidate = String.slice(base, 0, @max - String.length(suffix)) <> suffix
         if usable?(candidate, taken?), do: candidate
-      end)
+      end) || random_key(taken?)
     end
+  end
+
+  # Every numbered form of the base is taken (some ten thousand projects of
+  # one name): a key nobody chose beats no key at all.
+  defp random_key(taken?) do
+    candidate =
+      "P" <>
+        (6 |> :crypto.strong_rand_bytes() |> Base.encode32(padding: false) |> binary_part(0, 9))
+
+    if usable?(candidate, taken?), do: candidate, else: random_key(taken?)
   end
 
   defp usable?(key, taken?), do: valid_key?(key) and not taken?.(key)

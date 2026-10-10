@@ -351,7 +351,13 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
           <button type="button" class="btn btn-ghost btn-sm" phx-click="move_project_close">
             {gettext("Cancel")}
           </button>
-          <button type="submit" class="btn btn-primary btn-sm" phx-disable-with={gettext("Moving…")}>
+          <%!-- A top-level project with nowhere to go under: nothing to submit. --%>
+          <button
+            type="submit"
+            class="btn btn-primary btn-sm"
+            disabled={is_nil(@parent) and @targets == []}
+            phx-disable-with={gettext("Moving…")}
+          >
             {gettext("Move")}
           </button>
         </div>

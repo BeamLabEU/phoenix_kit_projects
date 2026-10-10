@@ -138,6 +138,22 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
       assert ApiKeys.get(ctx.key.uuid).project_uuid == ctx.parent.uuid
     end
 
+    test "a carry step that fails does not undo or hide the move", ctx do
+      # a module row for an extension that no longer exists: enabling it on
+      # the project is refused, the rest is carried
+      PhoenixKitProjects.Test.Repo.insert!(%PhoenixKitProjects.Schemas.ProjectModule{
+        project_uuid: ctx.parent.uuid,
+        ext_key: "gone_extension",
+        enabled: true
+      })
+
+      assert {:ok, %{to: nil, members: 2}} =
+               ProjectMove.run(ctx.child, :top, ctx.scope, members: true, modules: true)
+
+      assert Projects.subproject_link(ctx.child.uuid) == nil
+      assert Extensions.enabled?(ctx.child.uuid, "events")
+    end
+
     test "a member of the parent without settings rights is refused", ctx do
       scope = fake_scope(user_uuid: ctx.mate.uuid, permissions: ["projects"])
 

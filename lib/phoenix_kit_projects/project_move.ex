@@ -27,6 +27,8 @@ defmodule PhoenixKitProjects.ProjectMove do
 
   import Ecto.Query
 
+  require Logger
+
   alias PhoenixKit.RepoHelper
   alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Members, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Project, ProjectModule}
@@ -129,16 +131,32 @@ defmodule PhoenixKitProjects.ProjectMove do
       with {:ok, moved} <- Projects.move_project(project.uuid, target) do
         actor = Keyword.get(opts, :actor_uuid)
 
+        # The move has committed. Whatever a carry step does from here — one
+        # that raises included — the caller still gets `{:ok, …}` with what
+        # was carried, so the move is logged and shown; a step that failed
+        # carried nothing and says so in the log.
         {:ok,
          Map.merge(moved, %{
-           members: carry_members(before, scope, opts, actor),
-           modules: carry_modules(before, scope, opts, actor),
-           keys: carry_keys(before, scope, opts, actor)
+           members: safely(:members, fn -> carry_members(before, scope, opts, actor) end),
+           modules: safely(:modules, fn -> carry_modules(before, scope, opts, actor) end),
+           keys: safely(:keys, fn -> carry_keys(before, scope, opts, actor) end)
          })}
       end
     else
       {:error, :forbidden}
     end
+  end
+
+  defp safely(what, fun) do
+    fun.()
+  rescue
+    e ->
+      Logger.warning("[Projects.ProjectMove] carrying #{what} failed: #{Exception.message(e)}")
+      0
+  catch
+    kind, reason ->
+      Logger.warning("[Projects.ProjectMove] carrying #{what} #{kind}: #{inspect(reason)}")
+      0
   end
 
   defp allowed?(project, :top, scope), do: Authz.can?(scope, project, :edit_settings)
