@@ -389,6 +389,72 @@ defmodule PhoenixKitProjects.Extensions do
   def config(_, _, _), do: %{}
 
   @doc """
+  The dated things the project's enabled extensions put on its Calendar
+  tab (`Extension`'s `calendar:` — a planned client meeting from the CRM,
+  say), each overlapping `[from, until)`, soonest first, with the
+  extension's key under `:ext_key`. Read-only and never copied: the
+  extension is asked each time, so an item that moved is right on the next
+  read. A provider that raises, or answers something else, contributes
+  nothing — the project's own events must still show.
+  """
+  @spec calendar_items(binary(), DateTime.t(), DateTime.t()) :: [map()]
+  def calendar_items(project_uuid, %DateTime{} = from, %DateTime{} = until)
+      when is_binary(project_uuid) do
+    project_uuid
+    |> enabled_for_project()
+    |> Enum.flat_map(fn {ext, _row} -> provider_items(ext, project_uuid, from, until) end)
+    |> Enum.sort_by(& &1.starts_at, {:asc, DateTime})
+  rescue
+    _ -> []
+  end
+
+  def calendar_items(_project_uuid, _from, _until), do: []
+
+  defp provider_items(%Extension{calendar: {mod, fun}, key: key}, project_uuid, from, until) do
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    case apply(mod, fun, [project_uuid, from, until]) do
+      %{items: items} when is_list(items) ->
+        items |> Enum.filter(&calendar_item?/1) |> Enum.map(&Map.put(&1, :ext_key, key))
+
+      _ ->
+        []
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "[Projects.Extensions] calendar provider of #{key} failed: #{Exception.message(e)}"
+      )
+
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  defp provider_items(_ext, _project_uuid, _from, _until), do: []
+
+  # The least an item must be to be drawn: who it is and when it starts.
+  defp calendar_item?(%{source: s, id: id, title: t, starts_at: %DateTime{}})
+       when is_binary(s) and is_binary(id) and is_binary(t),
+       do: true
+
+  defp calendar_item?(_), do: false
+
+  @doc """
+  Tells the project's open pages that an extension's calendar items
+  changed (a meeting was planned, moved, cancelled), so the Calendar tab
+  reads them again. For the extension to call after its own commit.
+  """
+  @spec calendar_changed(binary()) :: :ok
+  def calendar_changed(project_uuid) when is_binary(project_uuid) do
+    PubSub.broadcast_project(:project_calendar_changed, %{uuid: project_uuid})
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  def calendar_changed(_), do: :ok
+
+  @doc """
   The API providers the catalog's extensions declare
   (`PhoenixKitProjects.Extensions.ApiProvider`), as `%{ext, module}`.
   """

@@ -128,7 +128,16 @@ Records link by **mention token** (`#[type:uuid|label]` in a task's
 description — the forms' own way): `interaction:` on a task, `tasks:` on an
 interaction, read back as `interactions` / `tasks`. The ledger is readable
 (`GET /entries`, `GET /tasks/{id}/entries`), events too (`GET /events`), and
-the briefing carries the client's latest interactions and the next events.
+the briefing carries the client's latest interactions, what is planned with
+the client (`client.planned`) and the next calendar events.
+
+**A plan with the client is an interaction** (CRM V9), not a calendar event:
+`status: "planned"` on `POST /ext/interactions`, then the same record is
+moved, logged (`status: "happened"`) or cancelled by `PATCH`. An extension
+may also put its dated things on the project's Calendar tab, read-only
+(`calendar: {module, fun}` in its declaration → `Extensions.calendar_items/3`;
+`Extensions.calendar_changed/1` tells open pages to read again) — the CRM
+does, for the project's interactions.
 
 ## The calls
 

@@ -1035,6 +1035,24 @@ Module-local additions to that convention:
   or a plain name whose first paragraph states that it is not a PR folder).
 - Commit the review folder. An uncommitted review is one `git clean` from gone.
 
+### An extension's dated things on the Calendar tab (2026-10-10)
+
+The CRM's plan for a client meeting stopped being a project event (CRM V9:
+a plan is an interaction with `status: "planned"`), so it would have left
+the project's Calendar tab. An extension declaration may now carry
+`calendar: {module, fun}` (`fun.(project_uuid, from, until)` →
+`%{items, truncated}`; item shape in `Extensions.Extension`'s moduledoc).
+`Extensions.calendar_items/3` collects from the project's ENABLED
+extensions, rescued per provider; `ProjectEventsLive` draws the items
+beside the project's own events (grid id `"ext:<source>:<id>"`, accent
+colour, a cancelled one greyed with ✕), lists the planned ones under
+Upcoming, and opens one read-only with a link to the extension's own tab.
+Nothing is copied: the tab asks on load, on a month change and when the
+extension calls `Extensions.calendar_changed/1`
+(`{:projects, :project_calendar_changed, _}` on the project topic). The
+briefing gained `client.planned` (the provider's list with
+`status=planned`); `GET /events` stays the project's own events.
+
 ## TODOs
 
 - **Drop the embed-user core-helper fallback.** `Web.Helpers.assign_embed_user/2`

@@ -48,6 +48,14 @@ defmodule PhoenixKitProjects.Extensions.Extension do
       `PhoenixKitProjects.Authz.can?/5` about.
     * `notification_types` — passthrough entries merged into this module's
       `notification_types/0` (core's prefs-UI shape).
+    * `calendar` — `{module, function}` called with
+      `(project_uuid, from, until)` (UTC `DateTime`s): dated things of the
+      extension's own that belong on the project's Calendar tab, read-only
+      (a planned client meeting, say). Answers
+      `%{items: [item], truncated: boolean}`; an item is
+      `%{source, id, title, label, starts_at, ends_at | nil, all_day, status,
+      location, url, updated_at}` — `status: "cancelled"` is the one value
+      the hub treats specially. Nothing is copied: the hub asks each time.
     * `on_enable` / `on_disable` — `{module, function}` called with
       `(project_uuid, config)` after a successful toggle. Best-effort:
       failures are logged, never abort the toggle.
@@ -81,6 +89,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
             on_enable: nil,
             on_disable: nil,
             api: nil,
+            calendar: nil,
             data_retention: :keep,
             default_enabled: false,
             category: nil,
@@ -108,6 +117,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
           on_enable: {module(), atom()} | nil,
           on_disable: {module(), atom()} | nil,
           api: module() | [module()] | nil,
+          calendar: {module(), atom()} | nil,
           data_retention: :keep,
           default_enabled: boolean(),
           category: String.t() | nil,
@@ -145,6 +155,7 @@ defmodule PhoenixKitProjects.Extensions.Extension do
          # A record of this extension on the projects JSON API — see
          # `PhoenixKitProjects.Extensions.ApiProvider`.
          api: normalize_api(map[:api], source),
+         calendar: normalize_callback(map[:calendar], source, :calendar),
          data_retention: :keep,
          default_enabled: map[:default_enabled] == true,
          category: map[:category] && to_string(map[:category]),

@@ -125,7 +125,13 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         case list_interactions(provider, Json.rescope(conn, p), since) do
           # one line each: the bodies are the interaction's own read
           {:ok, %{interactions: rows}} ->
-            %{project_uuid: p.uuid, interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"]))}
+            %{
+              project_uuid: p.uuid,
+              interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"])),
+              # what is planned with the client, soonest first — and what is
+              # past its time with no outcome said (`overdue`)
+              planned: planned_lines(provider, Json.rescope(conn, p))
+            }
 
           _ ->
             nil
@@ -144,6 +150,26 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
     params = if since, do: Map.put(params, "since", DateTime.to_iso8601(since)), else: params
     # credo:disable-for-next-line Credo.Check.Refactor.Apply
     apply(provider, :list, [ExtController.ctx(conn), params])
+  end
+
+  # A provider that knows no `status` answers its usual list; only rows
+  # that say they are planned are taken.
+  defp planned_lines(provider, conn) do
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    case apply(provider, :list, [
+           ExtController.ctx(conn),
+           %{"status" => "planned", "limit" => "5"}
+         ]) do
+      {:ok, %{interactions: rows}} ->
+        rows
+        |> Enum.filter(&(Map.get(&1, :status) == "planned"))
+        |> Enum.map(&Map.drop(&1, [:body, "body"]))
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
   end
 
   defp upcoming_events(project) do

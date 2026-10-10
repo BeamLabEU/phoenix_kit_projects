@@ -1008,7 +1008,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/events",
         summary:
-          "The project's planned events - meetings, milestones, reviews - in time order: the plan an interaction's event_uuid points at. Needs the events extension on the project.",
+          "The project's own calendar events - milestones, reviews, internal dates - in time order. A meeting planned with the client is NOT here: it is an interaction with status planned (GET /ext/interactions?status=planned). Needs the events extension on the project.",
         auth: true,
         scope: "tasks:read",
         action: "view",
@@ -1348,8 +1348,20 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     last day (for the daily story). Then the project and its policy, the sub-projects one line
     each, the project's notes since a moment, the client's latest interactions
     (`client.interactions` — from the nearest project above that holds the client, when you
-    work in a sub-project; `client.project_uuid` says which) and the next planned events
-    (`events`). Every task row carries its `interactions`. Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
+    work in a sub-project; `client.project_uuid` says which), what is planned with the client
+    (`client.planned`, soonest first; `overdue: true` on one whose time has passed with no
+    outcome said) and the project's next calendar events (`events`).
+
+    **Planning with the client.** A plan is an interaction, not a calendar event:
+    `POST /ext/interactions {status: "planned", occurred_at: <a future start>, …}` with who is
+    coming in `parties` (they are notified) and `location`. It is the same record from then on —
+    move it with a new `occurred_at`, and once it has happened `PATCH` it to
+    `status: "happened"` with the real start, the length and what was discussed, or to
+    `status: "cancelled"` saying why in `body` (a length is still welcome: the drive there
+    cost time). Nothing turns a plan into a record by itself; one past its time waits with
+    `overdue: true`. `GET /ext/interactions` without `status` is the record (happened and
+    cancelled); `?status=planned` is the plan. Poll with `updated_since`, since a plan changes
+    after you first see it. Every task row carries its `interactions`. Then poll `GET /tasks?updated_since=<the now of your last answer>` no more than
     once a minute; it answers what changed at or after that moment (inclusive, so a change in
     the same second is never lost - dedupe by uuid) and `now` for the next round.
 

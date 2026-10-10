@@ -18,7 +18,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   # A destructive action that asks through core's confirm modal.
   import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
 
-  alias PhoenixKitProjects.{L10n, ProjectEvents, Projects}
+  alias PhoenixKitProjects.{Extensions, L10n, Paths, ProjectEvents, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.ProjectEvent
   alias PhoenixKitProjects.Web.Components.ConfirmAction
@@ -46,6 +46,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
        anchor_date: Date.utc_today(),
        today: Date.utc_today(),
        selected: nil,
+       selected_item: nil,
        modal_open: false,
        modal_date: nil
      )
@@ -69,7 +70,16 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
     {:noreply, socket |> load_events() |> assign(selected: selected)}
   end
 
-  # The calendar component's callbacks arrive as messages.
+  # An extension's own dated things changed (the CRM planned, moved or
+  # cancelled a client meeting): read them again.
+  def handle_info({:projects, :project_calendar_changed, _payload}, socket),
+    do: {:noreply, socket |> load_events() |> assign(selected_item: nil)}
+
+  # The calendar component's callbacks arrive as messages. An extension's
+  # item carries its own id shape ("ext:<source>:<id>") and opens read-only.
+  def handle_info({:calendar_event_click, "ext:" <> _ = id}, socket),
+    do: {:noreply, assign(socket, selected_item: find_item(socket, id))}
+
   def handle_info({:calendar_event_click, uuid}, socket) do
     selected = socket.assigns.project && ProjectEvents.get(socket.assigns.project.uuid, uuid)
     {:noreply, assign(socket, selected: selected)}
@@ -108,8 +118,11 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   end
 
   def handle_event("close_detail", _params, socket) do
-    {:noreply, assign(socket, selected: nil)}
+    {:noreply, assign(socket, selected: nil, selected_item: nil)}
   end
+
+  def handle_event("select_item", %{"id" => id}, socket),
+    do: {:noreply, assign(socket, selected_item: find_item(socket, id))}
 
   def handle_event("select_event", %{"uuid" => uuid}, socket) do
     selected = socket.assigns.project && ProjectEvents.get(socket.assigns.project.uuid, uuid)
@@ -176,22 +189,98 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   defp load_events(socket) do
     case socket.assigns.project do
       nil ->
-        assign(socket, events: [], calendar_events: [], upcoming: [])
+        assign(socket, events: [], items: [], calendar_events: [], upcoming: [])
 
       project ->
         events = ProjectEvents.list_for_project(project.uuid)
         now = DateTime.utc_now()
         today = Date.utc_today()
+        items = extension_items(project, socket.assigns.anchor_date, now)
 
         assign(socket,
           events: events,
-          calendar_events: Enum.map(events, &to_calendar_event/1),
-          upcoming:
-            events
-            |> Enum.filter(&still_upcoming?(&1, now, today))
-            |> Enum.take(10)
+          items: items,
+          calendar_events:
+            Enum.map(events, &to_calendar_event/1) ++ Enum.map(items, &item_to_calendar_event/1),
+          upcoming: upcoming(events, items, now, today)
         )
     end
+  end
+
+  # What the project's extensions put on this calendar (a planned client
+  # meeting): the month on screen with one either side, and a year ahead
+  # for the upcoming list. Read each time — nothing is copied here.
+  defp extension_items(project, anchor, now) do
+    month_start = DateTime.new!(%{anchor | day: 1}, ~T[00:00:00], "Etc/UTC")
+    from = Enum.min([DateTime.add(month_start, -31 * 86_400), now], DateTime)
+
+    until =
+      Enum.max(
+        [DateTime.add(month_start, 62 * 86_400), DateTime.add(now, 366 * 86_400)],
+        DateTime
+      )
+
+    Extensions.calendar_items(project.uuid, from, until)
+  end
+
+  # The project's own events and the extensions' items still to come, in
+  # one list by start. An item that happened or was cancelled is on the
+  # grid, not in "what's next".
+  defp upcoming(events, items, now, today) do
+    events = Enum.filter(events, &still_upcoming?(&1, now, today))
+
+    items =
+      Enum.filter(items, fn i ->
+        Map.get(i, :status) not in ["happened", "cancelled"] and
+          DateTime.compare(Map.get(i, :ends_at) || i.starts_at, now) != :lt
+      end)
+
+    (events ++ items)
+    |> Enum.sort_by(& &1.starts_at, {:asc, DateTime})
+    |> Enum.take(10)
+  end
+
+  defp item_id(%{source: source, id: id}), do: "ext:#{source}:#{id}"
+
+  defp find_item(socket, id), do: Enum.find(socket.assigns.items, &(item_id(&1) == id))
+
+  defp item_cancelled?(item), do: Map.get(item, :status) == "cancelled"
+
+  # A chip like a timed event's, in the extension's own colour; a cancelled
+  # one stays on the grid, greyed and marked, so the day still explains itself.
+  defp item_to_calendar_event(item) do
+    start_d = DateTime.to_date(item.starts_at)
+    end_d = Date.add(DateTime.to_date(Map.get(item, :ends_at) || item.starts_at), 1)
+    time = Calendar.strftime(item.starts_at, "%H:%M")
+    cancelled = item_cancelled?(item)
+
+    PhoenixLiveCalendar.event(item_id(item), start_d,
+      title: if(cancelled, do: "✕ #{time} #{item.title}", else: "#{time} #{item.title}"),
+      end: end_d,
+      all_day: true,
+      color: if(cancelled, do: "bg-neutral", else: "bg-accent")
+    )
+  end
+
+  defp item_time_label(item) do
+    start_label =
+      "#{L10n.format_date(item.starts_at)} #{Calendar.strftime(item.starts_at, "%H:%M")}"
+
+    case Map.get(item, :ends_at) do
+      %DateTime{} = ends_at -> "#{start_label} – #{Calendar.strftime(ends_at, "%H:%M")}"
+      _ -> start_label
+    end
+  end
+
+  # Where the item is managed: the extension's own tab on this project when
+  # it has one (the CRM's Client tab), else the address the item gave.
+  defp item_path(project, item) do
+    case Extensions.Registry.get(to_string(Map.get(item, :ext_key))) do
+      %{tabs: [%{key: tab_key} | _]} -> Paths.project_ext_tab(project.uuid, tab_key)
+      _ -> Map.get(item, :url)
+    end
+  rescue
+    _ -> Map.get(item, :url)
   end
 
   # All-day moments are stored as midnights, so a raw DateTime compare
@@ -239,7 +328,8 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
     anchor = socket.assigns.anchor_date
     first = %{anchor | day: 1}
     shifted = Date.add(first, if(offset > 0, do: 32, else: -1))
-    assign(socket, anchor_date: %{shifted | day: 1})
+    # the extensions' items are read for the month on screen
+    socket |> assign(anchor_date: %{shifted | day: 1}) |> load_events()
   end
 
   defp event_attrs(params) do
@@ -398,18 +488,37 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
               :for={event <- @upcoming}
               class="flex items-center gap-3 rounded-lg border border-base-200 px-3 py-2"
             >
-              <.icon name="hero-calendar" class="w-4 h-4 text-info shrink-0" />
-              <button
-                type="button"
-                phx-click="select_event"
-                phx-value-uuid={event.uuid}
-                class="text-left text-sm font-medium link link-hover truncate"
-              >
-                {event.title}
-              </button>
-              <span class="text-xs text-base-content/60 ml-auto shrink-0">
-                {event_time_label(event)}
-              </span>
+              <%= if is_struct(event, ProjectEvent) do %>
+                <.icon name="hero-calendar" class="w-4 h-4 text-info shrink-0" />
+                <button
+                  type="button"
+                  phx-click="select_event"
+                  phx-value-uuid={event.uuid}
+                  class="text-left text-sm font-medium link link-hover truncate"
+                >
+                  {event.title}
+                </button>
+                <span class="text-xs text-base-content/60 ml-auto shrink-0">
+                  {event_time_label(event)}
+                </span>
+              <% else %>
+                <%!-- An extension's item (a planned client meeting): read-only here. --%>
+                <.icon name="hero-user-group" class="w-4 h-4 text-accent shrink-0" />
+                <button
+                  type="button"
+                  phx-click="select_item"
+                  phx-value-id={item_id(event)}
+                  class="text-left text-sm font-medium link link-hover truncate"
+                >
+                  {event.title}
+                </button>
+                <span :if={Map.get(event, :label)} class="badge badge-ghost badge-sm shrink-0">
+                  {event.label}
+                </span>
+                <span class="text-xs text-base-content/60 ml-auto shrink-0">
+                  {item_time_label(event)}
+                </span>
+              <% end %>
             </div>
           <% end %>
         </div>
@@ -449,6 +558,43 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
             >
               <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Remove")}
             </.button>
+            <.button type="button" size="sm" phx-click="close_detail">
+              {gettext("Close")}
+            </.button>
+          </:actions>
+        </.modal>
+
+        <%!-- An extension's item: what it is and the way to where it is
+             managed. Nothing about it can be changed from here. --%>
+        <.modal
+          :if={@selected_item}
+          show
+          on_close="close_detail"
+          id={"event-item-#{@project.uuid}"}
+          max_width="md"
+        >
+          <:title>{@selected_item.title}</:title>
+          <div class="flex flex-col gap-2 text-sm">
+            <div class="flex flex-wrap items-center gap-2">
+              <.icon name="hero-clock" class="w-4 h-4 opacity-60" />
+              <span>{item_time_label(@selected_item)}</span>
+              <span :if={Map.get(@selected_item, :label)} class="badge badge-ghost badge-sm">
+                {@selected_item.label}
+              </span>
+              <span :if={item_cancelled?(@selected_item)} class="badge badge-error badge-outline badge-sm">
+                {gettext("Cancelled")}
+              </span>
+            </div>
+            <div :if={Map.get(@selected_item, :location)} class="flex items-center gap-2">
+              <.icon name="hero-map-pin" class="w-4 h-4 opacity-60" />
+              <span>{@selected_item.location}</span>
+            </div>
+          </div>
+          <:actions>
+            <% path = item_path(@project, @selected_item) %>
+            <.link :if={path} navigate={path} class="btn btn-ghost btn-sm">
+              <.icon name="hero-arrow-top-right-on-square" class="w-4 h-4" /> {gettext("Open")}
+            </.link>
             <.button type="button" size="sm" phx-click="close_detail">
               {gettext("Close")}
             </.button>
