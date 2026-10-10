@@ -1338,15 +1338,18 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     WHERE key IS NULL AND is_template
     """)
 
-    execute(fn -> backfill_project_keys(prefix) end)
+    execute(fn -> backfill_project_keys(repo(), prefix) end)
   end
 
+  @doc false
   # Real projects get the key their name suggests, oldest first, so the
   # first "Kitchen" is `KIT` and the next `KIT2`. `Refs.suggest_key/2` is
   # the one place that rule is written; this only feeds it what is taken.
-  defp backfill_project_keys(prefix) do
+  # Public for its test: a fresh test database has no projects to backfill,
+  # so the chain alone never runs this over a row.
+  def backfill_project_keys(repo, prefix) do
     %{rows: rows} =
-      repo().query!(
+      repo.query!(
         """
         SELECT uuid::text, name FROM #{prefix}.phoenix_kit_projects
         WHERE key IS NULL ORDER BY inserted_at, uuid
@@ -1354,13 +1357,15 @@ defmodule PhoenixKitProjects.Migrations.Schema do
         []
       )
 
-    %{rows: taken} = repo().query!("SELECT key FROM #{prefix}.phoenix_kit_project_keys", [])
+    %{rows: taken} = repo.query!("SELECT key FROM #{prefix}.phoenix_kit_project_keys", [])
 
     Enum.reduce(rows, MapSet.new(taken, fn [key] -> key end), fn [uuid, name], taken ->
       key = PhoenixKitProjects.Refs.suggest_key(name, &MapSet.member?(taken, &1))
 
-      repo().query!(
-        "UPDATE #{prefix}.phoenix_kit_projects SET key = $1 WHERE uuid = $2::uuid",
+      # The uuid travels as text both ways: a `$2::uuid` parameter wants the
+      # 16 raw bytes, not the string the SELECT above returned.
+      repo.query!(
+        "UPDATE #{prefix}.phoenix_kit_projects SET key = $1 WHERE uuid::text = $2",
         [key, uuid]
       )
 

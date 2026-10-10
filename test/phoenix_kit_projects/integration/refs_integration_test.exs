@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Integration.RefsIntegrationTest do
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Paths, Projects, ResourceLinks}
   alias PhoenixKitProjects.Schemas.Assignment
+  alias PhoenixKitProjects.Test.Repo
 
   defp project!(name, extra \\ %{}) do
     {:ok, project} =
@@ -111,6 +112,86 @@ defmodule PhoenixKitProjects.Integration.RefsIntegrationTest do
       for junk <- ["", "no such key!", "ZZZZ", "42", nil, Ecto.UUID.generate()] do
         assert Projects.get_project(junk) == nil
       end
+    end
+  end
+
+  describe "the backfill (chain V22)" do
+    test "keys every project that has none, oldest first, around the keys in use" do
+      taken = project!("Backfill Me")
+      assert taken.key == "BM"
+
+      # Rows as they were before V22: no key. The default trigger would give
+      # a placeholder back, so it is off for this transaction.
+      Repo.query!("ALTER TABLE phoenix_kit_projects DISABLE TRIGGER pkp_project_key_default")
+
+      uuids =
+        for {name, at} <- [{"Backfill Me", "2020-01-02"}, {"Backfill Me", "2020-01-01"}] do
+          uuid = Ecto.UUID.generate()
+
+          Repo.query!(
+            """
+            INSERT INTO phoenix_kit_projects
+              (uuid, name, is_template, counts_weekends, start_mode, inserted_at, updated_at)
+            VALUES ($1::text::uuid, $2, false, false, 'immediate', $3::text::timestamptz, now())
+            """,
+            [uuid, name, at]
+          )
+
+          uuid
+        end
+
+      Repo.query!("ALTER TABLE phoenix_kit_projects ENABLE TRIGGER pkp_project_key_default")
+      assert Enum.all?(uuids, &is_nil(Projects.get_project(&1).key))
+
+      PhoenixKitProjects.Migrations.Schema.backfill_project_keys(Repo, "public")
+
+      [newer, older] = Enum.map(uuids, &Projects.get_project(&1).key)
+      assert {older, newer} == {"BM2", "BM3"}
+      assert Projects.get_project("BM3").uuid == hd(uuids)
+
+      # and again changes nothing
+      PhoenixKitProjects.Migrations.Schema.backfill_project_keys(Repo, "public")
+      assert Projects.get_project(hd(uuids)).key == "BM3"
+    end
+
+    test "numbers existing tasks per project in the order they were made" do
+      project = project!("Number Backfill")
+      tasks = for _ <- 1..3, do: task!(project)
+
+      Repo.query!(
+        "UPDATE phoenix_kit_project_assignments SET number = NULL WHERE project_uuid::text = $1",
+        [project.uuid]
+      )
+
+      Repo.query!("DELETE FROM phoenix_kit_project_task_counters WHERE project_uuid::text = $1", [
+        project.uuid
+      ])
+
+      # the two statements V22 runs
+      Repo.query!("""
+      WITH numbered AS (
+        SELECT a.uuid,
+               COALESCE(c.last_number, 0) + row_number() OVER (
+                 PARTITION BY a.project_uuid ORDER BY a.inserted_at, a.uuid
+               ) AS n
+        FROM phoenix_kit_project_assignments a
+        LEFT JOIN phoenix_kit_project_task_counters c ON c.project_uuid = a.project_uuid
+        WHERE a.number IS NULL
+      )
+      UPDATE phoenix_kit_project_assignments a SET number = numbered.n
+      FROM numbered WHERE a.uuid = numbered.uuid
+      """)
+
+      Repo.query!("""
+      INSERT INTO phoenix_kit_project_task_counters (project_uuid, last_number)
+      SELECT project_uuid, max(number) FROM phoenix_kit_project_assignments
+      WHERE number IS NOT NULL GROUP BY project_uuid
+      ON CONFLICT (project_uuid) DO UPDATE
+        SET last_number = GREATEST(phoenix_kit_project_task_counters.last_number, EXCLUDED.last_number)
+      """)
+
+      assert Enum.map(tasks, &Projects.get_assignment(&1.uuid).number) == [1, 2, 3]
+      assert task!(project).number == 4
     end
   end
 
