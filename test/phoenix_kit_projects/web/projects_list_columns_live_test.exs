@@ -393,6 +393,26 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert has_element?(view, "#projects-list-body span", "ArcLive /")
     end
 
+    test "a member of the sub-project alone does not read its parent's name", %{conn: conn} do
+      parent = fixture_project(%{"name" => "HiddenParentName"})
+
+      {:ok, %{child_project: child}} =
+        Projects.create_subproject(parent.uuid, %{"name" => "VisibleChild"})
+
+      {:ok, user} =
+        PhoenixKit.Users.Auth.register_user(%{
+          "email" => "child-only-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ActorPass123!"
+        })
+
+      {:ok, _} = PhoenixKitProjects.Members.add_member(child.uuid, user.uuid, role: "member")
+      conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid, permissions: ["projects"]))
+
+      {:ok, _view, html} = live(conn, @path <> "?subs=true")
+      assert html =~ "VisibleChild"
+      refute html =~ "HiddenParentName"
+    end
+
     test "a list of only archived projects still shows its toolbar", %{conn: conn} do
       for p <- Projects.list_projects(), do: Projects.archive_project(p)
       gone = fixture_project(%{"name" => "OnlyArchived"})

@@ -244,7 +244,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       projects: page,
       metrics: metrics,
       total_count: total,
-      any_projects?: total > 0 or count_listed(scope, archived: :all) > 0,
+      # Sub-projects count: someone who belongs only to a sub-project has
+      # nothing at the top level, and must still get the toolbar whose
+      # "include sub-projects" filter is how they find it.
+      any_projects?:
+        total > 0 or count_listed(scope, archived: :all, include_subprojects: true) > 0,
       local_search?: local_search?,
       filtered_count: filtered_count(a, scope, listing, rows, local_search?, computed?),
       totals: totals(page, metrics, a.search, local_search?),

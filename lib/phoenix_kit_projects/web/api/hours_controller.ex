@@ -52,7 +52,7 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
   defp groups(summary, "person") do
     Enum.map(summary.by_worker, fn row ->
       %{
-        worker: Map.take(row.worker, [:key, :kind, :uuid, :name]),
+        worker: row.worker |> Map.take([:key, :kind, :uuid, :name]) |> without_email(),
         minutes: Json.number(row.minutes),
         billable_minutes: Json.number(row.billable_minutes),
         entries: row.entries
@@ -155,4 +155,13 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
   defp invalid(field, why) do
     {:error, Json.error_body(422, "validation_failed", "#{field} #{why}.", %{field => [why]})}
   end
+
+  # The page names a person with no full name by their email; the API never
+  # gives an email out (`Api.Assignee`'s rule), so such a worker has no name
+  # here — the uuid says who.
+  defp without_email(%{name: name} = worker) when is_binary(name) do
+    if String.contains?(name, "@"), do: %{worker | name: nil}, else: worker
+  end
+
+  defp without_email(worker), do: worker
 end

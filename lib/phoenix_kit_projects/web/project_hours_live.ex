@@ -337,7 +337,11 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     |> Map.new(fn {uuid, project} ->
       {uuid,
        %{
-         log: Authz.can?(scope, project, :log_time),
+         # Logging needs the project's work ledger ON as well as the
+         # right to log: the site-wide page shows many projects, and one
+         # whose ledger is off takes no entries here either (the project
+         # page and the API refuse the same).
+         log: Authz.can?(scope, project, :log_time) and Features.on?(project, "ledger"),
          manage: Authz.can?(scope, project, :edit_tasks)
        }}
     end)
@@ -519,6 +523,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       [{_name, first} | _] = projects ->
         project_uuid = socket.assigns[:project] && socket.assigns.project.uuid
 
+        # The projects on offer first: the form reads tasks and people only
+        # for one of them (`log_form/2`).
+        socket = assign(socket, log_projects: projects)
+
         {:noreply,
          assign(socket,
            log_form:
@@ -527,8 +535,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
                "date" => Date.to_iso8601(Period.today(socket.assigns.offset)),
                "person" => "me",
                "task" => if(socket.assigns.task != "", do: socket.assigns.task, else: "")
-             }),
-           log_projects: projects
+             })
          )}
     end
   end
@@ -663,7 +670,15 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   # The form's values plus the choices that depend on the project picked.
   defp log_form(socket, params) do
-    project_uuid = params["project"]
+    # Only a project the viewer may log on is read for its tasks and
+    # people: the param is the client's, and a forged uuid would otherwise
+    # list another project's task titles in the picker.
+    project_uuid =
+      case log_project(socket, params) do
+        {:ok, uuid} -> uuid
+        _ -> nil
+      end
+
     lang = L10n.current_content_lang()
 
     %{

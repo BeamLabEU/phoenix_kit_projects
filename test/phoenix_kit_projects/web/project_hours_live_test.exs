@@ -574,6 +574,40 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       assert render_click(view, "delete_entry", %{"uuid" => foreign.uuid}) =~ "Entry not found."
     end
 
+    test "the log form reads tasks only of a project the viewer may log on",
+         %{conn: conn, project: project} do
+      task(project, "Foreign secret task")
+      mine = fixture_project(%{"name" => "Mine #{uniq()}"})
+      task(mine, "My own task")
+      off = fixture_project(%{"name" => "Ledger off #{uniq()}"})
+      task(off, "Task behind a switched-off ledger")
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(off, %{"ledger" => false})
+      member = user("Lena", "Logger")
+      {:ok, _} = Members.add_member(mine, member.uuid, role: "member")
+      {:ok, _} = Members.add_member(off, member.uuid, role: "member")
+
+      conn = put_test_scope(conn, fake_scope(user_uuid: member.uuid, permissions: ["projects"]))
+      {:ok, view, _html} = live(conn, "/en/admin/projects/hours")
+      render_click(view, "open_log", %{})
+
+      assert render_change(view, "log_change", %{"project" => mine.uuid}) =~ "My own task"
+      # a project they cannot see, named by a forged param
+      refute render_change(view, "log_change", %{"project" => project.uuid}) =~
+               "Foreign secret task"
+
+      # theirs, but its work ledger is off: no tasks offered, no entry taken
+      refute render_change(view, "log_change", %{"project" => off.uuid}) =~
+               "Task behind a switched-off ledger"
+
+      render_submit(view, "save_log", %{
+        "project" => off.uuid,
+        "date" => Date.to_iso8601(Date.utc_today()),
+        "duration" => "20"
+      })
+
+      assert Ledger.list_entries(off.uuid) == []
+    end
+
     test "logging from here picks the project and reads its tasks", %{
       conn: conn,
       project: project

@@ -232,15 +232,33 @@ defmodule PhoenixKitProjects.ListMetrics do
     ])
   end
 
-  defp read(:parents, _projects, uuids, _opts) do
-    from(a in Assignment,
-      join: p in Project,
-      on: p.uuid == a.project_uuid,
-      where: a.child_project_uuid in ^uuids,
-      select: {a.child_project_uuid, p}
-    )
-    |> repo().all()
-    |> Map.new()
+  # Only a parent the viewer may open: a project's name is information
+  # (`Crumbs.viewable_chain/2`'s rule), and someone who holds the
+  # sub-project alone must not read its parent's off the list. The answer
+  # is asked once per distinct parent, not per row.
+  defp read(:parents, _projects, uuids, opts) do
+    scope = Keyword.get(opts, :scope)
+
+    rows =
+      from(a in Assignment,
+        join: p in Project,
+        on: p.uuid == a.project_uuid,
+        where: a.child_project_uuid in ^uuids,
+        select: {a.child_project_uuid, p}
+      )
+      |> repo().all()
+
+    viewable =
+      rows
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.uniq_by(& &1.uuid)
+      |> Enum.filter(&PhoenixKitProjects.Authz.can?(scope, &1, :view))
+      |> MapSet.new(& &1.uuid)
+
+    for {child, parent} <- rows,
+        MapSet.member?(viewable, parent.uuid),
+        into: %{},
+        do: {child, parent}
   end
 
   defp pluck(projects, field) do

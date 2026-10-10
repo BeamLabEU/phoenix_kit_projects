@@ -118,8 +118,10 @@ defmodule PhoenixKitProjects.Hours do
   The projects a viewer's site-wide Hours page reads: `:all` for someone
   who administers every project, otherwise what they hold through
   membership, a group grant or an open project — `Projects.list_projects_for/2`'s
-  rule, and every project nested under those (a sub-project has no
-  members of its own and is reached through its parent).
+  rule, and every project nested under those: whoever can open a project
+  already reads its sub-projects' tasks on its Tasks tab, so their hours
+  are read the same way. (A sub-project CAN have members of its own;
+  writing still asks the sub-project itself.)
   """
   @spec visible_project_uuids(term()) :: [binary()] | :all
   def visible_project_uuids(scope) do
