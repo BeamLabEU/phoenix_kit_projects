@@ -184,6 +184,12 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
   defp error_message(:would_create_cycle),
     do: gettext("A project cannot go under one of its own sub-projects.")
 
+  defp error_message(:too_deep),
+    do:
+      gettext("That would nest projects deeper than the %{max} levels a project tree can have.",
+        max: 8
+      )
+
   defp error_message(:archived), do: gettext("An archived project cannot be moved.")
   defp error_message(:not_found), do: gettext("That project no longer exists.")
   defp error_message(_), do: gettext("Could not move the project.")
@@ -206,6 +212,8 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
         project: preview.project,
         parent: preview.parent,
         targets: preview.targets,
+        parent_name:
+          if(preview.parent_open?, do: name(preview.parent), else: gettext("another project")),
         members: preview.members,
         modules: preview.modules,
         keys: preview.keys,
@@ -224,7 +232,7 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
       <p class="text-sm text-base-content/70">
         <%= if @parent do %>
           {gettext("Now a sub-project of \"%{parent}\". Its tasks, sub-projects and logged time stay with it wherever it goes.",
-            parent: name(@parent)
+            parent: @parent_name
           )}
         <% else %>
           {gettext("Now a project of its own. Its tasks, sub-projects and logged time stay with it wherever it goes.")}
@@ -249,7 +257,7 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
             <span>
               <span class="font-medium">{gettext("Make it its own project")}</span>
               <span class="block text-xs text-base-content/60">
-                {gettext("It leaves \"%{parent}\" and appears in the projects list.", parent: name(@parent))}
+                {gettext("It leaves \"%{parent}\" and appears in the projects list.", parent: @parent_name)}
               </span>
             </span>
           </label>
@@ -289,7 +297,7 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
           class="flex flex-col gap-2 border-t border-base-300 pt-3"
         >
           <legend class="text-sm font-medium">
-            {gettext("Take along from \"%{parent}\"", parent: name(@parent))}
+            {gettext("Take along from \"%{parent}\"", parent: @parent_name)}
           </legend>
 
           <label :if={@members != []} class="flex items-start gap-2 cursor-pointer">

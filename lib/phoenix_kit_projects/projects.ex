@@ -1147,7 +1147,9 @@ defmodule PhoenixKitProjects.Projects do
 
       case %Project{} |> Project.changeset(keyed) |> repo().insert() do
         {:error, %Ecto.Changeset{errors: errors}} = error ->
-          if attempts > 1 and Keyword.has_key?(errors, :key) and
+          # Not inside somebody's transaction (a sub-project, a clone): the
+          # refused insert has aborted it, and a second try would only raise.
+          if attempts > 1 and not repo().in_transaction?() and Keyword.has_key?(errors, :key) and
                Keyword.keys(errors) == [:key] do
             insert_project(attrs, is_template?, attempts - 1)
           else
@@ -3314,7 +3316,32 @@ defmodule PhoenixKitProjects.Projects do
       # not nest one either.
       not is_nil(child.archived_at) -> {:error, :archived}
       child.uuid in project_ancestor_uuids(parent.uuid) -> {:error, :would_create_cycle}
+      too_deep?(parent, child) -> {:error, :too_deep}
       true -> :ok
+    end
+  end
+
+  # `parent_chain/1` and `subtree_uuids/1` walk #{@max_parent_depth} levels: a
+  # project nested deeper than that falls out of its root's reach (an API
+  # key, the crumbs, the hours of the tree). So the deepest project under
+  # `child` must still be within that many steps of the root once `child`
+  # hangs under `parent`.
+  defp too_deep?(%Project{} = parent, %Project{} = child) do
+    above = length(project_ancestor_uuids(parent.uuid)) + 1
+    above + levels_below([child.uuid], 0) > @max_parent_depth
+  end
+
+  defp levels_below(_level, depth) when depth > @max_parent_depth, do: depth
+
+  defp levels_below(level, depth) do
+    case repo().all(
+           from(a in Assignment,
+             where: a.project_uuid in ^level and not is_nil(a.child_project_uuid),
+             select: a.child_project_uuid
+           )
+         ) do
+      [] -> depth
+      children -> levels_below(children, depth + 1)
     end
   end
 
@@ -3488,8 +3515,10 @@ defmodule PhoenixKitProjects.Projects do
 
   defp drop_link(nil), do: :ok
 
+  # `stale_error_field`: a detach that got there first (it does not take the
+  # link lock) is a refusal, not a raise.
   defp drop_link(%Assignment{} = link) do
-    case repo().delete(link) do
+    case repo().delete(link, stale_error_field: :uuid) do
       {:ok, _} -> :ok
       {:error, cs} -> {:error, cs}
     end

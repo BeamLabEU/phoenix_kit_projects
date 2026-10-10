@@ -167,6 +167,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     changeset
     |> update_change(:key, &PhoenixKitProjects.Refs.normalize_key/1)
     |> keep_key_when_blank()
+    |> no_key_for_a_template()
     |> validate_change(:key, fn :key, key ->
       if is_nil(key) or PhoenixKitProjects.Refs.valid_key?(key) do
         []
@@ -195,6 +196,14 @@ defmodule PhoenixKitProjects.Schemas.Project do
   end
 
   defp keep_key_when_blank(changeset), do: changeset
+
+  # A template's key is the database's placeholder (`TPL7`), never a chosen
+  # one: a key once registered is retired for good, and a template must not
+  # take one a project would want. The form shows no key field for one; a
+  # posted key is dropped here.
+  defp no_key_for_a_template(changeset) do
+    if get_field(changeset, :is_template), do: delete_change(changeset, :key), else: changeset
+  end
 
   defp key_format_message do
     gettext(

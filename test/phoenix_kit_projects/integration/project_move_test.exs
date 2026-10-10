@@ -8,6 +8,8 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Extensions, Members, ProjectMove, Projects}
+  alias PhoenixKitProjects.Schemas.ProjectModule
+  alias PhoenixKitProjects.Test.Repo
 
   defp user!(tag) do
     {:ok, user} =
@@ -60,6 +62,27 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
       assert {:ok, %{from: nil, to: to}} = Projects.move_project(a.uuid, b.uuid)
       assert to.uuid == b.uuid
       refute a.uuid in Enum.map(Projects.list_projects(), & &1.uuid)
+    end
+
+    test "a move that would nest deeper than the tree walks is refused" do
+      # a chain of nine: root and eight below it, as deep as the tree walks
+      root = fixture_project()
+
+      deepest =
+        Enum.reduce(1..8, root, fn n, parent -> child!(parent, "Level #{n}") end)
+
+      loose = fixture_project()
+      assert {:error, :too_deep} = Projects.move_project(loose.uuid, deepest.uuid)
+      assert Projects.subproject_link(loose.uuid) == nil
+
+      # one level up there is room for a project with nothing under it…
+      [above | _] = Enum.reverse(Projects.parent_chain(deepest.uuid))
+      assert {:ok, _} = Projects.move_project(loose.uuid, above.uuid)
+
+      # …but not for one that brings a level of its own
+      tall = fixture_project()
+      _under = child!(tall, "Under tall")
+      assert {:error, :too_deep} = Projects.move_project(tall.uuid, above.uuid)
     end
 
     test "refusals leave the tree as it was" do
@@ -141,7 +164,7 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
     test "a carry step that fails does not undo or hide the move", ctx do
       # a module row for an extension that no longer exists: enabling it on
       # the project is refused, the rest is carried
-      PhoenixKitProjects.Test.Repo.insert!(%PhoenixKitProjects.Schemas.ProjectModule{
+      Repo.insert!(%ProjectModule{
         project_uuid: ctx.parent.uuid,
         ext_key: "gone_extension",
         enabled: true
@@ -152,6 +175,28 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
 
       assert Projects.subproject_link(ctx.child.uuid) == nil
       assert Extensions.enabled?(ctx.child.uuid, "events")
+    end
+
+    test "an owner of the sub-project alone is offered nothing of the parent's", ctx do
+      solo = user!("solo")
+      {:ok, _} = Members.add_member(ctx.child.uuid, solo.uuid, role: "owner")
+      scope = fake_scope(user_uuid: solo.uuid, permissions: ["projects"])
+
+      preview = ProjectMove.preview(ctx.child, scope)
+      refute preview.parent_open?
+      assert preview.members == []
+      assert preview.modules == []
+      assert preview.keys == []
+
+      assert {:ok, %{members: 0, modules: 0, keys: 0}} =
+               ProjectMove.run(ctx.child, :top, scope,
+                 members: true,
+                 modules: true,
+                 keys: [ctx.key.uuid]
+               )
+
+      assert Members.role_of(ctx.child.uuid, ctx.owner.uuid) == nil
+      assert ApiKeys.get(ctx.key.uuid).project_uuid == ctx.parent.uuid
     end
 
     test "a member of the parent without settings rights is refused", ctx do

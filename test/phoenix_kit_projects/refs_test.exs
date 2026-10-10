@@ -78,6 +78,10 @@ defmodule PhoenixKitProjects.RefsTest do
         assert Refs.parse(bad) == :error, inspect(bad)
       end
 
+      # not what was typed once upcased, and not 16 raw bytes as a uuid
+      for loose <- ["ß", "ﬁ", "ıı", "ABCDEFGHIJKLMNOP"], do: assert(Refs.parse(loose) == :error)
+      assert Refs.suggest_key(<<255, 254>>) == "PRJ"
+
       # A uuid's first group is key-shaped: it is looked up as a KEY (and
       # finds nothing), never matched as a prefix of a uuid.
       assert Refs.parse("a3d6a459") == {:project, "A3D6A459"}

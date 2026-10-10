@@ -400,12 +400,12 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
         Projects.create_subproject(parent.uuid, %{"name" => "VisibleChild"})
 
       {:ok, user} =
-        PhoenixKit.Users.Auth.register_user(%{
+        Auth.register_user(%{
           "email" => "child-only-#{System.unique_integer([:positive])}@example.com",
           "password" => "ActorPass123!"
         })
 
-      {:ok, _} = PhoenixKitProjects.Members.add_member(child.uuid, user.uuid, role: "member")
+      {:ok, _} = Members.add_member(child.uuid, user.uuid, role: "member")
       conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid, permissions: ["projects"]))
 
       {:ok, _view, html} = live(conn, @path <> "?subs=true")

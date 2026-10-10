@@ -81,9 +81,11 @@ defmodule PhoenixKitProjects.Refs do
   def parse(value) when is_binary(value) do
     value = String.trim(value)
 
-    case Ecto.UUID.cast(value) do
+    # The 36-character text form only: `Ecto.UUID.cast/1` also takes any 16
+    # raw bytes, which a 16-letter word is.
+    case byte_size(value) == 36 && Ecto.UUID.cast(value) do
       {:ok, uuid} -> {:uuid, uuid}
-      :error -> parse_ref(value)
+      _ -> parse_ref(value)
     end
   end
 
@@ -95,8 +97,11 @@ defmodule PhoenixKitProjects.Refs do
         parse_task(String.upcase(key), String.to_integer(number))
 
       nil ->
-        key = String.upcase(value)
-        if key_shaped?(key), do: {:project, key}, else: :error
+        # Shape first, on what was typed: upcasing "ß" gives "SS", which
+        # would pass for a key nobody wrote.
+        if Regex.match?(~r/^[A-Za-z0-9]{2,10}$/, value) and key_shaped?(String.upcase(value)),
+          do: {:project, String.upcase(value)},
+          else: :error
     end
   end
 
@@ -133,7 +138,10 @@ defmodule PhoenixKitProjects.Refs do
   end
 
   defp base_key(name) when is_binary(name) do
-    case words(name) do
+    case String.valid?(name) && words(name) do
+      false ->
+        "PRJ"
+
       [] ->
         "PRJ"
 

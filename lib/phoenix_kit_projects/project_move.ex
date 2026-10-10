@@ -36,6 +36,7 @@ defmodule PhoenixKitProjects.ProjectMove do
   @type preview :: %{
           project: Project.t(),
           parent: Project.t() | nil,
+          parent_open?: boolean(),
           targets: [Project.t()],
           members: [map()],
           modules: [ProjectModule.t()],
@@ -53,13 +54,23 @@ defmodule PhoenixKitProjects.ProjectMove do
     ancestors = Projects.parent_chain(project.uuid)
     parent = List.last(ancestors)
 
+    # Rights on the sub-project say nothing about its parent (roles are not
+    # inherited either way): the parent's people and module settings are
+    # offered — shown, and copied — only to someone who may open the parent,
+    # and a key only to someone who manages the project it belongs to.
+    parent_open? =
+      not is_nil(parent) and (project.is_template or Authz.can?(scope, parent, :view))
+
+    source = if parent_open?, do: parent
+
     %{
       project: project,
       parent: parent,
+      parent_open?: parent_open?,
       targets: targets(project, parent, scope),
-      members: carried_members(project, parent),
-      modules: carried_modules(project, parent),
-      keys: ancestor_keys(ancestors)
+      members: carried_members(project, source),
+      modules: carried_modules(project, source),
+      keys: ancestor_keys(ancestors, scope)
     }
   end
 
@@ -98,12 +109,13 @@ defmodule PhoenixKitProjects.ProjectMove do
     |> Enum.reject(&MapSet.member?(own, {&1.ext_key, &1.instance_key}))
   end
 
-  defp ancestor_keys([]), do: []
+  defp ancestor_keys([], _scope), do: []
 
-  defp ancestor_keys(ancestors) do
+  defp ancestor_keys(ancestors, scope) do
     now = DateTime.utc_now()
 
     ancestors
+    |> Enum.filter(&Authz.can?(scope, &1, :manage_modules))
     |> Enum.flat_map(&ApiKeys.list_for_project(&1.uuid))
     |> Enum.filter(&ApiKey.active?(&1, now))
   end

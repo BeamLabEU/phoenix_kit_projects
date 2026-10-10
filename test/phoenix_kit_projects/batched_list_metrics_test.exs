@@ -111,8 +111,18 @@ defmodule PhoenixKitProjects.BatchedListMetricsTest do
     parent = fixture_project()
     {:ok, %{child_project: child}} = Projects.create_subproject(parent.uuid, %{"name" => "Inner"})
 
+    # A parent is named only to a viewer who may open it — here a site admin.
+    admin = %PhoenixKit.Users.Auth.Scope{
+      user: %Auth.User{uuid: Ecto.UUID.generate(), email: "admin@example.com"},
+      authenticated?: true,
+      cached_roles: ["Owner"],
+      cached_permissions: MapSet.new(["projects", "projects.admin_all"])
+    }
+
     assert %{parents: %{} = parents, tasks: tasks} =
-             ListMetrics.load([parent, child], [:parents, :tasks])
+             ListMetrics.load([parent, child], [:parents, :tasks], scope: admin)
+
+    assert ListMetrics.load([child], [:parents]).parents == %{}
 
     assert parents[child.uuid].uuid == parent.uuid
     refute Map.has_key?(parents, parent.uuid)
