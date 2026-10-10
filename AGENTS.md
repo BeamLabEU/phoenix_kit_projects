@@ -331,8 +331,9 @@ Repo-local aliases:
   server owns clamping.
 - **Admin tabs match independently — there is no longest-prefix arbitration.**
   A plain `match: :prefix` on `projects` lights the Projects subtab on
-  `tasks`/`templates`/`overview` too. The subtab uses a `{:regex, …}` matcher
-  that excludes the literal siblings; keep it in sync when a sibling is added.
+  `tasks`/`templates`/`hours`/`overview` too. The subtab uses a `{:regex, …}`
+  matcher that excludes the literal siblings; keep it in sync when a sibling is
+  added.
 - **Route declaration order is match order.** `projects/:id/:tab` is the
   extension catch-all and must stay LAST — after `templates/*`, whose first
   segment would otherwise read as an id. Extension tab keys must not reuse a
@@ -361,6 +362,8 @@ lib/phoenix_kit_projects/
 ├── members.ex, grants.ex, health.ex, labels.ex, ledger.ex, invoicing.ex,
 │   project_events.ex, whiteboards.ex, attachments.ex, portal.ex, portal_links.ex
 │                            # The hub's per-project surfaces
+├── hours.ex + hours/*.ex    # The ledger READ back: filters, grouped summaries, the
+│                            # timesheet; Period, Format, Report (pure)
 ├── statuses.ex              # Workflow statuses (entities-backed, cement-at-start)
 ├── schedule_layout.ex, running_tiers.ex, assignees.ex
 │                            # Durations→dates walk, tiering, effective-assignee resolution
@@ -390,6 +393,8 @@ lib/phoenix_kit_projects/
 Calendar tabs, read-only, nested via `live_render`); the project chrome pages
 `ProjectFilesLive`, `ProjectMembersLive`, `ProjectModulesLive`,
 `ProjectActivityLive`, `ProjectWhiteboardsLive`, `ProjectEventsLive`;
+`ProjectHoursLive` (a project's Hours tab AND the site-wide
+`/admin/projects/hours` page);
 `PopupHostLive` (the emit-mode dialog stack); `MemberProjectsLive` (the user
 dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 (legacy `projects/list/…`).
@@ -1137,6 +1142,56 @@ extension calls `Extensions.calendar_changed/1`
 (`{:projects, :project_calendar_changed, _}` on the project topic). The
 briefing gained `client.planned` (the provider's list with
 `status=planned`); `GET /events` stays the project's own events.
+
+## Hours (2026-10-10)
+
+`Ledger` writes, `Hours` reads. `PhoenixKitProjects.Hours` takes one filter
+map (`filters/1`: projects or `:all`, a period, workers, a task, billable, the
+viewer's offset) and answers `list/2` (a page of entries with who / task /
+project resolved for the page), `summary/2` (totals, by worker / task /
+project / day and the worker × day matrix — six grouped reads whatever the
+size, pinned in `hours_test.exs` with `QueryCounter`), `timesheet/1`,
+`workers/1` and `task_options/2`. Things worth knowing before touching it:
+
+- **An entry counts on the day the work was done**: `ended_at`, else
+  `started_at`, else `inserted_at` (`Hours.work_at/1`). The API's `occurred_at`
+  is stored as `ended_at`, so a batch reported the morning after lands on its
+  own day.
+- **One person, one line.** A staff record linked to a user account folds
+  into that user (`worker_index/1` answers the CANONICAL key), and a filter
+  on either identity finds both (`expand_workers/1`). An agent is named after
+  its API key, else the `api_key_name` its entries carry.
+- **`minutes` is people's time, `ai_minutes` an agent's** — the split
+  `Ledger.totals_for_project/1` makes.
+- **Days are cut with ONE offset per read** (`Hours.Period.offset_seconds/2`),
+  so a period across a daylight-saving switch has its days an hour off on one
+  side; totals are unaffected. Core's per-instant `TimeZone` helpers are newer
+  than this module's core floor.
+- **Ask `Authz.can?/5` with the project STRUCT.** With a bare uuid the resolver
+  cannot read the project's own "who can do what" floors and judges by the
+  defaults; `Hours.projects_by_uuid/1` is the batched read the page uses.
+
+`Web.ProjectHoursLive` is ONE LiveView in two places: the project's **Hours
+tab** — a tab the Tasks extension contributes with `requires_flag: "ledger"`
+(a tab-level key `Extension` keeps and `ProjectShowLive.ext_tabs_for/3`
+honours through `Features.on?/2`), mounted with the extension-tab session —
+and the admin subtab `projects/hours`, over `Hours.visible_project_uuids/1`
+(`:all` for `projects.admin_all`, else memberships / grants / open projects
+plus what is nested under them). Filters ride core's `UrlState` in `:history`
+mode; only the routed page renders the sync hook, a tab leaving the address
+bar to its host. Logging one's own time needs `:log_time`; logging for
+somebody else, or changing another person's entry, `:edit_tasks`; an entry
+already on an invoice (`Invoicing.invoiced_entry_uuids/1`) is shown and never
+changed there. The chart is server-rendered boxes (no JS, no new hook); its
+colours are eight CSS variables on `.pk-hours-viz`. The report replaces the
+page's content rather than opening a dialog (a dialog prints as its box):
+`Hours.Report` builds the text and the CSV (formula-leading cells written as
+text), the print rules hide everything but `.pk-hours-report`. On the API,
+`GET /hours` is the same read (`Web.Api.HoursController`).
+
+Not built: a running timer; editing an entry's day, note or person (the
+ledger amends minutes and the billable flag only); a saved or scheduled
+report; a true PDF file (the browser's print makes one).
 
 ## TODOs
 

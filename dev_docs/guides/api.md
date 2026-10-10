@@ -267,9 +267,23 @@ owed by a day. A value that is not a day is a 422 with nothing written.
 The four ledger POSTs take an optional `occurred_at` (ISO 8601, any offset,
 truncated to the second, at most 5 minutes ahead of the server's clock). It is
 stored as the entry's `ended_at` and echoed as `occurred_at`; `inserted_at`
-stays the receipt time (`recorded_at`). Nothing groups entries by it yet —
-totals are lifetime — but a batch reported the morning after keeps its real
-date on the row for when a period report exists.
+stays the receipt time (`recorded_at`). A task's `totals` are lifetime;
+`GET /hours` is the period read.
+
+## Hours for a period
+
+`GET /hours?from=2026-10-01&to=2026-10-31&group_by=person` sums the logged
+time of the project — and, unless `include_subprojects=false`, of everything
+nested under it — for a period: `totals` (`minutes` is people's time,
+`ai_minutes` an agent's, `billable_minutes`, `tokens`, `cost_cents`,
+`entries`, `people`) and `groups`, by `person` (the default), `task` or
+`day`. `from` / `to` are days (UTC; `to` is included) or ISO 8601 instants;
+either may be left out. `worker` narrows to one or more `worker.key`s as a
+`group_by=person` answer names them, `billable` to billable time or the rest.
+An entry counts on the day the work was done (`occurred_at`), else the day it
+was recorded. A person with both an account and a staff record is one line.
+It is the read behind the Hours tab (`PhoenixKitProjects.Hours`); scope
+`tasks:read`, like `GET /entries`.
 
 ## Not in v1
 

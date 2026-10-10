@@ -67,6 +67,28 @@ defmodule PhoenixKitProjects.Invoicing do
     end
   end
 
+  @doc """
+  Which of `entry_uuids` are already on an invoice — one read for a page of
+  entries. An invoiced entry is a line somebody was billed for: the Hours
+  page shows it as such and does not amend it. A list, not a `MapSet`: it
+  crosses into templates, and a page of entries is short.
+  """
+  @spec invoiced_entry_uuids([binary()]) :: [binary()]
+  def invoiced_entry_uuids([]), do: []
+
+  def invoiced_entry_uuids(entry_uuids) when is_list(entry_uuids) do
+    dumped = Enum.map(entry_uuids, &Ecto.UUID.dump!/1)
+
+    from(r in @refs_table,
+      where: r.entry_uuid in ^dumped,
+      select: type(r.entry_uuid, Ecto.UUID)
+    )
+    |> with_prefix()
+    |> RepoHelper.repo().all()
+  rescue
+    _ -> []
+  end
+
   @doc "Uninvoiced billable HUMAN time entries for a project, oldest first."
   @spec uninvoiced_entries(binary()) :: [WorkEntry.t()]
   def uninvoiced_entries(project_uuid) do

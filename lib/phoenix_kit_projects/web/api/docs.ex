@@ -962,6 +962,71 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         example: nil
       },
       %{
+        id: "getHours",
+        method: "GET",
+        path: "/hours",
+        summary:
+          "Logged time summed for a period: `totals` (people's minutes, billable minutes, an agent's `ai_minutes`, tokens, cost, entries, people) and one grouping in `groups` — by person (default), by task or by day. Reads the project and, unless `include_subprojects=false`, everything nested under it. A period is cut on when the work was done (`occurred_at`, else when it was recorded); days are UTC days. The same figures as the Hours tab.",
+        auth: true,
+        scope: "tasks:read",
+        action: "view",
+        feature: "ledger",
+        idempotency: nil,
+        params: [
+          %{
+            name: "from",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "a day (`2026-10-01`, UTC) or an ISO 8601 datetime; absent = from the beginning"
+          },
+          %{
+            name: "to",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "a day, INCLUDED, or an ISO 8601 datetime, excluded; absent = until now"
+          },
+          %{
+            name: "group_by",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "`person` (default), `task` or `day`"
+          },
+          %{
+            name: "worker",
+            in: :query,
+            type: "string",
+            required: false,
+            doc:
+              "a `worker.key` from a `group_by=person` answer (`user:<uuid>`, `staff_person:<uuid>`, `ai_agent:<uuid>`), several comma-separated"
+          },
+          %{
+            name: "billable",
+            in: :query,
+            type: "boolean",
+            required: false,
+            doc: "`true` = billable entries only, `false` = the rest"
+          },
+          %{
+            name: "include_subprojects",
+            in: :query,
+            type: "boolean",
+            required: false,
+            doc: "`true` by default"
+          },
+          %{
+            name: "project",
+            in: :query,
+            type: "string",
+            required: false,
+            doc: "a sub-project's uuid"
+          }
+        ],
+        example: nil
+      },
+      %{
         id: "listEntries",
         method: "GET",
         path: "/entries",

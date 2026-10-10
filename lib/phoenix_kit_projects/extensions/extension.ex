@@ -36,6 +36,12 @@ defmodule PhoenixKitProjects.Extensions.Extension do
   (`:not_mounted_at_router`, no `handle_params/3`), exactly like this
   module's own embeddable LVs.
 
+  A tab may name a feature flag it depends on (`requires_flag: "ledger"`):
+  the hub then offers the tab only while that flag resolves on for the
+  project (`Features.on?/2`, so the flag's own `requires` count too). The
+  Tasks extension's Hours tab is the first: it has nothing to show once the
+  work ledger is switched off.
+
   ## Forward-looking surface (declared now, dispatched incrementally)
 
   Per the 2026-08-05 plan-review panel: the contract carries its FULL surface
@@ -106,7 +112,8 @@ defmodule PhoenixKitProjects.Extensions.Extension do
           key: String.t(),
           label: String.t(),
           icon: String.t() | nil,
-          lv: module()
+          lv: module(),
+          requires_flag: String.t() | nil
         }
 
   @type t :: %__MODULE__{
@@ -196,7 +203,15 @@ defmodule PhoenixKitProjects.Extensions.Extension do
            false <- to_string(tab[:key]) in @reserved_tab_keys,
            lv = tab[:lv],
            true <- is_atom(lv) and not is_nil(lv) and Code.ensure_loaded?(lv) do
-        [%{key: to_string(tab[:key]), label: to_string(tab[:label]), icon: tab[:icon], lv: lv}]
+        [
+          %{
+            key: to_string(tab[:key]),
+            label: to_string(tab[:label]),
+            icon: tab[:icon],
+            lv: lv,
+            requires_flag: tab[:requires_flag] && to_string(tab[:requires_flag])
+          }
+        ]
       else
         _ ->
           Logger.warning(

@@ -114,7 +114,7 @@ defmodule PhoenixKitProjects.Web.LandingTest do
       id_at = idx.("projects/:id")
 
       for p <-
-            ~w(projects/tasks projects/templates projects/overview projects/list projects/list/*rest projects/new) do
+            ~w(projects/tasks projects/templates projects/hours projects/overview projects/list projects/list/*rest projects/new) do
         assert idx.(p) < id_at, "#{p} must be declared before projects/:id"
       end
     end
@@ -132,8 +132,25 @@ defmodule PhoenixKitProjects.Web.LandingTest do
       refute Tab.matches_path?(t, "/admin/projects/tasks")
       refute Tab.matches_path?(t, "/admin/projects/tasks/new")
       refute Tab.matches_path?(t, "/admin/projects/overview")
+      refute Tab.matches_path?(t, "/admin/projects/hours")
+      # …while a project's own Hours tab is a project page.
+      assert Tab.matches_path?(t, "/admin/projects/0199-abc/hours")
       refute Tab.matches_path?(t, "/admin/projects/templates/0199-abc")
       refute Tab.matches_path?(t, "/admin/projectsx")
+    end
+
+    test "Hours sits between Tasks and the Overview, on its own page" do
+      hours = tab(:admin_projects_hours)
+      assert hours.path == "projects/hours"
+      assert {PhoenixKitProjects.Web.ProjectHoursLive, :index} = hours.live_view
+      assert tab(:admin_projects_tasks).priority < hours.priority
+      assert hours.priority < tab(:admin_projects_overview).priority
+
+      resolved = Tab.resolve_path(hours, :admin)
+      assert Tab.matches_path?(resolved, "/admin/projects/hours")
+      refute Tab.matches_path?(resolved, "/admin/projects")
+      assert PhoenixKitProjects.Paths.hours() =~ "/admin/projects/hours"
+      assert PhoenixKitProjects.Paths.project_hours("abc") =~ "/admin/projects/abc/hours"
     end
 
     test "Tasks and Templates subtabs stay their own" do

@@ -53,6 +53,7 @@ defmodule PhoenixKitProjects.Test.Router do
     patch("/tasks/:id/checklist/:item", TasksController, :checklist_item)
     post("/tasks/:id/interactions/:interaction", TasksController, :link)
     delete("/tasks/:id/interactions/:interaction", TasksController, :unlink)
+    get("/hours", HoursController, :show)
     get("/entries", LedgerController, :index)
     get("/tasks/:id/entries", LedgerController, :task_index)
     get("/events", EventsController, :index)
@@ -92,6 +93,7 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/", ProjectsLive, :index)
       live("/templates", TemplatesLive, :index)
       live("/tasks", TasksLive, :index)
+      live("/hours", ProjectHoursLive, :index)
       live("/overview", OverviewLive, :index)
 
       # Legacy `list/…` addresses redirect to the same path without the segment.

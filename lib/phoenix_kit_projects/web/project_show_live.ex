@@ -2792,7 +2792,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       is_nil(scope) or ExtRegistry.visible_for_scope?(ext, scope)
     end)
     |> Enum.flat_map(fn {ext, row} ->
-      Enum.map(ext.tabs, fn tab ->
+      ext.tabs
+      # A tab that names a feature flag is offered only while the flag
+      # resolves on (the Tasks extension's Hours tab and the work ledger).
+      |> Enum.filter(&tab_flag_on?(&1, project))
+      |> Enum.map(fn tab ->
         %{
           id: "ext:#{ext.key}:#{tab.key}",
           # The URL segment of the tab (`/projects/:id/whiteboards`).
@@ -2811,6 +2815,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       Logger.warning("[Projects] ext_tabs_for failed: #{Exception.message(e)}")
       []
   end
+
+  defp tab_flag_on?(%{requires_flag: flag}, project) when is_binary(flag),
+    do: Features.on?(project, flag)
+
+  defp tab_flag_on?(_tab, _project), do: true
 
   # The extension's declared mutating action (its first non-:view
   # permission_action) — resolved by the HOST into the tab session's
@@ -4071,6 +4080,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   data-confirm={gettext("Create a draft invoice from all uninvoiced billable time?")}
                 >
                   <.icon name="hero-banknotes" class="w-3 h-3" /> {gettext("Invoice effort")}
+                </button>
+                <%!-- The whole picture — who, which task, which day — is the
+                     Hours tab (offered while the ledger is on). --%>
+                <button
+                  :if={Enum.any?(@ext_tabs, &(&1.id == "ext:tasks:hours"))}
+                  type="button"
+                  class="btn btn-ghost btn-xs"
+                  phx-click="switch_tab"
+                  phx-value-tab="ext:tasks:hours"
+                  id={"project-hours-link-#{@project.uuid}"}
+                >
+                  <.icon name="hero-clock" class="w-3 h-3" /> {gettext("Hours")}
                 </button>
                 <button type="button" class="btn btn-ghost btn-xs" phx-click="open_log_time">
                   <.icon name="hero-plus" class="w-3 h-3" /> {gettext("Log time")}

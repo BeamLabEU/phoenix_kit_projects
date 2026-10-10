@@ -427,6 +427,18 @@ defmodule PhoenixKitProjects do
             default: true,
             requires: ["scheduling"]
           }
+        ],
+        # Hours: the work ledger read back — who worked, on what, when —
+        # with its chart, timesheet and report. A contributed tab like any
+        # provider's, offered only while the `ledger` flag is on.
+        tabs: [
+          %{
+            key: "hours",
+            label: gettext_noop("Hours"),
+            icon: "hero-clock",
+            lv: PhoenixKitProjects.Web.ProjectHoursLive,
+            requires_flag: "ledger"
+          }
         ]
       },
       %{
@@ -629,12 +641,12 @@ defmodule PhoenixKitProjects do
   # Paths reach the matcher normalised (URL prefix + locale stripped, no
   # trailing slash): the landing itself and every project page under it —
   # i.e. anything under `projects` that is not one of the sibling subtabs
-  # (`tasks`, `templates`, `overview`). Legacy `list/…` addresses redirect
+  # (`tasks`, `templates`, `hours`, `overview`). Legacy `list/…` addresses redirect
   # before they render, so they need no match. A function, not a module
   # attribute — a compiled Regex holds a reference and cannot be injected
   # into a function body.
   defp projects_list_match,
-    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|overview)(/|$))(/.*)?$}}
+    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|hours|overview)(/|$))(/.*)?$}}
 
   @impl PhoenixKit.Module
   def admin_tabs do
@@ -708,6 +720,22 @@ defmodule PhoenixKitProjects do
         parent: :admin_projects,
         live_view: {PhoenixKitProjects.Web.TasksLive, :index}
       },
+      # Hours across every project the viewer may see: the same page as a
+      # project's Hours tab, with a project filter.
+      %Tab{
+        id: :admin_projects_hours,
+        label: "Hours",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-clock",
+        path: "projects/hours",
+        priority: 664,
+        level: :admin,
+        permission: module_key(),
+        match: :prefix,
+        parent: :admin_projects,
+        live_view: {PhoenixKitProjects.Web.ProjectHoursLive, :index}
+      },
       # Last on purpose: the list is where the work is, the Overview is
       # the read-only picture of it. Its pieces are also dashboards-module
       # widgets (`DashboardWidgets`) for anyone who wants them on a board.
@@ -718,7 +746,7 @@ defmodule PhoenixKitProjects do
         gettext_domain: "default",
         icon: "hero-home",
         path: "projects/overview",
-        priority: 664,
+        priority: 665,
         level: :admin,
         permission: module_key(),
         match: :prefix,

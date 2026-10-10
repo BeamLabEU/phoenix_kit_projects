@@ -12,6 +12,14 @@ defmodule PhoenixKitProjects.Paths do
   @spec index() :: String.t()
   def index, do: Routes.path(@base)
 
+  @doc "Hours across every project the viewer may see."
+  @spec hours() :: String.t()
+  def hours, do: Routes.path("#{@base}/hours")
+
+  @doc "A project's Hours tab (contributed by the Tasks extension)."
+  @spec project_hours(String.t()) :: String.t()
+  def project_hours(id), do: Routes.path("#{@base}/#{id}/hours")
+
   @doc "The Overview — the read-only picture of every project; the last subtab."
   @spec overview() :: String.t()
   def overview, do: Routes.path("#{@base}/overview")
