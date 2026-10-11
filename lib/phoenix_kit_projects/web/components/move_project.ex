@@ -217,6 +217,10 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
         members: preview.members,
         modules: preview.modules,
         keys: preview.keys,
+        links: preview.links,
+        # Whether the project will have a client of its own after the move,
+        # which is what keeps another project's interactions readable.
+        client?: preview.links.own? or (preview.links.carried? and assigns.move.modules),
         under?: assigns.move.target not in ["top", ""]
       )
 
@@ -291,6 +295,30 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
             </span>
           </label>
         </fieldset>
+
+        <div
+          :if={@links.count > 0}
+          id={"move-project-links-#{@project.uuid}"}
+          class={["alert text-sm", if(@client?, do: "alert-info", else: "alert-warning")]}
+        >
+          <.icon name="hero-link" class="w-5 h-5 shrink-0" />
+          <div class="flex flex-col gap-1">
+            <span>
+              {ngettext(
+                "%{count} link from a task here points at a client interaction logged on another project.",
+                "%{count} links from tasks here point at client interactions logged on other projects.",
+                @links.count,
+                count: @links.count
+              )}
+            </span>
+            <span :if={@client?} class="text-xs">
+              {gettext("The interactions stay where they were logged. The links keep opening from here as long as this project has the same client.")}
+            </span>
+            <span :if={not @client?} class="text-xs">
+              {gettext("The interactions stay where they were logged, and this project would have no client of its own: take the module settings along, or set the client afterwards, for the links to keep opening from here.")}
+            </span>
+          </div>
+        </div>
 
         <fieldset
           :if={@parent && (@members != [] or @modules != [] or @keys != [])}

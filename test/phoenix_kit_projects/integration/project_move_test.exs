@@ -21,6 +21,33 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
     user
   end
 
+  defmodule Meetings do
+    @moduledoc false
+    # A stand-in for the CRM's interactions provider: where each
+    # interaction was logged is whatever the test put in the process
+    # dictionary of the test process (`ProjectMove.preview/2` runs there).
+    def resource, do: "interactions"
+    def scopes, do: %{read: "interactions:read", write: "interactions:write"}
+    def action, do: :log_interaction
+    def docs, do: []
+    def projects_of(uuids), do: Map.take(Process.get(:logged_on, %{}), uuids)
+  end
+
+  defmodule MeetingsProvider do
+    @moduledoc false
+    def phoenix_kit_project_extensions do
+      [
+        %{
+          key: "meetings",
+          name: "Meetings",
+          description: "A test extension with interactions",
+          permission_actions: [:view, :log_interaction],
+          api: PhoenixKitProjects.Integration.ProjectMoveTest.Meetings
+        }
+      ]
+    end
+  end
+
   defp child!(parent, name \\ "Child") do
     {:ok, %{child_project: child}} = Projects.create_subproject(parent.uuid, %{"name" => name})
     child
@@ -130,6 +157,53 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
       assert key.uuid == ctx.key.uuid
       refute ctx.parent.uuid in Enum.map(preview.targets, & &1.uuid)
       refute ctx.child.uuid in Enum.map(preview.targets, & &1.uuid)
+    end
+
+    test "preview counts the task links to interactions logged outside the project", ctx do
+      previous = Application.get_env(:phoenix_kit_projects, :extension_providers, [])
+
+      Application.put_env(:phoenix_kit_projects, :extension_providers, [
+        MeetingsProvider | previous
+      ])
+
+      PhoenixKitProjects.Extensions.Registry.refresh()
+
+      on_exit(fn ->
+        Application.put_env(:phoenix_kit_projects, :extension_providers, previous)
+        PhoenixKitProjects.Extensions.Registry.refresh()
+      end)
+
+      {:ok, _} = Extensions.enable(ctx.parent.uuid, "meetings")
+
+      task = fn ->
+        {:ok, a} =
+          Projects.create_assignment(%{
+            "project_uuid" => ctx.child.uuid,
+            "task_uuid" => fixture_task().uuid
+          })
+
+        a
+      end
+
+      [parents, own, gone] = for _ <- 1..3, do: Ecto.UUID.generate()
+      [first, second] = [task.(), task.()]
+      # Two tasks point at the parent's meeting, one at a meeting logged on
+      # the project itself, one at a meeting nobody knows any more.
+      for {a, i} <- [{first, parents}, {second, parents}, {first, own}, {second, gone}] do
+        {:ok, _} = Projects.link_interaction(a, i, "Meeting")
+      end
+
+      Process.put(:logged_on, %{parents => ctx.parent.uuid, own => ctx.child.uuid})
+
+      # The project has no such module of its own; the parent's can be carried.
+      assert ProjectMove.preview(ctx.child, ctx.scope).links ==
+               %{count: 2, own?: false, carried?: true}
+
+      {:ok, _} = ProjectMove.run(ctx.child, :top, ctx.scope, modules: true)
+      moved = Projects.get_project(ctx.child.uuid)
+
+      assert ProjectMove.preview(moved, ctx.scope).links ==
+               %{count: 2, own?: true, carried?: false}
     end
 
     test "run carries members with their roles, modules and the chosen key", ctx do

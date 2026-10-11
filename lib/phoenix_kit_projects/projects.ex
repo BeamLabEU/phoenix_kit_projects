@@ -4004,6 +4004,26 @@ defmodule PhoenixKitProjects.Projects do
     _ -> []
   end
 
+  @doc """
+  The interaction uuid of every task ↔ interaction link on the tasks of
+  `project_uuids`, one per link (a meeting three tasks point at is there
+  three times).
+  """
+  @spec interaction_links_in([binary()]) :: [String.t()]
+  def interaction_links_in(project_uuids) when is_list(project_uuids) do
+    repo().all(
+      from(j in @task_interactions,
+        join: a in Assignment,
+        on: a.uuid == j.assignment_uuid,
+        where: a.project_uuid in ^project_uuids,
+        select: type(j.interaction_uuid, Ecto.UUID)
+      )
+      |> with_table_prefix()
+    )
+  rescue
+    _ -> []
+  end
+
   @doc "Interaction uuids per task uuid for a displayed set, one query."
   @spec interactions_for_assignments([binary()]) :: %{binary() => [String.t()]}
   def interactions_for_assignments([]), do: %{}

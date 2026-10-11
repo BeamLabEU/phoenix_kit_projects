@@ -23,6 +23,13 @@ defmodule PhoenixKitProjects.ProjectMove do
       project, so the token an agent already holds keeps working.
 
   `preview/2` says what a move would leave behind; `run/4` does it.
+
+  One thing a move cannot carry is somebody else's records. A task here
+  may be linked to an interaction logged on the old parent (the client
+  meeting it came out of); that meeting stays the parent's. The preview
+  counts those links (`:links`) so the dialog can say what keeps them
+  readable: the project having the same client, which the module settings
+  carry.
   """
 
   import Ecto.Query
@@ -40,7 +47,8 @@ defmodule PhoenixKitProjects.ProjectMove do
           targets: [Project.t()],
           members: [map()],
           modules: [ProjectModule.t()],
-          keys: [ApiKey.t()]
+          keys: [ApiKey.t()],
+          links: %{count: non_neg_integer(), own?: boolean(), carried?: boolean()}
         }
 
   @doc """
@@ -62,6 +70,7 @@ defmodule PhoenixKitProjects.ProjectMove do
       not is_nil(parent) and (project.is_template or Authz.can?(scope, parent, :view))
 
     source = if parent_open?, do: parent
+    modules = carried_modules(project, source)
 
     %{
       project: project,
@@ -69,9 +78,47 @@ defmodule PhoenixKitProjects.ProjectMove do
       parent_open?: parent_open?,
       targets: targets(project, parent, scope),
       members: carried_members(project, source),
-      modules: carried_modules(project, source),
-      keys: ancestor_keys(ancestors, scope)
+      modules: modules,
+      keys: ancestor_keys(ancestors, scope),
+      links: outside_links(project, modules)
     }
+  end
+
+  # The task ↔ interaction links of the project (and what is nested in it)
+  # that point at an interaction logged on a project OUTSIDE it — the ones
+  # a move does not bring along. The provider says where each was logged
+  # (`projects_of/1`, optional); without one there is nothing to say.
+  # `own?`: the project has the provider's extension switched on itself;
+  # `carried?`: the old parent's row for it is among what can be copied.
+  defp outside_links(%Project{is_template: true}, _modules),
+    do: %{count: 0, own?: false, carried?: false}
+
+  defp outside_links(%Project{} = project, modules) do
+    with %{ext: ext, module: provider} <- Extensions.api_provider("interactions"),
+         true <- Code.ensure_loaded?(provider) and function_exported?(provider, :projects_of, 1),
+         inside = Projects.subtree_uuids(project.uuid),
+         [_ | _] = linked <- Projects.interaction_links_in(inside) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      logged_on = apply(provider, :projects_of, [Enum.uniq(linked)])
+
+      %{
+        count:
+          Enum.count(linked, fn uuid ->
+            case Map.get(logged_on, uuid) do
+              nil -> false
+              where -> where not in inside
+            end
+          end),
+        own?: Extensions.enabled?(project, ext.key),
+        carried?: Enum.any?(modules, &(&1.ext_key == ext.key and &1.enabled))
+      }
+    else
+      _ -> %{count: 0, own?: false, carried?: false}
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects.ProjectMove] counting interaction links: #{Exception.message(e)}")
+      %{count: 0, own?: false, carried?: false}
   end
 
   # A project can go under any project that could take it as a sub-project
