@@ -7,7 +7,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   use PhoenixKitProjects.Web.Components
   # The typeahead's server half + the access-request events, for the
   # description field's @/# picker.
-  use PhoenixKit.Mentions.Live
+  use PhoenixKitProjects.Web.Mentions
 
   import PhoenixKitWeb.Components.MultilangForm
 
@@ -489,6 +489,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         |> WebHelpers.close_or_navigate(Paths.projects())
 
       project ->
+        # The record the form edits holds short refs (`#ANDI-42`) where the
+        # row holds tokens: an untouched description is then no change, and
+        # a changed one is expanded again when it is written.
+        project = PhoenixKitProjects.RefText.collapse_fields(project, [:description])
+
         socket
         |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
         |> assign(

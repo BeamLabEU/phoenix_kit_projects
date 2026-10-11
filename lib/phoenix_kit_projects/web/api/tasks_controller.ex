@@ -19,7 +19,18 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   require Logger
 
   alias PhoenixKit.Mentions
-  alias PhoenixKitProjects.{Activity, Authz, Extensions, Features, Labels, Ledger, Projects}
+
+  alias PhoenixKitProjects.{
+    Activity,
+    Authz,
+    Extensions,
+    Features,
+    Labels,
+    Ledger,
+    Projects,
+    RefText
+  }
+
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
   alias PhoenixKitProjects.Web.Api.Assignee
@@ -300,7 +311,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   # index). Never fails the save: a mention that does not index is a
   # missing backlink, not lost work.
   defp sync_mentions(assignment_uuid, description, key) when is_binary(description) do
-    Mentions.sync("project_task", assignment_uuid, description,
+    # As it was stored: a `#ANDI-42` in the submitted text is a token there.
+    Mentions.sync("project_task", assignment_uuid, RefText.expand(description),
       field: "description",
       actor_uuid: ApiKey.accountable_uuid(key)
     )

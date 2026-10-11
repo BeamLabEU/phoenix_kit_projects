@@ -222,6 +222,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   defp validate(changeset) do
     changeset
     |> validate_required(@required)
+    |> PhoenixKitProjects.RefText.expand_on_write([:description])
     |> validate_inclusion(:priority, ~w(urgent high normal low))
     |> validate_task_xor_child()
     |> validate_inclusion(:status, @statuses)

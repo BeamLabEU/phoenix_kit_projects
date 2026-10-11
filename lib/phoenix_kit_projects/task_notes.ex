@@ -44,7 +44,7 @@ defmodule PhoenixKitProjects.TaskNotes do
   import Ecto.Query
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.Ledger
+  alias PhoenixKitProjects.{Ledger, RefText}
   alias PhoenixKitProjects.Schemas.Assignment
 
   @resource_type "project_task_notes"
@@ -449,7 +449,8 @@ defmodule PhoenixKitProjects.TaskNotes do
       %{
         # A usage-only note has nothing to say but its figures; the
         # comments module wants text or media, so the summary stands in.
-        content: fields[:content] || fields[:summary] || "",
+        # A `#ANDI-42` in the text becomes the link it names.
+        content: RefText.expand(fields[:content] || fields[:summary] || ""),
         metadata: metadata,
         # Server-side: a note is never queued for moderation.
         status: "published"

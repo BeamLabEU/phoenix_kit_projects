@@ -11,7 +11,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # The typeahead's server half + the access-request events. Injected
   # rather than hand-written so this form can't drift from every other
   # surface that offers mentions.
-  use PhoenixKit.Mentions.Live
+  use PhoenixKitProjects.Web.Mentions
   use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.MultilangForm
@@ -21,7 +21,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   alias Phoenix.LiveView.JS
   alias PhoenixKit.Mentions
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, Features, L10n, Labels, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Features, L10n, Labels, Paths, Projects, RefText, Statuses}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Crumbs
@@ -412,7 +412,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         # Sub-project linking row (V127): edit the CHILD project's name +
         # assignee, plus this row's dependencies. The assignee lives on the
         # child, so `assign_type` + `sp_form` come from it.
-        child = Projects.get_project_with_assignee(child_uuid) || %Project{}
+        # Short refs in the edit box (`#ANDI-42`), tokens in the row.
+        child =
+          RefText.collapse_fields(
+            Projects.get_project_with_assignee(child_uuid) || %Project{},
+            [:description]
+          )
 
         child_name = Project.localized_name(child, L10n.current_content_lang())
 
@@ -458,6 +463,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {project, assignment} ->
         task_name =
           assignment.task && Task.localized_title(assignment.task, L10n.current_content_lang())
+
+        # The record the form edits holds short refs (`#ANDI-42`) where the
+        # row holds tokens: an untouched description is then no change, and
+        # a changed one is expanded again when it is written.
+        assignment = RefText.collapse_fields(assignment, [:description])
 
         socket
         # Trail: … / <project> / <task> / Edit — the assignment has no page
@@ -1198,6 +1208,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # says "from this meeting" is listed on the meeting — and so a `#` in a
   # task is a backlink at all, which it was not before V8 of the CRM asked.
   defp sync_task_mentions(socket, assignment_uuid, description) when is_binary(description) do
+    # As it was stored: a `#ANDI-42` in the submitted text is a token there.
+    description = RefText.expand(description)
+
     case Mentions.sync("project_task", assignment_uuid, description,
            field: "description",
            actor_uuid: Activity.actor_uuid(socket)
@@ -1945,7 +1958,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         prefilled = %{
           "task_uuid" => task.uuid,
           "project_uuid" => socket.assigns.project.uuid,
-          "description" => task.description,
+          "description" => RefText.collapse(task.description),
           "estimated_duration" => task.estimated_duration && to_string(task.estimated_duration),
           "estimated_duration_unit" => task.estimated_duration_unit,
           "assigned_team_uuid" => task.default_assigned_team_uuid,

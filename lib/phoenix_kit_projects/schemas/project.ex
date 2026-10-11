@@ -144,6 +144,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_length(:name, min: 1, max: 255)
     |> validate_length(:external_id, max: 255)
     |> validate_key()
+    |> PhoenixKitProjects.RefText.expand_on_write([:description])
     |> validate_inclusion(:start_mode, @start_modes)
     |> validate_translations_shape()
     |> sanitize_settings()

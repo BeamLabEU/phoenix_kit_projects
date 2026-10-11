@@ -816,6 +816,23 @@ agreed on is what is built, and where they corrected it is marked.
   key or `KEY-number`, nothing looser — and the key a name suggests). The
   uuid stays the identity of every row and valid everywhere; code that
   STORES a pointer stores the uuid.
+- **Refs in text** (`PhoenixKitProjects.RefText`; Max, 2026-10-11: *"in the
+  text you would be able to use something like #test-001 instead of
+  #555-66-66…"*). The stored form of a link stays core's mention token
+  (it points at the uuid, so a renamed key or a moved project breaks
+  nothing); what changed is the edit box. `expand/1` turns a typed
+  `#KEY-42` / `#KEY` that names a real task or project into its token,
+  labelled with the ref only, and runs as a `prepare_changes` of the three
+  description changesets (`expand_on_write/2`: `Task`, `Assignment`,
+  `Project`, their `translations` too) and on a note's body — on the WRITE,
+  never on a form's validate, so the text does not change under the cursor.
+  `collapse/1` shows project and task tokens as refs again; the forms hold
+  the record collapsed (`collapse_fields/2`), so an untouched description
+  is no change. `Web.Mentions` replaces `use PhoenixKit.Mentions.Live` in
+  the two forms: the same typeahead, but a picked project or task inserts
+  `#KEY-42`. Neither direction asks who is looking — see the moduledoc for
+  why that leaks nothing. A comment typed in the comments module's own box
+  does not pass through here and keeps the long token.
 - **One key per project, sub-projects included** (all four seats): a
   sub-project can be moved out or under another project, and its refs must
   not change when it does. A sub-project's row on the parent's list is
@@ -878,7 +895,13 @@ modules and its agent's key behind.
   it could go; `run/4` checks the mover (`:edit_settings` on the project,
   `:edit_tasks` on a new parent) and carries what was ticked, each thing
   only where the mover may grant it. `ApiKeys.move/3` points a key at the
-  project and keeps its token.
+  project and keeps its token. `preview.links` counts the task ↔
+  interaction links that point at an interaction logged OUTSIDE the
+  project (the interactions provider's optional `projects_of/1` says
+  where); the dialog says they keep opening while the project has the same
+  client, and warns when it would be left with none. The CRM side of that
+  rule: a project reads what other projects logged with its client company
+  (`Interactions.list_for_project/2` `client:`), and writes only its own.
 - `Web.Components.MoveProject` — the dialog, in `ConfirmAction`'s shape
   (one modal, one event clause per page): on the project's own ⋮ menu, on
   a sub-project's row ("Move out…") and on a row of the projects list.

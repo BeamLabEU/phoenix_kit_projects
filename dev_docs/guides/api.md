@@ -144,6 +144,12 @@ and/or a key), `waiting_on`, `origin`, labels by name and a checklist;
 notes, `updated_since` the poll. AGENTS.md ("What the first agent on the API
 asked for") has the map from each ask to its code.
 
+**Short refs in text.** Write `#ANDI-42` (or `#ANDI` for a project) in a
+description or a note and it is stored as a link to that task: the text comes
+back as `#[project_task:uuid|ANDI-42]`, the stored form, which points at the
+uuid and so survives a renamed key or a moved project. A ref that names nothing
+stays the text it was. `PhoenixKitProjects.RefText`.
+
 Records link by **mention token** (`#[type:uuid|label]` in a task's
 description — the forms' own way): `interaction:` on a task, `tasks:` on an
 interaction, read back as `interactions` / `tasks`. The ledger is readable

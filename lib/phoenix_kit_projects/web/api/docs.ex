@@ -347,7 +347,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
               "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
           },
           %{name: "title", in: :body, type: "string", required: true, doc: "up to a short line"},
-          %{name: "description", in: :body, type: "string", required: false, doc: ""},
+          %{
+            name: "description",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a `#ANDI-42` or `#ANDI` in the text that names a real task or project is stored as a link to it (read back as `#[project_task:uuid|ANDI-42]`)"
+          },
           %{
             name: "priority",
             in: :body,
@@ -458,7 +465,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
           },
           %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
           %{name: "title", in: :body, type: "string", required: false, doc: ""},
-          %{name: "description", in: :body, type: "string", required: false, doc: ""},
+          %{
+            name: "description",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a `#ANDI-42` or `#ANDI` in the text that names a real task or project is stored as a link to it (read back as `#[project_task:uuid|ANDI-42]`)"
+          },
           %{
             name: "priority",
             in: :body,
