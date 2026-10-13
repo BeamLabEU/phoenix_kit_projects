@@ -131,6 +131,17 @@ defmodule PhoenixKitProjects.Web.OngoingEndTest do
 
       assert %DateTime{} = updated.completed_at
     end
+
+    test "back to the last task: one ended by hand with no task at all is open again" do
+      project = fixture_project(%{"settings" => @ongoing})
+      {:ok, ended} = Projects.end_project(Projects.get_project(project.uuid))
+
+      {:ok, switched} =
+        Projects.update_project(ended, %{"settings" => %{"completion" => "auto"}})
+
+      assert switched.completed_at == nil
+      assert Project.derived_status(switched) == :running
+    end
   end
 
   describe "lists" do

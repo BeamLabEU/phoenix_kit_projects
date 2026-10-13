@@ -1260,13 +1260,33 @@ defmodule PhoenixKitProjects.Projects do
   def settle_completion({:ok, %Project{} = updated} = result, %Project{} = before) do
     if Project.completion(before) != Project.completion(updated) and not repo().in_transaction?() do
       _ = recompute_project_completion(updated.uuid)
-      {:ok, get_project(updated.uuid) || updated}
+      {:ok, reopen_if_empty(get_project(updated.uuid) || updated)}
     else
       result
     end
   end
 
   def settle_completion(result, _before), do: result
+
+  # Ended by hand, then switched to "ends with its last task" with no task
+  # at all: there is no last task to have ended it, so it is open again
+  # (the recompute only reopens a project that has an open task).
+  defp reopen_if_empty(%Project{completed_at: %DateTime{}, is_template: false} = project) do
+    if not Project.ongoing?(project) and list_assignments(project.uuid) == [] do
+      case project |> Project.changeset(%{completed_at: nil}) |> repo().update() do
+        {:ok, reopened} ->
+          ProjectsPubSub.broadcast_project(:project_reopened, project_payload(reopened))
+          reopened
+
+        _ ->
+          project
+      end
+    else
+      project
+    end
+  end
+
+  defp reopen_if_empty(project), do: project
 
   @doc """
   Ends ongoing work by hand: the one way a project that "ends only when
