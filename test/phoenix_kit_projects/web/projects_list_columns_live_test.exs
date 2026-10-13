@@ -530,22 +530,29 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
     test "the first change reloads at once; a burst after it shares one reload", %{conn: conn} do
       [a | _] = three("Rld")
       {:ok, view, _html} = live(conn, @path)
+      reload = fn -> :sys.get_state(view.pid).socket.assigns[:reload] end
 
       {:ok, _} = Projects.update_project(a, %{"name" => "Renamed once"})
       assert render(view) =~ "Renamed once"
 
-      # Within the pause that follows: nothing reloads per message...
+      # Let that reload's pause pass, so the burst below starts from rest
+      # (the timings here must not depend on how busy the machine is).
+      Process.sleep(600)
+      assert reload.() == nil
+
       {:ok, _} =
         Projects.update_project(Projects.get_project(a.uuid), %{"name" => "Renamed twice"},
           broadcast: false
         )
 
-      for _ <- 1..5, do: send(view.pid, {:projects, :assignment_updated, %{}})
-      refute render(view) =~ "Renamed twice"
-
-      # ...and when it has passed, the list is current.
-      Process.sleep(600)
+      # The first message of the burst reloads; the rest only mark the
+      # list stale for the one reload that follows the pause.
+      for _ <- 1..6, do: send(view.pid, {:projects, :assignment_updated, %{}})
+      assert reload.() == :stale
       assert render(view) =~ "Renamed twice"
+
+      Process.sleep(1000)
+      assert reload.() == nil
     end
   end
 end
