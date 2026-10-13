@@ -21,6 +21,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   import PhoenixKitWeb.Components.Core.FormActions, only: [form_actions: 1]
   import PhoenixKitWeb.Components.Core.FileUpload, only: [file_upload: 1]
   import PhoenixKitWeb.Components.Core.Input, only: [input: 1]
+  import PhoenixKitWeb.Components.Core.AdminEditLink, only: [admin_edit_link: 1]
   import PhoenixKitWeb.Components.Core.MentionText
   import PhoenixKitWeb.Components.Core.NavTabs, only: [nav_tabs: 1]
   import PhoenixKitWeb.Components.Core.StatusDot
@@ -29,8 +30,11 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Utils.Routes
+  alias PhoenixKitProjects.Paths
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitWeb.AdminEditHelper
 
   @impl true
   def mount(%{"slug" => slug}, _session, socket) do
@@ -53,6 +57,8 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         issue: nil,
         issue_uuid: nil,
         status_filter: "all",
+        admin_edit_url: nil,
+        admin_edit_label: nil,
         # The min-fill-time anchor (panel: bots submit instantly).
         mounted_ms: System.monotonic_time(:millisecond)
       )
@@ -96,11 +102,18 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     # topic only; it never reaches the template.
     viewer = socket.assigns[:phoenix_kit_current_scope]
 
+    # Re-derived on every load, like the rest of the view: a rotation or a
+    # switched-off portal must withdraw a link a live session already holds.
+    # Only touched when there is one to withdraw.
+    socket = clear_admin_edit(socket)
+
     case Portal.resolve(socket.assigns.slug, viewer) do
       {:ok, portal, project} ->
         case Portal.public_view(socket.assigns.slug, viewer) do
           {:ok, view} ->
-            assign(socket,
+            socket
+            |> assign_admin_edit(project)
+            |> assign(
               # The row itself, not just its uuid: the mention typeahead
               # scopes off the portal (access mode decides which issues are
               # listed at all), and re-resolving inside the event handler
@@ -132,6 +145,31 @@ defmodule PhoenixKitProjects.Web.PortalLive do
         )
     end
   end
+
+  # "Edit project" for someone who may VIEW this project (a member, or a site
+  # admin holding `projects.admin_all`) — the same gate the admin pages use
+  # (`WebHelpers.template_or_viewable?/2`), checked BEFORE the helper builds
+  # the link: the module key alone only means "may enter the module", and a
+  # public page must not hand every key-holder the project's internal uuid
+  # in an href that then bounces. Only called from the branch where the
+  # portal resolved and the view loaded, so a dead, switched-off or refused
+  # slug never shows (or hints at) an admin link. `project` is the row
+  # `Portal.resolve/2` already loaded: no extra read.
+  defp assign_admin_edit(socket, project) do
+    if WebHelpers.template_or_viewable?(project, socket.assigns[:phoenix_kit_current_scope]) do
+      AdminEditHelper.assign_admin_edit(socket, Paths.project(project.uuid),
+        label: gettext("Edit project"),
+        permission: PhoenixKitProjects.module_key()
+      )
+    else
+      socket
+    end
+  end
+
+  defp clear_admin_edit(%{assigns: %{admin_edit_url: url}} = socket) when not is_nil(url),
+    do: assign(socket, admin_edit_url: nil, admin_edit_label: nil)
+
+  defp clear_admin_edit(socket), do: socket
 
   # Whether to OFFER a sign-in link — and deliberately not a question about
   # this slug at all.
@@ -532,9 +570,12 @@ defmodule PhoenixKitProjects.Web.PortalLive do
             </span>
           </p>
         </div>
-        <.button :if={@view.may_submit} size="sm" navigate={report_path(@slug)}>
-          {gettext("Report an issue")}
-        </.button>
+        <div class="flex flex-wrap items-center gap-2">
+          <.admin_edit_link id="portal-admin-edit" url={@admin_edit_url} label={@admin_edit_label} />
+          <.button :if={@view.may_submit} size="sm" navigate={report_path(@slug)}>
+            {gettext("Report an issue")}
+          </.button>
+        </div>
       </header>
 
       <p :if={@view.capabilities.submit and not @view.may_submit} class="text-sm opacity-60">
