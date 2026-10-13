@@ -103,6 +103,120 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
     assert render(view) =~ "This page is unavailable"
   end
 
+  describe "admin edit link" do
+    defp edit_href(project), do: PhoenixKitProjects.Paths.project(project.uuid)
+    defp edit_link?(view, href), do: has_element?(view, ~s(#portal-admin-edit[href="#{href}"]))
+
+    defp member_scope(project, role) do
+      n = System.unique_integer([:positive])
+
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "edit-#{n}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      {:ok, _} = Members.add_member(project, user.uuid, role: role)
+      fake_scope(user_uuid: user.uuid, roles: [], permissions: ["projects"])
+    end
+
+    test "a site admin gets the project page in the portal header",
+         %{conn: conn, project: project, portal: portal} do
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
+
+      assert edit_link?(view, edit_href(project))
+      assert has_element?(view, "#portal-admin-edit", "Edit project")
+    end
+
+    test "a project member holding the module key gets it",
+         %{conn: conn, project: project, portal: portal} do
+      conn = put_test_scope(conn, member_scope(project, "member"))
+
+      {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
+
+      assert edit_link?(view, edit_href(project))
+    end
+
+    test "a non-member with the module key gets nothing, and no uuid reaches the page",
+         %{conn: conn, project: project, portal: portal} do
+      conn = put_test_scope(conn, fake_scope(roles: [], permissions: ["projects"]))
+
+      {:ok, view, html} = live(conn, "/portal/#{portal.slug}")
+
+      refute has_element?(view, "#portal-admin-edit")
+      refute html =~ project.uuid
+    end
+
+    test "an anonymous visitor gets nothing, and no uuid reaches the page",
+         %{conn: conn, project: project, portal: portal} do
+      {:ok, view, html} = live(conn, "/portal/#{portal.slug}")
+
+      assert html =~ project.name
+      refute has_element?(view, "#portal-admin-edit")
+      refute html =~ project.uuid
+    end
+
+    test "a member without the projects key gets nothing",
+         %{conn: conn, project: project, portal: portal} do
+      scope = member_scope(project, "member")
+      conn = put_test_scope(conn, struct!(scope, cached_permissions: MapSet.new(["shop"])))
+
+      {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
+
+      refute has_element?(view, "#portal-admin-edit")
+    end
+
+    test "an unknown slug gets no link even for an admin", %{conn: conn} do
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, view, html} = live(conn, "/portal/#{Ecto.UUID.generate()}")
+
+      assert html =~ "This page is unavailable"
+      refute has_element?(view, "#portal-admin-edit")
+    end
+
+    test "a switched-off portal gets no link even for an admin",
+         %{conn: conn, project: project, portal: portal} do
+      {:ok, _} = Extensions.disable(project, "portal")
+      conn = put_test_scope(conn, fake_scope())
+
+      {:ok, view, html} = live(conn, "/portal/#{portal.slug}")
+
+      assert html =~ "This page is unavailable"
+      refute has_element?(view, "#portal-admin-edit")
+    end
+
+    test "the link is withdrawn when a live session loses its portal",
+         %{conn: conn, project: project, portal: portal} do
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
+      assert edit_link?(view, edit_href(project))
+
+      {:ok, _} = Extensions.disable(project, "portal")
+
+      assert render(view) =~ "This page is unavailable"
+      refute has_element?(view, "#portal-admin-edit")
+    end
+
+    test "the link is withdrawn when a live session's viewer stops being a member",
+         %{conn: conn, project: project, portal: portal} do
+      scope = member_scope(project, "member")
+      conn = put_test_scope(conn, scope)
+      {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
+      assert edit_link?(view, edit_href(project))
+
+      {:ok, _} = Members.remove_member(project.uuid, scope.user.uuid)
+      # The board is still live and resolves; only the viewer's standing
+      # changed, so the reload must not keep a link granted earlier.
+      send(view.pid, {:projects, :project_modules_changed, %{}})
+
+      assert render(view) =~ project.name
+      refute has_element?(view, "#portal-admin-edit")
+    end
+  end
+
   defp portal_issue_query(project_uuid) do
     from(a in PhoenixKitProjects.Schemas.Assignment,
       where: a.project_uuid == ^project_uuid and a.source == "portal"
