@@ -385,7 +385,13 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       |> Enum.sort_by(&String.downcase(&1.worker.name))
       |> Enum.with_index(1)
       |> Enum.map(fn {row, slot} ->
-        %{key: row.worker.key, name: row.worker.name, slot: slot, minutes: row.minutes}
+        %{
+          key: row.worker.key,
+          name: row.worker.name,
+          slot: slot,
+          minutes: row.minutes,
+          ai: row.worker.kind == "ai_agent"
+        }
       end)
 
     series =
@@ -398,7 +404,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
                 key: :others,
                 name: gettext("Others"),
                 slot: 0,
-                minutes: others |> Enum.map(& &1.minutes) |> Enum.sum()
+                minutes: others |> Enum.map(& &1.minutes) |> Enum.sum(),
+                ai: false
               }
             ]
 
@@ -413,7 +420,22 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         %{date: date, minutes: day.minutes, parts: parts(day.by_worker, slots)}
       end)
 
-    %{days: days, series: series, max: days |> Enum.map(& &1.minutes) |> Enum.max(fn -> 0.0 end)}
+    max = days |> Enum.map(& &1.minutes) |> Enum.max(fn -> 0.0 end)
+    %{days: days, series: series, max: max, top: axis_top(max)}
+  end
+
+  # The axis ends on a round figure with a round half (2h / 1h, 8h / 4h),
+  # not on the busiest day's own "6h 40m": the smallest step that covers
+  # the busiest day in four or fewer.
+  @axis_steps [15, 30, 60, 120, 240, 480, 720, 1440]
+  defp axis_top(max) when max <= 0, do: 60.0
+
+  defp axis_top(max) do
+    step = Enum.find(@axis_steps, 1440, &(max / &1 <= 4))
+    steps = max(Float.ceil(max / step), 1.0)
+    # An even number of steps, so the middle line is a whole one too.
+    steps = if rem(trunc(steps), 2) == 1 and steps > 1, do: steps + 1, else: steps
+    steps * step
   end
 
   defp chart_dates(by_day, %{from_date: %Date{} = from, to_date: %Date{} = to}, offset) do
@@ -475,6 +497,11 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
     {:noreply, push_url_state(socket, changes)}
   end
+
+  # How the entries table is grouped: its own control, on the table's
+  # heading — it changes nothing else on the page.
+  def handle_event("group", %{"group" => group}, socket) when is_binary(group),
+    do: {:noreply, push_url_state(socket, group: group)}
 
   def handle_event("clear_filters", _params, socket) do
     {:noreply,
@@ -767,7 +794,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   defp minutes(text) do
     case Format.parse_duration(text) do
       {:ok, minutes} -> {:ok, minutes}
-      :error -> {:error, gettext("Enter how long, like 1h 30m, 90 or 1.5h.")}
+      :error -> {:error, gettext("Enter how long, like 1h 30m, 1:30, 90 or 1.5h.")}
     end
   end
 
@@ -975,12 +1002,15 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h2 :if={@mode == :all} class="text-xl font-semibold">{gettext("Hours")}</h2>
-              <p class="text-sm text-base-content/60">
-                {@period_info.label} · {tz_label(@offset)}
+              <%!-- The period is what every figure below is for; the zone is
+                   what every clock time below is in. --%>
+              <p class="text-sm">
+                <span class="font-medium">{@period_info.label}</span>
+                <span class="text-base-content/50">· {tz_label(@offset)}</span>
               </p>
             </div>
             <div class="flex items-center gap-2">
-              <button type="button" class="btn btn-sm" phx-click="open_report" id={"#{@dom}-report"}>
+              <button type="button" class="btn btn-ghost btn-sm" phx-click="open_report" id={"#{@dom}-report"}>
                 <.icon name="hero-document-text" class="w-4 h-4" /> {gettext("Report")}
               </button>
               <button
@@ -996,7 +1026,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           </div>
 
           <.filter_bar {assigns} />
-          <.totals_row totals={@summary.totals} />
+          <.totals_row totals={@summary.totals} total={@total} />
 
           <%= if @summary.totals.entries == 0 and @summary.totals.ai_minutes == 0 do %>
             <.empty_state
@@ -1007,7 +1037,9 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           <% else %>
             <.day_chart :if={@chart} chart={@chart} dom={@dom} />
 
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <%!-- `items-start`: a card is as tall as its rows, not as its
+                 neighbour. --%>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
               <.breakdown
                 title={gettext("By person")}
                 rows={Enum.map(@summary.by_worker, &%{label: &1.worker.name, minutes: &1.minutes, billable: &1.billable_minutes, hint: entries_hint(&1.entries), ai: &1.worker.kind == "ai_agent"})}
@@ -1062,7 +1094,14 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   defp filter_bar(assigns) do
     ~H"""
-    <form id={"#{@dom}-filters"} phx-change="filter" class="flex flex-wrap items-end gap-2" novalidate>
+    <%!-- The labels are the quiet tier (small, muted): what is scanned is
+         the values under them. --%>
+    <form
+      id={"#{@dom}-filters"}
+      phx-change="filter"
+      class="flex flex-wrap items-end gap-2 [&_label.label]:mb-1 [&_label.label_span]:text-xs [&_label.label_span]:font-medium [&_label.label_span]:text-base-content/60"
+      novalidate
+    >
       <.select
         id={"#{@dom}-period"}
         name="period"
@@ -1124,30 +1163,27 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         options={[{gettext("All"), "all"}, {gettext("Billable only"), "yes"}, {gettext("Not billable"), "no"}]}
         class="select-sm"
       />
-      <.select
-        id={"#{@dom}-group"}
-        name="group"
-        label={gettext("Group entries by")}
-        value={@group}
-        options={group_options(@mode)}
-        class="select-sm"
-      />
-      <label class="label cursor-pointer gap-2 pb-2">
-        <input type="hidden" name="subprojects" value="false" />
-        <input
-          type="checkbox"
-          name="subprojects"
-          value="true"
-          checked={@subprojects}
-          class="checkbox checkbox-sm"
-          id={"#{@dom}-subprojects"}
-        />
-        <span class="label-text text-sm">{gettext("Include sub-projects")}</span>
-      </label>
+      <%!-- The same two tiers as the selects beside it, so the row has
+           one shape. --%>
+      <div>
+        <span class="block mb-1 text-xs font-medium text-base-content/60">{gettext("Sub-projects")}</span>
+        <label class="flex items-center gap-2 h-8 cursor-pointer">
+          <input type="hidden" name="subprojects" value="false" />
+          <input
+            type="checkbox"
+            name="subprojects"
+            value="true"
+            checked={@subprojects}
+            class="checkbox checkbox-sm"
+            id={"#{@dom}-subprojects"}
+          />
+          <span class="text-sm">{gettext("Include")}</span>
+        </label>
+      </div>
       <button
         :if={filtered?(assigns)}
         type="button"
-        class="btn btn-ghost btn-sm mb-1"
+        class="btn btn-ghost btn-sm"
         phx-click="clear_filters"
         id={"#{@dom}-clear"}
       >
@@ -1190,20 +1226,41 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   # ── Totals ──
 
   attr(:totals, :map, required: true)
+  attr(:total, :integer, default: 0)
 
+  # People's time and an agent's are two sets of figures, each under its
+  # own name: an agent's hours are not people's (the ledger keeps them
+  # apart), and a tile that said "Total 0m" over a page full of an agent's
+  # work read as a broken page. A zero stays, quiet.
   defp totals_row(assigns) do
+    assigns = assign(assigns, ai_entries: max(assigns.total - assigns.totals.entries, 0))
+
     ~H"""
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <.stat_tile label={gettext("Total time")} value={Format.duration(@totals.minutes)} />
-      <.stat_tile label={gettext("Billable")} value={Format.duration(@totals.billable_minutes)} />
-      <.stat_tile label={gettext("People")} value={@totals.people} />
-      <.stat_tile label={gettext("Entries")} value={@totals.entries} />
-      <.stat_tile :if={@totals.ai_minutes > 0} label={gettext("AI time")} value={Format.duration(@totals.ai_minutes)} />
-      <.stat_tile :if={@totals.tokens > 0} label={gettext("AI tokens")} value={Format.tokens(@totals.tokens)} />
-      <.stat_tile :if={@totals.cost_cents > 0} label={gettext("AI cost")} value={Format.cost(@totals.cost_cents)} />
+    <div class="flex flex-col gap-3">
+      <div>
+        <p class="mb-1 text-xs font-medium uppercase tracking-wide text-base-content/50">{gettext("People")}</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <.stat_tile label={gettext("Human time")} value={Format.duration(@totals.minutes)} value_class={quiet(@totals.minutes)} />
+          <.stat_tile label={gettext("Billable")} value={Format.duration(@totals.billable_minutes)} value_class={quiet(@totals.billable_minutes)} />
+          <.stat_tile label={gettext("People")} value={@totals.people} value_class={quiet(@totals.people)} />
+          <.stat_tile label={gettext("Entries")} value={@totals.entries} value_class={quiet(@totals.entries)} />
+        </div>
+      </div>
+      <div :if={@totals.ai_minutes > 0 or @totals.tokens > 0 or @totals.cost_cents > 0}>
+        <p class="mb-1 text-xs font-medium uppercase tracking-wide text-base-content/50">{gettext("AI agents")}</p>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <.stat_tile label={gettext("AI time")} value={Format.duration(@totals.ai_minutes)} value_class={quiet(@totals.ai_minutes)} />
+          <.stat_tile label={gettext("Entries")} value={@ai_entries} value_class={quiet(@ai_entries)} />
+          <.stat_tile :if={@totals.tokens > 0} label={gettext("AI tokens")} value={Format.tokens(@totals.tokens)} />
+          <.stat_tile :if={@totals.cost_cents > 0} label={gettext("AI cost")} value={Format.cost(@totals.cost_cents)} />
+        </div>
+      </div>
     </div>
     """
   end
+
+  defp quiet(n) when n in [0, 0.0], do: "opacity-40"
+  defp quiet(_n), do: nil
 
   # ── The chart ──
   #
@@ -1226,16 +1283,20 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             <li :for={s <- @chart.series} class="flex items-center gap-1">
               <span class="inline-block w-2.5 h-2.5 rounded-sm" style={"background: var(--pkh-#{s.slot})"}></span>
               {s.name}
+              <span :if={s.ai} class="badge badge-ghost badge-xs">{gettext("AI")}</span>
             </li>
           </ul>
         </div>
         <div class="flex gap-2">
           <div class="flex flex-col justify-between text-[10px] text-base-content/50 tabular-nums h-40 text-right">
-            <span>{Format.duration(@chart.max)}</span>
+            <span>{Format.duration(@chart.top)}</span>
+            <span>{Format.duration(@chart.top / 2)}</span>
             <span>0</span>
           </div>
           <div class="flex-1 min-w-0">
-            <div class="flex items-end gap-0.5 h-40 border-b border-base-300">
+            <div class="relative flex items-end gap-0.5 h-40 border-b border-base-300">
+              <div class="absolute inset-x-0 top-0 border-t border-base-content/10 pointer-events-none"></div>
+              <div class="absolute inset-x-0 top-1/2 border-t border-base-content/10 pointer-events-none"></div>
               <div
                 :for={day <- @chart.days}
                 class="group relative flex-1 min-w-0 h-full flex flex-col justify-end"
@@ -1244,7 +1305,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
                 <div
                   :if={day.minutes > 0}
                   class="flex flex-col-reverse gap-0.5 w-full max-w-10 mx-auto rounded-t overflow-hidden"
-                  style={"height: #{pct(day.minutes, @chart.max)}%"}
+                  style={"height: #{pct(day.minutes, @chart.top)}%"}
                 >
                   <div
                     :for={{series, minutes} <- day.parts}
@@ -1390,7 +1451,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           </div>
         </div>
         <p :if={@workers == []} class="text-sm text-base-content/50">
-          {gettext("Nothing logged in this week.")}
+          {gettext("Nothing logged for %{from} – %{to}.", from: short_day(@week), to: short_day(Date.add(@week, 6)))}
         </p>
         <div :if={@workers != []} class="overflow-x-auto">
           <table class="table table-sm">
@@ -1458,14 +1519,29 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       assign(assigns,
         groups: grouped(assigns.rows, assigns.group, assigns.offset),
         multi?: assigns.mode == :all or length(assigns.summary.by_project) > 1,
-        sort: %{by: assigns.sort_by, dir: assigns.sort_dir}
+        sort: %{by: assigns.sort_by, dir: assigns.sort_dir},
+        # A Note column with nothing in it is a blank stripe: it shows once
+        # a row on screen has a note.
+        notes?: Enum.any?(assigns.rows, &(&1.entry.note not in [nil, ""]))
       )
 
     ~H"""
     <section class="flex flex-col gap-2" id={"#{@dom}-entries"}>
-      <h3 class="text-sm font-semibold">
-        {gettext("Entries")} <span class="font-normal text-base-content/60">· {@total}</span>
-      </h3>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h3 class="text-sm font-semibold">
+          {gettext("Entries")} <span class="font-normal text-base-content/60">· {@total}</span>
+        </h3>
+        <form id={"#{@dom}-group-form"} phx-change="group" class="flex items-center gap-2">
+          <label for={"#{@dom}-group"} class="text-xs font-medium text-base-content/60">{gettext("Group by")}</label>
+          <.select
+            id={"#{@dom}-group"}
+            name="group"
+            value={@group}
+            options={group_options(@mode)}
+            class="select-xs"
+          />
+        </form>
+      </div>
       <.table_default id={"#{@dom}-entries-table"} size="sm">
         <.table_default_header>
           <.table_default_row>
@@ -1474,7 +1550,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             <.table_default_header_cell :if={@multi?}>{gettext("Project")}</.table_default_header_cell>
             <.sort_header_cell field={:task} sort={@sort}>{gettext("Task")}</.sort_header_cell>
             <.sort_header_cell field={:amount} sort={@sort} align={:right}>{gettext("Time")}</.sort_header_cell>
-            <.table_default_header_cell>{gettext("Note")}</.table_default_header_cell>
+            <.table_default_header_cell :if={@notes?}>{gettext("Note")}</.table_default_header_cell>
             <.table_default_header_cell class="w-px"><span class="sr-only">{gettext("Actions")}</span></.table_default_header_cell>
           </.table_default_row>
         </.table_default_header>
@@ -1483,11 +1559,12 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             <tr :if={label} class="bg-base-200/50">
               <td colspan={if @multi?, do: 4, else: 3} class="font-semibold">{label}</td>
               <td class="text-right tabular-nums font-semibold">{Format.duration(minutes)}</td>
-              <td colspan="2"></td>
+              <td colspan={if @notes?, do: 2, else: 1}></td>
             </tr>
             <.table_default_row :for={row <- rows} id={"#{@dom}-entry-#{row.entry.uuid}"}>
               <.table_default_cell class="whitespace-nowrap">
-                {Report.stamp(row.at, @offset)}
+                <% {day, time} = when_parts(row.at, @offset) %>
+                {day} <span class="text-base-content/50 tabular-nums">{time}</span>
               </.table_default_cell>
               <.table_default_cell class="whitespace-nowrap">
                 {row.worker.name}
@@ -1509,7 +1586,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
                     navigate={Paths.project_tasks(row.project.uuid) <> "?task=#{row.task.uuid}"}
                     emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => row.project.uuid, "task" => row.task.uuid}}}
                     embed_mode={@embed_mode}
-                    class="link link-hover"
+                    class="link link-hover text-left"
                   >
                     <.ref_chip ref={row.task[:ref]} /> {row.task.title}
                   </.smart_link>
@@ -1522,7 +1599,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
                 <span :if={row.entry.billable} class="badge badge-primary badge-outline badge-xs ml-1">{gettext("billable")}</span>
                 <span :if={row.entry.uuid in @invoiced} class="badge badge-ghost badge-xs ml-1">{gettext("invoiced")}</span>
               </.table_default_cell>
-              <.table_default_cell class="text-base-content/70 max-w-md">
+              <.table_default_cell :if={@notes?} class="text-base-content/70 max-w-md">
                 <span class="line-clamp-2">{row.entry.note}</span>
               </.table_default_cell>
               <.table_default_cell class="text-right whitespace-nowrap">
@@ -1562,6 +1639,21 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       />
     </section>
     """
+  end
+
+  # An entry's moment as the page says dates everywhere else ("Oct 8,
+  # 2026") with the clock time beside it, in the viewer's zone.
+  defp when_parts(at, offset) do
+    case String.split(Report.stamp(at, offset), " ", parts: 2) do
+      [day, time] ->
+        case Date.from_iso8601(day) do
+          {:ok, date} -> {L10n.format_date(date), time}
+          _ -> {day, time}
+        end
+
+      [other] ->
+        {other, ""}
+    end
   end
 
   # The menu shows where the write would be allowed: a time entry, not on
@@ -1658,7 +1750,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           name="duration"
           label={gettext("How long")}
           value={@form.values["duration"]}
-          placeholder={gettext("1h 30m, 90 or 1.5h")}
+          placeholder={gettext("1h 30m, 1:30, 90 or 1.5h")}
           class="input-sm"
           autocomplete="off"
         />
@@ -1810,13 +1902,13 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           <p class="text-sm">{gettext("Period")}: {@report.period}</p>
           <p :for={{label, value} <- @report.filters} class="text-sm">{label}: {value}</p>
           <p class="text-xs opacity-60">
-            {gettext("Generated %{at}", at: Report.stamp(@report.generated_at, @offset))}
+            {gettext("Generated %{at}", at: Report.stamp(@report.generated_at, @offset))} · {tz_label(@offset)}
           </p>
         </header>
 
         <dl class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
           <div>
-            <dt class="opacity-60">{gettext("Total time")}</dt>
+            <dt class="opacity-60">{gettext("Human time")}</dt>
             <dd class="font-semibold">
               {Format.duration(@report.totals.minutes)} ({Format.decimal_hours(@report.totals.minutes)} h)
             </dd>
@@ -1831,6 +1923,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             <dt class="opacity-60">{gettext("AI time")}</dt>
             <dd class="font-semibold">{Format.duration(@report.totals.ai_minutes)}</dd>
           </div>
+          <div :if={@report.totals.tokens > 0}>
+            <dt class="opacity-60">{gettext("AI tokens")}</dt>
+            <dd class="font-semibold">{Format.tokens(@report.totals.tokens)}</dd>
+          </div>
           <div :if={@report.totals.cost_cents > 0}>
             <dt class="opacity-60">{gettext("AI cost")}</dt>
             <dd class="font-semibold">{Format.cost(@report.totals.cost_cents)}</dd>
@@ -1841,7 +1937,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           :if={@report.by_worker != []}
           title={gettext("By person")}
           head={gettext("Person")}
-          rows={Enum.map(@report.by_worker, &{&1.worker.name, &1})}
+          rows={Enum.map(@report.by_worker, &{report_worker(&1.worker), &1})}
         />
         <.report_table
           :if={length(@report.by_project) > 1}
@@ -1892,6 +1988,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     """
   end
 
+  # On paper there is no badge: an agent's row says so in words.
+  defp report_worker(%{kind: "ai_agent", name: name}), do: "#{name} (#{gettext("AI")})"
+  defp report_worker(%{name: name}), do: name
+
   attr(:title, :string, required: true)
   attr(:head, :string, required: true)
   attr(:rows, :list, required: true)
@@ -1913,10 +2013,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         <tbody>
           <tr :for={{label, row} <- @rows}>
             <td>{label}</td>
-            <td class="text-right tabular-nums">{Format.duration(row.minutes)}</td>
-            <td class="text-right tabular-nums">{Format.decimal_hours(row.minutes)}</td>
-            <td class="text-right tabular-nums">{Format.duration(row.billable_minutes)}</td>
-            <td class="text-right tabular-nums">{row.entries}</td>
+            <td class="text-right tabular-nums whitespace-nowrap">{Format.duration(row.minutes)}</td>
+            <td class="text-right tabular-nums whitespace-nowrap">{Format.decimal_hours(row.minutes)}</td>
+            <td class="text-right tabular-nums whitespace-nowrap">{Format.duration(row.billable_minutes)}</td>
+            <td class="text-right tabular-nums whitespace-nowrap">{row.entries}</td>
           </tr>
         </tbody>
       </table>
