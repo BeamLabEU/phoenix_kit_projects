@@ -30,6 +30,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  import PhoenixKitWeb.Components.Core.Chart, only: [bar_chart: 1]
+  import PhoenixKitWeb.Components.Core.DateNav, only: [date_nav: 1]
   import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
 
   alias PhoenixKit.Users.Auth.User
@@ -561,17 +563,16 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     end
   end
 
-  def handle_event("unpick", %{"field" => "worker"}, socket),
-    do: {:noreply, push_url_state(socket, worker: "")}
-
-  def handle_event("unpick", %{"field" => "task"}, socket),
-    do: {:noreply, push_url_state(socket, task: "")}
-
-  def handle_event("unpick", %{"field" => "project"}, socket),
-    do: {:noreply, push_url_state(socket, project_filter: "")}
-
-  def handle_event("unpick", %{"field" => "logtask"}, socket),
-    do: {:noreply, put_log_value(socket, "task", "")}
+  # The × on a chosen value (core's picker sends its own id).
+  def handle_event("unpick", %{"id" => id}, socket) do
+    case pick_field_of(to_string(id)) do
+      "worker" -> {:noreply, push_url_state(socket, worker: "")}
+      "task" -> {:noreply, push_url_state(socket, task: "")}
+      "project" -> {:noreply, push_url_state(socket, project_filter: "")}
+      "logtask" -> {:noreply, put_log_value(socket, "task", "")}
+      _ -> {:noreply, socket}
+    end
+  end
 
   # How the entries table is grouped: its own control, on the table's
   # heading — it changes nothing else on the page.
@@ -616,15 +617,19 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   def handle_event("toggle_all_tasks", _params, socket),
     do: {:noreply, assign(socket, show_all_tasks: not socket.assigns.show_all_tasks)}
 
-  def handle_event("sheet_week", %{"step" => step}, socket) when step in ~w(-1 1) do
-    monday = Date.add(socket.assigns.sheet_week, String.to_integer(step) * 7)
+  # Core's `<.date_nav>` names the day to go to; whatever day arrives, the
+  # sheet shows the week it is in.
+  def handle_event("sheet_week", %{"date" => value}, socket) do
+    monday =
+      case Date.from_iso8601(to_string(value)) do
+        {:ok, date} -> Period.week_start(date)
+        _ -> Period.week_start(Period.today(socket.assigns.offset))
+      end
+
     {:noreply, socket |> assign(sheet_week: monday) |> load_sheet()}
   end
 
-  def handle_event("sheet_week", _params, socket) do
-    monday = Period.week_start(Period.today(socket.assigns.offset))
-    {:noreply, socket |> assign(sheet_week: monday) |> load_sheet()}
-  end
+  def handle_event("sheet_week", _params, socket), do: {:noreply, socket}
 
   # ── Logging time ──
 
@@ -1243,7 +1248,12 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               />
             </div>
 
-            <.timesheet sheet={@sheet} week={@sheet_week} dom={@dom} />
+            <.timesheet
+              sheet={@sheet}
+              week={@sheet_week}
+              this_week={Period.week_start(Period.today(@offset))}
+              dom={@dom}
+            />
             <.entries_table {assigns} />
           <% end %>
       <% end %>
@@ -1320,14 +1330,12 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         :if={@mode == :all}
         label={gettext("Project")}
         id={"#{@dom}-pick-project"}
-        field="project"
         chosen={@picked["project"]}
         placeholder={gettext("All projects")}
       />
       <.pick_field
         label={gettext("Person")}
         id={"#{@dom}-pick-worker"}
-        field="worker"
         chosen={@picked["worker"]}
         placeholder={gettext("Everyone")}
       />
@@ -1335,7 +1343,6 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         :if={@mode == :project}
         label={gettext("Task")}
         id={"#{@dom}-pick-task"}
-        field="task"
         chosen={@picked["task"]}
         placeholder={gettext("All tasks")}
         class="w-64"
@@ -1408,49 +1415,36 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   attr(:label, :string, required: true)
   attr(:id, :string, required: true)
-  attr(:field, :string, required: true)
   attr(:chosen, :string, default: nil)
   attr(:placeholder, :string, required: true)
   attr(:class, :string, default: "w-44")
 
-  # A filter picked by searching (core's `<.search_picker>`): the box while
-  # nothing is picked — click it for the first page, type to narrow — and
-  # the choice with its own × once something is.
+  # A filter picked by searching: core's `<.search_picker>`, which is the
+  # box while nothing is picked (click it for the first page, type to
+  # narrow) and the choice with its own × once something is (`chosen`).
   defp pick_field(assigns) do
     ~H"""
     <.field label={@label} for={@id}>
-      <%= if @chosen do %>
-        <span class={["flex items-center gap-1 h-8 pl-3 pr-1 rounded-field border border-base-300 bg-base-100 text-sm", @class]}>
-          <span class="truncate flex-1" title={@chosen}>{@chosen}</span>
-          <button
-            type="button"
-            class="btn btn-ghost btn-xs btn-circle shrink-0"
-            phx-click="unpick"
-            phx-value-field={@field}
-            aria-label={gettext("Clear %{label}", label: @label)}
-          >
-            <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
-          </button>
-        </span>
-      <% else %>
-        <div class={@class}>
-          <.search_picker
-            id={@id}
-            dropdown_id={"#{@id}-list"}
-            search_event="pick_search"
-            pick_event="pick_pick"
-            search_on_focus
-            close_on_pick
-            row_layout="stacked"
-            placeholder={@placeholder}
-            class="input input-sm h-8 min-h-8 w-full"
-            searching_label={gettext("Searching…")}
-            more_label={gettext("Load more")}
-            loading_more_label={gettext("Loading…")}
-            no_matches_label={gettext("No matches")}
-          />
-        </div>
-      <% end %>
+      <div class={@class}>
+        <.search_picker
+          id={@id}
+          dropdown_id={"#{@id}-list"}
+          search_event="pick_search"
+          pick_event="pick_pick"
+          chosen={@chosen}
+          clear_event="unpick"
+          clear_label={gettext("Clear %{label}", label: @label)}
+          search_on_focus
+          close_on_pick
+          row_layout="stacked"
+          placeholder={@placeholder}
+          class="input input-sm h-8 min-h-8 w-full"
+          searching_label={gettext("Searching…")}
+          more_label={gettext("Load more")}
+          loading_more_label={gettext("Loading…")}
+          no_matches_label={gettext("No matches")}
+        />
+      </div>
     </.field>
     """
   end
@@ -1556,35 +1550,21 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             <span>0</span>
           </div>
           <div class="flex-1 min-w-0">
-            <div class="relative flex items-end gap-0.5 h-40 border-b border-base-300">
+            <%!-- Core's bar chart, one stacked bar a day: a part per person,
+                 in that person's colour; hovering a bar lists its parts. The
+                 two lines behind it are this page's axis (top and half). --%>
+            <div class="relative h-40 border-b border-base-300">
               <div class="absolute inset-x-0 top-0 border-t border-base-content/10 pointer-events-none"></div>
               <div class="absolute inset-x-0 top-1/2 border-t border-base-content/10 pointer-events-none"></div>
-              <div
-                :for={day <- @chart.days}
-                class="group relative flex-1 min-w-0 h-full flex flex-col justify-end"
-                title={day_title(day)}
-              >
-                <div
-                  :if={day.minutes > 0}
-                  class="flex flex-col-reverse gap-0.5 w-full max-w-10 mx-auto rounded-t overflow-hidden"
-                  style={"height: #{pct(day.minutes, @chart.top)}%"}
-                >
-                  <div
-                    :for={{series, minutes} <- day.parts}
-                    style={"flex: #{Float.round(minutes, 2)} 1 0; background: var(--pkh-#{series.slot})"}
-                  >
-                  </div>
-                </div>
-                <div class="hidden group-hover:block absolute z-10 bottom-full left-1/2 -translate-x-1/2 mb-1 w-max max-w-56 rounded-box bg-base-100 border border-base-300 shadow-lg p-2 text-xs pointer-events-none">
-                  <div class="font-semibold">{L10n.format_date(day.date)}</div>
-                  <div class="text-base-content/70">{Format.duration(day.minutes)}</div>
-                  <div :for={{series, minutes} <- day.parts} class="flex items-center gap-1 mt-0.5">
-                    <span class="inline-block w-2 h-2 rounded-sm" style={"background: var(--pkh-#{series.slot})"}></span>
-                    <span class="truncate">{series.name}</span>
-                    <span class="ml-auto pl-2 tabular-nums">{Format.duration(minutes)}</span>
-                  </div>
-                </div>
-              </div>
+              <.bar_chart
+                id={"#{@dom}-chart-bars"}
+                data={chart_bars(@chart)}
+                y_max={@chart.top}
+                height={160}
+                value_format={&Format.duration/1}
+                aria_label={gettext("Hours per day")}
+                class="relative"
+              />
             </div>
             <div class="flex justify-between text-[10px] text-base-content/50 mt-1">
               <span>{short_day(List.first(@chart.days).date)}</span>
@@ -1598,16 +1578,35 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     """
   end
 
+  # The chart's days as core's `bar_chart` takes them: a stacked bar per
+  # day, its parts in the stack's order.
+  defp chart_bars(chart) do
+    Enum.map(chart.days, fn day ->
+      %{
+        label: L10n.format_date(day.date),
+        parts:
+          Enum.map(day.parts, fn {series, minutes} ->
+            %{label: series.name, value: minutes, class: slot_class(series.slot)}
+          end)
+      }
+    end)
+  end
+
+  # A series' colour as a text colour (core's chart draws in currentColor).
+  # Spelled out: Tailwind only ships the classes it can read in the source.
+  defp slot_class(0), do: "text-[var(--pkh-0)]"
+  defp slot_class(1), do: "text-[var(--pkh-1)]"
+  defp slot_class(2), do: "text-[var(--pkh-2)]"
+  defp slot_class(3), do: "text-[var(--pkh-3)]"
+  defp slot_class(4), do: "text-[var(--pkh-4)]"
+  defp slot_class(5), do: "text-[var(--pkh-5)]"
+  defp slot_class(6), do: "text-[var(--pkh-6)]"
+  defp slot_class(_), do: "text-[var(--pkh-7)]"
+
   defp pct(_part, whole) when whole <= 0, do: 0
   defp pct(part, whole), do: Float.round(part / whole * 100, 2)
 
   defp short_day(%Date{} = d), do: "#{L10n.short_month(d.month)} #{d.day}"
-
-  defp day_title(day) do
-    people = Enum.map_join(day.parts, ", ", fn {s, m} -> "#{s.name} #{Format.duration(m)}" end)
-    base = "#{L10n.format_date(day.date)}: #{Format.duration(day.minutes)}"
-    if people == "", do: base, else: "#{base} (#{people})"
-  end
 
   # ── Breakdowns ──
 
@@ -1679,6 +1678,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   attr(:sheet, :map, required: true)
   attr(:week, Date, required: true)
+  attr(:this_week, Date, required: true)
   attr(:dom, :string, required: true)
 
   defp timesheet(assigns) do
@@ -1694,23 +1694,18 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     <section class="card bg-base-100 border border-base-200 shadow-sm" id={"#{@dom}-sheet"}>
       <div class="card-body p-4 gap-2">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <h3 class="text-sm font-semibold">
-            {gettext("Timesheet")}
-            <span class="font-normal text-base-content/60">
-              · {short_day(@week)} – {short_day(Date.add(@week, 6))}
-            </span>
-          </h3>
-          <div class="join">
-            <button type="button" class="btn btn-xs join-item" phx-click="sheet_week" phx-value-step="-1" aria-label={gettext("Previous week")}>
-              <.icon name="hero-chevron-left" class="w-3.5 h-3.5" />
-            </button>
-            <button type="button" class="btn btn-xs join-item" phx-click="sheet_week" phx-value-step="0">
-              {gettext("This week")}
-            </button>
-            <button type="button" class="btn btn-xs join-item" phx-click="sheet_week" phx-value-step="1" aria-label={gettext("Next week")}>
-              <.icon name="hero-chevron-right" class="w-3.5 h-3.5" />
-            </button>
-          </div>
+          <h3 class="text-sm font-semibold">{gettext("Timesheet")}</h3>
+          <%!-- Core's date control, a week a press; the tab has no URL of
+               its own, so it sends an event. --%>
+          <.date_nav
+            id={"#{@dom}-sheet-week"}
+            date={@week}
+            today={@this_week}
+            step={7}
+            label={"#{short_day(@week)} – #{short_day(Date.add(@week, 6))}"}
+            today_label={gettext("This week")}
+            event="sheet_week"
+          />
         </div>
         <p :if={@workers == []} class="text-sm text-base-content/50">
           {gettext("Nothing logged for %{from} – %{to}.", from: short_day(@week), to: short_day(Date.add(@week, 6)))}
@@ -2033,36 +2028,24 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         <div>
           <span class="label mb-2 block"><span class="font-semibold">{gettext("Task")}</span></span>
           <input type="hidden" name="task" value={@form.values["task"]} />
-          <%= if @form.task_label do %>
-            <span class="flex items-center gap-1 h-8 pl-3 pr-1 rounded-field border border-base-300 bg-base-100 text-sm">
-              <span class="truncate flex-1" title={@form.task_label}>{@form.task_label}</span>
-              <button
-                type="button"
-                class="btn btn-ghost btn-xs btn-circle shrink-0"
-                phx-click="unpick"
-                phx-value-field="logtask"
-                aria-label={gettext("Clear %{label}", label: gettext("Task"))}
-              >
-                <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
-              </button>
-            </span>
-          <% else %>
-            <.search_picker
-              id={"#{@dom}-pick-logtask"}
-              dropdown_id={"#{@dom}-pick-logtask-list"}
-              search_event="pick_search"
-              pick_event="pick_pick"
-              search_on_focus
-              close_on_pick
-              row_layout="stacked"
-              placeholder={gettext("The project itself — or search a task")}
-              class="input input-sm w-full"
-              searching_label={gettext("Searching…")}
-              more_label={gettext("Load more")}
-              loading_more_label={gettext("Loading…")}
-              no_matches_label={gettext("No matches")}
-            />
-          <% end %>
+          <.search_picker
+            id={"#{@dom}-pick-logtask"}
+            dropdown_id={"#{@dom}-pick-logtask-list"}
+            search_event="pick_search"
+            pick_event="pick_pick"
+            chosen={@form.task_label}
+            clear_event="unpick"
+            clear_label={gettext("Clear %{label}", label: gettext("Task"))}
+            search_on_focus
+            close_on_pick
+            row_layout="stacked"
+            placeholder={gettext("The project itself — or search a task")}
+            class="input input-sm w-full"
+            searching_label={gettext("Searching…")}
+            more_label={gettext("Load more")}
+            loading_more_label={gettext("Loading…")}
+            no_matches_label={gettext("No matches")}
+          />
         </div>
         <.input
           id={"#{@dom}-log-note"}
