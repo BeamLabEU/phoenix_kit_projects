@@ -467,9 +467,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         # The record the form edits holds short refs (`#ANDI-42`) where the
         # row holds tokens: an untouched description is then no change, and
         # a changed one is expanded again when it is written.
+        # A one-off task written over the API (or by the quick-add composer
+        # and reworded there) keeps its description on the task row; the
+        # box shows that text, and a save writes it back where it lives.
+        {assignment, desc_on_task?} = own_description(assignment)
         assignment = RefText.collapse_fields(assignment, [:description])
 
         socket
+        |> assign(:desc_on_task?, desc_on_task?)
         # Trail: … / <project> / <task> / Edit — the assignment has no page
         # of its own, so its task is a text crumb; the leaf is the page. The
         # drawer has no trail, so its heading still names the task.
@@ -1708,6 +1713,71 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end)
   end
 
+  # The description a one-off task's row shows when the assignment carries
+  # none of its own: the task's (`token_home/1` in `Projects` reads the
+  # same way). Returns the record to edit and whether the words live on
+  # the task.
+  defp own_description(%Assignment{description: d, task: %Task{ad_hoc: true} = task} = a)
+       when d in [nil, ""] do
+    own = description_translations(a.translations)
+
+    if own == %{} do
+      shown = Map.merge(a.translations || %{}, description_translations(task.translations))
+      {%{a | description: task.description, translations: shown}, true}
+    else
+      {a, false}
+    end
+  end
+
+  defp own_description(%Assignment{} = a), do: {a, false}
+
+  defp description_translations(translations) when is_map(translations) do
+    for {lang, %{"description" => text}} <- translations, text not in [nil, ""], into: %{} do
+      {lang, %{"description" => text}}
+    end
+  end
+
+  defp description_translations(_translations), do: %{}
+
+  # When the words live on the task, the assignment's save leaves them out
+  # and `save_task_words/2` writes them to the task instead.
+  defp split_task_words(socket, attrs) do
+    if socket.assigns[:desc_on_task?] do
+      {Map.drop(attrs, ["description", "translations"]),
+       Map.take(attrs, ["description", "translations"])}
+    else
+      {attrs, nil}
+    end
+  end
+
+  defp save_task_words(_updated, nil), do: :ok
+
+  defp save_task_words(%Assignment{task_uuid: task_uuid}, words) do
+    with %Task{} = task <- Projects.get_task(task_uuid) do
+      translations =
+        Map.merge(
+          task.translations || %{},
+          description_translations(words["translations"]),
+          fn _lang, old, new -> Map.merge(old || %{}, new) end
+        )
+
+      content =
+        words
+        |> Map.take(["description"])
+        |> Map.put("translations", translations)
+
+      case Projects.update_task(task, content) do
+        {:ok, _} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "[Projects] a one-off task's description was not saved: #{inspect(reason)}"
+          )
+      end
+    end
+  end
+
   # Apply template-level default dependencies and return a flash tuple
   # describing what to show the user. A rollback in
   # `Projects.apply_template_dependencies/1` is *not* fatal — the
@@ -1736,8 +1806,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp save_edit(socket, attrs) do
+    {attrs, task_words} = split_task_words(socket, attrs)
+
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
+        save_task_words(updated, task_words)
         # A person saved the form: the title and description are theirs
         # now, whatever key wrote them before.
         _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})

@@ -81,4 +81,39 @@ defmodule PhoenixKitProjects.Web.RefTextLiveTest do
     assert task.token == "##{ctx.ref}"
     assert project.token == "##{ctx.project.key}"
   end
+
+  test "a one-off task's own description shows in the edit box and is saved back to the task",
+       ctx do
+    {:ok, %{assignment: a}} =
+      Projects.create_task_with_assignment(
+        ctx.project.uuid,
+        %{"title" => "One-off", "description" => "See ##{ctx.ref} first.", "ad_hoc" => true},
+        %{}
+      )
+
+    token = "#[project_task:#{ctx.target.uuid}|#{ctx.ref}]"
+    a = Projects.get_assignment(a.uuid)
+    assert a.description == nil
+    assert a.task.description == "See #{token} first."
+
+    path = "/en/admin/projects/#{ctx.project.uuid}/assignments/#{a.uuid}/edit"
+    {:ok, view, html} = live(ctx.conn, path)
+    assert html =~ "See ##{ctx.ref} first."
+
+    # Untouched, a save changes neither row.
+    view |> form("#assignment-form", assignment: %{}) |> render_submit()
+    a = Projects.get_assignment(a.uuid)
+    assert a.description == nil
+    assert a.task.description == "See #{token} first."
+
+    {:ok, view, _html} = live(ctx.conn, path)
+
+    view
+    |> form("#assignment-form", assignment: %{description: "After ##{ctx.ref}."})
+    |> render_submit()
+
+    a = Projects.get_assignment(a.uuid)
+    assert a.description == nil
+    assert a.task.description == "After #{token}."
+  end
 end
