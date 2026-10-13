@@ -1236,7 +1236,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     assigns = assign(assigns, ai_entries: max(assigns.total - assigns.totals.entries, 0))
 
     ~H"""
-    <div class="flex flex-col gap-3">
+    <div class="flex flex-col gap-3 mt-2">
       <div>
         <p class="mb-1 text-xs font-medium uppercase tracking-wide text-base-content/50">{gettext("People")}</p>
         <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
