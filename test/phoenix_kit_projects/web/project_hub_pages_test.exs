@@ -207,7 +207,9 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
 
       html = render_click(view, "switch_tab", %{"tab" => "comments"})
       assert html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/comments")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/comments")
 
       {:ok, _} = Extensions.disable(project, "discussions")
       {:ok, view, html_off} = live(conn, "/en/admin/projects/#{project.uuid}")
@@ -217,7 +219,9 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       # A forged switch onto the missing tab lands on the list.
       html = render_click(view, "switch_tab", %{"tab" => "comments"})
       refute html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/tasks")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks")
     end
 
     test "/comments deep-links onto the tab; with Discussions off it lands on the list",
@@ -228,7 +232,9 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       {:ok, _} = Extensions.disable(project, "discussions")
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/comments")
       refute html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/tasks")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks")
     end
 
     test "a template never gets a Comments tab, even with Discussions on", %{conn: conn} do
@@ -252,7 +258,9 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       html = render(view)
       refute html =~ ~s(id="pk-comments-body-comments-tab-project-#{project.uuid}")
       refute html =~ ~s(phx-value-tab="comments")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/tasks")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks")
     end
 
     test "a project that is ONLY a discussion lands on Comments with no strip",
@@ -366,21 +374,28 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       for forged <- ["tasks", "board", "nonsense", "ext:evil:main"] do
         html = render_click(view, "switch_tab", %{"tab" => forged})
         assert html =~ "ext-tab-content", "#{forged} blanked the page"
-        assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/main")
+
+        assert html =~
+                 ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/main")
       end
     end
 
     test "turning tasks off while on the list moves the page to the extension tab",
          %{conn: conn, project: project} do
       {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/tasks")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks")
 
       {:ok, _} = Extensions.disable(project, "tasks")
       send(view.pid, {:projects, :project_modules_changed, %{}})
 
       html = render(view)
       assert html =~ "ext-tab-content"
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/main")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/main")
+
       refute html =~ ~s(phx-value-tab="tasks")
     end
 
@@ -395,7 +410,9 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       html = render(view)
       refute html =~ "ext-tab-content"
       refute html =~ ~s(phx-value-tab="ext:tab_ext:main")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/tasks")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks")
     end
 
     test "the extension tab sits in the top strip beside Tasks and deep-links by its key",
@@ -405,27 +422,37 @@ defmodule PhoenixKitProjects.Web.ProjectHubPagesTest do
       assert html =~ ~s(phx-value-tab="ext:tab_ext:main")
 
       html = render_click(view, "switch_tab", %{"tab" => "ext:tab_ext:main"})
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/main")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/main")
 
       # `/projects/:id/<tab key>` opens the tab directly.
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/main")
       assert html =~ "ext-tab-content"
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/main")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/main")
 
       # An unknown segment lands on the first tab, like the bare page.
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/no-such-tab")
       refute html =~ "ext-tab-content"
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/tasks")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks")
     end
 
     test "switching to Tasks reopens the task view you left", %{conn: conn, project: project} do
       {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/tasks/board")
 
       html = render_click(view, "switch_tab", %{"tab" => "ext:tab_ext:main"})
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/main")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/main")
 
       html = render_click(view, "switch_tab", %{"tab" => "tasks"})
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.key}/tasks/board")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks/board")
     end
   end
 

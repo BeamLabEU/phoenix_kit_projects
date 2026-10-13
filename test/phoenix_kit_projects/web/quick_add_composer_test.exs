@@ -37,7 +37,9 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
       )
 
     [row] = Regex.run(~r/<div id="quick-add".*?<\/div>/s, html)
-    assert row =~ ~s(href="/en/admin/projects/#{p.uuid}/assignments/new")
+
+    assert row =~
+             ~s(href="#{PhoenixKitProjects.DataCase.admin_projects()}/#{p.uuid}/assignments/new")
   end
 
   test "is not offered on templates", %{conn: conn} do

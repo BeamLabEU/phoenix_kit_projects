@@ -73,7 +73,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     refute render(host(view, p)) =~ "<dialog"
     # Form links are popup buttons; page links stay real links.
     assert html =~ ~s(phx-click="open_embed")
-    assert html =~ ~s(href="/en/admin/projects/#{p.uuid}/files")
+    assert html =~ ~s(href="#{PhoenixKitProjects.DataCase.admin_projects()}/#{p.uuid}/files")
   end
 
   test "Add task opens the form in the drawer; saving closes it and the plan updates",
@@ -268,6 +268,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
       )
 
     refute html =~ "project-popup-"
-    assert html =~ ~s(href="/en/admin/projects/#{p.uuid}/assignments/new")
+
+    assert html =~
+             ~s(href="#{PhoenixKitProjects.DataCase.admin_projects()}/#{p.uuid}/assignments/new")
   end
 end

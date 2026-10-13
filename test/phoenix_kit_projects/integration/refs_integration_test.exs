@@ -323,8 +323,8 @@ defmodule PhoenixKitProjects.Integration.RefsIntegrationTest do
       assert html =~ ~s(data-ref="PR-1")
       assert html =~ "Shown task"
       # the address the page mirrors into the bar is the friendly one
-      assert html =~ ~s(data-url="/en/admin/projects/PR/tasks")
-      refute html =~ ~s(data-url="/en/admin/projects/#{project.uuid})
+      assert html =~ ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/PR/tasks")
+      refute html =~ ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.uuid})
       assert task.number == 1
     end
 

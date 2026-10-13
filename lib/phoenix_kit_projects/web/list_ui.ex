@@ -21,16 +21,14 @@ defmodule PhoenixKitProjects.Web.ListUi do
 
   ## Fitting
 
-  The tables follow the catalogue's shape: every column but the name is
-  sized to its content (`column_fit_class/1`) and packed against the
-  right edge, so a Status column never floats alone in the middle; the
-  name column is marked `data-col-lead` and takes the slack. Core's
-  column fitting (`<.table_default fit>`, which also drops the least
-  important columns when the table is wider than its wrapper, reading
-  `data-col-priority` off the header cells) is passed as a DYNAMIC
-  attribute (`table_fit/0`), so a core without it ignores the attrs and
-  the table scrolls sideways as it always did — the core floor does not
-  move for it.
+  The tables use core's column fitting as it is (`<.table_default fit>`,
+  core >= 2.54): the name column is the `lead` one — it stays on the left
+  and takes the slack — every other column is sized to its content and
+  packed against the right edge, and when the table is wider than its
+  wrapper the least important columns go first, the last one left saying
+  "+N". A column's importance is its header cell's `priority`
+  (`column_priority/1`, through `column_attrs/2`); the checkbox and the
+  actions carry none and never go.
   """
 
   use Phoenix.Component
@@ -66,24 +64,8 @@ defmodule PhoenixKitProjects.Web.ListUi do
   def load_columns(socket, spec), do: TableColumns.load(Actor.uuid(socket), spec)
 
   @doc """
-  `<.table_default>`'s column fitting, as a DYNAMIC attribute so the core
-  floor stays put (see the moduledoc). `fit_pack: false` because these
-  tables size their own columns (`column_fit_class/1`), like the
-  catalogue's.
-  """
-  @spec table_fit() :: map()
-  def table_fit, do: %{fit: true, fit_pack: false}
-
-  @doc """
-  The header-cell class that sizes an optional column to its content, so
-  the name column takes the slack and the rest pack right.
-  """
-  @spec column_fit_class(String.t()) :: String.t()
-  def column_fit_class(_id), do: "w-px whitespace-nowrap"
-
-  @doc """
   How soon a column is dropped when the table does not fit its width —
-  core's `fit` reads it off the header cell as `data-col-priority`. The
+  the header cell's `priority` in core's `fit`. The
   highest number goes first, `1` last; what a row IS (its status) outlasts
   what it has (counts, a duration), which outlasts when (dates), which
   outlasts who and the external id. Name and Actions carry none and never
@@ -110,12 +92,12 @@ defmodule PhoenixKitProjects.Web.ListUi do
   def column_priority(_id), do: 6
 
   @doc """
-  The attributes an optional column's header cell takes: its fit class
-  (plus `extra`, e.g. `text-right` for a count) and its drop priority.
+  The attributes an optional column's header cell takes: core's drop
+  `priority`, plus `extra` as its class (e.g. `text-right` for a count).
   """
-  @spec column_attrs(String.t(), String.t() | nil) :: map()
+  @spec column_attrs(String.t(), String.t() | nil | false) :: map()
   def column_attrs(id, extra \\ nil) do
-    %{class: [column_fit_class(id), extra], "data-col-priority": column_priority(id)}
+    %{priority: column_priority(id), class: extra || ""}
   end
 
   @doc """
@@ -125,7 +107,7 @@ defmodule PhoenixKitProjects.Web.ListUi do
   """
   def actions_header_cell(assigns) do
     ~H"""
-    <.table_default_header_cell class="w-px">
+    <.table_default_header_cell>
       <span class="sr-only">{gettext("Actions")}</span>
     </.table_default_header_cell>
     """

@@ -1072,7 +1072,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     assigns = assign(assigns, draggable?: draggable?, lang: lang)
 
     ~H"""
-    <.table_default id="projects-list" size="sm" {ListUi.table_fit()}>
+    <.table_default id="projects-list" size="sm" fit>
       <.table_default_header>
         <.table_default_row>
           <.drag_handle_header_cell :if={@draggable?} />
@@ -1081,7 +1081,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             id="projects-select-all"
             aria_label={gettext("Select all projects")}
           />
-          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}} data-col-lead="true">
+          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}} lead>
             {gettext("Name")}
           </.sort_header_cell>
           <%= for col <- @visible_columns do %>
@@ -1102,7 +1102,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         >
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={p.uuid} />
-          <.table_default_cell class="font-medium" data-col-lead="true">
+          <.table_default_cell class="font-medium" lead>
             <%!-- A sub-project listed flat says where it lives: its parent,
                  muted, before its own name. --%>
             <% parent = Columns.get(@metrics, :parents, p) %>

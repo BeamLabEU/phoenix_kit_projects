@@ -607,7 +607,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
     assigns = assign(assigns, draggable?: draggable?, lang: lang)
 
     ~H"""
-    <.table_default id="templates-list" size="sm" {ListUi.table_fit()}>
+    <.table_default id="templates-list" size="sm" fit>
       <.table_default_header>
         <.table_default_row>
           <.drag_handle_header_cell :if={@draggable?} />
@@ -615,7 +615,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
             id="templates-select-all"
             aria_label={gettext("Select all templates")}
           />
-          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}} data-col-lead="true">
+          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}} lead>
             {gettext("Name")}
           </.sort_header_cell>
           <%= for col <- @visible_columns do %>
@@ -628,7 +628,7 @@ defmodule PhoenixKitProjects.Web.TemplatesLive do
         <.sortable_row :for={t <- @templates} item_id={t.uuid} data-search={ListUi.search_haystack(t, ["name", "description"])}>
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell value={t.uuid} />
-          <.table_default_cell class="font-medium" data-col-lead="true">
+          <.table_default_cell class="font-medium" lead>
             <.smart_link
               navigate={Paths.template(t.uuid)}
               emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => t.uuid}}}

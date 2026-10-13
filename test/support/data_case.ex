@@ -19,6 +19,8 @@ defmodule PhoenixKitProjects.DataCase do
 
   use ExUnit.CaseTemplate
 
+  alias PhoenixKit.Utils.Routes
+
   using do
     quote do
       @moduletag :integration
@@ -68,6 +70,16 @@ defmodule PhoenixKitProjects.DataCase do
   end
 
   @doc "Creates a real (non-template) Project with a unique name."
+  @doc """
+  The address of the module's admin root as the app writes it: with the
+  language segment (`/en/admin/projects`) on a multilingual site and
+  without it on a single-language one — core 2.62 dropped the segment
+  there, and which of the two a test site is depends on the core it runs
+  against. Assertions on a WRITTEN link use this; navigating still uses
+  `/en/admin/projects`, the scope the test router mounts.
+  """
+  def admin_projects, do: Routes.path("/admin/projects")
+
   def fixture_project(attrs \\ %{}) do
     {:ok, project} =
       PhoenixKitProjects.Projects.create_project(
