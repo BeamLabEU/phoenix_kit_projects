@@ -353,7 +353,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a `#ANDI-42` or `#ANDI` in the text that names a real task or project is stored as a link to it (read back as `#[project_task:uuid|ANDI-42]`)"
+              "a `#ANDI-42` or `#ANDI` in the text that names a task or project within the key's reach is stored as a link to it (read back as `#[project_task:uuid|ANDI-42]`)"
           },
           %{
             name: "priority",
@@ -471,7 +471,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a `#ANDI-42` or `#ANDI` in the text that names a real task or project is stored as a link to it (read back as `#[project_task:uuid|ANDI-42]`)"
+              "a `#ANDI-42` or `#ANDI` in the text that names a task or project within the key's reach is stored as a link to it (read back as `#[project_task:uuid|ANDI-42]`)"
           },
           %{
             name: "priority",

@@ -21,6 +21,8 @@ defmodule PhoenixKitProjects.Integration.RefTextTest do
   end
 
   setup do
+    # Fixtures are written by trusted code (`RefText`, "Who is writing").
+    PhoenixKitProjects.RefText.put_writer(:all)
     project = fixture_project()
     task = task!(project)
     %{project: project, task: task, ref: Assignment.ref(task)}
@@ -67,6 +69,39 @@ defmodule PhoenixKitProjects.Integration.RefTextTest do
       assert RefText.expand(nil) == nil
     end
 
+    test "a ref inside a URL's query or fragment stays as typed", ctx do
+      for text <- [
+            "https://example.test/view?tab=##{ctx.project.key}",
+            "see x?tab=##{ctx.ref}",
+            "a=##{ctx.ref}"
+          ] do
+        assert RefText.expand(text) == text, text
+      end
+    end
+
+    test "only a declared writer who may open the project gets a link", ctx do
+      text = "See ##{ctx.ref} in ##{ctx.project.key}."
+      linked = RefText.expand(text)
+      assert linked =~ "#[project_task:#{ctx.task.uuid}|"
+
+      # Nobody declared (the public portal, a job): nothing is resolved.
+      RefText.put_writer(nil)
+      assert RefText.expand(text) == text
+
+      # A signed-in person with no access to the project.
+      outsider = PhoenixKitProjects.LiveCase.fake_scope(permissions: ["projects"])
+      RefText.put_writer({:scope, outsider})
+      assert RefText.expand(text) == text
+      # ...and the box keeps the tokens it cannot read back.
+      assert RefText.collapse(linked) == linked
+
+      # An API key: links only within its reach.
+      RefText.put_writer({:reach, &(&1 == ctx.project.uuid)})
+      assert RefText.expand(text) == linked
+      RefText.put_writer({:reach, fn _ -> false end})
+      assert RefText.expand(text) == text
+    end
+
     test "an escaped token and a token of another type are left alone", ctx do
       other = "#[crm_interaction:#{Ecto.UUID.generate()}|Kickoff ##{ctx.ref}]"
       escaped = "\\#[project_task:#{ctx.task.uuid}|x]"
@@ -109,6 +144,11 @@ defmodule PhoenixKitProjects.Integration.RefTextTest do
       escaped = "\\#[project_task:#{ctx.task.uuid}|x]"
 
       for text <- [glued, gone, escaped], do: assert(RefText.collapse(text) == text)
+
+      # A plain ref before a token that cannot be shown short: collapsing
+      # must not let the link slide from the second place to the first.
+      slid = "##{ctx.project.key} x#[project:#{ctx.project.uuid}|old]"
+      assert RefText.collapse(slid) == slid
     end
   end
 

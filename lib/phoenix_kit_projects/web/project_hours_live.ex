@@ -217,7 +217,18 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     )
   end
 
-  defp load(socket) do
+  # A tab left open is asked again on every reload: somebody taken off the
+  # project stops seeing its hours with the next filter change or entry,
+  # not with the next visit.
+  defp load(%{assigns: %{mode: :project, project: %Project{} = project}} = socket) do
+    if Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :view),
+      do: do_load(socket),
+      else: mount_nothing(socket)
+  end
+
+  defp load(socket), do: do_load(socket)
+
+  defp do_load(socket) do
     a = socket.assigns
     offset = resolve_offset(socket)
     lang = L10n.current_content_lang()

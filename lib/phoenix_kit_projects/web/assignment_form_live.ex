@@ -1722,7 +1722,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     own = description_translations(a.translations)
 
     if own == %{} do
-      shown = Map.merge(a.translations || %{}, description_translations(task.translations))
+      shown = Map.merge(a.translations, description_translations(task.translations))
       {%{a | description: task.description, translations: shown}, true}
     else
       {a, false}
@@ -1741,10 +1741,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # When the words live on the task, the assignment's save leaves them out
   # and `save_task_words/2` writes them to the task instead.
+  defp put_save_flash(socket, :ok), do: put_flash(socket, :info, gettext("Assignment updated."))
+
+  defp put_save_flash(socket, :error),
+    do:
+      put_flash(
+        socket,
+        :warning,
+        gettext("Task updated, but its description could not be saved.")
+      )
+
+  # Only words the person changed are written: an untouched box must not
+  # put the text it was opened with over a newer one from the API.
   defp split_task_words(socket, attrs) do
     if socket.assigns[:desc_on_task?] do
-      {Map.drop(attrs, ["description", "translations"]),
-       Map.take(attrs, ["description", "translations"])}
+      shown = socket.assigns.assignment
+      words = Map.take(attrs, ["description", "translations"])
+
+      changed? =
+        (Map.has_key?(words, "description") and
+           (words["description"] || "") != (shown.description || "")) or
+          description_translations(words["translations"]) !=
+            description_translations(shown.translations)
+
+      {Map.drop(attrs, ["description", "translations"]), if(changed?, do: words)}
     else
       {attrs, nil}
     end
@@ -1753,28 +1773,32 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp save_task_words(_updated, nil), do: :ok
 
   defp save_task_words(%Assignment{task_uuid: task_uuid}, words) do
-    with %Task{} = task <- Projects.get_task(task_uuid) do
-      translations =
-        Map.merge(
-          task.translations || %{},
-          description_translations(words["translations"]),
-          fn _lang, old, new -> Map.merge(old || %{}, new) end
+    case Projects.get_task(task_uuid) do
+      %Task{} = task -> write_task_words(task, words)
+      _ -> :error
+    end
+  end
+
+  defp write_task_words(%Task{} = task, words) do
+    translations =
+      Map.merge(
+        task.translations,
+        description_translations(words["translations"]),
+        fn _lang, old, new -> Map.merge(old, new) end
+      )
+
+    content = words |> Map.take(["description"]) |> Map.put("translations", translations)
+
+    case Projects.update_task(task, content) do
+      {:ok, _} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "[Projects] a one-off task's description was not saved: #{inspect(reason)}"
         )
 
-      content =
-        words
-        |> Map.take(["description"])
-        |> Map.put("translations", translations)
-
-      case Projects.update_task(task, content) do
-        {:ok, _} ->
-          :ok
-
-        {:error, reason} ->
-          Logger.warning(
-            "[Projects] a one-off task's description was not saved: #{inspect(reason)}"
-          )
-      end
+        :error
     end
   end
 
@@ -1810,12 +1834,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
-        save_task_words(updated, task_words)
+        words_saved = save_task_words(updated, task_words)
         # A person saved the form: the title and description are theirs
         # now, whatever key wrote them before.
         _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
         apply_pending_labels(socket, updated)
-        sync_task_mentions(socket, updated.uuid, attrs["description"])
+
+        sync_task_mentions(
+          socket,
+          updated.uuid,
+          attrs["description"] || (task_words && task_words["description"])
+        )
 
         Activity.log("projects.assignment_updated",
           actor_uuid: Activity.actor_uuid(socket),
@@ -1827,7 +1856,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         {:noreply,
          socket
-         |> put_flash(:info, gettext("Assignment updated."))
+         |> put_save_flash(words_saved)
          |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
            kind: :assignment,
            record: updated,

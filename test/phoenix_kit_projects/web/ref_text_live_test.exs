@@ -11,6 +11,8 @@ defmodule PhoenixKitProjects.Web.RefTextLiveTest do
   alias PhoenixKitProjects.Web.Mentions
 
   setup %{conn: conn} do
+    # Fixtures are written by trusted code (`RefText`, "Who is writing").
+    PhoenixKitProjects.RefText.put_writer(:all)
     project = fixture_project()
 
     task = fn attrs ->
@@ -105,6 +107,12 @@ defmodule PhoenixKitProjects.Web.RefTextLiveTest do
     a = Projects.get_assignment(a.uuid)
     assert a.description == nil
     assert a.task.description == "See #{token} first."
+
+    # A box left untouched does not put its text over a newer one.
+    {:ok, view, _html} = live(ctx.conn, path)
+    {:ok, _} = Projects.update_task(a.task, %{"description" => "Reworded over the API."})
+    view |> form("#assignment-form", assignment: %{priority: "high"}) |> render_submit()
+    assert Projects.get_assignment(a.uuid).task.description == "Reworded over the API."
 
     {:ok, view, _html} = live(ctx.conn, path)
 

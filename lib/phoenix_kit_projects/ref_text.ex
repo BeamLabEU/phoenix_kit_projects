@@ -16,13 +16,22 @@ defmodule PhoenixKitProjects.RefText do
       and tasks become their short refs again; every other token (a person,
       a client interaction) is left as it is.
 
-  ## Neither direction asks who is looking
+  ## Who is writing
 
-  The token `expand/1` writes carries the ref as its label and nothing
-  else, so the author's text holds no more than they typed; the title is
-  resolved per reader at render, where `ResourceLinks` decides who may see
-  it. `collapse/1` shows a ref the text already pointed at. All either
-  tells anybody is that such a ref exists, and the numbers are consecutive.
+  `expand/1` resolves a ref only for a declared writer (`put_writer/1`,
+  held in the process dictionary): the admin pages declare the viewer's
+  scope as they mount (`Web.Helpers.assign_embed_user/2`), the API its
+  key's reach (`Web.Api.Auth`). A ref to a project the writer cannot open
+  stays the text it was — otherwise typing `#SECRET-7` and reading the
+  result back would say whether it exists, and hand over its uuid. A
+  process that declared nobody (the public portal, a background job)
+  expands nothing; trusted code declares `:all`.
+
+  The token carries the ref as its label and nothing else, so the
+  author's text holds no more than they typed; the title is resolved per
+  reader at render, where `ResourceLinks` decides who may see it.
+  `collapse/1` shows a ref the text already pointed at, and only when the
+  same writer's `expand/1` would read it back as the same links.
 
   ## What counts as a ref
 
@@ -35,19 +44,47 @@ defmodule PhoenixKitProjects.RefText do
   """
 
   alias PhoenixKit.Mentions.Token
-  alias PhoenixKitProjects.{Projects, Refs}
+  alias PhoenixKitProjects.{Projects, Refs, ResourceLinks}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @types ~w(project project_task)
 
-  # The `#` must start a word: not after a letter or digit, not inside a
-  # URL (`/`, `&`, `:`, `.`, `-`), not after another `#` (a Markdown
-  # heading), a backslash (escaped), or a Markdown link's text `[#…` or
-  # target `](#…`. A ref in plain brackets, `(#ANDI-42)`, is a ref.
-  @ref ~r/(?<![\p{L}\p{N}_\/\\#&:.\-\[])(?<!\]\()#([A-Za-z0-9]{2,10})(?:-([0-9]{1,9}))?(?![\p{L}\p{N}_\-])/u
+  # The `#` must start a word: at the start of the text, or after white
+  # space or punctuation that opens or separates (`(`, a quote, `,`, `;`,
+  # `>`, emphasis marks, a dash). So not after a letter or digit, not
+  # inside a URL (`/`, `?`, `=`, `&`, `:`, `.`), not after another `#` (a
+  # Markdown heading), a backslash (escaped), or a Markdown link's text
+  # `[#…` or target `](#…`. A ref in plain brackets, `(#ANDI-42)`, is one.
+  @ref ~r/(?<![^\s("'“‘«,;>*_~{–—])(?<!\]\()#([A-Za-z0-9]{2,10})(?:-([0-9]{1,9}))?(?![\p{L}\p{N}_\-])/u
 
-  # Left exactly as written: fenced and inline code.
-  @code ~r/```.*?```|`[^`\n]*`/s
+  # Left exactly as written: fenced and inline code, and URLs.
+  @code ~r/```.*?```|`[^`\n]*`|\bhttps?:\/\/\S+/s
+
+  @writer {__MODULE__, :writer}
+
+  @typedoc """
+  Who the text is written by: `:all` (trusted code), `{:scope, scope}` (a
+  signed-in viewer, asked through `ResourceLinks.visible_resource_uuids/2`),
+  or `{:reach, fun}` where `fun.(project_uuid)` says whether the writer may
+  open that project (an API key).
+  """
+  @type writer :: :all | {:scope, term()} | {:reach, (String.t() -> boolean())} | nil
+
+  @doc "Declares who writes text in this process (see the moduledoc). Returns the writer before."
+  @spec put_writer(writer()) :: writer()
+  def put_writer(writer), do: Process.put(@writer, writer)
+
+  defp may_link?(uuid, project_uuid) do
+    case Process.get(@writer) do
+      :all -> true
+      {:scope, nil} -> false
+      {:scope, scope} -> uuid in ResourceLinks.visible_resource_uuids([uuid], scope: scope)
+      {:reach, fun} when is_function(fun, 1) -> fun.(project_uuid) == true
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
 
   @doc """
   `text` with every short ref that names a real project or task turned
@@ -88,6 +125,7 @@ defmodule PhoenixKitProjects.RefText do
     with true <- key == String.upcase(key),
          {:project, _} <- Refs.parse(key),
          %Project{key: current} = project when is_binary(current) <- Projects.get_project(key),
+         true <- may_link?(project.uuid, project.uuid),
          {:ok, token} <- Token.to_string(:resource, "project", project.uuid, current) do
       token
     else
@@ -98,6 +136,7 @@ defmodule PhoenixKitProjects.RefText do
   defp token_for(key, number) do
     with {:task, _, _} <- Refs.parse("#{key}-#{number}"),
          %Assignment{} = a <- Projects.get_assignment("#{key}-#{number}"),
+         true <- may_link?(a.uuid, a.project_uuid),
          ref when is_binary(ref) <- Assignment.row_ref(a),
          {:ok, token} <- Token.to_string(:resource, "project_task", a.uuid, ref) do
       token
@@ -117,7 +156,10 @@ defmodule PhoenixKitProjects.RefText do
   def collapse(text) when is_binary(text) do
     if String.contains?(text, "#[") do
       short = Regex.replace(Token.pattern(), text, &collapse_token/6)
-      if targets(expand(short)) == targets(text), do: short, else: text
+      # Saved again, `short` must give the very text a save of `text` would:
+      # the same links at the same places (comparing only the list of
+      # targets let a link slide from one occurrence to another).
+      if placed(expand(short)) == placed(expand(text)), do: short, else: text
     else
       text
     end
@@ -149,7 +191,13 @@ defmodule PhoenixKitProjects.RefText do
     end
   end
 
-  defp targets(text), do: text |> Token.parse() |> Enum.map(&{&1.kind, &1.type, &1.uuid})
+  # The text with each token reduced to what it points at: labels differ
+  # (a renamed key), the place and the target must not.
+  defp placed(text) do
+    Regex.replace(Token.pattern(), text, fn _whole, esc, trigger, type, uuid, _label ->
+      "\0#{esc}#{trigger}#{type}:#{uuid}\0"
+    end)
+  end
 
   @doc """
   Has the refs in a changeset's changed text expanded when it is WRITTEN:

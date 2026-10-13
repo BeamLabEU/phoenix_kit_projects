@@ -826,6 +826,12 @@ agreed on is what is built, and where they corrected it is marked.
   description changesets (`expand_on_write/2`: `Task`, `Assignment`,
   `Project`, their `translations` too) and on a note's body — on the WRITE,
   never on a form's validate, so the text does not change under the cursor.
+  A ref resolves only for a DECLARED writer (`RefText.put_writer/1`, in the
+  process dictionary): `Web.Helpers.assign_embed_user/2` declares the
+  viewer's scope for every LiveView, `Web.Api.Auth` the key's reach; a
+  process that declared nobody (the public portal, a job) expands nothing,
+  and tests that write fixtures directly declare `:all`. Without this a
+  typed `#SECRET-7` said whether it exists (codex, 2026-10-13).
   `collapse/1` shows project and task tokens as refs again; the forms hold
   the record collapsed (`collapse_fields/2`), so an untouched description
   is no change. `Web.Mentions` replaces `use PhoenixKit.Mentions.Live` in

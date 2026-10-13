@@ -669,18 +669,30 @@ defmodule PhoenixKitProjects.Web.Helpers do
     # function. The two are behaviourally identical — drop the fallback
     # (and `resolve_embed_identity/1`) once the `phoenix_kit` floor includes
     # the core helper.
-    if function_exported?(PhoenixKitWeb.Users.Auth, :assign_embedded_current_user, 2) do
-      # `apply/3` is intentional here (see above): a direct call would emit an
-      # `unknown_function` warning — fatal under `--warnings-as-errors` — when
-      # compiled against an older core that lacks this helper.
-      # credo:disable-for-next-line Credo.Check.Refactor.Apply
-      apply(PhoenixKitWeb.Users.Auth, :assign_embedded_current_user, [socket, session])
-    else
-      local_assign_embed_user(socket, session)
-    end
+    socket =
+      if function_exported?(PhoenixKitWeb.Users.Auth, :assign_embedded_current_user, 2) do
+        # `apply/3` is intentional here (see above): a direct call would emit an
+        # `unknown_function` warning — fatal under `--warnings-as-errors` — when
+        # compiled against an older core that lacks this helper.
+        # credo:disable-for-next-line Credo.Check.Refactor.Apply
+        apply(PhoenixKitWeb.Users.Auth, :assign_embedded_current_user, [socket, session])
+      else
+        local_assign_embed_user(socket, session)
+      end
+
+    declare_ref_writer(socket)
   end
 
-  def assign_embed_user(socket, _session), do: socket
+  def assign_embed_user(socket, _session), do: declare_ref_writer(socket)
+
+  # The viewer is settled here for every page of the module, router-mounted
+  # or embedded, so this is where the LiveView's process says who writes
+  # the text it saves: `RefText` links a typed `#KEY-42` only when that
+  # person may open what it names.
+  defp declare_ref_writer(socket) do
+    PhoenixKitProjects.RefText.put_writer({:scope, socket.assigns[:phoenix_kit_current_scope]})
+    socket
+  end
 
   defp local_assign_embed_user(socket, session) do
     # A non-nil scope means the on_mount hook already ran (router mount).
