@@ -128,9 +128,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         filtered_count: 0,
         local_search?: true,
         # What the columns, the sort and the filters read for the listed
-        # projects (`ListMetrics`), and what the footer adds up.
+        # projects (`ListMetrics`).
         metrics: %{},
-        totals: %{projects: 0},
         any_projects?: false,
         filters_open: false,
         people_options: [],
@@ -278,7 +277,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         total > 0 or count_listed(scope, archived: :all, include_subprojects: true) > 0,
       local_search?: local_search?,
       filtered_count: filtered_count(a, scope, listing, rows, local_search?, computed?),
-      totals: totals(page, metrics, a.search, local_search?),
       # The filter panel's own options come from the set BEFORE the panel's
       # filters narrowed it — otherwise picking a client would leave that
       # client as the only one to pick.
@@ -368,38 +366,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     case socket.assigns[:phoenix_kit_current_user] do
       %{uuid: uuid} -> uuid
       _ -> PhoenixKitWeb.Actor.uuid(socket)
-    end
-  end
-
-  # The footer: what the rows on screen add up to. In local mode the
-  # client hook hides the rows a search misses, so the same match is made
-  # here — the line then counts what is visible, not what was rendered.
-  defp totals(page, metrics, search, local_search?) do
-    shown =
-      case {local_search?, search |> to_string() |> String.trim() |> String.downcase()} do
-        {true, q} when q != "" ->
-          Enum.filter(
-            page,
-            &String.contains?(ListUi.search_haystack(&1, ["name", "description"]), q)
-          )
-
-        _ ->
-          page
-      end
-
-    %{projects: length(shown)}
-    |> put_total(:open_tasks, metrics, :tasks, shown, :open)
-    |> put_total(:overdue, metrics, :due, shown, :overdue)
-    |> put_total(:minutes, metrics, :ledger, shown, :minutes)
-    |> put_total(:ai_minutes, metrics, :ledger, shown, :ai_minutes)
-  end
-
-  defp put_total(totals, name, metrics, family, shown, key) do
-    if Map.has_key?(metrics, family) do
-      sum = shown |> Enum.map(&(Columns.field(metrics, family, &1, key) || 0)) |> Enum.sum()
-      Map.put(totals, name, sum)
-    else
-      totals
     end
   end
 
@@ -538,29 +504,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   defp filters_set?(assigns) do
     Columns.active_count(filters(assigns)) + listing_filters(assigns) > 0 or
       not is_nil(assigns[:status_filter])
-  end
-
-  # The footer line: what the rows on screen add up to.
-  defp totals_line(assigns) do
-    ~H"""
-    <p id="projects-totals" class="text-xs text-base-content/60 text-right">
-      {ngettext("%{count} project", "%{count} projects", @totals.projects, count: @totals.projects)}
-      <span :if={Map.has_key?(@totals, :open_tasks)}>
-        · {ngettext("%{count} open task", "%{count} open tasks", @totals.open_tasks, count: @totals.open_tasks)}
-      </span>
-      <span :if={Map.get(@totals, :overdue, 0) > 0} class="text-error">
-        · {gettext("%{count} overdue", count: @totals.overdue)}
-      </span>
-      <span :if={Map.has_key?(@totals, :minutes)}>
-        · {gettext("%{amount} logged", amount: ListUi.format_minutes(@totals.minutes))}
-      </span>
-      <%!-- An agent's time is said apart, as in the columns: the figure
-           before it is people's. --%>
-      <span :if={Map.get(@totals, :ai_minutes, 0) > 0}>
-        · {gettext("%{amount} by AI", amount: ListUi.format_minutes(@totals.ai_minutes))}
-      </span>
-    </p>
-    """
   end
 
   @impl true
@@ -1036,7 +979,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           >
             {gettext("No projects match.")}
           </p>
-          {totals_line(assigns)}
           </div>
         </.bulk_select_scope>
 
@@ -1055,7 +997,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
           </div>
           {filters_panel(assigns)}
           {render_projects_table(assigns, draggable?, lang)}
-          {totals_line(assigns)}
         <% end %>
       <% end %>
 

@@ -127,8 +127,8 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert html =~ "1/2"
       assert html =~ "50%"
       assert html =~ "2h 30m"
-      assert has_element?(view, "#projects-totals", "1 open task")
-      assert has_element?(view, "#projects-totals", "2h 30m logged")
+      # No footer adding the page up: the columns say it (Max, 2026-10-13).
+      refute has_element?(view, "#projects-totals")
     end
 
     test "every column the picker offers renders, and an overdue count is loud", %{conn: conn} do
@@ -174,7 +174,6 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert html =~ "2.5k tokens"
       assert html =~ "$0.12"
       assert html =~ "EXT-77"
-      assert has_element?(view, "#projects-totals .text-error", "1 overdue")
     end
   end
 
@@ -262,9 +261,8 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert length(order(html, [top | bulk])) == 100
 
       # a filter counts what matches, not what exists
-      {:ok, view, html} = live(conn, @path <> "?who=#{Ecto.UUID.generate()}")
+      {:ok, _view, html} = live(conn, @path <> "?who=#{Ecto.UUID.generate()}")
       assert order(html, [top | bulk]) == []
-      assert has_element?(view, "#projects-totals", "0 projects")
     end
   end
 
@@ -473,10 +471,9 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
         assert html =~ "ScopeMine", "missing own project for #{inspect(query)}"
         refute html =~ "ScopeForeign", "foreign project shown for #{inspect(query)}"
 
-        # ... nor in the panel's options or the footer
+        # ... nor in the panel's options
         html = view |> element("#projects-filters-toggle") |> render_click()
         refute html =~ "ScopeForeign"
-        assert has_element?(view, "#projects-totals", "1 project")
       end
     end
   end
