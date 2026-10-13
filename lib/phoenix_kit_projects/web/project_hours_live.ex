@@ -1333,6 +1333,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         field="task"
         chosen={@picked["task"]}
         placeholder={gettext("All tasks")}
+        class="w-64"
       />
 
       <form id={"#{@dom}-filters-more"} phx-change="filter" class="contents" novalidate>
@@ -1436,6 +1437,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
             pick_event="pick_pick"
             search_on_focus
             close_on_pick
+            row_layout="stacked"
             placeholder={@placeholder}
             class="input input-sm h-8 min-h-8 w-full"
             searching_label={gettext("Searching…")}
@@ -2045,6 +2047,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
               pick_event="pick_pick"
               search_on_focus
               close_on_pick
+              row_layout="stacked"
               placeholder={gettext("The project itself — or search a task")}
               class="input input-sm w-full"
               searching_label={gettext("Searching…")}
