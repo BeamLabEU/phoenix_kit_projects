@@ -1303,6 +1303,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   icon="hero-pencil"
                   label={gettext("Edit")}
                 />
+                <.table_row_menu_button
+                  :if={@fx.ledger and not @is_template}
+                  phx-click="open_log_time"
+                  phx-value-uuid={@a.uuid}
+                  icon="hero-play-circle"
+                  label={gettext("Log time")}
+                />
                 <.table_row_menu_divider />
                 <.table_row_menu_button
                   {ConfirmAction.ask("remove_assignment",
@@ -1365,37 +1372,31 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 </button>
               </form>
             <% else %>
+              <%!-- A duration shows once it is set (and stays a click to
+                   change); an unset one is set in the task's form, not by
+                   a button on every row (Max, 2026-10-14). --%>
               <% dur = format_duration(@a) %>
               <button
-                :if={@fx.estimates}
+                :if={@fx.estimates and dur != "—"}
                 phx-click="edit_duration"
                 phx-value-uuid={@a.uuid}
-                class={[
-                  "badge badge-sm gap-1 cursor-pointer transition-colors",
-                  dur != "—" && "badge-outline hover:bg-primary hover:text-primary-content hover:border-primary",
-                  dur == "—" && "badge-ghost hover:bg-base-300"
-                ]}
+                class="badge badge-sm gap-1 cursor-pointer transition-colors badge-outline hover:bg-primary hover:text-primary-content hover:border-primary"
               >
-                <.icon name="hero-clock" class="w-3 h-3" />
-                {if dur != "—", do: dur, else: gettext("Set duration")}
+                <.icon name="hero-clock" class="w-3 h-3" /> {dur}
               </button>
             <% end %>
 
+            <%!-- Time shows once some is logged; logging it is in the task's
+                 form and its ⋮ menu. --%>
             <% logged = Map.get(@ledger_minutes, @a.uuid, 0) %>
             <button
-              :if={@fx.ledger and not @is_template}
+              :if={@fx.ledger and not @is_template and logged > 0}
               phx-click="open_log_time"
               phx-value-uuid={@a.uuid}
               title={gettext("Log time on this task")}
-              class={[
-                "badge badge-sm gap-1 cursor-pointer transition-colors",
-                logged > 0 &&
-                  "badge-outline hover:bg-primary hover:text-primary-content hover:border-primary",
-                logged == 0 && "badge-ghost hover:bg-base-300"
-              ]}
+              class="badge badge-sm gap-1 cursor-pointer transition-colors badge-outline hover:bg-primary hover:text-primary-content hover:border-primary"
             >
-              <.icon name="hero-play-circle" class="w-3 h-3" />
-              {if logged > 0, do: format_minutes(logged), else: gettext("Log time")}
+              <.icon name="hero-play-circle" class="w-3 h-3" /> {format_minutes(logged)}
             </button>
 
             <% atype = assignee_type(@a) %>
@@ -1419,16 +1420,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               {label.name}
             </span>
 
-            <% weekends? = task_counts_weekends?(@a, @project) %>
+            <%!-- Only the exception is said: weekdays only is the usual case. --%>
             <span
-              :if={@fx.scheduling}
-              class={"badge badge-sm gap-1 #{if weekends?, do: "badge-info badge-outline", else: "badge-ghost"}"}
+              :if={@fx.scheduling and task_counts_weekends?(@a, @project)}
+              class="badge badge-sm gap-1 badge-info badge-outline"
             >
-              <%= if weekends? do %>
-                <.icon name="hero-calendar" class="w-3 h-3" /> {gettext("incl. weekends")}
-              <% else %>
-                {gettext("weekdays only")}
-              <% end %>
+              <.icon name="hero-calendar" class="w-3 h-3" /> {gettext("incl. weekends")}
             </span>
 
             <%= if @fx.progress and not @is_template do %>

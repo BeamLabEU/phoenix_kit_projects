@@ -61,6 +61,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> assign(form_seq: 0, add_next?: false)
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
+      |> assign_logged_minutes()
       |> assign_ai_translate()
       # Unsaved edits? Flipped by the first change event; the host's
       # dialog (emit mode) stops closing on Esc/backdrop while true and
@@ -93,6 +94,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # The hub gate map for this form's project. Placeholder projects (the
   # not-found render window) fall back to catalog defaults.
+  # What is logged on the task being edited, for the form's "Log time" line.
+  defp assign_logged_minutes(
+         %{assigns: %{live_action: :edit, assignment: %Assignment{uuid: uuid}}} = socket
+       )
+       when is_binary(uuid) do
+    minutes =
+      case PhoenixKitProjects.Ledger.totals_for_assignments([uuid]) do
+        %{^uuid => %{minutes: minutes}} -> minutes
+        _ -> 0
+      end
+
+    assign(socket, :logged_minutes, minutes)
+  end
+
+  defp assign_logged_minutes(socket), do: assign(socket, :logged_minutes, 0)
+
   defp assign_fx(socket) do
     case socket.assigns[:project] do
       %Project{uuid: uuid} = project when is_binary(uuid) ->
@@ -859,6 +876,42 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {:edit, _} -> save_edit(socket, attrs)
     end
   end
+
+  # Time logged from the task's form: the viewer's own, on this task, as
+  # the project page's "Log time" would. The buttons render only where the
+  # ledger is on; the event is asked again here.
+  def handle_event("log_time", params, %{assigns: %{live_action: :edit}} = socket) do
+    %{project: project, assignment: assignment} = socket.assigns
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    with true <- Features.on?(project, "ledger"),
+         true <- PhoenixKitProjects.Authz.can?(scope, project, :log_time, assignment),
+         {:ok, minutes} <- PhoenixKitProjects.Hours.Format.parse_duration(params["duration"]),
+         {:ok, _entry} <-
+           PhoenixKitProjects.Ledger.log_time(assignment.project_uuid, minutes,
+             assignment_uuid: assignment.uuid,
+             billable: params["billable"] in ["true", "on"],
+             actor_uuid: Activity.actor_uuid(socket)
+           ) do
+      {:noreply,
+       socket
+       |> assign_logged_minutes()
+       |> put_flash(:info, gettext("Time logged."))}
+    else
+      :error ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Enter how long, like 1h 30m, 1:30, 90 or 1.5h."))}
+
+      false ->
+        {:noreply,
+         put_flash(socket, :error, gettext("You don't have permission to log time here."))}
+
+      _ ->
+        {:noreply, put_flash(socket, :error, gettext("Could not log the time."))}
+    end
+  end
+
+  def handle_event("log_time", _params, socket), do: {:noreply, socket}
 
   # Portal visibility flip — immediate write, never a form param. Gated
   # explicitly on :edit_tasks (a PUBLIC-exposure change gets the strict
@@ -2515,6 +2568,39 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </div>
             </div>
 
+            <%!-- Logging time on the task, here in its form instead of on
+                 every row of the list. The inputs belong to a form of their
+                 own (`form=`), drawn after this one: a form inside a form
+                 is not HTML. --%>
+            <div
+              :if={@live_action == :edit and @kind == "task" and @fx.ledger and not @project.is_template}
+              id="assignment-log-time"
+              class="flex flex-col gap-1"
+            >
+              <span class="label mb-1"><span class="font-semibold">{gettext("Log time")}</span></span>
+              <div class="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  name="duration"
+                  form="assignment-log-form"
+                  placeholder={gettext("1h 30m, 1:30, 90 or 1.5h")}
+                  autocomplete="off"
+                  class="input input-sm w-48"
+                  aria-label={gettext("How long")}
+                />
+                <label class="flex items-center gap-2 cursor-pointer text-sm">
+                  <input type="checkbox" name="billable" value="true" form="assignment-log-form" class="checkbox checkbox-sm" />
+                  {gettext("Billable")}
+                </label>
+                <button type="submit" form="assignment-log-form" class="btn btn-sm" phx-disable-with={gettext("Saving…")}>
+                  <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Log time")}
+                </button>
+                <span :if={@logged_minutes > 0} class="text-sm text-base-content/60">
+                  {gettext("%{amount} logged so far", amount: PhoenixKitProjects.Hours.Format.duration(@logged_minutes))}
+                </span>
+              </div>
+            </div>
+
             <.select
               field={@form[:status]}
               label={gettext("Status")}
@@ -2883,6 +2969,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         <.ai_translate_modal ai_translate={FormGlue.ai_translate_config(assigns)} />
       </.form>
+      <%!-- Owns the "Log time" inputs drawn inside the form above (`form=`). --%>
+      <form id="assignment-log-form" phx-submit="log_time" class="hidden"></form>
       <% end %>
     </div>
     """
