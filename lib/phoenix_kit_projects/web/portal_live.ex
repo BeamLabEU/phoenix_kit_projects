@@ -225,10 +225,21 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   def handle_info({:comments_updated, _payload}, socket), do: {:noreply, socket}
 
   # Rotation / re-configuration while mounted: re-resolve; a dead slug
-  # downgrades to the uniform unavailable state on the spot.
+  # downgrades to the uniform unavailable state on the spot. Membership,
+  # grant and project-settings (visibility) changes are in the list because
+  # they move the viewer's standing, which the "Edit project" link is derived
+  # from: without them a removed member keeps a link until some unrelated
+  # event happens to reload the board.
   @impl true
   def handle_info({:projects, event, _payload}, socket)
-      when event in [:portal_rotated, :project_modules_changed, :assignment_updated] do
+      when event in [
+             :portal_rotated,
+             :project_modules_changed,
+             :assignment_updated,
+             :project_members_changed,
+             :project_grants_changed,
+             :project_updated
+           ] do
     {:noreply, load_view(socket)}
   end
 

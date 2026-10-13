@@ -207,10 +207,10 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
       {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
       assert edit_link?(view, edit_href(project))
 
-      {:ok, _} = Members.remove_member(project.uuid, scope.user.uuid)
       # The board is still live and resolves; only the viewer's standing
-      # changed, so the reload must not keep a link granted earlier.
-      send(view.pid, {:projects, :project_modules_changed, %{}})
+      # changed. The removal's own broadcast must reload it (no hand-sent
+      # event: that once hid the portal ignoring `:project_members_changed`).
+      {:ok, _} = Members.remove_member(project.uuid, scope.user.uuid)
 
       assert render(view) =~ project.name
       refute has_element?(view, "#portal-admin-edit")
