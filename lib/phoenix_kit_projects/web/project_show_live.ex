@@ -1335,6 +1335,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </div>
           </div>
 
+          <%!-- What the task waits on: a line of its own under the title,
+               not one more chip among the others (Max, 2026-10-14). It
+               opens the task's form on the field that says it. --%>
+          <.smart_link
+            :if={@a.waiting_on}
+            navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid) <> "?focus=waiting_on"}
+            emit={
+              {PhoenixKitProjects.Web.AssignmentFormLive,
+               %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid, "focus" => "waiting_on"}}
+            }
+            embed_mode={@embed_mode}
+            class="flex items-start gap-1.5 text-sm text-left text-warning hover:underline"
+            title={gettext("Waiting on someone else — click to change")}
+          >
+            <.icon name="hero-pause-circle" class="w-4 h-4 mt-0.5 shrink-0" />
+            <span>{gettext("Waiting on %{who}", who: @a.waiting_on)}</span>
+          </.smart_link>
+
           <%!-- Description --%>
           <% lang = L10n.current_content_lang() %>
           <% shown_desc = Assignment.localized_description(@a, lang) || TaskSchema.localized_description(@a.task, lang) %>
@@ -1347,20 +1365,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <%!-- What an agent (or a person) set on the task: whom it waits
                  on, where it came from, how far its checklist is. --%>
-            <%!-- Opens the task's form on the field that says it. --%>
-            <.smart_link
-              :if={@a.waiting_on}
-              navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid) <> "?focus=waiting_on"}
-              emit={
-                {PhoenixKitProjects.Web.AssignmentFormLive,
-                 %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid, "focus" => "waiting_on"}}
-              }
-              embed_mode={@embed_mode}
-              class="badge badge-sm badge-warning gap-1 cursor-pointer hover:brightness-95"
-              title={gettext("Waiting on someone else — click to change")}
-            >
-              <.icon name="hero-pause-circle" class="w-3 h-3" /> {gettext("Waiting on %{who}", who: @a.waiting_on)}
-            </.smart_link>
             <span :if={@a.origin} class="badge badge-sm badge-ghost" title={gettext("Where this came from")}>
               {gettext("from %{origin}", origin: @a.origin)}
             </span>
