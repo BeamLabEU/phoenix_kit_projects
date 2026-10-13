@@ -30,6 +30,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
+
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.Date, as: KitDate
 
@@ -59,6 +61,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
   @groups ~w(none day person task project)
   @billable ~w(all yes no)
+  @who ~w(all people ai)
 
   use PhoenixKitWeb.Live.UrlState,
     mode: :history,
@@ -70,6 +73,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       task: [default: ""],
       project_filter: [default: "", url_key: "project"],
       billable: [default: "all", in: @billable],
+      who: [default: "all", in: @who],
       subprojects: [default: true, cast: :boolean, url_key: "sub"],
       group: [default: "none", in: @groups],
       sort_by: [default: :at, cast: :atom, in: @sort_fields, url_key: "sort"],
@@ -209,7 +213,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       total: 0,
       invoiced: [],
       worker_options: [],
-      task_options: [],
+      picked: %{},
       perms: %{},
       chart: nil,
       sheet: nil,
@@ -243,10 +247,12 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         workers: if(a.worker == "", do: [], else: [a.worker]),
         assignment_uuid: if(a.mode == :project and a.task != "", do: a.task),
         billable: billable_filter(a.billable),
+        who: who_filter(a.who),
         offset_seconds: Period.offset_seconds(offset)
       )
 
     summary = Hours.summary(filters, lang: lang)
+    worker_options = Hours.workers(Hours.filters(project_uuids: project_uuids))
 
     page =
       Hours.list(filters,
@@ -267,9 +273,23 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       rows: page.entries,
       total: page.total,
       invoiced: page.entries |> Enum.map(& &1.entry.uuid) |> Invoicing.invoiced_entry_uuids(),
-      worker_options: Hours.workers(Hours.filters(project_uuids: project_uuids)),
-      task_options:
-        if(a.mode == :project, do: Hours.task_options(listable(project_uuids), lang), else: []),
+      worker_options: worker_options,
+      # What the three pickers show as chosen. Nothing is listed whole:
+      # each searches as it is typed in (`pick_search`).
+      picked: %{
+        "worker" =>
+          if(a.worker != "",
+            do: Enum.find_value(worker_options, a.worker, &(&1.key == a.worker && &1.name))
+          ),
+        "task" => if(a.mode == :project and a.task != "", do: picked_task(a.task, lang)),
+        "project" =>
+          if(a.project_filter != "",
+            do:
+              Enum.find_value(a[:project_options] || [], a.project_filter, fn {name, uuid} ->
+                uuid == a.project_filter && name
+              end)
+          )
+      },
       perms: perms(socket, page.entries),
       chart: chart(summary, period, offset),
       sheet_week: sheet_week
@@ -324,6 +344,17 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       Hours.project_uuids(chosen, a.subprojects)
     else
       visible
+    end
+  end
+
+  defp who_filter("people"), do: :people
+  defp who_filter("ai"), do: :ai
+  defp who_filter(_), do: :all
+
+  defp picked_task(uuid, lang) do
+    case Hours.task_option(uuid, lang) do
+      %{} = task -> task_label(task)
+      nil -> gettext("A removed task")
     end
   end
 
@@ -489,14 +520,57 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         task: params["task"],
         project_filter: params["project"],
         billable: params["billable"],
+        who: params["who"],
         group: params["group"]
       ]
       |> Enum.filter(fn {_k, v} -> is_binary(v) end)
-      |> Keyword.put(:subprojects, params["subprojects"] in ["true", "on"])
+      |> put_subprojects(params)
       |> custom_when_dated(params)
 
     {:noreply, push_url_state(socket, changes)}
   end
+
+  # ── The pickers (core's `<.search_picker>`) ──
+  #
+  # Person, Task and Project are searched as they are typed in, never
+  # listed whole: a project with a hundred thousand tasks answers the same
+  # twenty rows as one with five. One search event and one pick event for
+  # all of them; the input's id says which (`…-pick-<field>`), and is
+  # echoed back so each picker keeps to its own answers.
+
+  def handle_event("pick_search", %{"q" => q} = params, socket) do
+    id = to_string(params["id"])
+    limit = pick_limit(params["limit"])
+    {rows, more?} = pick_rows(pick_field_of(id), to_string(q), limit, socket)
+
+    {:noreply,
+     push_event(socket, "picker_results", %{q: q, results: rows, has_more: more?, id: id})}
+  end
+
+  def handle_event("pick_pick", %{"uuid" => value} = params, socket) when is_binary(value) do
+    id = to_string(params["id"])
+    socket = push_event(socket, "picker_staged", %{id: id})
+
+    case pick_field_of(id) do
+      "worker" -> {:noreply, push_url_state(socket, worker: value)}
+      "task" -> {:noreply, push_url_state(socket, task: value)}
+      "project" -> {:noreply, push_url_state(socket, project_filter: value)}
+      "logtask" -> {:noreply, put_log_value(socket, "task", value)}
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("unpick", %{"field" => "worker"}, socket),
+    do: {:noreply, push_url_state(socket, worker: "")}
+
+  def handle_event("unpick", %{"field" => "task"}, socket),
+    do: {:noreply, push_url_state(socket, task: "")}
+
+  def handle_event("unpick", %{"field" => "project"}, socket),
+    do: {:noreply, push_url_state(socket, project_filter: "")}
+
+  def handle_event("unpick", %{"field" => "logtask"}, socket),
+    do: {:noreply, put_log_value(socket, "task", "")}
 
   # How the entries table is grouped: its own control, on the table's
   # heading — it changes nothing else on the page.
@@ -513,6 +587,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
        task: "",
        project_filter: "",
        billable: "all",
+       who: "all",
        subprojects: true,
        group: "none"
      )}
@@ -683,6 +758,109 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   # Typing a day into either date field IS choosing a custom period; the
   # select follows, so the two cannot disagree.
+  # The tick is in one of the bar's two forms: only that form says whether
+  # it is set.
+  defp put_subprojects(changes, %{"subprojects" => value}),
+    do: Keyword.put(changes, :subprojects, value in ["true", "on"])
+
+  defp put_subprojects(changes, _params), do: changes
+
+  defp pick_field_of(id), do: id |> String.split("-pick-") |> List.last()
+
+  defp pick_limit(limit) when is_integer(limit), do: limit |> max(1) |> min(50)
+
+  defp pick_limit(limit) when is_binary(limit) do
+    case Integer.parse(limit) do
+      {n, _} -> pick_limit(n)
+      :error -> 20
+    end
+  end
+
+  defp pick_limit(_), do: 20
+
+  # `{rows, more?}` for one picker, each row as the hook draws it.
+  defp pick_rows("task", q, limit, socket) do
+    {tasks, more?} =
+      Hours.search_tasks(
+        listable(project_uuids(socket)),
+        q,
+        limit,
+        L10n.current_content_lang()
+      )
+
+    {Enum.map(tasks, &task_row/1), more?}
+  end
+
+  defp pick_rows("logtask", q, limit, socket) do
+    with %{values: %{"project" => project}} when is_binary(project) and project != "" <-
+           socket.assigns[:log_form],
+         {:ok, project_uuid} <- log_project(socket, %{"project" => project}) do
+      {tasks, more?} =
+        Hours.search_tasks([project_uuid], q, limit, L10n.current_content_lang())
+
+      {Enum.map(tasks, &task_row/1), more?}
+    else
+      _ -> {[], false}
+    end
+  end
+
+  defp pick_rows("worker", q, limit, socket) do
+    socket.assigns[:worker_options]
+    |> List.wrap()
+    |> Enum.filter(&name_matches?(&1.name, q))
+    |> page_of(limit, fn w ->
+      %{
+        kind: "worker",
+        uuid: w.key,
+        label: w.name,
+        sublabel: if(w.kind == "ai_agent", do: gettext("AI")),
+        icon: if(w.kind == "ai_agent", do: "hero-cpu-chip", else: "hero-user")
+      }
+    end)
+  end
+
+  defp pick_rows("project", q, limit, socket) do
+    socket.assigns[:project_options]
+    |> List.wrap()
+    |> Enum.filter(fn {name, _uuid} -> name_matches?(name, q) end)
+    |> page_of(limit, fn {name, uuid} ->
+      %{kind: "project", uuid: uuid, label: name, icon: "hero-clipboard-document-list"}
+    end)
+  end
+
+  defp pick_rows(_field, _q, _limit, _socket), do: {[], false}
+
+  defp task_row(task) do
+    %{
+      kind: "task",
+      uuid: task.uuid,
+      label: task.title,
+      sublabel: task.ref,
+      icon: "hero-check-circle"
+    }
+  end
+
+  defp name_matches?(_name, ""), do: true
+
+  defp name_matches?(name, q),
+    do: String.contains?(String.downcase(to_string(name)), String.downcase(String.trim(q)))
+
+  defp page_of(list, limit, fun),
+    do: {list |> Enum.take(limit) |> Enum.map(fun), length(list) > limit}
+
+  # One value of the open Log time form changed from outside its inputs (a
+  # task picked or cleared): the form is rebuilt from what it holds.
+  defp put_log_value(%{assigns: %{log_form: %{values: values}}} = socket, key, value) do
+    params =
+      values
+      |> Map.put(key, value)
+      |> Map.update("billable", "false", &to_string(&1 == true))
+
+    assign(socket, log_form: log_form(socket, params))
+  end
+
+  defp put_log_value(socket, _key, _value), do: socket
+
   defp custom_when_dated(changes, %{"_target" => [field]}) when field in ~w(from to),
     do: Keyword.put(changes, :period, "custom")
 
@@ -725,16 +903,17 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         "date" => params["date"] || "",
         "time" => params["time"] || "",
         "person" => params["person"] || "me",
-        "task" => params["task"] || "",
+        "task" => blank_to_nil(params["task"]) || "",
         "duration" => params["duration"] || "",
         "note" => params["note"] || "",
         "billable" => params["billable"] in ["true", "on"]
       },
-      tasks:
-        if(is_binary(project_uuid) and project_uuid != "",
-          do: Hours.task_options([project_uuid], lang),
-          else: []
-        ),
+      # The task picked, as its chip says it (nil = the project itself).
+      task_label:
+        case Hours.task_option(params["task"], lang) do
+          %{project_uuid: ^project_uuid} = task -> task_label(task)
+          _ -> nil
+        end,
       people: person_options(socket, project_uuid),
       error: nil
     }
@@ -822,9 +1001,11 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   defp log_task(_project_uuid, blank) when blank in [nil, ""], do: {:ok, nil}
 
   defp log_task(project_uuid, task_uuid) do
-    if Enum.any?(Hours.task_options([project_uuid], nil), &(&1.uuid == task_uuid)),
-      do: {:ok, task_uuid},
-      else: {:error, gettext("Pick a task of this project.")}
+    # The one task is looked up, not the project's whole list.
+    case Hours.task_option(task_uuid) do
+      %{project_uuid: ^project_uuid} -> {:ok, task_uuid}
+      _ -> {:error, gettext("Pick a task of this project.")}
+    end
   end
 
   # With a start time the entry runs from it for its length; with a day
@@ -946,12 +1127,13 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   # The narrowing in words, for the report's head.
   defp filter_words(a) do
-    worker = Enum.find(a.worker_options, &(&1.key == a.worker))
-    task = Enum.find(a.task_options, &(&1.uuid == a.task))
+    picked = a[:picked] || %{}
 
     [
-      worker && {gettext("Person"), worker.name},
-      task && {gettext("Task"), task.title},
+      picked["worker"] && {gettext("Person"), picked["worker"]},
+      picked["task"] && {gettext("Task"), picked["task"]},
+      a.who == "people" && {gettext("Whose time"), gettext("People only")},
+      a.who == "ai" && {gettext("Whose time"), gettext("AI only")},
       a.billable == "yes" && {gettext("Billable"), gettext("billable only")},
       a.billable == "no" && {gettext("Billable"), gettext("not billable only")}
     ]
@@ -1094,102 +1276,176 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   defp filter_bar(assigns) do
     ~H"""
-    <%!-- The labels are the quiet tier (small, muted): what is scanned is
-         the values under them. --%>
-    <form
-      id={"#{@dom}-filters"}
-      phx-change="filter"
-      class="flex flex-wrap items-end gap-2 [&_label.label]:mb-1 [&_label.label_span]:text-xs [&_label.label_span]:font-medium [&_label.label_span]:text-base-content/60"
-      novalidate
-    >
-      <.select
-        id={"#{@dom}-period"}
-        name="period"
-        label={gettext("Period")}
-        value={@period}
-        options={Enum.map(Period.presets(), &{Period.preset_label(&1), &1})}
-        class="select-sm"
-      />
-      <.input
-        id={"#{@dom}-from"}
-        type="date"
-        name="from"
-        label={gettext("From")}
-        value={date_value(@period_info.from_date)}
-        class="input-sm"
-      />
-      <.input
-        id={"#{@dom}-to"}
-        type="date"
-        name="to"
-        label={gettext("To")}
-        value={date_value(@period_info.to_date)}
-        class="input-sm"
-      />
-      <.select
-        :if={@mode == :all}
-        id={"#{@dom}-project"}
-        name="project"
-        label={gettext("Project")}
-        value={@project_filter}
-        options={@project_options}
-        prompt={gettext("All projects")}
-        class="select-sm"
-      />
-      <.select
-        id={"#{@dom}-worker"}
-        name="worker"
-        label={gettext("Person")}
-        value={@worker}
-        options={Enum.map(@worker_options, &{&1.name, &1.key})}
-        prompt={gettext("Everyone")}
-        class="select-sm"
-      />
-      <.select
-        :if={@mode == :project}
-        id={"#{@dom}-task"}
-        name="task"
-        label={gettext("Task")}
-        value={@task}
-        options={Enum.map(@task_options, &{&1.title, &1.uuid})}
-        prompt={gettext("All tasks")}
-        class="select-sm max-w-xs"
-      />
-      <.select
-        id={"#{@dom}-billable"}
-        name="billable"
-        label={gettext("Billable")}
-        value={@billable}
-        options={[{gettext("All"), "all"}, {gettext("Billable only"), "yes"}, {gettext("Not billable"), "no"}]}
-        class="select-sm"
-      />
-      <%!-- The same two tiers as the selects beside it, so the row has
-           one shape. --%>
-      <div>
-        <span class="block mb-1 text-xs font-medium text-base-content/60">{gettext("Sub-projects")}</span>
-        <label class="flex items-center gap-2 h-8 cursor-pointer">
-          <input type="hidden" name="subprojects" value="false" />
-          <input
-            type="checkbox"
-            name="subprojects"
-            value="true"
-            checked={@subprojects}
-            class="checkbox checkbox-sm"
-            id={"#{@dom}-subprojects"}
+    <%!-- One row, one shape: every control is a small muted label over a
+         32px-high control (`field/1`). Two forms share `phx-change="filter"`
+         (each sends what it holds); between them sit the pickers, outside
+         any form, so typing in one is a search and not a filter change. --%>
+    <div class="flex flex-wrap items-end gap-x-2 gap-y-3" id={"#{@dom}-filterbar"}>
+      <form id={"#{@dom}-filters"} phx-change="filter" class="contents" novalidate>
+        <.field label={gettext("Period")} for={"#{@dom}-period"}>
+          <.select
+            id={"#{@dom}-period"}
+            name="period"
+            value={@period}
+            options={Enum.map(Period.presets(), &{Period.preset_label(&1), &1})}
+            class="select-sm h-8 min-h-8"
           />
-          <span class="text-sm">{gettext("Include")}</span>
-        </label>
-      </div>
+        </.field>
+        <.field label={gettext("From")} for={"#{@dom}-from"}>
+          <input
+            id={"#{@dom}-from"}
+            type="date"
+            name="from"
+            value={date_value(@period_info.from_date)}
+            class="input input-sm h-8 min-h-8 w-36"
+          />
+        </.field>
+        <.field label={gettext("To")} for={"#{@dom}-to"}>
+          <input
+            id={"#{@dom}-to"}
+            type="date"
+            name="to"
+            value={date_value(@period_info.to_date)}
+            class="input input-sm h-8 min-h-8 w-36"
+          />
+        </.field>
+      </form>
+
+      <.pick_field
+        :if={@mode == :all}
+        label={gettext("Project")}
+        id={"#{@dom}-pick-project"}
+        field="project"
+        chosen={@picked["project"]}
+        placeholder={gettext("All projects")}
+      />
+      <.pick_field
+        label={gettext("Person")}
+        id={"#{@dom}-pick-worker"}
+        field="worker"
+        chosen={@picked["worker"]}
+        placeholder={gettext("Everyone")}
+      />
+      <.pick_field
+        :if={@mode == :project}
+        label={gettext("Task")}
+        id={"#{@dom}-pick-task"}
+        field="task"
+        chosen={@picked["task"]}
+        placeholder={gettext("All tasks")}
+      />
+
+      <form id={"#{@dom}-filters-more"} phx-change="filter" class="contents" novalidate>
+        <.field label={gettext("Whose time")} for={"#{@dom}-who"}>
+          <.select
+            id={"#{@dom}-who"}
+            name="who"
+            value={@who}
+            options={[
+              {gettext("People and AI"), "all"},
+              {gettext("People only"), "people"},
+              {gettext("AI only"), "ai"}
+            ]}
+            class="select-sm h-8 min-h-8"
+          />
+        </.field>
+        <.field label={gettext("Billable")} for={"#{@dom}-billable"}>
+          <.select
+            id={"#{@dom}-billable"}
+            name="billable"
+            value={@billable}
+            options={[{gettext("All"), "all"}, {gettext("Billable only"), "yes"}, {gettext("Not billable"), "no"}]}
+            class="select-sm h-8 min-h-8"
+          />
+        </.field>
+        <.field label={gettext("Sub-projects")} for={"#{@dom}-subprojects"}>
+          <label class="flex items-center gap-2 h-8 cursor-pointer">
+            <input type="hidden" name="subprojects" value="false" />
+            <input
+              type="checkbox"
+              name="subprojects"
+              value="true"
+              checked={@subprojects}
+              class="checkbox checkbox-sm"
+              id={"#{@dom}-subprojects"}
+            />
+            <span class="text-sm">{gettext("Include")}</span>
+          </label>
+        </.field>
+      </form>
+
       <button
         :if={filtered?(assigns)}
         type="button"
-        class="btn btn-ghost btn-sm"
+        class="btn btn-ghost btn-sm h-8 min-h-8"
         phx-click="clear_filters"
         id={"#{@dom}-clear"}
       >
         <.icon name="hero-x-mark" class="w-4 h-4" /> {gettext("Clear")}
       </button>
-    </form>
+    </div>
+    """
+  end
+
+  attr(:label, :string, required: true)
+  attr(:for, :string, default: nil)
+  slot(:inner_block, required: true)
+
+  # A filter control with its label: the quiet tier above, the control under.
+  defp field(assigns) do
+    ~H"""
+    <div class="min-w-0">
+      <label for={@for} class="block mb-1 text-xs font-medium text-base-content/60">{@label}</label>
+      {render_slot(@inner_block)}
+    </div>
+    """
+  end
+
+  attr(:label, :string, required: true)
+  attr(:id, :string, required: true)
+  attr(:field, :string, required: true)
+  attr(:chosen, :string, default: nil)
+  attr(:placeholder, :string, required: true)
+  attr(:class, :string, default: "w-44")
+
+  # A filter picked by searching (core's `<.search_picker>`): the box while
+  # nothing is picked — click it for the first page, type to narrow — and
+  # the choice with its own × once something is.
+  defp pick_field(assigns) do
+    ~H"""
+    <.field label={@label} for={@id}>
+      <%= if @chosen do %>
+        <span class={["flex items-center gap-1 h-8 pl-3 pr-1 rounded-field border border-base-300 bg-base-100 text-sm", @class]}>
+          <span class="truncate flex-1" title={@chosen}>{@chosen}</span>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs btn-circle shrink-0"
+            phx-click="unpick"
+            phx-value-field={@field}
+            aria-label={gettext("Clear %{label}", label: @label)}
+          >
+            <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+          </button>
+        </span>
+      <% else %>
+        <div class={@class}>
+          <.search_picker
+            id={@id}
+            dropdown_id={"#{@id}-list"}
+            search_event="pick_search"
+            pick_event="pick_pick"
+            search_on_focus
+            close_on_pick
+            placeholder={@placeholder}
+            class="input input-sm h-8 min-h-8 w-full"
+            searching_label={gettext("Searching…")}
+            more_label={gettext("Load more")}
+            loading_more_label={gettext("Loading…")}
+            no_matches_label={gettext("No matches")}
+          />
+        </div>
+      <% end %>
+    </.field>
     """
   end
 
@@ -1204,7 +1460,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   defp filtered?(a) do
     a.period != "month" or a.worker != "" or a.task != "" or a.project_filter != "" or
-      a.billable != "all" or a.group != "none" or not a.subprojects
+      a.billable != "all" or a.who != "all" or a.group != "none" or not a.subprojects
   end
 
   defp date_value(%Date{} = date), do: Date.to_iso8601(date)
@@ -1239,7 +1495,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     <div class="flex flex-col gap-3 mt-2">
       <div>
         <p class="mb-1 text-xs font-medium uppercase tracking-wide text-base-content/50">{gettext("People")}</p>
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="grid grid-cols-2 gap-3 md:grid-cols-none md:grid-flow-col md:auto-cols-fr">
           <.stat_tile label={gettext("Human time")} value={Format.duration(@totals.minutes)} value_class={quiet(@totals.minutes)} />
           <.stat_tile label={gettext("Billable")} value={Format.duration(@totals.billable_minutes)} value_class={quiet(@totals.billable_minutes)} />
           <.stat_tile label={gettext("People")} value={@totals.people} value_class={quiet(@totals.people)} />
@@ -1248,7 +1504,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       </div>
       <div :if={@totals.ai_minutes > 0 or @totals.tokens > 0 or @totals.cost_cents > 0}>
         <p class="mb-1 text-xs font-medium uppercase tracking-wide text-base-content/50">{gettext("AI agents")}</p>
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="grid grid-cols-2 gap-3 md:grid-cols-none md:grid-flow-col md:auto-cols-fr">
           <.stat_tile label={gettext("AI time")} value={Format.duration(@totals.ai_minutes)} value_class={quiet(@totals.ai_minutes)} />
           <.stat_tile label={gettext("Entries")} value={@ai_entries} value_class={quiet(@ai_entries)} />
           <.stat_tile :if={@totals.tokens > 0} label={gettext("AI tokens")} value={Format.tokens(@totals.tokens)} />
@@ -1763,15 +2019,41 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
           options={@form.people}
           class="select-sm"
         />
-        <.select
-          id={"#{@dom}-log-task"}
-          name="task"
-          label={gettext("Task")}
-          value={@form.values["task"]}
-          options={Enum.map(@form.tasks, &{&1.title, &1.uuid})}
-          prompt={gettext("The project itself")}
-          class="select-sm"
-        />
+        <%!-- Searched, not listed: a project can hold any number of
+             tasks. Empty means the project itself. --%>
+        <div>
+          <span class="label mb-2 block"><span class="font-semibold">{gettext("Task")}</span></span>
+          <input type="hidden" name="task" value={@form.values["task"]} />
+          <%= if @form.task_label do %>
+            <span class="flex items-center gap-1 h-8 pl-3 pr-1 rounded-field border border-base-300 bg-base-100 text-sm">
+              <span class="truncate flex-1" title={@form.task_label}>{@form.task_label}</span>
+              <button
+                type="button"
+                class="btn btn-ghost btn-xs btn-circle shrink-0"
+                phx-click="unpick"
+                phx-value-field="logtask"
+                aria-label={gettext("Clear %{label}", label: gettext("Task"))}
+              >
+                <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+              </button>
+            </span>
+          <% else %>
+            <.search_picker
+              id={"#{@dom}-pick-logtask"}
+              dropdown_id={"#{@dom}-pick-logtask-list"}
+              search_event="pick_search"
+              pick_event="pick_pick"
+              search_on_focus
+              close_on_pick
+              placeholder={gettext("The project itself — or search a task")}
+              class="input input-sm w-full"
+              searching_label={gettext("Searching…")}
+              more_label={gettext("Load more")}
+              loading_more_label={gettext("Loading…")}
+              no_matches_label={gettext("No matches")}
+            />
+          <% end %>
+        </div>
         <.input
           id={"#{@dom}-log-note"}
           name="note"

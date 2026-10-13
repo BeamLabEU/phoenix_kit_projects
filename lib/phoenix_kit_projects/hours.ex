@@ -58,6 +58,7 @@ defmodule PhoenixKitProjects.Hours do
           workers: [worker_key()],
           assignment_uuid: binary() | nil,
           billable: boolean() | nil,
+          who: :all | :people | :ai,
           offset_seconds: integer()
         }
 
@@ -80,6 +81,8 @@ defmodule PhoenixKitProjects.Hours do
       workers: opts |> Map.get(:workers, []) |> List.wrap() |> Enum.filter(&worker_key?/1),
       assignment_uuid: uuid_or_nil(Map.get(opts, :assignment_uuid)),
       billable: if(is_boolean(Map.get(opts, :billable)), do: Map.get(opts, :billable)),
+      # Whose time: everyone's, people's only, or the agents' only.
+      who: if(Map.get(opts, :who) in [:people, :ai], do: Map.get(opts, :who), else: :all),
       offset_seconds: if(is_integer(opts[:offset_seconds]), do: opts[:offset_seconds], else: 0)
     }
   end
@@ -209,7 +212,12 @@ defmodule PhoenixKitProjects.Hours do
     |> on_assignment(f.assignment_uuid)
     |> billable(f.billable)
     |> by_workers(f.workers)
+    |> by_who(Map.get(f, :who, :all))
   end
+
+  defp by_who(q, :people), do: where(q, [e], e.actor_kind != "ai_agent")
+  defp by_who(q, :ai), do: where(q, [e], e.actor_kind == "ai_agent")
+  defp by_who(q, _all), do: q
 
   defp in_projects(q, :all), do: q
   defp in_projects(q, uuids), do: where(q, [e], e.project_uuid in ^uuids)
@@ -612,6 +620,86 @@ defmodule PhoenixKitProjects.Hours do
   rescue
     _ -> []
   end
+
+  @doc """
+  The tasks of `project_uuids` matching `query`, for a search-as-you-type
+  picker: `{[%{uuid, title, ref, project_uuid}], more?}`, at most `limit`
+  of them, in plan order. An empty query is the first page. The match is
+  made in the database (a title containing the words, or the task's
+  number — `42` or `ANDI-42`), so a project with any number of tasks
+  answers the same way; nothing is ever listed whole.
+  """
+  @spec search_tasks([binary()] | :all, String.t(), pos_integer(), String.t() | nil) ::
+          {[map()], boolean()}
+  def search_tasks(project_uuids, query, limit, lang \\ nil)
+  def search_tasks(:all, _query, _limit, _lang), do: {[], false}
+  def search_tasks([], _query, _limit, _lang), do: {[], false}
+
+  def search_tasks(project_uuids, query, limit, lang) when is_list(project_uuids) do
+    lang = lang || L10n.current_content_lang()
+    limit = limit |> max(1) |> min(50)
+    q = query |> to_string() |> String.trim()
+
+    base =
+      from(a in Assignment,
+        join: t in assoc(a, :task),
+        where:
+          a.project_uuid in ^project_uuids and is_nil(a.child_project_uuid) and
+            a.review_status == "accepted",
+        order_by: [asc: a.project_uuid, asc: a.position, asc: a.inserted_at],
+        limit: ^(limit + 1),
+        preload: [:project, task: t]
+      )
+
+    rows =
+      base
+      |> matching_task(q)
+      |> RepoHelper.repo().all()
+      |> Enum.map(&task_option(&1, lang))
+
+    {Enum.take(rows, limit), length(rows) > limit}
+  rescue
+    _ -> {[], false}
+  end
+
+  defp matching_task(queryable, ""), do: queryable
+
+  defp matching_task(queryable, q) do
+    pattern = "%" <> String.replace(q, ~r/([\\%_])/, "\\\\\\1") <> "%"
+
+    case Regex.run(~r/(\d{1,9})$/, q) do
+      [_, digits] ->
+        number = String.to_integer(digits)
+        where(queryable, [a, t], ilike(t.title, ^pattern) or a.number == ^number)
+
+      _ ->
+        where(queryable, [_a, t], ilike(t.title, ^pattern))
+    end
+  end
+
+  @doc "One task as a picker shows it (`search_tasks/4`'s row), or nil."
+  @spec task_option(binary() | Assignment.t() | nil, String.t() | nil) :: map() | nil
+  def task_option(assignment_or_uuid, lang \\ nil)
+
+  def task_option(%Assignment{} = a, lang) do
+    %{
+      uuid: a.uuid,
+      title: Assignment.label(a, lang || L10n.current_content_lang()),
+      ref: Assignment.row_ref(a),
+      project_uuid: a.project_uuid
+    }
+  end
+
+  def task_option(uuid, lang) when is_binary(uuid) and uuid != "" do
+    case Projects.get_assignment(uuid) do
+      %Assignment{child_project_uuid: nil} = a -> task_option(a, lang)
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  def task_option(_other, _lang), do: nil
 
   # ── Workers ─────────────────────────────────────────────────────────
 
