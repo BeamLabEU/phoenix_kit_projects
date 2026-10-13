@@ -103,6 +103,8 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
       # People's time, an agent's own, and the two together: an agent's
       # hours are not people's (the ledger keeps them apart), so each has
       # its column and nothing is hidden inside a sum.
+      # Its header is shortened (`header/1`): the full name is as wide as
+      # three of the figures under it.
       col("hours", gettext("Human hours"), :ledger, :hours, :right),
       col("ai_hours", gettext("AI hours"), :ledger, :ai_hours, :right),
       col("total_hours", gettext("Total hours"), :ledger, :total_hours, :right),
@@ -120,6 +122,15 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
 
   defp col(id, label, family, sort, align \\ :left),
     do: %{id: id, label: label, family: family, sort: sort, align: align}
+
+  @doc """
+  What a column's header cell says: its label, or a shorter form where the
+  label would make the column much wider than its values. The picker, the
+  sort selector and the header's tooltip keep the full label.
+  """
+  @spec header(spec()) :: String.t()
+  def header(%{id: "hours"}), do: gettext("H. hours")
+  def header(%{label: label}), do: label
 
   @doc "A native column's spec by id, or nil."
   @spec spec(String.t()) :: spec() | nil

@@ -114,7 +114,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
 
       {:ok, view, html} = live(conn, @path)
 
-      for header <- ["Status", "Client", "Progress", "Tasks", "Human hours", "Last edited"] do
+      for header <- ["Status", "Client", "Progress", "Tasks", "H. hours", "Last edited"] do
         assert html =~ header
       end
 

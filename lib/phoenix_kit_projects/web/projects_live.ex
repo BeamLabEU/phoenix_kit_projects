@@ -1206,17 +1206,21 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       <% nil -> %>
         <.table_default_header_cell {ListUi.column_attrs(@id)}></.table_default_header_cell>
       <% %{sort: nil} = spec -> %>
-        <.table_default_header_cell {ListUi.column_attrs(@id, spec.align == :right && "text-right")}>
-          {spec.label}
+        <.table_default_header_cell
+          title={spec.label}
+          {ListUi.column_attrs(@id, spec.align == :right && "text-right")}
+        >
+          {Columns.header(spec)}
         </.table_default_header_cell>
       <% spec -> %>
         <.sort_header_cell
           field={spec.sort}
           sort={%{by: @sort_by, dir: @sort_dir}}
           align={spec.align}
+          title={spec.label}
           {ListUi.column_attrs(@id)}
         >
-          {spec.label}
+          {Columns.header(spec)}
         </.sort_header_cell>
     <% end %>
     """
