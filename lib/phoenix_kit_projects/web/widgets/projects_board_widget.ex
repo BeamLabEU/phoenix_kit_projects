@@ -18,7 +18,15 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
   alias PhoenixKitProjects.Schemas.Project
 
   # Attention-first tile order: what needs eyes sorts before what's fine.
-  @lifecycle_rank %{overdue: 0, running: 1, setup: 2, scheduled: 3, completed: 4, archived: 5}
+  @lifecycle_rank %{
+    overdue: 0,
+    running: 1,
+    ongoing: 1,
+    setup: 2,
+    scheduled: 3,
+    completed: 4,
+    archived: 5
+  }
 
   @impl true
   def update(assigns, socket) do

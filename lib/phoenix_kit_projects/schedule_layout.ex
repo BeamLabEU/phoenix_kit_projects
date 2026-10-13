@@ -162,6 +162,13 @@ defmodule PhoenixKitProjects.ScheduleLayout do
   @spec schedule_anchor(Project.t()) :: DateTime.t()
   defp schedule_anchor(%Project{started_at: %DateTime{} = at}), do: at
   defp schedule_anchor(%Project{scheduled_start_date: %DateTime{} = at}), do: at
+
+  # Ongoing work with no start (made before it started itself) is under
+  # way since it was made; "now" would move its tasks on every refresh.
+  defp schedule_anchor(%Project{inserted_at: %DateTime{} = made} = project) do
+    if Project.ongoing?(project), do: made, else: DateTime.utc_now()
+  end
+
   defp schedule_anchor(_), do: DateTime.utc_now()
 
   @doc """

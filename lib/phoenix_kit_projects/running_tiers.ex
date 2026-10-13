@@ -95,7 +95,7 @@ defmodule PhoenixKitProjects.RunningTiers do
     %{project: project, progress_pct: pct, tier: tier} = summary
 
     days_running =
-      case project.started_at do
+      case project.started_at || (Project.ongoing?(project) && Map.get(project, :inserted_at)) do
         %DateTime{} = dt -> Date.diff(today, DateTime.to_date(dt))
         _ -> 0
       end

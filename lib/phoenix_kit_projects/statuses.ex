@@ -492,6 +492,9 @@ defmodule PhoenixKitProjects.Statuses do
       end
     end)
     |> broadcast_after_commit()
+    # The update ran inside the transaction, where a project just switched
+    # to ongoing work could not be started.
+    |> PhoenixKitProjects.Projects.start_ongoing()
   end
 
   @doc "True once a project has started (has a `started_at`)."

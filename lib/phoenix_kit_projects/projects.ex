@@ -1138,9 +1138,42 @@ defmodule PhoenixKitProjects.Projects do
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
       end
 
-      {:ok, project}
+      start_ongoing({:ok, project})
     end
   end
+
+  @doc """
+  Starts ongoing work that nobody will start by hand: a real project that
+  ends only when someone ends it (`Project.ongoing?/1`), in immediate
+  mode, has no setup phase and no Start button, so it is started as soon
+  as it exists or becomes ongoing — which is also what freezes its
+  workflow statuses (`start_project/2`). Takes and returns a result tuple
+  so it can end a pipeline; anything else passes through. Inside
+  somebody's transaction it does nothing: the caller runs it again after
+  the commit.
+  """
+  @spec start_ongoing(term()) :: term()
+  def start_ongoing(
+        {:ok,
+         %Project{
+           is_template: false,
+           started_at: nil,
+           completed_at: nil,
+           archived_at: nil,
+           start_mode: "immediate"
+         } = project} = result
+      ) do
+    if Project.ongoing?(project) and not repo().in_transaction?() do
+      case start_project(project) do
+        {:ok, started} -> {:ok, started}
+        {:error, _} -> result
+      end
+    else
+      result
+    end
+  end
+
+  def start_ongoing(result), do: result
 
   # A real project with no key given gets the one its name suggests
   # (`suggest_project_key/1`); a template is left to the database's
@@ -1210,7 +1243,8 @@ defmodule PhoenixKitProjects.Projects do
   def update_project(%Project{} = p, attrs, opts \\ []) do
     with {:ok, updated} <- p |> Project.changeset(attrs) |> repo().update() do
       if Keyword.get(opts, :broadcast, true), do: broadcast_project_updated(updated)
-      {:ok, updated}
+      # Switched to ongoing work while it waited for a Start: see `start_ongoing/1`.
+      start_ongoing({:ok, updated})
     end
   end
 
@@ -1724,7 +1758,9 @@ defmodule PhoenixKitProjects.Projects do
     )
     |> exclude_subprojects()
     |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
-    |> order_by([p], desc: p.started_at)
+    # Ongoing work made before it started itself has no start: it sorts
+    # by the day it was made, not ahead of everything (NULLS FIRST).
+    |> order_by([p], desc: coalesce(p.started_at, p.inserted_at))
     |> repo().all()
   end
 
@@ -2223,7 +2259,7 @@ defmodule PhoenixKitProjects.Projects do
         # subscribers still learn the new project exists.
         carry_template_extensions(template, project, opts)
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
-        {:ok, project}
+        start_ongoing({:ok, project})
 
       {:error, _reason} = err ->
         err
@@ -3242,7 +3278,10 @@ defmodule PhoenixKitProjects.Projects do
           project_uuid: link.project_uuid
         })
 
-        {:ok, result}
+        # The child was made inside the transaction, where an ongoing one
+        # could not be started (`start_ongoing/1`).
+        {:ok, child} = start_ongoing({:ok, result.child_project})
+        {:ok, %{result | child_project: child}}
 
       {:error, reason} ->
         {:error, reason}

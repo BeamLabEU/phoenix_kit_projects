@@ -287,6 +287,35 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       {:ok, _view, html} = live(conn, "/en/admin/projects?state=ongoing")
       assert html =~ project.name
 
+      # Nobody presses Start on it, so becoming ongoing started it (and
+      # froze its statuses); one made ongoing is started as it is made.
+      assert %DateTime{} = project.started_at
+      ongoing = %{"completion" => "manual"}
+
+      made = fixture_project(%{"settings" => ongoing})
+      assert %DateTime{} = Projects.get_project(made.uuid).started_at
+
+      {:ok, %{child_project: child}} =
+        Projects.create_subproject(made.uuid, %{
+          "name" => "Upkeep #{System.unique_integer([:positive])}"
+        })
+
+      assert %DateTime{} = child.started_at
+
+      # Not one that waits for a scheduled start, and not a template.
+      later = DateTime.add(DateTime.utc_now(), 86_400, :second)
+
+      waiting =
+        fixture_project(%{
+          "settings" => ongoing,
+          "start_mode" => "scheduled",
+          "scheduled_start_date" => later
+        })
+
+      assert waiting.started_at == nil
+      assert Project.derived_status(waiting) == :scheduled
+      assert fixture_project(%{"settings" => ongoing, "is_template" => true}).started_at == nil
+
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{fixture_project().uuid}")
       assert html =~ "set up tasks, then start"
     end
