@@ -99,11 +99,12 @@ defmodule PhoenixKitProjects.Web.ListUi do
   def column_priority(id) when id in ~w(updated last_used hours open_tasks next_due), do: 3
 
   def column_priority(id)
-      when id in ~w(created eta started completed last_activity next_event billable_hours),
+      when id in ~w(created eta started completed last_activity next_event billable_hours ai_hours
+                    total_hours),
       do: 4
 
   def column_priority(id)
-      when id in ~w(created_by weekends owner assignee members subprojects mode health),
+      when id in ~w(created_by weekends owner assignee members subprojects health),
       do: 5
 
   def column_priority(_id), do: 6

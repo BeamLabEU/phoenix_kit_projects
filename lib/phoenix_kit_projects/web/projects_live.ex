@@ -43,7 +43,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       f_state: [default: "", url_key: "state", in: @state_filters],
       f_who: [default: "", url_key: "who"],
       f_overdue: [default: false, cast: :boolean, url_key: "overdue"],
-      f_mode: [default: "", url_key: "mode", in: ["", "auto", "manual"]],
       f_archived: [default: "no", url_key: "archived", in: ~w(no all only)],
       f_subs: [default: false, cast: :boolean, url_key: "subs"],
       f_ext_col: [default: "", url_key: "xcol"],
@@ -88,6 +87,10 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # own choice through core's column picker (`ListUi` moduledoc). The roster
   # and the defaults live in `Web.ProjectListColumns`; the extensions' own
   # columns (the CRM's Client, say) join both.
+  # How long the list waits after a reload before it reloads again for
+  # changes that arrived meanwhile (`handle_info/2`).
+  @reload_pause_ms 400
+
   @columns_key "projects.list"
   @column_events ~w(add_column remove_column reorder_columns reset_columns)
 
@@ -180,7 +183,31 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   @impl true
-  def handle_info({:projects, _event, _payload}, socket), do: {:noreply, load_projects(socket)}
+  # Any change anywhere in the module arrives here, and one act is often
+  # several messages (a task done: the task, its project's rollup, the
+  # parent's). The first one reloads at once; the rest of a burst wait for
+  # the pause that follows and share one reload.
+  def handle_info({:projects, _event, _payload}, socket) do
+    case socket.assigns[:reload] do
+      nil ->
+        Process.send_after(self(), :reload_settled, @reload_pause_ms)
+        {:noreply, socket |> assign(:reload, :fresh) |> load_projects()}
+
+      _busy ->
+        {:noreply, assign(socket, :reload, :stale)}
+    end
+  end
+
+  def handle_info(:reload_settled, socket) do
+    case socket.assigns[:reload] do
+      :stale ->
+        Process.send_after(self(), :reload_settled, @reload_pause_ms)
+        {:noreply, socket |> assign(:reload, :fresh) |> load_projects()}
+
+      _ ->
+        {:noreply, assign(socket, :reload, nil)}
+    end
+  end
 
   def handle_info(msg, socket) do
     Logger.debug("[ProjectsLive] unexpected handle_info: #{inspect(msg)}")
@@ -271,7 +298,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       state: a.f_state,
       who: a.f_who,
       overdue: a.f_overdue,
-      mode: a.f_mode,
       ext_col: a.f_ext_col,
       ext_val: a.f_ext_val
     }
@@ -475,14 +501,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         aria-label={col.label}
       />
       <.select
-        name="mode"
-        value={@f_mode}
-        options={[{gettext("Finite"), "auto"}, {gettext("Ongoing"), "manual"}]}
-        prompt={gettext("Any kind")}
-        class="select-sm"
-        aria-label={gettext("Kind")}
-      />
-      <.select
         name="archived"
         value={@f_archived}
         options={[
@@ -599,7 +617,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
        f_state: string_param(params["state"]),
        f_who: string_param(params["who"]),
        f_overdue: params["overdue"] == "true",
-       f_mode: string_param(params["mode"]),
        f_archived: if(params["archived"] in ~w(all only), do: params["archived"], else: "no"),
        f_subs: params["subs"] == "true",
        f_ext_col: ext_col,
@@ -614,7 +631,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
        f_state: "",
        f_who: "",
        f_overdue: false,
-       f_mode: "",
        f_archived: "no",
        f_subs: false,
        f_ext_col: "",
@@ -1267,7 +1283,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
     ~H"""
     <.table_default_cell>
-      <div class="flex flex-wrap items-center gap-1">
+      <%!-- Two different things, one under the other: where the project
+           stands (the system's), then the status its people gave it. --%>
+      <div class="flex flex-col items-start gap-1">
         <.project_status_badge project={@p} />
         <.workflow_status_badge
           :if={@statuses_available}
@@ -1384,6 +1402,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   defp column_cell(assigns, "hours", p),
     do: minutes_cell(assigns, Columns.field(assigns.metrics, :ledger, p, :minutes))
 
+  defp column_cell(assigns, "ai_hours", p),
+    do: minutes_cell(assigns, Columns.field(assigns.metrics, :ledger, p, :ai_minutes))
+
+  defp column_cell(assigns, "total_hours", p),
+    do: minutes_cell(assigns, Columns.total_minutes(assigns.metrics, p))
+
   defp column_cell(assigns, "billable_hours", p),
     do: minutes_cell(assigns, Columns.field(assigns.metrics, :ledger, p, :billable_minutes))
 
@@ -1404,19 +1428,6 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   defp column_cell(assigns, "last_activity", p),
     do: date_cell(assigns, Columns.get(assigns.metrics, :activity, p) || p.updated_at)
-
-  defp column_cell(assigns, "mode", p) do
-    assigns = assign(assigns, ongoing?: Project.ongoing?(p))
-
-    ~H"""
-    <.table_default_cell class="whitespace-nowrap text-base-content/70">
-      <span :if={@ongoing?} class="inline-flex items-center gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
-        <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Ongoing")}
-      </span>
-      <span :if={not @ongoing?}>{gettext("Finite")}</span>
-    </.table_default_cell>
-    """
-  end
 
   defp column_cell(assigns, "health", p) do
     assigns = assign(assigns, health: Health.get(p))

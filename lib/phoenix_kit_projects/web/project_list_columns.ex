@@ -39,7 +39,8 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   @sql_sorts ~w(position name inserted_at updated_at)a
   @computed_sorts ~w(state progress tasks open_tasks overdue next_due next_event subprojects
                      members owner assignee started eta completed hours billable_hours
-                     tokens cost last_activity mode health created_by external_id key ext)a
+                     ai_hours total_hours tokens cost last_activity health created_by
+                     external_id key ext)a
   @sort_fields @sql_sorts ++ @computed_sorts
 
   @states ~w(running ongoing setup scheduled overdue completed)
@@ -99,12 +100,16 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
       col("started", gettext("Started"), nil, :started),
       col("eta", gettext("Planned end"), :tasks, :eta),
       col("completed", gettext("Completed"), nil, :completed),
-      col("hours", gettext("Hours logged"), :ledger, :hours, :right),
+      # People's time, an agent's own, and the two together: an agent's
+      # hours are not people's (the ledger keeps them apart), so each has
+      # its column and nothing is hidden inside a sum.
+      col("hours", gettext("Human hours"), :ledger, :hours, :right),
+      col("ai_hours", gettext("AI hours"), :ledger, :ai_hours, :right),
+      col("total_hours", gettext("Total hours"), :ledger, :total_hours, :right),
       col("billable_hours", gettext("Billable hours"), :ledger, :billable_hours, :right),
       col("tokens", gettext("AI tokens"), :ledger, :tokens, :right),
       col("cost", gettext("AI cost"), :ledger, :cost, :right),
       col("last_activity", gettext("Last activity"), :activity, :last_activity),
-      col("mode", gettext("Kind"), nil, :mode),
       col("health", gettext("Health"), nil, :health),
       col("created", gettext("Created"), nil, :inserted_at),
       col("updated", gettext("Last edited"), nil, :updated_at),
@@ -231,7 +236,6 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   def sort_value(:state, p, _m, _ext), do: Map.get(@state_rank, Project.derived_status(p), 9)
   def sort_value(:started, p, _m, _ext), do: p.started_at
   def sort_value(:completed, p, _m, _ext), do: p.completed_at
-  def sort_value(:mode, p, _m, _ext), do: Project.completion(p)
   def sort_value(:external_id, p, _m, _ext), do: text(p.external_id)
   def sort_value(:key, p, _m, _ext), do: text(p.key)
 
@@ -261,6 +265,8 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   def sort_value(:owner, p, m, _ext), do: p |> owners(m) |> List.first() |> text()
   def sort_value(:assignee, p, m, _ext), do: m |> field(:assignee, p, :label) |> text()
   def sort_value(:hours, p, m, _ext), do: field(m, :ledger, p, :minutes) || 0.0
+  def sort_value(:ai_hours, p, m, _ext), do: field(m, :ledger, p, :ai_minutes) || 0.0
+  def sort_value(:total_hours, p, m, _ext), do: total_minutes(m, p)
   def sort_value(:billable_hours, p, m, _ext), do: field(m, :ledger, p, :billable_minutes) || 0.0
   def sort_value(:tokens, p, m, _ext), do: field(m, :ledger, p, :tokens) || 0.0
   def sort_value(:cost, p, m, _ext), do: field(m, :ledger, p, :cost_cents) || 0.0
@@ -287,6 +293,13 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
       %{} = value -> Map.get(value, key)
       _ -> nil
     end
+  end
+
+  @doc "People's time and an agent's together, in minutes."
+  @spec total_minutes(ListMetrics.t(), Project.t()) :: float()
+  def total_minutes(metrics, project) do
+    (field(metrics, :ledger, project, :minutes) || 0.0) +
+      (field(metrics, :ledger, project, :ai_minutes) || 0.0)
   end
 
   @doc "The names of a project's owners, oldest membership first."
@@ -327,15 +340,15 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
 
   @typedoc """
   The list's filters beyond search and the workflow status: `state` (a
-  derived state or `""`), `who` (`""`, `"mine"` or a user uuid), `overdue`
-  (only projects with overdue tasks), `mode` (`""`, `"auto"`, `"manual"`),
-  and one extension column's value (`ext_col` + `ext_val`).
+  derived state or `""` — "ongoing" is one of them, the only place ongoing
+  work is filtered), `who` (`""`, `"mine"` or a user uuid), `overdue`
+  (only projects with overdue tasks), and one extension column's value
+  (`ext_col` + `ext_val`).
   """
   @type filters :: %{
           state: String.t(),
           who: String.t(),
           overdue: boolean(),
-          mode: String.t(),
           ext_col: String.t(),
           ext_val: String.t()
         }
@@ -348,7 +361,6 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
         filters.state != "",
         filters.who != "",
         filters.overdue,
-        filters.mode != "",
         ext_filter?(filters)
       ],
       & &1
@@ -377,7 +389,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   @spec filter([Project.t()], filters(), ListMetrics.t(), String.t() | nil) :: [Project.t()]
   def filter(projects, filters, metrics, viewer_uuid) do
     Enum.filter(projects, fn p ->
-      state?(p, filters.state) and mode?(p, filters.mode) and
+      state?(p, filters.state) and
         who?(p, filters.who, metrics, viewer_uuid) and
         overdue?(p, filters.overdue, metrics) and ext?(p, filters, metrics)
     end)
@@ -385,9 +397,6 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
 
   defp state?(_p, ""), do: true
   defp state?(p, state), do: Atom.to_string(Project.derived_status(p)) == state
-
-  defp mode?(_p, ""), do: true
-  defp mode?(p, mode), do: Project.completion(p) == mode
 
   defp who?(_p, "", _metrics, _viewer), do: true
   defp who?(_p, "mine", _metrics, nil), do: false

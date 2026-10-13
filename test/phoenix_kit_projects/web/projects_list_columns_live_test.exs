@@ -114,7 +114,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
 
       {:ok, view, html} = live(conn, @path)
 
-      for header <- ["Status", "Client", "Progress", "Tasks", "Hours logged", "Last edited"] do
+      for header <- ["Status", "Client", "Progress", "Tasks", "Human hours", "Last edited"] do
         assert html =~ header
       end
 
@@ -144,7 +144,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       {:ok, view, _html} = live(conn, @path)
 
       for id <- ~w(open_tasks overdue next_due next_event subprojects members owner assignee
-                   started eta completed billable_hours tokens cost last_activity mode health
+                   started eta completed billable_hours ai_hours total_hours tokens cost last_activity health
                    created created_by external_id) do
         render_hook(view, "add_column", %{"column_id" => id})
       end
@@ -162,7 +162,8 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
             "AI tokens",
             "AI cost",
             "Last activity",
-            "Kind",
+            "AI hours",
+            "Total hours",
             "Health"
           ] do
         assert html =~ header
@@ -173,7 +174,6 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert html =~ "2.5k tokens"
       assert html =~ "$0.12"
       assert html =~ "EXT-77"
-      assert html =~ "Finite"
       assert has_element?(view, "#projects-totals .text-error", "1 overdue")
     end
   end
@@ -237,7 +237,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       {:ok, _view, html} = live(conn, @path <> "?sort=position")
       assert html =~ ~s|data-sortable="true"|
 
-      for query <- ~w(?sort=hours ?sort=position&mode=auto ?sort=position&subs=true
+      for query <- ~w(?sort=hours ?sort=position&state=setup ?sort=position&subs=true
                       ?sort=position&archived=all ?sort=position&overdue=true) do
         {:ok, _view, html} = live(conn, @path <> query)
         refute html =~ ~s|data-sortable="true"|, "draggable under #{query}"
@@ -289,7 +289,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
              )
     end
 
-    test "state, kind, overdue and the client each narrow, and say how many are set",
+    test "state, overdue and the client each narrow, and say how many are set",
          %{conn: conn} do
       [a, b, c] = projects = three("Flt")
       {:ok, _} = Projects.start_project(a)
@@ -305,8 +305,10 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert order(html, projects) == [a.name]
       assert has_element?(view, "#projects-filters-toggle .badge", "1")
 
-      html = render_change(view, "filter", %{"mode" => "manual"})
+      # Ongoing work is a state, and the only filter for it.
+      html = render_change(view, "filter", %{"state" => "ongoing"})
       assert order(html, projects) == [b.name]
+      refute has_element?(view, ~s|#projects-filters select[name="mode"]|)
 
       html = render_change(view, "filter", %{"overdue" => "true"})
       assert order(html, projects) == [c.name]
@@ -521,6 +523,29 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert html =~ project.name
       refute html =~ "Gated col"
       refute html =~ "Secret gated"
+    end
+  end
+
+  describe "reloading" do
+    test "the first change reloads at once; a burst after it shares one reload", %{conn: conn} do
+      [a | _] = three("Rld")
+      {:ok, view, _html} = live(conn, @path)
+
+      {:ok, _} = Projects.update_project(a, %{"name" => "Renamed once"})
+      assert render(view) =~ "Renamed once"
+
+      # Within the pause that follows: nothing reloads per message...
+      {:ok, _} =
+        Projects.update_project(Projects.get_project(a.uuid), %{"name" => "Renamed twice"},
+          broadcast: false
+        )
+
+      for _ <- 1..5, do: send(view.pid, {:projects, :assignment_updated, %{}})
+      refute render(view) =~ "Renamed twice"
+
+      # ...and when it has passed, the list is current.
+      Process.sleep(600)
+      assert render(view) =~ "Renamed twice"
     end
   end
 end

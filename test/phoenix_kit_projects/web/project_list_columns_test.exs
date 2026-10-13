@@ -28,7 +28,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumnsTest do
 
   defp names(projects), do: Enum.map(projects, & &1.name)
 
-  @no_filters %{state: "", who: "", overdue: false, mode: "", ext_col: "", ext_val: ""}
+  @no_filters %{state: "", who: "", overdue: false, ext_col: "", ext_val: ""}
 
   describe "the roster" do
     test "every column id is unique, and every sort a column names is whitelisted" do
@@ -129,6 +129,26 @@ defmodule PhoenixKitProjects.Web.ProjectListColumnsTest do
     end
   end
 
+  describe "hours" do
+    test "people's time, an agent's and the two together each sort by their own figure" do
+      a = project("A")
+      b = project("B")
+
+      metrics = %{
+        ledger: %{
+          a.uuid => %{minutes: 60.0, ai_minutes: 0.0},
+          b.uuid => %{minutes: 10.0, ai_minutes: 300.0}
+        }
+      }
+
+      assert Columns.total_minutes(metrics, b) == 310.0
+      assert Columns.total_minutes(%{}, a) == 0.0
+      assert names(Columns.sort([a, b], :hours, :desc, metrics)) == ["A", "B"]
+      assert names(Columns.sort([a, b], :ai_hours, :desc, metrics)) == ["B", "A"]
+      assert names(Columns.sort([a, b], :total_hours, :desc, metrics)) == ["B", "A"]
+    end
+  end
+
   describe "filter/4" do
     test "no filter passes everything" do
       projects = [project("A"), project("B")]
@@ -145,11 +165,10 @@ defmodule PhoenixKitProjects.Web.ProjectListColumnsTest do
              ) ==
                ["R"]
 
-      assert names(Columns.filter([running, ongoing], %{@no_filters | mode: "manual"}, %{}, nil)) ==
+      assert names(
+               Columns.filter([running, ongoing], %{@no_filters | state: "ongoing"}, %{}, nil)
+             ) ==
                ["O"]
-
-      assert names(Columns.filter([running, ongoing], %{@no_filters | mode: "auto"}, %{}, nil)) ==
-               ["R"]
     end
 
     test "mine and a named person read the members; nobody signed in has no projects of theirs" do
