@@ -99,16 +99,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          %{assigns: %{live_action: :edit, assignment: %Assignment{uuid: uuid}}} = socket
        )
        when is_binary(uuid) do
-    minutes =
-      case PhoenixKitProjects.Ledger.totals_for_assignments([uuid]) do
-        %{^uuid => %{minutes: minutes}} -> minutes
-        _ -> 0
-      end
+    # People's time and an agent's apart, with the agent's tokens and cost:
+    # the same figures the Hours page shows, for this one task.
+    totals =
+      PhoenixKitProjects.Hours.summary(
+        PhoenixKitProjects.Hours.filters(
+          project_uuids: [socket.assigns.assignment.project_uuid],
+          assignment_uuid: uuid
+        )
+      ).totals
 
-    assign(socket, :logged_minutes, minutes)
+    assign(socket, :logged, totals)
+  rescue
+    _ -> assign(socket, :logged, nil)
   end
 
-  defp assign_logged_minutes(socket), do: assign(socket, :logged_minutes, 0)
+  defp assign_logged_minutes(socket), do: assign(socket, :logged, nil)
 
   defp assign_fx(socket) do
     case socket.assigns[:project] do
@@ -2595,10 +2601,28 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 <button type="submit" form="assignment-log-form" class="btn btn-sm" phx-disable-with={gettext("Saving…")}>
                   <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Log time")}
                 </button>
-                <span :if={@logged_minutes > 0} class="text-sm text-base-content/60">
-                  {gettext("%{amount} logged so far", amount: PhoenixKitProjects.Hours.Format.duration(@logged_minutes))}
-                </span>
               </div>
+              <%!-- What is on the task so far: people's time, and what an
+                   agent reported for itself (it sends its own time and
+                   tokens over the API; nobody types those in). --%>
+              <dl :if={@logged} class="flex flex-wrap gap-x-6 gap-y-1 mt-1 text-sm" id="assignment-logged">
+                <div>
+                  <dt class="inline text-base-content/60">{gettext("Human time")}:</dt>
+                  <dd class="inline font-medium">{PhoenixKitProjects.Hours.Format.duration(@logged.minutes)}</dd>
+                </div>
+                <div :if={@logged.ai_minutes > 0}>
+                  <dt class="inline text-base-content/60">{gettext("AI time")}:</dt>
+                  <dd class="inline font-medium">{PhoenixKitProjects.Hours.Format.duration(@logged.ai_minutes)}</dd>
+                </div>
+                <div :if={@logged.tokens > 0}>
+                  <dt class="inline text-base-content/60">{gettext("AI tokens")}:</dt>
+                  <dd class="inline font-medium">{PhoenixKitProjects.Hours.Format.tokens(@logged.tokens)}</dd>
+                </div>
+                <div :if={@logged.cost_cents > 0}>
+                  <dt class="inline text-base-content/60">{gettext("AI cost")}:</dt>
+                  <dd class="inline font-medium">{PhoenixKitProjects.Hours.Format.cost(@logged.cost_cents)}</dd>
+                </div>
+              </dl>
             </div>
 
             <.select
