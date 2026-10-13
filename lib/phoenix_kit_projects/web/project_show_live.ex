@@ -3487,18 +3487,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name="hero-check-circle" class="w-3.5 h-3.5" /> {gettext("Completed")}
               </span>
             <% end %>
-            <%!-- Ongoing work never completes on its own (the project's
-                 `completion` setting): every task done is "all caught up".
-                 The badges sit on the start bar below (Max, 2026-10-07);
-                 here only when that bar is not shown (no lifecycle). --%>
-            <%= if Project.ongoing?(@project) and is_nil(@project.completed_at) and not @fx.lifecycle do %>
-              <span class="badge badge-ghost gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
-                <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Ongoing")}
-              </span>
-              <span :if={@total_tasks > 0 and @done_tasks == @total_tasks} class="badge badge-success badge-outline gap-1">
-                <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("All caught up")}
-              </span>
-            <% end %>
+            <%!-- Ongoing work never completes on its own: every task done
+                 is "all caught up", said here. That it IS ongoing is not
+                 said on the page at all — it is the project's status on
+                 the list, and nothing here depends on it (Max, 2026-10-13:
+                 "no reason for Ongoing to take up a whole row"). --%>
+            <span
+              :if={Project.ongoing?(@project) and is_nil(@project.completed_at) and @total_tasks > 0 and @done_tasks == @total_tasks}
+              class="badge badge-success badge-outline gap-1"
+            >
+              <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("All caught up")}
+            </span>
             <%= if @project.archived_at do %>
               <span class="badge badge-ghost gap-1">
                 <.icon name="hero-archive-box" class="w-3.5 h-3.5" /> {gettext("Archived")}
@@ -3878,20 +3877,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <%!-- Start mode / template bar. Hidden entirely when the project has
            no lifecycle: a checklist has no beginning to announce, and the
            bar's whole job is announcing one. Templates keep it — their
-           branch is about how to USE the template, not about starting. --%>
+           branch is about how to USE the template, not about starting.
+           Ongoing work has nothing to announce either (no setup, no start
+           to press, no end to reach), so it has no bar — unless it still
+           waits for a scheduled start, which the bar is how you bring
+           forward. --%>
+      <% ongoing_open? = not @is_template and Project.ongoing?(@project) and is_nil(@project.completed_at) %>
+      <% waiting? = is_nil(@project.started_at) and @project.start_mode == "scheduled" %>
       <div
-        :if={@is_template or @fx.lifecycle}
+        :if={(@is_template or @fx.lifecycle) and not (ongoing_open? and not waiting?)}
         class="flex flex-wrap items-center gap-3 bg-base-200 rounded-lg px-4 py-3"
       >
-        <%!-- Ongoing work says so here, on the line that says where the
-             project stands, not as a tag beside the title. --%>
-        <% ongoing_open? = not @is_template and Project.ongoing?(@project) and is_nil(@project.completed_at) %>
-        <span :if={ongoing_open?} class="badge badge-ghost gap-1" title={gettext("Ongoing — this project ends only when someone ends it")}>
-          <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Ongoing")}
-        </span>
-        <span :if={ongoing_open? and @total_tasks > 0 and @done_tasks == @total_tasks} class="badge badge-success badge-outline gap-1">
-          <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("All caught up")}
-        </span>
         <%= cond do %>
           <% @is_template -> %>
             <.icon name="hero-document-duplicate" class="w-5 h-5 text-info" />
@@ -3955,11 +3951,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             >
               {gettext("Start now")}
             </button>
-          <% ongoing_open? -> %>
-            <%!-- Ongoing work has no setup phase and nothing to start: it
-                 is under way from the day it is made (`:ongoing` in
-                 `Project.derived_status/2`), so the bar says "Ongoing"
-                 and offers no Start button. --%>
           <% true -> %>
             <.icon name="hero-clock" class="w-5 h-5 text-warning" />
             <span class="text-sm">{gettext("Not started — set up tasks, then start")}</span>

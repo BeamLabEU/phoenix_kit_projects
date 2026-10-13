@@ -28,7 +28,10 @@ defmodule PhoenixKitProjects.Web.Crumbs do
   `Web.Helpers.keep_host_title/1`).
   """
 
+  use Phoenix.Component
   use Gettext, backend: PhoenixKitProjects.Gettext
+
+  import PhoenixKitProjects.Web.Components.RefChip, only: [ref_chip: 1]
 
   alias PhoenixKitProjects.{Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.{Project, Task}
@@ -76,7 +79,32 @@ defmodule PhoenixKitProjects.Web.Crumbs do
   """
   @spec under_project(Project.t(), term(), [map()]) :: keyword()
   def under_project(%Project{} = project, scope, extra \\ []) do
-    section() ++ [page_crumbs: project(project, L10n.current_content_lang(), scope) ++ extra]
+    section() ++
+      [
+        page_crumbs: project(project, L10n.current_content_lang(), scope) ++ extra,
+        page_toolbar: key_toolbar(project),
+        page_project_key: project.key
+      ]
+  end
+
+  @doc """
+  The project's key in the header of its sub-pages (Edit, Members, Files,
+  Activity…), as on the project page itself, where it sits beside the
+  name: core's `page_toolbar` value for it, drawn from the page's
+  `:page_project_key` assign. A crumb is text only, so the key follows the
+  trail. Nil for a template, which has no key to show.
+  """
+  @spec key_toolbar(Project.t()) :: {module(), atom()} | nil
+  def key_toolbar(%Project{is_template: false, key: key}) when is_binary(key) and key != "",
+    do: {__MODULE__, :key_chip}
+
+  def key_toolbar(_project), do: nil
+
+  @doc false
+  def key_chip(assigns) do
+    ~H"""
+    <.ref_chip ref={assigns[:page_project_key]} size="md" />
+    """
   end
 
   @doc "Section + one subtab crumb (`:tasks` | `:templates`)."

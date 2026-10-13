@@ -60,6 +60,9 @@ defmodule PhoenixKitProjects.Web.ProjectApiLive do
          page_title: gettext("Your API key"),
          page_section: gettext("Projects"),
          page_section_path: Paths.projects(),
+         # The project's key, after the trail (`Crumbs.key_toolbar/1`).
+         page_toolbar: Crumbs.key_toolbar(project),
+         page_project_key: project.key,
          page_crumbs:
            Crumbs.project(
              project,

@@ -264,8 +264,8 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
     end
   end
 
-  describe "an ongoing project's start bar" do
-    test "says Ongoing, with no setup line and nothing to start", %{conn: conn} do
+  describe "an ongoing project's page" do
+    test "has no start bar: no Ongoing tag, no setup line, nothing to start", %{conn: conn} do
       conn = put_test_scope(conn, fake_scope())
       project = fixture_project()
 
@@ -275,7 +275,7 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
       _ = task(project, "One")
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert html =~ "Ongoing"
+      refute html =~ "Ongoing"
       refute html =~ "Start project"
       refute html =~ "set up tasks, then start"
 
@@ -286,6 +286,13 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
 
       {:ok, _view, html} = live(conn, "/en/admin/projects?state=ongoing")
       assert html =~ project.name
+
+      # Its key is in the header of its sub-pages too, not only its own page.
+      for sub <- ~w(edit members files activity modules) do
+        {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/#{sub}")
+        assert html =~ "data-page-toolbar", sub
+        assert html =~ project.key, sub
+      end
 
       # Nobody presses Start on it, so becoming ongoing started it (and
       # froze its statuses); one made ongoing is started as it is made.
