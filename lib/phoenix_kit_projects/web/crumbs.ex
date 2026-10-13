@@ -87,18 +87,15 @@ defmodule PhoenixKitProjects.Web.Crumbs do
       ]
   end
 
-  @doc """
-  The project's key in the header of its sub-pages (Edit, Members, Files,
-  Activity…), as on the project page itself, where it sits beside the
-  name: core's `page_toolbar` value for it, drawn from the page's
-  `:page_project_key` assign. A crumb is text only, so the key follows the
-  trail. Nil for a template, which has no key to show.
-  """
-  @spec key_toolbar(Project.t()) :: {module(), atom()} | nil
-  def key_toolbar(%Project{is_template: false, key: key}) when is_binary(key) and key != "",
+  # The project's key in the header of its sub-pages (Edit, Members, Files,
+  # Activity…), as on the project page itself, where it sits beside the
+  # name: core's `page_toolbar` value for it, drawn from the page's
+  # `:page_project_key` assign. A crumb is text only, so the key follows
+  # the trail. Nil for a template, which has no key to show.
+  defp key_toolbar(%Project{is_template: false, key: key}) when is_binary(key) and key != "",
     do: {__MODULE__, :key_chip}
 
-  def key_toolbar(_project), do: nil
+  defp key_toolbar(_project), do: nil
 
   @doc false
   def key_chip(assigns) do
