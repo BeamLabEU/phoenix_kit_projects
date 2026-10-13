@@ -53,6 +53,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Project, WorkEntry}
   alias PhoenixKitProjects.Web.Components.ConfirmAction
+  alias PhoenixKitWeb.Components.Core.FormFieldLabel
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   require Logger
@@ -1276,39 +1277,43 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
   defp filter_bar(assigns) do
     ~H"""
-    <%!-- One row, one shape: every control is a small muted label over a
-         32px-high control (`field/1`). Two forms share `phx-change="filter"`
-         (each sends what it holds); between them sit the pickers, outside
-         any form, so typing in one is a search and not a filter change. --%>
-    <div class="flex flex-wrap items-end gap-x-2 gap-y-3" id={"#{@dom}-filterbar"}>
+    <%!-- Core's `<.select>` and `<.input>` with their own labels, and core's
+         label over the pickers. The wrapper only sets the row's tier: the
+         labels small, and one display for all of them (core gives a
+         select's label `block` and an input's not, which is what set the
+         date fields lower than the selects beside them).
+         Two forms share `phx-change="filter"` (each sends what it holds);
+         between them sit the pickers, outside any form, so typing in one
+         is a search and not a filter change. --%>
+    <div
+      class="flex flex-wrap items-end gap-x-2 gap-y-3 [&_label.label]:flex [&_label.label]:mb-1 [&_label.label>span]:text-xs [&_label.label>span]:font-medium"
+      id={"#{@dom}-filterbar"}
+    >
       <form id={"#{@dom}-filters"} phx-change="filter" class="contents" novalidate>
-        <.field label={gettext("Period")} for={"#{@dom}-period"}>
-          <.select
-            id={"#{@dom}-period"}
-            name="period"
-            value={@period}
-            options={Enum.map(Period.presets(), &{Period.preset_label(&1), &1})}
-            class="select-sm h-8 min-h-8"
-          />
-        </.field>
-        <.field label={gettext("From")} for={"#{@dom}-from"}>
-          <input
-            id={"#{@dom}-from"}
-            type="date"
-            name="from"
-            value={date_value(@period_info.from_date)}
-            class="input input-sm h-8 min-h-8 w-36"
-          />
-        </.field>
-        <.field label={gettext("To")} for={"#{@dom}-to"}>
-          <input
-            id={"#{@dom}-to"}
-            type="date"
-            name="to"
-            value={date_value(@period_info.to_date)}
-            class="input input-sm h-8 min-h-8 w-36"
-          />
-        </.field>
+        <.select
+          id={"#{@dom}-period"}
+          name="period"
+          label={gettext("Period")}
+          value={@period}
+          options={Enum.map(Period.presets(), &{Period.preset_label(&1), &1})}
+          class="select-sm h-8 min-h-8"
+        />
+        <.input
+          id={"#{@dom}-from"}
+          type="date"
+          name="from"
+          label={gettext("From")}
+          value={date_value(@period_info.from_date)}
+          class="input-sm h-8 min-h-8 w-36"
+        />
+        <.input
+          id={"#{@dom}-to"}
+          type="date"
+          name="to"
+          label={gettext("To")}
+          value={date_value(@period_info.to_date)}
+          class="input-sm h-8 min-h-8 w-36"
+        />
       </form>
 
       <.pick_field
@@ -1337,28 +1342,26 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       />
 
       <form id={"#{@dom}-filters-more"} phx-change="filter" class="contents" novalidate>
-        <.field label={gettext("Whose time")} for={"#{@dom}-who"}>
-          <.select
-            id={"#{@dom}-who"}
-            name="who"
-            value={@who}
-            options={[
-              {gettext("People and AI"), "all"},
-              {gettext("People only"), "people"},
-              {gettext("AI only"), "ai"}
-            ]}
-            class="select-sm h-8 min-h-8"
-          />
-        </.field>
-        <.field label={gettext("Billable")} for={"#{@dom}-billable"}>
-          <.select
-            id={"#{@dom}-billable"}
-            name="billable"
-            value={@billable}
-            options={[{gettext("All"), "all"}, {gettext("Billable only"), "yes"}, {gettext("Not billable"), "no"}]}
-            class="select-sm h-8 min-h-8"
-          />
-        </.field>
+        <.select
+          id={"#{@dom}-who"}
+          name="who"
+          label={gettext("Whose time")}
+          value={@who}
+          options={[
+            {gettext("People and AI"), "all"},
+            {gettext("People only"), "people"},
+            {gettext("AI only"), "ai"}
+          ]}
+          class="select-sm h-8 min-h-8"
+        />
+        <.select
+          id={"#{@dom}-billable"}
+          name="billable"
+          label={gettext("Billable")}
+          value={@billable}
+          options={[{gettext("All"), "all"}, {gettext("Billable only"), "yes"}, {gettext("Not billable"), "no"}]}
+          class="select-sm h-8 min-h-8"
+        />
         <.field label={gettext("Sub-projects")} for={"#{@dom}-subprojects"}>
           <label class="flex items-center gap-2 h-8 cursor-pointer">
             <input type="hidden" name="subprojects" value="false" />
@@ -1392,11 +1395,12 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   attr(:for, :string, default: nil)
   slot(:inner_block, required: true)
 
-  # A filter control with its label: the quiet tier above, the control under.
+  # A control core has no labelled component for (a picker, the tick),
+  # under core's own label — the one `<.select>` and `<.input>` draw.
   defp field(assigns) do
     ~H"""
     <div class="min-w-0">
-      <label for={@for} class="block mb-1 text-xs font-medium text-base-content/60">{@label}</label>
+      <FormFieldLabel.label for={@for}>{@label}</FormFieldLabel.label>
       {render_slot(@inner_block)}
     </div>
     """
@@ -1711,41 +1715,44 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         <p :if={@workers == []} class="text-sm text-base-content/50">
           {gettext("Nothing logged for %{from} – %{to}.", from: short_day(@week), to: short_day(Date.add(@week, 6)))}
         </p>
-        <div :if={@workers != []} class="overflow-x-auto">
-          <table class="table table-sm">
-            <thead>
-              <tr>
-                <th>{gettext("Person")}</th>
-                <th :for={day <- @sheet.days} class="text-right whitespace-nowrap">
-                  {weekday(day)} <span class="font-normal text-base-content/50">{day.day}</span>
-                </th>
-                <th class="text-right">{gettext("Week")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr :for={w <- @workers}>
-                <td class="whitespace-nowrap">{w.name}</td>
-                <td :for={day <- @sheet.days} class="text-right tabular-nums">
-                  {sheet_cell(@sheet.matrix[w.key][day])}
-                </td>
-                <td class="text-right tabular-nums font-medium">
-                  {Format.duration(@sheet.matrix[w.key] |> Map.values() |> Enum.sum())}
-                </td>
-              </tr>
-            </tbody>
-            <tfoot :if={length(@workers) > 1}>
-              <tr>
-                <th>{gettext("Total")}</th>
-                <th :for={day <- @sheet.days} class="text-right tabular-nums">
-                  {sheet_cell(day_total(@sheet.matrix, day))}
-                </th>
-                <th class="text-right tabular-nums">
-                  {Format.duration(@sheet.matrix |> Map.values() |> Enum.flat_map(&Map.values/1) |> Enum.sum())}
-                </th>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+        <.table_default
+          :if={@workers != []}
+          id={"#{@dom}-sheet-table"}
+          size="sm"
+          wrapper_class="overflow-x-auto"
+        >
+          <.table_default_header>
+            <.table_default_row>
+              <.table_default_header_cell>{gettext("Person")}</.table_default_header_cell>
+              <.table_default_header_cell :for={day <- @sheet.days} class="text-right whitespace-nowrap">
+                {weekday(day)} <span class="font-normal text-base-content/50">{day.day}</span>
+              </.table_default_header_cell>
+              <.table_default_header_cell class="text-right">{gettext("Week")}</.table_default_header_cell>
+            </.table_default_row>
+          </.table_default_header>
+          <.table_default_body>
+            <.table_default_row :for={w <- @workers}>
+              <.table_default_cell class="whitespace-nowrap">{w.name}</.table_default_cell>
+              <.table_default_cell :for={day <- @sheet.days} class="text-right tabular-nums">
+                {sheet_cell(@sheet.matrix[w.key][day])}
+              </.table_default_cell>
+              <.table_default_cell class="text-right tabular-nums font-medium">
+                {Format.duration(@sheet.matrix[w.key] |> Map.values() |> Enum.sum())}
+              </.table_default_cell>
+            </.table_default_row>
+          </.table_default_body>
+          <.table_default_footer :if={length(@workers) > 1}>
+            <.table_default_row>
+              <.table_default_header_cell>{gettext("Total")}</.table_default_header_cell>
+              <.table_default_header_cell :for={day <- @sheet.days} class="text-right tabular-nums">
+                {sheet_cell(day_total(@sheet.matrix, day))}
+              </.table_default_header_cell>
+              <.table_default_header_cell class="text-right tabular-nums">
+                {Format.duration(@sheet.matrix |> Map.values() |> Enum.flat_map(&Map.values/1) |> Enum.sum())}
+              </.table_default_header_cell>
+            </.table_default_row>
+          </.table_default_footer>
+        </.table_default>
       </div>
     </section>
     """
@@ -2239,28 +2246,28 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
 
         <section :if={@report.entries != []}>
           <h2 class="text-sm font-semibold mb-1">{gettext("Entries")}</h2>
-          <table class="table table-xs">
-            <thead>
-              <tr>
-                <th>{gettext("When")}</th>
-                <th>{gettext("Who")}</th>
-                <th>{gettext("Task")}</th>
-                <th class="text-right">{gettext("Time")}</th>
-                <th>{gettext("Note")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr :for={row <- @report.entries}>
-                <td class="whitespace-nowrap">{Report.stamp(row.at, @offset)}</td>
-                <td class="whitespace-nowrap">{row.worker.name}</td>
-                <td>{task_label(row.task)}</td>
-                <td class="text-right whitespace-nowrap tabular-nums">
+          <.table_default size="xs" wrapper_class="overflow-x-auto">
+            <.table_default_header>
+              <.table_default_row>
+                <.table_default_header_cell>{gettext("When")}</.table_default_header_cell>
+                <.table_default_header_cell>{gettext("Who")}</.table_default_header_cell>
+                <.table_default_header_cell>{gettext("Task")}</.table_default_header_cell>
+                <.table_default_header_cell class="text-right">{gettext("Time")}</.table_default_header_cell>
+                <.table_default_header_cell>{gettext("Note")}</.table_default_header_cell>
+              </.table_default_row>
+            </.table_default_header>
+            <.table_default_body>
+              <.table_default_row :for={row <- @report.entries}>
+                <.table_default_cell class="whitespace-nowrap">{Report.stamp(row.at, @offset)}</.table_default_cell>
+                <.table_default_cell class="whitespace-nowrap">{report_worker(row.worker)}</.table_default_cell>
+                <.table_default_cell>{task_label(row.task)}</.table_default_cell>
+                <.table_default_cell class="text-right whitespace-nowrap tabular-nums">
                   {Format.duration(Decimal.to_float(row.entry.amount))}{if row.entry.billable, do: " *"}
-                </td>
-                <td>{row.entry.note}</td>
-              </tr>
-            </tbody>
-          </table>
+                </.table_default_cell>
+                <.table_default_cell>{row.entry.note}</.table_default_cell>
+              </.table_default_row>
+            </.table_default_body>
+          </.table_default>
           <p class="text-xs opacity-60 mt-1">* {gettext("billable")}</p>
           <p :if={Report.truncated?(@report)} class="text-xs opacity-60">
             {gettext("The first %{shown} of %{total} entries.", shown: length(@report.entries), total: @report.total_entries)}
@@ -2285,26 +2292,26 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     ~H"""
     <section>
       <h2 class="text-sm font-semibold mb-1">{@title}</h2>
-      <table class="table table-xs">
-        <thead>
-          <tr>
-            <th>{@head}</th>
-            <th class="text-right">{gettext("Time")}</th>
-            <th class="text-right">{gettext("Hours")}</th>
-            <th class="text-right">{gettext("Billable")}</th>
-            <th class="text-right">{gettext("Entries")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr :for={{label, row} <- @rows}>
-            <td>{label}</td>
-            <td class="text-right tabular-nums whitespace-nowrap">{Format.duration(row.minutes)}</td>
-            <td class="text-right tabular-nums whitespace-nowrap">{Format.decimal_hours(row.minutes)}</td>
-            <td class="text-right tabular-nums whitespace-nowrap">{Format.duration(row.billable_minutes)}</td>
-            <td class="text-right tabular-nums whitespace-nowrap">{row.entries}</td>
-          </tr>
-        </tbody>
-      </table>
+      <.table_default size="xs" wrapper_class="overflow-x-auto">
+        <.table_default_header>
+          <.table_default_row>
+            <.table_default_header_cell>{@head}</.table_default_header_cell>
+            <.table_default_header_cell class="text-right">{gettext("Time")}</.table_default_header_cell>
+            <.table_default_header_cell class="text-right">{gettext("Hours")}</.table_default_header_cell>
+            <.table_default_header_cell class="text-right">{gettext("Billable")}</.table_default_header_cell>
+            <.table_default_header_cell class="text-right">{gettext("Entries")}</.table_default_header_cell>
+          </.table_default_row>
+        </.table_default_header>
+        <.table_default_body>
+          <.table_default_row :for={{label, row} <- @rows}>
+            <.table_default_cell>{label}</.table_default_cell>
+            <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{Format.duration(row.minutes)}</.table_default_cell>
+            <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{Format.decimal_hours(row.minutes)}</.table_default_cell>
+            <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{Format.duration(row.billable_minutes)}</.table_default_cell>
+            <.table_default_cell class="text-right tabular-nums whitespace-nowrap">{row.entries}</.table_default_cell>
+          </.table_default_row>
+        </.table_default_body>
+      </.table_default>
     </section>
     """
   end
