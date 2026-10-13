@@ -1244,9 +1244,74 @@ defmodule PhoenixKitProjects.Projects do
     with {:ok, updated} <- p |> Project.changeset(attrs) |> repo().update() do
       if Keyword.get(opts, :broadcast, true), do: broadcast_project_updated(updated)
       # Switched to ongoing work while it waited for a Start: see `start_ongoing/1`.
-      start_ongoing({:ok, updated})
+      {:ok, updated} |> settle_completion(p) |> start_ongoing()
     end
   end
+
+  @doc """
+  After how a project ends was changed (`before` is the project as it
+  was): a project switched to "ends with its last task" whose tasks are
+  all done completes on the spot, and its parent's row follows — the rule
+  it now lives under is applied, not left for the next task change. Takes
+  and returns a result tuple; inside a transaction it does nothing and the
+  caller runs it again after the commit.
+  """
+  @spec settle_completion(term(), Project.t()) :: term()
+  def settle_completion({:ok, %Project{} = updated} = result, %Project{} = before) do
+    if Project.completion(before) != Project.completion(updated) and not repo().in_transaction?() do
+      _ = recompute_project_completion(updated.uuid)
+      {:ok, get_project(updated.uuid) || updated}
+    else
+      result
+    end
+  end
+
+  def settle_completion(result, _before), do: result
+
+  @doc """
+  Ends ongoing work by hand: the one way a project that "ends only when
+  someone ends it" completes. Stamps `completed_at`, broadcasts
+  `:project_completed` and refreshes its parent's row. `{:error,
+  :not_ongoing}` for a project that ends with its last task (that one
+  completes itself), `{:error, :already_ended}` for one already ended.
+  """
+  @spec end_project(Project.t()) ::
+          {:ok, Project.t()} | {:error, :not_ongoing | :already_ended | Ecto.Changeset.t()}
+  def end_project(%Project{completed_at: %DateTime{}}), do: {:error, :already_ended}
+
+  def end_project(%Project{is_template: false} = p) do
+    if Project.ongoing?(p) do
+      with {:ok, ended} <-
+             p |> Project.changeset(%{completed_at: DateTime.utc_now()}) |> repo().update() do
+        ProjectsPubSub.broadcast_project(:project_completed, project_payload(ended))
+        propagate_rollup_to_parent(ended.uuid, 0)
+        {:ok, ended}
+      end
+    else
+      {:error, :not_ongoing}
+    end
+  end
+
+  def end_project(%Project{}), do: {:error, :not_ongoing}
+
+  @doc "Takes back `end_project/1`: the ongoing work is under way again."
+  @spec resume_project(Project.t()) ::
+          {:ok, Project.t()} | {:error, :not_ongoing | :not_ended | Ecto.Changeset.t()}
+  def resume_project(%Project{completed_at: nil}), do: {:error, :not_ended}
+
+  def resume_project(%Project{is_template: false} = p) do
+    if Project.ongoing?(p) do
+      with {:ok, resumed} <- p |> Project.changeset(%{completed_at: nil}) |> repo().update() do
+        ProjectsPubSub.broadcast_project(:project_reopened, project_payload(resumed))
+        propagate_rollup_to_parent(resumed.uuid, 0)
+        {:ok, resumed}
+      end
+    else
+      {:error, :not_ongoing}
+    end
+  end
+
+  def resume_project(%Project{}), do: {:error, :not_ongoing}
 
   @doc "Broadcasts a `:project_updated` event for a project (post-commit use)."
   @spec broadcast_project_updated(Project.t()) :: :ok
@@ -1785,8 +1850,11 @@ defmodule PhoenixKitProjects.Projects do
     Project
     |> where(
       [p],
+      # With no lifecycle there is no start to wait for: such a project
+      # is among the active (`list_active_projects/1`), not here as well.
       p.is_template == false and is_nil(p.archived_at) and is_nil(p.started_at) and
-        p.start_mode == "scheduled" and not is_nil(p.scheduled_start_date)
+        p.start_mode == "scheduled" and not is_nil(p.scheduled_start_date) and
+        not lifecycle_off(p.settings)
     )
     |> exclude_subprojects()
     |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
@@ -2656,13 +2724,17 @@ defmodule PhoenixKitProjects.Projects do
   # "in_progress" once any work exists/has started, else "todo".
   defp rollup_status(%{completed_at: %DateTime{}}, _summary), do: "done"
 
-  defp rollup_status(_child, summary) do
+  defp rollup_status(child, summary) do
     total = rollup_val(summary, :total, 0)
     done = rollup_val(summary, :done, 0)
     in_progress = rollup_val(summary, :in_progress, 0)
     progress = rollup_val(summary, :progress_pct, 0)
 
-    if total > 0 and (done > 0 or in_progress > 0 or progress > 0),
+    # Ongoing work is under way from the day it is made, with or without
+    # a task begun (a template's row describes nothing live).
+    under_way? = Project.ongoing?(child) and Map.get(child, :is_template) != true
+
+    if under_way? or (total > 0 and (done > 0 or in_progress > 0 or progress > 0)),
       do: "in_progress",
       else: "todo"
   end

@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.Components.Core.ChangeCue
@@ -907,6 +908,26 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
        put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
+
+  # Ending ongoing work asks first (`Components.ConfirmAction`).
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(end_project))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
+  def handle_event("end_project", _params, socket),
+    do: {:noreply, end_or_resume(socket, :end)}
+
+  def handle_event("resume_project", _params, socket),
+    do: {:noreply, end_or_resume(socket, :resume)}
 
   def handle_event("cancel", _params, socket) do
     {:noreply, WebHelpers.close_or_navigate(socket, Paths.projects())}
@@ -2720,6 +2741,38 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               ]}
             />
 
+            <%!-- Ongoing work has no end to reach, so nothing on its page
+                 ends it; the one way is here, beside the setting that makes
+                 it ongoing (Max, 2026-10-13: "we could just hide the way to
+                 end it in the settings"). --%>
+            <div
+              :if={@live_action == :edit and @can_manage_modules and Project.ongoing?(@project) and not @project.is_template}
+              id="project-end"
+              class="flex flex-wrap items-center gap-2 text-sm"
+            >
+              <%= if @project.completed_at do %>
+                <span class="opacity-70">
+                  {gettext("Ended %{when}", when: L10n.format_date(@project.completed_at))}
+                </span>
+                <button type="button" phx-click="resume_project" class="btn btn-ghost btn-xs">
+                  {gettext("Reopen it")}
+                </button>
+              <% else %>
+                <span class="opacity-60">{gettext("Finished with it for good?")}</span>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs text-error"
+                  {ConfirmAction.ask("end_project",
+                    title: gettext("End this project"),
+                    message: gettext("The project is marked completed and leaves the active lists. Its tasks stay as they are, and it can be reopened here."),
+                    confirm: gettext("End project")
+                  )}
+                >
+                  {gettext("End this project")}
+                </button>
+              <% end %>
+            </div>
+
             <%!-- What an AI agent on the API may do here. Every row is a
                  project setting (`Project.agent_policy/1`), so the same
                  module serves a locked-down client project and an open
@@ -2837,6 +2890,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         </.form_actions>
       </.form>
 
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
+
       <%!-- Modules & Features, embedded — OUTSIDE the project form (and
            after its Save row), where its own forms (labels, extension
            settings, API keys) can post:
@@ -2883,4 +2938,39 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     </div>
     """
   end
+
+  # Ends ongoing work, or takes that back. The buttons render only for
+  # someone who manages the project's settings; the event is a message
+  # anyone on the page can send, so it is asked again here.
+  defp end_or_resume(
+         %{assigns: %{live_action: :edit, project: %Project{} = project}} = socket,
+         act
+       ) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    with true <- Authz.can?(scope, project, :manage_modules),
+         {:ok, updated} <- do_end_or_resume(project, act) do
+      Activity.log(
+        if(act == :end, do: "projects.project_ended", else: "projects.project_resumed"),
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "project",
+        resource_uuid: updated.uuid,
+        metadata: %{"name" => updated.name}
+      )
+
+      socket
+      |> assign(:project, updated)
+      |> put_flash(
+        :info,
+        if(act == :end, do: gettext("Project ended."), else: gettext("Project reopened."))
+      )
+    else
+      _ -> put_flash(socket, :error, gettext("That could not be done."))
+    end
+  end
+
+  defp end_or_resume(socket, _act), do: socket
+
+  defp do_end_or_resume(project, :end), do: Projects.end_project(project)
+  defp do_end_or_resume(project, :resume), do: Projects.resume_project(project)
 end
