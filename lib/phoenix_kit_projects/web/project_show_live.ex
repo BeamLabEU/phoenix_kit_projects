@@ -1187,6 +1187,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:assignment_comment_counts, :map, default: %{})
   attr(:deps_by_assignment, :map, default: %{})
   attr(:ledger_minutes, :map, default: %{})
+  attr(:ledger_ai_minutes, :map, default: %{})
   attr(:ledger_tokens, :map, default: %{})
   attr(:assignment_note_counts, :map, default: %{})
   attr(:assignment_labels, :map, default: %{})
@@ -1303,6 +1304,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   icon="hero-pencil"
                   label={gettext("Edit")}
                 />
+                <.smart_menu_link
+                  :if={not @is_template}
+                  navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid) <> "?focus=waiting_on"}
+                  emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid, "focus" => "waiting_on"}}}
+                  embed_mode={@embed_mode}
+                  icon="hero-pause-circle"
+                  label={if(@a.waiting_on, do: gettext("Waiting on…"), else: gettext("Mark as waiting on…"))}
+                />
                 <.table_row_menu_button
                   :if={@fx.ledger and not @is_template}
                   phx-click="open_log_time"
@@ -1338,9 +1347,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <div class="flex flex-wrap items-center gap-2 text-xs">
             <%!-- What an agent (or a person) set on the task: whom it waits
                  on, where it came from, how far its checklist is. --%>
-            <span :if={@a.waiting_on} class="badge badge-sm badge-warning gap-1" title={gettext("Waiting on someone else")}>
+            <%!-- Opens the task's form on the field that says it. --%>
+            <.smart_link
+              :if={@a.waiting_on}
+              navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid) <> "?focus=waiting_on"}
+              emit={
+                {PhoenixKitProjects.Web.AssignmentFormLive,
+                 %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid, "focus" => "waiting_on"}}
+              }
+              embed_mode={@embed_mode}
+              class="badge badge-sm badge-warning gap-1 cursor-pointer hover:brightness-95"
+              title={gettext("Waiting on someone else — click to change")}
+            >
               <.icon name="hero-pause-circle" class="w-3 h-3" /> {gettext("Waiting on %{who}", who: @a.waiting_on)}
-            </span>
+            </.smart_link>
             <span :if={@a.origin} class="badge badge-sm badge-ghost" title={gettext("Where this came from")}>
               {gettext("from %{origin}", origin: @a.origin)}
             </span>
@@ -1388,15 +1408,31 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             <%!-- Time shows once some is logged; logging it is in the task's
                  form and its ⋮ menu. --%>
-            <% logged = Map.get(@ledger_minutes, @a.uuid, 0) %>
+            <%!-- People's time and an agent's are two chips: the first opens
+                 the log dialog, the second the agent's notes, where that
+                 time was reported. --%>
+            <% ai_logged = Map.get(@ledger_ai_minutes, @a.uuid, 0) %>
+            <% logged = max(Map.get(@ledger_minutes, @a.uuid, 0) - ai_logged, 0) %>
             <button
               :if={@fx.ledger and not @is_template and logged > 0}
               phx-click="open_log_time"
               phx-value-uuid={@a.uuid}
-              title={gettext("Log time on this task")}
+              title={gettext("Time people logged — click to log more")}
               class="badge badge-sm gap-1 cursor-pointer transition-colors badge-outline hover:bg-primary hover:text-primary-content hover:border-primary"
             >
-              <.icon name="hero-play-circle" class="w-3 h-3" /> {format_minutes(logged)}
+              <.icon name="hero-user" class="w-3 h-3" /> {format_minutes(logged)}
+            </button>
+            <button
+              :if={@fx.ledger and not @is_template and ai_logged > 0}
+              type="button"
+              phx-click={if(@comments_enabled, do: "open_comments")}
+              phx-value-type="notes"
+              phx-value-uuid={@a.uuid}
+              phx-value-title={TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
+              title={gettext("Time the AI reported — click for its notes")}
+              class="badge badge-sm gap-1 cursor-pointer transition-colors badge-outline hover:bg-primary hover:text-primary-content hover:border-primary"
+            >
+              <.icon name="hero-cpu-chip" class="w-3 h-3" /> {gettext("AI %{amount}", amount: format_minutes(ai_logged))}
             </button>
 
             <% atype = assignee_type(@a) %>
@@ -2693,6 +2729,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       assign(socket,
         ledger_totals: Ledger.totals_for_project(project.uuid),
         ledger_minutes: Map.new(per_task, fn {uuid, t} -> {uuid, t.minutes} end),
+        # An agent's share of those minutes: the row says the two apart.
+        ledger_ai_minutes: Ledger.ai_minutes_for_assignments(displayed),
         ledger_tokens: Map.new(per_task, fn {uuid, t} -> {uuid, t.tokens} end),
         # Cheap availability probe for the Invoice-effort button — the
         # click re-runs the FULL guard chain (authz + profile + rate).
@@ -2704,6 +2742,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       assign(socket,
         ledger_totals: nil,
         ledger_minutes: %{},
+        ledger_ai_minutes: %{},
         ledger_tokens: %{},
         invoice_ready?: false
       )
@@ -4501,6 +4540,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       comments_enabled={@comments_enabled}
                                       assignment_comment_counts={@assignment_comment_counts}
                                       ledger_minutes={@ledger_minutes}
+                                      ledger_ai_minutes={assigns[:ledger_ai_minutes] || %{}}
                                       ledger_tokens={@ledger_tokens}
                                       assignment_note_counts={@assignment_note_counts}
                                       assignment_labels={@assignment_labels}
@@ -4527,6 +4567,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       comments_enabled={@comments_enabled}
                       assignment_comment_counts={@assignment_comment_counts}
                       ledger_minutes={@ledger_minutes}
+                      ledger_ai_minutes={assigns[:ledger_ai_minutes] || %{}}
                       ledger_tokens={@ledger_tokens}
                       assignment_note_counts={@assignment_note_counts}
                       assignment_labels={@assignment_labels}

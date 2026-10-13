@@ -492,6 +492,26 @@ defmodule PhoenixKitProjects.Ledger do
   end
 
   @doc """
+  The minutes an agent reported for itself, per assignment — the part of
+  `totals_for_assignments/1`'s `minutes` that is not people's. Only the
+  assignments that have some are in the map.
+  """
+  @spec ai_minutes_for_assignments([binary()]) :: %{binary() => float()}
+  def ai_minutes_for_assignments([]), do: %{}
+
+  def ai_minutes_for_assignments(uuids) when is_list(uuids) do
+    from(e in WorkEntry,
+      where: e.assignment_uuid in ^uuids and e.kind == "time" and e.actor_kind == "ai_agent",
+      group_by: e.assignment_uuid,
+      select: {e.assignment_uuid, sum(e.amount)}
+    )
+    |> RepoHelper.repo().all()
+    |> Map.new(fn {uuid, sum} -> {uuid, Decimal.to_float(sum)} end)
+  rescue
+    _ -> %{}
+  end
+
+  @doc """
   Minutes, tokens and cents per assignment for a DISPLAYED set — one query,
   a `%{minutes, tokens, cost_cents}` per uuid asked about (zeros when
   nothing is logged). The task row's chips and the API's `totals` read

@@ -444,7 +444,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   def resolve_action_params(_atom, session) do
     session
-    |> Map.take(["id", "project_id", "template", "kind", "title"])
+    |> Map.take(["id", "project_id", "template", "kind", "title", "focus"])
   end
 
   @doc """

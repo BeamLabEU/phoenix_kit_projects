@@ -59,6 +59,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       # element mounts and `phx-mounted` refocuses it; `add_next?` is the
       # submit's intent (the "then=next" submitter), read at save time.
       |> assign(form_seq: 0, add_next?: false)
+      # A link may name the field it is about (`?focus=waiting_on`): the
+      # form opens with the cursor there.
+      |> assign(focus_field: Map.get(resolved_params, "focus"))
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
       |> assign_logged_minutes()
@@ -2656,7 +2659,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                  where a relayed item came from, and a checklist — sub-items
                  ticked one by one, one per line here, "[x]" when done. --%>
             <div class="flex gap-2">
-              <div class="flex-1">
+              <div
+                class="flex-1"
+                id="assignment-waiting-on"
+                phx-mounted={@focus_field == "waiting_on" && JS.focus(to: "#assignment-waiting-on input")}
+              >
                 <.input field={@form[:waiting_on]} label={gettext("Waiting on")} placeholder={gettext("e.g. the client")} maxlength="200" />
               </div>
               <div class="w-48">
