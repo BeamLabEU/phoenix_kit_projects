@@ -80,6 +80,18 @@ defmodule PhoenixKitProjects.Projects do
   #
   # COALESCE, not a bare comparison: absence means "inherit the default",
   # which is on. Only an explicit false counts.
+  # Ongoing work (`Project.ongoing?/1`) that is not waiting for a scheduled
+  # start: under way without being started (`Project.derived_status/2`).
+  defmacrop ongoing_open(p) do
+    quote do
+      fragment(
+        "(COALESCE(? ->> 'completion', 'auto') = 'manual' AND ? = 'immediate')",
+        unquote(p).settings,
+        unquote(p).start_mode
+      )
+    end
+  end
+
   defmacrop lifecycle_off(settings) do
     quote do
       fragment(
@@ -1707,7 +1719,7 @@ defmodule PhoenixKitProjects.Projects do
     |> where(
       [p],
       p.is_template == false and is_nil(p.archived_at) and
-        (not is_nil(p.started_at) or lifecycle_off(p.settings)) and
+        (not is_nil(p.started_at) or lifecycle_off(p.settings) or ongoing_open(p)) and
         is_nil(p.completed_at)
     )
     |> exclude_subprojects()
@@ -1753,7 +1765,7 @@ defmodule PhoenixKitProjects.Projects do
     |> where(
       [p],
       p.is_template == false and is_nil(p.archived_at) and is_nil(p.started_at) and
-        p.start_mode == "immediate" and not lifecycle_off(p.settings)
+        p.start_mode == "immediate" and not lifecycle_off(p.settings) and not ongoing_open(p)
     )
     |> exclude_subprojects()
     |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))

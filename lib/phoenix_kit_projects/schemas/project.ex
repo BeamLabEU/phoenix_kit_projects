@@ -427,7 +427,14 @@ defmodule PhoenixKitProjects.Schemas.Project do
   meaningful in the UI.
   """
   @type derived_state ::
-          :archived | :template | :completed | :running | :overdue | :scheduled | :setup
+          :archived
+          | :template
+          | :completed
+          | :ongoing
+          | :running
+          | :overdue
+          | :scheduled
+          | :setup
 
   @doc """
   Lifecycle state for this project, in priority order:
@@ -435,6 +442,11 @@ defmodule PhoenixKitProjects.Schemas.Project do
     * `:archived`  — soft-hidden (`archived_at` is set)
     * `:template`  — `is_template: true`
     * `:completed` — `completed_at` is set
+    * `:ongoing`   — ongoing work (`ongoing?/1`: it ends only when someone
+      ends it) that is not waiting for a scheduled start. It has no setup
+      phase and nothing to finish, so it is under way from the day it is
+      made, started or not (Max, 2026-10-13: *"there should be a on going
+      status for projects that don't really have an end"*)
     * `:running`   — `started_at` is set and not yet completed
     * `:overdue`   — scheduled, the scheduled_start_date has passed, not started
     * `:scheduled` — scheduled, start date still in the future, not started
@@ -451,9 +463,10 @@ defmodule PhoenixKitProjects.Schemas.Project do
       p.archived_at -> :archived
       p.is_template -> :template
       p.completed_at -> :completed
-      p.started_at -> :running
+      p.started_at -> if(ongoing?(p), do: :ongoing, else: :running)
       scheduled_overdue?(p, now) -> :overdue
       p.start_mode == "scheduled" -> :scheduled
+      ongoing?(p) -> :ongoing
       true -> :setup
     end
   end

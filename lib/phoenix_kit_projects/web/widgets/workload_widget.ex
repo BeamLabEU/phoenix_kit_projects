@@ -78,7 +78,13 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
             {gettext("Projects")} · {@total}
           </p>
           <div class="grid min-h-0 flex-1 grid-cols-4 gap-1.5">
-            <.kpi small label={gettext("Running")} value={count(@lifecycle, :running)} tone="text-success" />
+            <%!-- Ongoing work is under way too: it counts with the running. --%>
+            <.kpi
+              small
+              label={gettext("Running")}
+              value={count(@lifecycle, :running) + count(@lifecycle, :ongoing)}
+              tone="text-success"
+            />
             <.kpi
               small
               label={gettext("Overdue")}

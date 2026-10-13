@@ -371,6 +371,26 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     event(project, start_d, last_day, lang, extra, class)
   end
 
+  # Ongoing work never started by hand is under way since it was made.
+  defp running_event(
+         %{project: %Project{started_at: nil, inserted_at: %DateTime{} = made} = project} =
+           summary,
+         lang,
+         today,
+         offset,
+         marker
+       ) do
+    if Project.ongoing?(project) do
+      running_event(
+        %{summary | project: %{project | started_at: made}},
+        lang,
+        today,
+        offset,
+        marker
+      )
+    end
+  end
+
   defp running_event(_, _, _, _, _), do: nil
 
   # Highlight only the overdue stretch (planned_end+1 .. today) of a late

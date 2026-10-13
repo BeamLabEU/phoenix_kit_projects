@@ -3956,16 +3956,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               {gettext("Start now")}
             </button>
           <% ongoing_open? -> %>
-            <%!-- Ongoing work has no setup phase to finish first: tasks
-                 come and go for as long as it runs, so no "set up tasks,
-                 then start" - only the button. --%>
-            <button
-              type="button"
-              phx-click="open_start_modal"
-              class="btn btn-success btn-xs ml-auto"
-            >
-              <.icon name="hero-play" class="w-4 h-4" /> {gettext("Start project")}
-            </button>
+            <%!-- Ongoing work has no setup phase and nothing to start: it
+                 is under way from the day it is made (`:ongoing` in
+                 `Project.derived_status/2`), so the bar says "Ongoing"
+                 and offers no Start button. --%>
           <% true -> %>
             <.icon name="hero-clock" class="w-5 h-5 text-warning" />
             <span class="text-sm">{gettext("Not started — set up tasks, then start")}</span>

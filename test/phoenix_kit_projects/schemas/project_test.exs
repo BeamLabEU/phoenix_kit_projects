@@ -233,6 +233,23 @@ defmodule PhoenixKitProjects.Schemas.ProjectTest do
     test ":setup when immediate-mode and not started" do
       assert Project.derived_status(%Project{start_mode: "immediate"}) == :setup
     end
+
+    test ":ongoing for work with no end, started or not, unless it waits for a scheduled start" do
+      ongoing = %{"completion" => "manual"}
+
+      assert Project.derived_status(%Project{start_mode: "immediate", settings: ongoing}) ==
+               :ongoing
+
+      started = %Project{started_at: ~U[2026-01-01 00:00:00Z], settings: ongoing}
+      assert Project.derived_status(started) == :ongoing
+
+      ended = %{started | completed_at: ~U[2026-02-01 00:00:00Z]}
+      assert Project.derived_status(ended) == :completed
+
+      future = DateTime.add(DateTime.utc_now(), 3600, :second)
+      waiting = %Project{start_mode: "scheduled", scheduled_start_date: future, settings: ongoing}
+      assert Project.derived_status(waiting) == :scheduled
+    end
   end
 
   describe "planned_end_for/2 + eta_from/3" do

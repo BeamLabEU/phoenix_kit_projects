@@ -10,6 +10,7 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, Members, Projects, ResourceLinks}
+  alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitStaff.{Departments, Staff, Teams}
 
   @base "/api/projects/v1"
@@ -264,7 +265,7 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
   end
 
   describe "an ongoing project's start bar" do
-    test "says Ongoing and offers the button, with no setup line", %{conn: conn} do
+    test "says Ongoing, with no setup line and nothing to start", %{conn: conn} do
       conn = put_test_scope(conn, fake_scope())
       project = fixture_project()
 
@@ -275,8 +276,16 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       assert html =~ "Ongoing"
-      assert html =~ "Start project"
+      refute html =~ "Start project"
       refute html =~ "set up tasks, then start"
+
+      # Under way without being started: among the active, not in setup.
+      assert Project.derived_status(project) == :ongoing
+      assert Enum.any?(Projects.list_active_projects(), &(&1.uuid == project.uuid))
+      refute Enum.any?(Projects.list_setup_projects(), &(&1.uuid == project.uuid))
+
+      {:ok, _view, html} = live(conn, "/en/admin/projects?state=ongoing")
+      assert html =~ project.name
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{fixture_project().uuid}")
       assert html =~ "set up tasks, then start"

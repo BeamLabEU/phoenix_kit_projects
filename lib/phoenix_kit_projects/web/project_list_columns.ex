@@ -42,7 +42,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
                      tokens cost last_activity mode health created_by external_id key ext)a
   @sort_fields @sql_sorts ++ @computed_sorts
 
-  @states ~w(running setup scheduled overdue completed)
+  @states ~w(running ongoing setup scheduled overdue completed)
   @default_columns ~w(key status progress tasks hours updated)
 
   @type spec :: %{
@@ -68,6 +68,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   @doc "The label of a derived-state filter value."
   @spec state_label(String.t()) :: String.t()
   def state_label("running"), do: gettext("Running")
+  def state_label("ongoing"), do: gettext("Ongoing")
   def state_label("setup"), do: gettext("Not started")
   def state_label("scheduled"), do: gettext("Scheduled")
   def state_label("overdue"), do: gettext("Late to start")
@@ -207,7 +208,15 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
     end
   end
 
-  @state_rank %{running: 0, overdue: 1, scheduled: 2, setup: 3, completed: 4, archived: 5}
+  @state_rank %{
+    running: 0,
+    ongoing: 0,
+    overdue: 1,
+    scheduled: 2,
+    setup: 3,
+    completed: 4,
+    archived: 5
+  }
   @health_rank Health.statuses() |> Enum.with_index() |> Map.new()
 
   @doc """

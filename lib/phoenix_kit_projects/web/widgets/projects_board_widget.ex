@@ -121,18 +121,21 @@ defmodule PhoenixKitProjects.Web.Widgets.ProjectsBoardWidget do
   # go to the states that need attention.
   defp tint(:overdue), do: "bg-error/10 hover:bg-error/20"
   defp tint(:running), do: "bg-success/10 hover:bg-success/20"
+  defp tint(:ongoing), do: "bg-success/10 hover:bg-success/20"
   defp tint(:setup), do: "bg-warning/10 hover:bg-warning/20"
   defp tint(:scheduled), do: "bg-info/10 hover:bg-info/20"
   defp tint(_quiet), do: "bg-base-200/60 hover:bg-base-200"
 
   defp dot(:overdue), do: "bg-error"
   defp dot(:running), do: "bg-success"
+  defp dot(:ongoing), do: "bg-success"
   defp dot(:setup), do: "bg-warning"
   defp dot(:scheduled), do: "bg-info"
   defp dot(_quiet), do: "bg-base-content/30"
 
   defp lifecycle_label(:overdue), do: gettext("overdue")
   defp lifecycle_label(:running), do: gettext("running")
+  defp lifecycle_label(:ongoing), do: gettext("ongoing")
   defp lifecycle_label(:setup), do: gettext("setup")
   defp lifecycle_label(:scheduled), do: gettext("scheduled")
   defp lifecycle_label(:completed), do: gettext("completed")

@@ -20,7 +20,7 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
 
   attr(:state, :atom,
     required: true,
-    values: [:running, :completed, :overdue, :scheduled, :setup, :archived, :template]
+    values: [:running, :ongoing, :completed, :overdue, :scheduled, :setup, :archived, :template]
   )
 
   def derived_status_badge(assigns) do
@@ -134,6 +134,7 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
   end
 
   defp label(:running), do: gettext("running")
+  defp label(:ongoing), do: gettext("ongoing")
   defp label(:completed), do: gettext("completed")
   defp label(:overdue), do: gettext("overdue")
   defp label(:scheduled), do: gettext("scheduled")
@@ -142,6 +143,7 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
   defp label(:template), do: gettext("template")
 
   defp badge_class(:running), do: "badge-success"
+  defp badge_class(:ongoing), do: "badge-success"
   defp badge_class(:completed), do: "badge-success badge-outline"
   defp badge_class(:overdue), do: "badge-error"
   defp badge_class(:scheduled), do: "badge-info"
@@ -150,6 +152,7 @@ defmodule PhoenixKitProjects.Web.Components.DerivedStatusBadge do
   defp badge_class(:template), do: "badge-info badge-outline"
 
   defp icon_name(:running), do: "hero-play"
+  defp icon_name(:ongoing), do: "hero-arrow-path"
   defp icon_name(:completed), do: "hero-check-circle"
   defp icon_name(:overdue), do: "hero-exclamation-triangle"
   defp icon_name(:scheduled), do: "hero-calendar"
