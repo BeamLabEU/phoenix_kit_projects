@@ -391,6 +391,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     |> put_total(:open_tasks, metrics, :tasks, shown, :open)
     |> put_total(:overdue, metrics, :due, shown, :overdue)
     |> put_total(:minutes, metrics, :ledger, shown, :minutes)
+    |> put_total(:ai_minutes, metrics, :ledger, shown, :ai_minutes)
   end
 
   defp put_total(totals, name, metrics, family, shown, key) do
@@ -552,6 +553,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       </span>
       <span :if={Map.has_key?(@totals, :minutes)}>
         · {gettext("%{amount} logged", amount: ListUi.format_minutes(@totals.minutes))}
+      </span>
+      <%!-- An agent's time is said apart, as in the columns: the figure
+           before it is people's. --%>
+      <span :if={Map.get(@totals, :ai_minutes, 0) > 0}>
+        · {gettext("%{amount} by AI", amount: ListUi.format_minutes(@totals.ai_minutes))}
       </span>
     </p>
     """
