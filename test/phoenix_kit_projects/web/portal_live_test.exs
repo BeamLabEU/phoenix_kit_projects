@@ -11,8 +11,10 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
   alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
+  alias PhoenixKit.Users.Roles
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Extensions
+  alias PhoenixKitProjects.Grants
   alias PhoenixKitProjects.Members
   alias PhoenixKitProjects.Portal
   alias PhoenixKitProjects.PortalLinks
@@ -217,6 +219,116 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
     end
   end
 
+  describe "live portal authorization" do
+    test "the link follows project visibility changes", %{
+      conn: conn,
+      project: project,
+      portal: portal
+    } do
+      scope = fake_scope(roles: [], permissions: ["projects"])
+
+      {:ok, project} =
+        Projects.update_project(project, %{settings: %{"visibility" => "everyone"}})
+
+      {:ok, view, _html} = live(put_test_scope(conn, scope), "/portal/#{portal.slug}")
+      assert has_element?(view, "#portal-admin-edit")
+
+      {:ok, _} = Projects.update_project(project, %{settings: %{"visibility" => "private"}})
+
+      refute has_element?(view, "#portal-admin-edit")
+      refute render(view) =~ project.uuid
+    end
+
+    test "the link follows a site-role grant and its revocation", %{
+      conn: conn,
+      project: project,
+      portal: portal
+    } do
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "grant-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      scope = fake_scope(user_uuid: user.uuid, roles: [], permissions: ["projects"])
+
+      {:ok, role} =
+        Roles.create_role(%{
+          name: "Portal-#{System.unique_integer([:positive])}"
+        })
+
+      {:ok, _} = Roles.assign_role(user, role.name)
+      {:ok, view, _html} = live(put_test_scope(conn, scope), "/portal/#{portal.slug}")
+      refute has_element?(view, "#portal-admin-edit")
+
+      {:ok, grant} = Grants.grant(project, "role", role.uuid, "viewer")
+      assert has_element?(view, "#portal-admin-edit")
+
+      {:ok, _} = Grants.revoke(grant.uuid)
+      refute has_element?(view, "#portal-admin-edit")
+      refute render(view) =~ project.uuid
+    end
+
+    test "deleting the project withdraws the link from an open portal", %{
+      conn: conn,
+      project: project,
+      portal: portal
+    } do
+      {:ok, view, _html} = live(put_test_scope(conn, fake_scope()), "/portal/#{portal.slug}")
+      assert has_element?(view, "#portal-admin-edit")
+
+      {:ok, _} = Projects.delete_project(project)
+
+      assert render(view) =~ "This page is unavailable"
+      refute has_element?(view, "#portal-admin-edit")
+    end
+
+    test "a scope refresh withdraws or restores the link after a module permission change", %{
+      project: project,
+      portal: portal
+    } do
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "refresh-#{System.unique_integer([:positive])}@example.com",
+          password: "ValidPassword123!"
+        })
+
+      {:ok, _} = Members.add_member(project, user.uuid, role: "viewer")
+      scope = fake_scope(user_uuid: user.uuid, roles: [], permissions: ["projects"])
+
+      {:ok, socket} =
+        PortalLive.mount(
+          %{"slug" => portal.slug},
+          %{},
+          %Phoenix.LiveView.Socket{
+            view: PortalLive,
+            private: %{connect_info: %{}, lifecycle: %Phoenix.LiveView.Lifecycle{}}
+          }
+          |> Phoenix.Component.assign(:phoenix_kit_current_scope, scope)
+        )
+
+      assert socket.assigns.admin_edit_url == PhoenixKitProjects.Paths.project(project.uuid)
+
+      revoked = struct!(scope, cached_permissions: MapSet.new())
+
+      socket =
+        socket
+        |> Phoenix.Component.assign(:phoenix_kit_current_scope, revoked)
+        |> PhoenixKitWeb.Users.Auth.refresh_view_scope_assigns()
+
+      assert socket.assigns.admin_edit_url == nil
+      assert socket.assigns.admin_edit_label == nil
+      assert socket.assigns.view.project_name == project.name
+
+      socket =
+        socket
+        |> Phoenix.Component.assign(:phoenix_kit_current_scope, scope)
+        |> PhoenixKitWeb.Users.Auth.refresh_view_scope_assigns()
+
+      assert socket.assigns.admin_edit_url == PhoenixKitProjects.Paths.project(project.uuid)
+    end
+  end
+
   defp portal_issue_query(project_uuid) do
     from(a in PhoenixKitProjects.Schemas.Assignment,
       where: a.project_uuid == ^project_uuid and a.source == "portal"
@@ -284,6 +396,45 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
       refute html =~ "Discussion"
     end
 
+    test "unpublishing an issue removes its open discussion", %{
+      conn: conn,
+      portal: portal,
+      assignment: assignment
+    } do
+      {:ok, view, _html} = live(conn, issue_path(portal, assignment))
+      assert has_element?(view, "h2", "Discussion")
+
+      {:ok, _} = Portal.set_public(assignment, false)
+
+      refute has_element?(view, "h2", "Discussion")
+      refute has_element?(view, "#portal-issue-#{assignment.uuid}")
+    end
+
+    test "an open issue refreshes its status", %{
+      conn: conn,
+      portal: portal,
+      assignment: assignment
+    } do
+      {:ok, view, _html} = live(conn, issue_path(portal, assignment))
+      {:ok, _} = Projects.update_assignment_status(assignment, %{status: "in_progress"})
+
+      assert has_element?(view, "header", "in progress")
+    end
+
+    test "deleting an issue removes its open discussion", %{
+      conn: conn,
+      portal: portal,
+      assignment: assignment
+    } do
+      {:ok, view, _html} = live(conn, issue_path(portal, assignment))
+      assert has_element?(view, "h2", "Discussion")
+
+      {:ok, _} = Projects.delete_assignment(assignment)
+
+      refute has_element?(view, "h2", "Discussion")
+      refute render(view) =~ assignment.uuid
+    end
+
     test "an anonymous reader cannot post through the embedded discussion", %{
       conn: conn,
       portal: portal,
@@ -342,6 +493,21 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
       refute html =~ "/report"
       assert html =~ "Sign in to report an issue"
+    end
+
+    test "an open board follows participation policy changes", %{
+      conn: conn,
+      project: project,
+      portal: portal
+    } do
+      {:ok, view, _html} = live(conn, "/portal/#{portal.slug}")
+      assert has_element?(view, "a", "Report an issue")
+
+      {:ok, _} = Portal.set_participation(project.uuid, %{"submit_access" => "nobody"})
+      refute has_element?(view, "a", "Report an issue")
+
+      {:ok, _} = Portal.set_participation(project.uuid, %{"submit_access" => "anyone"})
+      assert has_element?(view, "a", "Report an issue")
     end
   end
 

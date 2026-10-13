@@ -1123,6 +1123,7 @@ defmodule PhoenixKitProjects.Portal do
               }
             )
 
+            ProjectsPubSub.broadcast_project(:portal_participation_changed, %{uuid: project_uuid})
             {:ok, updated}
 
           error ->

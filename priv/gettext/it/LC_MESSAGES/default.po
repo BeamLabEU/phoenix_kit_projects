@@ -6397,3 +6397,8 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "from %{origin}"
 msgstr ""
+
+#: lib/phoenix_kit_projects/web/portal_live.ex:161
+#, elixir-autogen, elixir-format
+msgid "Edit project"
+msgstr "Modifica progetto"

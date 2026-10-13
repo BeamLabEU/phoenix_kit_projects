@@ -6397,3 +6397,8 @@ msgstr "nt klient"
 #, elixir-autogen, elixir-format
 msgid "from %{origin}"
 msgstr "kellelt: %{origin}"
+
+#: lib/phoenix_kit_projects/web/portal_live.ex:161
+#, elixir-autogen, elixir-format
+msgid "Edit project"
+msgstr "Muuda projekti"

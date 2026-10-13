@@ -171,6 +171,13 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   defp clear_admin_edit(socket), do: socket
 
+  # Core calls this after refreshing a signed-in viewer's scope. Public
+  # pages stay mounted, so their permission-derived controls need refreshing.
+  @doc false
+  def phoenix_kit_scope_changed(socket), do: reload_view(socket)
+
+  defp reload_view(socket), do: socket |> load_view() |> load_issue()
+
   # Whether to OFFER a sign-in link — and deliberately not a question about
   # this slug at all.
   #
@@ -234,13 +241,23 @@ defmodule PhoenixKitProjects.Web.PortalLive do
   def handle_info({:projects, event, _payload}, socket)
       when event in [
              :portal_rotated,
+             :portal_participation_changed,
              :project_modules_changed,
+             :assignment_created,
              :assignment_updated,
+             :assignment_deleted,
              :project_members_changed,
              :project_grants_changed,
-             :project_updated
+             :project_updated,
+             :project_deleted,
+             :project_started,
+             :project_completed,
+             :project_reopened,
+             :project_archived,
+             :project_unarchived,
+             :project_status_changed
            ] do
-    {:noreply, load_view(socket)}
+    {:noreply, reload_view(socket)}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}

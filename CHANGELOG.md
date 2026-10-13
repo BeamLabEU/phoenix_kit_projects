@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- An "Edit project" link in the public portal board header for viewers who
+  can reach that project in the admin area (PR #49). The label is translated
+  in all seven supported locales.
+
+### Fixed
+
+- Open portal pages withdraw the edit link when project membership, grants,
+  visibility, or module permissions change, and become unavailable when the
+  project is deleted.
+- An open issue refreshes its status and closes its discussion when the issue
+  is unpublished or deleted. Portal pages also refresh on project lifecycle
+  changes and on participation-policy changes.
+- The standalone test host explicitly configures multilingual URLs to match
+  its locale-prefixed router after the core dependency update.
+
 ## 0.29.0 - 2026-10-05
 
 PR #48 plus its post-merge reviews

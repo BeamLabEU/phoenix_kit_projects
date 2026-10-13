@@ -2,13 +2,11 @@ defmodule PhoenixKitProjects.PathsTest do
   @moduledoc """
   Direct unit tests for the URL builder helpers.
 
-  All paths route through `PhoenixKit.Utils.Routes.path/1`, which in
-  the test config has `url_prefix` pinned to `/` (see
-  `test_helper.exs`). Admin paths follow the same primary-locale-no-
-  prefix rule as non-admin paths (introduced in phoenix_kit
-  PR #551 — `Routes.admin_path/2` strips the prefix when the locale
-  equals the default), so `Paths.tasks()` resolves to
-  `/admin/projects/tasks` for the default `en` locale.
+  All paths route through `PhoenixKit.Utils.Routes.path/1`, with
+  `url_prefix` pinned to `/` (see `test_helper.exs`). These database-free
+  tests use core's boot/mix-task context, where URLs keep their locale
+  prefix. Runtime LiveView tests configure their multilingual host in
+  `LiveCase`.
   """
 
   use ExUnit.Case, async: true
@@ -22,6 +20,13 @@ defmodule PhoenixKitProjects.PathsTest do
   # segment again — restoring the pre-#551 shape. Hosts that want the
   # prefixless shape flip the toggle on `/admin/settings/languages`.
   @prefix "/en/admin/projects"
+
+  setup do
+    # These database-free tests exercise the boot/mix-task URL shape. Runtime
+    # LiveView tests configure the multilingual host in LiveCase instead.
+    Process.put(:phoenix_kit_config_status, :configured)
+    :ok
+  end
 
   test "index/0 returns the base admin URL" do
     assert Paths.index() == @prefix

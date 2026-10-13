@@ -54,6 +54,12 @@ defmodule PhoenixKitProjects.LiveCase do
     pid = Sandbox.start_owner!(TestRepo, shared: not tags[:async])
     on_exit(fn -> Sandbox.stop_owner(pid) end)
 
+    # The test router serves locale-prefixed admin URLs. Core also supports
+    # single-language hosts, whose generated links omit the locale entirely.
+    # Match this host's route configuration explicitly inside each sandbox.
+    {:ok, _} = PhoenixKit.Settings.update_boolean_setting("languages_enabled", true)
+    {:ok, _} = PhoenixKit.Settings.update_boolean_setting("default_language_no_prefix", false)
+
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{})

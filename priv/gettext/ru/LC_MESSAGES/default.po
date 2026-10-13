@@ -6417,3 +6417,8 @@ msgstr "напр. клиент"
 #, elixir-autogen, elixir-format
 msgid "from %{origin}"
 msgstr "от: %{origin}"
+
+#: lib/phoenix_kit_projects/web/portal_live.ex:161
+#, elixir-autogen, elixir-format
+msgid "Edit project"
+msgstr "Редактировать проект"
