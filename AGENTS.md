@@ -839,6 +839,78 @@ the HTTP layer needs (`info/1` — one read of the shape per list, so
 - **Transitions** report `also_changed` — how many OTHER rows the tick rules
   moved (`Outline.Api.statuses/1` before and after; cheap, one select each).
 
+### Tasks under tasks — the model and the typed list (V23, 2026-10-14)
+
+The boss's ask, in Max's words: *"when he creates a simple to-do, he doesn't
+even need to go through the add task pop-up… basically a text field that he
+can just hit enter… and that would be a new task"*; then *"let's make proper
+subtasks because we want flexibility"*. Decided with Max and a codex/zai/grok
+panel the same night (answers in Max's review folder, `subtasks-plan-*`).
+
+**The model** (`PhoenixKitProjects.Outline`):
+
+- `parent_uuid` on a task row; same project, never its own ancestor — a
+  trigger (`pkp_assignment_parent_check`) holds both, so no insert path can
+  skip them. A subtask is a whole task (number, owner, dates, hours).
+- `position` stays ONE order per project, written **depth first**: a parent
+  is followed by everything under it. Readers that only sort by position
+  stay sensible; readers that need the shape call `Outline.walk/1`. Every
+  write of the shape goes through `Outline.write_order/2` (it clears changed
+  parents before setting them, so a swap never passes through a cycle).
+- **Counts count leaves** (`Outline.leaves/1`, `Projects.leaves_only/1` in
+  SQL): a task with subtasks is the sum of them, never a unit itself.
+- **Tick rules** (`Outline.settle/3`, called from `update_assignment_status/2`
+  and `update_assignment_form/3`, so every path gets them): ticking a task
+  ticks everything open under it (a sub-project row is left to its project);
+  the last subtask ticked ticks its parent unless
+  `settings["outline"]["complete_parent"] == false`; reopening a subtask
+  reopens every done ancestor (to `in_progress`); unticking a parent touches
+  nothing below. The page asks first when the tick would close other
+  people's subtasks (`complete_or_ask/3`).
+- **Held tasks**: `review_status: "removed"`. A line taken out of the typed
+  list whose task carries something (`Outline.protected?/2`: hours, notes,
+  discussion, description, owner, dates, estimate, dependency, begun, from
+  the portal, a library task) is held, out of every list and count like a
+  pending request, and shown under the list with Restore / Delete. A plain
+  one-off task is deleted outright. A held row whose id comes back in a
+  line is revived in place — that is how cut-and-paste MOVES a task.
+- Deleting a task deletes what is under it (`Projects.delete_assignment/1`,
+  deepest first, so a sub-project row tears its project down and portal
+  files go).
+- The V19 checklist is gone: V23 converted every item to a subtask.
+
+**The list** (`Web.OutlineList`, hooks in `priv/static/assets/phoenix_kit_projects.js`,
+shipped through `js_sources/0` as `PhoenixKitProjectsHooks`):
+
+- **Text face** (`PkpOutline`): the whole list is one contenteditable; every
+  line element carries its task's uuid. The browser only edits text INSIDE a
+  line — every structural edit (Enter, Backspace at a line start, a deletion
+  across lines, paste, cut, Tab, Alt+arrows, undo) is done by the hook on
+  the elements, so an id can only move with its line. After a pause the whole
+  list goes to the server as `outline_sync` (lines + every id the browser has
+  been shown); `Outline.sync/4` creates, renames, revives, deletes or holds,
+  and rewrites the order. Only a task the browser KNEW and no longer lists is
+  taken as removed. Server pushes (`pkp_outline:lines`) are applied when the
+  browser is idle. Cut/copy put plain indented text on the clipboard plus an
+  `application/x-pkp-outline` payload with the ids.
+- **Cards**: the old rows, nested by depth, foldable, a "3/7" count, titles
+  typed in place (`PkpTitle`: Enter adds the next task, Tab nests, Backspace
+  on a fresh empty one drops it, a multi-line paste adds a task per line).
+- **Which face**: `settings["outline"]["style"]` — `auto` (text while no row
+  feature is on — in_progress, assignees, priorities, labels, estimates,
+  progress, dependencies, scheduling, ledger — and no sub-project row),
+  `text`, `cards`. `settings["outline"]["row"]` keeps chosen features off the
+  cards (they stay in the form). A template is always cards.
+- The board shows top-level tasks only, each with its subtask count; the
+  timeline nests; calendars show a subtask only when it has its own date.
+- Feature flag `subtasks` (default on): off, Tab does nothing; existing
+  subtasks keep their place.
+- **Known limit**: two browsers typing at once — a task deleted in one can
+  come back as a NEW task if the other was mid-typing when the delete
+  arrived and still has the line (its id is no longer the project's, so the
+  line reads as new). Low odds; the alternative (refusing unknown ids)
+  breaks undo of a delete.
+
 ### Short names: a project's key, a task's ref (V22, 2026-10-10)
 
 The boss, via Max: *"everything uses the UUID, which is very not user
