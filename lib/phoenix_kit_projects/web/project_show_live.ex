@@ -1319,7 +1319,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <%!-- The title is typed into where it stands (Enter adds the
                    next task, Tab makes it a subtask); the arrow opens the
                    form. Read-only rows keep the title as the link. --%>
-              <%= if @ol && @ol.can.edit and not @is_template and @a.task do %>
+              <%= if @ol != nil and @ol.can.edit and not @is_template and @a.task != nil do %>
                 <OutlineList.title_input a={@a} can={@ol.can} focus={@ol.focus} fresh={@ol.fresh} />
                 <span
                   :if={@ol.count}
@@ -1813,7 +1813,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     params =
       if params["force"] == true, do: %{"uuid" => uuid, "force" => "1"}, else: %{"uuid" => uuid}
 
-    {:noreply, socket} = handle_event(event, params, socket)
+    # A question left open by an earlier tick is not this one's.
+    {:noreply, socket} = handle_event(event, params, ConfirmAction.clear(socket))
     {:reply, %{asked: socket.assigns[:confirm_action] != nil}, socket}
   end
 
@@ -4047,6 +4048,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "new", "project_id" => @project.uuid}}}
               embed_mode={@embed_mode}
               class="btn btn-primary btn-sm"
+              data-id="add-task-sheet"
             >
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add task")}
             </.smart_link>

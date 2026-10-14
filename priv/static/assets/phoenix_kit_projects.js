@@ -434,8 +434,8 @@
       var line = at.line;
       if (this.locked(line)) return;
       var t = this.text(line);
-      var head = t.slice(0, at.offset);
-      var tail = t.slice(at.offset);
+      var head = t.slice(0, at.offset).replace(/\s+$/, "");
+      var tail = t.slice(at.offset).replace(/^\s+/, "");
 
       // Enter on an empty indented line steps it out one level.
       if (t === "" && this.depth(line) > 0) {

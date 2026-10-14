@@ -563,7 +563,7 @@ defmodule PhoenixKitProjects.Outline do
     result = with_project_lock(project_uuid, &do_sync(&1, lines, MapSet.new(known), opts))
 
     with {:ok, summary} <- result do
-      Enum.each(summary.renamed_tasks, fn task ->
+      Enum.each(summary.renamed_tasks, fn {_row_uuid, task} ->
         ProjectsPubSub.broadcast_task(:task_updated, %{uuid: task.uuid, title: task.title})
       end)
 
@@ -627,7 +627,7 @@ defmodule PhoenixKitProjects.Outline do
       removed: removed,
       held: held,
       revived: revived,
-      renamed: Enum.map(renamed_tasks, & &1.uuid),
+      renamed: Enum.map(renamed_tasks, &elem(&1, 0)),
       renamed_tasks: renamed_tasks
     }
   end
@@ -747,7 +747,7 @@ defmodule PhoenixKitProjects.Outline do
             |> repo().update_all(set: [words_by_key_uuid: key_uuid])
           end
 
-          updated
+          {row.uuid, updated}
 
         {:error, cs} ->
           repo().rollback({:line, id, cs})
