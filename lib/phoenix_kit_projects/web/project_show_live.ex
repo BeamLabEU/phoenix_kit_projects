@@ -1500,7 +1500,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                not one more chip among the others (Max, 2026-10-14). It
                opens the task's form on the field that says it. --%>
           <.smart_link
-            :if={@a.waiting_on and @fx[:waiting] != false}
+            :if={@a.waiting_on != nil and @fx[:waiting] != false}
             navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid) <> "?focus=waiting_on"}
             emit={
               {PhoenixKitProjects.Web.AssignmentFormLive,
@@ -1532,7 +1532,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% dates = task_dates_label(@a) %>
             <% overdue = Assignment.overdue?(@a) %>
             <span
-              :if={dates and @fx[:dates] != false}
+              :if={dates != nil and @fx[:dates] != false}
               class={["badge badge-sm gap-1", if(overdue, do: "badge-error", else: "badge-outline")]}
               title={if(overdue, do: gettext("Past its end date"), else: gettext("The task's dates"))}
             >
