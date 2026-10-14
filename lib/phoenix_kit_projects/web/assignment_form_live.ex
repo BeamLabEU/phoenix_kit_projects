@@ -14,6 +14,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   use PhoenixKitProjects.Web.Mentions
   use PhoenixKitAI.Components.AITranslate.Embed
 
+  import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
   import PhoenixKitWeb.Components.MultilangForm
 
   require Logger
@@ -65,6 +66,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
       |> assign_logged_minutes()
+      |> assign_log_people()
       |> assign_ai_translate()
       # Unsaved edits? Flipped by the first change event; the host's
       # dialog (emit mode) stops closing on Esc/backdrop while true and
@@ -97,6 +99,82 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # The hub gate map for this form's project. Placeholder projects (the
   # not-found render window) fall back to catalog defaults.
+  # Whose time the log line records: the viewer's unless a person was
+  # picked — and a picked one must be among those the form offered.
+  defp log_actor(%{assigns: %{log_person: %{key: key}}} = socket) do
+    if Enum.any?(socket.assigns[:log_people] || [], fn {_name, k} -> k == key end) do
+      [kind, uuid] = String.split(key, ":", parts: 2)
+      {:ok, [actor_kind: kind, actor_uuid: uuid]}
+    else
+      false
+    end
+  end
+
+  defp log_actor(socket) do
+    case Activity.actor_uuid(socket) do
+      uuid when is_binary(uuid) -> {:ok, [actor_kind: "user", actor_uuid: uuid]}
+      _ -> false
+    end
+  end
+
+  defp log_note(note) when is_binary(note) do
+    case String.trim(note) do
+      "" -> nil
+      text -> String.slice(text, 0, 500)
+    end
+  end
+
+  defp log_note(_), do: nil
+
+  # The people time may be logged for besides the viewer: the project's
+  # other members, then the staff people with no account among them —
+  # only for someone who runs the project's plan (`:edit_tasks`), as on
+  # the Hours page. `[{name, "user:<uuid>" | "staff_person:<uuid>"}]`.
+  defp assign_log_people(
+         %{assigns: %{live_action: :edit, project: %Project{uuid: project_uuid} = project}} =
+           socket
+       )
+       when is_binary(project_uuid) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    people =
+      if PhoenixKitProjects.Authz.can?(scope, project, :edit_tasks) do
+        my_uuid = Activity.actor_uuid(socket)
+
+        members =
+          project_uuid
+          |> PhoenixKitProjects.Members.list_members()
+          |> Enum.reject(&(&1.user_uuid == my_uuid))
+          |> Enum.map(&{log_member_name(&1), "user:#{&1.user_uuid}"})
+
+        listed = MapSet.new([my_uuid | Enum.map(members, fn {_n, "user:" <> uuid} -> uuid end)])
+
+        staff =
+          PhoenixKitProjects.People.list_people()
+          |> Enum.reject(&MapSet.member?(listed, &1.user_uuid))
+          |> Enum.map(&{PhoenixKitProjects.People.display_name(&1), "staff_person:#{&1.uuid}"})
+
+        members ++ staff
+      else
+        []
+      end
+
+    assign(socket, log_people: people, log_person: nil)
+  rescue
+    _ -> assign(socket, log_people: [], log_person: nil)
+  end
+
+  defp assign_log_people(socket), do: assign(socket, log_people: [], log_person: nil)
+
+  defp log_member_name(%{user: %{} = user}) do
+    case PhoenixKit.Users.Auth.User.full_name(user) do
+      name when is_binary(name) and name != "" -> name
+      _ -> user.email
+    end
+  end
+
+  defp log_member_name(_), do: gettext("Someone")
+
   # What is logged on the task being edited, for the form's "Log time" line.
   defp assign_logged_minutes(
          %{assigns: %{live_action: :edit, assignment: %Assignment{uuid: uuid}}} = socket
@@ -886,21 +964,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  # Time logged from the task's form: the viewer's own, on this task, as
-  # the project page's "Log time" would. The buttons render only where the
-  # ledger is on; the event is asked again here.
+  # Time logged from the task's form, as the project page's "Log time"
+  # would: the viewer's own, or — for someone who runs the plan — a
+  # person picked from the project's people. The controls render only
+  # where the ledger is on; the event is asked again here.
   def handle_event("log_time", params, %{assigns: %{live_action: :edit}} = socket) do
     %{project: project, assignment: assignment} = socket.assigns
     scope = socket.assigns[:phoenix_kit_current_scope]
 
     with true <- Features.on?(project, "ledger"),
          true <- PhoenixKitProjects.Authz.can?(scope, project, :log_time, assignment),
+         {:ok, actor} <- log_actor(socket),
          {:ok, minutes} <- PhoenixKitProjects.Hours.Format.parse_duration(params["duration"]),
          {:ok, _entry} <-
-           PhoenixKitProjects.Ledger.log_time(assignment.project_uuid, minutes,
-             assignment_uuid: assignment.uuid,
-             billable: params["billable"] in ["true", "on"],
-             actor_uuid: Activity.actor_uuid(socket)
+           PhoenixKitProjects.Ledger.log_time(
+             assignment.project_uuid,
+             minutes,
+             [
+               assignment_uuid: assignment.uuid,
+               note: log_note(params["note"]),
+               billable: params["billable"] in ["true", "on"]
+             ] ++ actor
            ) do
       {:noreply,
        socket
@@ -919,6 +1003,47 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         {:noreply, put_flash(socket, :error, gettext("Could not log the time."))}
     end
   end
+
+  # The "Who" picker of the log line (core's `<.search_picker>`): the
+  # project's people, searched as typed, twenty at a time.
+  def handle_event("log_person_search", %{"q" => q} = params, socket) do
+    needle = q |> to_string() |> String.trim() |> String.downcase()
+
+    matches =
+      Enum.filter(socket.assigns[:log_people] || [], fn {name, _key} ->
+        needle == "" or String.contains?(String.downcase(name), needle)
+      end)
+
+    rows =
+      matches
+      |> Enum.take(20)
+      |> Enum.map(fn {name, key} ->
+        %{kind: "person", uuid: key, label: name, icon: "hero-user"}
+      end)
+
+    {:noreply,
+     push_event(socket, "picker_results", %{
+       q: q,
+       results: rows,
+       has_more: length(matches) > 20,
+       id: params["id"]
+     })}
+  end
+
+  def handle_event("log_person_pick", %{"uuid" => key} = params, socket) do
+    person =
+      Enum.find_value(socket.assigns[:log_people] || [], fn {name, k} ->
+        k == key && %{key: k, name: name}
+      end)
+
+    {:noreply,
+     socket
+     |> assign(:log_person, person)
+     |> push_event("picker_staged", %{id: params["id"]})}
+  end
+
+  def handle_event("log_person_clear", _params, socket),
+    do: {:noreply, assign(socket, :log_person, nil)}
 
   def handle_event("log_time", _params, socket), do: {:noreply, socket}
 
@@ -2577,27 +2702,106 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </div>
             </div>
 
-            <%!-- Logging time on the task, here in its form instead of on
-                 every row of the list. The inputs belong to a form of their
-                 own (`form=`), drawn after this one: a form inside a form
-                 is not HTML. --%>
-            <div
+            <%!-- Whom the task waits on and where it came from: straight
+                 under the description, where the task's state is read. --%>
+            <div class="flex gap-2">
+              <div
+                class="flex-1"
+                id="assignment-waiting-on"
+                phx-mounted={@focus_field == "waiting_on" && JS.focus(to: "#assignment-waiting-on input")}
+              >
+                <.input field={@form[:waiting_on]} label={gettext("Waiting on")} placeholder={gettext("e.g. the client")} maxlength="200" />
+              </div>
+              <div class="w-48">
+                <.input field={@form[:origin]} label={gettext("From")} placeholder={gettext("e.g. client, boss")} maxlength="40" />
+              </div>
+            </div>
+
+            <%!-- The task's time, in one box: what people logged, what an
+                 agent reported for itself (it sends its own time and tokens
+                 over the API; nobody types those in), and a line to log
+                 more — for yourself or, for someone who runs the plan, for
+                 anybody on it. The inputs belong to a form of their own
+                 (`form=`), drawn after this one: a form inside a form is
+                 not HTML. --%>
+            <fieldset
               :if={@live_action == :edit and @kind == "task" and @fx.ledger and not @project.is_template}
               id="assignment-log-time"
-              class="flex flex-col gap-1"
+              class="flex flex-col gap-3 rounded-box border border-base-300 p-3"
             >
-              <span class="label mb-1"><span class="font-semibold">{gettext("Log time")}</span></span>
-              <div class="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  name="duration"
-                  form="assignment-log-form"
-                  placeholder={gettext("1h 30m, 1:30, 90 or 1.5h")}
-                  autocomplete="off"
-                  class="input input-sm w-48"
-                  aria-label={gettext("How long")}
-                />
-                <label class="flex items-center gap-2 cursor-pointer text-sm">
+              <legend class="px-1 text-sm font-semibold">{gettext("Time and AI usage")}</legend>
+              <dl :if={@logged} class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm" id="assignment-logged">
+                <div>
+                  <dt class="text-xs text-base-content/60">{gettext("Human time")}</dt>
+                  <dd class={["font-semibold", @logged.minutes == 0 && "opacity-40"]}>
+                    {PhoenixKitProjects.Hours.Format.duration(@logged.minutes)}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-base-content/60">{gettext("AI time")}</dt>
+                  <dd class={["font-semibold", @logged.ai_minutes == 0 && "opacity-40"]}>
+                    {PhoenixKitProjects.Hours.Format.duration(@logged.ai_minutes)}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-base-content/60">{gettext("AI tokens")}</dt>
+                  <dd class={["font-semibold", @logged.tokens == 0 && "opacity-40"]}>
+                    {if @logged.tokens > 0, do: PhoenixKitProjects.Hours.Format.tokens(@logged.tokens), else: "0"}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs text-base-content/60">{gettext("AI cost")}</dt>
+                  <dd class={["font-semibold", @logged.cost_cents == 0 && "opacity-40"]}>
+                    {if @logged.cost_cents > 0, do: PhoenixKitProjects.Hours.Format.cost(@logged.cost_cents), else: "—"}
+                  </dd>
+                </div>
+              </dl>
+              <p class="text-xs text-base-content/60">
+                {gettext("The AI's figures come from what it reports itself; its write-ups are in the task's notes (the chip icon on the task's row).")}
+              </p>
+              <div class="flex flex-wrap items-end gap-2">
+                <div :if={@log_people != []} class="w-48">
+                  <span class="block mb-1 text-xs font-medium text-base-content/60">{gettext("Who")}</span>
+                  <.search_picker
+                    id="assignment-log-person"
+                    dropdown_id="assignment-log-person-list"
+                    search_event="log_person_search"
+                    pick_event="log_person_pick"
+                    chosen={@log_person && @log_person.name}
+                    clear_event="log_person_clear"
+                    clear_label={gettext("Back to me")}
+                    search_on_focus
+                    close_on_pick
+                    placeholder={gettext("Me")}
+                    class="input input-sm w-full"
+                    searching_label={gettext("Searching…")}
+                    more_label={gettext("Load more")}
+                    loading_more_label={gettext("Loading…")}
+                    no_matches_label={gettext("No matches")}
+                  />
+                </div>
+                <div class="w-40">
+                  <span class="block mb-1 text-xs font-medium text-base-content/60">{gettext("How long")}</span>
+                  <input
+                    type="text"
+                    name="duration"
+                    form="assignment-log-form"
+                    placeholder={gettext("1h 30m, 1:30, 90…")}
+                    autocomplete="off"
+                    class="input input-sm w-full"
+                  />
+                </div>
+                <div class="flex-1 min-w-40">
+                  <span class="block mb-1 text-xs font-medium text-base-content/60">{gettext("Note (optional)")}</span>
+                  <input
+                    type="text"
+                    name="note"
+                    form="assignment-log-form"
+                    autocomplete="off"
+                    class="input input-sm w-full"
+                  />
+                </div>
+                <label class="flex items-center gap-2 h-8 cursor-pointer text-sm">
                   <input type="checkbox" name="billable" value="true" form="assignment-log-form" class="checkbox checkbox-sm" />
                   {gettext("Billable")}
                 </label>
@@ -2605,28 +2809,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Log time")}
                 </button>
               </div>
-              <%!-- What is on the task so far: people's time, and what an
-                   agent reported for itself (it sends its own time and
-                   tokens over the API; nobody types those in). --%>
-              <dl :if={@logged} class="flex flex-wrap gap-x-6 gap-y-1 mt-1 text-sm" id="assignment-logged">
-                <div>
-                  <dt class="inline text-base-content/60">{gettext("Human time")}:</dt>
-                  <dd class="inline font-medium">{PhoenixKitProjects.Hours.Format.duration(@logged.minutes)}</dd>
-                </div>
-                <div :if={@logged.ai_minutes > 0}>
-                  <dt class="inline text-base-content/60">{gettext("AI time")}:</dt>
-                  <dd class="inline font-medium">{PhoenixKitProjects.Hours.Format.duration(@logged.ai_minutes)}</dd>
-                </div>
-                <div :if={@logged.tokens > 0}>
-                  <dt class="inline text-base-content/60">{gettext("AI tokens")}:</dt>
-                  <dd class="inline font-medium">{PhoenixKitProjects.Hours.Format.tokens(@logged.tokens)}</dd>
-                </div>
-                <div :if={@logged.cost_cents > 0}>
-                  <dt class="inline text-base-content/60">{gettext("AI cost")}:</dt>
-                  <dd class="inline font-medium">{PhoenixKitProjects.Hours.Format.cost(@logged.cost_cents)}</dd>
-                </div>
-              </dl>
-            </div>
+            </fieldset>
 
             <.select
               field={@form[:status]}
@@ -2658,18 +2841,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                  waits on (a badge beside the status, not a fourth status),
                  where a relayed item came from, and a checklist — sub-items
                  ticked one by one, one per line here, "[x]" when done. --%>
-            <div class="flex gap-2">
-              <div
-                class="flex-1"
-                id="assignment-waiting-on"
-                phx-mounted={@focus_field == "waiting_on" && JS.focus(to: "#assignment-waiting-on input")}
-              >
-                <.input field={@form[:waiting_on]} label={gettext("Waiting on")} placeholder={gettext("e.g. the client")} maxlength="200" />
-              </div>
-              <div class="w-48">
-                <.input field={@form[:origin]} label={gettext("From")} placeholder={gettext("e.g. client, boss")} maxlength="40" />
-              </div>
-            </div>
             <.textarea
               name="checklist_text"
               value={checklist_text(@form[:checklist].value)}
