@@ -286,19 +286,19 @@ defmodule PhoenixKitProjects.Web.ApiReview48Test do
                c |> get("#{@base}/tasks/#{t["uuid"]}") |> json_response(200)
     end
 
-    test "a PATCH the assignment changeset refuses (51 checklist items) changes nothing", %{
+    test "a PATCH the assignment changeset refuses (an end before the start) changes nothing", %{
       conn: conn,
       token: token
     } do
       c = api(conn, token)
       t = new_task(c, %{"title" => "Before"})
-      items = for n <- 1..51, do: %{"text" => "item #{n}"}
 
       assert %{"error" => %{"code" => "validation_failed"}} =
                c
                |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{
                  "title" => "After",
-                 "checklist" => items
+                 "start_date" => "2026-10-20",
+                 "end_date" => "2026-10-10"
                })
                |> json_response(422)
 

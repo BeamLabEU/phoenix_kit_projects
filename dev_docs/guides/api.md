@@ -139,7 +139,13 @@ child never completes its parent; copied to new sub-projects) — and
 **`agents`** — `take_started_task`, `edit_foreign_text`, `delete_tasks`
 (`none` | `own` | `any`), `amend_own_ledger`, read back as `agent_policy` on
 `/me` and `/project`. Tasks carry who created and who started them (a person
-and/or a key), `waiting_on`, `origin`, labels by name and a checklist;
+and/or a key), `waiting_on`, `origin`, labels by name, and their place in the
+project's outline — tasks sit under tasks (`parent_task`, `depth`, `subtasks:
+{done, total}`; `parent` on create and update, `POST /tasks/{id}/move`,
+`POST /tasks/batch` for many lines at once, `GET /tasks?parent=`). Completing
+a task completes what is under it; the last subtask done completes its parent
+unless the project turned that off; reopening a subtask reopens its parents;
+`DELETE` of a task with subtasks needs `cascade=true`;
 `GET /briefing` is the recovery read, `POST`/`GET /notes` the project's own
 notes, `updated_since` the poll. AGENTS.md ("What the first agent on the API
 asked for") has the map from each ask to its code.

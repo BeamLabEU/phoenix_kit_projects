@@ -697,9 +697,9 @@ carries the columns. What landed:
   `started_by_uuid` / `started_by_key_uuid` (server-only fields,
   `Projects.stamp_assignment/2`; the form and the API stamp them).
 - **`waiting_on`**, **`origin`** (`source` was taken — it means internal vs
-  portal), **`checklist`** (`[{id, text, done, done_at}]`, ≤ 50 items, ids
-  minted by the changeset, never driving `progress_pct`); form fields and
-  row badges; `PATCH /tasks/{id}/checklist/{item}` ticks one item.
+  portal); form fields and row badges. *(A `checklist` column lived here
+  from V19 to V22; V23 turned every item into a subtask and dropped it —
+  see "Tasks under tasks" below.)*
 - **Labels by name** on the API (`Labels.ensure_by_names/3`, creates the
   missing ones when the flag is on); `position: "top"` on create
   (`Projects.top_assignment_position/1`); `updated_since` on `GET /tasks`
@@ -709,12 +709,12 @@ carries the columns. What landed:
   `POST /notes`, `GET /notes?since=`.
 - **`GET /briefing`**: project + policy, open tasks (≤ 50, priority then
   position, `truncated`) with direction / last outcome / latest note / who
-  started / waiting / checklist counts, sub-projects one line each, project
+  started / waiting / subtask counts (was checklist counts until V23), sub-projects one line each, project
   notes since. **Ledger corrections**: `PATCH /entries/{id}` (minutes),
   `DELETE /entries/{id}`. **`DELETE /tasks/{id}`** under the policy.
 
-Not built, by choice: a fourth lifecycle status (waiting is a badge), a
-parent task (the checklist is the sub-item), typed file refs, ETags (an
+Not built, by choice: a fourth lifecycle status (waiting is a badge), typed
+file refs, ETags (an
 `updated_since` poll is enough), a claim history (the current holder only).
 
 **The second sweep (2026-10-05, same agent, three reports):** `estimated`
@@ -750,8 +750,8 @@ description, on the assignment's — with a copy of the library text — for a
 shared task); claims hold for every move out of `in_progress` by another
 actor, not only the start; every task-level API action rescopes to the
 task's project BEFORE its feature and role gates (codex: a child's floors
-were checked against the root); a checklist tick is one row-locked update
-(`Projects.update_checklist_item/3`); `ResourceLinks.visible_resource_uuids/2`
+were checked against the root); a checklist tick was one row-locked update
+(gone with the checklist in V23); `ResourceLinks.visible_resource_uuids/2`
 climbs the whole ancestry (a grandchild's records were invisible to a root
 member); ledger reads say `limit`/`truncated`, task entries are queried by
 `assignment_uuid`, amendments name the key in the trace, tokens/cost entries
@@ -780,6 +780,7 @@ The earlier list, for the record:
 
 - **Sub-items**: a `parent_uuid` on a task or a checklist — a sub-project per
   client question is too heavy (its own workflow status and ledger).
+  *(First answered with the checklist; since V23 with real subtasks.)*
 - **Project-level notes**: `POST /notes` beside `/time` and `/usage` — half a
   day's report is not about a task (decisions, research, the in-flight block).
 - **A briefing read**: `GET /notes?since=` or one call returning the open tasks
@@ -802,6 +803,41 @@ The earlier list, for the record:
   does the same; whether an API completion should stop at the sub-project, or
   whether a project with no open rows of its own should complete at all, is
   the open question. Documented in the guide for now.
+
+### Tasks under tasks — the API (V23, 2026-10-14)
+
+Max, 2026-10-14: *"let's make proper subtasks because we want flexibility"*.
+A task (`Assignment`) may sit under another task of the same project
+(`parent_uuid`, any depth; a trigger refuses another project's task and a
+loop). `position` stays ONE depth-first order for the project. The V19
+checklist is gone: V23 converted every item into a subtask of its task and
+dropped the column; its API went with it, no compatibility layer (the
+agent guide was rewritten instead). `PhoenixKitProjects.Outline` holds the
+shape, the tick rules and the writes; `PhoenixKitProjects.Outline.Api` what
+the HTTP layer needs (`info/1` — one read of the shape per list, so
+`Json.task/5` can say where each row sits; `batch_create/4`).
+
+- **On every task's JSON**: `parent_task` (the parent's ref or null —
+  `parent_ref` keeps its old meaning, a sub-project row's own place),
+  `depth`, `subtasks: {done, total}` over the LEAVES of its branch;
+  `subtask_refs` (direct children, in order) on the detail.
+- **Writes**: `parent` on `POST`/`PATCH /tasks` (a ref or uuid of an
+  accepted task row of the same project — never a sub-project row, 409;
+  null moves to the top level; through `Outline.move/3`, so the branch moves
+  with it); `POST /tasks/{id}/move` `{parent?, after?}` (absent parent =
+  stay, null = top; absent after = last, null = first; 409 `cycle`);
+  `POST /tasks/batch` `{lines, parent?}` — ≤ 500 lines, strings or
+  `{text, depth?, done?}`, one transaction under the project lock, one
+  broadcast, an activity row per task; `DELETE /tasks/{id}` answers 409
+  `has_subtasks` (with the count) unless `cascade=true`, refuses when a
+  sub-project row is under it, and applies the `delete_tasks` policy to
+  every row it would take.
+- **Reads**: `GET /tasks?parent=none|<ref>`; the briefing lists TOP-LEVEL
+  open tasks (each with `subtasks`) plus whatever this key has in hand at
+  any depth, so one parent with thirty subtasks cannot fill the cap;
+  `open_with_subtasks` counts every open row.
+- **Transitions** report `also_changed` — how many OTHER rows the tick rules
+  moved (`Outline.Api.statuses/1` before and after; cheap, one select each).
 
 ### Short names: a project's key, a task's ref (V22, 2026-10-10)
 
@@ -924,7 +960,7 @@ to walk from, so nothing there could carry a date.
   the reader sits). Either may stand alone; a check constraint and
   `Assignment.validate_dates/1` keep the end from preceding the start.
   They are ordinary form fields (cast in `changeset/2`), ungated like
-  `waiting_on` and the checklist: blank costs nothing on the row.
+  `waiting_on`: blank costs nothing on the row.
 - **`Assignment.overdue?/2`**: the end date has passed and the task is not
   done. The row's date badge turns red on it; the API answers it as
   `overdue` and counts it in the briefing.

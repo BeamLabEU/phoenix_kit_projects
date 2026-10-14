@@ -3,7 +3,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
   What the first agent on the API asked for (2026-10-05): an ongoing
   project that never completes on its own, provenance and claims, wording
   protection, deletion and ledger corrections under the project's agent
-  policy, checklists, waiting / origin / labels on a task, polling by
+  policy, waiting / origin / labels on a task, polling by
   `updated_since`, project-level notes and the briefing.
   """
 
@@ -236,7 +236,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
     assert %{"deleted" => _} = b |> delete("#{@base}/tasks/#{t2["uuid"]}") |> json_response(200)
   end
 
-  test "checklist, origin, labels, position and updated_since", %{
+  test "origin, labels, position and updated_since", %{
     conn: conn,
     project: project,
     token: token
@@ -255,8 +255,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
           "title" => "Relayed",
           "origin" => "client",
           "labels" => ["Furniture", "Urgent"],
-          "position" => "top",
-          "checklist" => [%{"text" => "Rooms dropdown"}, %{"text" => "CIX set", "done" => true}]
+          "position" => "top"
         },
         idem()
       )
@@ -264,26 +263,13 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
 
     assert t["origin"] == "client"
     assert Enum.sort(t["labels"]) == ["Furniture", "Urgent"]
-    assert t["checklist"] == %{"done" => 1, "total" => 2}
+    assert t["subtasks"] == %{"done" => 0, "total" => 0}
     assert t["position"] < first["position"]
     assert [%{name: _}, %{name: _}] = Labels.list_for_project(project.uuid)
 
     %{"task" => detail} = c |> get("#{@base}/tasks/#{t["uuid"]}") |> json_response(200)
-    [open_item, done_item] = detail["checklist_items"]
-    assert open_item["done"] == false
-    assert done_item["done"] == true and is_binary(done_item["done_at"])
-
-    %{"task" => ticked} =
-      c
-      |> patch_json("#{@base}/tasks/#{t["uuid"]}/checklist/#{open_item["id"]}", %{"done" => true})
-      |> json_response(200)
-
-    assert ticked["checklist"] == %{"done" => 2, "total" => 2}
-
-    assert %{"error" => %{"code" => "not_found"}} =
-             c
-             |> patch_json("#{@base}/tasks/#{t["uuid"]}/checklist/nope", %{"done" => true})
-             |> json_response(404)
+    assert detail["subtask_refs"] == []
+    refute Map.has_key?(detail, "checklist_items")
 
     # labels by name again: existing reused, one new
     %{"task" => relabelled} =
@@ -640,7 +626,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
     %{"events" => [%{"uuid" => ^uuid}]} = c |> get("#{@base}/briefing") |> json_response(200)
   end
 
-  test "bad shapes are refused, not dropped: checklist, done, labels, completion, a bad interaction on update",
+  test "bad shapes are refused, not dropped: labels, completion, a bad interaction on update",
        %{
          conn: conn,
          project: project,
@@ -653,25 +639,10 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
       c
       |> post_json(
         "#{@base}/tasks",
-        %{"title" => "Shapes", "checklist" => [%{"text" => "one"}]},
+        %{"title" => "Shapes"},
         idem()
       )
       |> json_response(201)
-
-    assert %{"error" => %{"code" => "validation_failed", "details" => %{"checklist" => _}}} =
-             c
-             |> patch_json("#{@base}/tasks/#{t["uuid"]}", %{"checklist" => "x"})
-             |> json_response(422)
-
-    %{"task" => %{"checklist_items" => [item]}} =
-      c |> get("#{@base}/tasks/#{t["uuid"]}") |> json_response(200)
-
-    assert %{"error" => %{"code" => "validation_failed", "details" => %{"done" => _}}} =
-             c
-             |> patch_json("#{@base}/tasks/#{t["uuid"]}/checklist/#{item["id"]}", %{
-               "done" => "yes"
-             })
-             |> json_response(422)
 
     long = String.duplicate("x", 61)
 

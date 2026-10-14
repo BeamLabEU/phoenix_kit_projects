@@ -24,6 +24,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   }
 
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
+  alias PhoenixKitProjects.Outline.Api, as: OutlineApi
   alias PhoenixKitProjects.Web.Api.{Assignee, Docs}
 
   @lifecycle ~w(todo in_progress done)
@@ -235,16 +236,18 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   The JSON shape of a task (an assignment with its task or sub-project
   preloaded). `totals` — minutes, tokens and cents logged on it — comes
   from `Ledger.totals_for_assignments/1`: pass the batch for a list, or
-  nothing for one task.
+  nothing for one task. `outline` is the project's shape
+  (`Outline.Api.info/1`), read once for a list; one task reads its own.
   """
-  @spec task(Assignment.t(), map() | nil, [map()] | nil, [String.t()] | nil) :: map()
-  def task(%Assignment{} = a, totals \\ nil, labels \\ nil, interactions \\ nil) do
+  @spec task(Assignment.t(), map() | nil, [map()] | nil, [String.t()] | nil, map() | nil) ::
+          map()
+  def task(%Assignment{} = a, totals \\ nil, labels \\ nil, interactions \\ nil, outline \\ nil) do
     totals =
       (totals || Map.get(Ledger.totals_for_assignments([a.uuid]), a.uuid))
       |> whole_totals()
 
     labels = labels || Map.get(Labels.labels_for_assignments([a.uuid]), a.uuid, [])
-    checklist = Assignment.checklist_counts(a)
+    place = OutlineApi.place(outline || OutlineApi.info(a.project_uuid), a)
 
     %{
       totals: totals,
@@ -255,6 +258,12 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       ref: Assignment.ref(a),
       number: a.number,
       parent_ref: if(a.child_project_uuid, do: Assignment.row_ref(a)),
+      # the task this one sits under (`ANDI-40`), null at the top level;
+      # how deep it sits; and, for a task with tasks under it, how many of
+      # the ones at the bottom of its branch are done
+      parent_task: place.parent_task,
+      depth: place.depth,
+      subtasks: place.subtasks,
       kind: if(a.child_project_uuid, do: "subproject", else: "task"),
       # a nested project's own answers — a caught-up ongoing child reads
       # as in_progress at 100% on its row, this says why
@@ -276,7 +285,6 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       end_date: a.end_date,
       overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
-      checklist: checklist,
       # who it is FOR (a person, a team or a department), apart from who
       # made it and who started it
       assignee: Assignee.to_json(a),
@@ -296,7 +304,8 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   direction now (the latest `redirect` a person wrote), the last agent
   note's outcome, the one line to read (`display_summary`: the person's
   description, else the direction, else the latest agent summary marked
-  as such), and where the whole notes thread is.
+  as such), where the whole notes thread is, and the tasks directly under
+  it (`subtask_refs`, in order).
   """
   @spec task_detail(Assignment.t()) :: map()
   def task_detail(%Assignment{} = a) do
@@ -304,7 +313,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     display = TaskNotes.display_summary(description(a), latest)
 
     %{
-      checklist_items: a.checklist || [],
+      subtask_refs: OutlineApi.subtask_refs(OutlineApi.info(a.project_uuid), a.uuid),
       direction: latest.redirect && TaskNotes.to_json(latest.redirect),
       last_outcome: latest.agent && latest.agent.metadata["outcome"],
       latest_agent_note: latest.agent && TaskNotes.to_json(latest.agent),

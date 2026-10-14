@@ -211,7 +211,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/tasks",
         summary:
-          "Every task of the project the key may see, in plan order. No pagination: the whole list comes back. The key sees every task its role allows — there is no notion of \"my\" tasks for a key.",
+          "Every task of the project the key may see, in plan order — depth first, so a task is followed by the tasks under it (`parent_task` and `depth` on each say where it sits). No pagination: the whole list comes back. The key sees every task its role allows — there is no notion of \"my\" tasks for a key.",
         auth: true,
         scope: "tasks:read",
         action: "view",
@@ -256,6 +256,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "todo | in_progress | done | open (= not done)"
+          },
+          %{
+            name: "parent",
+            in: :query,
+            type: "string",
+            required: false,
+            doc:
+              "`none` for the top-level tasks only, or a task's ref or uuid for the tasks directly under it; leave it out for every task at any depth"
           }
         ],
         example: nil
@@ -265,7 +273,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/tasks",
         summary:
-          "Create a task at the bottom of the plan. It starts as todo and is NOT started — call /tasks/{id}/start to begin it. It is unassigned unless you pass `assignee`.",
+          "Create a task at the bottom of the plan, or last under `parent`. It starts as todo and is NOT started — call /tasks/{id}/start to begin it. It is unassigned unless you pass `assignee`. For several tasks at once (a list relayed from a client) use POST /tasks/batch.",
         auth: true,
         scope: "tasks:write",
         action: "create_tasks",
@@ -332,11 +340,12 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
               "label names; existing ones are reused, new ones created (needs the project's labels feature)"
           },
           %{
-            name: "checklist",
+            name: "parent",
             in: :body,
-            type: "array",
+            type: "string",
             required: false,
-            doc: "sub-items: [{text, done?}] - ticked one by one, never driving progress_pct"
+            doc:
+              "a task's ref or uuid in this project: the new task sits under it, after the tasks already there (a subtask is a whole task - its own number, owner, dates and hours)"
           },
           %{
             name: "project",
@@ -456,12 +465,12 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             doc: "the full list of label names to set (a replace, not a merge)"
           },
           %{
-            name: "checklist",
+            name: "parent",
             in: :body,
-            type: "array",
+            type: "string",
             required: false,
             doc:
-              "the full checklist [{id?, text, done?}] - keep the ids to keep the items; or tick one item with PATCH /tasks/{id}/checklist/{item}"
+              "move the task, with everything under it, to the end of this task's subtasks; null moves it to the top level; leaving it out keeps it where it is (POST /tasks/{id}/move places it exactly)"
           },
           %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
           %{name: "title", in: :body, type: "string", required: false, doc: ""},
@@ -503,7 +512,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/tasks/{id}/transition",
         summary:
-          "Move a task through its lifecycle: todo → in_progress or done; in_progress → done or todo; done → todo. Any other move answers 409 invalid_transition with `allowed_transitions` — reload the task and pick one of those. Completing a task may complete the project; reopening one may reopen it.",
+          "Move a task through its lifecycle: todo → in_progress or done; in_progress → done or todo; done → todo. Any other move answers 409 invalid_transition with `allowed_transitions` — reload the task and pick one of those. Completing a task completes every open task under it; when the last task under a parent is done, the parent completes too (unless the project turned that off); reopening a task reopens the done tasks above it; reopening a parent leaves the tasks under it as they are. `also_changed` says how many other tasks moved. Completing a task may complete the project; reopening one may reopen it.",
         auth: true,
         scope: "tasks:write",
         action: "update_status",
@@ -565,21 +574,30 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "DELETE",
         path: "/tasks/{id}",
         summary:
-          "Delete a task, when the project's agent policy allows it (`agent_policy.delete_tasks`: none | own | any - `own` means a task this key created). A sub-project row is not deleted here.",
+          "Delete a task, when the project's agent policy allows it (`agent_policy.delete_tasks`: none | own | any - `own` means a task this key created). A task with tasks under it answers 409 has_subtasks with their count unless `cascade=true`, which deletes them too (each must be one the policy lets you delete; the answer lists them in `also_deleted`). A sub-project row is not deleted here.",
         auth: true,
         scope: "tasks:write",
         action: "delete_tasks",
         feature: "tasks",
         idempotency: nil,
-        params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
+        params: [
+          %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
+          %{
+            name: "cascade",
+            in: :query,
+            type: "boolean",
+            required: false,
+            doc: "`true` to delete the tasks under it as well"
+          }
+        ],
         example: nil
       },
       %{
-        id: "tickChecklistItem",
-        method: "PATCH",
-        path: "/tasks/{id}/checklist/{item}",
+        id: "moveTask",
+        method: "POST",
+        path: "/tasks/{id}/move",
         summary:
-          "Tick or untick one checklist item by its id, without rewriting the list (safe when two sessions tick different items).",
+          "Put a task, with everything under it, somewhere else in the project's outline. A task cannot go under itself or under a task below it (409 cycle). An open task moved under a done one reopens it.",
         auth: true,
         scope: "tasks:write",
         action: "edit_tasks",
@@ -588,15 +606,62 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         params: [
           %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
           %{
-            name: "item",
-            in: :path,
+            name: "parent",
+            in: :body,
             type: "string",
-            required: true,
-            doc: "the item's id from checklist_items"
+            required: false,
+            doc:
+              "the task to sit under (ref or uuid); null for the top level; leave it out to stay under the same parent"
           },
-          %{name: "done", in: :body, type: "boolean", required: true, doc: ""}
+          %{
+            name: "after",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a task under that parent to go right after; null to go first; leave it out to go last"
+          }
         ],
-        example: ~s({"done": true})
+        example: ~s({"parent": "ANDI-40", "after": "ANDI-41"})
+      },
+      %{
+        id: "batchCreateTasks",
+        method: "POST",
+        path: "/tasks/batch",
+        summary:
+          "Create many one-off tasks at once, in one transaction - a list relayed from a client, pasted notes. One task per line, in order, nested by `depth`; blank lines are skipped. Answers 201 with the tasks in line order.",
+        auth: true,
+        scope: "tasks:write",
+        action: "create_tasks",
+        feature: "tasks",
+        idempotency: :optional,
+        params: [
+          %{
+            name: "lines",
+            in: :body,
+            type: "array",
+            required: true,
+            doc:
+              "at most 500; each a string (the title) or `{text, depth?, done?}` - `depth` 0 sits under `parent` (or at the top level), 1 under the line above it, and so on; `done: true` creates it done"
+          },
+          %{
+            name: "parent",
+            in: :body,
+            type: "string",
+            required: false,
+            doc: "a task's ref or uuid: the lines go under it, after the tasks already there"
+          },
+          %{
+            name: "project",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+          }
+        ],
+        example:
+          ~s({"parent": "ANDI-40", "lines": ["Which rooms?", "Matte or gloss?", {"text": "Delivery date", "depth": 0}, {"text": "Ask about Saturdays", "depth": 1}]})
       },
       %{
         id: "linkInteraction",
@@ -944,7 +1009,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/briefing",
         summary:
-          "Everything to pick the project up in one read: the project (completion mode, caught up?, what an agent may do), the open tasks with direction, last outcome, latest note summary and next steps, who started them, what they wait on, their checklist counts; the sub-projects one line each; the project's notes since a moment. Capped at 50 tasks by priority then position (`truncated` says so). Read this first after a context reset.",
+          "Everything to pick the project up in one read: the project (completion mode, caught up?, what an agent may do), the open top-level tasks with direction, last outcome, latest note summary and next steps, who started them, what they wait on, how many of the tasks under them are done (`subtasks`) - plus any task your key has in hand, wherever it sits; the sub-projects one line each; the project's notes since a moment. Capped at 50 tasks by priority then position (`truncated` says so). Read this first after a context reset.",
         auth: true,
         scope: "tasks:read",
         action: "view",
@@ -1393,7 +1458,34 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     client's next idea is just the next task. An ongoing sub-project never completes its parent.
     New sub-projects copy the parent's mode unless you pass `completion`.
 
-    ## On a task: waiting, origin, labels, a checklist
+    ## Tasks under tasks
+
+    A task can sit under another task of the same project, to any depth. A subtask is a whole
+    task - its own number, owner, dates, hours and notes; there are no lighter "items". Four
+    questions relayed from a client are four subtasks of one task, added in one call:
+
+        POST /tasks/batch  {"parent": "ANDI-40", "lines": ["Which rooms?", "Matte or gloss?",
+                            "Delivery date?", "Saturday installs?"]}
+
+    (or create the parent in the same batch: its line at depth 0, the questions at depth 1).
+    `parent` on create and PATCH puts a task under another (null: back to the top level);
+    `POST /tasks/{id}/move` places it exactly. Every task says `parent_task` (the ref above it, or
+    null), `depth`, and `subtasks: {done, total}` - counted over the tasks at the bottom of its
+    branch, the ones with nothing under them. `GET /tasks?parent=ANDI-40` lists what is directly
+    under one; `parent=none` the top level only.
+
+    The tick rules, the same in the admin and here:
+    - completing a task completes every open task under it (a sub-project row is left alone);
+    - when the last task under a parent is done, the parent completes too - unless the project
+      turned that off (a parent can carry work of its own);
+    - reopening a task reopens the done tasks above it;
+    - reopening a parent leaves the tasks under it as they are.
+    A transition answers `also_changed`: how many other tasks it moved. Deleting a task with
+    tasks under it needs `cascade=true`. A task somebody took out of the list in the admin while
+    it carried work (hours, notes, an owner) is held, not deleted: it is in no list and no count
+    until a person restores it.
+
+    ## On a task: waiting, origin, labels
 
     - `waiting_on` - whom the task waits on ("the client", "the boss"). A badge beside the status,
       not a status: a waiting task is still todo or in_progress. Clear it when the wait is over.
@@ -1415,11 +1507,6 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       passed and the task is not done. `GET /tasks?due_before=<day>&status=open` is what is owed.
     - `labels` - the project's labels by name (needs the labels feature); on create or update, the
       full list to set. New names are created for you.
-    - `checklist` - sub-items ticked one by one: four questions relayed from a client are one
-      task with four items, not four tasks and not a sub-project. Create with `checklist:
-      [{text}]`, tick with `PATCH /tasks/{id}/checklist/{item}`; the task shows `checklist:
-      {done, total}` on the list and `checklist_items` on the detail. Ticking never moves the
-      task's status or `progress_pct` - finish the task with `/complete` as usual.
     - `position: "top"` on create puts the task above every row.
 
     ## Links between records: the mention token
@@ -1529,13 +1616,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     `priority`, `progress_pct`, `estimated_duration`, `estimated_duration_unit`, `position`,
     `task_uuid`, `child_project_uuid`, `library_task`, `completed_at`, `inserted_at`, `updated_at`,
     `totals` (`minutes`, `tokens`, `cost_cents` logged on the task — sums over the ledger).
-    Plus `waiting_on`, `origin`, `start_date`, `end_date`, `overdue`, `labels` (names), `checklist` (`{done, total}`), `created_by` and
+    Plus `waiting_on`, `origin`, `start_date`, `end_date`, `overdue`, `labels` (names), `parent_task` (the ref of the task it sits under, or null), `depth` (0 at the top level), `subtasks` (`{done, total}` over the tasks at the bottom of its branch; zeros when nothing is under it), `created_by` and
     `started_by` (`{person, key}` uuids - null for a person's own doing), `words_by` (`{key}` when
     an API key wrote the title and description last, `{person: true}` otherwise), `interactions`
     (the client interactions it links), `updated_at`; on a `subproject` row, `subproject`
     (`{completion, caught_up, caught_up_since, completed_at}` of the nested project - an ongoing
     child reads in_progress at 100% when caught up, this says so).
-    `GET /tasks/{id}` adds `checklist_items` (`[{id, text, done, done_at}]`), `direction` (the latest redirect, or null), `last_outcome`,
+    `GET /tasks/{id}` adds `subtask_refs` (the tasks directly under it, in order), `direction` (the latest redirect, or null), `last_outcome`,
     `latest_agent_note`, `display_summary` (`text` + `source`: description | redirect | agent) and
     `notes_url`. A `subproject` row is a nested project: its lifecycle is its own, the row's status
     and progress roll up from it, and its tasks are reached with `project=<child_project_uuid>`
