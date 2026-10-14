@@ -2452,7 +2452,6 @@ defmodule PhoenixKitProjects.Projects do
            %{
              "project_uuid" => project.uuid,
              "task_uuid" => a.task_uuid,
-             "parent_uuid" => parent_uuid,
              "status" => "todo",
              "position" => a.position,
              "description" => a.description,
@@ -2465,8 +2464,18 @@ defmodule PhoenixKitProjects.Projects do
            },
            broadcast: false
          ) do
-      {:ok, new_a} -> new_a.uuid
-      {:error, cs} -> repo().rollback(cs)
+      {:ok, new_a} ->
+        # Never cast (a place is the outline's to write): set here, the
+        # parent being already cloned — the walk is depth first.
+        if parent_uuid do
+          from(x in Assignment, where: x.uuid == ^new_a.uuid)
+          |> repo().update_all(set: [parent_uuid: parent_uuid])
+        end
+
+        new_a.uuid
+
+      {:error, cs} ->
+        repo().rollback(cs)
     end
   end
 
@@ -4089,7 +4098,7 @@ defmodule PhoenixKitProjects.Projects do
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_form(%Assignment{} = a, attrs, opts \\ []) do
     with {:ok, updated} <- a |> Assignment.changeset(attrs) |> repo().update() do
-      if updated.status != a.status, do: settle_outline(updated, a.status)
+      updated = if updated.status != a.status, do: status_changed(updated, a), else: updated
 
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
@@ -4100,6 +4109,42 @@ defmodule PhoenixKitProjects.Projects do
 
       {:ok, updated}
     end
+  end
+
+  # A status changed through the form: the completion stamps follow it as
+  # they do on every other path (a reopen clears them, a tick sets them),
+  # the rows around it settle, and the project's own completion is
+  # recomputed — the form has no page around it to do that.
+  defp status_changed(%Assignment{} = updated, %Assignment{} = was) do
+    stamps =
+      cond do
+        updated.status == "done" ->
+          [
+            completed_at:
+              updated.completed_at || DateTime.utc_now() |> DateTime.truncate(:second),
+            progress_pct: 100
+          ]
+
+        was.status == "done" ->
+          [completed_at: nil, completed_by_uuid: nil, progress_pct: 0]
+
+        true ->
+          []
+      end
+
+    updated =
+      if stamps == [] do
+        updated
+      else
+        {_, _} =
+          from(x in Assignment, where: x.uuid == ^updated.uuid) |> repo().update_all(set: stamps)
+
+        struct(updated, stamps)
+      end
+
+    settle_outline(updated, was.status)
+    recompute_project_completion(updated.project_uuid)
+    updated
   end
 
   @doc """

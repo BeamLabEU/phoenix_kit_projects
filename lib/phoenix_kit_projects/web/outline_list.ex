@@ -37,6 +37,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   @styles ~w(auto text cards)
 
   @doc "The list styles a project may choose."
+  @spec styles() :: [String.t()]
   def styles, do: @styles
 
   @doc ~S|The project's stored choice: `"auto"`, `"text"` or `"cards"`.|
@@ -105,6 +106,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   `outline_held`, `outline_can` — and, for the text face, the lines pushed
   to the hook.
   """
+  @spec assign_outline(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def assign_outline(socket) do
     %{project: project, fx: fx} = socket.assigns
     assignments = socket.assigns[:assignments] || []
@@ -146,8 +148,8 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     end
   end
 
-  @doc "The list as the text face shows it: one map per line, in outline order."
-  def lines(socket) do
+  # The list as the text face shows it: one map per line, in outline order.
+  defp lines(socket) do
     %{project: project, assignments: assignments} = socket.assigns
     counts = socket.assigns[:outline_counts] || Outline.counts(assignments)
 
@@ -178,6 +180,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   defp line_text(%Assignment{} = a), do: Assignment.label(a) || ""
 
   @doc "How the hook opens a line's task: a popup session in a drawer page, else a link."
+  @spec opener(Assignment.t(), Project.t(), Phoenix.LiveView.Socket.t()) :: map()
   def opener(%Assignment{} = a, project, socket) do
     cond do
       Assignment.subproject?(a) ->
@@ -204,6 +207,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   # ── events ─────────────────────────────────────────────────────────
 
   @doc "The events this module answers (all start with `outline_`)."
+  @spec event?(String.t()) :: boolean()
   def event?("outline_" <> _), do: true
   def event?(_), do: false
 
@@ -211,6 +215,14 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   Handles an `outline_*` event. `reload` is the page's own "the list
   changed" (`sync_project_completion |> load_assignments`).
   """
+  @spec handle_event(
+          String.t(),
+          map(),
+          Phoenix.LiveView.Socket.t(),
+          (Phoenix.LiveView.Socket.t() ->
+             Phoenix.LiveView.Socket.t())
+        ) ::
+          {:noreply, Phoenix.LiveView.Socket.t()} | {:reply, map(), Phoenix.LiveView.Socket.t()}
   def handle_event("outline_sync", %{"lines" => lines} = params, socket, reload)
       when is_list(lines) do
     %{project: project, outline_can: can} = socket.assigns
@@ -220,13 +232,17 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       # removed: the lines come back on the next refresh.
       known = if can.delete, do: List.wrap(params["known"]), else: []
 
-      case Outline.sync(project.uuid, lines, known, actor_uuid: Activity.actor_uuid(socket)) do
+      case Outline.sync(project.uuid, lines, known,
+             actor_uuid: Activity.actor_uuid(socket),
+             allow_done: can.tick
+           ) do
         {:ok, summary} ->
           log_sync(socket, summary)
           socket = reload.(socket)
           {:reply, sync_reply(summary, socket), socket}
 
         {:error, reason} ->
+          audit_failed(socket, "projects.task_list_edited", project.uuid, "project")
           {:reply, %{error: sync_error(reason)}, socket}
       end
     else
@@ -236,26 +252,33 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
   def handle_event("outline_restore", %{"uuid" => uuid}, socket, reload) do
     with true <- socket.assigns.outline_can.edit,
-         %Assignment{review_status: "removed"} = a <- own(socket, uuid),
-         {:ok, _} <- Outline.restore(a) do
-      {:noreply, reload.(socket)}
+         %Assignment{review_status: "removed"} = a <- own(socket, uuid) do
+      case Outline.restore(a) do
+        {:ok, _} ->
+          audit(socket, "projects.assignment_restored", a)
+          {:noreply, reload.(socket)}
+
+        {:error, _} ->
+          audit_failed(socket, "projects.assignment_restored", uuid)
+          {:noreply, put_flash(socket, :error, gettext("The task could not be restored."))}
+      end
     else
       _ -> {:noreply, socket}
     end
   end
 
   def handle_event("outline_purge", %{"uuid" => uuid}, socket, reload) do
-    with true <- socket.assigns.outline_can.delete,
-         %Assignment{review_status: "removed"} = a <- own(socket, uuid),
-         {:ok, _} <- Projects.delete_assignment(a) do
-      Activity.log("projects.assignment_removed",
-        actor_uuid: Activity.actor_uuid(socket),
-        resource_type: "assignment",
-        resource_uuid: uuid,
-        metadata: %{"task" => Assignment.label(a)}
-      )
+    with true <- socket.assigns.outline_can.edit and socket.assigns.outline_can.delete,
+         %Assignment{review_status: "removed"} = a <- own(socket, uuid) do
+      case Projects.delete_assignment(a) do
+        {:ok, _} ->
+          audit(socket, "projects.assignment_removed", a)
+          {:noreply, reload.(socket)}
 
-      {:noreply, reload.(socket)}
+        {:error, _} ->
+          audit_failed(socket, "projects.assignment_removed", uuid)
+          {:noreply, put_flash(socket, :error, gettext("Could not remove task."))}
+      end
     else
       _ -> {:noreply, socket}
     end
@@ -271,6 +294,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
          %Assignment{task: %Task{} = task} <- own(socket, uuid),
          true <- task.title != title,
          {:ok, _} <- Projects.update_task(task, %{"title" => title}) do
+      audit(socket, "projects.assignment_updated", uuid, %{"fields" => ["title"]})
       {:reply, %{}, reload.(socket)}
     else
       _ -> {:reply, %{}, socket}
@@ -290,13 +314,16 @@ defmodule PhoenixKitProjects.Web.OutlineList do
              %{}
            ) do
       Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
+      audit(socket, "projects.assignment_created", a)
       # Below a task that has subtasks, the new one is its first subtask;
-      # otherwise the next task at the same level.
-      has_below? = MapSet.member?(socket.assigns.outline_parents, anchor.uuid)
+      # otherwise the next task at the same level. A place that went away
+      # meanwhile leaves the task at the end of the list, where it is seen.
+      has_below? = Outline.descendants(Outline.shape(a.project_uuid), anchor.uuid) != []
 
-      if has_below?,
-        do: Outline.move(a, anchor.uuid, nil),
-        else: Outline.move(a, anchor.parent_uuid, anchor.uuid)
+      _ =
+        if has_below?,
+          do: Outline.move(a, anchor.uuid, nil),
+          else: Outline.move(a, anchor.parent_uuid, anchor.uuid)
 
       {:noreply, socket |> assign(outline_focus: a.uuid, outline_fresh: a.uuid) |> reload.()}
     else
@@ -313,6 +340,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
              %{}
            ) do
       Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
+      audit(socket, "projects.assignment_created", a)
       {:noreply, socket |> assign(outline_focus: a.uuid, outline_fresh: a.uuid) |> reload.()}
     else
       _ -> {:noreply, socket}
@@ -337,14 +365,14 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       last = List.last(branch)
 
       pasted =
-        Enum.map(lines, fn line ->
+        for %{"text" => text} = line when is_binary(text) <- lines do
           %{
             "id" => nil,
-            "text" => line["text"],
+            "text" => text,
             "depth" => base + to_depth(line["depth"]),
-            "done" => line["done"] == true
+            "done" => line["done"] == true and socket.assigns.outline_can.tick
           }
-        end)
+        end
 
       all =
         Enum.flat_map(walked, fn {a, depth} ->
@@ -361,7 +389,14 @@ defmodule PhoenixKitProjects.Web.OutlineList do
           {:noreply, reload.(socket)}
 
         {:error, reason} ->
-          {:noreply, Phoenix.LiveView.put_flash(socket, :error, sync_error(reason))}
+          audit_failed(
+            socket,
+            "projects.task_list_edited",
+            socket.assigns.project.uuid,
+            "project"
+          )
+
+          {:noreply, put_flash(socket, :error, sync_error(reason))}
       end
     else
       _ -> {:noreply, socket}
@@ -393,8 +428,16 @@ defmodule PhoenixKitProjects.Web.OutlineList do
         end
 
       case result do
-        {:ok, _} -> {:noreply, socket |> assign(outline_focus: a.uuid) |> reload.()}
-        _ -> {:noreply, socket}
+        {:ok, moved} ->
+          audit(socket, "projects.assignment_moved", a, %{"parent" => moved.parent_uuid})
+          {:noreply, socket |> assign(outline_focus: a.uuid) |> reload.()}
+
+        {:error, _} ->
+          audit_failed(socket, "projects.assignment_moved", a.uuid)
+          {:noreply, put_flash(socket, :error, gettext("The task could not be moved there."))}
+
+        :noop ->
+          {:noreply, socket}
       end
     else
       _ -> {:noreply, socket}
@@ -408,6 +451,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
          %Assignment{} = a <- own(socket, uuid),
          false <- MapSet.member?(socket.assigns.outline_parents, uuid),
          {:ok, _} <- Projects.delete_assignment(a) do
+      audit(socket, "projects.assignment_removed", a)
       rows = Outline.walk(socket.assigns.assignments) |> Enum.map(&elem(&1, 0).uuid)
       index = Enum.find_index(rows, &(&1 == uuid)) || 0
       focus = if index > 0, do: Enum.at(rows, index - 1)
@@ -442,6 +486,41 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   end
 
   def handle_event(_event, _params, socket, _reload), do: {:noreply, socket}
+
+  defp put_flash(socket, kind, message), do: Phoenix.LiveView.put_flash(socket, kind, message)
+
+  # One history line per act, as the row buttons write them; a failure is
+  # written too, so the record shows what was tried.
+  defp audit(socket, action, a_or_uuid, metadata \\ %{}) do
+    {uuid, label} =
+      case a_or_uuid do
+        %Assignment{} = a -> {a.uuid, Assignment.label(a)}
+        uuid -> {uuid, nil}
+      end
+
+    Activity.log(action,
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "assignment",
+      resource_uuid: uuid,
+      metadata:
+        metadata
+        |> Map.put("project_uuid", socket.assigns.project.uuid)
+        |> then(&if(label, do: Map.put(&1, "task", label), else: &1))
+    )
+  rescue
+    _ -> :ok
+  end
+
+  defp audit_failed(socket, action, uuid, type \\ "assignment") do
+    Activity.log_failed(action,
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: type,
+      resource_uuid: uuid,
+      metadata: %{"project_uuid" => socket.assigns.project.uuid}
+    )
+  rescue
+    _ -> :ok
+  end
 
   defp to_depth(n) when is_integer(n) and n >= 0, do: n
   defp to_depth(_), do: 0
@@ -494,7 +573,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   # One line of history for a batch, however many lines it carried.
   defp log_sync(socket, summary) do
     counts = %{
-      "created" => map_size(summary.created),
+      "created" => summary.created_count,
       "removed" => length(summary.removed),
       "held" => length(summary.held),
       "restored" => length(summary.revived),
@@ -585,7 +664,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
         <li :for={a <- @held} class="flex items-center gap-2 text-sm">
           <span class="font-mono text-xs text-base-content/50 shrink-0">{Refs.task_ref(@project.key, a.number)}</span>
           <span class="truncate flex-1 text-base-content/60 line-through">{Assignment.label(a)}</span>
-          <button type="button" class="btn btn-ghost btn-xs" phx-click="outline_restore" phx-value-uuid={a.uuid}>
+          <button type="button" class="btn btn-ghost btn-xs" phx-click="outline_restore" phx-value-uuid={a.uuid} phx-disable-with={gettext("Restoring…")}>
             <.icon name="hero-arrow-uturn-left" class="w-3.5 h-3.5" /> {gettext("Restore")}
           </button>
           <button
@@ -594,6 +673,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
             class="btn btn-ghost btn-xs text-error"
             phx-click="outline_purge"
             phx-value-uuid={a.uuid}
+            phx-disable-with={gettext("Deleting…")}
             data-confirm={gettext("Delete \"%{title}\" and everything it carries? This cannot be undone.", title: Assignment.label(a))}
           >
             <.icon name="hero-trash" class="w-3.5 h-3.5" /> {gettext("Delete")}

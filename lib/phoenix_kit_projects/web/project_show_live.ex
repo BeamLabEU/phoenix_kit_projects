@@ -1901,7 +1901,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           at -> List.insert_at(rest, at, uuid)
         end
 
-      Projects.reorder_assignments(project_uuid, reordered,
+      Projects.reorder_assignments(
+        project_uuid,
+        keep_outline(reordered, socket.assigns.assignments),
         actor_uuid: Activity.actor_uuid(socket),
         broadcast: false
       )
@@ -4768,6 +4770,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         :if={@fx.tasks and not @is_template and @outline_can.edit}
         type="button"
         phx-click="outline_add_first"
+        phx-disable-with={gettext("Adding…")}
         class="btn btn-ghost btn-sm justify-start gap-2 mt-2 w-full text-base-content/60"
       >
         <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add a task")}

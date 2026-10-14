@@ -1215,6 +1215,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
       new_task UUID;
       done BOOLEAN;
       done_at TIMESTAMPTZ;
+      converted INTEGER := 0;
     BEGIN
       IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns
@@ -1262,8 +1263,16 @@ defmodule PhoenixKitProjects.Migrations.Schema do
              CASE WHEN done THEN 'done' ELSE 'todo' END,
              CASE WHEN done THEN 100 ELSE 0 END,
              done_at, r.review_status);
+
+          converted := converted + 1;
         END LOOP;
       END LOOP;
+
+      -- Nothing converted (a replay of the chain: v19 re-adds the column
+      -- empty): leave every position as it is.
+      IF converted = 0 THEN
+        RETURN;
+      END IF;
 
       -- One depth-first order per project that now has subtasks.
       WITH RECURSIVE walk AS (

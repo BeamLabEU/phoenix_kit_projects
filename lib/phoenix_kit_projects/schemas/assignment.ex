@@ -127,7 +127,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     # project, never its own ancestor — a database trigger holds both. A
     # subtask is a whole task; `position` stays one depth-first order for
     # the project, so a parent is followed by everything under it
-    # (`PhoenixKitProjects.Outline`).
+    # (`PhoenixKitProjects.Outline`). Never cast: a place in the list is
+    # written only through `Outline.move/3` / `Outline.write_order/2`, which
+    # keep that order and settle the ticks around it.
     belongs_to(:parent, __MODULE__, foreign_key: :parent_uuid, references: :uuid)
 
     # When set, this assignment IS a sub-project: instead of a reusable task
@@ -162,7 +164,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   @optional ~w(task_uuid child_project_uuid position description estimated_duration
                estimated_duration_unit counts_weekends progress_pct track_progress priority
                translations assigned_team_uuid assigned_department_uuid assigned_person_uuid
-               waiting_on origin start_date end_date parent_uuid)a
+               waiting_on origin start_date end_date)a
 
   # Server-only fields: set by trusted server code (completion tracking,
   # provenance), never cast from untrusted form params. Use `status_changeset/2`.

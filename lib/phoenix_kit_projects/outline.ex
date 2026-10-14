@@ -175,10 +175,28 @@ defmodule PhoenixKitProjects.Outline do
     |> repo().all()
   end
 
-  @doc "How many accepted rows sit under this task (any depth)."
-  @spec descendant_count(Assignment.t()) :: non_neg_integer()
-  def descendant_count(%Assignment{uuid: uuid, project_uuid: project_uuid}) do
-    project_uuid |> shape() |> descendants(uuid) |> length()
+  @doc """
+  Every row under this task, any depth and any review status (held ones
+  included — the database cascade would take them), deepest first, with
+  `:task` and `:project` loaded.
+  """
+  @spec rows_below(Assignment.t()) :: [Assignment.t()]
+  def rows_below(%Assignment{uuid: uuid, project_uuid: project_uuid}) do
+    uuids =
+      from(x in Assignment,
+        where: x.project_uuid == ^project_uuid,
+        select: %{uuid: x.uuid, parent_uuid: x.parent_uuid}
+      )
+      |> repo().all()
+      |> descendants(uuid)
+      |> Enum.map(& &1.uuid)
+
+    by_uuid =
+      from(x in Assignment, where: x.uuid in ^uuids, preload: [:task, :project])
+      |> repo().all()
+      |> Map.new(&{&1.uuid, &1})
+
+    uuids |> Enum.reverse() |> Enum.flat_map(&List.wrap(by_uuid[&1]))
   end
 
   @doc """
@@ -222,6 +240,15 @@ defmodule PhoenixKitProjects.Outline do
   """
   @spec settle(Assignment.t(), String.t() | nil, binary() | nil) :: [binary()]
   def settle(%Assignment{} = a, was, actor_uuid \\ nil) do
+    # Under the project's lock: two ticks in one project (the last two
+    # subtasks, ticked by two people) read and write the shape one at a time.
+    case with_project_lock(a.project_uuid, fn _project -> do_settle(a, was, actor_uuid) end) do
+      {:ok, changed} -> changed
+      _ -> []
+    end
+  end
+
+  defp do_settle(%Assignment{} = a, was, actor_uuid) do
     cond do
       a.status == "done" and was != "done" ->
         down = tick_below(a, actor_uuid)
@@ -241,8 +268,49 @@ defmodule PhoenixKitProjects.Outline do
   it. Returns the uuids changed.
   """
   @spec settle_placed(Assignment.t()) :: [binary()]
-  def settle_placed(%Assignment{status: "done"}), do: []
-  def settle_placed(%Assignment{} = a), do: reopen_above(a)
+  def settle_placed(%Assignment{} = a), do: settle_tree(a.project_uuid)
+
+  @doc """
+  Brings every task that has subtasks in line with them, after the shape
+  changed (a move, a typed list saved, a held task restored, lines added
+  under a task): a done task with an open subtask reopens; an open one whose
+  subtasks are all done ticks itself when the project lets it. Deepest
+  first. Only task rows count — a sub-project row is its own project's
+  business. Must run inside the project lock (`with_project_lock/2`).
+  Returns the uuids it changed.
+  """
+  @spec settle_tree(binary(), binary() | nil) :: [binary()]
+  def settle_tree(project_uuid, actor_uuid \\ nil) do
+    rows = shape(project_uuid)
+    auto? = parent_auto?(project_uuid)
+    tasks = Enum.filter(rows, &is_nil(&1.child_project_uuid))
+    by_parent = Enum.group_by(tasks, & &1.parent_uuid)
+    depths = depths(rows)
+
+    {_status, changed} =
+      tasks
+      |> Enum.filter(&Map.has_key?(by_parent, &1.uuid))
+      |> Enum.sort_by(&(-Map.get(depths, &1.uuid, 0)))
+      |> Enum.reduce({Map.new(tasks, &{&1.uuid, &1.status}), []}, fn parent, {status, changed} ->
+        kids = Enum.map(Map.fetch!(by_parent, parent.uuid), &Map.fetch!(status, &1.uuid))
+        all_done? = Enum.all?(kids, &(&1 == "done"))
+
+        cond do
+          status[parent.uuid] == "done" and not all_done? ->
+            reopen([parent.uuid])
+            {Map.put(status, parent.uuid, "in_progress"), [parent.uuid | changed]}
+
+          status[parent.uuid] != "done" and all_done? and auto? ->
+            mark_done([parent.uuid], actor_uuid)
+            {Map.put(status, parent.uuid, "done"), [parent.uuid | changed]}
+
+          true ->
+            {status, changed}
+        end
+      end)
+
+    changed
+  end
 
   defp tick_below(%Assignment{} = a, actor_uuid) do
     uuids =
@@ -302,19 +370,24 @@ defmodule PhoenixKitProjects.Outline do
     if done_above == [] do
       []
     else
-      # Under way, not untouched: something below it was done or is.
-      from(x in Assignment, where: x.uuid in ^done_above)
-      |> repo().update_all(
-        set: [
-          status: "in_progress",
-          completed_at: nil,
-          completed_by_uuid: nil,
-          updated_at: now()
-        ]
-      )
-
+      reopen(done_above)
       done_above
     end
+  end
+
+  # Under way, not untouched: something below it was done or is.
+  defp reopen(uuids) do
+    from(x in Assignment, where: x.uuid in ^uuids)
+    |> repo().update_all(
+      set: [
+        status: "in_progress",
+        completed_at: nil,
+        completed_by_uuid: nil,
+        updated_at: now()
+      ]
+    )
+
+    :ok
   end
 
   defp mark_done([], _actor_uuid), do: []
@@ -438,7 +511,7 @@ defmodule PhoenixKitProjects.Outline do
   Broadcasts `:assignment_reordered`.
   """
   @spec move(Assignment.t(), binary() | nil, binary() | nil | :last) ::
-          {:ok, Assignment.t()} | {:error, :not_found | :cycle | term()}
+          {:ok, Assignment.t()} | {:error, :not_found | :cycle | :subproject | term()}
   def move(%Assignment{} = a, parent_uuid, after_uuid \\ :last) do
     result =
       with_project_lock(a.project_uuid, fn _project ->
@@ -449,6 +522,7 @@ defmodule PhoenixKitProjects.Outline do
         case move_error(by_uuid, branch, a.uuid, parent_uuid, after_uuid) do
           nil ->
             place_branch(a, rows, by_uuid, branch, parent_uuid, after_uuid)
+            settle_tree(a.project_uuid)
             repo().get!(Assignment, a.uuid)
 
           error ->
@@ -457,8 +531,6 @@ defmodule PhoenixKitProjects.Outline do
       end)
 
     with {:ok, moved} <- result do
-      settle_placed(moved)
-
       ProjectsPubSub.broadcast_assignment(:assignment_reordered, %{
         project_uuid: moved.project_uuid
       })
@@ -477,6 +549,9 @@ defmodule PhoenixKitProjects.Outline do
 
       parent_uuid in branch ->
         :cycle
+
+      parent_uuid && by_uuid[parent_uuid].child_project_uuid != nil ->
+        :subproject
 
       is_binary(after_uuid) and not sibling_of?(by_uuid, branch, after_uuid, parent_uuid) ->
         :not_found
@@ -562,7 +637,7 @@ defmodule PhoenixKitProjects.Outline do
   Options: `:actor_uuid` (stamped as creator), `:key_uuid` (an API key as
   the writer), `:rename` (false: titles of existing tasks are left alone).
 
-  Returns `{:ok, %{created: %{tmp => %{uuid, number}}, removed: [uuid],
+  Returns `{:ok, %{created: %{tmp => %{uuid, number}}, created_count: n, removed: [uuid],
   held: [uuid], revived: [uuid], renamed: [uuid]}}`, or `{:error, reason}`
   (`:too_many_lines`, `:not_found`, or `{:line, index, changeset}`).
   Broadcasts one `:assignment_reordered` for the project after commit.
@@ -598,19 +673,15 @@ defmodule PhoenixKitProjects.Outline do
 
     by_uuid = Map.new(rows, &{&1.uuid, &1})
 
-    lines = normalize_lines(lines, by_uuid)
+    lines =
+      lines |> normalize_lines(by_uuid) |> maybe_untick(Keyword.get(opts, :allow_done, true))
 
     # 1. New lines become tasks.
+    created_count = Enum.count(lines, &is_nil(&1.id))
     {lines, created} = create_lines(project, lines, opts)
 
     # 2. Held tasks that a line names are back.
-    revived =
-      for %{id: id} <- lines, row = by_uuid[id], row && row.review_status == "removed", do: id
-
-    if revived != [] do
-      from(a in Assignment, where: a.uuid in ^revived)
-      |> repo().update_all(set: [review_status: "accepted", updated_at: now()])
-    end
+    revived = revive_lines(lines, by_uuid)
 
     # 3. Changed titles.
     renamed_tasks =
@@ -634,11 +705,13 @@ defmodule PhoenixKitProjects.Outline do
           row.uuid not in removed and row.uuid not in held
       end)
 
-    order = lines |> nest() |> weave(unlisted, rows)
+    order = lines |> nest(subproject_rows(rows)) |> weave(unlisted, rows)
     write_order(project.uuid, order)
+    settle_tree(project.uuid, Keyword.get(opts, :actor_uuid))
 
     %{
       created: created,
+      created_count: created_count,
       removed: removed,
       held: held,
       revived: revived,
@@ -647,14 +720,32 @@ defmodule PhoenixKitProjects.Outline do
     }
   end
 
+  # A new line arrives ticked only when this person may tick.
+  defp maybe_untick(lines, true), do: lines
+  defp maybe_untick(lines, _), do: Enum.map(lines, &%{&1 | done: false})
+
+  defp revive_lines(lines, by_uuid) do
+    revived =
+      for %{id: id} <- lines, row = by_uuid[id], row && row.review_status == "removed", do: id
+
+    if revived != [] do
+      from(a in Assignment, where: a.uuid in ^revived)
+      |> repo().update_all(set: [review_status: "accepted", updated_at: now()])
+    end
+
+    revived
+  end
+
   # Blank new lines are not tasks; an id seen twice (a line split by the
   # browser carries its id onto both halves) stays with the first; an id
   # that is not this project's is a new line.
   defp normalize_lines(lines, by_uuid) do
     {out, _seen} =
-      Enum.reduce(lines, {[], %{}}, fn line, {acc, seen} ->
+      lines
+      |> Enum.filter(&is_map/1)
+      |> Enum.reduce({[], %{}}, fn line, {acc, seen} ->
         id = line["id"]
-        text = line["text"] |> to_string() |> String.replace(~r/\s+/u, " ") |> String.trim()
+        text = line["text"] |> line_text() |> String.replace(~r/\s+/u, " ") |> String.trim()
         text = String.slice(text, 0, @title_max)
         depth = line["depth"] |> to_int() |> max(0)
 
@@ -672,7 +763,7 @@ defmodule PhoenixKitProjects.Outline do
           true ->
             entry = %{
               id: id,
-              tmp: line["tmp"],
+              tmp: if(is_binary(line["tmp"]), do: line["tmp"]),
               text: text,
               depth: depth,
               done: line["done"] == true
@@ -684,6 +775,9 @@ defmodule PhoenixKitProjects.Outline do
 
     Enum.reverse(out)
   end
+
+  defp line_text(text) when is_binary(text), do: text
+  defp line_text(_), do: ""
 
   defp to_int(n) when is_integer(n), do: n
 
@@ -932,10 +1026,22 @@ defmodule PhoenixKitProjects.Outline do
 
   # Lines → `[{uuid, parent_uuid}]`: a line sits under the nearest line
   # above it that is one level shallower.
-  defp nest(lines) do
+  # Nothing goes under a sub-project row (its tasks live in its project):
+  # a line indented under one sits beside it instead.
+  defp subproject_rows(rows),
+    do:
+      for(
+        %{child_project_uuid: c, uuid: uuid} <- rows,
+        not is_nil(c),
+        into: %{},
+        do: {uuid, true}
+      )
+
+  defp nest(lines, subprojects) do
     {order, _stack} =
       Enum.map_reduce(lines, [], fn line, stack ->
         stack = Enum.take(stack, min(line.depth, length(stack)))
+        stack = Enum.take_while(stack, &(not Map.has_key?(subprojects, &1)))
         parent = List.last(stack)
         {{line.id, parent}, stack ++ [line.id]}
       end)
@@ -995,22 +1101,28 @@ defmodule PhoenixKitProjects.Outline do
   @doc "Puts a held task (and what is held under it) back in the list."
   @spec restore(Assignment.t()) :: {:ok, Assignment.t()} | {:error, term()}
   def restore(%Assignment{review_status: "removed"} = a) do
-    rows =
-      from(x in Assignment,
-        where: x.project_uuid == ^a.project_uuid and x.review_status == "removed",
-        select: %{uuid: x.uuid, parent_uuid: x.parent_uuid}
-      )
-      |> repo().all()
+    result =
+      with_project_lock(a.project_uuid, fn _project ->
+        rows =
+          from(x in Assignment,
+            where: x.project_uuid == ^a.project_uuid and x.review_status == "removed",
+            select: %{uuid: x.uuid, parent_uuid: x.parent_uuid}
+          )
+          |> repo().all()
 
-    uuids = [a.uuid | rows |> descendants(a.uuid) |> Enum.map(& &1.uuid)]
+        uuids = [a.uuid | rows |> descendants(a.uuid) |> Enum.map(& &1.uuid)]
 
-    from(x in Assignment, where: x.uuid in ^uuids)
-    |> repo().update_all(set: [review_status: "accepted", updated_at: now()])
+        from(x in Assignment, where: x.uuid in ^uuids and x.review_status == "removed")
+        |> repo().update_all(set: [review_status: "accepted", updated_at: now()])
 
-    restored = repo().get!(Assignment, a.uuid)
-    settle_placed(restored)
-    ProjectsPubSub.broadcast_assignment(:assignment_reordered, %{project_uuid: a.project_uuid})
-    {:ok, restored}
+        settle_tree(a.project_uuid)
+        repo().get!(Assignment, a.uuid)
+      end)
+
+    with {:ok, restored} <- result do
+      ProjectsPubSub.broadcast_assignment(:assignment_reordered, %{project_uuid: a.project_uuid})
+      {:ok, restored}
+    end
   end
 
   def restore(%Assignment{} = a), do: {:ok, a}

@@ -744,9 +744,12 @@
         if (payload && payload.plain === plain) rows = payload.rows;
       } catch (_e) { rows = null; }
 
+      // Nothing is pasted onto (or across from) a sub-project line: refuse
+      // before touching the lines, not after.
+      if (this.locked(c.start.line)) return;
       this.remember();
       var at = c.collapsed ? c.start : this.deleteRange(c);
-      if (!at.line || this.locked(at.line)) return;
+      if (!at.line || this.locked(at.line)) { this.changed(); return; }
 
       if (!rows && plain.indexOf("\n") === -1) {
         this.insertText(at, plain.replace(/\s+/g, " "));
@@ -868,25 +871,6 @@
       if (tone) this.bar.dataset.tone = tone; else delete this.bar.dataset.tone;
     },
 
-    ask: function (text, yes) {
-      var self = this;
-      this.bar.textContent = "";
-      this.bar.dataset.tone = "warn";
-      var span = document.createElement("span");
-      span.textContent = text;
-      var ok = document.createElement("button");
-      ok.type = "button";
-      ok.textContent = this.el.dataset.yes || "Yes";
-      var no = document.createElement("button");
-      no.type = "button";
-      no.textContent = this.el.dataset.no || "Cancel";
-      ok.addEventListener("click", function () { self.say(""); yes(); });
-      no.addEventListener("click", function () { self.say(self.el.dataset.hint || ""); });
-      this.bar.appendChild(span);
-      this.bar.appendChild(ok);
-      this.bar.appendChild(no);
-    },
-
     // ── talking to the server ────────────────────────────────────────
 
     changed: function () {
@@ -979,10 +963,13 @@
       var locals = [];
       this.lines().forEach(function (el) {
         if (el.dataset.id) byId[el.dataset.id] = el;
-        else locals.push({ el: el, after: el.previousElementSibling });
+        else locals.push({ el: el, after: el.previousElementSibling, before: el.nextElementSibling });
       });
 
       var frag = document.createDocumentFragment();
+      // What the browser has been shown is what the server last sent:
+      // a task gone from there is no longer this list's to remove.
+      this.known = {};
       lines.forEach(function (data) {
         self.known[data.id] = true;
         var el = byId[data.id];
@@ -1008,8 +995,13 @@
           if (local.el.parentNode === self.root) self.root.removeChild(local.el);
           return;
         }
+        // Beside the line it followed; failing that, before the one it
+        // preceded; only then at the end — never jumped to the top.
         var after = local.after && local.after.isConnected ? local.after : null;
-        self.root.insertBefore(local.el, after ? after.nextSibling : self.root.firstChild);
+        var before = local.before && local.before.isConnected ? local.before : null;
+        if (after) self.root.insertBefore(local.el, after.nextSibling);
+        else if (before) self.root.insertBefore(local.el, before);
+        else self.root.appendChild(local.el);
       });
       this.refreshEmpty();
       if (keep && keep.line.isConnected && document.activeElement === this.root) this.setCaret(keep.line, keep.offset);

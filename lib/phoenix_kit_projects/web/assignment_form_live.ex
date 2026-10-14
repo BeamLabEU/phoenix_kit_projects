@@ -1064,7 +1064,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
              %{}
            ) do
       Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
-      Outline.move(a, parent.uuid, :last)
+      log_subtask_act(socket, "projects.assignment_created", a.uuid, %{"parent" => parent.uuid})
+      _ = Outline.move(a, parent.uuid, :last)
 
       {:noreply,
        socket
@@ -1079,9 +1080,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     with %Assignment{} = parent <- socket.assigns[:assignment],
          %Assignment{parent_uuid: p} = sub when p == parent.uuid <- Projects.get_assignment(uuid),
          true <- may?(socket, :update_status) do
-      if sub.status == "done",
-        do: Projects.reopen_assignment(sub),
-        else: Projects.complete_assignment(sub, Activity.actor_uuid(socket))
+      {action, result} =
+        if sub.status == "done",
+          do: {"projects.assignment_reopened", Projects.reopen_assignment(sub)},
+          else:
+            {"projects.assignment_completed",
+             Projects.complete_assignment(sub, Activity.actor_uuid(socket))}
+
+      outcome = if match?({:ok, _}, result), do: :ok, else: :failed
+      log_subtask_act(socket, action, sub.uuid, %{}, outcome)
+      # No page around the form to settle the project: a last leaf ticked
+      # here completes it, as it would from the list.
+      Projects.recompute_project_completion(socket.assigns.project.uuid)
 
       fresh = Projects.get_assignment(parent.uuid)
       {:noreply, socket |> assign(assignment: fresh || parent) |> assign_outline(%{})}
@@ -1634,17 +1644,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     parent = if choice == "", do: nil, else: choice
 
     case socket.assigns do
-      %{live_action: :edit, assignment: %Assignment{} = a, parent_task: current}
+      %{
+        live_action: :edit,
+        assignment: %Assignment{} = a,
+        parent_task: current,
+        subtasks_on?: true
+      }
       when current != parent ->
-        case Outline.move(a, parent, :last) do
-          {:ok, moved} ->
-            socket
-            |> assign(assignment: %{a | parent_uuid: moved.parent_uuid})
-            |> assign_outline(%{})
-
-          {:error, _} ->
-            put_flash(socket, :error, gettext("The task could not be moved there."))
-        end
+        if may?(socket, :edit_tasks), do: move_to(socket, a, parent), else: socket
 
       %{live_action: :new} ->
         assign(socket, parent_task: parent)
@@ -1655,6 +1662,34 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp maybe_move(socket, _params), do: socket
+
+  defp move_to(socket, a, parent) do
+    case Outline.move(a, parent, :last) do
+      {:ok, moved} ->
+        log_subtask_act(socket, "projects.assignment_moved", a.uuid, %{"parent" => parent})
+
+        socket
+        |> assign(assignment: %{a | parent_uuid: moved.parent_uuid})
+        |> assign_outline(%{})
+
+      {:error, _} ->
+        log_subtask_act(socket, "projects.assignment_moved", a.uuid, %{}, :failed)
+        put_flash(socket, :error, gettext("The task could not be moved there."))
+    end
+  end
+
+  defp log_subtask_act(socket, action, uuid, metadata, outcome \\ :ok) do
+    opts = [
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "assignment",
+      resource_uuid: uuid,
+      metadata: Map.put(metadata, "project_uuid", socket.assigns.project.uuid)
+    ]
+
+    if outcome == :ok, do: Activity.log(action, opts), else: Activity.log_failed(action, opts)
+  rescue
+    _ -> :ok
+  end
 
   defp may?(socket, action) do
     PhoenixKitProjects.Authz.can?(

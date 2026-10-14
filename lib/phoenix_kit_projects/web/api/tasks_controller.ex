@@ -834,10 +834,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   # Every accepted row under a task, any depth — what a delete takes with it.
-  defp below(%Assignment{uuid: uuid, project_uuid: project_uuid}) do
-    under = project_uuid |> Outline.shape() |> Outline.descendants(uuid) |> MapSet.new(& &1.uuid)
-    project_uuid |> Projects.list_assignments() |> Enum.filter(&MapSet.member?(under, &1.uuid))
-  end
+  # Everything the delete would take: held subtasks too, since the
+  # database cascade takes them whether or not a list shows them.
+  defp below(%Assignment{} = a), do: Outline.rows_below(a)
 
   # ── Subtasks: move, and many lines at once ──────────────────────
 
