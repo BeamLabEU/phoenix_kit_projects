@@ -64,6 +64,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       # A link may name the field it is about (`?focus=waiting_on`): the
       # form opens with the cursor there.
       |> assign(focus_field: Map.get(resolved_params, "focus"))
+      |> assign(save_state: :idle, save_error: nil, pending_params: nil, autosave_timer: nil)
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
       |> assign_logged_minutes()
@@ -880,6 +881,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # ── Validate ────────────────────────────────────────────────────
 
   @impl true
+  # "Done" on a task being edited: what is still waiting is saved first;
+  # if that fails the form stays open on the error.
+  def handle_event("close_form", _params, socket) do
+    socket = socket |> cancel_autosave() |> autosave_now()
+
+    if socket.assigns[:save_state] == :error do
+      {:noreply, socket}
+    else
+      fallback =
+        case socket.assigns[:project] do
+          %{uuid: uuid} -> Paths.project(uuid)
+          _ -> Paths.projects()
+        end
+
+      {:noreply, WebHelpers.close_or_navigate(socket, fallback)}
+    end
+  end
+
   def handle_event("cancel", _params, socket) do
     fallback =
       case socket.assigns[:project] do
@@ -1016,7 +1035,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
        task_form: task_form,
        add_to_library: add_to_library
      )
-     |> WebHelpers.mark_dirty()}
+     |> WebHelpers.mark_dirty()
+     |> schedule_autosave(params)}
   end
 
   # ── Dependency management (edit mode) ───────────────────────────
@@ -1043,6 +1063,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   # ── Save ────────────────────────────────────────────────────────
+
+  # A task being edited saves as it is changed (`schedule_autosave/2`):
+  # Enter in a field just saves now, and nothing closes.
+  def handle_event(
+        "save",
+        %{"assignment" => _} = params,
+        %{assigns: %{live_action: :edit, kind: "task"}} = socket
+      ) do
+    {:noreply,
+     socket
+     |> keep_edit_title(params)
+     |> cancel_autosave()
+     |> assign(:pending_params, params)
+     |> autosave_now()}
+  end
 
   def handle_event("save", %{"assignment" => attrs} = params, socket) do
     socket = keep_edit_title(socket, params)
@@ -2148,6 +2183,144 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # ── Saving as you go (a task being edited) ──
+  #
+  # The shape of the publishing editor's: every change restarts a short
+  # timer; when it runs out the form is saved, and a quiet line says where
+  # things stand (saving, saved, or why not). There is no Save and no
+  # Cancel: a task's form is where its state is read and changed, and
+  # logging time, dependencies and the portal switches already wrote at
+  # once — the fields now do too (Max, 2026-10-14).
+  @autosave_ms 700
+
+  @impl true
+  def handle_info(:autosave, socket),
+    do: {:noreply, socket |> assign(:autosave_timer, nil) |> autosave_now()}
+
+  def handle_info(_message, socket), do: {:noreply, socket}
+
+  defp schedule_autosave(%{assigns: %{live_action: :edit, kind: "task"}} = socket, params) do
+    socket = cancel_autosave(socket)
+
+    assign(socket,
+      pending_params: params,
+      save_state: :pending,
+      autosave_timer: Process.send_after(self(), :autosave, @autosave_ms)
+    )
+  end
+
+  defp schedule_autosave(socket, _params), do: socket
+
+  defp cancel_autosave(socket) do
+    if timer = socket.assigns[:autosave_timer], do: Process.cancel_timer(timer)
+    assign(socket, :autosave_timer, nil)
+  end
+
+  # Saves what the form last sent, through the same steps a submit took
+  # (gates re-read, the other assignee kinds cleared, translations merged,
+  # the checklist folded), and stays where it is.
+  defp autosave_now(%{assigns: %{pending_params: %{"assignment" => attrs} = params}} = socket) do
+    assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
+    fx = Features.gates(socket.assigns.project)
+
+    socket =
+      assign(socket,
+        fx: fx,
+        pending_labels: if(fx.labels, do: Enum.uniq(List.wrap(params["labels"] || [])))
+      )
+
+    attrs =
+      attrs
+      |> clear_other_assignees(assign_type)
+      |> strip_gated_attrs(fx)
+      |> merge_attrs(socket)
+      |> fold_checklist(params, socket.assigns[:assignment])
+
+    {attrs, task_words} = split_task_words(socket, attrs)
+
+    case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
+      {:ok, updated} ->
+        words_saved = save_task_words(updated, task_words)
+        save_edit_title(socket, updated)
+
+        # The words become the person's only when the person changed them:
+        # a form that saves on every change must not take a task's text
+        # from the agent that wrote it because its priority was touched.
+        if words_changed?(socket, attrs, task_words) do
+          _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
+
+          sync_task_mentions(
+            socket,
+            updated.uuid,
+            attrs["description"] || (task_words && task_words["description"])
+          )
+        end
+
+        apply_pending_labels(socket, updated)
+
+        socket
+        |> log_edit_once(updated)
+        |> hold_saved(updated)
+        |> assign(
+          pending_params: nil,
+          save_state: if(words_saved == :ok, do: :saved, else: :error),
+          save_error:
+            if(words_saved == :ok, do: nil, else: gettext("The description could not be saved.")),
+          dirty?: false
+        )
+        |> WebHelpers.notify_dirty(false)
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        socket
+        |> assign_form(Map.put(cs, :action, :validate))
+        |> assign(save_state: :error, save_error: first_error_message(cs))
+    end
+  rescue
+    e ->
+      Logger.error("[Projects] a task's form could not be saved: #{Exception.message(e)}")
+      assign(socket, save_state: :error, save_error: gettext("Could not save. Try again."))
+  end
+
+  defp autosave_now(socket), do: socket
+
+  defp words_changed?(socket, attrs, task_words) do
+    shown = socket.assigns.assignment
+    title = socket.assigns[:edit_title]
+
+    not is_nil(task_words) or
+      (Map.has_key?(attrs, "description") and
+         (attrs["description"] || "") != (shown.description || "")) or
+      (socket.assigns[:title_editable?] == true and is_binary(title) and
+         match?(%Task{}, shown.task) and String.trim(title) != shown.task.title)
+  end
+
+  # The record the next change is compared with: the task as it is now
+  # saved, in the form's own shape (its own description shown, short refs).
+  defp hold_saved(socket, %Assignment{uuid: uuid} = updated) do
+    {record, desc_on_task?} = own_description(Projects.get_assignment(uuid) || updated)
+
+    assign(socket,
+      assignment: RefText.collapse_fields(record, [:description]),
+      desc_on_task?: desc_on_task?
+    )
+  end
+
+  # One line in the project's activity per visit to the form, not one per
+  # pause in typing.
+  defp log_edit_once(%{assigns: %{edit_logged?: true}} = socket, _updated), do: socket
+
+  defp log_edit_once(socket, updated) do
+    Activity.log("projects.assignment_updated",
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "assignment",
+      resource_uuid: updated.uuid,
+      target_uuid: Activity.assignee_target_uuid(updated),
+      metadata: %{"project" => socket.assigns.project.name}
+    )
+
+    assign(socket, :edit_logged?, true)
+  end
+
   defp save_edit(socket, attrs) do
     {attrs, task_words} = split_task_words(socket, attrs)
 
@@ -2945,9 +3118,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     <input type="checkbox" name="billable" value="true" form="assignment-log-form" class="checkbox checkbox-sm" />
                     {gettext("Billable")}
                   </label>
-                  <span class="text-xs text-base-content/60 flex-1 text-right">
-                    {gettext("Logged right away — the rest of the form saves with Save.")}
-                  </span>
                   <button type="submit" form="assignment-log-form" class="btn btn-primary btn-sm" phx-disable-with={gettext("Saving…")}>
                     <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Log time")}
                   </button>
@@ -3247,12 +3417,34 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
              "Add & next" in the markup and CSS `order` puts it last on
              screen. "Add & next" carries `then=next`, which LiveView sends
              as the submitter — Shift+Enter presses it through PkShiftEnter. --%>
-        <%!-- Always in reach: the form is two screens long, and the thing
-             most often changed (the status) is at its top. --%>
-        <div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 mt-2 py-2 px-3 rounded-box border border-base-300 bg-base-100 shadow">
-          <span :if={@dirty?} class="mr-auto text-xs text-warning" id="assignment-unsaved">
-            {gettext("Unsaved changes")}
+        <%!-- A task being edited saves as it is changed: no Save, no
+             Cancel — a line that says where things stand, and Done. Always
+             in reach: the form is two screens long. --%>
+        <div
+          :if={@live_action == :edit}
+          id="assignment-save-bar"
+          class="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-2 mt-2 py-2 px-3 rounded-box border border-base-300 bg-base-100 shadow"
+        >
+          <span id="assignment-save-state" role="status" class="inline-flex items-center gap-1.5 text-xs text-base-content/60">
+            <%= case @save_state do %>
+              <% :pending -> %>
+                <span class="loading loading-spinner loading-xs"></span> {gettext("Saving…")}
+              <% :saved -> %>
+                <.icon name="hero-check" class="w-3.5 h-3.5 text-success" /> {gettext("Saved")}
+              <% :error -> %>
+                <span class="badge badge-error badge-sm h-auto gap-1">
+                  <.icon name="hero-exclamation-triangle" class="w-3 h-3" />
+                  {gettext("Not saved")}: {@save_error}
+                </span>
+              <% _ -> %>
+                {gettext("Changes are saved as you make them.")}
+            <% end %>
           </span>
+          <button type="button" phx-click="close_form" class="btn btn-sm">
+            {gettext("Done")}
+          </button>
+        </div>
+        <div :if={@live_action != :edit} class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 mt-2 py-2 px-3 rounded-box border border-base-300 bg-base-100 shadow">
           <button
             type="button"
             phx-click="cancel"
