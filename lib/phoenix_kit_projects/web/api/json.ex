@@ -23,8 +23,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     TaskNotes
   }
 
+  alias PhoenixKitProjects.Outline.Api, as: OutlineApi
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
-  alias PhoenixKitProjects.Web.Api.Docs
+  alias PhoenixKitProjects.Web.Api.{Assignee, Docs}
 
   @lifecycle ~w(todo in_progress done)
   @transitions %{
@@ -95,14 +96,21 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   @spec scope_project(Plug.Conn.t(), map()) :: {:ok, Plug.Conn.t()} | {:halt, Plug.Conn.t()}
   def scope_project(conn, params) do
     case Map.get(params, "project") do
-      uuid when is_binary(uuid) and uuid != "" ->
-        if uuid == conn.assigns.pk_project.uuid do
-          {:ok, conn}
-        else
-          case within_reach?(conn.assigns.pk_api_key, uuid) && Projects.get_project(uuid) do
-            %Project{} = project -> {:ok, rescope(conn, project)}
-            _ -> {:halt, no_such_project(conn)}
-          end
+      ref when is_binary(ref) and ref != "" ->
+        # A uuid or a key (`ANDI`): resolved first, then held to the key's
+        # reach, so a key that names somebody else's project answers the
+        # same 404 as one that names nothing.
+        case Projects.get_project(ref) do
+          %Project{uuid: uuid} when uuid == conn.assigns.pk_project.uuid ->
+            {:ok, conn}
+
+          %Project{uuid: uuid} = project ->
+            if within_reach?(conn.assigns.pk_api_key, uuid),
+              do: {:ok, rescope(conn, project)},
+              else: {:halt, no_such_project(conn)}
+
+          _ ->
+            {:halt, no_such_project(conn)}
         end
 
       _ ->
@@ -228,20 +236,34 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   The JSON shape of a task (an assignment with its task or sub-project
   preloaded). `totals` — minutes, tokens and cents logged on it — comes
   from `Ledger.totals_for_assignments/1`: pass the batch for a list, or
-  nothing for one task.
+  nothing for one task. `outline` is the project's shape
+  (`Outline.Api.info/1`), read once for a list; one task reads its own.
   """
-  @spec task(Assignment.t(), map() | nil, [map()] | nil, [String.t()] | nil) :: map()
-  def task(%Assignment{} = a, totals \\ nil, labels \\ nil, interactions \\ nil) do
+  @spec task(Assignment.t(), map() | nil, [map()] | nil, [String.t()] | nil, map() | nil) ::
+          map()
+  def task(%Assignment{} = a, totals \\ nil, labels \\ nil, interactions \\ nil, outline \\ nil) do
     totals =
       (totals || Map.get(Ledger.totals_for_assignments([a.uuid]), a.uuid))
       |> whole_totals()
 
     labels = labels || Map.get(Labels.labels_for_assignments([a.uuid]), a.uuid, [])
-    checklist = Assignment.checklist_counts(a)
+    place = OutlineApi.place(outline || OutlineApi.info(a.project_uuid), a)
 
     %{
       totals: totals,
       uuid: a.uuid,
+      # the short name: `ANDI-42` for a task; for a sub-project row the
+      # CHILD's key (work goes to the child — `parent_ref` is the row's
+      # own place in this list). Accepted wherever a task uuid is.
+      ref: Assignment.ref(a),
+      number: a.number,
+      parent_ref: if(a.child_project_uuid, do: Assignment.row_ref(a)),
+      # the task this one sits under (`ANDI-40`), null at the top level;
+      # how deep it sits; and, for a task with tasks under it, how many of
+      # the ones at the bottom of its branch are done
+      parent_task: place.parent_task,
+      depth: place.depth,
+      subtasks: place.subtasks,
       kind: if(a.child_project_uuid, do: "subproject", else: "task"),
       # a nested project's own answers — a caught-up ongoing child reads
       # as in_progress at 100% on its row, this says why
@@ -259,8 +281,13 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       child_project_uuid: a.child_project_uuid,
       waiting_on: a.waiting_on,
       origin: a.origin,
+      start_date: a.start_date,
+      end_date: a.end_date,
+      overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
-      checklist: checklist,
+      # who it is FOR (a person, a team or a department), apart from who
+      # made it and who started it
+      assignee: Assignee.to_json(a),
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       words_by: if(a.words_by_key_uuid, do: %{key: a.words_by_key_uuid}, else: %{person: true}),
@@ -277,7 +304,8 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   direction now (the latest `redirect` a person wrote), the last agent
   note's outcome, the one line to read (`display_summary`: the person's
   description, else the direction, else the latest agent summary marked
-  as such), and where the whole notes thread is.
+  as such), where the whole notes thread is, and the tasks directly under
+  it (`subtask_refs`, in order).
   """
   @spec task_detail(Assignment.t()) :: map()
   def task_detail(%Assignment{} = a) do
@@ -285,7 +313,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     display = TaskNotes.display_summary(description(a), latest)
 
     %{
-      checklist_items: a.checklist || [],
+      subtask_refs: OutlineApi.subtask_refs(OutlineApi.info(a.project_uuid), a.uuid),
       direction: latest.redirect && TaskNotes.to_json(latest.redirect),
       last_outcome: latest.agent && latest.agent.metadata["outcome"],
       latest_agent_note: latest.agent && TaskNotes.to_json(latest.agent),
@@ -349,6 +377,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
 
     %{
       uuid: p.uuid,
+      key: p.key,
       name: p.name,
       description: p.description,
       start_mode: p.start_mode,
@@ -365,7 +394,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       subprojects: Enum.map(Projects.child_projects(p.uuid), &subproject/1)
     }
   rescue
-    _ -> %{uuid: p.uuid, name: p.name}
+    _ -> %{uuid: p.uuid, key: p.key, name: p.name}
   end
 
   defp parent_uuid(%Project{uuid: uuid}) do
@@ -380,6 +409,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   defp subproject(%Project{} = p) do
     %{
       uuid: p.uuid,
+      key: p.key,
       name: p.name,
       description: p.description,
       workflow_status: p.current_status_slug,

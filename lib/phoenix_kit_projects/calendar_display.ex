@@ -208,7 +208,7 @@ defmodule PhoenixKitProjects.CalendarDisplay do
       the configured marker).
   """
   @spec task_events(
-          [{map(), %{start: NaiveDateTime.t(), end: NaiveDateTime.t()}}],
+          [{map(), PhoenixKitProjects.ScheduleLayout.span()}],
           String.t() | nil,
           String.t(),
           keyword()
@@ -221,8 +221,18 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     Enum.map_reduce(items_with_spans, %{}, fn {item, span}, meta ->
       %{assignment: a, project: project} = item
 
-      start_d = to_date(naive_to_utc(span.start), offset)
-      end_d = exclusive_end_date(start_d, span.end, offset)
+      # a task with its own dates occupies those days wherever the viewer
+      # sits; a computed span is an instant, read in the viewer's frame
+      {start_d, end_d} =
+        case span do
+          %{pinned: {from, to}} ->
+            {from, Date.add(to, 1)}
+
+          _ ->
+            start_d = to_date(naive_to_utc(span.start), offset)
+            {start_d, exclusive_end_date(start_d, span.end, offset)}
+        end
+
       {bg, text} = color_for(project.uuid)
       late? = task_late?(a, span, now)
 
@@ -359,6 +369,26 @@ defmodule PhoenixKitProjects.CalendarDisplay do
     class = if late? and marker == "ring", do: @late_class
 
     event(project, start_d, last_day, lang, extra, class)
+  end
+
+  # Ongoing work never started by hand is under way since it was made.
+  defp running_event(
+         %{project: %Project{started_at: nil, inserted_at: %DateTime{} = made} = project} =
+           summary,
+         lang,
+         today,
+         offset,
+         marker
+       ) do
+    if Project.ongoing?(project) do
+      running_event(
+        %{summary | project: %{project | started_at: made}},
+        lang,
+        today,
+        offset,
+        marker
+      )
+    end
   end
 
   defp running_event(_, _, _, _, _), do: nil

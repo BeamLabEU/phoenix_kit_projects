@@ -323,6 +323,13 @@ defmodule PhoenixKitProjects do
         app: :phoenix_live_calendar,
         file: "static/assets/phoenix_live_calendar.js",
         global: "PhoenixLiveCalendarHooks"
+      },
+      # This module's own hooks: the typed task list (`PkpOutline`) and a
+      # title edited in place on a card row (`PkpTitle`). Plain JS, no build.
+      %{
+        app: :phoenix_kit_projects,
+        file: "static/assets/phoenix_kit_projects.js",
+        global: "PhoenixKitProjectsHooks"
       }
     ]
   end
@@ -369,7 +376,8 @@ defmodule PhoenixKitProjects do
           :delete_tasks,
           :assign_tasks,
           :update_status,
-          :log_time
+          :log_time,
+          :log_time_for_others
         ],
         # The FROZEN pre-hub flag catalog (2026-08-05 panel amendment #6):
         # every flag defaults true so existing projects are unchanged with
@@ -388,6 +396,10 @@ defmodule PhoenixKitProjects do
           # its In-progress column only while one is there.
           %{key: "in_progress", label: gettext_noop("In-progress step"), default: true},
           %{key: "assignees", label: gettext_noop("Assignees"), default: true},
+          # Tasks under tasks (V23): Tab in the list, a parent on the form
+          # and in the API. Off, the list stays flat; subtasks already made
+          # keep their place.
+          %{key: "subtasks", label: gettext_noop("Subtasks"), default: true},
           %{key: "estimates", label: gettext_noop("Estimates & durations"), default: true},
           %{
             key: "progress",
@@ -426,6 +438,18 @@ defmodule PhoenixKitProjects do
             label: gettext_noop("Calendar view"),
             default: true,
             requires: ["scheduling"]
+          }
+        ],
+        # Hours: the work ledger read back — who worked, on what, when —
+        # with its chart, timesheet and report. A contributed tab like any
+        # provider's, offered only while the `ledger` flag is on.
+        tabs: [
+          %{
+            key: "hours",
+            label: gettext_noop("Hours"),
+            icon: "hero-clock",
+            lv: PhoenixKitProjects.Web.ProjectHoursLive,
+            requires_flag: "ledger"
           }
         ]
       },
@@ -629,12 +653,12 @@ defmodule PhoenixKitProjects do
   # Paths reach the matcher normalised (URL prefix + locale stripped, no
   # trailing slash): the landing itself and every project page under it —
   # i.e. anything under `projects` that is not one of the sibling subtabs
-  # (`tasks`, `templates`, `overview`). Legacy `list/…` addresses redirect
+  # (`tasks`, `templates`, `hours`, `overview`). Legacy `list/…` addresses redirect
   # before they render, so they need no match. A function, not a module
   # attribute — a compiled Regex holds a reference and cannot be injected
   # into a function body.
   defp projects_list_match,
-    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|overview)(/|$))(/.*)?$}}
+    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|hours|overview)(/|$))(/.*)?$}}
 
   @impl PhoenixKit.Module
   def admin_tabs do
@@ -708,6 +732,22 @@ defmodule PhoenixKitProjects do
         parent: :admin_projects,
         live_view: {PhoenixKitProjects.Web.TasksLive, :index}
       },
+      # Hours across every project the viewer may see: the same page as a
+      # project's Hours tab, with a project filter.
+      %Tab{
+        id: :admin_projects_hours,
+        label: "Hours",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-clock",
+        path: "projects/hours",
+        priority: 664,
+        level: :admin,
+        permission: module_key(),
+        match: :prefix,
+        parent: :admin_projects,
+        live_view: {PhoenixKitProjects.Web.ProjectHoursLive, :index}
+      },
       # Last on purpose: the list is where the work is, the Overview is
       # the read-only picture of it. Its pieces are also dashboards-module
       # widgets (`DashboardWidgets`) for anyone who wants them on a board.
@@ -718,7 +758,7 @@ defmodule PhoenixKitProjects do
         gettext_domain: "default",
         icon: "hero-home",
         path: "projects/overview",
-        priority: 664,
+        priority: 665,
         level: :admin,
         permission: module_key(),
         match: :prefix,

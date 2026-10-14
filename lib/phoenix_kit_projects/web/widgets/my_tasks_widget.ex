@@ -125,7 +125,8 @@ defmodule PhoenixKitProjects.Web.Widgets.MyTasksWidget do
     """
   end
 
-  defp task_label(%Assignment{} = a), do: Assignment.label(a) || gettext("Untitled task")
+  # A subtask on a plate names the task it sits under: "Kitchen / Order tiles".
+  defp task_label(%Assignment{} = a), do: Assignment.label_under(a) || gettext("Untitled task")
 
   defp dot_class("in_progress"), do: "bg-warning"
   defp dot_class("done"), do: "bg-success"

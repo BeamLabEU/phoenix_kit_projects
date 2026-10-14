@@ -7,8 +7,11 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   # Declared up here because the `use UrlState` below evaluates its options in
   # the module body, so the whitelist has to exist by then.
-  @sort_fields ~w(position name inserted_at updated_at)a
+  # Every sort the list accepts: the four the database orders, and one per
+  # sortable column (`Web.ProjectListColumns`), which the list orders itself.
+  @sort_fields PhoenixKitProjects.Web.ProjectListColumns.sort_fields()
   @sort_field_strs Enum.map(@sort_fields, &Atom.to_string/1)
+  @state_filters ["" | PhoenixKitProjects.Web.ProjectListColumns.states()]
 
   # Search, status filter and sort live in the query string, so a filtered list
   # is a real URL: shareable, reload-proof, and Back returns to the previous
@@ -30,15 +33,29 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       search: [default: "", url_key: "q"],
       status_filter: [default: nil, url_key: "status"],
       sort_by: [default: :updated_at, cast: :atom, in: @sort_fields, url_key: "sort"],
-      sort_dir: [default: :desc, cast: :atom, in: [:asc, :desc], url_key: "dir"]
+      sort_dir: [default: :desc, cast: :atom, in: [:asc, :desc], url_key: "dir"],
+      # Which extension column `sort=ext` means. An id is open-ended (the
+      # catalog's), so it is checked against the loaded columns when used.
+      sort_ext: [default: "", url_key: "sortx"],
+      # The filters panel (`Web.ProjectListColumns`' filters). `who` is
+      # "mine" or a user uuid; the extension pair names one column and one
+      # of its values — both open-ended, both only ever compared.
+      f_state: [default: "", url_key: "state", in: @state_filters],
+      f_who: [default: "", url_key: "who"],
+      f_overdue: [default: false, cast: :boolean, url_key: "overdue"],
+      f_archived: [default: "no", url_key: "archived", in: ~w(no all only)],
+      f_subs: [default: false, cast: :boolean, url_key: "subs"],
+      f_ext_col: [default: "", url_key: "xcol"],
+      f_ext_val: [default: "", url_key: "xval"]
     ]
 
-  alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{Activity, Authz, Health, L10n, ListMetrics, Paths, Projects, Statuses}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
-  alias PhoenixKitProjects.Web.Components.ConfirmAction
+  alias PhoenixKitProjects.Web.Components.{ConfirmAction, MoveProject}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.ListUi
+  alias PhoenixKitProjects.Web.ProjectListColumns, as: Columns
   alias PhoenixKitWeb.TableColumns
 
   require Logger
@@ -67,8 +84,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   @local_search_threshold 100
 
   # Optional table columns (Name and Actions always render), each viewer's
-  # own choice through core's column picker (`ListUi` moduledoc).
-  @default_columns ~w(status)
+  # own choice through core's column picker (`ListUi` moduledoc). The roster
+  # and the defaults live in `Web.ProjectListColumns`; the extensions' own
+  # columns (the CRM's Client, say) join both.
+  # How long the list waits after a reload before it reloads again for
+  # changes that arrived meanwhile (`handle_info/2`).
+  @reload_pause_ms 400
+
   @columns_key "projects.list"
   @column_events ~w(add_column remove_column reorder_columns reset_columns)
 
@@ -105,8 +127,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         total_count: 0,
         filtered_count: 0,
         local_search?: true,
-        task_counts: %{},
-        creators: %{},
+        # What the columns, the sort and the filters read for the listed
+        # projects (`ListMetrics`).
+        metrics: %{},
+        any_projects?: false,
+        filters_open: false,
+        people_options: [],
+        ext_filter_options: %{},
         projects: [],
         bulk_enabled?: true,
         # `captured_uuids` is the snapshot taken from the DOM at the
@@ -125,8 +152,16 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
 
-    # The viewer's columns, read once the embed user is known.
-    socket = assign(socket, visible_columns: ListUi.load_columns(socket, columns_spec()))
+    # The extensions' columns the viewer may see (the columns alone — their
+    # values are read with the list), then the viewer's own choice, read
+    # once the embed user is known.
+    ext_columns =
+      ListMetrics.load([], [:ext], scope: socket.assigns[:phoenix_kit_current_scope]).ext
+
+    socket = assign(socket, ext_columns: ext_columns)
+
+    socket =
+      assign(socket, visible_columns: ListUi.load_columns(socket, columns_spec(ext_columns)))
 
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
@@ -147,86 +182,198 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   @impl true
-  def handle_info({:projects, _event, _payload}, socket), do: {:noreply, load_projects(socket)}
+  # Any change anywhere in the module arrives here, and one act is often
+  # several messages (a task done: the task, its project's rollup, the
+  # parent's). The first one reloads at once; the rest of a burst wait for
+  # the pause that follows and share one reload.
+  def handle_info({:projects, _event, _payload}, socket) do
+    case socket.assigns[:reload] do
+      nil ->
+        Process.send_after(self(), :reload_settled, @reload_pause_ms)
+        {:noreply, socket |> assign(:reload, :fresh) |> load_projects()}
+
+      _busy ->
+        {:noreply, assign(socket, :reload, :stale)}
+    end
+  end
+
+  def handle_info(:reload_settled, socket) do
+    case socket.assigns[:reload] do
+      :stale ->
+        Process.send_after(self(), :reload_settled, @reload_pause_ms)
+        {:noreply, socket |> assign(:reload, :fresh) |> load_projects()}
+
+      _ ->
+        {:noreply, assign(socket, :reload, nil)}
+    end
+  end
 
   def handle_info(msg, socket) do
     Logger.debug("[ProjectsLive] unexpected handle_info: #{inspect(msg)}")
     {:noreply, socket}
   end
 
+  # One load, two shapes.
+  #
+  # PLAIN: a database-ordered sort and no panel filter. At or below
+  # @local_search_threshold projects the whole set is rendered and the
+  # client hook narrows it; above it, the database searches and pages
+  # (load-more), exactly as before the columns grew.
+  #
+  # COMPUTED: a sort or a filter over a value that is read for the listed
+  # projects (progress, hours, the client…), which the database query does
+  # not carry. The list then loads the WHOLE visible set (searched in SQL
+  # past the threshold), reads only the families the sort and the filters
+  # need for it, filters and sorts in memory, and slices to the load-more
+  # cap. Sites hold tens to hundreds of projects, and each family is a
+  # fixed number of statements however many there are.
+  #
+  # Either way the families behind the VISIBLE columns are read for the
+  # rows that are drawn, never per row.
   defp load_projects(socket) do
-    status_slug = socket.assigns[:status_filter]
-    search = socket.assigns.search
+    a = socket.assigns
+    scope = a[:phoenix_kit_current_scope]
+    filters = filters(a)
 
-    total =
-      Projects.count_projects_for(socket.assigns[:phoenix_kit_current_scope], archived: false)
+    total = Projects.count_projects_for(scope, archived: false)
+    listing = listing_opts(a)
+    listed_total = if default_listing?(a), do: total, else: count_listed(scope, listing)
+    local_search? = listed_total <= @local_search_threshold
+    computed? = computed?(a, filters, local_search?)
 
-    local_search? = total <= @local_search_threshold
+    # Scoped to the viewer IN THE QUERY, before any sort or filter here: a
+    # non-admin's list is the projects they hold, so nothing below can
+    # widen it. Admins with projects.admin_all still see everything.
+    listed = Projects.list_projects_for(scope, list_opts(a, listing, local_search?, computed?))
 
-    base_opts = [
-      archived: false,
-      current_status_slug: status_slug || :all,
-      sort_by: socket.assigns.sort_by,
-      sort_dir: socket.assigns.sort_dir
-    ]
+    pre = pre_families(a, filters, computed?)
+    metrics = ListMetrics.load(listed, pre, scope: scope)
 
-    # Local mode: the full (status-filtered) set stays rendered and the
-    # client hook does the search narrowing — no SQL search, no limit.
-    # Server mode: SQL search + load-more pagination.
-    list_opts =
-      if local_search? do
-        base_opts
+    rows =
+      if computed? do
+        listed
+        |> Columns.filter(filters, metrics, viewer_uuid(socket))
+        |> sort_rows(a, metrics)
       else
-        base_opts
-        |> Keyword.put(:search, search)
-        |> then(fn opts ->
-          if socket.assigns.pagination == "load_more",
-            do: Keyword.put(opts, :limit, socket.assigns.loaded_count),
-            else: opts
-        end)
+        listed
       end
 
-    # Scoped to the viewer: the index showed every project on the site to
-    # anyone who could reach the module, which since the permission split
-    # is a population that legitimately includes contractors. Admins with
-    # projects.admin_all still see everything.
-    scope = socket.assigns[:phoenix_kit_current_scope]
-    projects = Projects.list_projects_for(scope, list_opts)
-    uuids = Enum.map(projects, & &1.uuid)
-    visible = socket.assigns.visible_columns
+    page =
+      if computed? and not local_search? and a.pagination == "load_more",
+        do: Enum.take(rows, a.loaded_count),
+        else: rows
+
+    visible = Columns.families_for(a.visible_columns) ++ if(a.f_subs, do: [:parents], else: [])
+    metrics = Map.merge(metrics, ListMetrics.load(page, visible -- pre, scope: scope))
 
     assign(socket,
-      projects: projects,
+      projects: page,
+      metrics: metrics,
       total_count: total,
+      # Sub-projects count: someone who belongs only to a sub-project has
+      # nothing at the top level, and must still get the toolbar whose
+      # "include sub-projects" filter is how they find it.
+      any_projects?:
+        total > 0 or count_listed(scope, archived: :all, include_subprojects: true) > 0,
       local_search?: local_search?,
-      filtered_count:
-        if(local_search?,
-          do: total,
-          else:
-            Projects.count_projects_for(scope,
-              archived: false,
-              current_status_slug: status_slug || :all,
-              search: search
-            )
-        ),
-      task_counts:
-        if("tasks" in visible, do: Projects.assignment_counts_for_projects(uuids), else: %{}),
-      creators:
-        if("created_by" in visible,
-          do:
-            Projects.creation_actors(uuids, [
-              "projects.project_created",
-              "projects.project_created_from_template"
-            ]),
-          else: %{}
-        ),
+      filtered_count: filtered_count(a, scope, listing, rows, local_search?, computed?),
+      # The filter panel's own options come from the set BEFORE the panel's
+      # filters narrowed it — otherwise picking a client would leave that
+      # client as the only one to pick.
+      people_options: if(a.filters_open, do: Columns.people_options(metrics), else: []),
+      ext_filter_options: ext_filter_options(a, metrics),
       # Per-row current status for the list badge, batched to avoid N+1.
       workflow_status_by_project:
-        if(socket.assigns.statuses_available,
-          do: Statuses.statuses_for_projects(projects),
+        if(a.statuses_available and "status" in a.visible_columns,
+          do: Statuses.statuses_for_projects(page),
           else: %{}
         )
     )
+  end
+
+  defp filters(a) do
+    %{
+      state: a.f_state,
+      who: a.f_who,
+      overdue: a.f_overdue,
+      ext_col: a.f_ext_col,
+      ext_val: a.f_ext_val
+    }
+  end
+
+  # What the database narrows by whichever shape the load takes.
+  defp listing_opts(a) do
+    [
+      archived: archived_opt(a.f_archived),
+      include_subprojects: a.f_subs,
+      current_status_slug: a[:status_filter] || :all
+    ]
+  end
+
+  defp archived_opt("all"), do: :all
+  defp archived_opt("only"), do: true
+  defp archived_opt(_), do: false
+
+  defp default_listing?(a),
+    do: a.f_archived == "no" and not a.f_subs and is_nil(a[:status_filter])
+
+  defp count_listed(scope, opts),
+    do: Projects.count_projects_for(scope, Keyword.take(opts, [:archived, :include_subprojects]))
+
+  # An open filter panel counts too, past the threshold: its options are
+  # the people and the clients of the whole set, not of one page.
+  defp computed?(a, filters, local_search?) do
+    not Columns.sql_sort?(a.sort_by) or Columns.active_count(filters) > 0 or
+      (a.filters_open and not local_search?)
+  end
+
+  defp list_opts(a, listing, local_search?, computed?) do
+    sort_by = if Columns.sql_sort?(a.sort_by), do: a.sort_by, else: :position
+    opts = listing ++ [sort_by: sort_by, sort_dir: a.sort_dir]
+
+    cond do
+      # Local mode: the full set stays rendered and the client hook does
+      # the search narrowing — no SQL search, no limit.
+      local_search? -> opts
+      computed? -> Keyword.put(opts, :search, a.search)
+      a.pagination == "load_more" -> opts ++ [search: a.search, limit: a.loaded_count]
+      true -> Keyword.put(opts, :search, a.search)
+    end
+  end
+
+  defp pre_families(a, filters, computed?) do
+    sort = if computed?, do: [Columns.sort_family(a.sort_by)], else: []
+    panel = if a.filters_open, do: [:members, :ext], else: []
+
+    (sort ++ Columns.filter_families(filters) ++ panel)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+  end
+
+  defp sort_rows(rows, a, metrics) do
+    if Columns.sql_sort?(a.sort_by),
+      do: rows,
+      else: Columns.sort(rows, a.sort_by, a.sort_dir, metrics, a.sort_ext)
+  end
+
+  defp filtered_count(_a, _scope, _listing, rows, _local?, true), do: length(rows)
+  defp filtered_count(_a, _scope, _listing, rows, true, _computed?), do: length(rows)
+
+  defp filtered_count(a, scope, listing, _rows, _local?, _computed?),
+    do: Projects.count_projects_for(scope, Keyword.put(listing, :search, a.search))
+
+  defp viewer_uuid(socket) do
+    case socket.assigns[:phoenix_kit_current_user] do
+      %{uuid: uuid} -> uuid
+      _ -> PhoenixKitWeb.Actor.uuid(socket)
+    end
+  end
+
+  # `%{column_id => [value]}` for the extension columns the panel filters by.
+  defp ext_filter_options(%{filters_open: false}, _metrics), do: %{}
+
+  defp ext_filter_options(_a, metrics) do
+    metrics |> Map.get(:ext, []) |> Map.new(&{&1.id, Columns.ext_options(&1)})
   end
 
   # Shared-catalog statuses as `{label, slug}` for the filter select.
@@ -257,13 +404,106 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     """
   end
 
-  defp sort_options do
-    [
-      {:position, gettext("Manual")},
-      {:name, gettext("Name")},
-      {:inserted_at, gettext("Date created")},
-      {:updated_at, gettext("Last edited")}
-    ]
+  # The filters panel's toggle, beside the search box: says how many
+  # filters are set, so a narrowed list never looks like the whole one.
+  defp filters_button(assigns) do
+    assigns =
+      assign(assigns, :active, Columns.active_count(filters(assigns)) + listing_filters(assigns))
+
+    ~H"""
+    <button
+      type="button"
+      id="projects-filters-toggle"
+      class={["btn btn-sm gap-1", @filters_open && "btn-active"]}
+      phx-click="toggle_filters"
+      aria-expanded={to_string(@filters_open)}
+    >
+      <.icon name="hero-funnel" class="w-4 h-4" />
+      <span class="hidden sm:inline">{gettext("Filters")}</span>
+      <span :if={@active > 0} class="badge badge-primary badge-sm">{@active}</span>
+    </button>
+    """
+  end
+
+  # Archived and sub-projects change WHICH projects are listed rather than
+  # narrow them, but they are choices the reader made all the same.
+  defp listing_filters(assigns) do
+    Enum.count([assigns.f_archived != "no", assigns.f_subs], & &1)
+  end
+
+  # One row under the toolbar, only while open: every choice is a select
+  # or a tick in a single form, so one `phx-change` carries the whole
+  # panel and the URL takes it from there.
+  defp filters_panel(assigns) do
+    ~H"""
+    <form
+      :if={@filters_open}
+      id="projects-filters"
+      phx-change="filter"
+      class="flex flex-wrap items-center gap-2 rounded-box border border-base-300 bg-base-100 px-3 py-2"
+    >
+      <.select
+        name="state"
+        value={@f_state}
+        options={Enum.map(Columns.states(), &{Columns.state_label(&1), &1})}
+        prompt={gettext("Any state")}
+        class="select-sm"
+        aria-label={gettext("State")}
+      />
+      <.select
+        name="who"
+        value={@f_who}
+        options={[{gettext("My projects"), "mine"} | @people_options]}
+        prompt={gettext("Anyone")}
+        class="select-sm"
+        aria-label={gettext("Member")}
+      />
+      <.select
+        :for={col <- @ext_columns}
+        name={"ext[#{col.id}]"}
+        value={if(@f_ext_col == col.id, do: @f_ext_val, else: "")}
+        options={Enum.map(Map.get(@ext_filter_options, col.id, []), &{&1, &1})}
+        prompt={gettext("Any %{column}", column: String.downcase(col.label))}
+        class="select-sm"
+        aria-label={col.label}
+      />
+      <.select
+        name="archived"
+        value={@f_archived}
+        options={[
+          {gettext("Not archived"), "no"},
+          {gettext("With archived"), "all"},
+          {gettext("Archived only"), "only"}
+        ]}
+        class="select-sm"
+        aria-label={gettext("Archived")}
+      />
+      <label class="label cursor-pointer gap-2 text-sm">
+        <input type="hidden" name="overdue" value="false" />
+        <input type="checkbox" name="overdue" value="true" checked={@f_overdue} class="checkbox checkbox-sm" />
+        {gettext("Has overdue tasks")}
+      </label>
+      <label class="label cursor-pointer gap-2 text-sm">
+        <input type="hidden" name="subs" value="false" />
+        <input type="checkbox" name="subs" value="true" checked={@f_subs} class="checkbox checkbox-sm" />
+        {gettext("Include sub-projects")}
+      </label>
+      <button
+        :if={filters_set?(assigns)}
+        type="button"
+        id="projects-filters-clear"
+        class="btn btn-ghost btn-sm gap-1 ml-auto"
+        phx-click="clear_filters"
+      >
+        <.icon name="hero-x-mark" class="w-4 h-4" /> {gettext("Clear filters")}
+      </button>
+    </form>
+    """
+  end
+
+  defp filters_set?(assigns) do
+    Columns.active_count(filters(assigns)) + listing_filters(assigns) > 0 or
+      not is_nil(assigns[:status_filter])
   end
 
   @impl true
@@ -283,18 +523,19 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     end
   end
 
+  # The "Move…" dialog: nest a project under another (it then leaves this
+  # list, which the reload shows).
+  def handle_event(event, params, socket)
+      when event in ~w(move_project_open move_project_change move_project_submit move_project_close),
+      do:
+        MoveProject.handle_event(event, params, socket, fn socket, _ -> load_projects(socket) end)
+
   # Sort selector fires `sort_form` for both field changes (via the
   # form's phx-change) and direction toggles (via the button's
   # phx-click). One event, two shapes — derive the missing half from
   # current state.
   def handle_event("sort_form", params, socket) do
-    field_str = params["sort_by"] || Atom.to_string(socket.assigns.sort_by)
     dir_str = params["sort_dir"] || Atom.to_string(socket.assigns.sort_dir)
-
-    field =
-      if field_str in @sort_field_strs,
-        do: String.to_existing_atom(field_str),
-        else: socket.assigns.sort_by
 
     dir =
       case dir_str do
@@ -302,7 +543,48 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         _ -> :asc
       end
 
-    {:noreply, apply_sort(socket, field, dir)}
+    {field, ext} = sort_target(params["sort_by"], socket)
+    {:noreply, apply_sort(socket, field, dir, ext)}
+  end
+
+  # The filters panel: closed by default so the toolbar stays one line.
+  # Opening it reloads — its selects list the people and the extension
+  # values of the listed projects, which a closed panel never reads.
+  def handle_event("toggle_filters", _params, socket) do
+    {:noreply, socket |> assign(filters_open: not socket.assigns.filters_open) |> load_projects()}
+  end
+
+  # One change event for the whole panel. Every value is re-validated by
+  # UrlState's spec on the way in (`in:` lists, boolean casts), so a forged
+  # value can only land on a default; `who` and the extension pair are
+  # open-ended and only ever compared against what is loaded.
+  def handle_event("filter", params, socket) do
+    {ext_col, ext_val} = ext_filter_param(params["ext"], socket)
+
+    {:noreply,
+     push_url_state(socket,
+       f_state: string_param(params["state"]),
+       f_who: string_param(params["who"]),
+       f_overdue: params["overdue"] == "true",
+       f_archived: if(params["archived"] in ~w(all only), do: params["archived"], else: "no"),
+       f_subs: params["subs"] == "true",
+       f_ext_col: ext_col,
+       f_ext_val: ext_val
+     )}
+  end
+
+  def handle_event("clear_filters", _params, socket) do
+    {:noreply,
+     push_url_state(socket,
+       status_filter: nil,
+       f_state: "",
+       f_who: "",
+       f_overdue: false,
+       f_archived: "no",
+       f_subs: false,
+       f_ext_col: "",
+       f_ext_val: ""
+     )}
   end
 
   # Workflow-status filter. Empty value clears it. Reset `loaded_count`
@@ -315,18 +597,19 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
   # Header-click sort: clicking the active column flips direction,
   # clicking a different column switches to it with :asc.
-  def handle_event("toggle_sort", %{"by" => field_str}, socket)
-      when field_str in @sort_field_strs do
-    field = String.to_existing_atom(field_str)
+  def handle_event("toggle_sort", %{"by" => field_str}, socket) when is_binary(field_str) do
+    a = socket.assigns
+    {field, ext} = sort_target(field_str, socket)
+    same? = field == a.sort_by and (field != :ext or ext == a.sort_ext)
 
     dir =
-      if field == socket.assigns.sort_by do
-        if socket.assigns.sort_dir == :asc, do: :desc, else: :asc
-      else
-        :asc
+      cond do
+        not same? -> :asc
+        a.sort_dir == :asc -> :desc
+        true -> :asc
       end
 
-    {:noreply, apply_sort(socket, field, dir)}
+    {:noreply, apply_sort(socket, field, dir, ext)}
   end
 
   def handle_event("toggle_sort", _params, socket), do: {:noreply, socket}
@@ -355,7 +638,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # the viewer. Reload so a newly-shown tasks / created_by column gets its
   # batched lookup map (hidden columns skip those queries).
   def handle_event(event, params, socket) when event in @column_events do
-    socket = TableColumns.handle_event(event, params, socket, columns_spec(), :visible_columns)
+    socket =
+      TableColumns.handle_event(
+        event,
+        params,
+        socket,
+        columns_spec(socket.assigns.ext_columns),
+        :visible_columns
+      )
+
     {:noreply, load_projects(socket)}
   end
 
@@ -511,9 +802,46 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # Sort change resets the load-more cap (otherwise a switch from
   # Name back to Manual would still show only the first @per_batch
   # rows of the new sort, leaving the user confused).
-  defp apply_sort(socket, field, dir) do
-    push_url_state(socket, sort_by: field, sort_dir: dir)
+  defp apply_sort(socket, field, dir, ext) do
+    push_url_state(socket, sort_by: field, sort_dir: dir, sort_ext: ext)
   end
+
+  # `{sort atom, extension column id}` for a sort the client named: a
+  # whitelisted field (never an atom minted from the param), or one of the
+  # extension columns this viewer was offered. Anything else keeps the
+  # current sort.
+  defp sort_target("ext:" <> _ = id, socket) do
+    if Enum.any?(socket.assigns.ext_columns, &(&1.id == id)),
+      do: {:ext, id},
+      else: {socket.assigns.sort_by, socket.assigns.sort_ext}
+  end
+
+  defp sort_target(field_str, _socket) when field_str in @sort_field_strs and field_str != "ext",
+    do: {String.to_existing_atom(field_str), ""}
+
+  defp sort_target(_other, socket), do: {socket.assigns.sort_by, socket.assigns.sort_ext}
+
+  defp string_param(value) when is_binary(value), do: value
+  defp string_param(_), do: ""
+
+  # The panel posts one select per extension column (`ext[<id>]`); the
+  # first one with a value is the filter (the list filters by one extension
+  # value at a time). Only a column this viewer was offered counts.
+  defp ext_filter_param(%{} = by_column, socket) do
+    offered = Enum.map(socket.assigns.ext_columns, & &1.id)
+    current = socket.assigns.f_ext_col
+
+    by_column
+    |> Enum.filter(fn {id, value} -> id in offered and is_binary(value) and value != "" end)
+    # A second column's select changing wins over the one already set.
+    |> Enum.sort_by(fn {id, _} -> id == current end)
+    |> case do
+      [{id, value} | _] -> {id, value}
+      [] -> {"", ""}
+    end
+  end
+
+  defp ext_filter_param(_other, _socket), do: {"", ""}
 
   defp sanitize_uuids(%{"uuids" => uuids}) when is_list(uuids) do
     Enum.filter(uuids, &is_binary/1)
@@ -548,7 +876,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       <.url_state_sync mode={:history} id="projects-list-url-state" />
       <%!-- True-empty install only — a no-match SEARCH/FILTER must keep
            the toolbar on screen so the query can be cleared. --%>
-      <%= if @total_count == 0 do %>
+      <%= if not @any_projects? do %>
         <.empty_state icon="hero-clipboard-document-list" title={gettext("No projects yet.")}>
           <:cta>
             <.new_project_button
@@ -572,8 +900,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
              a sparse subset, so DnD stays off until the full set is
              loaded (local-search mode always loads the full set). --%>
         <% lang = L10n.current_content_lang() %>
+        <%!-- Any panel filter, the archived view and the flat sub-project
+             view are sparse or foreign subsets too (a sub-project's position
+             is its place in its PARENT's plan), so they switch DnD off the
+             same way. --%>
         <% draggable? =
           @sort_by == :position and is_nil(@status_filter) and String.trim(@search) == "" and
+            not filters_set?(assigns) and
             (@local_search? or @loaded_count >= @total_count) %>
 
         <.bulk_select_scope
@@ -614,12 +947,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 class="w-48"
               />
               {status_filter_control(assigns)}
+              {filters_button(assigns)}
             </:leading>
             <:trailing>
               <.sort_selector
-                sort_by={@sort_by}
+                sort_by={if(@sort_by == :ext, do: @sort_ext, else: @sort_by)}
                 sort_dir={@sort_dir}
-                options={sort_options()}
+                options={Columns.sort_options(@ext_columns)}
                 manual_field={:position}
               />
               <ListUi.columns_button />
@@ -628,6 +962,8 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
               <.new_project_button embed_mode={@embed_mode} />
             </:primary>
           </.bulk_actions_toolbar>
+
+          {filters_panel(assigns)}
 
           {render_projects_table(assigns, draggable?, lang)}
 
@@ -651,13 +987,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         <%= if not @bulk_enabled? do %>
           <div class="flex items-center gap-2">
             <.sort_selector
-              sort_by={@sort_by}
+              sort_by={if(@sort_by == :ext, do: @sort_ext, else: @sort_by)}
               sort_dir={@sort_dir}
-              options={sort_options()}
+              options={Columns.sort_options(@ext_columns)}
               manual_field={:position}
             />
             {status_filter_control(assigns)}
+            {filters_button(assigns)}
           </div>
+          {filters_panel(assigns)}
           {render_projects_table(assigns, draggable?, lang)}
         <% end %>
       <% end %>
@@ -682,26 +1020,26 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       <.column_settings_modal
         show={@show_column_modal}
         id="projects-column-settings"
-        columns={columns_spec().columns}
+        columns={columns_spec(@ext_columns).columns}
         selected={@visible_columns}
       />
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
+      <.move_project_modal move={assigns[:move_project]} />
     </div>
     """
   end
 
-  defp column_options do
-    [
-      {"status", gettext("Status")},
-      {"tasks", gettext("Tasks")},
-      {"created", gettext("Created")},
-      {"updated", gettext("Last edited")},
-      {"created_by", gettext("Created by")},
-      {"external_id", gettext("External ID")}
-    ]
-  end
+  # The picker's roster: the native columns (`Web.ProjectListColumns` —
+  # add one there, plus its `column_cell/3` clause below), then whatever the
+  # extensions contribute. A new viewer sees Status, the extensions' columns
+  # (the client), then the rest of the defaults.
+  defp columns_spec(ext_columns) do
+    options =
+      Enum.map(Columns.specs(), &{&1.id, &1.label}) ++ Enum.map(ext_columns, &{&1.id, &1.label})
 
-  defp columns_spec, do: ListUi.columns_spec(@columns_key, column_options(), @default_columns)
+    [first | rest] = Columns.default_columns()
+    ListUi.columns_spec(@columns_key, options, [first | Enum.map(ext_columns, & &1.id)] ++ rest)
+  end
 
   attr(:embed_mode, :atom, required: true)
   attr(:label, :string, default: nil)
@@ -734,7 +1072,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     assigns = assign(assigns, draggable?: draggable?, lang: lang)
 
     ~H"""
-    <.table_default id="projects-list" size="sm" {ListUi.table_fit()}>
+    <.table_default id="projects-list" size="sm" fit>
       <.table_default_header>
         <.table_default_row>
           <.drag_handle_header_cell :if={@draggable?} />
@@ -743,7 +1081,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
             id="projects-select-all"
             aria_label={gettext("Select all projects")}
           />
-          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}} data-col-lead="true">
+          <.sort_header_cell field={:name} sort={%{by: @sort_by, dir: @sort_dir}} lead>
             {gettext("Name")}
           </.sort_header_cell>
           <%= for col <- @visible_columns do %>
@@ -760,13 +1098,19 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         <.sortable_row
           :for={p <- @projects}
           item_id={p.uuid}
-          data-search={ListUi.search_haystack(p, ["name", "description"])}
+          data-search={ListUi.search_haystack(p, ["name", "description"]) <> " " <> String.downcase(p.key || "")}
         >
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={p.uuid} />
-          <.table_default_cell class="font-medium" data-col-lead="true">
+          <.table_default_cell class="font-medium" lead>
+            <%!-- A sub-project listed flat says where it lives: its parent,
+                 muted, before its own name. --%>
+            <% parent = Columns.get(@metrics, :parents, p) %>
+            <span :if={parent} class="font-normal text-base-content/50">
+              {Project.localized_name(parent, @lang)} /
+            </span>
             <.smart_link
-              navigate={Paths.project(p.uuid)}
+              navigate={Paths.project(p)}
               emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => p.uuid}}}
               embed_mode={@embed_mode}
               class="link link-hover"
@@ -774,7 +1118,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
               {Project.localized_name(p, @lang)}
             </.smart_link>
             <% desc = Project.localized_description(p, @lang) %>
-            <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md">{desc}</div>
+            <div :if={desc} class="text-xs text-base-content/60 truncate max-w-md" title={desc}>{desc}</div>
           </.table_default_cell>
           <%= for col <- @visible_columns do %>
             {column_cell(assigns, col, p)}
@@ -787,6 +1131,12 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 embed_mode={@embed_mode}
                 icon="hero-pencil"
                 label={gettext("Edit")}
+              />
+              <.table_row_menu_button
+                phx-click="move_project_open"
+                phx-value-uuid={p.uuid}
+                icon="hero-arrows-right-left"
+                label={gettext("Move…")}
               />
               <.table_row_menu_divider />
               <.table_row_menu_button
@@ -816,70 +1166,77 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     """
   end
 
-  # One optional column's header cell, by id. Sortable columns keep core's
-  # sortable header; every one carries its fit class and drop priority.
-  defp column_header(assigns, "status") do
-    ~H"""
-    <.table_default_header_cell {ListUi.column_attrs("status")}>{gettext("Status")}</.table_default_header_cell>
-    """
-  end
+  # One optional column's header cell, by id: an extension's column sorts
+  # by its text; a native one keeps core's sortable header when its spec
+  # names a sort. Every one carries its fit class and drop priority.
+  defp column_header(assigns, "ext:" <> _ = id) do
+    assigns =
+      assign(assigns,
+        id: id,
+        label: Enum.find_value(assigns.ext_columns, id, &(&1.id == id && &1.label)),
+        active: assigns.sort_by == :ext and assigns.sort_ext == id
+      )
 
-  defp column_header(assigns, "tasks") do
     ~H"""
-    <.table_default_header_cell {ListUi.column_attrs("tasks", "text-right")}>
-      {gettext("Tasks")}
+    <.table_default_header_cell {ListUi.column_attrs(@id)}>
+      <button
+        type="button"
+        phx-click="toggle_sort"
+        phx-value-by={@id}
+        class="group inline-flex items-center gap-1 cursor-pointer select-none hover:opacity-80"
+      >
+        {@label}
+        <.icon :if={@active and @sort_dir == :asc} name="hero-chevron-up-mini" class="w-4 h-4" />
+        <.icon :if={@active and @sort_dir == :desc} name="hero-chevron-down-mini" class="w-4 h-4" />
+        <.icon
+          :if={not @active}
+          name="hero-chevron-up-down-mini"
+          class="w-4 h-4 opacity-30 group-hover:opacity-70"
+        />
+      </button>
     </.table_default_header_cell>
     """
   end
 
-  defp column_header(assigns, "created") do
-    ~H"""
-    <.sort_header_cell
-      field={:inserted_at}
-      sort={%{by: @sort_by, dir: @sort_dir}}
-      {ListUi.column_attrs("created")}
-    >
-      {gettext("Created")}
-    </.sort_header_cell>
-    """
-  end
+  defp column_header(assigns, id) do
+    assigns = assign(assigns, id: id, spec: Columns.spec(id))
 
-  defp column_header(assigns, "updated") do
     ~H"""
-    <.sort_header_cell
-      field={:updated_at}
-      sort={%{by: @sort_by, dir: @sort_dir}}
-      {ListUi.column_attrs("updated")}
-    >
-      {gettext("Last edited")}
-    </.sort_header_cell>
-    """
-  end
-
-  defp column_header(assigns, "created_by") do
-    ~H"""
-    <.table_default_header_cell {ListUi.column_attrs("created_by")}>
-      {gettext("Created by")}
-    </.table_default_header_cell>
-    """
-  end
-
-  defp column_header(assigns, "external_id") do
-    ~H"""
-    <.table_default_header_cell {ListUi.column_attrs("external_id")}>
-      {gettext("External ID")}
-    </.table_default_header_cell>
+    <%= case @spec do %>
+      <% nil -> %>
+        <.table_default_header_cell {ListUi.column_attrs(@id)}></.table_default_header_cell>
+      <% %{sort: nil} = spec -> %>
+        <.table_default_header_cell
+          title={spec.label}
+          {ListUi.column_attrs(@id, spec.align == :right && "text-right")}
+        >
+          {Columns.header(spec)}
+        </.table_default_header_cell>
+      <% spec -> %>
+        <.sort_header_cell
+          field={spec.sort}
+          sort={%{by: @sort_by, dir: @sort_dir}}
+          align={spec.align}
+          title={spec.label}
+          {ListUi.column_attrs(@id)}
+        >
+          {Columns.header(spec)}
+        </.sort_header_cell>
+    <% end %>
     """
   end
 
   # One optional column's body cell for project `p`, by id — the same
-  # order as the header, which is what `fit` hides columns by.
+  # order as the header, which is what `fit` hides columns by. A new native
+  # column is one clause here (and its entry in `Web.ProjectListColumns`).
   defp column_cell(assigns, "status", p) do
     assigns = assign(assigns, p: p)
 
     ~H"""
     <.table_default_cell>
-      <div class="flex flex-wrap items-center gap-1">
+      <%!-- Two different things, one under the other: where the project
+           stands (the system's), then the status its people gave it. --%>
+      <div class="flex flex-col items-start gap-1">
         <.project_status_badge project={@p} />
         <.workflow_status_badge
           :if={@statuses_available}
@@ -890,53 +1247,242 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
     """
   end
 
+  defp column_cell(assigns, "progress", p) do
+    assigns = assign(assigns, t: Columns.get(assigns.metrics, :tasks, p))
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap">
+      <%= if @t && @t.has_work do %>
+        <div class="flex items-center gap-2">
+          <progress class="progress progress-primary w-16" value={@t.progress_pct} max="100"></progress>
+          <span class="tabular-nums text-xs text-base-content/70">{@t.progress_pct}%</span>
+        </div>
+      <% else %>
+        <span class="text-base-content/40">—</span>
+      <% end %>
+    </.table_default_cell>
+    """
+  end
+
   defp column_cell(assigns, "tasks", p) do
-    assigns = assign(assigns, p: p)
+    assigns = assign(assigns, t: Columns.get(assigns.metrics, :tasks, p))
 
     ~H"""
-    <.table_default_cell class="text-right tabular-nums text-base-content/70">
-      {Map.get(@task_counts, @p.uuid, 0)}
+    <.table_default_cell
+      class="text-right tabular-nums text-base-content/70"
+      title={@t && gettext("%{done} of %{total} done", done: @t.done, total: @t.total)}
+    >
+      {if(@t && @t.total > 0, do: "#{@t.done}/#{@t.total}", else: "0")}
     </.table_default_cell>
     """
   end
 
-  defp column_cell(assigns, "created", p) do
-    assigns = assign(assigns, p: p)
+  defp column_cell(assigns, "open_tasks", p),
+    do: number_cell(assigns, Columns.field(assigns.metrics, :tasks, p, :open))
+
+  defp column_cell(assigns, "subprojects", p),
+    do: number_cell(assigns, Columns.field(assigns.metrics, :tasks, p, :subprojects))
+
+  defp column_cell(assigns, "overdue", p) do
+    assigns = assign(assigns, n: Columns.field(assigns.metrics, :due, p, :overdue) || 0)
+
+    ~H"""
+    <.table_default_cell class={["text-right tabular-nums", if(@n > 0, do: "text-error font-medium", else: "text-base-content/40")]}>
+      {@n}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "next_due", p),
+    do: date_cell(assigns, Columns.field(assigns.metrics, :due, p, :next_due))
+
+  defp column_cell(assigns, "next_event", p),
+    do: date_cell(assigns, Columns.get(assigns.metrics, :events, p))
+
+  defp column_cell(assigns, "members", p) do
+    assigns = assign(assigns, m: Columns.get(assigns.metrics, :members, p))
+
+    ~H"""
+    <.table_default_cell
+      class="text-right tabular-nums text-base-content/70"
+      title={@m && Enum.map_join(@m.people, ", ", & &1.name)}
+    >
+      {(@m && @m.count) || 0}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "owner", p),
+    do: text_cell(assigns, p |> Columns.owners(assigns.metrics) |> Enum.join(", "))
+
+  defp column_cell(assigns, "assignee", p) do
+    assigns = assign(assigns, a: Columns.get(assigns.metrics, :assignee, p))
 
     ~H"""
     <.table_default_cell class="whitespace-nowrap text-base-content/70">
-      {L10n.format_date(@p.inserted_at)}
+      <%= if @a do %>
+        <span class="inline-flex items-center gap-1 max-w-[12rem]" title={@a.label}>
+          <.icon name={assignee_kind_icon(@a.kind)} class="w-3.5 h-3.5 shrink-0" />
+          <span class="truncate">{@a.label}</span>
+        </span>
+      <% else %>
+        <span class="text-base-content/40">—</span>
+      <% end %>
     </.table_default_cell>
     """
   end
 
-  defp column_cell(assigns, "updated", p) do
-    assigns = assign(assigns, p: p)
+  defp column_cell(assigns, "started", p), do: date_cell(assigns, p.started_at)
+  defp column_cell(assigns, "completed", p), do: date_cell(assigns, p.completed_at)
+
+  # A finished project has an end already; its planned one is history.
+  defp column_cell(assigns, "eta", p) do
+    eta =
+      if p.completed_at, do: nil, else: Columns.field(assigns.metrics, :tasks, p, :planned_end)
+
+    late? = match?(%DateTime{}, eta) and DateTime.compare(eta, DateTime.utc_now()) == :lt
+    assigns = assign(assigns, eta: eta, late?: late?)
+
+    ~H"""
+    <.table_default_cell class={["whitespace-nowrap", if(@late?, do: "text-error", else: "text-base-content/70")]}>
+      {L10n.format_date(@eta) || "—"}
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "hours", p),
+    do: minutes_cell(assigns, Columns.field(assigns.metrics, :ledger, p, :minutes))
+
+  defp column_cell(assigns, "ai_hours", p),
+    do: minutes_cell(assigns, Columns.field(assigns.metrics, :ledger, p, :ai_minutes))
+
+  defp column_cell(assigns, "total_hours", p),
+    do: minutes_cell(assigns, Columns.total_minutes(assigns.metrics, p))
+
+  defp column_cell(assigns, "billable_hours", p),
+    do: minutes_cell(assigns, Columns.field(assigns.metrics, :ledger, p, :billable_minutes))
+
+  defp column_cell(assigns, "tokens", p) do
+    tokens = Columns.field(assigns.metrics, :ledger, p, :tokens) || 0
+
+    text_cell(
+      assigns,
+      if(tokens > 0, do: ListUi.format_tokens(tokens)),
+      "text-right tabular-nums"
+    )
+  end
+
+  defp column_cell(assigns, "cost", p) do
+    cents = Columns.field(assigns.metrics, :ledger, p, :cost_cents) || 0
+    text_cell(assigns, if(cents > 0, do: ListUi.format_cents(cents)), "text-right tabular-nums")
+  end
+
+  defp column_cell(assigns, "last_activity", p),
+    do: date_cell(assigns, Columns.get(assigns.metrics, :activity, p) || p.updated_at)
+
+  defp column_cell(assigns, "health", p) do
+    assigns = assign(assigns, health: Health.get(p))
+
+    ~H"""
+    <.table_default_cell class="whitespace-nowrap">
+      <%= if @health do %>
+        <span class={["badge badge-sm", health_badge(@health["status"])]} title={@health["note"]}>
+          {health_label(@health["status"])}
+        </span>
+      <% else %>
+        <span class="text-base-content/40">—</span>
+      <% end %>
+    </.table_default_cell>
+    """
+  end
+
+  defp column_cell(assigns, "created", p), do: date_cell(assigns, p.inserted_at)
+  defp column_cell(assigns, "updated", p), do: date_cell(assigns, p.updated_at)
+
+  defp column_cell(assigns, "created_by", p),
+    do: text_cell(assigns, Columns.get(assigns.metrics, :creators, p))
+
+  defp column_cell(assigns, "key", p), do: text_cell(assigns, p.key, "font-mono text-xs")
+
+  defp column_cell(assigns, "external_id", p),
+    do: text_cell(assigns, p.external_id, "font-mono text-xs")
+
+  # An extension's column: its text, linked when it gave a place to go.
+  defp column_cell(assigns, "ext:" <> _ = id, p) do
+    assigns = assign(assigns, v: Columns.ext_value(assigns.metrics, id, p))
 
     ~H"""
     <.table_default_cell class="whitespace-nowrap text-base-content/70">
-      {L10n.format_date(@p.updated_at)}
+      <%= cond do %>
+        <% @v && @v.url -> %>
+          <.link navigate={@v.url} class="link link-hover inline-block max-w-[14rem] truncate align-bottom" title={@v.text}>
+            {@v.text}
+          </.link>
+        <% @v -> %>
+          <span class="inline-block max-w-[14rem] truncate align-bottom" title={@v.text}>{@v.text}</span>
+        <% true -> %>
+          <span class="text-base-content/40">—</span>
+      <% end %>
     </.table_default_cell>
     """
   end
 
-  defp column_cell(assigns, "created_by", p) do
-    assigns = assign(assigns, p: p)
+  defp column_cell(assigns, _unknown, _p) do
+    ~H"""
+    <.table_default_cell></.table_default_cell>
+    """
+  end
+
+  defp number_cell(assigns, n) do
+    assigns = assign(assigns, n: n || 0)
+
+    ~H"""
+    <.table_default_cell class="text-right tabular-nums text-base-content/70">{@n}</.table_default_cell>
+    """
+  end
+
+  defp date_cell(assigns, value) do
+    assigns = assign(assigns, value: value)
 
     ~H"""
     <.table_default_cell class="whitespace-nowrap text-base-content/70">
-      {Map.get(@creators, @p.uuid) || "—"}
+      {L10n.format_date(@value) || "—"}
     </.table_default_cell>
     """
   end
 
-  defp column_cell(assigns, "external_id", p) do
-    assigns = assign(assigns, p: p)
+  defp minutes_cell(assigns, minutes) do
+    assigns = assign(assigns, minutes: minutes || 0)
 
     ~H"""
-    <.table_default_cell class="font-mono text-xs text-base-content/70">
-      {@p.external_id || "—"}
+    <.table_default_cell class="text-right tabular-nums whitespace-nowrap text-base-content/70">
+      {if(@minutes > 0, do: ListUi.format_minutes(@minutes), else: "—")}
     </.table_default_cell>
     """
   end
+
+  defp text_cell(assigns, text, class \\ nil) do
+    assigns = assign(assigns, text: if(text in [nil, ""], do: nil, else: text), class: class)
+
+    ~H"""
+    <.table_default_cell class={["whitespace-nowrap text-base-content/70", @class]}>
+      <span :if={@text} class="inline-block max-w-[14rem] truncate align-bottom" title={@text}>{@text}</span>
+      <span :if={!@text} class="text-base-content/40">—</span>
+    </.table_default_cell>
+    """
+  end
+
+  defp assignee_kind_icon(:team), do: "hero-users"
+  defp assignee_kind_icon(:department), do: "hero-building-office"
+  defp assignee_kind_icon(_person), do: "hero-user"
+
+  defp health_label("on_track"), do: gettext("On track")
+  defp health_label("some_risk"), do: gettext("Some risk")
+  defp health_label("concerned"), do: gettext("Concerned")
+  defp health_label(other), do: other
+
+  defp health_badge("on_track"), do: "badge-success"
+  defp health_badge("some_risk"), do: "badge-warning"
+  defp health_badge("concerned"), do: "badge-error"
+  defp health_badge(_), do: "badge-ghost"
 end

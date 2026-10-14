@@ -55,18 +55,12 @@ defmodule PhoenixKitProjects.Web.ProjectFilesLive do
 
       {:ok,
        socket
+       # Section, trail and key: the one helper for a page under a project.
+       |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
        |> assign(
          # Trail: Admin Panel / Projects / <parents…> / <project> / Files —
          # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
          page_title: gettext("Files"),
-         page_section: gettext("Projects"),
-         page_section_path: Paths.projects(),
-         page_crumbs:
-           Crumbs.project(
-             project,
-             L10n.current_content_lang(),
-             socket.assigns[:phoenix_kit_current_scope]
-           ),
          project: project,
          show_picker: false,
          folder_uuid: Attachments.folder_uuid(project, Activity.actor_uuid(socket))

@@ -57,6 +57,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
           completed_by_uuid: UUIDv7.t() | nil,
           completed_by: User.t() | Ecto.Association.NotLoaded.t() | nil,
           completed_at: DateTime.t() | nil,
+          parent_uuid: UUIDv7.t() | nil,
           translations: translations_map(),
           dependencies: [Dependency.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t() | nil,
@@ -101,8 +102,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     # the API key that created and (last) started it. `waiting_on`: whom
     # the task waits for, nil when it does not — a badge beside the three
     # statuses, not a fourth. `origin`: where a relayed item came from
-    # ("client", "boss"). `checklist`: sub-items ticked one by one,
-    # `[%{"id", "text", "done", "done_at"}]`, never driving `progress_pct`.
+    # ("client", "boss").
     field(:created_by_uuid, UUIDv7)
     field(:created_by_key_uuid, UUIDv7)
     field(:started_by_uuid, UUIDv7)
@@ -112,10 +112,25 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:words_by_key_uuid, UUIDv7)
     field(:waiting_on, :string)
     field(:origin, :string)
-    field(:checklist, {:array, :map}, default: [])
+    # The task's own dates (V21): optional calendar days, either alone.
+    # The task's number in its project (`ANDI-42` is number 42 of the
+    # project keyed `ANDI`; chain V22). The database hands it out on insert
+    # and never reuses one — never cast.
+    field(:number, :integer, read_after_writes: true)
+    field(:start_date, :date)
+    field(:end_date, :date)
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
+
+    # The task this one sits under (chain V23), nil at the top level. Same
+    # project, never its own ancestor — a database trigger holds both. A
+    # subtask is a whole task; `position` stays one depth-first order for
+    # the project, so a parent is followed by everything under it
+    # (`PhoenixKitProjects.Outline`). Never cast: a place in the list is
+    # written only through `Outline.move/3` / `Outline.write_order/2`, which
+    # keep that order and settle the ticks around it.
+    belongs_to(:parent, __MODULE__, foreign_key: :parent_uuid, references: :uuid)
 
     # When set, this assignment IS a sub-project: instead of a reusable task
     # template it points at a child Project embedded in the parent's timeline.
@@ -149,45 +164,12 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   @optional ~w(task_uuid child_project_uuid position description estimated_duration
                estimated_duration_unit counts_weekends progress_pct track_progress priority
                translations assigned_team_uuid assigned_department_uuid assigned_person_uuid
-               waiting_on origin checklist)a
+               waiting_on origin start_date end_date)a
 
   # Server-only fields: set by trusted server code (completion tracking,
   # provenance), never cast from untrusted form params. Use `status_changeset/2`.
   @server_only ~w(completed_by_uuid completed_at created_by_uuid created_by_key_uuid
                   started_by_uuid started_by_key_uuid words_by_key_uuid)a
-
-  @checklist_max 50
-  @checklist_text_max 500
-
-  @doc ~S|A checklist item as stored: `%{"id", "text", "done", "done_at"}`.|
-  @spec checklist_item(map()) :: map() | nil
-  def checklist_item(%{} = item) do
-    text = item["text"] || item[:text]
-
-    if is_binary(text) and String.trim(text) != "" do
-      done = (item["done"] || item[:done]) in [true, "true"]
-
-      %{
-        "id" => item["id"] || item[:id] || Ecto.UUID.generate(),
-        "text" => text |> String.trim() |> String.slice(0, @checklist_text_max),
-        "done" => done,
-        "done_at" =>
-          if(done,
-            do: item["done_at"] || item[:done_at] || DateTime.to_iso8601(DateTime.utc_now())
-          )
-      }
-    end
-  end
-
-  def checklist_item(_), do: nil
-
-  @doc "How many items are done, and how many there are."
-  @spec checklist_counts(t()) :: %{done: non_neg_integer(), total: non_neg_integer()}
-  def checklist_counts(%__MODULE__{checklist: items}) when is_list(items) do
-    %{done: Enum.count(items, &(&1["done"] == true)), total: length(items)}
-  end
-
-  def checklist_counts(_), do: %{done: 0, total: 0}
 
   @doc """
   Form-facing changeset. Does NOT allow setting `completed_by_uuid` or
@@ -215,6 +197,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   defp validate(changeset) do
     changeset
     |> validate_required(@required)
+    |> PhoenixKitProjects.RefText.expand_on_write([:description])
     |> validate_inclusion(:priority, ~w(urgent high normal low))
     |> validate_task_xor_child()
     |> validate_inclusion(:status, @statuses)
@@ -224,10 +207,23 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_translations_shape()
     |> validate_length(:waiting_on, max: 200)
     |> validate_length(:origin, max: 40)
-    |> normalize_checklist()
+    |> validate_dates()
+    |> check_constraint(:end_date,
+      name: :phoenix_kit_project_assignments_dates_check,
+      message: dates_message()
+    )
     |> assoc_constraint(:project)
     |> assoc_constraint(:task)
     |> assoc_constraint(:child_project)
+    |> assoc_constraint(:parent)
+    |> check_constraint(:parent_uuid,
+      name: :phoenix_kit_project_assignments_parent_project,
+      message: gettext("the parent task is in another project")
+    )
+    |> check_constraint(:parent_uuid,
+      name: :phoenix_kit_project_assignments_parent_cycle,
+      message: gettext("a task cannot sit under itself")
+    )
     |> validate_single_assignee()
     |> check_constraint(:assigned_team_uuid,
       name: :phoenix_kit_project_assignments_single_assignee,
@@ -236,24 +232,53 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> task_xor_child_constraints()
   end
 
-  # The checklist as stored: blank items dropped, ids kept or minted,
-  # `done_at` stamped when an item turns done; at most #{@checklist_max}.
-  defp normalize_checklist(changeset) do
-    case get_change(changeset, :checklist) do
-      nil ->
-        changeset
-
-      items when is_list(items) ->
-        items = items |> Enum.map(&checklist_item/1) |> Enum.reject(&is_nil/1)
-
-        if length(items) > @checklist_max,
-          do: add_error(changeset, :checklist, "at most #{@checklist_max} items"),
-          else: put_change(changeset, :checklist, items)
-
-      _ ->
-        add_error(changeset, :checklist, "must be a list of items")
+  defp validate_dates(changeset) do
+    with %Date{} = from <- get_field(changeset, :start_date),
+         %Date{} = to <- get_field(changeset, :end_date),
+         :lt <- Date.compare(to, from) do
+      add_error(changeset, :end_date, dates_message())
+    else
+      _ -> changeset
     end
   end
+
+  defp dates_message, do: gettext("must not be before the start date")
+
+  @doc """
+  True when the task has an end date that has passed and it is not done.
+  `today` is the reader's day (defaults to the UTC day).
+  """
+  @spec overdue?(t(), Date.t()) :: boolean()
+  def overdue?(assignment, today \\ Date.utc_today())
+
+  def overdue?(%__MODULE__{end_date: %Date{} = d, status: status}, %Date{} = today),
+    do: status != "done" and Date.compare(d, today) == :lt
+
+  def overdue?(_, _), do: false
+
+  @doc """
+  What this row is called: a task's ref (`ANDI-42` — its project's key and
+  its number there), and for a sub-project row the CHILD's own key, since
+  work is logged against the child and not against the row that embeds it.
+  `nil` until the project (or child) is loaded or keyed.
+  """
+  @spec ref(t()) :: String.t() | nil
+  def ref(%__MODULE__{child_project_uuid: child, child_project: %{key: key}})
+      when is_binary(child) and is_binary(key),
+      do: key
+
+  def ref(%__MODULE__{child_project_uuid: nil} = a), do: row_ref(a)
+  def ref(_), do: nil
+
+  @doc """
+  The row's own `KEY-number` in the project that lists it — for a task the
+  same as `ref/1`; for a sub-project row, its place in the parent's list.
+  """
+  @spec row_ref(t()) :: String.t() | nil
+  def row_ref(%__MODULE__{number: number, project: %{key: key}}),
+    do: PhoenixKitProjects.Refs.task_ref(key, number)
+
+  def row_ref(_), do: nil
 
   @doc """
   Changeset for the parent-side linking assignment of a **sub-project**.
@@ -393,6 +418,30 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     do: Project.localized_name(cp, lang)
 
   def label(%__MODULE__{}, _lang), do: nil
+
+  @doc """
+  `label/2` with the task it sits under in front — "Kitchen / Order tiles" —
+  for a place that shows a subtask away from its parent (a person's plate,
+  a picker). Reads `:parent` when it is preloaded (with its `:task`), or the
+  parent row passed as `parent`; a top-level task is just its label.
+  """
+  @spec label_under(t(), String.t() | nil, t() | nil) :: String.t() | nil
+  def label_under(assignment, lang \\ nil, parent \\ nil)
+
+  def label_under(%__MODULE__{parent_uuid: nil} = a, lang, _parent), do: label(a, lang)
+
+  def label_under(%__MODULE__{} = a, lang, parent) do
+    parent =
+      case parent || a.parent do
+        %__MODULE__{} = p -> p
+        _ -> nil
+      end
+
+    case {parent && label(parent, lang), label(a, lang)} do
+      {up, own} when is_binary(up) and is_binary(own) -> up <> " / " <> own
+      {_, own} -> own
+    end
+  end
 
   @doc "DB-column field names that participate in the `translations` JSONB."
   @spec translatable_fields() :: [String.t()]

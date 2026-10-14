@@ -40,6 +40,10 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
         {:ok, conn} ->
           key = ApiKeys.touch_last_used(key)
 
+          # A `#KEY-42` this request writes becomes a link only within the
+          # key's reach (`RefText`, "Who is writing").
+          PhoenixKitProjects.RefText.put_writer({:reach, &Json.within_reach?(key, &1)})
+
           conn
           |> assign(:pk_api_key, key)
           |> assign(:pk_project, project)

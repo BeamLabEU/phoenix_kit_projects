@@ -53,7 +53,7 @@ defmodule PhoenixKitProjects.ModuleCallbacksTest do
              ]
     end
 
-    test "js_sources/0 declares the gantt + schedule hook bundles" do
+    test "js_sources/0 declares the gantt, schedule and task-list hook bundles" do
       # Pins the bundles core's :phoenix_kit_js_sources compiler wires into
       # the host LiveSocket (gantt Timeline hooks + schedule enhancement hooks).
       assert PhoenixKitProjects.js_sources() == [
@@ -66,6 +66,11 @@ defmodule PhoenixKitProjects.ModuleCallbacksTest do
                  app: :phoenix_live_calendar,
                  file: "static/assets/phoenix_live_calendar.js",
                  global: "PhoenixLiveCalendarHooks"
+               },
+               %{
+                 app: :phoenix_kit_projects,
+                 file: "static/assets/phoenix_kit_projects.js",
+                 global: "PhoenixKitProjectsHooks"
                }
              ]
     end

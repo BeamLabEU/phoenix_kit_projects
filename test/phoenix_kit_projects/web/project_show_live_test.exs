@@ -549,7 +549,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       # on `Routes.admin_path/2` conditional on the site-wide
       # `default_language_no_prefix` setting (default `false`), so the
       # canonical primary-admin shape is back to `/en/admin/...`.
-      assert_redirect(view, "/en/admin/projects")
+      assert_redirect(view, "#{PhoenixKitProjects.DataCase.admin_projects()}")
     end
   end
 
@@ -674,7 +674,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       html = render_click(view, "switch_tab", %{"tab" => "calendar"})
       # The strip now carries the calendar's canonical address for PkUrlMirror.
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/calendar")
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks/calendar")
+
       calendar = find_live_child(view, "project-calendar-live-#{project.uuid}")
       assert render(calendar) =~ "cal-container"
 
@@ -734,7 +736,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       html = render_click(view, "switch_tab", %{"tab" => "gantt"})
       assert html =~ ~s(phx-hook="PkUrlMirror")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/timeline")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks/timeline")
     end
 
     test "a template show page (router-mounted) renders no tabs — no template gantt route",
@@ -748,7 +752,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
     test "the strip's data-url follows every switch (router mount)", %{conn: conn} do
       project = started_project_for_tabs()
       {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      base = "/en/admin/projects/#{project.uuid}"
+      # Opened by uuid; the address it mirrors is spelled with the key.
+      base = "#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}"
 
       # The bare page is the list view, whose canonical address is `/tasks`.
       assert html =~ ~s(phx-hook="PkUrlMirror")
@@ -767,10 +772,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       project = started_project_for_tabs()
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/gantt")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/timeline")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks/timeline")
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/tasks/board")
-      assert html =~ ~s(data-url="/en/admin/projects/#{project.uuid}/tasks/board")
+
+      assert html =~
+               ~s(data-url="#{PhoenixKitProjects.DataCase.admin_projects()}/#{project.key}/tasks/board")
+
       assert html =~ ~s(id="board-column-)
     end
 

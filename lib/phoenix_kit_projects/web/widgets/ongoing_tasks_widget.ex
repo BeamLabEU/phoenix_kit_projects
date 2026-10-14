@@ -52,10 +52,18 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   defp ongoing_tasks(nil, _limit), do: []
 
   defp ongoing_tasks(project, limit) do
-    project.uuid
-    |> Projects.list_assignments()
-    |> Enum.filter(&(&1.status in ["todo", "in_progress"]))
+    rows = Projects.list_assignments(project.uuid)
+    by_uuid = Map.new(rows, &{&1.uuid, &1})
+
+    # The limit goes to top-level tasks; a subtask takes a slot only when
+    # it is somebody's or has a day of its own (it is otherwise read off
+    # the task it sits under).
+    rows
+    |> Enum.filter(
+      &(&1.status in ["todo", "in_progress"] and (is_nil(&1.parent_uuid) or own_line?(&1)))
+    )
     |> Enum.take(limit)
+    |> Enum.map(&%{&1 | parent: &1.parent_uuid && Map.get(by_uuid, &1.parent_uuid)})
   rescue
     # Never crash the host dashboard: a transient DB error renders the
     # widget's empty state instead of taking down the host LiveView.
@@ -124,7 +132,12 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
     """
   end
 
-  defp task_label(%Assignment{} = a), do: Assignment.label(a) || gettext("Untitled task")
+  defp own_line?(%Assignment{} = a) do
+    not is_nil(a.assigned_person_uuid) or not is_nil(a.assigned_team_uuid) or
+      not is_nil(a.assigned_department_uuid) or not is_nil(a.start_date) or not is_nil(a.end_date)
+  end
+
+  defp task_label(%Assignment{} = a), do: Assignment.label_under(a) || gettext("Untitled task")
 
   defp dot_class("in_progress"), do: "bg-warning"
   defp dot_class("done"), do: "bg-success"

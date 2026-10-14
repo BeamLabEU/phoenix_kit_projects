@@ -283,7 +283,8 @@ defmodule PhoenixKitProjects.Web.ApiTest do
     assert me["extensions"]["tasks"] == true
     assert me["key"]["kind"] == "personal"
     assert me["key"]["role"] == "manager"
-    assert me["acting_for"] == %{"uuid" => owner.uuid, "name" => "Max Don"}
+    # `person_uuid`: their staff record (none here), what `assignee: "me"` names
+    assert me["acting_for"] == %{"uuid" => owner.uuid, "name" => "Max Don", "person_uuid" => nil}
     assert "manage_members" not in me["allowed_actions"]
 
     # a task the key creates is logged under the person

@@ -147,7 +147,11 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
     gettext("Started %{when}", when: relative_day(days))
   end
 
-  defp started_when_label(_), do: gettext("Not started yet")
+  defp started_when_label(project) do
+    if Project.ongoing?(project),
+      do: gettext("Ongoing"),
+      else: gettext("Not started yet")
+  end
 
   # Inlined here (rather than depending on a sibling LV's private helper) so the
   # component stays self-contained. Mirrors `OverviewLive.relative_day/1`.

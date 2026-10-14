@@ -28,7 +28,13 @@ defmodule PhoenixKitProjects.IdempotencyLivenessTest do
 
     # runs before the mode is restored (on_exit is last in, first out); the
     # key and its idempotency rows go with the project
-    on_exit(fn -> Repo.delete_all(from(p in Project, where: p.uuid == ^project.uuid)) end)
+    # — except its key: the registry keeps a deleted project's key retired
+    # (chain V22), and these rows are really committed, so it is removed by
+    # hand or every run would leave one behind for a later fixture to hit
+    on_exit(fn ->
+      Repo.delete_all(from(p in Project, where: p.uuid == ^project.uuid))
+      Repo.delete_all(from(k in "phoenix_kit_project_keys", where: k.key == ^project.key))
+    end)
 
     {:ok, key: key}
   end

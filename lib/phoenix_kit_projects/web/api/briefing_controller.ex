@@ -2,7 +2,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   @moduledoc """
   `GET /briefing` — what an agent needs to pick a project up in one read:
   the project (its completion mode, whether it is caught up, what an agent
-  may do here), the open tasks with the direction a person set, the last
+  may do here), the open top-level tasks (each with how many of the tasks
+  under it are done) with the direction a person set, the last
   outcome, the latest agent note's summary and next steps, who started
   them, what they wait on, the sub-projects in one line each, and the
   project's own notes since a moment. Bounded: the open tasks are capped
@@ -12,8 +13,16 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   use Phoenix.Controller, formats: [:json]
 
   alias PhoenixKitProjects.{Extensions, Labels, ProjectEvents, Projects, TaskNotes}
+  alias PhoenixKitProjects.Outline.Api, as: OutlineApi
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
-  alias PhoenixKitProjects.Web.Api.{EventsController, ExtController, Json, NotesController}
+
+  alias PhoenixKitProjects.Web.Api.{
+    Assignee,
+    EventsController,
+    ExtController,
+    Json,
+    NotesController
+  }
 
   @max_tasks 50
   @max_notes 20
@@ -30,14 +39,24 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
       key = conn.assigns.pk_api_key
       all = Projects.list_assignments(project.uuid)
-      {done, open} = Enum.split_with(all, &(&1.status == "done"))
+      outline = OutlineApi.info(project.uuid)
+      {done, open_any} = Enum.split_with(all, &(&1.status == "done"))
 
       # What to do next, in order: what this key already has in hand, what
       # is ready, what waits on someone — priority then position inside
       # each; done today last, as a tail of ids and titles.
+      #
+      # Ready and waiting are the TOP-LEVEL tasks: a task with thirty tasks
+      # under it is one line carrying `subtasks: {done, total}`, not thirty
+      # that push everything else past the cap. What the key has in hand is
+      # listed wherever it sits.
       mine =
-        Enum.filter(open, &(&1.status == "in_progress" and &1.started_by_key_uuid == key.uuid))
+        Enum.filter(
+          open_any,
+          &(&1.status == "in_progress" and &1.started_by_key_uuid == key.uuid)
+        )
 
+      open = Enum.filter(open_any, &(Map.get(outline.depths, &1.uuid, 0) == 0 or &1 in mine))
       waiting = Enum.filter(open, &(is_binary(&1.waiting_on) and &1 not in mine))
       ready = Enum.reject(open, &(&1 in mine or &1 in waiting))
 
@@ -48,7 +67,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       shown = Enum.take(ordered, limit)
 
       labels = Labels.labels_for_assignments(Enum.map(shown, & &1.uuid))
-      briefs = Enum.map(shown, &brief_task(&1, labels[&1.uuid] || []))
+      me = Assignee.person_uuid(key)
+      briefs = Enum.map(shown, &brief_task(&1, labels[&1.uuid] || [], me, outline))
 
       notes =
         if TaskNotes.available?(),
@@ -78,8 +98,17 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
           agent_policy: Project.agent_policy(project)
         },
         open_total: length(open),
+        # every open task at any depth, the ones under the listed tasks included
+        open_with_subtasks: length(open_any),
         truncated: length(open) > length(shown),
-        counts: %{mine: length(mine), ready: length(ready), waiting: length(waiting)},
+        counts: %{
+          mine: length(mine),
+          # open tasks assigned to the person this key acts for
+          assigned_to_me: Enum.count(open, &(is_binary(me) and &1.assigned_person_uuid == me)),
+          ready: length(ready),
+          waiting: length(waiting),
+          overdue: Enum.count(open, &Assignment.overdue?/1)
+        },
         resume: resume(briefs, notes, key),
         tasks: briefs,
         done_today: done_today,
@@ -110,7 +139,13 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         case list_interactions(provider, Json.rescope(conn, p), since) do
           # one line each: the bodies are the interaction's own read
           {:ok, %{interactions: rows}} ->
-            %{project_uuid: p.uuid, interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"]))}
+            %{
+              project_uuid: p.uuid,
+              interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"])),
+              # what is planned with the client, soonest first — and what is
+              # past its time with no outcome said (`overdue`)
+              planned: planned_lines(provider, Json.rescope(conn, p))
+            }
 
           _ ->
             nil
@@ -129,6 +164,26 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
     params = if since, do: Map.put(params, "since", DateTime.to_iso8601(since)), else: params
     # credo:disable-for-next-line Credo.Check.Refactor.Apply
     apply(provider, :list, [ExtController.ctx(conn), params])
+  end
+
+  # A provider that knows no `status` answers its usual list; only rows
+  # that say they are planned are taken.
+  defp planned_lines(provider, conn) do
+    # credo:disable-for-next-line Credo.Check.Refactor.Apply
+    case apply(provider, :list, [
+           ExtController.ctx(conn),
+           %{"status" => "planned", "limit" => "5"}
+         ]) do
+      {:ok, %{interactions: rows}} ->
+        rows
+        |> Enum.filter(&(Map.get(&1, :status) == "planned"))
+        |> Enum.map(&Map.drop(&1, [:body, "body"]))
+
+      _ ->
+        []
+    end
+  rescue
+    _ -> []
   end
 
   defp upcoming_events(project) do
@@ -202,7 +257,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   defp limit(_), do: @max_tasks
 
-  defp brief_task(%Assignment{} = a, labels) do
+  defp brief_task(%Assignment{} = a, labels, me, outline) do
+    place = OutlineApi.place(outline, a)
+
     latest =
       if TaskNotes.available?(), do: TaskNotes.latest(a.uuid), else: %{redirect: nil, agent: nil}
 
@@ -210,16 +267,24 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
     %{
       uuid: a.uuid,
+      ref: Assignment.ref(a),
       kind: if(a.child_project_uuid, do: "subproject", else: "task"),
       title: Assignment.label(a),
       status: a.status,
       priority: a.priority,
       position: a.position,
+      parent_task: place.parent_task,
+      depth: place.depth,
+      subtasks: place.subtasks,
       waiting_on: a.waiting_on,
       origin: a.origin,
+      start_date: a.start_date,
+      end_date: a.end_date,
+      overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
-      checklist: Assignment.checklist_counts(a),
       interactions: Projects.interactions_of(a),
+      assignee: Assignee.to_json(a),
+      assigned_to_me: is_binary(me) and a.assigned_person_uuid == me,
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       direction: latest.redirect && brief_note(latest.redirect),

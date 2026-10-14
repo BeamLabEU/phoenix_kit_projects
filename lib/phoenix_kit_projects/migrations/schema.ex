@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 20
+  @current_version 23
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -117,6 +117,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v18_key_persons(p)
     v19_agent_work(p)
     v20_words_and_links(p)
+    v21_task_dates(p)
+    v22_refs(p, prefix)
+    v23_subtasks(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -142,18 +145,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     # that may since have been legitimately edited; deliberately no
     # down-path (the projects convention for data migrations).
 
-    if target < 20, do: down_v20(p)
+    down_task_columns(p, target)
 
-    if target < 19, do: down_v19(p)
-
-    if target < 18 do
-      execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_api_keys_person_index")
-
-      execute("""
-      ALTER TABLE #{p}phoenix_kit_project_api_keys
-        DROP COLUMN IF EXISTS user_uuid
-      """)
-    end
+    if target < 18, do: down_v18(p)
 
     if target < 17 do
       execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_idempotency")
@@ -1045,6 +1039,55 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     """)
   end
 
+  # V19–V21 each added columns to the assignments table (and V20 the link
+  # table); newest first.
+  defp down_task_columns(p, target) do
+    if target < 23, do: down_v23(p)
+    if target < 22, do: down_v22(p)
+    if target < 21, do: down_v21(p)
+    if target < 20, do: down_v20(p)
+    if target < 19, do: down_v19(p)
+    :ok
+  end
+
+  defp down_v18(p) do
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_api_keys_person_index")
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      DROP COLUMN IF EXISTS user_uuid
+    """)
+  end
+
+  defp down_v22(p) do
+    execute("DROP TRIGGER IF EXISTS pkp_assignment_number ON #{p}phoenix_kit_project_assignments")
+    execute("DROP TRIGGER IF EXISTS pkp_project_key_default ON #{p}phoenix_kit_projects")
+    execute("DROP TRIGGER IF EXISTS pkp_project_key_register ON #{p}phoenix_kit_projects")
+    execute("DROP FUNCTION IF EXISTS #{p}pkp_assignment_number()")
+    execute("DROP FUNCTION IF EXISTS #{p}pkp_project_key_default()")
+    execute("DROP FUNCTION IF EXISTS #{p}pkp_project_key_register()")
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_number_index")
+    execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS number")
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_counters")
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_keys")
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_projects_key_index")
+    execute("ALTER TABLE #{p}phoenix_kit_projects DROP COLUMN IF EXISTS key")
+    execute("DROP SEQUENCE IF EXISTS #{p}phoenix_kit_project_key_seq")
+  end
+
+  defp down_v21(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_dates_check
+    """)
+
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_end_date_index")
+
+    for col <- ~w(start_date end_date) do
+      execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
+    end
+  end
+
   defp down_v20(p) do
     execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_task_interactions")
 
@@ -1060,6 +1103,506 @@ defmodule PhoenixKitProjects.Migrations.Schema do
           ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
       execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
     end
+  end
+
+  # V23 — tasks under tasks (Max, 2026-10-14: "let's make proper subtasks
+  # because we want flexibility"). A task may have a PARENT task in the same
+  # project, to any depth; a subtask is a whole task (its own number, owner,
+  # dates, hours), not a line inside its parent.
+  #
+  #   * `parent_uuid` — the task this one sits under. A trigger keeps the
+  #     two rules no insert path may skip: the parent is in the same project,
+  #     and nothing is its own ancestor. Deleting a parent takes the rows
+  #     under it (the context removes them first, so a sub-project row among
+  #     them is torn down properly; the cascade is the net under that).
+  #   * `position` stays ONE order for the whole project, written depth
+  #     first: a parent is followed by everything under it. Every reader that
+  #     sorted by position keeps a sensible order without knowing about
+  #     parents.
+  #   * `review_status` gains `removed`: a task taken out of the list that
+  #     still carries something (hours, a discussion, subtasks) is held, out
+  #     of every list and count like a pending request, until a person
+  #     restores it or confirms the delete.
+  #   * a task's title may be 500 characters (a checklist item could be).
+  #   * the V19 `checklist` is gone: every item becomes a subtask of the
+  #     task that carried it (same order, ticked ones done at the time they
+  #     were ticked; who ticked an item was never recorded), and the column
+  #     is dropped. Guarded on the column, so a re-run converts nothing.
+  defp v23_subtasks(p, prefix) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS parent_uuid UUID
+        REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE CASCADE
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_parent_index
+    ON #{p}phoenix_kit_project_assignments (parent_uuid) WHERE parent_uuid IS NOT NULL
+    """)
+
+    execute("""
+    CREATE OR REPLACE FUNCTION #{p}pkp_assignment_parent_check() RETURNS trigger AS $$
+    DECLARE
+      cur UUID;
+      up UUID;
+      proj UUID;
+      hops INTEGER := 0;
+    BEGIN
+      IF NEW.parent_uuid IS NULL THEN
+        RETURN NEW;
+      END IF;
+
+      cur := NEW.parent_uuid;
+
+      WHILE cur IS NOT NULL LOOP
+        IF cur = NEW.uuid OR hops > 100 THEN
+          RAISE EXCEPTION 'a task cannot sit under itself'
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'phoenix_kit_project_assignments_parent_cycle',
+                  TABLE = 'phoenix_kit_project_assignments';
+        END IF;
+
+        SELECT a.parent_uuid, a.project_uuid INTO up, proj
+        FROM #{p}phoenix_kit_project_assignments a WHERE a.uuid = cur;
+
+        IF hops = 0 AND proj IS DISTINCT FROM NEW.project_uuid THEN
+          RAISE EXCEPTION 'the parent task is in another project'
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'phoenix_kit_project_assignments_parent_project',
+                  TABLE = 'phoenix_kit_project_assignments';
+        END IF;
+
+        cur := up;
+        hops := hops + 1;
+      END LOOP;
+
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """)
+
+    execute(
+      "DROP TRIGGER IF EXISTS pkp_assignment_parent_check ON #{p}phoenix_kit_project_assignments"
+    )
+
+    execute("""
+    CREATE TRIGGER pkp_assignment_parent_check
+    BEFORE INSERT OR UPDATE OF parent_uuid, project_uuid ON #{p}phoenix_kit_project_assignments
+    FOR EACH ROW EXECUTE FUNCTION #{p}pkp_assignment_parent_check()
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_review_status_check
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD CONSTRAINT phoenix_kit_project_assignments_review_status_check
+    CHECK (review_status IN ('pending', 'accepted', 'rejected', 'removed'))
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_tasks
+      ALTER COLUMN title TYPE VARCHAR(500)
+    """)
+
+    execute("""
+    DO $$
+    DECLARE
+      r RECORD;
+      item RECORD;
+      new_task UUID;
+      done BOOLEAN;
+      done_at TIMESTAMPTZ;
+      converted INTEGER := 0;
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = '#{prefix}'
+          AND table_name = 'phoenix_kit_project_assignments'
+          AND column_name = 'checklist'
+      ) THEN
+        RETURN;
+      END IF;
+
+      FOR r IN
+        SELECT a.uuid, a.project_uuid, a.checklist, a.review_status
+        FROM #{p}phoenix_kit_project_assignments a
+        WHERE jsonb_typeof(a.checklist) = 'array' AND jsonb_array_length(a.checklist) > 0
+        ORDER BY a.project_uuid, a.position, a.inserted_at, a.uuid
+      LOOP
+        FOR item IN
+          SELECT e.value AS v, e.ordinality AS n
+          FROM jsonb_array_elements(r.checklist) WITH ORDINALITY AS e(value, ordinality)
+          ORDER BY e.ordinality
+        LOOP
+          CONTINUE WHEN btrim(COALESCE(item.v->>'text', '')) = '';
+
+          done := COALESCE(item.v->>'done', 'false') = 'true';
+          done_at := NULL;
+
+          IF done THEN
+            BEGIN
+              done_at := (item.v->>'done_at')::timestamptz;
+            EXCEPTION WHEN OTHERS THEN
+              done_at := NULL;
+            END;
+            done_at := COALESCE(done_at, now());
+          END IF;
+
+          INSERT INTO #{p}phoenix_kit_project_tasks (title, ad_hoc)
+          VALUES (left(btrim(item.v->>'text'), 500), true)
+          RETURNING uuid INTO new_task;
+
+          INSERT INTO #{p}phoenix_kit_project_assignments
+            (project_uuid, task_uuid, parent_uuid, position, status, progress_pct,
+             completed_at, review_status)
+          VALUES
+            (r.project_uuid, new_task, r.uuid, item.n::integer,
+             CASE WHEN done THEN 'done' ELSE 'todo' END,
+             CASE WHEN done THEN 100 ELSE 0 END,
+             done_at, r.review_status);
+
+          converted := converted + 1;
+        END LOOP;
+      END LOOP;
+
+      -- Nothing converted (a replay of the chain: v19 re-adds the column
+      -- empty): leave every position as it is.
+      IF converted = 0 THEN
+        RETURN;
+      END IF;
+
+      -- One depth-first order per project that now has subtasks.
+      WITH RECURSIVE walk AS (
+        SELECT a.uuid, a.project_uuid,
+               ARRAY[a.position::bigint, (extract(epoch FROM a.inserted_at) * 1000000)::bigint] AS path
+        FROM #{p}phoenix_kit_project_assignments a
+        WHERE a.parent_uuid IS NULL
+          AND a.project_uuid IN (
+            SELECT DISTINCT project_uuid FROM #{p}phoenix_kit_project_assignments
+            WHERE parent_uuid IS NOT NULL
+          )
+        UNION ALL
+        SELECT c.uuid, c.project_uuid,
+               walk.path || ARRAY[c.position::bigint, (extract(epoch FROM c.inserted_at) * 1000000)::bigint]
+        FROM #{p}phoenix_kit_project_assignments c
+        JOIN walk ON c.parent_uuid = walk.uuid
+      ),
+      ordered AS (
+        SELECT uuid, row_number() OVER (PARTITION BY project_uuid ORDER BY path, uuid) AS n
+        FROM walk
+      )
+      UPDATE #{p}phoenix_kit_project_assignments a
+      SET position = ordered.n
+      FROM ordered
+      WHERE a.uuid = ordered.uuid;
+    END $$;
+    """)
+
+    execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS checklist")
+  end
+
+  # Subtasks become top-level tasks again (their rows are work, never
+  # dropped); held rows are deleted, since the older shape cannot say
+  # "removed". The checklist column returns empty.
+  defp down_v23(p) do
+    execute(
+      "DROP TRIGGER IF EXISTS pkp_assignment_parent_check ON #{p}phoenix_kit_project_assignments"
+    )
+
+    execute("DROP FUNCTION IF EXISTS #{p}pkp_assignment_parent_check()")
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_parent_index")
+    execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS parent_uuid")
+
+    execute("DELETE FROM #{p}phoenix_kit_project_assignments WHERE review_status = 'removed'")
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_review_status_check
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD CONSTRAINT phoenix_kit_project_assignments_review_status_check
+    CHECK (review_status IN ('pending', 'accepted', 'rejected'))
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS checklist JSONB NOT NULL DEFAULT '[]'
+    """)
+  end
+
+  # V21 — a task's own dates (Max, 2026-10-06: "build a start date and an
+  # end date"). Until now a task's days were only ever computed from its
+  # duration and its place in the order; an ongoing project has no anchor
+  # to compute from, so nothing there could carry a date. Two optional
+  # calendar dates (no time, no zone: "by Thursday" means Thursday
+  # wherever the reader sits); either may stand alone; the end is never
+  # before the start. A partial index serves "what is due".
+  defp v21_task_dates(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS start_date DATE,
+      ADD COLUMN IF NOT EXISTS end_date DATE
+    """)
+
+    execute("""
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'phoenix_kit_project_assignments_dates_check'
+      ) THEN
+        ALTER TABLE #{p}phoenix_kit_project_assignments
+          ADD CONSTRAINT phoenix_kit_project_assignments_dates_check
+          CHECK (start_date IS NULL OR end_date IS NULL OR end_date >= start_date);
+      END IF;
+    END $$;
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_end_date_index
+    ON #{p}phoenix_kit_project_assignments (project_uuid, end_date)
+    WHERE end_date IS NOT NULL
+    """)
+  end
+
+  # V22 — the names people use instead of a uuid (`PhoenixKitProjects.Refs`):
+  # a project's KEY (`ANDI`) and a task's NUMBER in its project (`ANDI-42`).
+  #
+  # Both rules live in the database, so no insert path can skip them (a
+  # clone inserts hundreds of rows; the next code path will not call the
+  # context function):
+  #
+  #   * `phoenix_kit_project_keys` is every key any project has ever had —
+  #     the current one and the ones it was renamed from. A trigger on the
+  #     projects table registers a key when it is set and refuses one that
+  #     is another project's (with the registry's primary-key name, so the
+  #     changeset reports it like any unique violation). A row outlives its
+  #     project (`ON DELETE SET NULL`): an old `KEY-12` in a commit message
+  #     must never come to mean somebody else's task.
+  #   * a project inserted with no key gets a placeholder from a sequence
+  #     (`P7`, `TPL7` for a template — a template must not squat the key a
+  #     real project would want). The context suggests a key from the name
+  #     for real projects (`Projects.create_project/2`); the placeholder is
+  #     what a path that bypasses it gets.
+  #   * `phoenix_kit_project_task_counters` holds the last number handed out
+  #     per project — its own table, so numbering a task never locks the
+  #     project row a settings form is saving. A trigger numbers every new
+  #     assignment that arrives without one. Numbers are never reused: a
+  #     deleted task leaves a gap.
+  #
+  # Existing rows are backfilled: tasks numbered per project in the order
+  # they were created; real projects keyed from their names (the Elixir
+  # rule, run from here), templates from the sequence.
+  defp v22_refs(p, prefix) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_projects
+      ADD COLUMN IF NOT EXISTS key VARCHAR(12)
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_projects_key_index
+    ON #{p}phoenix_kit_projects (key) WHERE key IS NOT NULL
+    """)
+
+    execute("CREATE SEQUENCE IF NOT EXISTS #{p}phoenix_kit_project_key_seq")
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_keys (
+      key VARCHAR(12) PRIMARY KEY,
+      project_uuid UUID REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE SET NULL,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_keys_project_index
+    ON #{p}phoenix_kit_project_keys (project_uuid)
+    """)
+
+    execute("""
+    CREATE OR REPLACE FUNCTION #{p}pkp_project_key_default() RETURNS trigger AS $$
+    BEGIN
+      IF NEW.key IS NULL OR btrim(NEW.key) = '' THEN
+        LOOP
+          NEW.key := (CASE WHEN NEW.is_template THEN 'TPL' ELSE 'P' END)
+            || nextval('#{p}phoenix_kit_project_key_seq');
+          EXIT WHEN NOT EXISTS (
+            SELECT 1 FROM #{p}phoenix_kit_project_keys k WHERE k.key = NEW.key
+          );
+        END LOOP;
+      ELSE
+        NEW.key := upper(btrim(NEW.key));
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """)
+
+    execute("""
+    CREATE OR REPLACE FUNCTION #{p}pkp_project_key_register() RETURNS trigger AS $$
+    DECLARE
+      holder UUID;
+      known BOOLEAN;
+    BEGIN
+      IF NEW.key IS NULL THEN
+        RETURN NEW;
+      END IF;
+
+      INSERT INTO #{p}phoenix_kit_project_keys (key, project_uuid)
+      VALUES (NEW.key, NEW.uuid)
+      ON CONFLICT (key) DO NOTHING;
+
+      SELECT k.project_uuid, true INTO holder, known
+      FROM #{p}phoenix_kit_project_keys k WHERE k.key = NEW.key;
+
+      IF holder IS DISTINCT FROM NEW.uuid THEN
+        RAISE EXCEPTION 'project key % belongs to another project', NEW.key
+          USING ERRCODE = 'unique_violation',
+                CONSTRAINT = 'phoenix_kit_project_keys_pkey',
+                TABLE = 'phoenix_kit_project_keys';
+      END IF;
+
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """)
+
+    execute("DROP TRIGGER IF EXISTS pkp_project_key_default ON #{p}phoenix_kit_projects")
+
+    execute("""
+    CREATE TRIGGER pkp_project_key_default
+    BEFORE INSERT OR UPDATE OF key ON #{p}phoenix_kit_projects
+    FOR EACH ROW EXECUTE FUNCTION #{p}pkp_project_key_default()
+    """)
+
+    execute("DROP TRIGGER IF EXISTS pkp_project_key_register ON #{p}phoenix_kit_projects")
+
+    execute("""
+    CREATE TRIGGER pkp_project_key_register
+    AFTER INSERT OR UPDATE OF key ON #{p}phoenix_kit_projects
+    FOR EACH ROW EXECUTE FUNCTION #{p}pkp_project_key_register()
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS number INTEGER
+    """)
+
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_task_counters (
+      project_uuid UUID PRIMARY KEY
+        REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      last_number INTEGER NOT NULL DEFAULT 0
+    )
+    """)
+
+    # Rows from before this version, in the order they were made. Only the
+    # unnumbered ones, on top of what the project already handed out, so a
+    # re-run changes nothing.
+    execute("""
+    WITH numbered AS (
+      SELECT a.uuid,
+             COALESCE(c.last_number, 0) + row_number() OVER (
+               PARTITION BY a.project_uuid ORDER BY a.inserted_at, a.uuid
+             ) AS n
+      FROM #{p}phoenix_kit_project_assignments a
+      LEFT JOIN #{p}phoenix_kit_project_task_counters c ON c.project_uuid = a.project_uuid
+      WHERE a.number IS NULL
+    )
+    UPDATE #{p}phoenix_kit_project_assignments a
+    SET number = numbered.n
+    FROM numbered
+    WHERE a.uuid = numbered.uuid
+    """)
+
+    execute("""
+    INSERT INTO #{p}phoenix_kit_project_task_counters (project_uuid, last_number)
+    SELECT project_uuid, max(number)
+    FROM #{p}phoenix_kit_project_assignments
+    WHERE number IS NOT NULL
+    GROUP BY project_uuid
+    ON CONFLICT (project_uuid) DO UPDATE
+      SET last_number = GREATEST(
+        #{p}phoenix_kit_project_task_counters.last_number, EXCLUDED.last_number
+      )
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_assignments_number_index
+    ON #{p}phoenix_kit_project_assignments (project_uuid, number)
+    """)
+
+    execute("""
+    CREATE OR REPLACE FUNCTION #{p}pkp_assignment_number() RETURNS trigger AS $$
+    BEGIN
+      IF NEW.number IS NULL THEN
+        INSERT INTO #{p}phoenix_kit_project_task_counters AS c (project_uuid, last_number)
+        VALUES (NEW.project_uuid, 1)
+        ON CONFLICT (project_uuid) DO UPDATE SET last_number = c.last_number + 1
+        RETURNING c.last_number INTO NEW.number;
+      ELSE
+        INSERT INTO #{p}phoenix_kit_project_task_counters AS c (project_uuid, last_number)
+        VALUES (NEW.project_uuid, NEW.number)
+        ON CONFLICT (project_uuid) DO UPDATE
+          SET last_number = GREATEST(c.last_number, EXCLUDED.last_number);
+      END IF;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """)
+
+    execute("DROP TRIGGER IF EXISTS pkp_assignment_number ON #{p}phoenix_kit_project_assignments")
+
+    execute("""
+    CREATE TRIGGER pkp_assignment_number
+    BEFORE INSERT ON #{p}phoenix_kit_project_assignments
+    FOR EACH ROW EXECUTE FUNCTION #{p}pkp_assignment_number()
+    """)
+
+    execute("""
+    UPDATE #{p}phoenix_kit_projects
+    SET key = 'TPL' || nextval('#{p}phoenix_kit_project_key_seq')
+    WHERE key IS NULL AND is_template
+    """)
+
+    execute(fn -> backfill_project_keys(repo(), prefix) end)
+  end
+
+  @doc false
+  # Real projects get the key their name suggests, oldest first, so the
+  # first "Kitchen" is `KIT` and the next `KIT2`. `Refs.suggest_key/2` is
+  # the one place that rule is written; this only feeds it what is taken.
+  # Public for its test: a fresh test database has no projects to backfill,
+  # so the chain alone never runs this over a row.
+  def backfill_project_keys(repo, prefix) do
+    %{rows: rows} =
+      repo.query!(
+        """
+        SELECT uuid::text, name FROM #{prefix}.phoenix_kit_projects
+        WHERE key IS NULL ORDER BY inserted_at, uuid
+        """,
+        []
+      )
+
+    %{rows: taken} = repo.query!("SELECT key FROM #{prefix}.phoenix_kit_project_keys", [])
+
+    Enum.reduce(rows, MapSet.new(taken, fn [key] -> key end), fn [uuid, name], taken ->
+      key = PhoenixKitProjects.Refs.suggest_key(name, &MapSet.member?(taken, &1))
+
+      # The uuid travels as text both ways: a `$2::uuid` parameter wants the
+      # 16 raw bytes, not the string the SELECT above returned.
+      repo.query!(
+        "UPDATE #{prefix}.phoenix_kit_projects SET key = $1 WHERE uuid::text = $2",
+        [key, uuid]
+      )
+
+      MapSet.put(taken, key)
+    end)
   end
 
   # V20 — two corrections from the panel's sweep of V19 (2026-10-05).

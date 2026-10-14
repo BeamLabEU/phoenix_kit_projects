@@ -69,7 +69,7 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
       {:ok, _, html} = live(conn, "#{base}/#{sub}")
       assert trail_labels(html) == ["Projects", "Test", leaf], sub
       # The project crumb links back to the project page.
-      assert {"Test", "/en/admin/projects/#{p.uuid}"} in trail(html).crumbs
+      assert {"Test", "#{PhoenixKitProjects.DataCase.admin_projects()}/#{p.key}"} in trail(html).crumbs
     end
 
     {:ok, _, html} = live(conn, "#{base}/assignments/new")
@@ -79,7 +79,8 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
     # Edit: the project page's trail plus the project (linked), then "Edit".
     {:ok, _, html} = live(conn, "#{base}/edit")
     assert trail_labels(html) == ["Projects", "Test", "Edit"]
-    assert {"Test", "/en/admin/projects/#{p.uuid}"} in trail(html).crumbs
+
+    assert {"Test", "#{PhoenixKitProjects.DataCase.admin_projects()}/#{p.key}"} in trail(html).crumbs
 
     {:ok, _, html} = live(conn, "/en/admin/projects/new")
     assert trail_labels(html) == ["Projects", "New project"]
@@ -90,7 +91,8 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
     {:ok, _, html} = live(conn, "#{base}/assignments/#{a.uuid}/edit")
     assert trail_labels(html) == ["Projects", "Test", "Measure", "Edit"]
     assert {"Measure", nil} in trail(html).crumbs
-    assert {"Test", "/en/admin/projects/#{p.uuid}"} in trail(html).crumbs
+
+    assert {"Test", "#{PhoenixKitProjects.DataCase.admin_projects()}/#{p.key}"} in trail(html).crumbs
   end
 
   test "editing a sub-project row links the child's own page", %{conn: conn} do
@@ -101,7 +103,10 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
 
     {:ok, _, html} = live(conn, "/en/admin/projects/#{parent.uuid}/assignments/#{row.uuid}/edit")
     assert trail_labels(html) == ["Projects", "Parent", "Child", "Edit"]
-    assert {"Child", "/en/admin/projects/#{child.uuid}"} in trail(html).crumbs
+
+    assert {"Child", "#{PhoenixKitProjects.DataCase.admin_projects()}/#{child.key}"} in trail(
+             html
+           ).crumbs
   end
 
   test "the task library and templates", %{conn: conn} do
@@ -125,7 +130,10 @@ defmodule PhoenixKitProjects.Web.BreadcrumbsTest do
     {:ok, _, html} = live(conn, "/en/admin/projects/templates/#{tpl.uuid}/edit")
     assert trail_labels(html) == ["Projects", "Templates", "Kitchen template", "Edit"]
 
-    assert {"Kitchen template", "/en/admin/projects/templates/#{tpl.uuid}"} in trail(html).crumbs
+    assert {"Kitchen template",
+            "#{PhoenixKitProjects.DataCase.admin_projects()}/templates/#{tpl.uuid}"} in trail(
+             html
+           ).crumbs
   end
 
   test "a sub-project carries its parent chain", %{conn: conn} do

@@ -7,7 +7,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   use PhoenixKitProjects.Web.Components
   # The typeahead's server half + the access-request events, for the
   # description field's @/# picker.
-  use PhoenixKit.Mentions.Live
+  use PhoenixKitProjects.Web.Mentions
 
   import PhoenixKitWeb.Components.MultilangForm
 
@@ -19,8 +19,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
+  alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.OutlineList
   alias PhoenixKitWeb.Components.Core.ChangeCue
 
   require Logger
@@ -489,6 +491,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         |> WebHelpers.close_or_navigate(Paths.projects())
 
       project ->
+        # The record the form edits holds short refs (`#ANDI-42`) where the
+        # row holds tokens: an untouched description is then no change, and
+        # a changed one is expanded again when it is written.
+        project = PhoenixKitProjects.RefText.collapse_fields(project, [:description])
+
         socket
         |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
         |> assign(
@@ -536,7 +543,34 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     |> WebHelpers.close_or_navigate(Paths.projects())
   end
 
-  defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
+  defp assign_form(socket, cs),
+    do: assign(socket, form: to_form(cs), key_field: key_field(socket, cs))
+
+  # What the Key input says under itself (`PhoenixKitProjects.Refs`): for a
+  # new project the key its name suggests — what it gets if the field is
+  # left empty; for an existing one the keys it was renamed from, which
+  # keep working. A template has no key of its own to choose.
+  defp key_field(socket, %Ecto.Changeset{data: data} = cs) do
+    cond do
+      Ecto.Changeset.get_field(cs, :is_template) ->
+        nil
+
+      is_nil(data.uuid) ->
+        %{
+          suggestion: Projects.suggest_project_key(Ecto.Changeset.get_field(cs, :name)),
+          former: []
+        }
+
+      true ->
+        former =
+          case socket.assigns[:key_field] do
+            %{former: former, for: uuid} when uuid == data.uuid -> former
+            _ -> Projects.former_keys(data)
+          end
+
+        %{suggestion: data.key, former: former, for: data.uuid}
+    end
+  end
 
   # Assignee picker state (V128). `assign_type` ("" / "team" / "department" /
   # "person") drives which staff `<.select>` shows; the staff option lists are
@@ -875,6 +909,26 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
        put_flash(socket, :error, gettext("This feature is turned off for this project."))}
     end
   end
+
+  # Ending ongoing work asks first (`Components.ConfirmAction`).
+  def handle_event("request_confirm", params, socket),
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(end_project))}
+
+  def handle_event("confirm_action_cancel", _params, socket),
+    do: {:noreply, ConfirmAction.clear(socket)}
+
+  def handle_event("confirm_action_ok", _params, socket) do
+    case ConfirmAction.take(socket) do
+      {nil, socket} -> {:noreply, socket}
+      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+    end
+  end
+
+  def handle_event("end_project", _params, socket),
+    do: {:noreply, end_or_resume(socket, :end)}
+
+  def handle_event("resume_project", _params, socket),
+    do: {:noreply, end_or_resume(socket, :resume)}
 
   def handle_event("cancel", _params, socket) do
     {:noreply, WebHelpers.close_or_navigate(socket, Paths.projects())}
@@ -1238,6 +1292,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       base
       |> put_completion(Map.get(params, "completion"))
       |> put_agent_policy(Map.get(params, "agents"))
+      |> put_outline(Map.get(params, "outline"))
 
     if settings == base and not Map.has_key?(attrs, "settings"),
       do: attrs,
@@ -1248,6 +1303,51 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     do: Map.put(settings, "completion", mode)
 
   defp put_completion(settings, _), do: settings
+
+  # How the task list looks (`Web.OutlineList`): the style, whether the last
+  # subtask ticked ticks its parent, and which features stay off the rows.
+  defp put_outline(settings, %{} = posted) do
+    current = Map.get(settings, "outline") || %{}
+
+    style =
+      if posted["style"] in OutlineList.styles(),
+        do: posted["style"],
+        else: current["style"] || "auto"
+
+    row =
+      case posted["row"] do
+        %{} = row ->
+          Map.new(outline_row_features(), fn {key, _label} -> {key, row[key] != "false"} end)
+
+        _ ->
+          current["row"] || %{}
+      end
+
+    outline =
+      current
+      |> Map.put("style", style)
+      |> Map.put("complete_parent", posted["complete_parent"] != "false")
+      |> Map.put("row", row)
+
+    Map.put(settings, "outline", outline)
+  end
+
+  defp put_outline(settings, _), do: settings
+
+  # The features whose value a task row can show, for "show on the row".
+  @doc false
+  def outline_row_features do
+    [
+      {"assignees", gettext("Who it is assigned to")},
+      {"priorities", gettext("Priority")},
+      {"labels", gettext("Labels")},
+      {"estimates", gettext("Estimate and dates")},
+      {"progress", gettext("Progress")},
+      {"ledger", gettext("Hours and AI usage")},
+      {"dependencies", gettext("Dependencies")},
+      {"discussion", gettext("Discussion and agent notes")}
+    ]
+  end
 
   defp put_agent_policy(settings, %{} = posted) do
     policy =
@@ -2105,6 +2205,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   attr(:primary_language, :string, required: true)
   attr(:ai_in_flight, :list, required: true)
   attr(:ai_translate, :any, required: true)
+  attr(:key_field, :any, default: nil)
 
   defp translatable_card(assigns) do
     ~H"""
@@ -2160,6 +2261,37 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               data-mention-context={mention_context(assigns[:project])}
             />
           </.multilang_fields_wrapper>
+
+          <%!-- The project's short name (`ANDI`): its tasks are ANDI-1,
+               ANDI-2, … in links, search and on the API. Not translated,
+               so it sits under the language tabs' fields. --%>
+          <div :if={@key_field} class="card-body pt-0">
+            <.input
+              field={@form[:key]}
+              type="text"
+              label={gettext("Key")}
+              placeholder={@key_field.suggestion}
+              maxlength="10"
+              autocomplete="off"
+              phx-debounce="300"
+              class="font-mono uppercase w-40"
+            />
+            <p class="text-xs text-base-content/60 -mt-1">
+              <%= if @form.source.data.uuid do %>
+                {gettext("The short name of this project: its tasks are %{example}, and the key works in links and on the API. You can change it — the old key keeps working.",
+                  example: "#{@form[:key].value || @key_field.suggestion}-1"
+                )}
+                <span :if={@key_field.former != []}>
+                  {gettext("Also answers to: %{keys}.", keys: Enum.join(@key_field.former, ", "))}
+                </span>
+              <% else %>
+                {gettext("The short name of this project: its tasks will be %{example}, … Leave it empty to get %{suggestion}.",
+                  example: "#{@key_field.suggestion}-1",
+                  suggestion: @key_field.suggestion
+                )}
+              <% end %>
+            </p>
+          </div>
     </div>
     """
   end
@@ -2192,6 +2324,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <%!-- The house pattern: the SAME multilang tabs card every other
                create form uses — all languages fillable from the start. --%>
           <.translatable_card
+          key_field={assigns[:key_field]}
             form={@form}
             multilang_enabled={@multilang_enabled}
             language_tabs={@language_tabs}
@@ -2612,6 +2745,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
              primary-column inputs for `lang_*` JSONB inputs. --%>
         <%= if @live_action == :edit do %>
           <.translatable_card
+          key_field={assigns[:key_field]}
             form={@form}
             multilang_enabled={@multilang_enabled}
             language_tabs={@language_tabs}
@@ -2653,6 +2787,87 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 {gettext("Only when someone ends it — ongoing work"), "manual"}
               ]}
             />
+
+            <%!-- How the task list looks (`Web.OutlineList`): typed like a
+                 text, or rows that carry what the features add — and which
+                 of those stay in the task's form (Max, 2026-10-14: "the more
+                 settings, the better… the main important stuff clearly
+                 visible", the rest folded away). --%>
+            <% outline = Map.get(@project.settings || %{}, "outline") || %{} %>
+            <fieldset :if={@can_manage_modules and not @project.is_template} id="project-outline-settings" class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+              <legend class="px-1 text-sm font-medium">{gettext("The task list")}</legend>
+              <.select
+                name="outline[style]"
+                label={gettext("How it looks")}
+                value={outline["style"] || "auto"}
+                options={[
+                  {gettext("Automatic — a text list until a feature needs more room"), "auto"},
+                  {gettext("Always a text list — type, paste, Enter for the next"), "text"},
+                  {gettext("Always task cards"), "cards"}
+                ]}
+              />
+              <label class="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="hidden" name="outline[complete_parent]" value="false" />
+                <input
+                  type="checkbox"
+                  name="outline[complete_parent]"
+                  value="true"
+                  checked={outline["complete_parent"] != false}
+                  class="checkbox checkbox-primary checkbox-sm"
+                />
+                {gettext("Tick a task when its last subtask is ticked")}
+              </label>
+              <details class="text-sm">
+                <summary class="cursor-pointer opacity-70">{gettext("What the task cards show")}</summary>
+                <p class="text-xs opacity-60 mt-1 mb-2">
+                  {gettext("Unticked, a feature stays in the task's form and off the card.")}
+                </p>
+                <% row = outline["row"] || %{} %>
+                <label :for={{key, label} <- outline_row_features()} class="flex items-center gap-2 cursor-pointer py-0.5">
+                  <input type="hidden" name={"outline[row][#{key}]"} value="false" />
+                  <input
+                    type="checkbox"
+                    name={"outline[row][#{key}]"}
+                    value="true"
+                    checked={row[key] != false}
+                    class="checkbox checkbox-sm"
+                  />
+                  {label}
+                </label>
+              </details>
+            </fieldset>
+
+            <%!-- Ongoing work has no end to reach, so nothing on its page
+                 ends it; the one way is here, beside the setting that makes
+                 it ongoing (Max, 2026-10-13: "we could just hide the way to
+                 end it in the settings"). --%>
+            <div
+              :if={@live_action == :edit and @can_manage_modules and Project.ongoing?(@project) and not @project.is_template}
+              id="project-end"
+              class="flex flex-wrap items-center gap-2 text-sm"
+            >
+              <%= if @project.completed_at do %>
+                <span class="opacity-70">
+                  {gettext("Ended %{when}", when: L10n.format_date(@project.completed_at))}
+                </span>
+                <button type="button" phx-click="resume_project" class="btn btn-ghost btn-xs">
+                  {gettext("Reopen it")}
+                </button>
+              <% else %>
+                <span class="opacity-60">{gettext("Finished with it for good?")}</span>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-xs text-error"
+                  {ConfirmAction.ask("end_project",
+                    title: gettext("End this project"),
+                    message: gettext("The project is marked completed and leaves the active lists. Its tasks stay as they are, and it can be reopened here."),
+                    confirm: gettext("End project")
+                  )}
+                >
+                  {gettext("End this project")}
+                </button>
+              <% end %>
+            </div>
 
             <%!-- What an AI agent on the API may do here. Every row is a
                  project setting (`Project.agent_policy/1`), so the same
@@ -2771,6 +2986,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         </.form_actions>
       </.form>
 
+      <.confirm_action_modal confirm={assigns[:confirm_action]} />
+
       <%!-- Modules & Features, embedded — OUTSIDE the project form (and
            after its Save row), where its own forms (labels, extension
            settings, API keys) can post:
@@ -2817,4 +3034,39 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     </div>
     """
   end
+
+  # Ends ongoing work, or takes that back. The buttons render only for
+  # someone who manages the project's settings; the event is a message
+  # anyone on the page can send, so it is asked again here.
+  defp end_or_resume(
+         %{assigns: %{live_action: :edit, project: %Project{} = project}} = socket,
+         act
+       ) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    with true <- Authz.can?(scope, project, :manage_modules),
+         {:ok, updated} <- do_end_or_resume(project, act) do
+      Activity.log(
+        if(act == :end, do: "projects.project_ended", else: "projects.project_resumed"),
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "project",
+        resource_uuid: updated.uuid,
+        metadata: %{"name" => updated.name}
+      )
+
+      socket
+      |> assign(:project, updated)
+      |> put_flash(
+        :info,
+        if(act == :end, do: gettext("Project ended."), else: gettext("Project reopened."))
+      )
+    else
+      _ -> put_flash(socket, :error, gettext("That could not be done."))
+    end
+  end
+
+  defp end_or_resume(socket, _act), do: socket
+
+  defp do_end_or_resume(project, :end), do: Projects.end_project(project)
+  defp do_end_or_resume(project, :resume), do: Projects.resume_project(project)
 end

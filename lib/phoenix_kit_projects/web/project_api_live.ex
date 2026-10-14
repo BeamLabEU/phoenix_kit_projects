@@ -56,16 +56,10 @@ defmodule PhoenixKitProjects.Web.ProjectApiLive do
          true <- allowed?(socket, project) || :forbidden do
       {:ok,
        socket
+       # Section, trail and key: the one helper for a page under a project.
+       |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
        |> assign(
          page_title: gettext("Your API key"),
-         page_section: gettext("Projects"),
-         page_section_path: Paths.projects(),
-         page_crumbs:
-           Crumbs.project(
-             project,
-             L10n.current_content_lang(),
-             socket.assigns[:phoenix_kit_current_scope]
-           ),
          project: project,
          api_token: nil,
          can_manage:

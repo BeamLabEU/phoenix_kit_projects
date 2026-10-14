@@ -326,7 +326,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     # Only top-level assignments become bars: a sub-project's span already
     # covers its children's walk. Click targets stay UNFILTERED so a stale
     # render can't route a click wrong.
-    top_items = Enum.filter(items, &is_nil(&1.parent_uuid))
+    top_items = Enum.filter(items, &ScheduleLayout.own_bar?(&1, socket.assigns.project))
     click_targets = Map.new(top_items, fn it -> {it.uuid, click_target(it.assignment)} end)
 
     # Live updates: a sub-project's tasks broadcast on the CHILD project's
@@ -380,7 +380,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
     late_class =
       CalendarDisplay.late_marker_class(socket.assigns[:overdue_anim] || CalendarDisplay.read())
 
-    top_items = Enum.filter(items, &is_nil(&1.parent_uuid))
+    top_items = Enum.filter(items, &ScheduleLayout.own_bar?(&1, socket.assigns.project))
 
     events =
       top_items

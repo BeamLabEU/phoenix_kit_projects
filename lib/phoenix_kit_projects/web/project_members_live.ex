@@ -65,18 +65,12 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
 
       {:ok,
        socket
+       # Section, trail and key: the one helper for a page under a project.
+       |> assign(Crumbs.under_project(project, socket.assigns[:phoenix_kit_current_scope]))
        |> assign(
          # Trail: Admin Panel / Projects / <parents…> / <project> / Members —
          # the project is a linked crumb, the sub-page the leaf (see `Web.Crumbs`).
          page_title: gettext("Members"),
-         page_section: gettext("Projects"),
-         page_section_path: Paths.projects(),
-         page_crumbs:
-           Crumbs.project(
-             project,
-             L10n.current_content_lang(),
-             socket.assigns[:phoenix_kit_current_scope]
-           ),
          project: project,
          add_email: "",
          add_role: "member"

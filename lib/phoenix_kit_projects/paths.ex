@@ -12,6 +12,14 @@ defmodule PhoenixKitProjects.Paths do
   @spec index() :: String.t()
   def index, do: Routes.path(@base)
 
+  @doc "Hours across every project the viewer may see."
+  @spec hours() :: String.t()
+  def hours, do: Routes.path("#{@base}/hours")
+
+  @doc "A project's Hours tab (contributed by the Tasks extension)."
+  @spec project_hours(String.t()) :: String.t()
+  def project_hours(id), do: Routes.path("#{@base}/#{id}/hours")
+
   @doc "The Overview — the read-only picture of every project; the last subtab."
   @spec overview() :: String.t()
   def overview, do: Routes.path("#{@base}/overview")
@@ -46,6 +54,9 @@ defmodule PhoenixKitProjects.Paths do
   def edit_template(id), do: Routes.path("#{@base}/templates/#{id}/edit")
 
   # Projects
+  @typedoc "A project's uuid or key, or the project itself (its key is then used)."
+  @type project_ref :: String.t() | map()
+
   @doc """
   Projects (non-template) index — the landing page. Project pages sit
   directly under it (`#{@base}/:id/…`); the pre-2026-09 `#{@base}/list/…`
@@ -57,44 +68,44 @@ defmodule PhoenixKitProjects.Paths do
   @spec new_project() :: String.t()
   def new_project, do: Routes.path("#{@base}/new")
   @doc "Show page for a single project."
-  @spec project(String.t()) :: String.t()
-  def project(id), do: Routes.path("#{@base}/#{id}")
+  @spec project(project_ref()) :: String.t()
+  def project(id), do: Routes.path("#{@base}/#{seg(id)}")
   @doc "The Tasks tab of a project (its list view)."
-  @spec project_tasks(String.t()) :: String.t()
-  def project_tasks(id), do: Routes.path("#{@base}/#{id}/tasks")
+  @spec project_tasks(project_ref()) :: String.t()
+  def project_tasks(id), do: Routes.path("#{@base}/#{seg(id)}/tasks")
   @doc "Kanban board view for a single project (inside the Tasks tab)."
-  @spec project_board(String.t()) :: String.t()
-  def project_board(id), do: Routes.path("#{@base}/#{id}/tasks/board")
+  @spec project_board(project_ref()) :: String.t()
+  def project_board(id), do: Routes.path("#{@base}/#{seg(id)}/tasks/board")
   @doc "Gantt/waterfall timeline view for a single project (inside the Tasks tab)."
-  @spec project_gantt(String.t()) :: String.t()
-  def project_gantt(id), do: Routes.path("#{@base}/#{id}/tasks/timeline")
+  @spec project_gantt(project_ref()) :: String.t()
+  def project_gantt(id), do: Routes.path("#{@base}/#{seg(id)}/tasks/timeline")
   @doc "Month-calendar view for a single project (inside the Tasks tab)."
-  @spec project_calendar(String.t()) :: String.t()
-  def project_calendar(id), do: Routes.path("#{@base}/#{id}/tasks/calendar")
+  @spec project_calendar(project_ref()) :: String.t()
+  def project_calendar(id), do: Routes.path("#{@base}/#{seg(id)}/tasks/calendar")
   @doc "The Comments tab of a project."
-  @spec project_comments(String.t()) :: String.t()
-  def project_comments(id), do: Routes.path("#{@base}/#{id}/comments")
+  @spec project_comments(project_ref()) :: String.t()
+  def project_comments(id), do: Routes.path("#{@base}/#{seg(id)}/comments")
   @doc "A contributed extension tab of a project, by the tab's key (`\"whiteboards\"`)."
-  @spec project_ext_tab(String.t(), String.t()) :: String.t()
-  def project_ext_tab(id, tab_key), do: Routes.path("#{@base}/#{id}/#{tab_key}")
+  @spec project_ext_tab(project_ref(), String.t()) :: String.t()
+  def project_ext_tab(id, tab_key), do: Routes.path("#{@base}/#{seg(id)}/#{tab_key}")
   @doc "Edit form for a project."
-  @spec edit_project(String.t()) :: String.t()
-  def edit_project(id), do: Routes.path("#{@base}/#{id}/edit")
+  @spec edit_project(project_ref()) :: String.t()
+  def edit_project(id), do: Routes.path("#{@base}/#{seg(id)}/edit")
   @doc "Per-project Modules & Features panel."
-  @spec modules(String.t()) :: String.t()
-  def modules(id), do: Routes.path("#{@base}/#{id}/modules")
+  @spec modules(project_ref()) :: String.t()
+  def modules(id), do: Routes.path("#{@base}/#{seg(id)}/modules")
   @doc "Per-project Members page."
-  @spec members(String.t()) :: String.t()
-  def members(id), do: Routes.path("#{@base}/#{id}/members")
+  @spec members(project_ref()) :: String.t()
+  def members(id), do: Routes.path("#{@base}/#{seg(id)}/members")
   @doc "Per-project Your API key page — every member's own keys."
-  @spec api(String.t()) :: String.t()
-  def api(id), do: Routes.path("#{@base}/#{id}/api")
+  @spec api(project_ref()) :: String.t()
+  def api(id), do: Routes.path("#{@base}/#{seg(id)}/api")
   @doc "Per-project Files page."
-  @spec files(String.t()) :: String.t()
-  def files(id), do: Routes.path("#{@base}/#{id}/files")
+  @spec files(project_ref()) :: String.t()
+  def files(id), do: Routes.path("#{@base}/#{seg(id)}/files")
   @doc "Per-project Activity page."
-  @spec activity(String.t()) :: String.t()
-  def activity(id), do: Routes.path("#{@base}/#{id}/activity")
+  @spec activity(project_ref()) :: String.t()
+  def activity(id), do: Routes.path("#{@base}/#{seg(id)}/activity")
 
   # Assignments (within a project)
   @doc "New-assignment form nested under a project."
@@ -105,4 +116,31 @@ defmodule PhoenixKitProjects.Paths do
   @spec edit_assignment(String.t(), String.t()) :: String.t()
   def edit_assignment(project_id, id),
     do: Routes.path("#{@base}/#{project_id}/assignments/#{id}/edit")
+
+  @doc """
+  A link to one task: its project's Tasks tab, naming the task so the page
+  scrolls to the row and opens it. With the project's key and the task's
+  number in hand it reads `…/ANDI/tasks?task=ANDI-42`; the fragment is the
+  row's DOM id (always the uuid).
+  """
+  @spec task(project_ref(), map()) :: String.t()
+  def task(project, %{uuid: uuid} = assignment) do
+    ref =
+      case {project, assignment} do
+        {%{key: key}, %{number: number}} -> PhoenixKitProjects.Refs.task_ref(key, number)
+        _ -> nil
+      end
+
+    Routes.path("#{@base}/#{seg(project)}/tasks?task=#{ref || uuid}#task-#{uuid}")
+  end
+
+  # A project's URL segment: its key when the caller has the project in
+  # hand (`…/projects/ANDI`), else whatever id it passed. Both resolve
+  # (`Projects.get_project/1`).
+  defp seg(%{key: key}) when is_binary(key) and key != "", do: key
+  defp seg(%{uuid: uuid}), do: uuid
+  defp seg(id) when is_binary(id), do: id
+  # A page with no project (not found, a session without an id) still asks
+  # for its paths before it redirects.
+  defp seg(nil), do: ""
 end

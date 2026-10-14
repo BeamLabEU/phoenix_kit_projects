@@ -42,6 +42,7 @@ defmodule PhoenixKitProjects.Test.Router do
     pipe_through([:pk_projects_api])
 
     get("/me", MeController, :show)
+    get("/people", PeopleController, :index)
     get("/project", ProjectController, :show)
     post("/project/status", ProjectController, :set_status)
     post("/subprojects", ProjectController, :create_subproject)
@@ -49,9 +50,11 @@ defmodule PhoenixKitProjects.Test.Router do
     get("/notes", NotesController, :project_index)
     post("/notes", NotesController, :project_create)
     delete("/tasks/:id", TasksController, :delete)
-    patch("/tasks/:id/checklist/:item", TasksController, :checklist_item)
+    post("/tasks/batch", TasksController, :batch)
+    post("/tasks/:id/move", TasksController, :move)
     post("/tasks/:id/interactions/:interaction", TasksController, :link)
     delete("/tasks/:id/interactions/:interaction", TasksController, :unlink)
+    get("/hours", HoursController, :show)
     get("/entries", LedgerController, :index)
     get("/tasks/:id/entries", LedgerController, :task_index)
     get("/events", EventsController, :index)
@@ -91,6 +94,7 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/", ProjectsLive, :index)
       live("/templates", TemplatesLive, :index)
       live("/tasks", TasksLive, :index)
+      live("/hours", ProjectHoursLive, :index)
       live("/overview", OverviewLive, :index)
 
       # Legacy `list/…` addresses redirect to the same path without the segment.

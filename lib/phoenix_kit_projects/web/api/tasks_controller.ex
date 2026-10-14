@@ -12,6 +12,11 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   Content edits to a task that is a LIBRARY task (shared across projects)
   are refused: an agent renaming a shared task would rename it everywhere.
+
+  Tasks sit under tasks (`PhoenixKitProjects.Outline`): `parent` on create
+  and update, `POST /tasks/:id/move`, `POST /tasks/batch` for many lines at
+  once, `parent=` on the list, and a delete that refuses a task with tasks
+  under it unless `cascade=true`.
   """
 
   use Phoenix.Controller, formats: [:json]
@@ -19,9 +24,24 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   require Logger
 
   alias PhoenixKit.Mentions
-  alias PhoenixKitProjects.{Activity, Authz, Extensions, Features, Labels, Ledger, Projects}
+
+  alias PhoenixKitProjects.{
+    Activity,
+    Authz,
+    Extensions,
+    Features,
+    Labels,
+    Ledger,
+    Outline,
+    Projects,
+    RefText
+  }
+
+  alias PhoenixKitProjects.Outline.Api, as: OutlineApi
+
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
+  alias PhoenixKitProjects.Web.Api.Assignee
   alias PhoenixKitProjects.Web.Api.ExtController
   alias PhoenixKitProjects.Web.Api.Json
 
@@ -40,12 +60,18 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          {:ok, conn} <- Json.scope_project(conn, params),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view),
-         {:ok, conn} <- known_status(conn, params["status"]) do
+         {:ok, conn} <- known_status(conn, params["status"]),
+         {:ok, due} <- due_before(conn, params["due_before"]),
+         {:ok, under} <- under(conn, params),
+         {:ok, tasks} <- assigned_to(conn, params["assignee"]) do
+      outline = OutlineApi.info(conn.assigns.pk_project.uuid)
+
       tasks =
-        conn.assigns.pk_project.uuid
-        |> Projects.list_assignments()
+        tasks
+        |> filter_under(under, outline)
         |> filter_status(params["status"])
         |> filter_since(params["updated_since"])
+        |> filter_due(due)
 
       uuids = Enum.map(tasks, & &1.uuid)
       totals = Ledger.totals_for_assignments(uuids)
@@ -56,7 +82,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         tasks:
           Enum.map(
             tasks,
-            &Json.task(&1, totals[&1.uuid], labels[&1.uuid] || [], links[&1.uuid] || [])
+            &Json.task(&1, totals[&1.uuid], labels[&1.uuid] || [], links[&1.uuid] || [], outline)
           ),
         count: length(tasks),
         # whole seconds, like `updated_at`: a `now` with microseconds skipped
@@ -67,6 +93,88 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       {:halt, conn} -> conn
     end
   end
+
+  # `assignee`: `me`, `none` or a person's uuid (see `Assignee.filter/3`).
+  defp assigned_to(conn, value) do
+    tasks = Projects.list_assignments(conn.assigns.pk_project.uuid)
+
+    case Assignee.filter(tasks, conn.assigns.pk_api_key, value) do
+      {:ok, tasks} -> {:ok, tasks}
+      {:error, {status, body}} -> {:halt, conn |> put_status(status) |> json(body)}
+    end
+  end
+
+  # `parent`: `none` for the top level only, or a task (ref or uuid) for
+  # the tasks directly under it. Absent: every row, in outline order.
+  defp under(_conn, params) when not is_map_key(params, "parent"), do: {:ok, :all}
+  defp under(_conn, %{"parent" => "none"}), do: {:ok, :top}
+
+  defp under(conn, %{"parent" => ref}) do
+    case parent_of(conn.assigns.pk_project, ref) do
+      {:ok, %Assignment{uuid: uuid}} -> {:ok, uuid}
+      {:error, {status, body}} -> {:halt, conn |> put_status(status) |> json(body)}
+    end
+  end
+
+  defp filter_under(tasks, :all, _outline), do: tasks
+
+  defp filter_under(tasks, :top, outline),
+    do: Enum.filter(tasks, &(Map.get(outline.depths, &1.uuid, 0) == 0))
+
+  defp filter_under(tasks, uuid, _outline), do: Enum.filter(tasks, &(&1.parent_uuid == uuid))
+
+  # The task a `parent` names: an accepted task of THIS project (never a
+  # sub-project row — what sits under that is the child project's own).
+  defp parent_of(project, ref) when is_binary(ref) do
+    case Projects.get_assignment(ref) do
+      %Assignment{project_uuid: pid, review_status: "accepted", child_project_uuid: nil} = parent
+      when pid == project.uuid ->
+        {:ok, parent}
+
+      %Assignment{project_uuid: pid, review_status: "accepted"} when pid == project.uuid ->
+        {:error,
+         Json.error_body(
+           409,
+           "subproject",
+           "A sub-project row cannot have tasks under it here; add them to the sub-project."
+         )}
+
+      _ ->
+        {:error,
+         Json.error_body(404, "not_found", "No such parent task in this project.", %{parent: ref})}
+    end
+  rescue
+    _ ->
+      {:error,
+       Json.error_body(404, "not_found", "No such parent task in this project.", %{parent: ref})}
+  end
+
+  defp parent_of(_project, _ref),
+    do:
+      {:error,
+       Json.error_body(422, "validation_failed", "parent must be a task ref or uuid, or null.", %{
+         parent: ["must be a task ref or uuid, or null"]
+       })}
+
+  # `parent` as create and update take it: absent → `:keep`; null → the top
+  # level; a ref → that task.
+  defp parent_change(_project, params) when not is_map_key(params, "parent"), do: {:ok, :keep}
+  defp parent_change(_project, %{"parent" => nil}), do: {:ok, nil}
+
+  defp parent_change(project, %{"parent" => ref}) do
+    with {:ok, %Assignment{uuid: uuid}} <- parent_of(project, ref), do: {:ok, uuid}
+  end
+
+  defp move_error(:cycle),
+    do: Json.error_body(409, "cycle", "A task cannot sit under itself or under a task below it.")
+
+  defp move_error(_),
+    do:
+      Json.error_body(
+        404,
+        "not_found",
+        "The parent or the sibling is not a task of this project."
+      )
 
   # `updated_since`: the rows touched at or after that moment — inclusive,
   # so a change in the same second as the last answer's `now` is not lost;
@@ -80,6 +188,46 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   defp filter_since(tasks, _), do: tasks
+
+  # `due_before`: the tasks whose end date is on or before that day, done
+  # ones included (filter with `status=open` for what is still owed). A
+  # value that is not a date is refused - unlike a poll's `updated_since`,
+  # a wrong answer here reads as "nothing is due".
+  defp due_before(_conn, nil), do: {:ok, nil}
+
+  defp due_before(conn, value) do
+    case parse_date(value) do
+      {:ok, %Date{} = d} ->
+        {:ok, d}
+
+      _ ->
+        {:halt,
+         Json.error(
+           conn,
+           :unprocessable_entity,
+           "validation_failed",
+           "due_before must be a date, YYYY-MM-DD.",
+           %{due_before: ["must be a date, YYYY-MM-DD"]}
+         )}
+    end
+  end
+
+  defp filter_due(tasks, nil), do: tasks
+
+  defp filter_due(tasks, %Date{} = d),
+    do: Enum.filter(tasks, &(&1.end_date && Date.compare(&1.end_date, d) != :gt))
+
+  # A calendar day as an agent sends it: `YYYY-MM-DD`; null or blank clears.
+  defp parse_date(nil), do: {:ok, nil}
+
+  defp parse_date(v) when is_binary(v) do
+    case String.trim(v) do
+      "" -> {:ok, nil}
+      s -> with {:error, _} <- Date.from_iso8601(s), do: :error
+    end
+  end
+
+  defp parse_date(_), do: :error
 
   # A filter nobody recognises used to answer the whole list, which an
   # agent read as "no tasks match" or "every task matches" at random.
@@ -129,8 +277,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
     with :ok <- check_interaction(conn, params["interaction"]),
          :ok <- check_labels(params["labels"]),
-         :ok <- check_checklist(params["checklist"]) do
-      do_create_checked(conn, key, project, params)
+         {:ok, parent} <- parent_change(project, params) do
+      do_create_checked(conn, key, project, Map.put(params, "parent", parent))
     else
       {:error, pair} -> pair
     end
@@ -138,7 +286,10 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp do_create_checked(conn, key, project, params) do
     with {:ok, title} <- required_string(params, "title"),
-         {:ok, assignment_attrs} <- assignment_attrs(params) do
+         {:ok, assignment_attrs} <- assignment_attrs(params),
+         {:ok, assignee} <- Assignee.attrs(conn, params) do
+      assignment_attrs = Map.merge(assignment_attrs, assignee)
+
       task_attrs =
         %{"title" => title, "ad_hoc" => true}
         |> maybe_put("description", params["description"])
@@ -165,6 +316,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
           apply_labels(project, a, params["labels"])
 
+          # last under its parent (checked above); the top level needs no move
+          if is_binary(params["parent"]), do: Outline.move(a, params["parent"], :last)
+
           case link_interaction(conn, a, params["interaction"]) do
             :ok ->
               :ok
@@ -182,7 +336,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
           Json.error_body(404, "not_found", "The key's project is gone.")
       end
     else
-      {:error, {422, _} = pair} -> pair
+      {:error, {status, _} = pair} when is_integer(status) -> pair
     end
   end
 
@@ -206,10 +360,13 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          :ok <- content_editable(a, content),
          :ok <- text_policy(key, a, project, content),
          {:ok, assignment_attrs} <- assignment_attrs(params),
+         {:ok, assignee} <- Assignee.attrs(conn, params),
+         assignment_attrs = Map.merge(assignment_attrs, assignee),
          :ok <- check_interaction(conn, params["interaction"]),
          :ok <- check_labels(params["labels"]),
-         :ok <- check_checklist(params["checklist"]),
+         {:ok, parent} <- parent_change(project, params),
          :ok <- precheck(a, content, assignment_attrs),
+         :ok <- reparent(a, parent),
          {:ok, _} <- update_content(a, content),
          {:ok, _} <- update_fields(a, assignment_attrs),
          :ok <- stamp_words(a, key, content),
@@ -218,7 +375,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          :ok <- link_interaction(conn, a, params["interaction"]) do
       changed =
         Map.keys(Map.merge(content, assignment_attrs)) ++
-          Enum.filter(["labels", "interaction"], &Map.has_key?(params, &1))
+          Enum.filter(["labels", "interaction", "parent"], &Map.has_key?(params, &1))
 
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
@@ -237,12 +394,25 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     end
   end
 
+  # A changed `parent` moves the task, with everything under it, to the
+  # end of its new parent's tasks.
+  defp reparent(_a, :keep), do: :ok
+  defp reparent(%Assignment{parent_uuid: same}, same), do: :ok
+
+  defp reparent(a, parent_uuid) do
+    case Outline.move(a, parent_uuid, :last) do
+      {:ok, _} -> :ok
+      {:error, reason} -> {:error, move_error(reason)}
+    end
+  end
+
   # Indexes the `#` links in a saved description, so a task that says
   # "from this meeting" is listed on the meeting (core keeps the reverse
   # index). Never fails the save: a mention that does not index is a
   # missing backlink, not lost work.
   defp sync_mentions(assignment_uuid, description, key) when is_binary(description) do
-    Mentions.sync("project_task", assignment_uuid, description,
+    # As it was stored: a `#ANDI-42` in the submitted text is a token there.
+    Mentions.sync("project_task", assignment_uuid, RefText.expand(description),
       field: "description",
       actor_uuid: ApiKey.accountable_uuid(key)
     )
@@ -475,17 +645,6 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     end
   end
 
-  # A checklist is a list of items, or absent — never a string.
-  defp check_checklist(nil), do: :ok
-  defp check_checklist(items) when is_list(items), do: :ok
-
-  defp check_checklist(_),
-    do:
-      {:error,
-       Json.error_body(422, "validation_failed", "checklist must be a list of items.", %{
-         checklist: ["must be a list"]
-       })}
-
   # Label names: a list of strings, each 1–60 characters (the registry's
   # cap); anything else is a 422 rather than a silent drop.
   defp check_labels(nil), do: :ok
@@ -545,8 +704,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
        )}
 
   # Both rows' changesets are built and checked BEFORE either is written, so
-  # a rule only a changeset knows (a checklist over 50 items, a title over its
-  # length) is a 422 with nothing changed — not a new title beside a 422.
+  # a rule only a changeset knows (a title over its length, an end date
+  # before the start) is a 422 with nothing changed — not a new title beside a 422.
   defp precheck(%Assignment{task: task} = a, content, attrs) do
     fields = Map.merge(attrs, description_for_assignment(a, content))
 
@@ -605,25 +764,40 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   def start(conn, params), do: transition(conn, Map.put(params, "status", "in_progress"))
 
-  def delete(conn, %{"id" => id}) do
+  def delete(conn, %{"id" => id} = params) do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn, a} <- fetch(conn, id),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :delete_tasks) do
       %{pk_api_key: key, pk_project: project} = conn.assigns
+      below = below(a)
 
       cond do
         not is_nil(a.child_project_uuid) ->
           Json.error(conn, :conflict, "subproject", "A sub-project is not deleted here.")
 
         not Json.may_delete?(key, a, project) ->
+          delete_refused(conn, project)
+
+        below != [] and params["cascade"] not in [true, "true"] ->
           Json.error(
             conn,
-            :forbidden,
-            "delete_not_allowed",
-            "The project does not let an agent delete this task (policy delete_tasks: #{Project.agent_policy(project)["delete_tasks"]}).",
-            %{policy: "delete_tasks"}
+            :conflict,
+            "has_subtasks",
+            "This task has #{length(below)} task(s) under it; pass cascade=true to delete them with it.",
+            %{subtasks: length(below)}
           )
+
+        Enum.any?(below, &(not is_nil(&1.child_project_uuid))) ->
+          Json.error(
+            conn,
+            :conflict,
+            "subproject",
+            "A sub-project sits under this task; it is not deleted here."
+          )
+
+        not Enum.all?(below, &Json.may_delete?(key, &1, project)) ->
+          delete_refused(conn, project)
 
         true ->
           case Projects.delete_assignment(a) do
@@ -632,11 +806,12 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
                 actor_uuid: ApiKey.accountable_uuid(key),
                 resource_type: "assignment",
                 resource_uuid: a.uuid,
-                metadata: api_metadata(key, %{"task" => Assignment.label(a)})
+                metadata:
+                  api_metadata(key, %{"task" => Assignment.label(a), "subtasks" => length(below)})
               )
 
               sync_project_completion(conn)
-              json(conn, %{deleted: a.uuid})
+              json(conn, %{deleted: a.uuid, also_deleted: Enum.map(below, & &1.uuid)})
 
             {:error, _} ->
               Json.error(conn, :conflict, "conflict", "The task could not be deleted.")
@@ -648,52 +823,192 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     end
   end
 
-  # One checklist item, ticked or unticked, without rewriting the list:
-  # two sessions may tick different items at once.
-  def checklist_item(conn, %{"id" => id, "item" => item_id} = params) do
+  defp delete_refused(conn, project) do
+    Json.error(
+      conn,
+      :forbidden,
+      "delete_not_allowed",
+      "The project does not let an agent delete this task (policy delete_tasks: #{Project.agent_policy(project)["delete_tasks"]}).",
+      %{policy: "delete_tasks"}
+    )
+  end
+
+  # Every accepted row under a task, any depth — what a delete takes with it.
+  # Everything the delete would take: held subtasks too, since the
+  # database cascade takes them whether or not a list shows them.
+  defp below(%Assignment{} = a), do: Outline.rows_below(a)
+
+  # ── Subtasks: move, and many lines at once ──────────────────────
+
+  @doc """
+  `POST /tasks/:id/move` — puts a task, with everything under it, somewhere
+  else in its project's outline. `parent`: a task (ref or uuid), null for
+  the top level, absent to stay under the same parent. `after`: a sibling
+  under that parent to go after, null to go first, absent to go last.
+  """
+  def move(conn, %{"id" => id} = params) do
     with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn, a} <- fetch(conn, id),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks) do
-      Json.idempotent(conn, [], fn -> do_checklist_item(conn, a, item_id, params) end)
+      Json.idempotent(conn, [], fn -> do_move(conn, a, params) end)
     else
       {:halt, conn} -> conn
       {:error, :not_found} -> not_found(conn)
     end
   end
 
-  defp do_checklist_item(conn, a, item_id, params) do
-    key = conn.assigns.pk_api_key
+  defp do_move(conn, %Assignment{} = a, params) do
+    %{pk_api_key: key, pk_project: project} = conn.assigns
 
-    case Map.get(params, "done") do
-      done when done in [true, false, "true", "false"] ->
-        case Projects.update_checklist_item(a, item_id, done in [true, "true"]) do
-          {:ok, saved} ->
-            Activity.log("projects.assignment_updated",
-              actor_uuid: ApiKey.accountable_uuid(key),
-              resource_type: "assignment",
-              resource_uuid: a.uuid,
-              metadata: api_metadata(key, %{"fields" => ["checklist"], "item" => item_id})
-            )
+    with {:ok, parent} <- parent_change(project, params),
+         parent_uuid = if(parent == :keep, do: a.parent_uuid, else: parent),
+         {:ok, place} <- after_of(project, params),
+         {:ok, _} <- move_result(Outline.move(a, parent_uuid, place)) do
+      Activity.log("projects.assignment_updated",
+        actor_uuid: ApiKey.accountable_uuid(key),
+        resource_type: "assignment",
+        resource_uuid: a.uuid,
+        metadata: api_metadata(key, %{"fields" => ["parent", "position"]})
+      )
 
-            {200, %{task: Json.task(Projects.get_assignment(saved.uuid) || saved)}}
-
-          {:error, :not_found} ->
-            Json.error_body(404, "not_found", "No such checklist item on this task.")
-
-          {:error, %Ecto.Changeset{} = cs} ->
-            Json.changeset_error(cs)
-
-          {:error, _} ->
-            Json.error_body(409, "conflict", "The checklist could not be updated.")
-        end
-
-      _ ->
-        Json.error_body(422, "validation_failed", "done must be true or false.", %{
-          done: ["is required"]
-        })
+      sync_project_completion(conn)
+      {200, %{task: Json.task(Projects.get_assignment(a.uuid))}}
+    else
+      {:error, {status, _} = pair} when is_integer(status) -> pair
     end
   end
+
+  defp move_result({:ok, _} = ok), do: ok
+  defp move_result({:error, reason}), do: {:error, move_error(reason)}
+
+  defp after_of(_project, params) when not is_map_key(params, "after"), do: {:ok, :last}
+  defp after_of(_project, %{"after" => nil}), do: {:ok, nil}
+
+  defp after_of(project, %{"after" => ref}) when is_binary(ref) do
+    case Projects.get_assignment(ref) do
+      %Assignment{project_uuid: pid, uuid: uuid} when pid == project.uuid ->
+        {:ok, uuid}
+
+      _ ->
+        {:error,
+         Json.error_body(404, "not_found", "No such sibling task in this project.", %{after: ref})}
+    end
+  rescue
+    _ ->
+      {:error,
+       Json.error_body(404, "not_found", "No such sibling task in this project.", %{after: ref})}
+  end
+
+  defp after_of(_project, _),
+    do:
+      {:error,
+       Json.error_body(422, "validation_failed", "after must be a task ref or uuid, or null.", %{
+         after: ["must be a task ref or uuid, or null"]
+       })}
+
+  @doc """
+  `POST /tasks/batch` — one one-off task per line, in one transaction:
+  `lines` is a list of strings or `{text, depth?, done?}`; `depth` nests a
+  line under the nearest line above that is one level shallower; `parent`
+  puts the whole batch under a task (depth 0 sits directly under it).
+  """
+  def batch(conn, params) do
+    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
+         {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_feature(conn, :tasks),
+         {:ok, conn} <- Json.require_action(conn, :create_tasks) do
+      Json.idempotent(conn, [], fn -> do_batch(conn, params) end)
+    else
+      {:halt, conn} -> conn
+    end
+  end
+
+  defp do_batch(conn, params) do
+    %{pk_api_key: key, pk_project: project} = conn.assigns
+
+    with {:ok, lines} <- batch_lines(params["lines"]),
+         {:ok, parent} <- parent_change(project, params),
+         parent_uuid = if(parent == :keep, do: nil, else: parent),
+         {:ok, uuids} <-
+           batch_result(
+             OutlineApi.batch_create(project.uuid, lines, parent_uuid,
+               actor_uuid: ApiKey.accountable_uuid(key),
+               key_uuid: key.uuid
+             )
+           ) do
+      Enum.zip(uuids, lines)
+      |> Enum.each(fn {uuid, line} ->
+        Activity.log("projects.assignment_created",
+          actor_uuid: ApiKey.accountable_uuid(key),
+          resource_type: "assignment",
+          resource_uuid: uuid,
+          metadata: api_metadata(key, %{"task" => line.text, "batch" => length(uuids)})
+        )
+      end)
+
+      sync_project_completion(conn)
+
+      wanted = MapSet.new(uuids)
+      by_uuid = project.uuid |> Projects.list_assignments() |> Map.new(&{&1.uuid, &1})
+      outline = OutlineApi.info(project.uuid)
+      totals = Ledger.totals_for_assignments(uuids)
+
+      tasks =
+        for uuid <- uuids, MapSet.member?(wanted, uuid), a = by_uuid[uuid], not is_nil(a) do
+          Json.task(a, totals[uuid], [], [], outline)
+        end
+
+      {201, %{tasks: tasks, count: length(tasks)}}
+    else
+      {:error, {status, _} = pair} when is_integer(status) -> pair
+    end
+  end
+
+  defp batch_lines(lines) do
+    case OutlineApi.read_lines(lines) do
+      {:ok, lines} ->
+        {:ok, lines}
+
+      {:error, :too_many} ->
+        {:error,
+         Json.error_body(
+           422,
+           "validation_failed",
+           "lines holds at most #{OutlineApi.max_lines()} lines per call.",
+           %{lines: ["at most #{OutlineApi.max_lines()}"]}
+         )}
+
+      {:error, {:bad_line, index}} ->
+        {:error,
+         Json.error_body(
+           422,
+           "validation_failed",
+           "Line #{index} is not a string or {text, depth?, done?} (text up to 500 characters, depth 0 to 100, done true or false).",
+           %{lines: %{index => ["is invalid"]}}
+         )}
+
+      {:error, :empty} ->
+        {:error,
+         Json.error_body(422, "validation_failed", "lines has no line with text.", %{
+           lines: ["can't be blank"]
+         })}
+
+      {:error, _} ->
+        {:error,
+         Json.error_body(422, "validation_failed", "lines must be a list.", %{
+           lines: ["must be a list"]
+         })}
+    end
+  end
+
+  defp batch_result({:ok, _} = ok), do: ok
+
+  defp batch_result({:error, {:line, _index, %Ecto.Changeset{} = cs}}),
+    do: {:error, Json.changeset_error(cs)}
+
+  defp batch_result({:error, _}),
+    do: {:error, Json.error_body(404, "not_found", "The project or the parent task is gone.")}
 
   def complete(conn, params), do: transition(conn, Map.put(params, "status", "done"))
   def reopen(conn, params), do: transition(conn, Map.put(params, "status", "todo"))
@@ -736,6 +1051,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         )
 
       true ->
+        before = OutlineApi.statuses(a.project_uuid)
         {action, result} = apply_transition(a, to, key)
 
         case result do
@@ -749,7 +1065,12 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
             )
 
             sync_project_completion(conn)
-            {200, %{task: Json.task(Projects.get_assignment(a.uuid))}}
+
+            # the rows the move took with it: the tasks under a completed
+            # one, a parent whose last task this was, the parents a reopen
+            # reopened
+            also = OutlineApi.changed_besides(before, OutlineApi.statuses(a.project_uuid), a.uuid)
+            {200, %{task: Json.task(Projects.get_assignment(a.uuid)), also_changed: also}}
 
           {:error, %Ecto.Changeset{} = cs} ->
             Json.changeset_error(cs)
@@ -895,10 +1216,46 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       |> maybe_put("estimated_duration_unit", params["estimated_duration_unit"])
       |> maybe_put_text("waiting_on", params)
       |> maybe_put_text("origin", params)
-      |> maybe_put_list("checklist", params["checklist"])
       |> maybe_put("position", params["position"] |> then(&if(is_integer(&1), do: &1)))
 
+    with {:ok, attrs} <- put_date(attrs, "start_date", params),
+         {:ok, attrs} <- put_date(attrs, "end_date", params) do
+      checked_attrs(attrs)
+    end
+  end
+
+  # A date an agent may set or clear; anything that is not a day is a 422.
+  defp put_date(attrs, field, params) do
+    case Map.fetch(params, field) do
+      :error ->
+        {:ok, attrs}
+
+      {:ok, value} ->
+        case parse_date(value) do
+          {:ok, date} ->
+            {:ok, Map.put(attrs, field, date)}
+
+          :error ->
+            {:error,
+             Json.error_body(422, "validation_failed", "#{field} must be a date, YYYY-MM-DD.", %{
+               field => ["must be a date, YYYY-MM-DD"]
+             })}
+        end
+    end
+  end
+
+  defp checked_attrs(attrs) do
     cond do
+      match?(%Date{}, attrs["start_date"]) and match?(%Date{}, attrs["end_date"]) and
+          Date.compare(attrs["end_date"], attrs["start_date"]) == :lt ->
+        {:error,
+         Json.error_body(
+           422,
+           "validation_failed",
+           "end_date must not be before start_date.",
+           %{end_date: ["must not be before the start date"]}
+         )}
+
       Map.has_key?(attrs, "priority") and attrs["priority"] not in @priorities ->
         {:error,
          Json.error_body(
@@ -1013,7 +1370,4 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       _ -> map
     end
   end
-
-  defp maybe_put_list(map, k, v) when is_list(v), do: Map.put(map, k, v)
-  defp maybe_put_list(map, _k, _v), do: map
 end

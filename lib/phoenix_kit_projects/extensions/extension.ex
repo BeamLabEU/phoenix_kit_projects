@@ -58,6 +58,12 @@ defmodule PhoenixKitProjects.Extensions.Extension do
     * `"host_paths"` — `%{"new_task" => path}`: the hub's own pages, so a tab
       can link to them without naming this module's routes.
 
+  A tab may name a feature flag it depends on (`requires_flag: "ledger"`):
+  the hub then offers the tab only while that flag resolves on for the
+  project (`Features.on?/2`, so the flag's own `requires` count too). The
+  Tasks extension's Hours tab is the first: it has nothing to show once the
+  work ledger is switched off.
+
   ## Forward-looking surface (declared now, dispatched incrementally)
 
   The contract carries its FULL surface from day one so providers never need
@@ -70,6 +76,20 @@ defmodule PhoenixKitProjects.Extensions.Extension do
       `PhoenixKitProjects.Authz.can?/5` about.
     * `notification_types` — passthrough entries merged into this module's
       `notification_types/0` (core's prefs-UI shape).
+    * `calendar` — `{module, function}` called with
+      `(project_uuid, from, until)` (UTC `DateTime`s): dated things of the
+      extension's own that belong on the project's Calendar tab, read-only
+      (a planned client meeting, say). Answers
+      `%{items: [item], truncated: boolean}`; an item is
+      `%{source, id, title, label, starts_at, ends_at | nil, all_day, status,
+      location, url, updated_at}` — `status: "cancelled"` is the one value
+      the hub treats specially. Nothing is copied: the hub asks each time.
+    * `project_columns` — `{module, function}` called with a LIST of project
+      uuids: columns of the extension's own on the projects list (the CRM's
+      Client, say), read in one go for the whole page. Answers
+      `[%{key, label, values: %{project_uuid => %{text, url | nil}}}]`; the
+      list offers each as an optional column it can sort and filter by.
+      Values for a project the extension is off on are dropped by the hub.
     * `on_enable` / `on_disable` — `{module, function}` called with
       `(project_uuid, config)` after a successful toggle. Best-effort:
       failures are logged, never abort the toggle.
@@ -103,6 +123,8 @@ defmodule PhoenixKitProjects.Extensions.Extension do
             on_enable: nil,
             on_disable: nil,
             api: nil,
+            calendar: nil,
+            project_columns: nil,
             data_retention: :keep,
             default_enabled: false,
             category: nil,
@@ -112,7 +134,8 @@ defmodule PhoenixKitProjects.Extensions.Extension do
           key: String.t(),
           label: String.t(),
           icon: String.t() | nil,
-          lv: module()
+          lv: module(),
+          requires_flag: String.t() | nil
         }
 
   @type t :: %__MODULE__{
@@ -130,6 +153,8 @@ defmodule PhoenixKitProjects.Extensions.Extension do
           on_enable: {module(), atom()} | nil,
           on_disable: {module(), atom()} | nil,
           api: module() | [module()] | nil,
+          calendar: {module(), atom()} | nil,
+          project_columns: {module(), atom()} | nil,
           data_retention: :keep,
           default_enabled: boolean(),
           category: String.t() | nil,
@@ -167,6 +192,8 @@ defmodule PhoenixKitProjects.Extensions.Extension do
          # A record of this extension on the projects JSON API — see
          # `PhoenixKitProjects.Extensions.ApiProvider`.
          api: normalize_api(map[:api], source),
+         calendar: normalize_callback(map[:calendar], source, :calendar),
+         project_columns: normalize_callback(map[:project_columns], source, :project_columns),
          data_retention: :keep,
          default_enabled: map[:default_enabled] == true,
          category: map[:category] && to_string(map[:category]),
@@ -198,7 +225,15 @@ defmodule PhoenixKitProjects.Extensions.Extension do
            false <- to_string(tab[:key]) in @reserved_tab_keys,
            lv = tab[:lv],
            true <- is_atom(lv) and not is_nil(lv) and Code.ensure_loaded?(lv) do
-        [%{key: to_string(tab[:key]), label: to_string(tab[:label]), icon: tab[:icon], lv: lv}]
+        [
+          %{
+            key: to_string(tab[:key]),
+            label: to_string(tab[:label]),
+            icon: tab[:icon],
+            lv: lv,
+            requires_flag: tab[:requires_flag] && to_string(tab[:requires_flag])
+          }
+        ]
       else
         _ ->
           Logger.warning(

@@ -338,6 +338,7 @@ defmodule PhoenixKitProjects.Portal do
     from(a in Assignment,
       where:
         a.project_uuid == ^project_uuid and a.public == true and
+          a.review_status != "removed" and
           not is_nil(a.board_published_at),
       order_by: [desc: a.inserted_at],
       limit: 200,
@@ -347,7 +348,11 @@ defmodule PhoenixKitProjects.Portal do
 
   defp issues_query(%PortalRow{project_uuid: project_uuid}) do
     from(a in Assignment,
-      where: a.project_uuid == ^project_uuid and a.public == true,
+      # A task taken out of the list and held (chain V23) is off the board
+      # with it. Each row is listed for its own `public` flag, so a public
+      # task never shows a private subtask's title.
+      where:
+        a.project_uuid == ^project_uuid and a.public == true and a.review_status != "removed",
       order_by: [desc: a.inserted_at],
       limit: 200,
       preload: [:task, :child_project]
@@ -894,7 +899,8 @@ defmodule PhoenixKitProjects.Portal do
   @spec board_exposure_count(binary()) :: non_neg_integer()
   def board_exposure_count(project_uuid) when is_binary(project_uuid) do
     from(a in Assignment,
-      where: a.project_uuid == ^project_uuid and a.public == true,
+      where:
+        a.project_uuid == ^project_uuid and a.public == true and a.review_status != "removed",
       select: count(a.uuid)
     )
     |> RepoHelper.repo().one()

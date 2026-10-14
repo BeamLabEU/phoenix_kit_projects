@@ -11,8 +11,8 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 2.49.0 and < 3.0.0` (Hex — the release
-  that carries `activity_list/1`, on top of `Storage.ResourceFolders`,
+- **Depends on:** `phoenix_kit` `>= 2.54.0 and < 3.0.0` (Hex — the release
+  that carries `<.table_default fit>`'s column fitting, on top of `activity_list/1`, `Storage.ResourceFolders`,
   `PhoenixKitWeb.Actor`, `Activity.log/3`, `TableColumns` and the
   `form_actions` / `bulk_actions_toolbar` / `form_section` attrs and slots
   the LiveViews use; the compound form keeps the ceiling open across later 2.x
@@ -258,7 +258,9 @@ Repo-local aliases:
   depth level; feeds `project_tree_summaries/1` and `ScheduleLayout.trees/1`),
   `Projects.list_all_dependencies/1` on a LIST, `Extensions.enabled_map/1` +
   `Features.gates/1` / `flags/1` (one context read), `Portal.review_details_for/1`,
-  `Attachments.download_urls/1`, `Grants.subject_reaches/1`. Ecto preloads are
+  `Attachments.download_urls/1`, `Grants.subject_reaches/1`, `ListMetrics.load/3`
+  (the projects list's columns, one family of reads per column group) and
+  `Extensions.project_columns/2`. Ecto preloads are
   statements too, so assert N-independence, never an exact count. Known and
   left (low weight, one-off or a handful of rows): `Web.Crumbs`' per-ancestor
   `Authz.can?` for non-admins, `PortalLinks`' per-slug `Portal.resolve/2` in
@@ -329,8 +331,9 @@ Repo-local aliases:
   server owns clamping.
 - **Admin tabs match independently — there is no longest-prefix arbitration.**
   A plain `match: :prefix` on `projects` lights the Projects subtab on
-  `tasks`/`templates`/`overview` too. The subtab uses a `{:regex, …}` matcher
-  that excludes the literal siblings; keep it in sync when a sibling is added.
+  `tasks`/`templates`/`hours`/`overview` too. The subtab uses a `{:regex, …}`
+  matcher that excludes the literal siblings; keep it in sync when a sibling is
+  added.
 - **Route declaration order is match order.** `projects/:id/:tab` is the
   extension catch-all and must stay LAST — after `templates/*`, whose first
   segment would otherwise read as an id. Extension tab keys must not reuse a
@@ -359,10 +362,13 @@ lib/phoenix_kit_projects/
 ├── members.ex, grants.ex, health.ex, labels.ex, ledger.ex, invoicing.ex,
 │   project_events.ex, whiteboards.ex, attachments.ex, portal.ex, portal_links.ex
 │                            # The hub's per-project surfaces
+├── hours.ex + hours/*.ex    # The ledger READ back: filters, grouped summaries, the
+│                            # timesheet; Period, Format, Report (pure)
 ├── statuses.ex              # Workflow statuses (entities-backed, cement-at-start)
 ├── schedule_layout.ex, running_tiers.ex, assignees.ex
 │                            # Durations→dates walk, tiering, effective-assignee resolution
 ├── calendar_display.ex, gantt_display.ex   # The two display-settings customizers
+├── refs.ex, project_move.ex # Short names (key / `KEY-42`); moving a project in the tree
 ├── activity.ex, pub_sub.ex, resource_links.ex, errors.ex, paths.ex
 ├── gettext.ex, l10n.ex      # Own backend + content-locale helpers
 ├── ai_translatable.ex, ai_translate_binding.ex, dashboard_widgets.ex
@@ -374,6 +380,7 @@ lib/phoenix_kit_projects/
     ├── crumbs.ex        # page_section / page_crumbs / page_title
     ├── helpers.ex       # embed identity, translate_catalog/1, smart-link glue
     ├── list_ui.ex       # column visibility, search coercion, client haystacks
+    ├── project_list_columns.ex  # the projects list's columns as data: families, sorts, filters
     ├── routes.ex        # the public portal routes (route_module/0)
     ├── *_live.ex        # the LiveViews (below)
     └── widgets/*.ex     # the dashboards LiveComponents
@@ -386,6 +393,8 @@ lib/phoenix_kit_projects/
 Calendar tabs, read-only, nested via `live_render`); the project chrome pages
 `ProjectFilesLive`, `ProjectMembersLive`, `ProjectModulesLive`,
 `ProjectActivityLive`, `ProjectWhiteboardsLive`, `ProjectEventsLive`;
+`ProjectHoursLive` (a project's Hours tab AND the site-wide
+`/admin/projects/hours` page);
 `PopupHostLive` (the emit-mode dialog stack); `MemberProjectsLive` (the user
 dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 (legacy `projects/list/…`).
@@ -433,6 +442,7 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
 | `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — a project's API keys, the credentials of `Web.Api`) |
 | `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation; who holds it is a Postgres session advisory lock pinned for the request, so a live holder is 409 `in_progress` and a dead one's row is taken over — see `ApiKeys.idempotent/3`) |
+| (no schema modules) | `phoenix_kit_project_keys` (V22 — every key a project has had; trigger-maintained) and `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
 
@@ -546,7 +556,7 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V20**. `mix phoenix_kit.update` applies it
+`phoenix_kit_projects`, currently **V22**. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against
 `migrated_version_runtime/1`; tests run it through
 `PhoenixKitProjects.Test.SchemaMigration`, keyed on
@@ -687,9 +697,9 @@ carries the columns. What landed:
   `started_by_uuid` / `started_by_key_uuid` (server-only fields,
   `Projects.stamp_assignment/2`; the form and the API stamp them).
 - **`waiting_on`**, **`origin`** (`source` was taken — it means internal vs
-  portal), **`checklist`** (`[{id, text, done, done_at}]`, ≤ 50 items, ids
-  minted by the changeset, never driving `progress_pct`); form fields and
-  row badges; `PATCH /tasks/{id}/checklist/{item}` ticks one item.
+  portal); form fields and row badges. *(A `checklist` column lived here
+  from V19 to V22; V23 turned every item into a subtask and dropped it —
+  see "Tasks under tasks" below.)*
 - **Labels by name** on the API (`Labels.ensure_by_names/3`, creates the
   missing ones when the flag is on); `position: "top"` on create
   (`Projects.top_assignment_position/1`); `updated_since` on `GET /tasks`
@@ -699,12 +709,12 @@ carries the columns. What landed:
   `POST /notes`, `GET /notes?since=`.
 - **`GET /briefing`**: project + policy, open tasks (≤ 50, priority then
   position, `truncated`) with direction / last outcome / latest note / who
-  started / waiting / checklist counts, sub-projects one line each, project
+  started / waiting / subtask counts (was checklist counts until V23), sub-projects one line each, project
   notes since. **Ledger corrections**: `PATCH /entries/{id}` (minutes),
   `DELETE /entries/{id}`. **`DELETE /tasks/{id}`** under the policy.
 
-Not built, by choice: a fourth lifecycle status (waiting is a badge), a
-parent task (the checklist is the sub-item), typed file refs, ETags (an
+Not built, by choice: a fourth lifecycle status (waiting is a badge), typed
+file refs, ETags (an
 `updated_since` poll is enough), a claim history (the current holder only).
 
 **The second sweep (2026-10-05, same agent, three reports):** `estimated`
@@ -740,8 +750,8 @@ description, on the assignment's — with a copy of the library text — for a
 shared task); claims hold for every move out of `in_progress` by another
 actor, not only the start; every task-level API action rescopes to the
 task's project BEFORE its feature and role gates (codex: a child's floors
-were checked against the root); a checklist tick is one row-locked update
-(`Projects.update_checklist_item/3`); `ResourceLinks.visible_resource_uuids/2`
+were checked against the root); a checklist tick was one row-locked update
+(gone with the checklist in V23); `ResourceLinks.visible_resource_uuids/2`
 climbs the whole ancestry (a grandchild's records were invisible to a root
 member); ledger reads say `limit`/`truncated`, task entries are queried by
 `assignment_uuid`, amendments name the key in the trace, tokens/cost entries
@@ -770,6 +780,7 @@ The earlier list, for the record:
 
 - **Sub-items**: a `parent_uuid` on a task or a checklist — a sub-project per
   client question is too heavy (its own workflow status and ledger).
+  *(First answered with the checklist; since V23 with real subtasks.)*
 - **Project-level notes**: `POST /notes` beside `/time` and `/usage` — half a
   day's report is not about a task (decisions, research, the in-flight block).
 - **A briefing read**: `GET /notes?since=` or one call returning the open tasks
@@ -792,6 +803,271 @@ The earlier list, for the record:
   does the same; whether an API completion should stop at the sub-project, or
   whether a project with no open rows of its own should complete at all, is
   the open question. Documented in the guide for now.
+
+### Tasks under tasks — the API (V23, 2026-10-14)
+
+Max, 2026-10-14: *"let's make proper subtasks because we want flexibility"*.
+A task (`Assignment`) may sit under another task of the same project
+(`parent_uuid`, any depth; a trigger refuses another project's task and a
+loop). `position` stays ONE depth-first order for the project. The V19
+checklist is gone: V23 converted every item into a subtask of its task and
+dropped the column; its API went with it, no compatibility layer (the
+agent guide was rewritten instead). `PhoenixKitProjects.Outline` holds the
+shape, the tick rules and the writes; `PhoenixKitProjects.Outline.Api` what
+the HTTP layer needs (`info/1` — one read of the shape per list, so
+`Json.task/5` can say where each row sits; `batch_create/4`).
+
+- **On every task's JSON**: `parent_task` (the parent's ref or null —
+  `parent_ref` keeps its old meaning, a sub-project row's own place),
+  `depth`, `subtasks: {done, total}` over the LEAVES of its branch;
+  `subtask_refs` (direct children, in order) on the detail.
+- **Writes**: `parent` on `POST`/`PATCH /tasks` (a ref or uuid of an
+  accepted task row of the same project — never a sub-project row, 409;
+  null moves to the top level; through `Outline.move/3`, so the branch moves
+  with it); `POST /tasks/{id}/move` `{parent?, after?}` (absent parent =
+  stay, null = top; absent after = last, null = first; 409 `cycle`);
+  `POST /tasks/batch` `{lines, parent?}` — ≤ 500 lines, strings or
+  `{text, depth?, done?}`, one transaction under the project lock, one
+  broadcast, an activity row per task; `DELETE /tasks/{id}` answers 409
+  `has_subtasks` (with the count) unless `cascade=true`, refuses when a
+  sub-project row is under it, and applies the `delete_tasks` policy to
+  every row it would take.
+- **Reads**: `GET /tasks?parent=none|<ref>`; the briefing lists TOP-LEVEL
+  open tasks (each with `subtasks`) plus whatever this key has in hand at
+  any depth, so one parent with thirty subtasks cannot fill the cap;
+  `open_with_subtasks` counts every open row.
+- **Transitions** report `also_changed` — how many OTHER rows the tick rules
+  moved (`Outline.Api.statuses/1` before and after; cheap, one select each).
+
+### Tasks under tasks — the model and the typed list (V23, 2026-10-14)
+
+The boss's ask, in Max's words: *"when he creates a simple to-do, he doesn't
+even need to go through the add task pop-up… basically a text field that he
+can just hit enter… and that would be a new task"*; then *"let's make proper
+subtasks because we want flexibility"*. Decided with Max and a codex/zai/grok
+panel the same night (answers in Max's review folder, `subtasks-plan-*`).
+
+**The model** (`PhoenixKitProjects.Outline`):
+
+- `parent_uuid` on a task row; same project, never its own ancestor — a
+  trigger (`pkp_assignment_parent_check`) holds both, so no insert path can
+  skip them. A subtask is a whole task (number, owner, dates, hours).
+- `position` stays ONE order per project, written **depth first**: a parent
+  is followed by everything under it. Readers that only sort by position
+  stay sensible; readers that need the shape call `Outline.walk/1`. Every
+  write of the shape goes through `Outline.write_order/2` (it clears changed
+  parents before setting them, so a swap never passes through a cycle).
+- **Counts count leaves** (`Outline.leaves/1`, `Projects.leaves_only/1` in
+  SQL): a task with subtasks is the sum of them, never a unit itself.
+- **Tick rules** (`Outline.settle/3`, called from `update_assignment_status/2`
+  and `update_assignment_form/3`, so every path gets them): ticking a task
+  ticks everything open under it (a sub-project row is left to its project);
+  the last subtask ticked ticks its parent unless
+  `settings["outline"]["complete_parent"] == false`; reopening a subtask
+  reopens every done ancestor (to `in_progress`); unticking a parent touches
+  nothing below. The page asks first when the tick would close other
+  people's subtasks (`complete_or_ask/3`).
+- **Held tasks**: `review_status: "removed"`. A line taken out of the typed
+  list whose task carries something (`Outline.protected?/2`: hours, notes,
+  discussion, description, owner, dates, estimate, dependency, begun, from
+  the portal, a library task) is held, out of every list and count like a
+  pending request, and shown under the list with Restore / Delete. A plain
+  one-off task is deleted outright. A held row whose id comes back in a
+  line is revived in place — that is how cut-and-paste MOVES a task.
+- Deleting a task deletes what is under it (`Projects.delete_assignment/1`,
+  deepest first, so a sub-project row tears its project down and portal
+  files go).
+- The V19 checklist is gone: V23 converted every item to a subtask.
+
+**The list** (`Web.OutlineList`, hooks in `priv/static/assets/phoenix_kit_projects.js`,
+shipped through `js_sources/0` as `PhoenixKitProjectsHooks`):
+
+- **Text face** (`PkpOutline`): the whole list is one contenteditable; every
+  line element carries its task's uuid. The browser only edits text INSIDE a
+  line — every structural edit (Enter, Backspace at a line start, a deletion
+  across lines, paste, cut, Tab, Alt+arrows, undo) is done by the hook on
+  the elements, so an id can only move with its line. After a pause the whole
+  list goes to the server as `outline_sync` (lines + every id the browser has
+  been shown); `Outline.sync/4` creates, renames, revives, deletes or holds,
+  and rewrites the order. Only a task the browser KNEW and no longer lists is
+  taken as removed. Server pushes (`pkp_outline:lines`) are applied when the
+  browser is idle. Cut/copy put plain indented text on the clipboard plus an
+  `application/x-pkp-outline` payload with the ids.
+- **Cards**: the old rows, nested by depth, foldable, a "3/7" count, titles
+  typed in place (`PkpTitle`: Enter adds the next task, Tab nests, Backspace
+  on a fresh empty one drops it, a multi-line paste adds a task per line).
+- **Which face**: `settings["outline"]["style"]` — `auto` (text while no row
+  feature is on — in_progress, assignees, priorities, labels, estimates,
+  progress, dependencies, scheduling, ledger — and no sub-project row),
+  `text`, `cards`. `settings["outline"]["row"]` keeps chosen features off the
+  cards (they stay in the form). A template is always cards.
+- The board shows top-level tasks only, each with its subtask count; the
+  timeline nests; calendars show a subtask only when it has its own date.
+- Feature flag `subtasks` (default on): off, Tab does nothing; existing
+  subtasks keep their place.
+- **Known limit**: two browsers typing at once — a task deleted in one can
+  come back as a NEW task if the other was mid-typing when the delete
+  arrived and still has the line (its id is no longer the project's, so the
+  line reads as new). Low odds; the alternative (refusing unknown ids)
+  breaks undo of a delete.
+
+### Short names: a project's key, a task's ref (V22, 2026-10-10)
+
+The boss, via Max: *"everything uses the UUID, which is very not user
+friendly. Ideally, we'd have better internal structures, kind of like Jira
+style."* The plan went to codex, grok, zai and gemini first; what they
+agreed on is what is built, and where they corrected it is marked.
+
+- **A project has a `key`** (`ANDI`, 2–10 of `A-Z0-9` with a letter) and
+  **a task a `number`** in its project; `ANDI-42` is the task's **ref**
+  (`PhoenixKitProjects.Refs`: the shape, the one strict parser — a uuid, a
+  key or `KEY-number`, nothing looser — and the key a name suggests). The
+  uuid stays the identity of every row and valid everywhere; code that
+  STORES a pointer stores the uuid.
+- **Refs in text** (`PhoenixKitProjects.RefText`; Max, 2026-10-11: *"in the
+  text you would be able to use something like #test-001 instead of
+  #555-66-66…"*). The stored form of a link stays core's mention token
+  (it points at the uuid, so a renamed key or a moved project breaks
+  nothing); what changed is the edit box. `expand/1` turns a typed
+  `#KEY-42` / `#KEY` that names a real task or project into its token,
+  labelled with the ref only, and runs as a `prepare_changes` of the three
+  description changesets (`expand_on_write/2`: `Task`, `Assignment`,
+  `Project`, their `translations` too) and on a note's body — on the WRITE,
+  never on a form's validate, so the text does not change under the cursor.
+  A ref resolves only for a DECLARED writer (`RefText.put_writer/1`, in the
+  process dictionary): `Web.Helpers.assign_embed_user/2` declares the
+  viewer's scope for every LiveView, `Web.Api.Auth` the key's reach; a
+  process that declared nobody (the public portal, a job) expands nothing,
+  and tests that write fixtures directly declare `:all`. Without this a
+  typed `#SECRET-7` said whether it exists (codex, 2026-10-13).
+  `collapse/1` shows project and task tokens as refs again; the forms hold
+  the record collapsed (`collapse_fields/2`), so an untouched description
+  is no change. `Web.Mentions` replaces `use PhoenixKit.Mentions.Live` in
+  the two forms: the same typeahead, but a picked project or task inserts
+  `#KEY-42`. Neither direction asks who is looking — see the moduledoc for
+  why that leaks nothing. A comment typed in the comments module's own box
+  does not pass through here and keeps the long token.
+- **One key per project, sub-projects included** (all four seats): a
+  sub-project can be moved out or under another project, and its refs must
+  not change when it does. A sub-project's row on the parent's list is
+  called by the CHILD's key (`Assignment.ref/1`); its own place in that
+  list is `row_ref/1` (grok: an agent handed the row's number would log
+  work against the linking row).
+- **The database owns both rules** (codex, grok, gemini: the next insert
+  path will not call the context function). `phoenix_kit_project_keys` is
+  every key any project has had; a trigger on the projects table registers
+  a key when it is set and refuses another project's, raising the
+  registry's primary-key name so `Project.changeset/2` reports it as a
+  unique violation. A row outlives its project: a renamed-from key keeps
+  resolving (`Projects.project_by_key/1`, `former_keys/1`) and neither it
+  nor a deleted project's key is ever handed on. A second trigger numbers
+  every new assignment from `phoenix_kit_project_task_counters` — its own
+  table (grok), so numbering never locks the project row a form is saving.
+  Numbers are never reused.
+- **Where a key comes from.** `Projects.create_project/2` suggests one from
+  the name for a real project (`ANDI Manager` → `ANDI`, `3D editor` →
+  `3DE`, `PhoenixKit` → `PK`, `Kitchen` → `KIT`, a taken one → `KIT2`); the
+  form shows the suggestion and takes a typed one; a project inserted with
+  none gets a placeholder from a sequence (`P7`, and `TPL7` for a template,
+  which therefore never squats a key a project would want — the panel's
+  answer to "should templates have keys"). An emptied key field never
+  renames a keyed project (`keep_key_when_blank/1`).
+- **Lookups take either.** `Projects.get_project/1` and `get_assignment/1`
+  answer for a uuid or a ref and `nil` for anything else (they used to
+  raise on a non-uuid), so every page's `:id` segment and every API path
+  param resolves both. Resolve first, then authorize: a foreign ref is the
+  same not-found as an unknown one.
+- **Where it shows.** `Paths.*` take a project struct and then spell the
+  key (`/admin/projects/ANDI/tasks?task=ANDI-42`); the project page mirrors
+  that address into the bar; `<.ref_chip>` on task rows, board cards, the
+  sub-project row, the page header and the task drawer; the `#` search
+  finds a typed ref; a link to a task carries it. The API answers `key`,
+  `ref`, `number`, `parent_ref` and its guide has a "Short names" section.
+- **Tests that create projects by name are not async.** Two sandboxed
+  transactions inserting the same suggested key wait on each other at the
+  registry and deadlock once each creates a second project;
+  `fixture_project/1` passes a key of its own (`DataCase.unique_key/0`).
+- **Not built, on purpose:** a ref for anything but projects and tasks
+  (the panel: notes, ledger rows and events are quoted as their task);
+  moving a task between projects (when it comes: a new number in the
+  destination and the old ref kept as an alias, never a renumber);
+  releasing a key on archive.
+
+### Moving a project in the tree (2026-10-10)
+
+Max could not find how to take the "3D editor" sub-project out of its
+parent: the only way was "Make standalone" in the row menu of the PARENT's
+task list, and it left the project with no members, none of the parent's
+modules and its agent's key behind.
+
+- `Projects.move_project/2` — to the top level or under another project,
+  in one transaction under the sub-project link lock (from one parent to
+  another in one step; a refusal rolls the old link back).
+- `PhoenixKitProjects.ProjectMove` — `preview/2` says what the old parent
+  has that the project does not (members, module rows, the live keys of
+  its ancestors, which reach it only while it is nested there) and where
+  it could go; `run/4` checks the mover (`:edit_settings` on the project,
+  `:edit_tasks` on a new parent) and carries what was ticked, each thing
+  only where the mover may grant it. `ApiKeys.move/3` points a key at the
+  project and keeps its token. `preview.links` counts the task ↔
+  interaction links that point at an interaction logged OUTSIDE the
+  project (the interactions provider's optional `projects_of/1` says
+  where); the dialog says they keep opening while the project has the same
+  client, and warns when it would be left with none. The CRM side of that
+  rule: a project reads what other projects logged with its client company
+  (`Interactions.list_for_project/2` `client:`), and writes only its own.
+- `Web.Components.MoveProject` — the dialog, in `ConfirmAction`'s shape
+  (one modal, one event clause per page): on the project's own ⋮ menu, on
+  a sub-project's row ("Move out…") and on a row of the projects list.
+
+### A task's own dates (V21, 2026-10-06)
+
+Max: *"build a start date and an end date."* Until V21 a task's days were
+only ever computed — duration plus its place in the order, walked from the
+project's start by `ScheduleLayout` — and an ongoing project has no start
+to walk from, so nothing there could carry a date.
+
+- **Two optional columns on the assignment**, `start_date` and `end_date`
+  (`DATE`: a day, no time and no zone — "by Thursday" is Thursday wherever
+  the reader sits). Either may stand alone; a check constraint and
+  `Assignment.validate_dates/1` keep the end from preceding the start.
+  They are ordinary form fields (cast in `changeset/2`), ungated like
+  `waiting_on`: blank costs nothing on the row.
+- **`Assignment.overdue?/2`**: the end date has passed and the task is not
+  done. The row's date badge turns red on it; the API answers it as
+  `overdue` and counts it in the briefing.
+- **The schedule honours them** (`ScheduleLayout.pin_dates/2`): a dated
+  task sits on its days instead of where the walk put it — both dates:
+  that range; only a start: its computed length from that day, one day at
+  least; only an end: that one day. The walk itself is not moved (the
+  order still says what follows what), and every ancestor sub-project's
+  span is widened to cover it. A pinned span carries `pinned: {from, to}`;
+  `CalendarDisplay.task_events/4` draws those days as they are rather than
+  converting the instants into the viewer's zone (which added a day east
+  of UTC and lost one west of it — the test walks four offsets).
+- **API**: `start_date` / `end_date` on create and PATCH (`YYYY-MM-DD`;
+  null or empty clears; anything else, or an end before the start, is a
+  422 before any write), both plus `overdue` on every task row and in the
+  briefing, `counts.overdue` there, and `GET /tasks?due_before=<day>`.
+- **Assignee over the API (2026-10-07)**: `Web.Api.Assignee` reads
+  (`to_json/1`), sets (`attrs/2` from a request's `assignee`: `me`, a
+  person's uuid, `{"team"|"department": uuid}`, null) and filters
+  (`filter/3`); `GET /people` lists who a task can be for, names only.
+  The feature and the `assign_tasks` action are checked only when the
+  field is sent. Nothing is assigned by default.
+- **A link to a task opens it (2026-10-07)**: `ResourceLinks` resolves a
+  task to `<project>/tasks?task=<uuid>#task-<uuid>`; `ProjectShowLive`
+  rings the row (`focus_task/2`, widening the lens if it hid the row) and
+  hands `PopupHostLive` an `"open"` session entry, which it sends itself
+  as an `:opened` once subscribed (no race with the page's own broadcast).
+- **Ongoing on the start bar (2026-10-07)**: the Ongoing / All caught up
+  badges sit on the start bar, which for an unstarted ongoing project is
+  only the Start button (no "set up tasks, then start"); the header keeps
+  them only when the project has no lifecycle. The list's connector rail
+  needs two rows: through a lone sub-project it read as a dependency.
+- Not done: dates on a sub-project's row (its span is its children's), a
+  date on a library task (a template has no calendar), and a "due this
+  week" view in the UI — the calendar and the badge are the view for now.
 
 ### Task notes: the long record, apart from the discussion (2026-10-05)
 
@@ -991,6 +1267,74 @@ Module-local additions to that convention:
   or a plain name whose first paragraph states that it is not a PR folder).
 - Commit the review folder. An uncommitted review is one `git clean` from gone.
 
+### An extension's dated things on the Calendar tab (2026-10-10)
+
+The CRM's plan for a client meeting stopped being a project event (CRM V9:
+a plan is an interaction with `status: "planned"`), so it would have left
+the project's Calendar tab. An extension declaration may now carry
+`calendar: {module, fun}` (`fun.(project_uuid, from, until)` →
+`%{items, truncated}`; item shape in `Extensions.Extension`'s moduledoc).
+`Extensions.calendar_items/3` collects from the project's ENABLED
+extensions, rescued per provider; `ProjectEventsLive` draws the items
+beside the project's own events (grid id `"ext:<source>:<id>"`, accent
+colour, a cancelled one greyed with ✕), lists the planned ones under
+Upcoming, and opens one read-only with a link to the extension's own tab.
+Nothing is copied: the tab asks on load, on a month change and when the
+extension calls `Extensions.calendar_changed/1`
+(`{:projects, :project_calendar_changed, _}` on the project topic). The
+briefing gained `client.planned` (the provider's list with
+`status=planned`); `GET /events` stays the project's own events.
+
+## Hours (2026-10-10)
+
+`Ledger` writes, `Hours` reads. `PhoenixKitProjects.Hours` takes one filter
+map (`filters/1`: projects or `:all`, a period, workers, a task, billable, the
+viewer's offset) and answers `list/2` (a page of entries with who / task /
+project resolved for the page), `summary/2` (totals, by worker / task /
+project / day and the worker × day matrix — six grouped reads whatever the
+size, pinned in `hours_test.exs` with `QueryCounter`), `timesheet/1`,
+`workers/1` and `task_options/2`. Things worth knowing before touching it:
+
+- **An entry counts on the day the work was done**: `ended_at`, else
+  `started_at`, else `inserted_at` (`Hours.work_at/1`). The API's `occurred_at`
+  is stored as `ended_at`, so a batch reported the morning after lands on its
+  own day.
+- **One person, one line.** A staff record linked to a user account folds
+  into that user (`worker_index/1` answers the CANONICAL key), and a filter
+  on either identity finds both (`expand_workers/1`). An agent is named after
+  its API key, else the `api_key_name` its entries carry.
+- **`minutes` is people's time, `ai_minutes` an agent's** — the split
+  `Ledger.totals_for_project/1` makes.
+- **Days are cut with ONE offset per read** (`Hours.Period.offset_seconds/2`),
+  so a period across a daylight-saving switch has its days an hour off on one
+  side; totals are unaffected. Core's per-instant `TimeZone` helpers are newer
+  than this module's core floor.
+- **Ask `Authz.can?/5` with the project STRUCT.** With a bare uuid the resolver
+  cannot read the project's own "who can do what" floors and judges by the
+  defaults; `Hours.projects_by_uuid/1` is the batched read the page uses.
+
+`Web.ProjectHoursLive` is ONE LiveView in two places: the project's **Hours
+tab** — a tab the Tasks extension contributes with `requires_flag: "ledger"`
+(a tab-level key `Extension` keeps and `ProjectShowLive.ext_tabs_for/3`
+honours through `Features.on?/2`), mounted with the extension-tab session —
+and the admin subtab `projects/hours`, over `Hours.visible_project_uuids/1`
+(`:all` for `projects.admin_all`, else memberships / grants / open projects
+plus what is nested under them). Filters ride core's `UrlState` in `:history`
+mode; only the routed page renders the sync hook, a tab leaving the address
+bar to its host. Logging one's own time needs `:log_time`; logging for
+somebody else, or changing another person's entry, `:edit_tasks`; an entry
+already on an invoice (`Invoicing.invoiced_entry_uuids/1`) is shown and never
+changed there. The chart is server-rendered boxes (no JS, no new hook); its
+colours are eight CSS variables on `.pk-hours-viz`. The report replaces the
+page's content rather than opening a dialog (a dialog prints as its box):
+`Hours.Report` builds the text and the CSV (formula-leading cells written as
+text), the print rules hide everything but `.pk-hours-report`. On the API,
+`GET /hours` is the same read (`Web.Api.HoursController`).
+
+Not built: a running timer; editing an entry's day, note or person (the
+ledger amends minutes and the billable flag only); a saved or scheduled
+report; a true PDF file (the browser's print makes one).
+
 ## TODOs
 
 - **Drop the embed-user core-helper fallback.** `Web.Helpers.assign_embed_user/2`
@@ -1014,3 +1358,59 @@ Module-local additions to that convention:
 - **Dashboards catalog strings are untranslatable from here.**
   `phoenix_kit_dashboards` translates provider strings through its own backend.
   **Trigger:** that helper honouring a provider backend.
+
+## The projects list: columns, sorts and filters (2026-10-10)
+
+The boss asked for "way more columns" on the projects list — the client,
+task counts — and to filter and sort by them. Three pieces:
+
+- **`ListMetrics.load(projects, families, opts)`** reads what the columns
+  show for a whole page of projects. Columns are grouped into FAMILIES
+  (`:tasks`, `:due`, `:events`, `:members`, `:assignee`, `:ledger`,
+  `:activity`, `:creators`, `:parents`, `:ext`); only the families behind
+  the visible columns, the active sort and the set filters are read, each
+  in a fixed number of statements (`batched_list_metrics_test.exs`).
+  Progress and task counts come from the TREE summary (a done task is 100
+  whatever its slider says, a sub-project rolls into its parent) — the flat
+  `project_summaries/1` sums the raw sliders and disagrees with the project
+  page for a task completed without moving its slider.
+- **`Web.ProjectListColumns`** is the roster as data: a column's label,
+  family, sort and alignment (`specs/0`), the in-memory `sort/5` (nil last
+  whichever way, ties by name) and `filter/4`. **To add a column:** one
+  entry in `specs/0`, a `sort_value/4` clause if it sorts, a
+  `column_cell/3` clause in `ProjectsLive`, and a `ListUi.column_priority/1`
+  line if "dropped first" is wrong for it. A row-menu item goes in
+  `render_projects_table/3`'s `<.table_row_menu>`.
+- **Extension columns.** An extension declaration may carry
+  `project_columns: {module, fun}`; `fun.(project_uuids)` answers
+  `[%{key, label, values: %{project_uuid => %{text, url | nil}}}]`.
+  `Extensions.project_columns/2` calls each provider once per load, drops
+  the values of projects the extension is off on (one read of the
+  enablement rows), hides a sibling module's column from a viewer without
+  that module's permission, and rescues a failing provider to nothing. The
+  list offers each as column `ext:<ext_key>:<key>` — shown by default,
+  sortable by its text, filterable by its distinct values. The CRM's Client
+  is the first (`PhoenixKitCRM.ProjectColumns`).
+
+**Two shapes of load.** The four database sorts (`position`, `name`,
+`inserted_at`, `updated_at`) with no panel filter keep the old behaviour:
+everything rendered at or below 100 projects, SQL search + load-more above.
+Any other sort, or any panel filter, loads the whole visible set (searched
+in SQL past the threshold), reads the families the sort and the filters
+need, filters and sorts in memory and slices to the load-more cap. Fine at
+tens to hundreds of projects; if a site ever holds thousands, the answer is
+SQL aggregates per sort, not a bigger slice.
+
+**State lives in the URL** through `UrlState` in `:history` mode (the list
+is embeddable — no `handle_params/3`): `sort`, `dir`, `sortx` (which
+extension column `sort=ext` means), `state`, `who` (`mine` or a user uuid),
+`overdue`, `mode`, `archived` (`no`/`all`/`only`), `subs` (sub-projects
+listed flat, each prefixed with its parent), `xcol` + `xval` (one extension
+column's value). Open-ended values (`who`, `sortx`, `xcol`, `xval`) are
+only ever compared against what was loaded — never turned into atoms or
+queries. Drag-reorder stays on only for the manual sort with no search, no
+filter, no archived view and no sub-projects, as before.
+
+The viewer scope is applied in the database query before anything else, so
+no sort, filter or listing switch can show a non-admin a project they do
+not hold (`projects_list_columns_live_test.exs`, "scoping").

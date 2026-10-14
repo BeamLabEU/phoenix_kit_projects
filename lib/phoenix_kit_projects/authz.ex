@@ -38,6 +38,8 @@ defmodule PhoenixKitProjects.Authz do
 
   Actions (`actions/0`): `:view`, `:create_tasks`, `:edit_tasks`,
   `:delete_tasks`, `:assign_tasks`, `:update_status`, `:log_time`,
+  `:log_time_for_others` (enter time on another person's behalf — its own
+  row in the project's "who can" panel, so a project decides who that is),
   `:comment`, `:upload_files`, `:manage_members`, `:manage_modules`,
   `:edit_settings`, `:set_health`, `:archive_project`, `:delete_project`.
   Extensions may declare additional action keys via `permission_actions`;
@@ -71,6 +73,7 @@ defmodule PhoenixKitProjects.Authz do
     :assign_tasks,
     :update_status,
     :log_time,
+    :log_time_for_others,
     :comment,
     :upload_files,
     :manage_members,
@@ -252,6 +255,7 @@ defmodule PhoenixKitProjects.Authz do
     assign_tasks: :viewer,
     update_status: :viewer,
     log_time: :viewer,
+    log_time_for_others: :viewer,
     comment: :viewer,
     upload_files: :viewer,
     set_health: :viewer,
@@ -271,7 +275,7 @@ defmodule PhoenixKitProjects.Authz do
 
   @overridable Map.new(
                  ~w(create_tasks edit_tasks delete_tasks assign_tasks update_status
-                    log_time comment upload_files set_health)a,
+                    log_time log_time_for_others comment upload_files set_health)a,
                  fn action -> {action, {Atom.to_string(action), @choices}} end
                )
 

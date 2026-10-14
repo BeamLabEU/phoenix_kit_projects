@@ -12,6 +12,7 @@ defmodule PhoenixKitProjects.Projects do
   alias PhoenixKit.Users.Auth, as: UsersAuth
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
+  alias PhoenixKitProjects.Refs
   alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, TaskDependency}
 
   # Dialyzer loses opacity on `MapSet.t()` whenever an empty MapSet
@@ -79,6 +80,18 @@ defmodule PhoenixKitProjects.Projects do
   #
   # COALESCE, not a bare comparison: absence means "inherit the default",
   # which is on. Only an explicit false counts.
+  # Ongoing work (`Project.ongoing?/1`) that is not waiting for a scheduled
+  # start: under way without being started (`Project.derived_status/2`).
+  defmacrop ongoing_open(p) do
+    quote do
+      fragment(
+        "(COALESCE(? ->> 'completion', 'auto') = 'manual' AND ? = 'immediate')",
+        unquote(p).settings,
+        unquote(p).start_mode
+      )
+    end
+  end
+
   defmacrop lifecycle_off(settings) do
     quote do
       fragment(
@@ -822,6 +835,9 @@ defmodule PhoenixKitProjects.Projects do
     * `:archived` — `false` (default) hides archived; `true` shows only
       archived; `:all` returns both.
     * `:include_templates` — default `false`.
+    * `:include_subprojects` — default `false`: a project nested under
+      another is reached through its parent. `true` lists them flat beside
+      the top-level ones (the projects list's "include sub-projects").
   """
   @spec list_projects(keyword()) :: [Project.t()]
   def list_projects(opts \\ []) do
@@ -834,7 +850,7 @@ defmodule PhoenixKitProjects.Projects do
 
     Project
     |> maybe_exclude_templates(include_templates)
-    |> exclude_subprojects()
+    |> maybe_exclude_subprojects(Keyword.get(opts, :include_subprojects, false))
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> maybe_search_name_description(Keyword.get(opts, :search))
@@ -933,6 +949,24 @@ defmodule PhoenixKitProjects.Projects do
   # measured, not only where it is listed.
   defp accepted_only(q), do: where(q, [a], a.review_status == "accepted")
 
+  # A task with subtasks is the sum of them, so the aggregates count only
+  # the rows with nothing (accepted) under them — `Outline.leaves/1` in SQL.
+  # A subquery over the schema, never a table name: the tables may be
+  # prefixed.
+  defp leaves_only(q) do
+    where(q, [a], a.uuid not in subquery(parent_uuids_query()))
+  end
+
+  defp parent_uuids_query do
+    from(c in Assignment,
+      where: not is_nil(c.parent_uuid) and c.review_status == "accepted",
+      select: c.parent_uuid
+    )
+  end
+
+  defp maybe_exclude_subprojects(q, true), do: q
+  defp maybe_exclude_subprojects(q, _), do: exclude_subprojects(q)
+
   defp exclude_subprojects(q) do
     children =
       from(a in Assignment, where: not is_nil(a.child_project_uuid), select: a.child_project_uuid)
@@ -954,12 +988,83 @@ defmodule PhoenixKitProjects.Projects do
   defp maybe_filter_status(q, slug) when is_binary(slug),
     do: where(q, [p], p.current_status_slug == ^slug)
 
-  @doc "Fetches a project by uuid, or `nil` if not found."
-  @spec get_project(uuid()) :: Project.t() | nil
-  def get_project(uuid), do: repo().get(Project, uuid)
-  @doc "Fetches a project by uuid. Raises if not found."
-  @spec get_project!(uuid()) :: Project.t()
-  def get_project!(uuid), do: repo().get!(Project, uuid)
+  @doc """
+  Fetches a project by uuid or by key (`ANDI`, a current or former one —
+  `PhoenixKitProjects.Refs`), or `nil`. Anything that is neither answers
+  `nil` rather than raising, so a page can take its `:id` segment as typed.
+  """
+  @spec get_project(uuid() | String.t()) :: Project.t() | nil
+  def get_project(id) do
+    case Refs.parse(id) do
+      {:uuid, uuid} -> repo().get(Project, uuid)
+      {:project, key} -> project_by_key(key)
+      _ -> nil
+    end
+  end
+
+  @doc "Fetches a project by uuid or key. Raises if not found."
+  @spec get_project!(uuid() | String.t()) :: Project.t()
+  def get_project!(id) do
+    case get_project(id) do
+      %Project{} = project -> project
+      nil -> raise Ecto.NoResultsError, queryable: Project
+    end
+  end
+
+  @doc """
+  The project a key names — its current key or one it was renamed from
+  (the registry keeps every key a project has had, chain V22). `nil` for
+  an unknown key and for one whose project is gone.
+  """
+  @spec project_by_key(String.t()) :: Project.t() | nil
+  def project_by_key(key) when is_binary(key) do
+    key = Refs.normalize_key(key)
+
+    key &&
+      repo().one(
+        from(p in Project,
+          join: k in "phoenix_kit_project_keys",
+          on: k.project_uuid == p.uuid,
+          where: k.key == ^key,
+          limit: 1
+        )
+      )
+  end
+
+  def project_by_key(_), do: nil
+
+  @doc """
+  The keys a project answered to before its current one, newest first —
+  they keep resolving (`project_by_key/1`) and are never handed to
+  another project.
+  """
+  @spec former_keys(Project.t()) :: [String.t()]
+  def former_keys(%Project{uuid: uuid, key: current}) do
+    repo().all(
+      from(k in "phoenix_kit_project_keys",
+        where: k.project_uuid == type(^uuid, UUIDv7) and k.key != ^(current || ""),
+        order_by: [desc: k.inserted_at],
+        select: k.key
+      )
+    )
+  end
+
+  @doc """
+  The key `name` suggests for a new project, free of every key in use or
+  retired (`Refs.suggest_key/2`'s rule).
+  """
+  @spec suggest_project_key(String.t() | nil) :: String.t()
+  def suggest_project_key(name) do
+    taken = MapSet.new(repo().all(from(k in "phoenix_kit_project_keys", select: k.key)))
+    Refs.suggest_key(name, &MapSet.member?(taken, &1))
+  end
+
+  @doc """
+  The task a ref names (`ANDI-42`, through the project's current or a
+  former key) or a uuid; `nil` otherwise. Preloaded like `get_assignment/1`.
+  """
+  @spec assignment_by_ref(term()) :: Assignment.t() | nil
+  def assignment_by_ref(ref), do: get_assignment(ref)
 
   @doc """
   Fetches multiple projects by uuid in a single query, returning a
@@ -1033,7 +1138,7 @@ defmodule PhoenixKitProjects.Projects do
     is_template? = template_attr?(attrs)
     attrs = put_default_position(attrs, fn -> next_project_position(is_template?) end)
 
-    with {:ok, project} <- %Project{} |> Project.changeset(attrs) |> repo().insert() do
+    with {:ok, project} <- insert_project(attrs, is_template?) do
       # Hub membership (P2a): the creator holds the first owner seat. Only
       # real (non-template) projects get members; best-effort so a members
       # hiccup never fails the create. `:actor_uuid` is the LV-layer opt.
@@ -1048,7 +1153,72 @@ defmodule PhoenixKitProjects.Projects do
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
       end
 
-      {:ok, project}
+      start_ongoing({:ok, project})
+    end
+  end
+
+  @doc """
+  Starts ongoing work that nobody will start by hand: a real project that
+  ends only when someone ends it (`Project.ongoing?/1`), in immediate
+  mode, has no setup phase and no Start button, so it is started as soon
+  as it exists or becomes ongoing — which is also what freezes its
+  workflow statuses (`start_project/2`). Takes and returns a result tuple
+  so it can end a pipeline; anything else passes through. Inside
+  somebody's transaction it does nothing: the caller runs it again after
+  the commit.
+  """
+  @spec start_ongoing(term()) :: term()
+  def start_ongoing(
+        {:ok,
+         %Project{
+           is_template: false,
+           started_at: nil,
+           completed_at: nil,
+           archived_at: nil,
+           start_mode: "immediate"
+         } = project} = result
+      ) do
+    if Project.ongoing?(project) and not repo().in_transaction?() do
+      case start_project(project) do
+        {:ok, started} -> {:ok, started}
+        {:error, _} -> result
+      end
+    else
+      result
+    end
+  end
+
+  def start_ongoing(result), do: result
+
+  # A real project with no key given gets the one its name suggests
+  # (`suggest_project_key/1`); a template is left to the database's
+  # placeholder (`TPL7`), so it never squats a key a project would want.
+  # Two creates suggesting the same key at once: the loser's insert is
+  # refused by the registry and it suggests again.
+  defp insert_project(attrs, is_template?, attempts \\ 3) do
+    given = Refs.normalize_key(Map.get(attrs, "key") || Map.get(attrs, :key))
+
+    if is_template? or given do
+      %Project{} |> Project.changeset(attrs) |> repo().insert()
+    else
+      name = Map.get(attrs, "name") || Map.get(attrs, :name)
+      key_field = if Enum.any?(Map.keys(attrs), &is_atom/1), do: :key, else: "key"
+      keyed = Map.put(attrs, key_field, suggest_project_key(name))
+
+      case %Project{} |> Project.changeset(keyed) |> repo().insert() do
+        {:error, %Ecto.Changeset{errors: errors}} = error ->
+          # Not inside somebody's transaction (a sub-project, a clone): the
+          # refused insert has aborted it, and a second try would only raise.
+          if attempts > 1 and not repo().in_transaction?() and Keyword.has_key?(errors, :key) and
+               Keyword.keys(errors) == [:key] do
+            insert_project(attrs, is_template?, attempts - 1)
+          else
+            error
+          end
+
+        ok ->
+          ok
+      end
     end
   end
 
@@ -1088,9 +1258,95 @@ defmodule PhoenixKitProjects.Projects do
   def update_project(%Project{} = p, attrs, opts \\ []) do
     with {:ok, updated} <- p |> Project.changeset(attrs) |> repo().update() do
       if Keyword.get(opts, :broadcast, true), do: broadcast_project_updated(updated)
-      {:ok, updated}
+      # Switched to ongoing work while it waited for a Start: see `start_ongoing/1`.
+      {:ok, updated} |> settle_completion(p) |> start_ongoing()
     end
   end
+
+  @doc """
+  After how a project ends was changed (`before` is the project as it
+  was): a project switched to "ends with its last task" whose tasks are
+  all done completes on the spot, and its parent's row follows — the rule
+  it now lives under is applied, not left for the next task change. Takes
+  and returns a result tuple; inside a transaction it does nothing and the
+  caller runs it again after the commit.
+  """
+  @spec settle_completion(term(), Project.t()) :: term()
+  def settle_completion({:ok, %Project{} = updated} = result, %Project{} = before) do
+    if Project.completion(before) != Project.completion(updated) and not repo().in_transaction?() do
+      _ = recompute_project_completion(updated.uuid)
+      {:ok, reopen_if_empty(get_project(updated.uuid) || updated)}
+    else
+      result
+    end
+  end
+
+  def settle_completion(result, _before), do: result
+
+  # Ended by hand, then switched to "ends with its last task" with no task
+  # at all: there is no last task to have ended it, so it is open again
+  # (the recompute only reopens a project that has an open task).
+  defp reopen_if_empty(%Project{completed_at: %DateTime{}, is_template: false} = project) do
+    if not Project.ongoing?(project) and list_assignments(project.uuid) == [] do
+      case project |> Project.changeset(%{completed_at: nil}) |> repo().update() do
+        {:ok, reopened} ->
+          ProjectsPubSub.broadcast_project(:project_reopened, project_payload(reopened))
+          reopened
+
+        _ ->
+          project
+      end
+    else
+      project
+    end
+  end
+
+  defp reopen_if_empty(project), do: project
+
+  @doc """
+  Ends ongoing work by hand: the one way a project that "ends only when
+  someone ends it" completes. Stamps `completed_at`, broadcasts
+  `:project_completed` and refreshes its parent's row. `{:error,
+  :not_ongoing}` for a project that ends with its last task (that one
+  completes itself), `{:error, :already_ended}` for one already ended.
+  """
+  @spec end_project(Project.t()) ::
+          {:ok, Project.t()} | {:error, :not_ongoing | :already_ended | Ecto.Changeset.t()}
+  def end_project(%Project{completed_at: %DateTime{}}), do: {:error, :already_ended}
+
+  def end_project(%Project{is_template: false} = p) do
+    if Project.ongoing?(p) do
+      with {:ok, ended} <-
+             p |> Project.changeset(%{completed_at: DateTime.utc_now()}) |> repo().update() do
+        ProjectsPubSub.broadcast_project(:project_completed, project_payload(ended))
+        propagate_rollup_to_parent(ended.uuid, 0)
+        {:ok, ended}
+      end
+    else
+      {:error, :not_ongoing}
+    end
+  end
+
+  def end_project(%Project{}), do: {:error, :not_ongoing}
+
+  @doc "Takes back `end_project/1`: the ongoing work is under way again."
+  @spec resume_project(Project.t()) ::
+          {:ok, Project.t()} | {:error, :not_ongoing | :not_ended | Ecto.Changeset.t()}
+  def resume_project(%Project{completed_at: nil}), do: {:error, :not_ended}
+
+  def resume_project(%Project{is_template: false} = p) do
+    if Project.ongoing?(p) do
+      with {:ok, resumed} <- p |> Project.changeset(%{completed_at: nil}) |> repo().update() do
+        ProjectsPubSub.broadcast_project(:project_reopened, project_payload(resumed))
+        propagate_rollup_to_parent(resumed.uuid, 0)
+        {:ok, resumed}
+      end
+    else
+      {:error, :not_ongoing}
+    end
+  end
+
+  def resume_project(%Project{}), do: {:error, :not_ongoing}
 
   @doc "Broadcasts a `:project_updated` event for a project (post-commit use)."
   @spec broadcast_project_updated(Project.t()) :: :ok
@@ -1316,7 +1572,7 @@ defmodule PhoenixKitProjects.Projects do
 
     Project
     |> maybe_exclude_templates(include_templates)
-    |> exclude_subprojects()
+    |> maybe_exclude_subprojects(Keyword.get(opts, :include_subprojects, false))
     |> maybe_filter_archived(archived)
     |> maybe_filter_status(status_slug)
     |> maybe_search_name_description(Keyword.get(opts, :search))
@@ -1449,6 +1705,7 @@ defmodule PhoenixKitProjects.Projects do
       select: {a.project_uuid, count(a.uuid)}
     )
     |> accepted_only()
+    |> leaves_only()
     |> repo().all()
     |> Map.new()
   end
@@ -1577,7 +1834,7 @@ defmodule PhoenixKitProjects.Projects do
         where(
           query,
           [p],
-          ilike(p.name, ^pattern) or ilike(p.description, ^pattern) or
+          ilike(p.name, ^pattern) or ilike(p.description, ^pattern) or ilike(p.key, ^pattern) or
             fragment(
               "EXISTS (SELECT 1 FROM jsonb_each(?) AS t WHERE t.value->>'name' ILIKE ? OR t.value->>'description' ILIKE ?)",
               p.translations,
@@ -1597,12 +1854,14 @@ defmodule PhoenixKitProjects.Projects do
     |> where(
       [p],
       p.is_template == false and is_nil(p.archived_at) and
-        (not is_nil(p.started_at) or lifecycle_off(p.settings)) and
+        (not is_nil(p.started_at) or lifecycle_off(p.settings) or ongoing_open(p)) and
         is_nil(p.completed_at)
     )
     |> exclude_subprojects()
     |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
-    |> order_by([p], desc: p.started_at)
+    # Ongoing work made before it started itself has no start: it sorts
+    # by the day it was made, not ahead of everything (NULLS FIRST).
+    |> order_by([p], desc: coalesce(p.started_at, p.inserted_at))
     |> repo().all()
   end
 
@@ -1627,8 +1886,11 @@ defmodule PhoenixKitProjects.Projects do
     Project
     |> where(
       [p],
+      # With no lifecycle there is no start to wait for: such a project
+      # is among the active (`list_active_projects/1`), not here as well.
       p.is_template == false and is_nil(p.archived_at) and is_nil(p.started_at) and
-        p.start_mode == "scheduled" and not is_nil(p.scheduled_start_date)
+        p.start_mode == "scheduled" and not is_nil(p.scheduled_start_date) and
+        not lifecycle_off(p.settings)
     )
     |> exclude_subprojects()
     |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
@@ -1643,7 +1905,7 @@ defmodule PhoenixKitProjects.Projects do
     |> where(
       [p],
       p.is_template == false and is_nil(p.archived_at) and is_nil(p.started_at) and
-        p.start_mode == "immediate" and not lifecycle_off(p.settings)
+        p.start_mode == "immediate" and not lifecycle_off(p.settings) and not ongoing_open(p)
     )
     |> exclude_subprojects()
     |> maybe_scope_to_viewer(Keyword.get(opts, :viewer))
@@ -1673,6 +1935,7 @@ defmodule PhoenixKitProjects.Projects do
       select: {a.status, count(a.uuid)}
     )
     |> accepted_only()
+    |> leaves_only()
     |> repo().all()
     |> Map.new()
   end
@@ -1702,9 +1965,11 @@ defmodule PhoenixKitProjects.Projects do
           on: p.uuid == a.project_uuid,
           where:
             a.assigned_person_uuid == ^person.uuid and a.status != "done" and
+              a.review_status == "accepted" and
               p.is_template == false and is_nil(p.archived_at),
           order_by: [asc: a.status, asc: a.inserted_at],
-          preload: [:task, :project]
+          # `parent: :task` — a subtask reads as "parent / title" on a plate.
+          preload: [:task, :project, parent: :task]
         )
         |> repo().all()
     end
@@ -1744,6 +2009,7 @@ defmodule PhoenixKitProjects.Projects do
         select: {a.project_uuid, a.status, count(a.uuid)}
       )
       |> accepted_only()
+      |> leaves_only()
       |> repo().all()
       |> Enum.reduce(%{}, fn {project_uuid, status, n}, acc ->
         Map.update(acc, project_uuid, %{status => n}, fn inner ->
@@ -1763,6 +2029,7 @@ defmodule PhoenixKitProjects.Projects do
         select: {a.project_uuid, sum(a.progress_pct)}
       )
       |> accepted_only()
+      |> leaves_only()
       |> repo().all()
       |> Map.new()
 
@@ -1915,7 +2182,8 @@ defmodule PhoenixKitProjects.Projects do
   # data, not a child — skipped, never recursed into. (`path` is a plain
   # map: dialyzer's opaqueness false positive on a literal MapSet.)
   defp build_tree_node(%Project{} = project, by_project, depth, path) do
-    assignments = Map.get(by_project, project.uuid, [])
+    # Leaves only: a task with subtasks is counted through them.
+    assignments = by_project |> Map.get(project.uuid, []) |> PhoenixKitProjects.Outline.leaves()
     {task_rows, link_rows} = Enum.split_with(assignments, &is_nil(&1.child_project_uuid))
     path = Map.put(path, project.uuid, true)
 
@@ -2012,6 +2280,7 @@ defmodule PhoenixKitProjects.Projects do
       }
     )
     |> accepted_only()
+    |> leaves_only()
     |> repo().all()
     |> Enum.reduce(%{}, fn {puuid, a_dur, a_unit, a_cw, t_dur, t_unit}, acc ->
       project = Map.get(projects_by_uuid, puuid)
@@ -2101,7 +2370,7 @@ defmodule PhoenixKitProjects.Projects do
         # subscribers still learn the new project exists.
         carry_template_extensions(template, project, opts)
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
-        {:ok, project}
+        start_ongoing({:ok, project})
 
       {:error, _reason} = err ->
         err
@@ -2157,20 +2426,26 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
+  # Walked depth first, so a row's parent is cloned (and in the map) before
+  # the row: a subtask of the source is a subtask of the copy.
   defp clone_assignments_in_tx(source_assignments, project) do
-    Enum.reduce(source_assignments, %{}, fn a, acc ->
+    source_assignments
+    |> PhoenixKitProjects.Outline.walk()
+    |> Enum.reduce(%{}, fn {a, _depth}, acc ->
+      parent_uuid = a.parent_uuid && Map.get(acc, a.parent_uuid)
+
       new_uuid =
         if is_nil(a.child_project_uuid) do
-          clone_task_assignment_in_tx(a, project)
+          clone_task_assignment_in_tx(a, project, parent_uuid)
         else
-          clone_subproject_assignment_in_tx(a, project)
+          clone_subproject_assignment_in_tx(a, project, parent_uuid)
         end
 
       Map.put(acc, a.uuid, new_uuid)
     end)
   end
 
-  defp clone_task_assignment_in_tx(a, project) do
+  defp clone_task_assignment_in_tx(a, project, parent_uuid) do
     # `broadcast: false` — cloned inside the clone transaction; the post-commit
     # `:project_created` in `clone_template/2` signals the whole new tree.
     case create_assignment(
@@ -2189,8 +2464,18 @@ defmodule PhoenixKitProjects.Projects do
            },
            broadcast: false
          ) do
-      {:ok, new_a} -> new_a.uuid
-      {:error, cs} -> repo().rollback(cs)
+      {:ok, new_a} ->
+        # Never cast (a place is the outline's to write): set here, the
+        # parent being already cloned — the walk is depth first.
+        if parent_uuid do
+          from(x in Assignment, where: x.uuid == ^new_a.uuid)
+          |> repo().update_all(set: [parent_uuid: parent_uuid])
+        end
+
+        new_a.uuid
+
+      {:error, cs} ->
+        repo().rollback(cs)
     end
   end
 
@@ -2198,7 +2483,7 @@ defmodule PhoenixKitProjects.Projects do
   # when cloning a template) is recursively cloned into a fresh project, and a
   # new linking assignment is created pointing at the clone. The single-parent
   # unique index forbids reusing the same child, so the deep copy is mandatory.
-  defp clone_subproject_assignment_in_tx(a, project) do
+  defp clone_subproject_assignment_in_tx(a, project, parent_uuid) do
     cloned_child =
       case get_project(a.child_project_uuid) do
         nil ->
@@ -2218,8 +2503,18 @@ defmodule PhoenixKitProjects.Projects do
       })
 
     case %Assignment{} |> Assignment.subproject_changeset(link_attrs) |> repo().insert() do
-      {:ok, new_link} -> new_link.uuid
-      {:error, cs} -> repo().rollback(cs)
+      {:ok, new_link} ->
+        # The linking changeset never casts a parent; a sub-project row
+        # that sat under a task keeps its place.
+        if parent_uuid do
+          from(x in Assignment, where: x.uuid == ^new_link.uuid)
+          |> repo().update_all(set: [parent_uuid: parent_uuid])
+        end
+
+        new_link.uuid
+
+      {:error, cs} ->
+        repo().rollback(cs)
     end
   end
 
@@ -2498,13 +2793,17 @@ defmodule PhoenixKitProjects.Projects do
   # "in_progress" once any work exists/has started, else "todo".
   defp rollup_status(%{completed_at: %DateTime{}}, _summary), do: "done"
 
-  defp rollup_status(_child, summary) do
+  defp rollup_status(child, summary) do
     total = rollup_val(summary, :total, 0)
     done = rollup_val(summary, :done, 0)
     in_progress = rollup_val(summary, :in_progress, 0)
     progress = rollup_val(summary, :progress_pct, 0)
 
-    if total > 0 and (done > 0 or in_progress > 0 or progress > 0),
+    # Ongoing work is under way from the day it is made, with or without
+    # a task begun (a template's row describes nothing live).
+    under_way? = Project.ongoing?(child) and Map.get(child, :is_template) != true
+
+    if under_way? or (total > 0 and (done > 0 or in_progress > 0 or progress > 0)),
       do: "in_progress",
       else: "todo"
   end
@@ -2522,7 +2821,9 @@ defmodule PhoenixKitProjects.Projects do
   defp rollup_val(summary, key, _default) when is_map(summary), do: Map.fetch!(summary, key)
 
   defp decide_completion(project) do
-    assignments = list_assignments(project.uuid)
+    # A task with subtasks is the sum of them: only the rows with nothing
+    # under them are counted, here as everywhere a project counts its work.
+    assignments = project.uuid |> list_assignments() |> PhoenixKitProjects.Outline.leaves()
     total = length(assignments)
     done = Enum.count(assignments, &(&1.status == "done"))
 
@@ -2611,6 +2912,10 @@ defmodule PhoenixKitProjects.Projects do
 
   @assignment_preloads [
     :task,
+    # The row's own project, for its key: a task's ref is `KEY-number`
+    # (`Assignment.ref/1`), and a list can mix a parent's rows with its
+    # sub-projects'. One read for the whole list.
+    :project,
     # Deep-preload the embedded child's assignee (V128) so a sub-project row can
     # show who the sub-project is assigned to.
     {:child_project, [:assigned_team, :assigned_department, assigned_person: [:user]]},
@@ -2624,8 +2929,11 @@ defmodule PhoenixKitProjects.Projects do
 
   @doc "Fetches a project with its assignee associations preloaded (V128)."
   @spec get_project_with_assignee(uuid()) :: Project.t() | nil
-  def get_project_with_assignee(uuid) do
-    Project |> preload(^@assignee_preloads) |> repo().get(uuid)
+  def get_project_with_assignee(id) do
+    case get_project(id) do
+      nil -> nil
+      project -> repo().preload(project, @assignee_preloads)
+    end
   end
 
   @doc "Lists assignments within a project, ordered by position, with related records preloaded."
@@ -2750,10 +3058,22 @@ defmodule PhoenixKitProjects.Projects do
 
   @doc "Fetches an assignment by uuid with related records preloaded, or `nil` if not found."
   @spec get_assignment(uuid()) :: Assignment.t() | nil
-  def get_assignment(uuid) do
-    Assignment
-    |> preload(^@assignment_preloads)
-    |> repo().get(uuid)
+  def get_assignment(id) do
+    case Refs.parse(id) do
+      {:uuid, uuid} ->
+        Assignment |> preload(^@assignment_preloads) |> repo().get(uuid)
+
+      {:task, key, number} ->
+        with %Project{uuid: project_uuid} <- project_by_key(key) do
+          Assignment
+          |> where([a], a.project_uuid == ^project_uuid and a.number == ^number)
+          |> preload(^@assignment_preloads)
+          |> repo().one()
+        end
+
+      _ ->
+        nil
+    end
   end
 
   @doc """
@@ -3101,7 +3421,10 @@ defmodule PhoenixKitProjects.Projects do
           project_uuid: link.project_uuid
         })
 
-        {:ok, result}
+        # The child was made inside the transaction, where an ongoing one
+        # could not be started (`start_ongoing/1`).
+        {:ok, child} = start_ongoing({:ok, result.child_project})
+        {:ok, %{result | child_project: child}}
 
       {:error, reason} ->
         {:error, reason}
@@ -3187,7 +3510,32 @@ defmodule PhoenixKitProjects.Projects do
       # not nest one either.
       not is_nil(child.archived_at) -> {:error, :archived}
       child.uuid in project_ancestor_uuids(parent.uuid) -> {:error, :would_create_cycle}
+      too_deep?(parent, child) -> {:error, :too_deep}
       true -> :ok
+    end
+  end
+
+  # `parent_chain/1` and `subtree_uuids/1` walk #{@max_parent_depth} levels: a
+  # project nested deeper than that falls out of its root's reach (an API
+  # key, the crumbs, the hours of the tree). So the deepest project under
+  # `child` must still be within that many steps of the root once `child`
+  # hangs under `parent`.
+  defp too_deep?(%Project{} = parent, %Project{} = child) do
+    above = length(project_ancestor_uuids(parent.uuid)) + 1
+    above + levels_below([child.uuid], 0) > @max_parent_depth
+  end
+
+  defp levels_below(_level, depth) when depth > @max_parent_depth, do: depth
+
+  defp levels_below(level, depth) do
+    case repo().all(
+           from(a in Assignment,
+             where: a.project_uuid in ^level and not is_nil(a.child_project_uuid),
+             select: a.child_project_uuid
+           )
+         ) do
+      [] -> depth
+      children -> levels_below(children, depth + 1)
     end
   end
 
@@ -3286,6 +3634,120 @@ defmodule PhoenixKitProjects.Projects do
 
       {:ok, deleted}
     end
+  end
+
+  @doc """
+  The assignment that embeds `project_uuid` in its parent's plan, or `nil`
+  for a top-level project. A project has at most one (the partial unique
+  index on `child_project_uuid`).
+  """
+  @spec subproject_link(uuid()) :: Assignment.t() | nil
+  def subproject_link(project_uuid) when is_binary(project_uuid) do
+    repo().one(from(a in Assignment, where: a.child_project_uuid == ^project_uuid, limit: 1))
+  end
+
+  @doc """
+  Moves a project to another place in the tree: `:top` makes it a
+  top-level project (what `detach_subproject/1` does from the parent's
+  side), a project uuid nests it under that project — whether it was
+  top-level or another project's sub-project before. The project keeps its
+  tasks, its own sub-projects, members, keys and ledger; only the row that
+  embeds it in a parent's plan is removed and (for a new parent) written
+  again at the end of that parent's list.
+
+  One transaction under the same advisory lock as `link_subproject/2`, so a
+  move can never leave the project with two parents or lose it between
+  them, and two crossing moves cannot close a cycle.
+
+  Returns `{:ok, %{project: p, from: old_parent | nil, to: new_parent | nil}}`.
+  Errors: `:not_found`, `:already_there` (the target is where it already
+  is), and `link_subproject/2`'s `:self_link`, `:kind_mismatch`,
+  `:archived`, `:would_create_cycle`.
+  """
+  @spec move_project(uuid(), :top | uuid()) ::
+          {:ok, %{project: Project.t(), from: Project.t() | nil, to: Project.t() | nil}}
+          | {:error, atom() | Ecto.Changeset.t()}
+  def move_project(project_uuid, target) when is_binary(project_uuid) do
+    repo().transaction(fn ->
+      repo().query!("SELECT pg_advisory_xact_lock($1)", [@subproject_link_lock])
+
+      with {:ok, project} <- fetch_project(project_uuid),
+           link = subproject_link(project_uuid),
+           {:ok, to} <- move_target(target, project, link),
+           :ok <- drop_link(link),
+           {:ok, new_link} <- place_under(to, project) do
+        from = link && get_project(link.project_uuid)
+        %{project: project, from: from, to: to, old_link: link, new_link: new_link}
+      else
+        {:error, reason} -> repo().rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, %{old_link: old_link, new_link: new_link} = result} ->
+        after_move(result.project, old_link, new_link)
+        {:ok, Map.drop(result, [:old_link, :new_link])}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp move_target(:top, _project, nil), do: {:error, :already_there}
+  defp move_target(:top, _project, _link), do: {:ok, nil}
+
+  defp move_target(parent_uuid, _project, %Assignment{project_uuid: parent_uuid}),
+    do: {:error, :already_there}
+
+  defp move_target(parent_uuid, project, _link) when is_binary(parent_uuid) do
+    with {:ok, parent} <- fetch_project(parent_uuid),
+         :ok <- validate_link(parent, project) do
+      {:ok, parent}
+    end
+  end
+
+  defp move_target(_target, _project, _link), do: {:error, :not_found}
+
+  defp drop_link(nil), do: :ok
+
+  # `stale_error_field`: a detach that got there first (it does not take the
+  # link lock) is a refusal, not a raise.
+  defp drop_link(%Assignment{} = link) do
+    case repo().delete(link, stale_error_field: :uuid) do
+      {:ok, _} -> :ok
+      {:error, cs} -> {:error, cs}
+    end
+  end
+
+  defp place_under(nil, _project), do: {:ok, nil}
+
+  defp place_under(%Project{} = parent, %Project{} = project) do
+    with {:ok, %{assignment: link}} <- do_link_subproject(parent, project), do: {:ok, link}
+  end
+
+  # Broadcasts and rollups run on the committed state, like
+  # `link_subproject/2` and `detach_subproject/1`: the old parent has one row
+  # fewer, the new one a row more, and every project list is nudged because
+  # the project entered or left the top level.
+  defp after_move(%Project{} = project, old_link, new_link) do
+    if old_link do
+      ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
+        uuid: old_link.uuid,
+        project_uuid: old_link.project_uuid
+      })
+
+      recompute_project_completion(old_link.project_uuid)
+    end
+
+    if new_link do
+      ProjectsPubSub.broadcast_assignment(:assignment_created, %{
+        uuid: new_link.uuid,
+        project_uuid: new_link.project_uuid
+      })
+
+      recompute_project_completion(new_link.project_uuid)
+    end
+
+    ProjectsPubSub.broadcast_project(:project_updated, project_payload(project))
   end
 
   # Ancestor project uuids of `project_uuid`, walking up the linking-assignment
@@ -3636,6 +4098,8 @@ defmodule PhoenixKitProjects.Projects do
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_form(%Assignment{} = a, attrs, opts \\ []) do
     with {:ok, updated} <- a |> Assignment.changeset(attrs) |> repo().update() do
+      updated = if updated.status != a.status, do: status_changed(updated, a), else: updated
+
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
           uuid: updated.uuid,
@@ -3645,6 +4109,42 @@ defmodule PhoenixKitProjects.Projects do
 
       {:ok, updated}
     end
+  end
+
+  # A status changed through the form: the completion stamps follow it as
+  # they do on every other path (a reopen clears them, a tick sets them),
+  # the rows around it settle, and the project's own completion is
+  # recomputed — the form has no page around it to do that.
+  defp status_changed(%Assignment{} = updated, %Assignment{} = was) do
+    stamps =
+      cond do
+        updated.status == "done" ->
+          [
+            completed_at:
+              updated.completed_at || DateTime.utc_now() |> DateTime.truncate(:second),
+            progress_pct: 100
+          ]
+
+        was.status == "done" ->
+          [completed_at: nil, completed_by_uuid: nil, progress_pct: 0]
+
+        true ->
+          []
+      end
+
+    updated =
+      if stamps == [] do
+        updated
+      else
+        {_, _} =
+          from(x in Assignment, where: x.uuid == ^updated.uuid) |> repo().update_all(set: stamps)
+
+        struct(updated, stamps)
+      end
+
+    settle_outline(updated, was.status)
+    recompute_project_completion(updated.project_uuid)
+    updated
   end
 
   @doc """
@@ -3728,6 +4228,26 @@ defmodule PhoenixKitProjects.Projects do
       from(j in @task_interactions,
         where: j.assignment_uuid == type(^uuid, Ecto.UUID),
         order_by: [asc: j.inserted_at],
+        select: type(j.interaction_uuid, Ecto.UUID)
+      )
+      |> with_table_prefix()
+    )
+  rescue
+    _ -> []
+  end
+
+  @doc """
+  The interaction uuid of every task ↔ interaction link on the tasks of
+  `project_uuids`, one per link (a meeting three tasks point at is there
+  three times).
+  """
+  @spec interaction_links_in([binary()]) :: [String.t()]
+  def interaction_links_in(project_uuids) when is_list(project_uuids) do
+    repo().all(
+      from(j in @task_interactions,
+        join: a in Assignment,
+        on: a.uuid == j.assignment_uuid,
+        where: a.project_uuid in ^project_uuids,
         select: type(j.interaction_uuid, Ecto.UUID)
       )
       |> with_table_prefix()
@@ -3864,52 +4384,15 @@ defmodule PhoenixKitProjects.Projects do
         else: query
       )
 
-  @doc """
-  Ticks or unticks one checklist item under a row lock: the list is re-read
-  inside the transaction, so two sessions ticking different items at once
-  both land (the API's per-item PATCH). `{:error, :not_found}` for an id the
-  task does not carry.
-  """
-  @spec update_checklist_item(Assignment.t(), String.t(), boolean()) ::
-          {:ok, Assignment.t()} | {:error, term()}
-  def update_checklist_item(%Assignment{uuid: uuid}, item_id, done) when is_boolean(done) do
-    repo().transaction(fn ->
-      fresh = repo().one!(from(a in Assignment, where: a.uuid == ^uuid, lock: "FOR UPDATE"))
-      items = fresh.checklist || []
-
-      if Enum.any?(items, &(&1["id"] == item_id)) do
-        updated =
-          Enum.map(items, fn
-            %{"id" => ^item_id} = item -> item |> Map.put("done", done) |> Map.delete("done_at")
-            item -> item
-          end)
-
-        case update_assignment_form(fresh, %{checklist: updated}, broadcast: false) do
-          {:ok, saved} -> saved
-          {:error, reason} -> repo().rollback(reason)
-        end
-      else
-        repo().rollback(:not_found)
-      end
-    end)
-    |> tap(fn
-      {:ok, saved} ->
-        ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
-          uuid: saved.uuid,
-          project_uuid: saved.project_uuid
-        })
-
-      _ ->
-        :ok
-    end)
-  end
-
   @doc "When an ongoing project caught up: the latest completion among its tasks, nil when not caught up."
   @spec caught_up_since(Project.t()) :: DateTime.t() | nil
   def caught_up_since(%Project{} = project) do
     if caught_up?(project) do
       repo().one(
-        from(a in Assignment, where: a.project_uuid == ^project.uuid, select: max(a.completed_at))
+        from(a in Assignment,
+          where: a.project_uuid == ^project.uuid and a.review_status == "accepted",
+          select: max(a.completed_at)
+        )
       )
     end
   rescue
@@ -3936,6 +4419,8 @@ defmodule PhoenixKitProjects.Projects do
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_status(%Assignment{} = a, attrs) do
     with {:ok, updated} <- a |> Assignment.status_changeset(attrs) |> repo().update() do
+      settle_outline(updated, a.status)
+
       ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
         uuid: updated.uuid,
         project_uuid: updated.project_uuid
@@ -3943,6 +4428,26 @@ defmodule PhoenixKitProjects.Projects do
 
       {:ok, updated}
     end
+  end
+
+  # A status change reaches the rows around the task (`Outline.settle/3`):
+  # ticking it ticks what is under it, the last subtask ticked ticks its
+  # parent, reopening it reopens what it sits under. When that touched
+  # other rows, viewers are told once that the list changed.
+  defp settle_outline(%Assignment{} = updated, was) do
+    case PhoenixKitProjects.Outline.settle(updated, was, updated.completed_by_uuid) do
+      [] ->
+        :ok
+
+      _changed ->
+        ProjectsPubSub.broadcast_assignment(:assignment_reordered, %{
+          project_uuid: updated.project_uuid
+        })
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects] outline settle failed: #{Exception.message(e)}")
+      :ok
   end
 
   @doc """
@@ -4064,18 +4569,28 @@ defmodule PhoenixKitProjects.Projects do
   @spec delete_assignment(Assignment.t()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t() | term()}
   def delete_assignment(%Assignment{child_project_uuid: nil} = a) do
-    # Before the row goes: the portal submission cascades with it, and
-    # once that is gone nothing points at the screenshots it carried.
-    PhoenixKitProjects.Portal.delete_attachments_for(a.uuid)
+    # What sits under it goes with it, deepest first — through this same
+    # function, so a sub-project row among them takes its project along
+    # and every row's portal files are cleaned up. (The database would
+    # cascade the rows; it would not do either of those.)
+    below =
+      from(x in Assignment,
+        where: x.project_uuid == ^a.project_uuid,
+        select: %{uuid: x.uuid, parent_uuid: x.parent_uuid}
+      )
+      |> repo().all()
+      |> PhoenixKitProjects.Outline.descendants(a.uuid)
+      |> Enum.reverse()
 
-    with {:ok, deleted} <- repo().delete(a) do
-      ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
-        uuid: deleted.uuid,
-        project_uuid: deleted.project_uuid
-      })
+    Enum.each(below, fn %{uuid: uuid} ->
+      case repo().get(Assignment, uuid) do
+        nil -> :ok
+        %Assignment{child_project_uuid: nil} = row -> delete_one_assignment(row)
+        row -> delete_assignment(row)
+      end
+    end)
 
-      {:ok, deleted}
-    end
+    delete_one_assignment(a)
   end
 
   def delete_assignment(%Assignment{child_project_uuid: child_uuid} = a) do
@@ -4112,6 +4627,21 @@ defmodule PhoenixKitProjects.Projects do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp delete_one_assignment(%Assignment{} = a) do
+    # Before the row goes: the portal submission cascades with it, and
+    # once that is gone nothing points at the screenshots it carried.
+    PhoenixKitProjects.Portal.delete_attachments_for(a.uuid)
+
+    with {:ok, deleted} <- repo().delete(a, stale_error_field: :uuid) do
+      ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
+        uuid: deleted.uuid,
+        project_uuid: deleted.project_uuid
+      })
+
+      {:ok, deleted}
     end
   end
 
@@ -4319,7 +4849,11 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  @doc "Assignments in this project that the given assignment does NOT yet depend on."
+  @doc """
+  Assignments in this project that the given assignment does NOT yet depend
+  on — never the tasks it sits under or the ones under it: a task cannot
+  wait for a part of itself, nor a part for the whole.
+  """
   @spec available_dependencies(uuid(), uuid()) :: [Assignment.t()]
   def available_dependencies(project_uuid, assignment_uuid) do
     existing =
@@ -4328,10 +4862,20 @@ defmodule PhoenixKitProjects.Projects do
         select: d.depends_on_uuid
       )
 
+    shape = PhoenixKitProjects.Outline.shape(project_uuid)
+
+    own_branch =
+      Enum.map(
+        PhoenixKitProjects.Outline.ancestors(shape, assignment_uuid) ++
+          PhoenixKitProjects.Outline.descendants(shape, assignment_uuid),
+        & &1.uuid
+      )
+
     from(a in Assignment,
       where:
         a.project_uuid == ^project_uuid and
           a.uuid != ^assignment_uuid and
+          a.uuid not in ^own_branch and
           a.uuid not in subquery(existing),
       preload: [:task, :child_project],
       order_by: [asc: a.position, asc: a.inserted_at]

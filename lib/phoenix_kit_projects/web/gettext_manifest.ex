@@ -44,6 +44,7 @@ defmodule PhoenixKitProjects.Web.GettextManifest do
       gettext("Overview"),
       gettext("Templates"),
       gettext("Tasks"),
+      gettext("Hours"),
 
       # Per-project subtabs. Listed even where the same literal happens to
       # appear in an ordinary `gettext/1` call elsewhere in the module: that

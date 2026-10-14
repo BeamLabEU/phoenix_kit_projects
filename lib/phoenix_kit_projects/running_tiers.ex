@@ -17,6 +17,8 @@ defmodule PhoenixKitProjects.RunningTiers do
     measure, and recency alone would rank them above real work.
   """
 
+  alias PhoenixKitProjects.Schemas.Project
+
   # Fallback "late" threshold (days since `started_at`) when a project has
   # no estimated durations — without a sum of durations there is no real
   # planned_end to compare against. Projects with durations use
@@ -58,10 +60,24 @@ defmodule PhoenixKitProjects.RunningTiers do
     %{project: project, progress_pct: pct, total: total, planned_end: planned_end} = summary
 
     cond do
-      total == 0 -> :empty
-      late?(planned_end, project, now, pct) -> :late
-      pct >= @near_done_threshold_pct -> :near_done
-      true -> :on_track
+      total == 0 ->
+        :empty
+
+      # Ongoing work has no end to be late for.
+      Project.ongoing?(project) and pct < @near_done_threshold_pct ->
+        :on_track
+
+      Project.ongoing?(project) ->
+        :near_done
+
+      late?(planned_end, project, now, pct) ->
+        :late
+
+      pct >= @near_done_threshold_pct ->
+        :near_done
+
+      true ->
+        :on_track
     end
   end
 
@@ -79,7 +95,7 @@ defmodule PhoenixKitProjects.RunningTiers do
     %{project: project, progress_pct: pct, tier: tier} = summary
 
     days_running =
-      case project.started_at do
+      case project.started_at || (Project.ongoing?(project) && Map.get(project, :inserted_at)) do
         %DateTime{} = dt -> Date.diff(today, DateTime.to_date(dt))
         _ -> 0
       end

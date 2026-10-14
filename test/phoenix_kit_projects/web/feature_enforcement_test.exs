@@ -257,11 +257,19 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
         Features.set_flags(project, %{
           "view_board" => false,
           "view_timeline" => false,
-          "view_calendar" => false
+          "view_calendar" => false,
+          # The work ledger contributes the Hours tab; with it on, the top
+          # strip has two tabs to offer and stays.
+          "ledger" => false
         })
 
       {:ok, _view, html} = live(conn, show_path(project))
       refute html =~ ~s(id="project-tabs-#{project.uuid}")
+
+      {:ok, _} = Features.set_flags(project, %{"ledger" => true})
+      {:ok, _view, html} = live(conn, show_path(project))
+      assert html =~ ~s(id="project-tabs-#{project.uuid}")
+      assert html =~ "ext:tasks:hours"
     end
   end
 

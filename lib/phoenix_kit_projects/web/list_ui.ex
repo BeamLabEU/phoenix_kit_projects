@@ -21,16 +21,14 @@ defmodule PhoenixKitProjects.Web.ListUi do
 
   ## Fitting
 
-  The tables follow the catalogue's shape: every column but the name is
-  sized to its content (`column_fit_class/1`) and packed against the
-  right edge, so a Status column never floats alone in the middle; the
-  name column is marked `data-col-lead` and takes the slack. Core's
-  column fitting (`<.table_default fit>`, which also drops the least
-  important columns when the table is wider than its wrapper, reading
-  `data-col-priority` off the header cells) is passed as a DYNAMIC
-  attribute (`table_fit/0`), so a core without it ignores the attrs and
-  the table scrolls sideways as it always did — the core floor does not
-  move for it.
+  The tables use core's column fitting as it is (`<.table_default fit>`,
+  core >= 2.54): the name column is the `lead` one — it stays on the left
+  and takes the slack — every other column is sized to its content and
+  packed against the right edge, and when the table is wider than its
+  wrapper the least important columns go first, the last one left saying
+  "+N". A column's importance is its header cell's `priority`
+  (`column_priority/1`, through `column_attrs/2`); the checkbox and the
+  actions carry none and never go.
   """
 
   use Phoenix.Component
@@ -66,24 +64,8 @@ defmodule PhoenixKitProjects.Web.ListUi do
   def load_columns(socket, spec), do: TableColumns.load(Actor.uuid(socket), spec)
 
   @doc """
-  `<.table_default>`'s column fitting, as a DYNAMIC attribute so the core
-  floor stays put (see the moduledoc). `fit_pack: false` because these
-  tables size their own columns (`column_fit_class/1`), like the
-  catalogue's.
-  """
-  @spec table_fit() :: map()
-  def table_fit, do: %{fit: true, fit_pack: false}
-
-  @doc """
-  The header-cell class that sizes an optional column to its content, so
-  the name column takes the slack and the rest pack right.
-  """
-  @spec column_fit_class(String.t()) :: String.t()
-  def column_fit_class(_id), do: "w-px whitespace-nowrap"
-
-  @doc """
   How soon a column is dropped when the table does not fit its width —
-  core's `fit` reads it off the header cell as `data-col-priority`. The
+  the header cell's `priority` in core's `fit`. The
   highest number goes first, `1` last; what a row IS (its status) outlasts
   what it has (counts, a duration), which outlasts when (dates), which
   outlasts who and the external id. Name and Actions carry none and never
@@ -91,19 +73,31 @@ defmodule PhoenixKitProjects.Web.ListUi do
   """
   @spec column_priority(String.t()) :: pos_integer()
   def column_priority("status"), do: 1
-  def column_priority(id) when id in ~w(tasks uses duration), do: 2
-  def column_priority(id) when id in ~w(updated last_used), do: 3
-  def column_priority("created"), do: 4
-  def column_priority(id) when id in ~w(created_by weekends), do: 5
+  def column_priority("key"), do: 2
+  # An extension's column (the client) says whose the project is: it goes
+  # just after what the project is.
+  def column_priority("ext:" <> _), do: 2
+  def column_priority(id) when id in ~w(tasks uses duration progress overdue), do: 2
+  def column_priority(id) when id in ~w(updated last_used hours open_tasks next_due), do: 3
+
+  def column_priority(id)
+      when id in ~w(created eta started completed last_activity next_event billable_hours ai_hours
+                    total_hours),
+      do: 4
+
+  def column_priority(id)
+      when id in ~w(created_by weekends owner assignee members subprojects health),
+      do: 5
+
   def column_priority(_id), do: 6
 
   @doc """
-  The attributes an optional column's header cell takes: its fit class
-  (plus `extra`, e.g. `text-right` for a count) and its drop priority.
+  The attributes an optional column's header cell takes: core's drop
+  `priority`, plus `extra` as its class (e.g. `text-right` for a count).
   """
-  @spec column_attrs(String.t(), String.t() | nil) :: map()
+  @spec column_attrs(String.t(), String.t() | nil | false) :: map()
   def column_attrs(id, extra \\ nil) do
-    %{class: [column_fit_class(id), extra], "data-col-priority": column_priority(id)}
+    %{priority: column_priority(id), class: extra || ""}
   end
 
   @doc """
@@ -113,7 +107,7 @@ defmodule PhoenixKitProjects.Web.ListUi do
   """
   def actions_header_cell(assigns) do
     ~H"""
-    <.table_default_header_cell class="w-px">
+    <.table_default_header_cell>
       <span class="sr-only">{gettext("Actions")}</span>
     </.table_default_header_cell>
     """
@@ -131,6 +125,35 @@ defmodule PhoenixKitProjects.Web.ListUi do
     </button>
     """
   end
+
+  @doc ~S|Minutes as "2h 30m" — the wording the project page uses for logged time.|
+  @spec format_minutes(number()) :: String.t()
+  def format_minutes(minutes) do
+    m = round(minutes)
+    h = div(m, 60)
+    rest = rem(m, 60)
+
+    cond do
+      h == 0 -> gettext("%{m}m", m: rest)
+      rest == 0 -> gettext("%{h}h", h: h)
+      true -> gettext("%{h}h %{m}m", h: h, m: rest)
+    end
+  end
+
+  @doc ~S|A token count as "3.9M tokens" / "13.3k tokens".|
+  @spec format_tokens(number()) :: String.t()
+  def format_tokens(t) when t >= 1_000_000,
+    do: gettext("%{n}M tokens", n: Float.round(t / 1_000_000, 1))
+
+  def format_tokens(t) when t >= 1_000, do: gettext("%{n}k tokens", n: Float.round(t / 1_000, 1))
+  def format_tokens(t), do: gettext("%{n} tokens", n: round(t))
+
+  @doc """
+  Cents as a dollar string. The ledger stores cents unit-agnostically; the
+  display currency is the same v1 simplification the project page makes.
+  """
+  @spec format_cents(number()) :: String.t()
+  def format_cents(cents), do: "$" <> :erlang.float_to_binary(cents / 100, decimals: 2)
 
   @doc """
   Coerces the search event payload to a binary. A forged `search[x]=y`

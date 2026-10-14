@@ -61,7 +61,11 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
       <%!-- Bands and KPI boxes self-fit via cq units — the whole body always
       fits its box (dashboards are one screenful: nothing scrolls or clips). --%>
       <div :if={@view == "simple"} class="grid h-full min-h-0 grid-cols-2 gap-2">
-        <.kpi label={gettext("Running")} value={count(@lifecycle, :running)} tone="text-success" />
+        <.kpi
+          label={gettext("Running")}
+          value={count(@lifecycle, :running) + count(@lifecycle, :ongoing)}
+          tone="text-success"
+        />
         <.kpi
           label={gettext("Overdue")}
           value={count(@lifecycle, :overdue)}
@@ -78,7 +82,13 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
             {gettext("Projects")} · {@total}
           </p>
           <div class="grid min-h-0 flex-1 grid-cols-4 gap-1.5">
-            <.kpi small label={gettext("Running")} value={count(@lifecycle, :running)} tone="text-success" />
+            <%!-- Ongoing work is under way too: it counts with the running. --%>
+            <.kpi
+              small
+              label={gettext("Running")}
+              value={count(@lifecycle, :running) + count(@lifecycle, :ongoing)}
+              tone="text-success"
+            />
             <.kpi
               small
               label={gettext("Overdue")}

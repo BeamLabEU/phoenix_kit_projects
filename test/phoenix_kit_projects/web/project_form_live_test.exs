@@ -62,7 +62,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLiveTest do
         )
         |> render_submit()
 
-      assert redirect_to =~ "/en/admin/projects/"
+      assert redirect_to =~ "#{PhoenixKitProjects.DataCase.admin_projects()}/"
 
       assert_activity_logged("projects.project_created",
         actor_uuid: actor_uuid,

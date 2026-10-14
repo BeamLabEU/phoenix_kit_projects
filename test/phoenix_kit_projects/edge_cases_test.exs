@@ -8,7 +8,11 @@ defmodule PhoenixKitProjects.EdgeCasesTest do
   needs at least one weird-input round-trip.
   """
 
-  use PhoenixKitProjects.DataCase, async: true
+  # Not async: these tests create projects whose keys come from their
+  # names, and two sandboxed transactions inserting the same key wait on
+  # each other at the key registry (chain V22) — a deadlock once each
+  # creates a second one.
+  use PhoenixKitProjects.DataCase, async: false
 
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Schemas.Project

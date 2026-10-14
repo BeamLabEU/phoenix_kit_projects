@@ -910,7 +910,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
          or a fully-loaded server page): a load-more-truncated page is
          a sparse subset, and the reorder handler renumbers only the
          dropped rows to 1..N, corrupting the hidden rows' order. --%>
-    <.table_default id="tasks-list" size="sm" {ListUi.table_fit()}>
+    <.table_default id="tasks-list" size="sm" fit>
       <.table_default_header>
         <.table_default_row>
           <.drag_handle_header_cell :if={@draggable?} />
@@ -919,7 +919,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             id="tasks-select-all"
             aria_label={gettext("Select all tasks")}
           />
-          <.sort_header_cell field={:title} sort={%{by: @sort_by, dir: @sort_dir}} data-col-lead="true">
+          <.sort_header_cell field={:title} sort={%{by: @sort_by, dir: @sort_dir}} lead>
             {gettext("Title")}
           </.sort_header_cell>
           <%= for col <- @visible_columns do %>
@@ -940,7 +940,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         >
           <.drag_handle_cell :if={@draggable?} />
           <.bulk_select_cell :if={@bulk_enabled?} value={task.uuid} />
-          <.table_default_cell class="font-medium" data-col-lead="true">
+          <.table_default_cell class="font-medium" lead>
             <.smart_link
               navigate={Paths.edit_task(task.uuid)}
               emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}

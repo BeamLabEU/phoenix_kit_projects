@@ -109,6 +109,26 @@ it can reach. A key minted on a child does not reach its parent. The agent guide
 has a "Sub-projects" section teaching the pattern: one sub-project per piece of
 work, tasks created with `project` set to it.
 
+## Short names: keys and refs
+
+A project has a **key** (`ANDI`) and a task a **number** in its project; together
+they are the task's **ref**, `ANDI-42` (`PhoenixKitProjects.Refs`, chain V22;
+Max for the boss, 2026-10-10: *"everything uses the UUID, which is very not user
+friendly… kind of like Jira style"*). The uuid stays the identity; a ref is a
+locator on top of it.
+
+- `Projects.get_project/1` and `get_assignment/1` take a uuid or a ref, so every
+  path param resolves either (`TasksController.fetch/2` — resolve first, then
+  hold the result to the key's reach, so a foreign ref is the same 404 as an
+  unknown one) and so does `project` (`Json.scope_project/2`).
+- `Json.task/4` answers `ref`, `number` and — for a sub-project row —
+  `parent_ref`: there `ref` is the CHILD's key, so an agent that takes the row's
+  ref logs against the child and not against the linking row (grok's point on the
+  design panel). `Json.project/1` answers `key`.
+- A key can be renamed; the registry (`phoenix_kit_project_keys`) keeps every key
+  a project has had and never hands one on, a deleted project's included. The
+  agent guide says: store uuids, show refs.
+
 ## What a project's settings decide for an agent
 
 Two keys in the project's `settings` JSONB (the form's edit card, chain V19 for
@@ -119,16 +139,39 @@ child never completes its parent; copied to new sub-projects) — and
 **`agents`** — `take_started_task`, `edit_foreign_text`, `delete_tasks`
 (`none` | `own` | `any`), `amend_own_ledger`, read back as `agent_policy` on
 `/me` and `/project`. Tasks carry who created and who started them (a person
-and/or a key), `waiting_on`, `origin`, labels by name and a checklist;
+and/or a key), `waiting_on`, `origin`, labels by name, and their place in the
+project's outline — tasks sit under tasks (`parent_task`, `depth`, `subtasks:
+{done, total}`; `parent` on create and update, `POST /tasks/{id}/move`,
+`POST /tasks/batch` for many lines at once, `GET /tasks?parent=`). Completing
+a task completes what is under it; the last subtask done completes its parent
+unless the project turned that off; reopening a subtask reopens its parents;
+`DELETE` of a task with subtasks needs `cascade=true`;
 `GET /briefing` is the recovery read, `POST`/`GET /notes` the project's own
 notes, `updated_since` the poll. AGENTS.md ("What the first agent on the API
 asked for") has the map from each ask to its code.
+
+**Short refs in text.** Write `#ANDI-42` (or `#ANDI` for a project) in a
+description or a note and it is stored as a link to that task: the text comes
+back as `#[project_task:uuid|ANDI-42]`, the stored form, which points at the
+uuid and so survives a renamed key or a moved project. A ref that names nothing,
+or a project outside the key's reach, stays the text it was (so writing a ref
+never says whether something the key cannot open exists).
+`PhoenixKitProjects.RefText`.
 
 Records link by **mention token** (`#[type:uuid|label]` in a task's
 description — the forms' own way): `interaction:` on a task, `tasks:` on an
 interaction, read back as `interactions` / `tasks`. The ledger is readable
 (`GET /entries`, `GET /tasks/{id}/entries`), events too (`GET /events`), and
-the briefing carries the client's latest interactions and the next events.
+the briefing carries the client's latest interactions, what is planned with
+the client (`client.planned`) and the next calendar events.
+
+**A plan with the client is an interaction** (CRM V9), not a calendar event:
+`status: "planned"` on `POST /ext/interactions`, then the same record is
+moved, logged (`status: "happened"`) or cancelled by `PATCH`. An extension
+may also put its dated things on the project's Calendar tab, read-only
+(`calendar: {module, fun}` in its declaration → `Extensions.calendar_items/3`;
+`Extensions.calendar_changed/1` tells open pages to read again) — the CRM
+does, for the project's interactions.
 
 ## The calls
 
@@ -206,14 +249,55 @@ idempotent reply. Default 300 calls per 60 s;
 A limiter failure denies, as the house rule for abuse controls says. The
 docs print the live figure, so an agent reads what applies on this site.
 
+## Who a task is for
+
+`assignee` on a task is who it is for: `{kind, uuid, name}` with kind
+`person`, `team` or `department`, or null. On create and PATCH it takes
+`"me"` (the staff person of the user a personal key acts for; a 422 for a
+shared agent), a person's uuid, `{"team": uuid}` or `{"department": uuid}`;
+null clears it and leaving it out changes nothing. One assignee at a time,
+as in the form. It needs the `assignees` feature (403 `feature_disabled`)
+and the `assign_tasks` action, checked only when the field is sent, so a
+plain create still works with the feature off. `GET /people?q=` lists who
+a task can be for, by uuid and name and never by email. `GET
+/tasks?assignee=me|none|<person uuid>` filters; the briefing rows carry
+`assignee` and `assigned_to_me`, and `counts.assigned_to_me`. `/me` gives
+`acting_for.person_uuid`. A sub-project row answers its nested project's
+assignee. Nothing is assigned by default: an agent passes `"me"`.
+
+## A task's own dates
+
+`start_date` and `end_date` on a task are calendar days (`YYYY-MM-DD`), both
+optional, either alone, the end never before the start; null or an empty
+string clears one. They are not moments: no time and no zone. A dated task
+sits on those days in the calendar and the timeline; an undated one is still
+placed by its duration and its place in the order. `overdue` is true once the
+end date has passed and the task is not done; the briefing counts those in
+`counts.overdue`, and `GET /tasks?due_before=<day>&status=open` lists what is
+owed by a day. A value that is not a day is a 422 with nothing written.
+
 ## When the work happened
 
 The four ledger POSTs take an optional `occurred_at` (ISO 8601, any offset,
 truncated to the second, at most 5 minutes ahead of the server's clock). It is
 stored as the entry's `ended_at` and echoed as `occurred_at`; `inserted_at`
-stays the receipt time (`recorded_at`). Nothing groups entries by it yet —
-totals are lifetime — but a batch reported the morning after keeps its real
-date on the row for when a period report exists.
+stays the receipt time (`recorded_at`). A task's `totals` are lifetime;
+`GET /hours` is the period read.
+
+## Hours for a period
+
+`GET /hours?from=2026-10-01&to=2026-10-31&group_by=person` sums the logged
+time of the project — and, unless `include_subprojects=false`, of everything
+nested under it — for a period: `totals` (`minutes` is people's time,
+`ai_minutes` an agent's, `billable_minutes`, `tokens`, `cost_cents`,
+`entries`, `people`) and `groups`, by `person` (the default), `task` or
+`day`. `from` / `to` are days (UTC; `to` is included) or ISO 8601 instants;
+either may be left out. `worker` narrows to one or more `worker.key`s as a
+`group_by=person` answer names them, `billable` to billable time or the rest.
+An entry counts on the day the work was done (`occurred_at`), else the day it
+was recorded. A person with both an account and a staff record is one line.
+It is the read behind the Hours tab (`PhoenixKitProjects.Hours`); scope
+`tasks:read`, like `GET /entries`.
 
 ## Not in v1
 

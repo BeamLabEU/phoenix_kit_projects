@@ -99,6 +99,11 @@ defmodule PhoenixKitProjects.Web.Widgets.CalendarWidget do
       |> Enum.flat_map(fn {items, layout} ->
         items
         |> Enum.reject(&Assignment.subproject?(&1.assignment))
+        # A subtask is on the calendar only with a date of its own; the
+        # task it sits under covers its days otherwise.
+        |> Enum.filter(
+          &(is_nil(&1.assignment.parent_uuid) or ScheduleLayout.dated?(&1.assignment))
+        )
         |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
       end)
       |> only_mine(settings, scope)
