@@ -284,7 +284,24 @@ defmodule PhoenixKitProjects.Web.PopupHostLiveTest do
       # `phx-value-frame-ref`); no window-level key binding remains.
       refute html =~ "phx-window-keydown"
       assert length(Regex.scan(~r/phx-hook="PkDialog"/, html)) == 2
-      assert length(Regex.scan(~r/phx-value-frame-ref="\d+"/, html)) == 2
+      assert length(Regex.scan(~r/data-frame-ref="\d+"/, html)) == 2
+    end
+
+    test "every frame has a × that closes it, asking first only while it holds unsaved changes",
+         %{conn: conn} do
+      topic = unique_topic()
+
+      {:ok, view, _} =
+        live_isolated(conn, PhoenixKitProjects.Web.PopupHostLive,
+          session: %{"pubsub_topic" => topic}
+        )
+
+      push_n_frames(topic, view, 1)
+      html = render(view)
+      [button] = Regex.run(~r/<button[^>]*aria-label="Close"[^>]*>/, html)
+      assert button =~ ~s(phx-click="close_top_modal")
+      assert button =~ ~r/phx-value-frame-ref="\d+"/
+      refute button =~ "data-confirm"
     end
 
     test "close_top_modal with non-top frame-ref is a no-op", %{conn: conn} do
