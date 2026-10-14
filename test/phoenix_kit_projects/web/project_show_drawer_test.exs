@@ -179,23 +179,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     assert Projects.list_assignments(p.uuid) == []
   end
 
-  test "the Add a task row opens the sheet with the cursor in the title", %{
+  test "the Add task button opens the sheet with the cursor in the title", %{
     conn: conn,
     project: p
   } do
     {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
 
     {_host, form, _} =
-      open_drawer(view, p, "#quick-add button[phx-value-lv$='AssignmentFormLive']")
+      open_drawer(view, p, "button[data-id='add-task-sheet']")
 
     html = render(form)
     assert html =~ ~s(name="task[title]")
-    # The wrapper mounts focused and the title carries the Shift+Enter hook.
+    # The wrapper mounts focused; Enter submits through the first submit
+    # button, "Add" (then=next), the same keystroke as the typed list's.
     assert html =~ ~s(id="new-task-title-0")
-    assert html =~ ~s(phx-hook="PkShiftEnter")
-    assert html =~ ~s(data-shift-enter-click="#assignment-add-next")
     assert html =~ ~s(id="assignment-add-next")
-    assert html =~ "Shift+Enter adds and starts the next"
+    assert html =~ "Enter adds it and starts the next"
+    refute html =~ "PkShiftEnter"
   end
 
   test "Add & next adds the task, keeps the sheet open on a fresh clean form",

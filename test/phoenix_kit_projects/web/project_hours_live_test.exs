@@ -481,12 +481,13 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
 
       {:ok, view, _html} = mount_tab(conn, project, admin)
       render_change(view, "filter", %{"period" => "all", "subprojects" => "true"})
-      render_click(view, "sheet_week", %{"step" => "0"})
+      # Core's date_nav names the day to show; the sheet shows its week.
+      today = Date.utc_today()
+      render_click(view, "sheet_week", %{"date" => Date.to_iso8601(today)})
 
-      assert view |> element("#hours-#{project.uuid}-sheet") |> render() =~
-               "Nothing logged in this week."
+      assert view |> element("#hours-#{project.uuid}-sheet") |> render() =~ "Nothing logged for"
 
-      sheet = render_click(view, "sheet_week", %{"step" => "-1"})
+      sheet = render_click(view, "sheet_week", %{"date" => Date.to_iso8601(Date.add(today, -7))})
       assert sheet =~ "Ann Able"
     end
   end
@@ -590,14 +591,16 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/hours")
       render_click(view, "open_log", %{})
 
-      assert render_change(view, "log_change", %{"project" => mine.uuid}) =~ "My own task"
+      # Tasks are searched, not listed (core's search_picker).
+      render_change(view, "log_change", %{"project" => mine.uuid})
+      assert "My own task" in task_search(view)
       # a project they cannot see, named by a forged param
-      refute render_change(view, "log_change", %{"project" => project.uuid}) =~
-               "Foreign secret task"
+      render_change(view, "log_change", %{"project" => project.uuid})
+      refute "Foreign secret task" in task_search(view)
 
       # theirs, but its work ledger is off: no tasks offered, no entry taken
-      refute render_change(view, "log_change", %{"project" => off.uuid}) =~
-               "Task behind a switched-off ledger"
+      render_change(view, "log_change", %{"project" => off.uuid})
+      refute "Task behind a switched-off ledger" in task_search(view)
 
       render_submit(view, "save_log", %{
         "project" => off.uuid,
@@ -618,8 +621,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/hours")
 
       render_click(view, "open_log", %{})
-      html = render_change(view, "log_change", %{"project" => project.uuid, "duration" => "20"})
-      assert html =~ "Cut the panels"
+      render_change(view, "log_change", %{"project" => project.uuid, "duration" => "20"})
+      assert "Cut the panels" in task_search(view)
 
       render_submit(view, "save_log", %{
         "project" => project.uuid,
@@ -631,6 +634,13 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLiveTest do
       assert [%{assignment_uuid: uuid}] = Ledger.list_entries(project.uuid)
       assert uuid == cut.uuid
     end
+  end
+
+  # What the log form's task picker answers for an empty search.
+  defp task_search(view) do
+    render_hook(view, "pick_search", %{"q" => "", "id" => "log-pick-logtask"})
+    assert_push_event(view, "picker_results", %{id: "log-pick-logtask", results: rows})
+    Enum.map(rows, & &1.label)
   end
 
   defp before?(html, a, b) do

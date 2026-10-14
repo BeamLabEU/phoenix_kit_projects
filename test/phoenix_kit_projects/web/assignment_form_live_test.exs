@@ -277,16 +277,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLiveTest do
         )
 
       # On :edit the form has no `task_mode` select — task is fixed
-      # post-creation; only the assignment fields are editable.
-      {:error, {:live_redirect, _}} =
-        view
-        |> form("#assignment-form",
-          assignment: %{
-            status: "in_progress",
-            description: "updated description"
-          }
-        )
-        |> render_submit()
+      # post-creation; only the assignment fields are editable. An edit
+      # saves where it stands (Enter included) and stays open.
+      view
+      |> form("#assignment-form",
+        assignment: %{
+          status: "in_progress",
+          description: "updated description"
+        }
+      )
+      |> render_submit()
+
+      assert PhoenixKitProjects.Projects.get_assignment(assignment.uuid).description ==
+               "updated description"
 
       assert_activity_logged("projects.assignment_updated",
         actor_uuid: actor_uuid,

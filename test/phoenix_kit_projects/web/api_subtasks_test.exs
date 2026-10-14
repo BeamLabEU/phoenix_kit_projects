@@ -306,8 +306,7 @@ defmodule PhoenixKitProjects.Web.ApiSubtasksTest do
     t = create(c, %{"title" => "No list"})
     refute Map.has_key?(t, "checklist")
 
-    assert_error_sent(404, fn ->
-      c |> patch_json("#{@base}/tasks/#{t["uuid"]}/checklist/x", %{"done" => true})
-    end)
+    gone = c |> patch_json("#{@base}/tasks/#{t["uuid"]}/checklist/x", %{"done" => true})
+    assert gone.status == 404
   end
 end

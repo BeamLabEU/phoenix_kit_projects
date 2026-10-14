@@ -259,10 +259,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
         )
 
       portal_at = :binary.match(html, "toggle_portal_public") |> elem(0)
-      save_at = :binary.match(html, "phx-disable-with") |> elem(0)
+      # An edit saves as it goes; its bar (where things stand, Done) is
+      # the form's foot.
+      save_at = :binary.match(html, ~s(id="assignment-save-bar")) |> elem(0)
 
       assert portal_at < save_at,
-             "the portal switch renders after the Save button"
+             "the portal switch renders after the save bar"
     end
   end
 end

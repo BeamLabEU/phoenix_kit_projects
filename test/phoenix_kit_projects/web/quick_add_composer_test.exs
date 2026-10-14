@@ -18,27 +18,30 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
     {:ok, conn: conn, project: project}
   end
 
-  test "on the project page it is a popup button into the add-task sheet",
-       %{conn: conn, project: p} do
-    {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
+  # Someone who may add tasks types them into the list: the row at the
+  # foot adds a task in place (`outline_add_first`) instead of opening the
+  # sheet — the sheet stays at the top as "Add task", for one with details.
+  test "on the project page it adds a task in place", %{conn: conn, project: p} do
+    {:ok, view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
-    [row] = Regex.run(~r/<div id="quick-add".*?<\/div>/s, html)
-    assert row =~ "Add a task"
-    assert row =~ ~s(phx-click="open_embed")
-    assert row =~ ~s(phx-value-lv="Elixir.PhoenixKitProjects.Web.AssignmentFormLive")
-    assert row =~ "&quot;live_action&quot;:&quot;new&quot;"
-    refute row =~ "<form"
+    assert html =~ ~s(phx-click="outline_add_first")
+    refute html =~ ~s(id="quick-add")
+    assert has_element?(view, "[data-id='add-task-sheet']")
+
+    view |> element("button[phx-click='outline_add_first']") |> render_click()
+    [a] = PhoenixKitProjects.Projects.list_assignments(p.uuid)
+    # The new row's title takes the cursor, empty, to be typed into.
+    assert render(view) =~ ~s(id="task-title-#{a.uuid}")
   end
 
-  test "on a host page in navigate mode it is a link to the add page", %{conn: conn, project: p} do
+  test "on a host page in navigate mode the sheet is a link to the add page",
+       %{conn: conn, project: p} do
     {:ok, _view, html} =
       live_isolated(conn, ProjectShowLive,
         session: %{"id" => p.uuid, "current_user_uuid" => embed_user_uuid!()}
       )
 
-    [row] = Regex.run(~r/<div id="quick-add".*?<\/div>/s, html)
-
-    assert row =~
+    assert html =~
              ~s(href="#{PhoenixKitProjects.DataCase.admin_projects()}/#{p.uuid}/assignments/new")
   end
 
@@ -46,11 +49,13 @@ defmodule PhoenixKitProjects.Web.QuickAddComposerTest do
     t = fixture_template(%{"name" => "Tmpl-#{System.unique_integer([:positive])}"})
     {:ok, _view, html} = live(conn, "/en/admin/projects/templates/#{t.uuid}")
     refute html =~ ~s(id="quick-add")
+    refute html =~ ~s(phx-click="outline_add_first")
   end
 
   test "is hidden when the tasks feature is off", %{conn: conn, project: p} do
     {:ok, _} = Extensions.disable(p, "tasks")
     {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
     refute html =~ ~s(id="quick-add")
+    refute html =~ ~s(phx-click="outline_add_first")
   end
 end
