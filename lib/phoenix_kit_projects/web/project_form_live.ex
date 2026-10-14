@@ -1291,6 +1291,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       base
       |> put_completion(Map.get(params, "completion"))
       |> put_agent_policy(Map.get(params, "agents"))
+      |> put_outline(Map.get(params, "outline"))
 
     if settings == base and not Map.has_key?(attrs, "settings"),
       do: attrs,
@@ -1301,6 +1302,51 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     do: Map.put(settings, "completion", mode)
 
   defp put_completion(settings, _), do: settings
+
+  # How the task list looks (`Web.OutlineList`): the style, whether the last
+  # subtask ticked ticks its parent, and which features stay off the rows.
+  defp put_outline(settings, %{} = posted) do
+    current = Map.get(settings, "outline") || %{}
+
+    style =
+      if posted["style"] in PhoenixKitProjects.Web.OutlineList.styles(),
+        do: posted["style"],
+        else: current["style"] || "auto"
+
+    row =
+      case posted["row"] do
+        %{} = row ->
+          Map.new(outline_row_features(), fn {key, _label} -> {key, row[key] != "false"} end)
+
+        _ ->
+          current["row"] || %{}
+      end
+
+    outline =
+      current
+      |> Map.put("style", style)
+      |> Map.put("complete_parent", posted["complete_parent"] != "false")
+      |> Map.put("row", row)
+
+    Map.put(settings, "outline", outline)
+  end
+
+  defp put_outline(settings, _), do: settings
+
+  # The features whose value a task row can show, for "show on the row".
+  @doc false
+  def outline_row_features do
+    [
+      {"assignees", gettext("Who it is assigned to")},
+      {"priorities", gettext("Priority")},
+      {"labels", gettext("Labels")},
+      {"estimates", gettext("Estimate and dates")},
+      {"progress", gettext("Progress")},
+      {"ledger", gettext("Hours and AI usage")},
+      {"dependencies", gettext("Dependencies")},
+      {"discussion", gettext("Discussion and agent notes")}
+    ]
+  end
 
   defp put_agent_policy(settings, %{} = posted) do
     policy =
@@ -2740,6 +2786,55 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 {gettext("Only when someone ends it — ongoing work"), "manual"}
               ]}
             />
+
+            <%!-- How the task list looks (`Web.OutlineList`): typed like a
+                 text, or rows that carry what the features add — and which
+                 of those stay in the task's form (Max, 2026-10-14: "the more
+                 settings, the better… the main important stuff clearly
+                 visible", the rest folded away). --%>
+            <% outline = Map.get(@project.settings || %{}, "outline") || %{} %>
+            <fieldset :if={@can_manage_modules and not @project.is_template} id="project-outline-settings" class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+              <legend class="px-1 text-sm font-medium">{gettext("The task list")}</legend>
+              <.select
+                name="outline[style]"
+                label={gettext("How it looks")}
+                value={outline["style"] || "auto"}
+                options={[
+                  {gettext("Automatic — a text list until a feature needs more room"), "auto"},
+                  {gettext("Always a text list — type, paste, Enter for the next"), "text"},
+                  {gettext("Always task cards"), "cards"}
+                ]}
+              />
+              <label class="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="hidden" name="outline[complete_parent]" value="false" />
+                <input
+                  type="checkbox"
+                  name="outline[complete_parent]"
+                  value="true"
+                  checked={outline["complete_parent"] != false}
+                  class="checkbox checkbox-primary checkbox-sm"
+                />
+                {gettext("Tick a task when its last subtask is ticked")}
+              </label>
+              <details class="text-sm">
+                <summary class="cursor-pointer opacity-70">{gettext("What the task cards show")}</summary>
+                <p class="text-xs opacity-60 mt-1 mb-2">
+                  {gettext("Unticked, a feature stays in the task's form and off the card.")}
+                </p>
+                <% row = outline["row"] || %{} %>
+                <label :for={{key, label} <- outline_row_features()} class="flex items-center gap-2 cursor-pointer py-0.5">
+                  <input type="hidden" name={"outline[row][#{key}]"} value="false" />
+                  <input
+                    type="checkbox"
+                    name={"outline[row][#{key}]"}
+                    value="true"
+                    checked={row[key] != false}
+                    class="checkbox checkbox-sm"
+                  />
+                  {label}
+                </label>
+              </details>
+            </fieldset>
 
             <%!-- Ongoing work has no end to reach, so nothing on its page
                  ends it; the one way is here, beside the setting that makes

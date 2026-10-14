@@ -24,7 +24,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   alias Phoenix.LiveView.JS
   alias PhoenixKit.Mentions
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, Features, L10n, Labels, Paths, Projects, RefText, Statuses}
+
+  alias PhoenixKitProjects.{
+    Activity,
+    Features,
+    L10n,
+    Labels,
+    Outline,
+    Paths,
+    Projects,
+    RefText,
+    Statuses
+  }
+
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Crumbs
@@ -72,6 +84,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> assign_logged_minutes()
       |> assign_log_people()
       |> assign_edit_title()
+      |> assign_outline(resolved_params)
       |> assign_threads()
       |> assign_ai_translate()
       # Unsaved edits? Flipped by the first change event; the host's
@@ -1036,8 +1049,47 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  def handle_event("subtask_add", %{"title" => title}, socket) do
+    title = title |> to_string() |> String.trim()
+
+    with %Assignment{} = parent <- socket.assigns[:assignment],
+         true <- title != "",
+         true <- may?(socket, :create_tasks),
+         {:ok, %{assignment: a}} <-
+           Projects.create_task_with_assignment(
+             socket.assigns.project.uuid,
+             %{"title" => title, "ad_hoc" => true},
+             %{}
+           ) do
+      Projects.stamp_assignment(a, %{created_by_uuid: Activity.actor_uuid(socket)})
+      Outline.move(a, parent.uuid, :last)
+
+      {:noreply,
+       socket
+       |> assign_outline(%{})
+       |> assign(:subtask_seq, (socket.assigns[:subtask_seq] || 0) + 1)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("subtask_toggle", %{"uuid" => uuid}, socket) do
+    with %Assignment{} = parent <- socket.assigns[:assignment],
+         %Assignment{parent_uuid: p} = sub when p == parent.uuid <- Projects.get_assignment(uuid),
+         true <- may?(socket, :update_status) do
+      if sub.status == "done",
+        do: Projects.reopen_assignment(sub),
+        else: Projects.complete_assignment(sub, Activity.actor_uuid(socket))
+
+      fresh = Projects.get_assignment(parent.uuid)
+      {:noreply, socket |> assign(assignment: fresh || parent) |> assign_outline(%{})}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   def handle_event("validate", %{"assignment" => attrs} = params, socket) do
-    socket = keep_edit_title(socket, params)
+    socket = socket |> keep_edit_title(params) |> maybe_move(params)
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
     task_mode = Map.get(params, "task_mode", socket.assigns.task_mode)
 
@@ -1170,7 +1222,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> clear_other_assignees(assign_type)
       |> strip_gated_attrs(fx)
       |> merge_attrs(socket)
-      |> fold_checklist(params, socket.assigns[:assignment])
 
     case {socket.assigns.live_action, task_mode} do
       {:new, "new"} -> save_with_new_task(socket, attrs, params)
@@ -1498,53 +1549,117 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp link_error_message(:not_found), do: gettext("That project no longer exists.")
   defp link_error_message(_), do: gettext("Could not nest that project.")
 
-  # The checklist as the form shows it: one line per item, `[x]` first
-  # when done.
-  defp checklist_text(items) when is_list(items) do
-    Enum.map_join(items, "\n", fn item ->
-      if(item["done"] == true, do: "[x] ", else: "[ ] ") <> (item["text"] || "")
-    end)
+  # ── Tasks under tasks ──────────────────────────────────────────────
+
+  # The "Sits under" choices (every task of the project but this one and
+  # what is under it, indented by depth), the current choice, and — when
+  # editing — the task's own subtasks.
+  defp assign_outline(socket, params) do
+    project = socket.assigns[:project]
+    on? = match?(%Project{}, project) and Features.on?(project, "subtasks")
+
+    if on? do
+      rows = Projects.list_assignments(project.uuid)
+      own = socket.assigns[:assignment]
+      own_uuid = own && own.uuid
+
+      excluded =
+        if own_uuid,
+          do:
+            MapSet.new([own_uuid | rows |> Outline.descendants(own_uuid) |> Enum.map(& &1.uuid)]),
+          else: MapSet.new()
+
+      options =
+        for {a, depth} <- Outline.walk(rows),
+            not MapSet.member?(excluded, a.uuid),
+            not Assignment.subproject?(a),
+            do: {String.duplicate("— ", depth) <> (Assignment.label(a) || ""), a.uuid}
+
+      subtasks = if own_uuid, do: Enum.filter(rows, &(&1.parent_uuid == own_uuid)), else: []
+
+      parent =
+        cond do
+          own_uuid -> own.parent_uuid
+          is_binary(params["parent"]) -> params["parent"]
+          true -> nil
+        end
+
+      assign(socket,
+        subtasks_on?: true,
+        parent_options: options,
+        parent_task: parent,
+        subtasks: subtasks,
+        subtask_counts: Outline.counts(rows)
+      )
+    else
+      assign(socket,
+        subtasks_on?: false,
+        parent_options: [],
+        parent_task: nil,
+        subtasks: [],
+        subtask_counts: %{}
+      )
+    end
+  rescue
+    _ ->
+      assign(socket,
+        subtasks_on?: false,
+        parent_options: [],
+        parent_task: nil,
+        subtasks: [],
+        subtask_counts: %{}
+      )
   end
 
-  defp checklist_text(_), do: ""
+  defp place_under_parent(socket, %Assignment{} = record) do
+    with parent when is_binary(parent) and parent != "" <- socket.assigns[:parent_task],
+         true <- socket.assigns[:subtasks_on?] == true do
+      Outline.move(record, parent, :last)
+    end
 
-  # …and back: lines to items, keeping the ids of the items whose text did
-  # not change (a tick or an edit is an update, not a new item).
-  defp fold_checklist(attrs, %{"checklist_text" => text}, assignment) when is_binary(text) do
-    # Each existing item lends its id to the FIRST line with its text, so
-    # two lines that read the same stay two items.
-    existing = (assignment && assignment.checklist) || []
-
-    {items, _left} =
-      text
-      |> String.split(~r/\r?\n/)
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.map_reduce(existing, fn line, pool ->
-        {done, rest} =
-          case Regex.run(~r/^(?:[-*]\s+)?\[(x|X| )?\]\s*(.*)$/, line) do
-            [_, mark, rest] -> {String.downcase(mark) == "x", rest}
-            _ -> {false, line}
-          end
-
-        {base, pool} =
-          case Enum.split_with(pool, &(&1["text"] == String.trim(rest))) do
-            {[match | rest_matches], others} -> {match, rest_matches ++ others}
-            {[], others} -> {%{}, others}
-          end
-
-        {%{
-           "id" => base["id"],
-           "text" => rest,
-           "done" => done,
-           "done_at" => if(done, do: base["done_at"])
-         }, pool}
-      end)
-
-    Map.put(attrs, "checklist", items)
+    :ok
+  rescue
+    _ -> :ok
   end
 
-  defp fold_checklist(attrs, _params, _assignment), do: attrs
+  defp place_under_parent(_socket, _record), do: :ok
+
+  # The "Sits under" select changed on a task being edited: moved at once
+  # (with its branch), not on the autosave — where a task sits is not a
+  # field of the row, it is its place in the list.
+  defp maybe_move(socket, %{"parent_task" => choice}) when is_binary(choice) do
+    parent = if choice == "", do: nil, else: choice
+
+    case socket.assigns do
+      %{live_action: :edit, assignment: %Assignment{} = a, parent_task: current}
+      when current != parent ->
+        case Outline.move(a, parent, :last) do
+          {:ok, moved} ->
+            socket
+            |> assign(assignment: %{a | parent_uuid: moved.parent_uuid})
+            |> assign_outline(%{})
+
+          {:error, _} ->
+            put_flash(socket, :error, gettext("The task could not be moved there."))
+        end
+
+      %{live_action: :new} ->
+        assign(socket, parent_task: parent)
+
+      _ ->
+        socket
+    end
+  end
+
+  defp maybe_move(socket, _params), do: socket
+
+  defp may?(socket, action) do
+    PhoenixKitProjects.Authz.can?(
+      socket.assigns[:phoenix_kit_current_scope],
+      socket.assigns.project,
+      action
+    )
+  end
 
   @doc false
   def completion_options do
@@ -1705,6 +1820,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # form for the next task, clean and focused.
   defp after_create(socket, record) do
     project = socket.assigns.project
+    place_under_parent(socket, record)
 
     if socket.assigns.add_next? do
       socket
@@ -2283,7 +2399,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> clear_other_assignees(assign_type)
       |> strip_gated_attrs(fx)
       |> merge_attrs(socket)
-      |> fold_checklist(params, socket.assigns[:assignment])
 
     {attrs, task_words} = split_task_words(socket, attrs)
 
@@ -3003,9 +3118,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
               <%!-- Re-keyed by `form_seq` so "Add & next" mounts a fresh
                    wrapper and the cursor lands back in the title; the same
-                   mount focuses it when the sheet opens. Shift+Enter in the
-                   title presses "Add & next" (core's PkShiftEnter); plain
-                   Enter is the browser's own submit → "Add". --%>
+                   mount focuses it when the sheet opens. Enter submits
+                   through the first submit button, "Add" (then=next): the
+                   form stays for the next task. --%>
               <div
                 :if={@live_action == :new and @task_mode == "new"}
                 id={"new-task-title-#{@form_seq}"}
@@ -3024,8 +3139,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   lang_data_key="title"
                   label={gettext("Task title")}
                   required
-                  phx-hook="PkShiftEnter"
-                  data-shift-enter-click="#assignment-add-next"
                 />
               </div>
 
@@ -3052,17 +3165,66 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <%!-- Adding: the name and the description lead, the state after. --%>
             <.state_fields :if={@live_action != :edit} {assigns} />
 
-            <%!-- What the first agent asked for (2026-10-05): whom the task
-                 waits on (a badge beside the status, not a fourth status),
-                 where a relayed item came from, and a checklist — sub-items
-                 ticked one by one, one per line here, "[x]" when done. --%>
-            <.textarea
-              name="checklist_text"
-              value={checklist_text(@form[:checklist].value)}
-              label={gettext("Checklist")}
-              rows="3"
-              placeholder={gettext("One item per line; start a line with [x] when it is done")}
+            <%!-- Where the task sits: under another task of this project, or
+                 at the top. Moving it takes its own subtasks along. --%>
+            <.select
+              :if={@subtasks_on? and @kind == "task" and not @project.is_template}
+              id="assignment-parent-task"
+              name="parent_task"
+              value={@parent_task || ""}
+              label={gettext("Sits under")}
+              options={[{gettext("Nothing — a top-level task"), ""} | @parent_options]}
             />
+
+            <%!-- The task's subtasks: ticked here, opened here, and added by
+                 typing a line and pressing Enter (the inputs belong to a
+                 form of their own, drawn after this one). --%>
+            <fieldset
+              :if={@live_action == :edit and @subtasks_on? and @kind == "task" and not @project.is_template}
+              id="assignment-subtasks"
+              class="rounded-box border border-base-300 p-3"
+            >
+              <legend class="px-1 text-sm font-medium">
+                {gettext("Subtasks")}
+                <span :if={@subtasks != []} class="text-base-content/50 font-normal">
+                  {Enum.count(@subtasks, &(&1.status == "done"))}/{length(@subtasks)}
+                </span>
+              </legend>
+              <ul class="flex flex-col gap-1 mb-2">
+                <li :for={sub <- @subtasks} class="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    class="checkbox checkbox-sm checkbox-success"
+                    checked={sub.status == "done"}
+                    phx-click="subtask_toggle"
+                    phx-value-uuid={sub.uuid}
+                    aria-label={gettext("Done")}
+                  />
+                  <.link
+                    navigate={Paths.edit_assignment(@project.uuid, sub.uuid)}
+                    class={["link link-hover truncate flex-1", sub.status == "done" && "line-through text-base-content/50"]}
+                  >
+                    {Assignment.label(sub, @current_lang)}
+                  </.link>
+                  <span :if={Map.get(@subtask_counts, sub.uuid)} class="text-xs text-base-content/50">
+                    {Map.get(@subtask_counts, sub.uuid).done}/{Map.get(@subtask_counts, sub.uuid).total}
+                  </span>
+                </li>
+              </ul>
+              <%!-- Re-keyed after each add: a fresh, empty input that takes
+                   the cursor back for the next line. --%>
+              <input
+                type="text"
+                name="title"
+                form="assignment-subtask-form"
+                id={"assignment-subtask-new-#{assigns[:subtask_seq] || 0}"}
+                phx-mounted={(assigns[:subtask_seq] || 0) > 0 && JS.focus()}
+                placeholder={gettext("Add a subtask and press Enter")}
+                maxlength="500"
+                autocomplete="off"
+                class="input input-sm input-bordered w-full"
+              />
+            </fieldset>
 
             <%!-- The task's time, in one box: what people logged, what an
                  agent reported for itself (it sends its own time and tokens
@@ -3502,13 +3664,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           >
             {gettext("Cancel")}
           </button>
-          <button
-            type="submit"
-            phx-disable-with={gettext("Saving…")}
-            class="btn btn-primary btn-sm order-3"
-          >
-            <%= if @live_action == :new, do: gettext("Add"), else: gettext("Save") %>
-          </button>
+          <%!-- The browser's implicit submission (Enter in a field) presses
+               the FIRST submit button: Enter adds and starts the next task,
+               like Enter in the typed list. "Add and close" is the click. --%>
           <button
             :if={@live_action == :new}
             type="submit"
@@ -3516,17 +3674,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             name="then"
             value="next"
             phx-disable-with={gettext("Saving…")}
-            title={gettext("Shift+Enter")}
-            class="btn btn-outline btn-sm order-2"
+            title={gettext("Enter")}
+            class="btn btn-primary btn-sm order-3"
           >
-            {gettext("Add & next")}
+            {gettext("Add")}
+          </button>
+          <button
+            type="submit"
+            phx-disable-with={gettext("Saving…")}
+            class={["btn btn-sm order-2", if(@live_action == :new, do: "btn-outline", else: "btn-primary")]}
+          >
+            <%= if @live_action == :new, do: gettext("Add and close"), else: gettext("Save") %>
           </button>
         </div>
         <p :if={@live_action == :new} class="text-xs text-base-content/50 text-right">
           <%= if @embed_mode == :navigate do %>
-            {gettext("Enter adds · Shift+Enter adds and starts the next")}
+            {gettext("Enter adds it and starts the next")}
           <% else %>
-            {gettext("Enter adds · Shift+Enter adds and starts the next · Esc closes")}
+            {gettext("Enter adds it and starts the next · Esc closes")}
           <% end %>
         </p>
 
@@ -3534,6 +3699,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       </.form>
       <%!-- Owns the "Log time" inputs drawn inside the form above (`form=`). --%>
       <form id="assignment-log-form" phx-submit="log_time" class="hidden"></form>
+      <%!-- Owns the "Add a subtask" line drawn inside the form above. --%>
+      <form id="assignment-subtask-form" phx-submit="subtask_add" class="hidden"></form>
 
       <%!-- The task's two threads, in its own form: what people said about
            it, and what the agent wrote while working on it. They opened

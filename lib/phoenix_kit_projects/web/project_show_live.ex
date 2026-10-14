@@ -76,7 +76,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Refs
+  alias PhoenixKitProjects.Outline
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
+  alias PhoenixKitProjects.Web.OutlineList
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
   alias PhoenixKitProjects.TaskNotes
   alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
@@ -468,6 +470,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       list_sort: :position,
       list_controls: ListControls.read(),
       list_controls?: false,
+      outline_style: :cards,
+      outline_depths: %{},
+      outline_counts: %{},
+      outline_parents: MapSet.new(),
+      outline_held: [],
+      outline_lines: [],
+      outline_can: %{edit: false, delete: false, tick: false, nest: false},
+      outline_fx: nil,
+      outline_dom_id: "pkp-outline",
       is_template: false,
       wrapper_class: @default_wrapper_class,
       router_mounted?: false,
@@ -670,14 +681,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       |> Projects.list_all_dependencies()
       |> Enum.group_by(& &1.assignment_uuid)
 
-    total = length(assignments)
-    done = Enum.count(assignments, &(&1.status == "done"))
+    # A task with subtasks is the sum of them, so the project counts the
+    # rows with nothing under them (`Outline.leaves/1`).
+    leaves = Outline.leaves(assignments)
+    total = length(leaves)
+    done = Enum.count(leaves, &(&1.status == "done"))
     # Rollup is the average of all assignments' `progress_pct` values
     # — a half-finished task contributes 50%, not 0%. Auto-completion
     # (`recompute_project_completion/1`) stays binary: a project only
     # auto-flags as completed when every assignment is `status: "done"`,
     # not when the rollup happens to hit 100% by other means.
-    progress_sum = Enum.reduce(assignments, 0, &(&1.progress_pct + &2))
+    progress_sum = Enum.reduce(leaves, 0, &(&1.progress_pct + &2))
     schedule = calculate_schedule(socket.assigns.project, assignments)
 
     # Sub-project rollup display data (V127): one batched summary query over
@@ -702,7 +716,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # denominator so it doesn't drag the project's % down before it holds any
     # work. Without this the header % here and the dashboard card disagree.
     empty_subs =
-      Enum.count(assignments, fn a ->
+      Enum.count(leaves, fn a ->
         Assignment.subproject?(a) and empty_subproject?(Map.get(subproject_summaries, a.uuid))
       end)
 
@@ -721,6 +735,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     )
     |> assign_pending_reviews(project_uuid)
     |> apply_list_lens()
+    |> OutlineList.assign_outline()
   end
 
   # ── The list lens ───────────────────────────────────────────────────
@@ -738,7 +753,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # screen (`ListControls`). Without them the list is the whole
     # project in manual order — the one arrangement drag-reordering
     # needs — whatever lens or sort a wider day may have left behind.
-    controls? = ListControls.show?(socket.assigns[:list_controls] || ListControls.read(), counts)
+    # The typed list IS the whole project in its own order: there is nothing
+    # for a lens or a sort to act on.
+    text? = OutlineList.style(socket.assigns.project, socket.assigns.fx, all) == :text
+
+    controls? =
+      not text? and
+        ListControls.show?(socket.assigns[:list_controls] || ListControls.read(), counts)
+
     status = if controls?, do: socket.assigns[:list_status] || "active", else: "all"
     sort = if controls?, do: socket.assigns[:list_sort] || :position, else: :position
 
@@ -770,6 +792,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       list_manual?: sort == :position,
       list_whole?: status == "all"
     )
+  end
+
+  # A drag moves a row among its siblings and takes its subtasks along: the
+  # dropped order sets each row's place among its own siblings, and the
+  # outline is then written depth first from that (a subtask dropped above
+  # its parent stays under it — nesting is Tab's job, not a drag's).
+  defp keep_outline(order, assignments) do
+    rank = order |> Enum.with_index() |> Map.new()
+
+    assignments
+    |> Enum.sort_by(&Map.get(rank, &1.uuid, 0))
+    |> Outline.walk()
+    |> Enum.map(fn {a, _depth} -> a.uuid end)
   end
 
   # A drop under a lens: the rows the user could see, in their new order,
@@ -1074,6 +1109,66 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # Ticking a task ticks everything under it. When some of that is another
+  # person's work, the list asks first and names the count.
+  defp complete_or_ask(socket, a, params) do
+    below = Outline.open_below(a, current_person_uuid(socket))
+
+    if below.others > 0 and params["force"] != "1" do
+      {:noreply,
+       ConfirmAction.request(
+         socket,
+         %{
+           "event" => "complete",
+           "uuid" => a.uuid,
+           "force" => "1",
+           "title" => gettext("Tick the subtasks too?"),
+           "message" =>
+             ngettext(
+               "This also ticks 1 open subtask, assigned to someone else.",
+               "This also ticks %{count} open subtasks, %{others} of them assigned to someone else.",
+               below.count,
+               others: below.others
+             ),
+           "confirm" => gettext("Tick all")
+         },
+         ["complete"]
+       )}
+    else
+      attrs = %{
+        status: "done",
+        progress_pct: 100,
+        completed_by_uuid: Activity.actor_uuid(socket),
+        completed_at: DateTime.utc_now()
+      }
+
+      socket
+      |> update_assignment_with_activity(a, attrs, "projects.assignment_completed",
+        metadata: %{
+          "task" => Assignment.label(a),
+          "project" => socket.assigns.project.name,
+          "subtasks_ticked" => below.count
+        }
+      )
+      |> maybe_sync_and_reload()
+    end
+  end
+
+  defp current_person_uuid(socket) do
+    case Activity.actor_uuid(socket) do
+      nil ->
+        nil
+
+      user_uuid ->
+        case PhoenixKitProjects.People.get_person_by_user_uuid(user_uuid, preload: []) do
+          %{uuid: uuid} -> uuid
+          _ -> nil
+        end
+    end
+  rescue
+    _ -> nil
+  end
+
   defp maybe_sync_and_reload({:ok, socket}) do
     {:noreply, socket |> sync_project_completion() |> load_assignments()}
   end
@@ -1191,13 +1286,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:ledger_tokens, :map, default: %{})
   attr(:assignment_note_counts, :map, default: %{})
   attr(:assignment_labels, :map, default: %{})
+  # The outline bits of a row (`OutlineList`): permissions, the "3 of 7" of
+  # a task with subtasks, folded or not, and whether its title takes the
+  # cursor (a row just added). Nil on rows drawn outside the list.
+  attr(:ol, :map, default: nil)
 
   defp task_body(assigns) do
     ~H"""
     <div class="card-body py-3 px-4 gap-2">
       <%!-- Title row --%>
           <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2 min-w-0">
+            <div class="flex items-center gap-2 min-w-0 flex-1">
               <span
                 :if={@draggable}
                 class="pk-drag-handle cursor-grab text-base-content/40 hover:text-base-content shrink-0"
@@ -1205,8 +1304,46 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               >
                 <.icon name="hero-bars-3" class="w-4 h-4" />
               </span>
+              <button
+                :if={@ol && @ol.count}
+                type="button"
+                phx-click="outline_fold"
+                phx-value-uuid={@a.uuid}
+                class="btn btn-ghost btn-xs btn-circle shrink-0"
+                title={if @ol.folded, do: gettext("Show subtasks"), else: gettext("Hide subtasks")}
+              >
+                <.icon name={if @ol.folded, do: "hero-chevron-right", else: "hero-chevron-down"} class="w-4 h-4" />
+              </button>
               <.assignment_status_badge :if={not @is_template} status={@a.status} />
               <.ref_chip :if={not @is_template} ref={Refs.task_ref(@project.key, @a.number)} />
+              <%!-- The title is typed into where it stands (Enter adds the
+                   next task, Tab makes it a subtask); the arrow opens the
+                   form. Read-only rows keep the title as the link. --%>
+              <%= if @ol && @ol.can.edit and not @is_template and @a.task do %>
+                <OutlineList.title_input a={@a} can={@ol.can} focus={@ol.focus} fresh={@ol.fresh} />
+                <span
+                  :if={@ol.count}
+                  class="badge badge-sm badge-outline shrink-0"
+                  title={gettext("Subtasks done")}
+                >
+                  {@ol.count.done}/{@ol.count.total}
+                </span>
+                <.smart_link
+                  navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid)}
+                  emit={
+                    {PhoenixKitProjects.Web.AssignmentFormLive,
+                     %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid}}
+                  }
+                  embed_mode={@embed_mode}
+                  class="btn btn-ghost btn-xs btn-circle shrink-0"
+                  title={gettext("Open the task")}
+                >
+                  <.icon name="hero-arrow-top-right-on-square" class="w-3.5 h-3.5" />
+                </.smart_link>
+              <% else %>
+              <span :if={@ol && @ol.count} class="badge badge-sm badge-outline shrink-0">
+                {@ol.count.done}/{@ol.count.total}
+              </span>
               <%!-- Title links to the same edit form as the row menu's
                    Edit — clicking a name anywhere should go somewhere. --%>
               <.smart_link
@@ -1220,6 +1357,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               >
                 {TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
               </.smart_link>
+              <% end %>
             </div>
 
             <div class="flex items-center gap-1 shrink-0">
@@ -1376,10 +1514,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               title={if(overdue, do: gettext("Past its end date"), else: gettext("The task's dates"))}
             >
               <.icon name="hero-calendar-days" class="w-3 h-3" /> {dates}
-            </span>
-            <% checklist = Assignment.checklist_counts(@a) %>
-            <span :if={checklist.total > 0} class="badge badge-sm badge-outline gap-1" title={gettext("Checklist")}>
-              <.icon name="hero-list-bullet" class="w-3 h-3" /> {checklist.done}/{checklist.total}
             </span>
             <%= if @fx.estimates and @editing_duration_uuid == @a.uuid do %>
               <% prefill_dur = @a.estimated_duration || @a.task.estimated_duration %>
@@ -1650,7 +1784,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        ConfirmAction.request(
          socket,
          params,
-         ~w(archive_project remove_assignment review_submission detach_subproject)
+         ~w(archive_project remove_assignment review_submission detach_subproject complete)
        )}
 
   def handle_event("confirm_action_cancel", _params, socket),
@@ -1668,6 +1802,30 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   def handle_event(event, params, socket)
       when event in ~w(move_project_open move_project_change move_project_submit move_project_close),
       do: MoveProject.handle_event(event, params, socket, &after_project_move/2)
+
+  # The typed list's tick: the same act as the row's Done / Reopen buttons,
+  # so it goes through them (their feature gate, their permission, their
+  # history line). The reply tells the list whether a question was put
+  # first — it then takes its tick back until that is answered.
+  def handle_event("outline_tick", %{"id" => uuid} = params, socket) when is_binary(uuid) do
+    event = if params["done"] == true, do: "complete", else: "reopen"
+
+    params =
+      if params["force"] == true, do: %{"uuid" => uuid, "force" => "1"}, else: %{"uuid" => uuid}
+
+    {:noreply, socket} = handle_event(event, params, socket)
+    {:reply, %{asked: socket.assigns[:confirm_action] != nil}, socket}
+  end
+
+  def handle_event("outline_" <> _ = event, params, socket) do
+    if socket.assigns.fx[:tasks] do
+      OutlineList.handle_event(event, params, socket, fn socket ->
+        socket |> sync_project_completion() |> load_assignments()
+      end)
+    else
+      {:noreply, socket}
+    end
+  end
 
   def handle_event(event, params, socket) do
     case Map.get(@gated_events, event) do
@@ -1878,24 +2036,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply, activate_tab(socket, resolve_switch_target(tab, socket))}
   end
 
-  defp gated_handle_event("complete", %{"uuid" => uuid}, socket) do
+  defp gated_handle_event("complete", %{"uuid" => uuid} = params, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
 
       a ->
-        attrs = %{
-          status: "done",
-          progress_pct: 100,
-          completed_by_uuid: Activity.actor_uuid(socket),
-          completed_at: DateTime.utc_now()
-        }
-
-        socket
-        |> update_assignment_with_activity(a, attrs, "projects.assignment_completed",
-          metadata: %{"task" => Assignment.label(a), "project" => socket.assigns.project.name}
-        )
-        |> maybe_sync_and_reload()
+        complete_or_ask(socket, a, params)
     end
   end
 
@@ -2515,7 +2662,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     project_uuid = socket.assigns.project.uuid
 
     # The hook sends the rows on screen; the write wants the whole plan.
-    full_order = merge_visible_order(Enum.map(socket.assigns.assignments, & &1.uuid), ordered_ids)
+    full_order =
+      socket.assigns.assignments
+      |> Enum.map(& &1.uuid)
+      |> merge_visible_order(ordered_ids)
+      |> keep_outline(socket.assigns.assignments)
 
     case Projects.reorder_assignments(project_uuid, full_order,
            actor_uuid: Activity.actor_uuid(socket)
@@ -4237,6 +4388,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       </div>
 
+      <%!-- The typed list (`OutlineList.text_list/1`): the whole project as
+           one text field — one line a task, an indent a subtask. Drawn when
+           nothing the project has switched on needs a row of its own, or
+           when the project chose it (settings → "How the list looks"). --%>
+      <%= if @outline_style == :text and not @is_template do %>
+        <OutlineList.text_list id={@outline_dom_id} lines={@outline_lines} can={@outline_can} />
+      <% else %>
       <%= if @assignments != [] and @visible_assignments == [] do %>
         <.empty_state icon="hero-funnel" title={gettext("Nothing matches this filter.")}>
           <:cta>
@@ -4299,7 +4457,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             data-sortable-items=".sortable-item"
             data-sortable-handle=".pk-drag-handle"
           >
-            <%= for a <- @visible_assignments do %>
+            <% ol_folded = assigns[:outline_folded] || MapSet.new() %>
+            <% ol_depths = if @list_manual?, do: Outline.depths(@visible_assignments), else: %{} %>
+            <%= for a <- OutlineList.unfolded(@visible_assignments, ol_folded) do %>
               <%!-- The row a link named (`focus_task/2`) takes focus as the
                    page mounts, which is what scrolls it into view: the
                    URL's fragment is gone by then (the tab sync rewrites
@@ -4307,6 +4467,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <div
                 id={"task-#{a.uuid}"}
                 class="relative flex gap-4 py-3 scroll-mt-24 focus:outline-none sortable-item"
+                style={"margin-left: #{Map.get(ol_depths, a.uuid, 0) * 2}rem"}
                 data-id={a.uuid}
                 tabindex={assigns[:focus_task] == a.uuid && "-1"}
                 phx-mounted={assigns[:focus_task] == a.uuid && Phoenix.LiveView.JS.focus()}
@@ -4561,14 +4722,23 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   <% else %>
                     <.task_body
                       a={a}
+                      ol={
+                        %{
+                          can: @outline_can,
+                          count: Map.get(@outline_counts, a.uuid),
+                          folded: MapSet.member?(ol_folded, a.uuid),
+                          focus: assigns[:outline_focus] == a.uuid,
+                          fresh: assigns[:outline_fresh] == a.uuid
+                        }
+                      }
                       scope={@phoenix_kit_current_scope}
                       draggable={@list_manual?}
                       is_template={@is_template}
                       project={@project}
-                      fx={@fx}
+                      fx={assigns[:outline_fx] || @fx}
                       embed_mode={@embed_mode}
                       editing_duration_uuid={@editing_duration_uuid}
-                      comments_enabled={@comments_enabled}
+                      comments_enabled={@comments_enabled and (assigns[:outline_fx] || %{})[:comments_row] != false}
                       assignment_comment_counts={@assignment_comment_counts}
                       ledger_minutes={@ledger_minutes}
                       ledger_ai_minutes={assigns[:ledger_ai_minutes] || %{}}
@@ -4590,10 +4760,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            in there adds and starts the next (see `AssignmentFormLive`).
            Real projects only — a template's tasks are library tasks by
            design. Feature-gated on render like the "Add task" button. --%>
+      <%!-- Cards: a task is added right here and typed into its row. The
+           sheet ("Add task" at the top) stays for one with details. --%>
+      <button
+        :if={@fx.tasks and not @is_template and @outline_can.edit}
+        type="button"
+        phx-click="outline_add_first"
+        class="btn btn-ghost btn-sm justify-start gap-2 mt-2 w-full text-base-content/60"
+      >
+        <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Add a task")}
+      </button>
       <.quick_add_composer
-        :if={@fx.tasks and not @is_template}
+        :if={@fx.tasks and not @is_template and not @outline_can.edit}
         project_uuid={@project.uuid}
         embed_mode={@embed_mode}
+      />
+      <% end %>
+
+      <OutlineList.held_tray
+        :if={not @is_template}
+        held={@outline_held}
+        can={@outline_can}
+        project={@project}
       />
       </div>
 
@@ -4624,7 +4812,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             :for={{status, title, tint} <- board_columns}
             class={["bg-base-200/50 rounded-lg border-t-4 p-3 flex flex-col gap-2 min-h-24", tint]}
           >
-            <% column = Enum.filter(@assignments, &(&1.status == status)) %>
+            <%!-- Top-level tasks are the cards; a task's subtasks show as
+                 its "2/5" and are worked in the task (grok's rule, the
+                 panel of 2026-10-14). --%>
+            <% column = @assignments |> Outline.roots() |> Enum.filter(&(&1.status == status)) %>
             <div class="flex items-center justify-between px-1">
               <span class="text-sm font-semibold">{title}</span>
               <span class="badge badge-ghost badge-sm">{length(column)}</span>
@@ -4681,6 +4872,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
                   <div class="flex flex-wrap items-center gap-1">
                     <.ref_chip ref={Assignment.ref(a)} />
+                    <% sub = Map.get(@outline_counts, a.uuid) %>
+                    <span :if={sub} class="badge badge-xs badge-outline gap-1" title={gettext("Subtasks done")}>
+                      <.icon name="hero-list-bullet" class="w-3 h-3" /> {sub.done}/{sub.total}
+                    </span>
                     <span
                       :if={@fx.priorities and a.priority != "normal"}
                       class={["badge badge-xs gap-1", priority_class(a.priority)]}
