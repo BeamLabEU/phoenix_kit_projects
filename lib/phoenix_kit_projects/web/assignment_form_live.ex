@@ -27,6 +27,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitWeb.Components.Core.FormFieldLabel
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
@@ -67,6 +68,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> assign_fx()
       |> assign_logged_minutes()
       |> assign_log_people()
+      |> assign_edit_title()
       |> assign_ai_translate()
       # Unsaved edits? Flipped by the first change event; the host's
       # dialog (emit mode) stops closing on Esc/backdrop while true and
@@ -99,6 +101,89 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # The hub gate map for this form's project. Placeholder projects (the
   # not-found render window) fall back to catalog defaults.
+  attr(:editable, :boolean, required: true)
+  attr(:title, :string, default: nil)
+
+  # The task's name at the top of its form. A one-off task's is changed
+  # here; a library task's belongs to the library (every project that uses
+  # the task shows it), so here it is only read.
+  defp task_title_field(%{editable: true} = assigns) do
+    ~H"""
+    <.input id="assignment-task-title" name="task_title" value={@title} label={gettext("Title")} maxlength="255" />
+    """
+  end
+
+  defp task_title_field(assigns) do
+    ~H"""
+    <div :if={@title} id="assignment-task-title">
+      <FormFieldLabel.label>{gettext("Title")}</FormFieldLabel.label>
+      <p class="font-medium break-words">{@title}</p>
+      <p class="text-xs text-base-content/60">
+        {gettext("From the task library: its name is changed there, for every project that uses it.")}
+      </p>
+    </div>
+    """
+  end
+
+  # Where the task stands: its status and priority, whose it is, and what
+  # it waits on. First in the form when editing, after the name and the
+  # description when adding.
+  defp state_fields(assigns) do
+    ~H"""
+            <div class="flex gap-2">
+              <div class="flex-1">
+                <.select
+                  field={@form[:status]}
+                  label={gettext("Status")}
+                  options={status_options(@fx, @assignment)}
+                />
+              </div>
+              <div :if={@fx.priorities} class="w-40">
+                <.select
+                  field={@form[:priority]}
+                  label={gettext("Priority")}
+                  options={priority_options()}
+                />
+              </div>
+            </div>
+
+            <%= if @fx.assignees do %>
+              <.select
+                name="assign_type"
+                label={gettext("Assigned to")}
+                value={@assign_type}
+                options={[{gettext("Nobody"), ""}, {gettext("Department"), "department"}, {gettext("Team"), "team"}, {gettext("Person"), "person"}]}
+              />
+
+              <%= if @assign_type == "department" do %>
+                <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
+              <% end %>
+              <%= if @assign_type == "team" do %>
+                <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
+              <% end %>
+              <%= if @assign_type == "person" do %>
+                <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
+              <% end %>
+            <% end %>
+
+            <%!-- Whom the task waits on and where it came from: straight
+                 under the description, where the task's state is read. --%>
+            <div class="flex gap-2">
+              <div
+                class="flex-1"
+                id="assignment-waiting-on"
+                phx-mounted={@focus_field == "waiting_on" && JS.focus(to: "#assignment-waiting-on input")}
+              >
+                <.input field={@form[:waiting_on]} label={gettext("Waiting on")} placeholder={gettext("e.g. the client")} maxlength="200" />
+              </div>
+              <div class="w-48">
+                <.input field={@form[:origin]} label={gettext("Requested by")} placeholder={gettext("e.g. client, boss")} maxlength="40" />
+              </div>
+            </div>
+
+    """
+  end
+
   # Whose time the log line records: the viewer's unless a person was
   # picked — and a picked one must be among those the form offered.
   defp log_actor(%{assigns: %{log_person: %{key: key}}} = socket) do
@@ -159,12 +244,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         []
       end
 
-    assign(socket, log_people: people, log_person: nil)
+    assign(socket, log_people: people, log_person: nil, log_seq: 0)
   rescue
-    _ -> assign(socket, log_people: [], log_person: nil)
+    _ -> assign(socket, log_people: [], log_person: nil, log_seq: 0)
   end
 
-  defp assign_log_people(socket), do: assign(socket, log_people: [], log_person: nil)
+  defp assign_log_people(socket), do: assign(socket, log_people: [], log_person: nil, log_seq: 0)
 
   defp log_member_name(%{user: %{} = user}) do
     case PhoenixKit.Users.Auth.User.full_name(user) do
@@ -190,12 +275,56 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
       ).totals
 
-    assign(socket, :logged, totals)
+    assign(socket, logged: totals, ai_summary: ai_summary(uuid))
   rescue
-    _ -> assign(socket, :logged, nil)
+    _ -> assign(socket, logged: nil, ai_summary: nil)
   end
 
-  defp assign_logged_minutes(socket), do: assign(socket, :logged, nil)
+  defp assign_logged_minutes(socket), do: assign(socket, logged: nil, ai_summary: nil)
+
+  # The summary of the agent's latest note on the task, if it wrote one.
+  defp ai_summary(assignment_uuid) do
+    with true <- PhoenixKitProjects.TaskNotes.available?(),
+         %{agent: %{metadata: %{"summary" => summary}}} when is_binary(summary) and summary != "" <-
+           PhoenixKitProjects.TaskNotes.latest(assignment_uuid) do
+      summary
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  # The task's own name, for the top of the edit form (`task_title_field/1`).
+  defp assign_edit_title(
+         %{assigns: %{live_action: :edit, assignment: %Assignment{task: %Task{} = task}}} = socket
+       ) do
+    assign(socket, edit_title: task.title, title_editable?: task.ad_hoc == true)
+  end
+
+  defp assign_edit_title(socket), do: assign(socket, edit_title: nil, title_editable?: false)
+
+  defp keep_edit_title(socket, %{"task_title" => title}) when is_binary(title),
+    do: assign(socket, :edit_title, title)
+
+  defp keep_edit_title(socket, _params), do: socket
+
+  # A one-off task renamed in its form: written to the task after the
+  # assignment's own save, and only when the name really changed.
+  defp save_edit_title(socket, %Assignment{task_uuid: task_uuid}) do
+    title = socket.assigns[:edit_title]
+
+    with true <- socket.assigns[:title_editable?] == true,
+         true <- is_binary(title) and String.trim(title) != "",
+         %Task{ad_hoc: true} = task <- Projects.get_task(task_uuid),
+         true <- String.trim(title) != task.title do
+      Projects.update_task(task, %{"title" => String.trim(title)})
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
 
   defp assign_fx(socket) do
     case socket.assigns[:project] do
@@ -840,6 +969,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   def handle_event("validate", %{"assignment" => attrs} = params, socket) do
+    socket = keep_edit_title(socket, params)
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
     task_mode = Map.get(params, "task_mode", socket.assigns.task_mode)
 
@@ -915,6 +1045,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # ── Save ────────────────────────────────────────────────────────
 
   def handle_event("save", %{"assignment" => attrs} = params, socket) do
+    socket = keep_edit_title(socket, params)
     assign_type = Map.get(params, "assign_type", "")
 
     # Save-time gate re-resolution (panel R3-4): the submit binds to the
@@ -989,6 +1120,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {:noreply,
        socket
        |> assign_logged_minutes()
+       |> assign(log_person: nil, log_seq: (socket.assigns[:log_seq] || 0) + 1)
        |> put_flash(:info, gettext("Time logged."))}
     else
       :error ->
@@ -1306,7 +1438,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> Enum.reject(&(&1 == ""))
       |> Enum.map_reduce(existing, fn line, pool ->
         {done, rest} =
-          case Regex.run(~r/^\[(x|X| )?\]\s*(.*)$/, line) do
+          case Regex.run(~r/^(?:[-*]\s+)?\[(x|X| )?\]\s*(.*)$/, line) do
             [_, mark, rest] -> {String.downcase(mark) == "x", rest}
             _ -> {false, line}
           end
@@ -2022,6 +2154,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
+        save_edit_title(socket, updated)
         # A person saved the form: the title and description are theirs
         # now, whatever key wrote them before.
         _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
@@ -2601,6 +2734,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <% end %>
             <% end %>
 
+            <%!-- Editing: the task's name and where it stands come first —
+                 the form is opened to see that, then maybe to change one
+                 thing (the pass with the other AIs, 2026-10-14). --%>
+            <%= if @live_action == :edit do %>
+              <.task_title_field editable={@title_editable?} title={@edit_title} />
+              <.state_fields {assigns} />
+            <% end %>
+
             <%!-- The translatable fields — the new task's title (Create new)
                  and the description — sit under the language tabs and INSIDE
                  the wrapper so a language switch shows the skeleton + cleanly
@@ -2679,43 +2820,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 lang_data_key="description"
                 label={gettext("Description")}
                 type="textarea"
-                rows={3}
+                rows={if(@live_action == :edit, do: 8, else: 3)}
                 disabled={@current_lang in @ai_in_flight}
                 mentions
                 data-mention-context={mention_context(@project)}
               />
             </.multilang_fields_wrapper>
 
-            <%!-- Bigger gap separating the translatable Description (governed by
-                 the language tabs) from the non-translatable fields below. --%>
-            <div :if={@fx.estimates} class="flex gap-2 mt-4">
-              <div class="flex-1">
-                <.input field={@form[:estimated_duration]} label={gettext("Duration")} type="number" />
-              </div>
-              <div class="w-40">
-                <.select
-                  field={@form[:estimated_duration_unit]}
-                  label={gettext("Unit")}
-                  options={duration_unit_options()}
-                  prompt={gettext("—")}
-                />
-              </div>
-            </div>
+            <%!-- Adding: the name and the description lead, the state after. --%>
+            <.state_fields :if={@live_action != :edit} {assigns} />
 
-            <%!-- Whom the task waits on and where it came from: straight
-                 under the description, where the task's state is read. --%>
-            <div class="flex gap-2">
-              <div
-                class="flex-1"
-                id="assignment-waiting-on"
-                phx-mounted={@focus_field == "waiting_on" && JS.focus(to: "#assignment-waiting-on input")}
-              >
-                <.input field={@form[:waiting_on]} label={gettext("Waiting on")} placeholder={gettext("e.g. the client")} maxlength="200" />
-              </div>
-              <div class="w-48">
-                <.input field={@form[:origin]} label={gettext("From")} placeholder={gettext("e.g. client, boss")} maxlength="40" />
-              </div>
-            </div>
+            <%!-- What the first agent asked for (2026-10-05): whom the task
+                 waits on (a badge beside the status, not a fourth status),
+                 where a relayed item came from, and a checklist — sub-items
+                 ticked one by one, one per line here, "[x]" when done. --%>
+            <.textarea
+              name="checklist_text"
+              value={checklist_text(@form[:checklist].value)}
+              label={gettext("Checklist")}
+              rows="3"
+              placeholder={gettext("One item per line; start a line with [x] when it is done")}
+            />
 
             <%!-- The task's time, in one box: what people logged, what an
                  agent reported for itself (it sends its own time and tokens
@@ -2756,15 +2881,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   </dd>
                 </div>
               </dl>
-              <p class="text-xs text-base-content/60">
-                {gettext("The AI's figures come from what it reports itself; its write-ups are in the task's notes (the chip icon on the task's row).")}
+              <%!-- The AI's own last words on the task, where its figures
+                   are: the summary of its latest note. --%>
+              <p :if={@ai_summary} class="text-sm" id="assignment-ai-summary">
+                <span class="text-xs text-base-content/60">{gettext("Latest from the AI")}:</span>
+                {@ai_summary}
               </p>
-              <div class="flex flex-wrap items-end gap-2">
-                <div :if={@log_people != []} class="w-48">
-                  <span class="block mb-1 text-xs font-medium text-base-content/60">{gettext("Who")}</span>
+              <p class="text-xs text-base-content/60">
+                {gettext("AI figures are self-reported. Its full notes open from the chip icon on the task's row.")}
+              </p>
+              <div class="grid grid-cols-2 gap-x-2 gap-y-3 border-t border-base-300 pt-3 [&_label.label]:mb-1 [&_label.label>span]:text-xs [&_label.label>span]:font-medium">
+                <div>
+                  <FormFieldLabel.label for="assignment-log-person">{gettext("Log for")}</FormFieldLabel.label>
+                  <%!-- Whose time: always said. A search for someone who runs
+                       the plan; the viewer, as text, for everyone else. --%>
                   <.search_picker
+                    :if={@log_people != []}
                     id="assignment-log-person"
                     dropdown_id="assignment-log-person-list"
+                    form="assignment-log-form"
                     search_event="log_person_search"
                     pick_event="log_person_pick"
                     chosen={@log_person && @log_person.name}
@@ -2772,57 +2907,70 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     clear_label={gettext("Back to me")}
                     search_on_focus
                     close_on_pick
-                    placeholder={gettext("Me")}
+                    placeholder={gettext("Me — or search a person")}
                     class="input input-sm w-full"
                     searching_label={gettext("Searching…")}
                     more_label={gettext("Load more")}
                     loading_more_label={gettext("Loading…")}
                     no_matches_label={gettext("No matches")}
                   />
+                  <span :if={@log_people == []} id="assignment-log-person" class="input input-sm w-full flex items-center text-base-content/70">
+                    {gettext("Me")}
+                  </span>
                 </div>
-                <div class="w-40">
-                  <span class="block mb-1 text-xs font-medium text-base-content/60">{gettext("How long")}</span>
-                  <input
-                    type="text"
-                    name="duration"
-                    form="assignment-log-form"
-                    placeholder={gettext("1h 30m, 1:30, 90…")}
-                    autocomplete="off"
-                    class="input input-sm w-full"
-                  />
+                <%!-- Re-keyed after each entry (`log_seq`): the two boxes come
+                     back empty, so a second press cannot log the same again. --%>
+                <.input
+                  id={"assignment-log-duration-#{@log_seq}"}
+                  name="duration"
+                  form="assignment-log-form"
+                  label={gettext("How long")}
+                  value=""
+                  placeholder={gettext("1h 30m, 1:30, 90 or 1.5h")}
+                  autocomplete="off"
+                  class="input-sm"
+                />
+                <.input
+                  id={"assignment-log-note-#{@log_seq}"}
+                  name="note"
+                  form="assignment-log-form"
+                  label={gettext("What was done (optional)")}
+                  value=""
+                  autocomplete="off"
+                  class="input-sm"
+                  wrapper_class="col-span-2"
+                />
+                <div class="col-span-2 flex flex-wrap items-center justify-between gap-2">
+                  <label class="flex items-center gap-2 cursor-pointer text-sm">
+                    <input type="checkbox" name="billable" value="true" form="assignment-log-form" class="checkbox checkbox-sm" />
+                    {gettext("Billable")}
+                  </label>
+                  <span class="text-xs text-base-content/60 flex-1 text-right">
+                    {gettext("Logged right away — the rest of the form saves with Save.")}
+                  </span>
+                  <button type="submit" form="assignment-log-form" class="btn btn-primary btn-sm" phx-disable-with={gettext("Saving…")}>
+                    <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Log time")}
+                  </button>
                 </div>
-                <div class="flex-1 min-w-40">
-                  <span class="block mb-1 text-xs font-medium text-base-content/60">{gettext("Note (optional)")}</span>
-                  <input
-                    type="text"
-                    name="note"
-                    form="assignment-log-form"
-                    autocomplete="off"
-                    class="input input-sm w-full"
-                  />
-                </div>
-                <label class="flex items-center gap-2 h-8 cursor-pointer text-sm">
-                  <input type="checkbox" name="billable" value="true" form="assignment-log-form" class="checkbox checkbox-sm" />
-                  {gettext("Billable")}
-                </label>
-                <button type="submit" form="assignment-log-form" class="btn btn-sm" phx-disable-with={gettext("Saving…")}>
-                  <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Log time")}
-                </button>
               </div>
             </fieldset>
 
-            <.select
-              field={@form[:status]}
-              label={gettext("Status")}
-              options={status_options(@fx, @assignment)}
-            />
+            <div class="divider text-xs text-base-content/50 my-1">{gettext("Planning")}</div>
 
-            <div :if={@fx.priorities} class="w-48">
-              <.select
-                field={@form[:priority]}
-                label={gettext("Priority")}
-                options={priority_options()}
-              />
+            <%!-- The ESTIMATE: planned effort, not time already spent (that is
+                 the box above). --%>
+            <div :if={@fx.estimates} class="flex gap-2">
+              <div class="flex-1">
+                <.input field={@form[:estimated_duration]} label={gettext("Estimate")} type="number" />
+              </div>
+              <div class="w-40">
+                <.select
+                  field={@form[:estimated_duration_unit]}
+                  label={gettext("Unit")}
+                  options={duration_unit_options()}
+                  prompt={gettext("—")}
+                />
+              </div>
             </div>
 
             <%!-- The task's own dates (Max, 2026-10-06): optional, either
@@ -2834,40 +2982,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </div>
               <div class="flex-1">
                 <.input field={@form[:end_date]} type="date" label={gettext("End date")} />
-              </div>
-            </div>
-
-            <%!-- What the first agent asked for (2026-10-05): whom the task
-                 waits on (a badge beside the status, not a fourth status),
-                 where a relayed item came from, and a checklist — sub-items
-                 ticked one by one, one per line here, "[x]" when done. --%>
-            <.textarea
-              name="checklist_text"
-              value={checklist_text(@form[:checklist].value)}
-              label={gettext("Checklist")}
-              rows="3"
-              placeholder={gettext("One item per line; start a line with [x] when it is done")}
-            />
-
-            <%!-- Labels: plain checkboxes over the PROJECT's registry (managed
-                 in the Modules panel); selection replaces the join rows on
-                 save. Renders only when the flag is on AND labels exist. --%>
-            <div :if={@fx.labels and @project_labels != []} class="fieldset">
-              <span class="fieldset-legend text-sm font-medium mb-1">{gettext("Labels")}</span>
-              <div class="flex flex-wrap gap-2">
-                <label
-                  :for={label <- @project_labels}
-                  class="flex items-center gap-1.5 cursor-pointer rounded-lg border border-base-200 px-2 py-1"
-                >
-                  <input
-                    type="checkbox"
-                    name="labels[]"
-                    value={label.uuid}
-                    checked={label.uuid in @selected_labels}
-                    class="checkbox checkbox-primary checkbox-xs"
-                  />
-                  <span class={["badge badge-sm", label.color]}>{label.name}</span>
-                </label>
               </div>
             </div>
 
@@ -2897,26 +3011,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <span class="text-sm">{gettext("Counts weekends (e.g. deliveries, external processes)")}</span>
             </label>
 
-            <%= if @fx.assignees do %>
-              <div class="divider text-xs text-base-content/50 my-1">{gettext("Assignment (optional)")}</div>
-
-              <.select
-                name="assign_type"
-                label={gettext("Assign to")}
-                value={@assign_type}
-                options={[{gettext("Nobody"), ""}, {gettext("Department"), "department"}, {gettext("Team"), "team"}, {gettext("Person"), "person"}]}
-              />
-
-              <%= if @assign_type == "department" do %>
-                <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
-              <% end %>
-              <%= if @assign_type == "team" do %>
-                <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
-              <% end %>
-              <%= if @assign_type == "person" do %>
-                <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
-              <% end %>
-            <% end %>
+            <%!-- Labels: plain checkboxes over the PROJECT's registry (managed
+                 in the Modules panel); selection replaces the join rows on
+                 save. Renders only when the flag is on AND labels exist. --%>
+            <div :if={@fx.labels and @project_labels != []} class="fieldset">
+              <span class="fieldset-legend text-sm font-medium mb-1">{gettext("Labels")}</span>
+              <div class="flex flex-wrap gap-2">
+                <label
+                  :for={label <- @project_labels}
+                  class="flex items-center gap-1.5 cursor-pointer rounded-lg border border-base-200 px-2 py-1"
+                >
+                  <input
+                    type="checkbox"
+                    name="labels[]"
+                    value={label.uuid}
+                    checked={label.uuid in @selected_labels}
+                    class="checkbox checkbox-primary checkbox-xs"
+                  />
+                  <span class={["badge badge-sm", label.color]}>{label.name}</span>
+                </label>
+              </div>
+            </div>
 
             <%= if @live_action == :new and @task_mode == "new" and @fx.library do %>
               <div class="divider my-1"></div>
@@ -3132,7 +3247,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
              "Add & next" in the markup and CSS `order` puts it last on
              screen. "Add & next" carries `then=next`, which LiveView sends
              as the submitter — Shift+Enter presses it through PkShiftEnter. --%>
-        <div class="flex flex-wrap items-center justify-end gap-2 mt-2">
+        <%!-- Always in reach: the form is two screens long, and the thing
+             most often changed (the status) is at its top. --%>
+        <div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 mt-2 py-2 px-3 rounded-box border border-base-300 bg-base-100 shadow">
+          <span :if={@dirty?} class="mr-auto text-xs text-warning" id="assignment-unsaved">
+            {gettext("Unsaved changes")}
+          </span>
           <button
             type="button"
             phx-click="cancel"
