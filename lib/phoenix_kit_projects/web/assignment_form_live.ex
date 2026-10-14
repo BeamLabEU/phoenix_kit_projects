@@ -12,6 +12,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # rather than hand-written so this form can't drift from every other
   # surface that offers mentions.
   use PhoenixKitProjects.Web.Mentions
+  # The task's discussion and notes are embedded in its form.
+  use PhoenixKitComments.Embed
   use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
@@ -70,6 +72,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> assign_logged_minutes()
       |> assign_log_people()
       |> assign_edit_title()
+      |> assign_threads()
       |> assign_ai_translate()
       # Unsaved edits? Flipped by the first change event; the host's
       # dialog (emit mode) stops closing on Esc/backdrop while true and
@@ -301,6 +304,39 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   rescue
     _ -> nil
   end
+
+  # Whether the task's discussion and the agent's notes show in the form,
+  # and how many of each there are: `%{comments, notes}` or nil. Both need
+  # the comments module and the project's Discussions switched on.
+  defp assign_threads(
+         %{
+           assigns: %{
+             live_action: :edit,
+             project: %Project{} = project,
+             assignment: %Assignment{uuid: uuid}
+           }
+         } = socket
+       )
+       when is_binary(uuid) do
+    threads =
+      if not project.is_template and Code.ensure_loaded?(PhoenixKitComments) and
+           PhoenixKitComments.enabled?() and
+           PhoenixKitProjects.Extensions.enabled?(project, "discussions") do
+        %{
+          comments: PhoenixKitComments.count_comments("assignment", uuid, status: "published"),
+          notes:
+            PhoenixKitComments.count_comments(PhoenixKitProjects.TaskNotes.resource_type(), uuid,
+              status: "published"
+            )
+        }
+      end
+
+    assign(socket, :threads, threads)
+  rescue
+    _ -> assign(socket, :threads, nil)
+  end
+
+  defp assign_threads(socket), do: assign(socket, :threads, nil)
 
   # The task's own name, for the top of the edit form (`task_title_field/1`).
   defp assign_edit_title(
@@ -3498,6 +3534,54 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       </.form>
       <%!-- Owns the "Log time" inputs drawn inside the form above (`form=`). --%>
       <form id="assignment-log-form" phx-submit="log_time" class="hidden"></form>
+
+      <%!-- The task's two threads, in its own form: what people said about
+           it, and what the agent wrote while working on it. They opened
+           only from two icons on the task's row, which the drawer covers.
+           Outside the form above (each has forms of its own), folded until
+           asked for, and there only while the project's Discussions are on. --%>
+      <div
+        :if={@live_action == :edit and @kind == "task" and @threads}
+        id="assignment-threads"
+        class="flex flex-col gap-3 mt-4 mb-16"
+      >
+        <.accordion id="assignment-discussion" cue={true}>
+          <:title>
+            {gettext("Discussion")}
+            <span class="ml-2 text-xs font-normal opacity-50">{@threads.comments}</span>
+          </:title>
+          <:content>
+            <.live_component
+              module={PhoenixKitComments.Web.CommentsComponent}
+              id={"task-form-comments-#{@assignment.uuid}"}
+              resource_type="assignment"
+              resource_uuid={@assignment.uuid}
+              current_user={assigns[:phoenix_kit_current_user]}
+              title=""
+              show_likes={true}
+            />
+          </:content>
+        </.accordion>
+        <.accordion id="assignment-ai-notes" cue={true}>
+          <:title>
+            {gettext("AI notes")}
+            <span class="ml-2 text-xs font-normal opacity-50">{@threads.notes}</span>
+          </:title>
+          <:content>
+            <.live_component
+              module={PhoenixKitComments.Web.CommentsComponent}
+              id={"task-form-notes-#{@assignment.uuid}"}
+              resource_type={PhoenixKitProjects.TaskNotes.resource_type()}
+              resource_uuid={@assignment.uuid}
+              current_user={assigns[:phoenix_kit_current_user]}
+              title=""
+              show_likes={false}
+              decoration_keys={PhoenixKitProjects.TaskNotes.decoration_keys()}
+              comment_decorations={PhoenixKitProjects.TaskNotes.decorations(PhoenixKitProjects.TaskNotes.list(@assignment.uuid))}
+            />
+          </:content>
+        </.accordion>
+      </div>
       <% end %>
     </div>
     """
