@@ -251,7 +251,12 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # What an AI agent on the API may do here (`agent_policy/1` fills the
     # defaults): take over a task someone else started, reword tasks it
     # did not create, delete tasks, amend its own ledger entries.
-    "agents" => &is_map/1
+    "agents" => &is_map/1,
+    # The task list (`PhoenixKitProjects.Web.OutlineList`): `style` —
+    # "auto" | "text" | "cards"; `complete_parent` — false keeps a task
+    # open when its last subtask is ticked; `row` — %{feature => false}
+    # keeps that feature's value off the rows, in the task's form only.
+    "outline" => &is_map/1
   }
 
   @completion_modes ~w(auto manual)

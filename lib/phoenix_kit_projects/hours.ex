@@ -331,8 +331,12 @@ defmodule PhoenixKitProjects.Hours do
       cost_cents, entries, people}`
     * `:by_worker` — `[%{worker, minutes, billable_minutes, entries}]`,
       most time first (an agent's minutes are its `minutes` here)
-    * `:by_task` — `[%{task, project, minutes, billable_minutes, entries}]`
-      (`task` nil = logged on the project itself)
+    * `:by_task` — `[%{task, project, minutes, billable_minutes, entries,
+      below_minutes, below_billable_minutes}]` (`task` nil = logged on the
+      project itself). `minutes` is the task's OWN time; `below_*` is what
+      was logged on the tasks under it, so a task with subtasks reads own +
+      below. A task with nothing of its own but time below it is listed
+      with `entries: 0`.
     * `:by_project` — `[%{project, minutes, billable_minutes, entries}]`
     * `:by_day` — `[%{date, minutes, by_worker: %{key => minutes}}]`,
       oldest first, days with nothing logged left out
@@ -368,7 +372,7 @@ defmodule PhoenixKitProjects.Hours do
     %{
       totals: totals(query, by_worker),
       by_worker: by_worker,
-      by_task: Enum.map(task_rows, &task_row(&1, tasks, projects)),
+      by_task: task_rows |> Enum.map(&task_row(&1, tasks, projects)) |> fold_branches(lang),
       by_project: Enum.map(project_rows, &project_row(&1, projects)),
       by_day: by_day(day_rows, workers),
       matrix: matrix(day_rows, workers),
@@ -531,6 +535,78 @@ defmodule PhoenixKitProjects.Hours do
     }
   end
 
+  # A task with subtasks reads its own time plus what was logged under it
+  # (chain V23). Every row gains `below_*`; a task that carries no entry of
+  # its own but has some below is added, so the branch has a line. Sorted
+  # as before: most time (own + below) first.
+  defp fold_branches(rows, lang) do
+    project_uuids = rows |> Enum.map(& &1.project.uuid) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+    parents =
+      from(a in Assignment,
+        where: a.project_uuid in ^project_uuids and not is_nil(a.parent_uuid),
+        select: {a.uuid, a.parent_uuid}
+      )
+      |> RepoHelper.repo().all()
+      |> Map.new()
+
+    if parents == %{} do
+      Enum.map(rows, &Map.merge(&1, %{below_minutes: 0.0, below_billable_minutes: 0.0}))
+    else
+      below =
+        Enum.reduce(rows, %{}, fn row, acc ->
+          row.task
+          |> then(&(&1 && &1.uuid))
+          |> chain_above(parents, [])
+          |> Enum.reduce(acc, fn up, acc ->
+            Map.update(
+              acc,
+              up,
+              {row.minutes, row.billable_minutes, row.project},
+              fn {m, b, p} -> {m + row.minutes, b + row.billable_minutes, p} end
+            )
+          end)
+        end)
+
+      listed = MapSet.new(rows, &(&1.task && &1.task.uuid))
+      extra_uuids = below |> Map.keys() |> Enum.reject(&MapSet.member?(listed, &1))
+      titles = task_titles(extra_uuids, lang)
+
+      extra =
+        Enum.map(extra_uuids, fn uuid ->
+          {_m, _b, project} = Map.fetch!(below, uuid)
+
+          %{
+            task: task_map(uuid, titles),
+            project: project,
+            minutes: 0.0,
+            billable_minutes: 0.0,
+            entries: 0,
+            last_at: nil
+          }
+        end)
+
+      (rows ++ extra)
+      |> Enum.map(fn row ->
+        {m, b, _} = Map.get(below, row.task && row.task.uuid, {0.0, 0.0, nil})
+        Map.merge(row, %{below_minutes: m, below_billable_minutes: b})
+      end)
+      |> Enum.sort_by(&(-(&1.minutes + &1.below_minutes)))
+    end
+  rescue
+    _ -> Enum.map(rows, &Map.merge(&1, %{below_minutes: 0.0, below_billable_minutes: 0.0}))
+  end
+
+  defp chain_above(nil, _parents, acc), do: acc
+  defp chain_above(_uuid, _parents, acc) when length(acc) > 100, do: acc
+
+  defp chain_above(uuid, parents, acc) do
+    case Map.get(parents, uuid) do
+      nil -> acc
+      up -> if up in acc, do: acc, else: chain_above(up, parents, [up | acc])
+    end
+  end
+
   defp project_row(row, projects) do
     %{
       project: %{uuid: row.project_uuid, name: projects[row.project_uuid]},
@@ -611,11 +687,11 @@ defmodule PhoenixKitProjects.Hours do
         a.project_uuid in ^project_uuids and is_nil(a.child_project_uuid) and
           a.review_status == "accepted",
       order_by: [asc: a.project_uuid, asc: a.position, asc: a.inserted_at],
-      preload: [:task]
+      preload: [:task, parent: :task]
     )
     |> RepoHelper.repo().all()
     |> Enum.map(
-      &%{uuid: &1.uuid, title: Assignment.label(&1, lang), project_uuid: &1.project_uuid}
+      &%{uuid: &1.uuid, title: Assignment.label_under(&1, lang), project_uuid: &1.project_uuid}
     )
   rescue
     _ -> []
@@ -648,7 +724,7 @@ defmodule PhoenixKitProjects.Hours do
             a.review_status == "accepted",
         order_by: [asc: a.project_uuid, asc: a.position, asc: a.inserted_at],
         limit: ^(limit + 1),
-        preload: [:project, task: t]
+        preload: [:project, task: t, parent: :task]
       )
 
     rows =
@@ -684,7 +760,8 @@ defmodule PhoenixKitProjects.Hours do
   def task_option(%Assignment{} = a, lang) do
     %{
       uuid: a.uuid,
-      title: Assignment.label(a, lang || L10n.current_content_lang()),
+      # "Kitchen / Order tiles" for a subtask, when its parent is loaded.
+      title: Assignment.label_under(a, lang || L10n.current_content_lang()),
       ref: Assignment.row_ref(a),
       project_uuid: a.project_uuid
     }
@@ -692,8 +769,11 @@ defmodule PhoenixKitProjects.Hours do
 
   def task_option(uuid, lang) when is_binary(uuid) and uuid != "" do
     case Projects.get_assignment(uuid) do
-      %Assignment{child_project_uuid: nil} = a -> task_option(a, lang)
-      _ -> nil
+      %Assignment{child_project_uuid: nil} = a ->
+        a |> RepoHelper.repo().preload(parent: :task) |> task_option(lang)
+
+      _ ->
+        nil
     end
   rescue
     _ -> nil
@@ -902,9 +982,15 @@ defmodule PhoenixKitProjects.Hours do
         lang = lang || L10n.current_content_lang()
 
         # `:project` for the row's ref (`ANDI-42`, `Assignment.ref/1`).
-        from(a in Assignment, where: a.uuid in ^uuids, preload: [:task, :child_project, :project])
+        # `parent: :task` — a subtask is named with the task it sits under.
+        from(a in Assignment,
+          where: a.uuid in ^uuids,
+          preload: [:task, :child_project, :project, parent: :task]
+        )
         |> RepoHelper.repo().all()
-        |> Map.new(&{&1.uuid, %{title: Assignment.label(&1, lang), ref: Assignment.ref(&1)}})
+        |> Map.new(
+          &{&1.uuid, %{title: Assignment.label_under(&1, lang), ref: Assignment.ref(&1)}}
+        )
     end
   end
 

@@ -949,6 +949,21 @@ defmodule PhoenixKitProjects.Projects do
   # measured, not only where it is listed.
   defp accepted_only(q), do: where(q, [a], a.review_status == "accepted")
 
+  # A task with subtasks is the sum of them, so the aggregates count only
+  # the rows with nothing (accepted) under them — `Outline.leaves/1` in SQL.
+  # A subquery over the schema, never a table name: the tables may be
+  # prefixed.
+  defp leaves_only(q) do
+    where(q, [a], a.uuid not in subquery(parent_uuids_query()))
+  end
+
+  defp parent_uuids_query do
+    from(c in Assignment,
+      where: not is_nil(c.parent_uuid) and c.review_status == "accepted",
+      select: c.parent_uuid
+    )
+  end
+
   defp maybe_exclude_subprojects(q, true), do: q
   defp maybe_exclude_subprojects(q, _), do: exclude_subprojects(q)
 
@@ -1690,6 +1705,7 @@ defmodule PhoenixKitProjects.Projects do
       select: {a.project_uuid, count(a.uuid)}
     )
     |> accepted_only()
+    |> leaves_only()
     |> repo().all()
     |> Map.new()
   end
@@ -1919,6 +1935,7 @@ defmodule PhoenixKitProjects.Projects do
       select: {a.status, count(a.uuid)}
     )
     |> accepted_only()
+    |> leaves_only()
     |> repo().all()
     |> Map.new()
   end
@@ -1948,9 +1965,11 @@ defmodule PhoenixKitProjects.Projects do
           on: p.uuid == a.project_uuid,
           where:
             a.assigned_person_uuid == ^person.uuid and a.status != "done" and
+              a.review_status == "accepted" and
               p.is_template == false and is_nil(p.archived_at),
           order_by: [asc: a.status, asc: a.inserted_at],
-          preload: [:task, :project]
+          # `parent: :task` — a subtask reads as "parent / title" on a plate.
+          preload: [:task, :project, parent: :task]
         )
         |> repo().all()
     end
@@ -1990,6 +2009,7 @@ defmodule PhoenixKitProjects.Projects do
         select: {a.project_uuid, a.status, count(a.uuid)}
       )
       |> accepted_only()
+      |> leaves_only()
       |> repo().all()
       |> Enum.reduce(%{}, fn {project_uuid, status, n}, acc ->
         Map.update(acc, project_uuid, %{status => n}, fn inner ->
@@ -2009,6 +2029,7 @@ defmodule PhoenixKitProjects.Projects do
         select: {a.project_uuid, sum(a.progress_pct)}
       )
       |> accepted_only()
+      |> leaves_only()
       |> repo().all()
       |> Map.new()
 
@@ -2161,7 +2182,8 @@ defmodule PhoenixKitProjects.Projects do
   # data, not a child — skipped, never recursed into. (`path` is a plain
   # map: dialyzer's opaqueness false positive on a literal MapSet.)
   defp build_tree_node(%Project{} = project, by_project, depth, path) do
-    assignments = Map.get(by_project, project.uuid, [])
+    # Leaves only: a task with subtasks is counted through them.
+    assignments = by_project |> Map.get(project.uuid, []) |> PhoenixKitProjects.Outline.leaves()
     {task_rows, link_rows} = Enum.split_with(assignments, &is_nil(&1.child_project_uuid))
     path = Map.put(path, project.uuid, true)
 
@@ -2258,6 +2280,7 @@ defmodule PhoenixKitProjects.Projects do
       }
     )
     |> accepted_only()
+    |> leaves_only()
     |> repo().all()
     |> Enum.reduce(%{}, fn {puuid, a_dur, a_unit, a_cw, t_dur, t_unit}, acc ->
       project = Map.get(projects_by_uuid, puuid)
@@ -2403,26 +2426,33 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
+  # Walked depth first, so a row's parent is cloned (and in the map) before
+  # the row: a subtask of the source is a subtask of the copy.
   defp clone_assignments_in_tx(source_assignments, project) do
-    Enum.reduce(source_assignments, %{}, fn a, acc ->
+    source_assignments
+    |> PhoenixKitProjects.Outline.walk()
+    |> Enum.reduce(%{}, fn {a, _depth}, acc ->
+      parent_uuid = a.parent_uuid && Map.get(acc, a.parent_uuid)
+
       new_uuid =
         if is_nil(a.child_project_uuid) do
-          clone_task_assignment_in_tx(a, project)
+          clone_task_assignment_in_tx(a, project, parent_uuid)
         else
-          clone_subproject_assignment_in_tx(a, project)
+          clone_subproject_assignment_in_tx(a, project, parent_uuid)
         end
 
       Map.put(acc, a.uuid, new_uuid)
     end)
   end
 
-  defp clone_task_assignment_in_tx(a, project) do
+  defp clone_task_assignment_in_tx(a, project, parent_uuid) do
     # `broadcast: false` — cloned inside the clone transaction; the post-commit
     # `:project_created` in `clone_template/2` signals the whole new tree.
     case create_assignment(
            %{
              "project_uuid" => project.uuid,
              "task_uuid" => a.task_uuid,
+             "parent_uuid" => parent_uuid,
              "status" => "todo",
              "position" => a.position,
              "description" => a.description,
@@ -2444,7 +2474,7 @@ defmodule PhoenixKitProjects.Projects do
   # when cloning a template) is recursively cloned into a fresh project, and a
   # new linking assignment is created pointing at the clone. The single-parent
   # unique index forbids reusing the same child, so the deep copy is mandatory.
-  defp clone_subproject_assignment_in_tx(a, project) do
+  defp clone_subproject_assignment_in_tx(a, project, parent_uuid) do
     cloned_child =
       case get_project(a.child_project_uuid) do
         nil ->
@@ -2464,8 +2494,18 @@ defmodule PhoenixKitProjects.Projects do
       })
 
     case %Assignment{} |> Assignment.subproject_changeset(link_attrs) |> repo().insert() do
-      {:ok, new_link} -> new_link.uuid
-      {:error, cs} -> repo().rollback(cs)
+      {:ok, new_link} ->
+        # The linking changeset never casts a parent; a sub-project row
+        # that sat under a task keeps its place.
+        if parent_uuid do
+          from(x in Assignment, where: x.uuid == ^new_link.uuid)
+          |> repo().update_all(set: [parent_uuid: parent_uuid])
+        end
+
+        new_link.uuid
+
+      {:error, cs} ->
+        repo().rollback(cs)
     end
   end
 
@@ -2772,7 +2812,9 @@ defmodule PhoenixKitProjects.Projects do
   defp rollup_val(summary, key, _default) when is_map(summary), do: Map.fetch!(summary, key)
 
   defp decide_completion(project) do
-    assignments = list_assignments(project.uuid)
+    # A task with subtasks is the sum of them: only the rows with nothing
+    # under them are counted, here as everywhere a project counts its work.
+    assignments = project.uuid |> list_assignments() |> PhoenixKitProjects.Outline.leaves()
     total = length(assignments)
     done = Enum.count(assignments, &(&1.status == "done"))
 
@@ -4047,6 +4089,8 @@ defmodule PhoenixKitProjects.Projects do
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_form(%Assignment{} = a, attrs, opts \\ []) do
     with {:ok, updated} <- a |> Assignment.changeset(attrs) |> repo().update() do
+      if updated.status != a.status, do: settle_outline(updated, a.status)
+
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
           uuid: updated.uuid,
@@ -4295,52 +4339,15 @@ defmodule PhoenixKitProjects.Projects do
         else: query
       )
 
-  @doc """
-  Ticks or unticks one checklist item under a row lock: the list is re-read
-  inside the transaction, so two sessions ticking different items at once
-  both land (the API's per-item PATCH). `{:error, :not_found}` for an id the
-  task does not carry.
-  """
-  @spec update_checklist_item(Assignment.t(), String.t(), boolean()) ::
-          {:ok, Assignment.t()} | {:error, term()}
-  def update_checklist_item(%Assignment{uuid: uuid}, item_id, done) when is_boolean(done) do
-    repo().transaction(fn ->
-      fresh = repo().one!(from(a in Assignment, where: a.uuid == ^uuid, lock: "FOR UPDATE"))
-      items = fresh.checklist || []
-
-      if Enum.any?(items, &(&1["id"] == item_id)) do
-        updated =
-          Enum.map(items, fn
-            %{"id" => ^item_id} = item -> item |> Map.put("done", done) |> Map.delete("done_at")
-            item -> item
-          end)
-
-        case update_assignment_form(fresh, %{checklist: updated}, broadcast: false) do
-          {:ok, saved} -> saved
-          {:error, reason} -> repo().rollback(reason)
-        end
-      else
-        repo().rollback(:not_found)
-      end
-    end)
-    |> tap(fn
-      {:ok, saved} ->
-        ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
-          uuid: saved.uuid,
-          project_uuid: saved.project_uuid
-        })
-
-      _ ->
-        :ok
-    end)
-  end
-
   @doc "When an ongoing project caught up: the latest completion among its tasks, nil when not caught up."
   @spec caught_up_since(Project.t()) :: DateTime.t() | nil
   def caught_up_since(%Project{} = project) do
     if caught_up?(project) do
       repo().one(
-        from(a in Assignment, where: a.project_uuid == ^project.uuid, select: max(a.completed_at))
+        from(a in Assignment,
+          where: a.project_uuid == ^project.uuid and a.review_status == "accepted",
+          select: max(a.completed_at)
+        )
       )
     end
   rescue
@@ -4367,6 +4374,8 @@ defmodule PhoenixKitProjects.Projects do
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_status(%Assignment{} = a, attrs) do
     with {:ok, updated} <- a |> Assignment.status_changeset(attrs) |> repo().update() do
+      settle_outline(updated, a.status)
+
       ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
         uuid: updated.uuid,
         project_uuid: updated.project_uuid
@@ -4374,6 +4383,26 @@ defmodule PhoenixKitProjects.Projects do
 
       {:ok, updated}
     end
+  end
+
+  # A status change reaches the rows around the task (`Outline.settle/3`):
+  # ticking it ticks what is under it, the last subtask ticked ticks its
+  # parent, reopening it reopens what it sits under. When that touched
+  # other rows, viewers are told once that the list changed.
+  defp settle_outline(%Assignment{} = updated, was) do
+    case PhoenixKitProjects.Outline.settle(updated, was, updated.completed_by_uuid) do
+      [] ->
+        :ok
+
+      _changed ->
+        ProjectsPubSub.broadcast_assignment(:assignment_reordered, %{
+          project_uuid: updated.project_uuid
+        })
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects] outline settle failed: #{Exception.message(e)}")
+      :ok
   end
 
   @doc """
@@ -4495,18 +4524,28 @@ defmodule PhoenixKitProjects.Projects do
   @spec delete_assignment(Assignment.t()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t() | term()}
   def delete_assignment(%Assignment{child_project_uuid: nil} = a) do
-    # Before the row goes: the portal submission cascades with it, and
-    # once that is gone nothing points at the screenshots it carried.
-    PhoenixKitProjects.Portal.delete_attachments_for(a.uuid)
+    # What sits under it goes with it, deepest first — through this same
+    # function, so a sub-project row among them takes its project along
+    # and every row's portal files are cleaned up. (The database would
+    # cascade the rows; it would not do either of those.)
+    below =
+      from(x in Assignment,
+        where: x.project_uuid == ^a.project_uuid,
+        select: %{uuid: x.uuid, parent_uuid: x.parent_uuid}
+      )
+      |> repo().all()
+      |> PhoenixKitProjects.Outline.descendants(a.uuid)
+      |> Enum.reverse()
 
-    with {:ok, deleted} <- repo().delete(a) do
-      ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
-        uuid: deleted.uuid,
-        project_uuid: deleted.project_uuid
-      })
+    Enum.each(below, fn %{uuid: uuid} ->
+      case repo().get(Assignment, uuid) do
+        nil -> :ok
+        %Assignment{child_project_uuid: nil} = row -> delete_one_assignment(row)
+        row -> delete_assignment(row)
+      end
+    end)
 
-      {:ok, deleted}
-    end
+    delete_one_assignment(a)
   end
 
   def delete_assignment(%Assignment{child_project_uuid: child_uuid} = a) do
@@ -4543,6 +4582,21 @@ defmodule PhoenixKitProjects.Projects do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  defp delete_one_assignment(%Assignment{} = a) do
+    # Before the row goes: the portal submission cascades with it, and
+    # once that is gone nothing points at the screenshots it carried.
+    PhoenixKitProjects.Portal.delete_attachments_for(a.uuid)
+
+    with {:ok, deleted} <- repo().delete(a, stale_error_field: :uuid) do
+      ProjectsPubSub.broadcast_assignment(:assignment_deleted, %{
+        uuid: deleted.uuid,
+        project_uuid: deleted.project_uuid
+      })
+
+      {:ok, deleted}
     end
   end
 
@@ -4750,7 +4804,11 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  @doc "Assignments in this project that the given assignment does NOT yet depend on."
+  @doc """
+  Assignments in this project that the given assignment does NOT yet depend
+  on — never the tasks it sits under or the ones under it: a task cannot
+  wait for a part of itself, nor a part for the whole.
+  """
   @spec available_dependencies(uuid(), uuid()) :: [Assignment.t()]
   def available_dependencies(project_uuid, assignment_uuid) do
     existing =
@@ -4759,10 +4817,20 @@ defmodule PhoenixKitProjects.Projects do
         select: d.depends_on_uuid
       )
 
+    shape = PhoenixKitProjects.Outline.shape(project_uuid)
+
+    own_branch =
+      Enum.map(
+        PhoenixKitProjects.Outline.ancestors(shape, assignment_uuid) ++
+          PhoenixKitProjects.Outline.descendants(shape, assignment_uuid),
+        & &1.uuid
+      )
+
     from(a in Assignment,
       where:
         a.project_uuid == ^project_uuid and
           a.uuid != ^assignment_uuid and
+          a.uuid not in ^own_branch and
           a.uuid not in subquery(existing),
       preload: [:task, :child_project],
       order_by: [asc: a.position, asc: a.inserted_at]

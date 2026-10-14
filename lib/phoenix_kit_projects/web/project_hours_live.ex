@@ -1116,7 +1116,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
       filters: filter_words(a),
       totals: a.summary.totals,
       by_worker: a.summary.by_worker,
-      by_task: a.summary.by_task,
+      # The report lists what was logged on each task itself.
+      by_task: Enum.filter(a.summary.by_task, &(&1.entries > 0)),
       by_project: a.summary.by_project,
       entries: page.entries,
       total_entries: page.total,
@@ -1658,15 +1659,27 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   defp entries_hint(count),
     do: ngettext("%{count} entry", "%{count} entries", count, count: count)
 
+  defp branch_hint(row, below) when below > 0 do
+    gettext("%{own} on the task itself, %{below} on its subtasks",
+      own: Format.duration(row.minutes),
+      below: Format.duration(below)
+    )
+  end
+
+  defp branch_hint(row, _below), do: entries_hint(row.entries)
+
   defp task_breakdown(rows, show_all?, multi_project?) do
     rows = if show_all?, do: rows, else: Enum.take(rows, 8)
 
     Enum.map(rows, fn row ->
+      below = Map.get(row, :below_minutes, 0.0)
+
       %{
         label: task_label(row.task) <> if(multi_project?, do: " · #{row.project.name}", else: ""),
-        minutes: row.minutes,
-        billable: row.billable_minutes,
-        hint: entries_hint(row.entries),
+        # A task with subtasks reads its own time plus what is under it.
+        minutes: row.minutes + below,
+        billable: row.billable_minutes + Map.get(row, :below_billable_minutes, 0.0),
+        hint: branch_hint(row, below),
         ai: false
       }
     end)

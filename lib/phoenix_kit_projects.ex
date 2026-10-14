@@ -323,6 +323,13 @@ defmodule PhoenixKitProjects do
         app: :phoenix_live_calendar,
         file: "static/assets/phoenix_live_calendar.js",
         global: "PhoenixLiveCalendarHooks"
+      },
+      # This module's own hooks: the typed task list (`PkpOutline`) and a
+      # title edited in place on a card row (`PkpTitle`). Plain JS, no build.
+      %{
+        app: :phoenix_kit_projects,
+        file: "static/assets/phoenix_kit_projects.js",
+        global: "PhoenixKitProjectsHooks"
       }
     ]
   end
@@ -389,6 +396,10 @@ defmodule PhoenixKitProjects do
           # its In-progress column only while one is there.
           %{key: "in_progress", label: gettext_noop("In-progress step"), default: true},
           %{key: "assignees", label: gettext_noop("Assignees"), default: true},
+          # Tasks under tasks (V23): Tab in the list, a parent on the form
+          # and in the API. Off, the list stays flat; subtasks already made
+          # keep their place.
+          %{key: "subtasks", label: gettext_noop("Subtasks"), default: true},
           %{key: "estimates", label: gettext_noop("Estimates & durations"), default: true},
           %{
             key: "progress",

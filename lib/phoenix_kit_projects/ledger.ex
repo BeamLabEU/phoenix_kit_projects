@@ -546,6 +546,41 @@ defmodule PhoenixKitProjects.Ledger do
     _ -> Map.new(uuids, &{&1, %{minutes: 0.0, tokens: 0.0, cost_cents: 0.0}})
   end
 
+  @doc """
+  `totals_for_assignments/1` per BRANCH: for the rows of a project (anything
+  with `uuid` and `parent_uuid`), every row's own minutes, tokens and cents
+  plus those of everything under it — what a task with subtasks shows
+  (chain V23). `%{uuid => %{minutes, tokens, cost_cents, own: %{…}}}`;
+  `own` is the row's own share, so a caller can say "2 h, 30 min of it its
+  own". One ledger read however deep the outline.
+  """
+  @spec totals_for_branches([map()]) :: %{binary() => map()}
+  def totals_for_branches([]), do: %{}
+
+  def totals_for_branches(rows) when is_list(rows) do
+    own = totals_for_assignments(Enum.map(rows, & &1.uuid))
+    zero = %{minutes: 0.0, tokens: 0.0, cost_cents: 0.0}
+
+    Map.new(rows, fn row ->
+      mine = Map.get(own, row.uuid, zero)
+
+      total =
+        rows
+        |> PhoenixKitProjects.Outline.descendants(row.uuid)
+        |> Enum.reduce(mine, fn below, acc ->
+          t = Map.get(own, below.uuid, zero)
+
+          %{
+            minutes: acc.minutes + t.minutes,
+            tokens: acc.tokens + t.tokens,
+            cost_cents: acc.cost_cents + t.cost_cents
+          }
+        end)
+
+      {row.uuid, Map.put(total, :own, mine)}
+    end)
+  end
+
   defp empty_totals,
     do: %{
       time_minutes: 0.0,

@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 22
+  @current_version 23
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -119,6 +119,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v20_words_and_links(p)
     v21_task_dates(p)
     v22_refs(p, prefix)
+    v23_subtasks(p, prefix)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -1041,6 +1042,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # V19–V21 each added columns to the assignments table (and V20 the link
   # table); newest first.
   defp down_task_columns(p, target) do
+    if target < 23, do: down_v23(p)
     if target < 22, do: down_v22(p)
     if target < 21, do: down_v21(p)
     if target < 20, do: down_v20(p)
@@ -1101,6 +1103,227 @@ defmodule PhoenixKitProjects.Migrations.Schema do
           ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
       execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
     end
+  end
+
+  # V23 — tasks under tasks (Max, 2026-10-14: "let's make proper subtasks
+  # because we want flexibility"). A task may have a PARENT task in the same
+  # project, to any depth; a subtask is a whole task (its own number, owner,
+  # dates, hours), not a line inside its parent.
+  #
+  #   * `parent_uuid` — the task this one sits under. A trigger keeps the
+  #     two rules no insert path may skip: the parent is in the same project,
+  #     and nothing is its own ancestor. Deleting a parent takes the rows
+  #     under it (the context removes them first, so a sub-project row among
+  #     them is torn down properly; the cascade is the net under that).
+  #   * `position` stays ONE order for the whole project, written depth
+  #     first: a parent is followed by everything under it. Every reader that
+  #     sorted by position keeps a sensible order without knowing about
+  #     parents.
+  #   * `review_status` gains `removed`: a task taken out of the list that
+  #     still carries something (hours, a discussion, subtasks) is held, out
+  #     of every list and count like a pending request, until a person
+  #     restores it or confirms the delete.
+  #   * a task's title may be 500 characters (a checklist item could be).
+  #   * the V19 `checklist` is gone: every item becomes a subtask of the
+  #     task that carried it (same order, ticked ones done at the time they
+  #     were ticked; who ticked an item was never recorded), and the column
+  #     is dropped. Guarded on the column, so a re-run converts nothing.
+  defp v23_subtasks(p, prefix) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS parent_uuid UUID
+        REFERENCES #{p}phoenix_kit_project_assignments(uuid) ON DELETE CASCADE
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_parent_index
+    ON #{p}phoenix_kit_project_assignments (parent_uuid) WHERE parent_uuid IS NOT NULL
+    """)
+
+    execute("""
+    CREATE OR REPLACE FUNCTION #{p}pkp_assignment_parent_check() RETURNS trigger AS $$
+    DECLARE
+      cur UUID;
+      up UUID;
+      proj UUID;
+      hops INTEGER := 0;
+    BEGIN
+      IF NEW.parent_uuid IS NULL THEN
+        RETURN NEW;
+      END IF;
+
+      cur := NEW.parent_uuid;
+
+      WHILE cur IS NOT NULL LOOP
+        IF cur = NEW.uuid OR hops > 100 THEN
+          RAISE EXCEPTION 'a task cannot sit under itself'
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'phoenix_kit_project_assignments_parent_cycle',
+                  TABLE = 'phoenix_kit_project_assignments';
+        END IF;
+
+        SELECT a.parent_uuid, a.project_uuid INTO up, proj
+        FROM #{p}phoenix_kit_project_assignments a WHERE a.uuid = cur;
+
+        IF hops = 0 AND proj IS DISTINCT FROM NEW.project_uuid THEN
+          RAISE EXCEPTION 'the parent task is in another project'
+            USING ERRCODE = 'check_violation',
+                  CONSTRAINT = 'phoenix_kit_project_assignments_parent_project',
+                  TABLE = 'phoenix_kit_project_assignments';
+        END IF;
+
+        cur := up;
+        hops := hops + 1;
+      END LOOP;
+
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+    """)
+
+    execute(
+      "DROP TRIGGER IF EXISTS pkp_assignment_parent_check ON #{p}phoenix_kit_project_assignments"
+    )
+
+    execute("""
+    CREATE TRIGGER pkp_assignment_parent_check
+    BEFORE INSERT OR UPDATE OF parent_uuid, project_uuid ON #{p}phoenix_kit_project_assignments
+    FOR EACH ROW EXECUTE FUNCTION #{p}pkp_assignment_parent_check()
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_review_status_check
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD CONSTRAINT phoenix_kit_project_assignments_review_status_check
+    CHECK (review_status IN ('pending', 'accepted', 'rejected', 'removed'))
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_tasks
+      ALTER COLUMN title TYPE VARCHAR(500)
+    """)
+
+    execute("""
+    DO $$
+    DECLARE
+      r RECORD;
+      item RECORD;
+      new_task UUID;
+      done BOOLEAN;
+      done_at TIMESTAMPTZ;
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = '#{prefix}'
+          AND table_name = 'phoenix_kit_project_assignments'
+          AND column_name = 'checklist'
+      ) THEN
+        RETURN;
+      END IF;
+
+      FOR r IN
+        SELECT a.uuid, a.project_uuid, a.checklist, a.review_status
+        FROM #{p}phoenix_kit_project_assignments a
+        WHERE jsonb_typeof(a.checklist) = 'array' AND jsonb_array_length(a.checklist) > 0
+        ORDER BY a.project_uuid, a.position, a.inserted_at, a.uuid
+      LOOP
+        FOR item IN
+          SELECT e.value AS v, e.ordinality AS n
+          FROM jsonb_array_elements(r.checklist) WITH ORDINALITY AS e(value, ordinality)
+          ORDER BY e.ordinality
+        LOOP
+          CONTINUE WHEN btrim(COALESCE(item.v->>'text', '')) = '';
+
+          done := COALESCE(item.v->>'done', 'false') = 'true';
+          done_at := NULL;
+
+          IF done THEN
+            BEGIN
+              done_at := (item.v->>'done_at')::timestamptz;
+            EXCEPTION WHEN OTHERS THEN
+              done_at := NULL;
+            END;
+            done_at := COALESCE(done_at, now());
+          END IF;
+
+          INSERT INTO #{p}phoenix_kit_project_tasks (title, ad_hoc)
+          VALUES (left(btrim(item.v->>'text'), 500), true)
+          RETURNING uuid INTO new_task;
+
+          INSERT INTO #{p}phoenix_kit_project_assignments
+            (project_uuid, task_uuid, parent_uuid, position, status, progress_pct,
+             completed_at, review_status)
+          VALUES
+            (r.project_uuid, new_task, r.uuid, item.n::integer,
+             CASE WHEN done THEN 'done' ELSE 'todo' END,
+             CASE WHEN done THEN 100 ELSE 0 END,
+             done_at, r.review_status);
+        END LOOP;
+      END LOOP;
+
+      -- One depth-first order per project that now has subtasks.
+      WITH RECURSIVE walk AS (
+        SELECT a.uuid, a.project_uuid,
+               ARRAY[a.position::bigint, (extract(epoch FROM a.inserted_at) * 1000000)::bigint] AS path
+        FROM #{p}phoenix_kit_project_assignments a
+        WHERE a.parent_uuid IS NULL
+          AND a.project_uuid IN (
+            SELECT DISTINCT project_uuid FROM #{p}phoenix_kit_project_assignments
+            WHERE parent_uuid IS NOT NULL
+          )
+        UNION ALL
+        SELECT c.uuid, c.project_uuid,
+               walk.path || ARRAY[c.position::bigint, (extract(epoch FROM c.inserted_at) * 1000000)::bigint]
+        FROM #{p}phoenix_kit_project_assignments c
+        JOIN walk ON c.parent_uuid = walk.uuid
+      ),
+      ordered AS (
+        SELECT uuid, row_number() OVER (PARTITION BY project_uuid ORDER BY path, uuid) AS n
+        FROM walk
+      )
+      UPDATE #{p}phoenix_kit_project_assignments a
+      SET position = ordered.n
+      FROM ordered
+      WHERE a.uuid = ordered.uuid;
+    END $$;
+    """)
+
+    execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS checklist")
+  end
+
+  # Subtasks become top-level tasks again (their rows are work, never
+  # dropped); held rows are deleted, since the older shape cannot say
+  # "removed". The checklist column returns empty.
+  defp down_v23(p) do
+    execute(
+      "DROP TRIGGER IF EXISTS pkp_assignment_parent_check ON #{p}phoenix_kit_project_assignments"
+    )
+
+    execute("DROP FUNCTION IF EXISTS #{p}pkp_assignment_parent_check()")
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_parent_index")
+    execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS parent_uuid")
+
+    execute("DELETE FROM #{p}phoenix_kit_project_assignments WHERE review_status = 'removed'")
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    DROP CONSTRAINT IF EXISTS phoenix_kit_project_assignments_review_status_check
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+    ADD CONSTRAINT phoenix_kit_project_assignments_review_status_check
+    CHECK (review_status IN ('pending', 'accepted', 'rejected'))
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS checklist JSONB NOT NULL DEFAULT '[]'
+    """)
   end
 
   # V21 — a task's own dates (Max, 2026-10-06: "build a start date and an

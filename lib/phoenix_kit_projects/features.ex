@@ -159,6 +159,7 @@ defmodule PhoenixKitProjects.Features do
   @task_gates [
     :library,
     :in_progress,
+    :subtasks,
     :assignees,
     :estimates,
     :progress,

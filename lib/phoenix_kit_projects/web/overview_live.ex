@@ -18,7 +18,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
   }
 
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
-  alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
   alias PhoenixKitProjects.Web.AssigneeFilter
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -268,6 +268,10 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
       |> Enum.flat_map(fn {items, layout} ->
         items
         |> Enum.reject(&Assignment.subproject?(&1.assignment))
+        # A subtask has a chip of its own only with a date of its own.
+        |> Enum.filter(
+          &(is_nil(&1.assignment.parent_uuid) or ScheduleLayout.dated?(&1.assignment))
+        )
         |> Enum.map(&{&1, Map.fetch!(layout, &1.uuid)})
       end)
 
@@ -986,7 +990,7 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
                   >
                     <.assignment_status_badge status={a.status} size="xs" class="mt-1" />
                     <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium truncate">{Task.localized_title(a.task, L10n.current_content_lang())}</div>
+                      <div class="text-sm font-medium truncate">{Assignment.label_under(a, L10n.current_content_lang())}</div>
                       <div class="text-xs text-base-content/60 truncate">{Project.localized_name(a.project, L10n.current_content_lang())}</div>
                     </div>
                   </.smart_link>

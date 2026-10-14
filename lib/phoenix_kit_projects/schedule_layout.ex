@@ -172,6 +172,29 @@ defmodule PhoenixKitProjects.ScheduleLayout do
   defp schedule_anchor(_), do: DateTime.utc_now()
 
   @doc """
+  Whether a flattened item is drawn as a bar of its own on a calendar of
+  `root`: a top-level row always; a subtask of the root's own tasks only
+  when it carries a date of its own — otherwise the task it sits under
+  already covers its days.
+  """
+  @spec own_bar?(item(), Project.t()) :: boolean()
+  def own_bar?(%{parent_uuid: nil}, _root), do: true
+
+  def own_bar?(
+        %{assignment: %Assignment{parent_uuid: parent} = a, parent_uuid: parent, project: p},
+        root
+      )
+      when is_binary(parent),
+      do: p.uuid == root.uuid and dated?(a)
+
+  def own_bar?(_item, _root), do: false
+
+  @doc "Whether the task carries a date of its own."
+  @spec dated?(Assignment.t()) :: boolean()
+  def dated?(%Assignment{start_date: nil, end_date: nil}), do: false
+  def dated?(%Assignment{}), do: true
+
+  @doc """
   Whether an assignment counts weekends — its own override, falling back to
   the project's setting.
   """
@@ -216,15 +239,21 @@ defmodule PhoenixKitProjects.ScheduleLayout do
   # sequential walk then never terminates. Skipped, like the tree summary.
   defp collect_items(project, parent_uuid, depth, by_project, path) do
     path = Map.put(path, project.uuid, true)
+    rows = Map.get(by_project, project.uuid, [])
+    present = MapSet.new(rows, & &1.uuid)
 
-    by_project
-    |> Map.get(project.uuid, [])
-    |> Enum.flat_map(fn a ->
+    Enum.flat_map(rows, fn a ->
+      # A subtask hangs off the task it sits under (chain V23), so the walk
+      # lays it out inside that task's span, exactly as it does a
+      # sub-project's rows; a task with subtasks is then a container and
+      # contributes no duration of its own.
+      task_parent = if a.parent_uuid && MapSet.member?(present, a.parent_uuid), do: a.parent_uuid
+
       item = %{
         uuid: a.uuid,
         assignment: a,
         project: project,
-        parent_uuid: parent_uuid,
+        parent_uuid: task_parent || parent_uuid,
         position: a.position
       }
 
