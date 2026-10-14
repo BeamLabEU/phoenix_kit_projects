@@ -30,16 +30,38 @@ defmodule PhoenixKitProjects.Extensions.Extension do
         ]
       end
 
-  Contributed tab LVs are rendered by the hub via `live_render` with the
-  projects embed-session contract (`project_uuid` / `current_user_uuid` /
-  `locale` / emit keys) — the LV must be mountable off-router
-  (`:not_mounted_at_router`, no `handle_params/3`), exactly like this
-  module's own embeddable LVs.
+  Contributed tab LVs are rendered by the hub via `live_render` — the LV must
+  be mountable off-router (`:not_mounted_at_router`, no `handle_params/3`),
+  exactly like this module's own embeddable LVs — with this session:
+
+    * `"project_uuid"` — the project being viewed. The only key a tab needs.
+    * `"ext_key"` — the `key` of the extension entry that contributed the tab.
+    * `"instance_key"` — which enablement row this render is; always
+      `"default"` (see "Instances").
+    * `"config"` — the project's stored values for the extension's
+      `config_schema`; `%{}` when none are stored.
+    * `"can_write"` — boolean the hub resolved for the viewer: may they
+      perform the extension's write action (its first `permission_actions`
+      entry other than `:view`) on this project. `false` when the extension
+      declares none or the viewer is unidentified. The tab has no scope, so
+      this is its only write authorization.
+    * `"current_user_uuid"` — the viewer's uuid as a string, or `nil`.
+      Identity only, never authorization.
+    * `"locale"` — the Gettext locale to set on mount.
+    * `"wrapper_class"` — class for the tab's outermost element; the hub
+      passes `""` because the project page already pads the pane.
+    * `"mode"` / `"pubsub_topic"` / `"frame_ref"` — the hub's emit contract,
+      forwarded from its own mount: the mode as the decoded atom
+      (`:navigate`, `:emit` or `:popup` — not the string a host passes the
+      hub), the topic to emit on or `nil`, and the popup frame integer or
+      `nil`. A tab that never navigates or opens a dialog ignores all three.
+    * `"host_paths"` — `%{"new_task" => path}`: the hub's own pages, so a tab
+      can link to them without naming this module's routes.
 
   ## Forward-looking surface (declared now, dispatched incrementally)
 
-  Per the 2026-08-05 plan-review panel: the contract carries its FULL surface
-  from day one so providers never need rework when later hub layers land —
+  The contract carries its FULL surface from day one so providers never need
+  rework when later hub layers land —
 
     * `feature_flags` — per-project flags this extension owns
       (`%{key, label, default, requires: [...]}`); the hub's Features layer
