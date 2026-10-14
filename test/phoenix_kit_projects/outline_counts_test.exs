@@ -15,7 +15,11 @@ defmodule PhoenixKitProjects.OutlineCountsTest do
   alias PhoenixKitProjects.{Hours, Ledger, Projects, ScheduleLayout}
   alias PhoenixKitProjects.Schemas.Assignment
 
+  # `parent_uuid` is not castable: a subtask is placed through
+  # `Outline.move/3`, as every real path places one.
   defp task(project, title, attrs \\ %{}) do
+    {parent, attrs} = Map.pop(attrs, "parent_uuid")
+
     {:ok, %{assignment: a}} =
       Projects.create_task_with_assignment(
         project.uuid,
@@ -23,7 +27,12 @@ defmodule PhoenixKitProjects.OutlineCountsTest do
         attrs
       )
 
-    a
+    if parent do
+      {:ok, a} = PhoenixKitProjects.Outline.move(a, parent, :last)
+      a
+    else
+      a
+    end
   end
 
   defp set(%Assignment{} = a, changes) do

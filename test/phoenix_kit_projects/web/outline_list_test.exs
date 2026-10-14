@@ -129,6 +129,25 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       assert titles(p) == ["Keep", "Worked on"]
     end
 
+    test "lines that are not objects do not take the page down, and the edit is on record",
+         %{conn: conn} do
+      p = simple()
+      {:ok, view, _} = live(conn, "/en/admin/projects/#{p.uuid}")
+
+      render_hook(view, "outline_sync", %{"lines" => ["foo", 42], "known" => []})
+      assert_reply(view, %{created: created})
+      assert created == %{}
+      assert render(view) =~ "PkpOutline"
+
+      render_hook(view, "outline_sync", %{"lines" => [%{"text" => "Logged"}], "known" => []})
+      assert_reply(view, %{created: _})
+
+      assert_activity_logged("projects.task_list_edited",
+        resource_uuid: p.uuid,
+        metadata_has: %{"created" => 1}
+      )
+    end
+
     test "a list nobody may edit refuses the lines it is sent" do
       p = simple()
 

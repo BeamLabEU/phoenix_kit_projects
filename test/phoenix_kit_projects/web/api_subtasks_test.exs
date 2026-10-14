@@ -276,6 +276,29 @@ defmodule PhoenixKitProjects.Web.ApiSubtasksTest do
     refute Repo.get(Assignment, a1["uuid"])
   end
 
+  test "a held subtask counts: the delete needs cascade and reports it", %{
+    conn: conn,
+    project: project,
+    token: token
+  } do
+    set_policy(project, %{"delete_tasks" => "any"})
+    c = api(conn, token)
+    p = create(c, %{"title" => "P"})
+    held = create(c, %{"title" => "Held", "parent" => p["ref"]})
+
+    Repo.get!(Assignment, held["uuid"])
+    |> Ecto.Changeset.change(review_status: "removed")
+    |> Repo.update!()
+
+    assert %{"error" => %{"code" => "has_subtasks"}} =
+             c |> delete("#{@base}/tasks/#{p["uuid"]}") |> json_response(409)
+
+    %{"also_deleted" => also} =
+      c |> delete("#{@base}/tasks/#{p["uuid"]}?cascade=true") |> json_response(200)
+
+    assert also == [held["uuid"]]
+  end
+
   test "the briefing lists top-level tasks with their counts, not every subtask", %{
     conn: conn,
     token: token

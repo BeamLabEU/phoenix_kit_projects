@@ -126,6 +126,47 @@ defmodule PhoenixKitProjects.OutlineTest do
       assert listed(p) == [{"Child", 0, "todo"}]
     end
 
+    test "malformed lines are skipped, never a crash" do
+      p = project()
+      long = String.duplicate("x", 600)
+
+      {:ok, %{created: created}} =
+        Outline.sync(
+          p.uuid,
+          [
+            "not a map",
+            %{"text" => %{"nested" => true}},
+            %{"text" => "  Café 🎨\t—  日本  ", "depth" => "0"},
+            %{"text" => long, "depth" => -3},
+            %{"text" => "Under", "depth" => "1"},
+            %{"text" => "Nil depth", "depth" => nil}
+          ],
+          []
+        )
+
+      # No `tmp` on these lines, so nothing to report back — but made.
+      assert created == %{}
+      [cafe, longest, under, nil_depth] = listed(p)
+      assert cafe == {"Café 🎨 — 日本", 0, "todo"}
+      assert String.length(elem(longest, 0)) == 500
+      assert under == {"Under", 1, "todo"}
+      assert nil_depth == {"Nil depth", 0, "todo"}
+    end
+
+    test "too many lines, or a project that is gone, is an error" do
+      p = project()
+      lines = for i <- 1..2001, do: line("L#{i}")
+      assert {:error, :too_many_lines} = Outline.sync(p.uuid, lines, [])
+      assert {:error, :not_found} = Outline.sync(Ecto.UUID.generate(), [line("x")], [])
+    end
+
+    test "a new line arrives ticked only when ticking is allowed" do
+      p = project()
+      ticked = %{"text" => "Done already", "done" => true}
+      {:ok, _} = Outline.sync(p.uuid, [ticked], [], allow_done: false)
+      assert listed(p) == [{"Done already", 0, "todo"}]
+    end
+
     test "a task the browser never knew of is kept, in its place" do
       p = project()
       a = task(p, "Known")
@@ -218,6 +259,29 @@ defmodule PhoenixKitProjects.OutlineTest do
     end
   end
 
+  describe "a status changed through the form" do
+    test "ticking the last task there completes the project; reopening clears the stamps" do
+      p =
+        fixture_project(%{
+          "name" => "Form #{System.unique_integer([:positive])}",
+          "start_mode" => "immediate"
+        })
+
+      a = task(p, "Only one")
+
+      {:ok, done} = Projects.update_assignment_form(a, %{"status" => "done"})
+      assert done.completed_at
+      assert done.progress_pct == 100
+      assert Projects.get_project(p.uuid).completed_at
+
+      {:ok, reopened} = Projects.update_assignment_form(done, %{"status" => "todo"})
+      assert reopened.completed_at == nil
+      assert reopened.progress_pct == 0
+      assert Projects.get_assignment(a.uuid).completed_at == nil
+      assert Projects.get_project(p.uuid).completed_at == nil
+    end
+  end
+
   describe "move/3 and delete" do
     test "a branch moves whole, and nothing goes under itself" do
       p = project()
@@ -231,13 +295,48 @@ defmodule PhoenixKitProjects.OutlineTest do
                Outline.move(Projects.get_assignment(t["B"].uuid), t["A1"].uuid, :last)
     end
 
-    test "the database refuses a parent in another project" do
+    test "the database refuses a parent in another project, and the form cannot set one" do
       p = project()
       a = task(p, "Here")
       there = task(project(), "There")
 
-      assert {:error, cs} = Projects.update_assignment_form(a, %{"parent_uuid" => there.uuid})
+      # Not castable: a place in the list goes through Outline.move/3.
+      {:ok, unchanged} = Projects.update_assignment_form(a, %{"parent_uuid" => there.uuid})
+      assert unchanged.parent_uuid == nil
+
+      result =
+        a
+        |> Ecto.Changeset.change(parent_uuid: there.uuid)
+        |> Ecto.Changeset.check_constraint(:parent_uuid,
+          name: :phoenix_kit_project_assignments_parent_project
+        )
+        |> PhoenixKit.RepoHelper.repo().update()
+
+      assert {:error, cs} = result
       assert cs.errors[:parent_uuid]
+    end
+
+    test "nothing goes under a sub-project row" do
+      p = project()
+      a = task(p, "Task")
+      {:ok, %{assignment: link}} = Projects.create_subproject(p.uuid, %{"name" => "Child"})
+
+      assert {:error, :subproject} = Outline.move(a, link.uuid, :last)
+
+      {:ok, _} =
+        Outline.sync(p.uuid, [line("Child", 0, link.uuid), line("Task", 1, a.uuid)], [])
+
+      assert Projects.get_assignment(a.uuid).parent_uuid == nil
+    end
+
+    test "moving the last open subtask out ticks the parent it leaves" do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [line("Parent"), line("Done", 1), line("Open", 1)], [])
+      t = Map.new(Projects.list_assignments(p.uuid), &{&1.task.title, &1})
+      {:ok, _} = Projects.complete_assignment(t["Done"], nil)
+
+      {:ok, _} = Outline.move(Projects.get_assignment(t["Open"].uuid), nil, :last)
+      assert Projects.get_assignment(t["Parent"].uuid).status == "done"
     end
 
     test "deleting a task deletes what is under it" do
