@@ -104,13 +104,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # not-found render window) fall back to catalog defaults.
   attr(:editable, :boolean, required: true)
   attr(:title, :string, default: nil)
+  attr(:shared, :boolean, default: false)
 
   # The task's name at the top of its form. A one-off task's is changed
   # here; a library task's belongs to the library (every project that uses
   # the task shows it), so here it is only read.
   defp task_title_field(%{editable: true} = assigns) do
     ~H"""
-    <.input id="assignment-task-title" name="task_title" value={@title} label={gettext("Title")} maxlength="255" />
+    <div>
+      <.input id="assignment-task-title" name="task_title" value={@title} label={gettext("Title")} maxlength="255" />
+      <p :if={@shared} class="mt-1 text-xs text-base-content/60">
+        {gettext("This task is in the task library: renaming it here renames it in every project that uses it.")}
+      </p>
+    </div>
     """
   end
 
@@ -224,7 +230,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     scope = socket.assigns[:phoenix_kit_current_scope]
 
     people =
-      if PhoenixKitProjects.Authz.can?(scope, project, :edit_tasks) do
+      if PhoenixKitProjects.Authz.can?(scope, project, :log_time_for_others) do
         my_uuid = Activity.actor_uuid(socket)
 
         members =
@@ -300,10 +306,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp assign_edit_title(
          %{assigns: %{live_action: :edit, assignment: %Assignment{task: %Task{} = task}}} = socket
        ) do
-    assign(socket, edit_title: task.title, title_editable?: task.ad_hoc == true)
+    # Anyone who may edit the task may rename it; a library task's name is
+    # shared, which the field says (`shared`).
+    assign(socket,
+      edit_title: task.title,
+      title_editable?: true,
+      title_shared?: task.ad_hoc != true
+    )
   end
 
-  defp assign_edit_title(socket), do: assign(socket, edit_title: nil, title_editable?: false)
+  defp assign_edit_title(socket),
+    do: assign(socket, edit_title: nil, title_editable?: false, title_shared?: false)
 
   defp keep_edit_title(socket, %{"task_title" => title}) when is_binary(title),
     do: assign(socket, :edit_title, title)
@@ -317,7 +330,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     with true <- socket.assigns[:title_editable?] == true,
          true <- is_binary(title) and String.trim(title) != "",
-         %Task{ad_hoc: true} = task <- Projects.get_task(task_uuid),
+         %Task{} = task <- Projects.get_task(task_uuid),
          true <- String.trim(title) != task.title do
       Projects.update_task(task, %{"title" => String.trim(title)})
     end
@@ -2911,7 +2924,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                  the form is opened to see that, then maybe to change one
                  thing (the pass with the other AIs, 2026-10-14). --%>
             <%= if @live_action == :edit do %>
-              <.task_title_field editable={@title_editable?} title={@edit_title} />
+              <.task_title_field editable={@title_editable?} title={@edit_title} shared={@title_shared?} />
               <.state_fields {assigns} />
             <% end %>
 

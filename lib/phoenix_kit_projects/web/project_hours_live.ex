@@ -387,7 +387,10 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
          # whose ledger is off takes no entries here either (the project
          # page and the API refuse the same).
          log: Authz.can?(scope, project, :log_time) and Features.on?(project, "ledger"),
-         manage: Authz.can?(scope, project, :edit_tasks)
+         manage: Authz.can?(scope, project, :edit_tasks),
+         # Entering time for somebody else is its own row in the project's
+         # "who can" panel.
+         for_others: Authz.can?(scope, project, :log_time_for_others)
        }}
     end)
   end
@@ -933,7 +936,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   defp person_options(socket, project_uuid) do
     me = [{gettext("Me"), "me"}]
 
-    if is_binary(project_uuid) and may?(socket.assigns, project_uuid, :manage) do
+    if is_binary(project_uuid) and may?(socket.assigns, project_uuid, :for_others) do
       my_uuid = Activity.actor_uuid(socket)
 
       members =

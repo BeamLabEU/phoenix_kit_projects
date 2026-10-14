@@ -369,7 +369,8 @@ defmodule PhoenixKitProjects do
           :delete_tasks,
           :assign_tasks,
           :update_status,
-          :log_time
+          :log_time,
+          :log_time_for_others
         ],
         # The FROZEN pre-hub flag catalog (2026-08-05 panel amendment #6):
         # every flag defaults true so existing projects are unchanged with

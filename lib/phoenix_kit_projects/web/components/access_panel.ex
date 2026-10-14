@@ -44,6 +44,7 @@ defmodule PhoenixKitProjects.Web.Components.AccessPanel do
     "assign_tasks" => [{:ext, "tasks"}, {:flag, "assignees"}],
     "update_status" => [{:ext, "tasks"}, {:flag, "statuses"}],
     "log_time" => [{:ext, "tasks"}, {:flag, "ledger"}],
+    "log_time_for_others" => [{:ext, "tasks"}, {:flag, "ledger"}],
     "set_health" => [{:ext, "tasks"}, {:flag, "lifecycle"}],
     "comment" => [{:ext, "discussions"}],
     "upload_files" => [{:ext, "files"}]
@@ -174,6 +175,7 @@ defmodule PhoenixKitProjects.Web.Components.AccessPanel do
   defp action_label("assign_tasks"), do: gettext("Assign tasks")
   defp action_label("update_status"), do: gettext("Change task status")
   defp action_label("log_time"), do: gettext("Log time")
+  defp action_label("log_time_for_others"), do: gettext("Log time for other people")
   defp action_label("comment"), do: gettext("Comment")
   defp action_label("upload_files"), do: gettext("Upload files")
   defp action_label("set_health"), do: gettext("Set project health")
