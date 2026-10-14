@@ -28,7 +28,7 @@
   var CSS = [
     ".pkp-ol{outline:none;min-height:3rem;padding:.25rem 0;line-height:1.75rem;font-size:.95rem;white-space:pre-wrap;word-break:break-word;caret-color:currentColor}",
     ".pkp-ol-line{position:relative;min-height:1.75rem;padding-right:5.5rem;padding-left:calc(1.9rem + var(--d,0) * " + INDENT_REM + "rem);border-radius:.375rem}",
-    ".pkp-ol-line:hover{background:color-mix(in oklab,currentColor 4%,transparent)}",
+    ".pkp-ol-line:hover{background-color:color-mix(in oklab,currentColor 4%,transparent)}",
     ".pkp-ol-line::before{content:'';position:absolute;left:calc(.35rem + var(--d,0) * " + INDENT_REM + "rem);top:.4rem;width:.95rem;height:.95rem;border:1.5px solid color-mix(in oklab,currentColor 45%,transparent);border-radius:.25rem;cursor:pointer;box-sizing:border-box}",
     ".pkp-ol-line[data-done='1']::before{background:#16a34a;border-color:#16a34a;background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='white' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round' d='M3.5 8.5l3 3 6-7'/%3E%3C/svg%3E\");background-size:100% 100%}",
     ".pkp-ol-line[data-done='1']{text-decoration:line-through;color:color-mix(in oklab,currentColor 50%,transparent)}",
@@ -37,6 +37,16 @@
     ".pkp-ol-line::after{content:attr(data-ref) '  \\203A';position:absolute;right:.5rem;top:0;font-size:.75rem;opacity:0;cursor:pointer;text-decoration:none;white-space:nowrap;color:color-mix(in oklab,currentColor 70%,transparent)}",
     ".pkp-ol-line[data-id]:hover::after,.pkp-ol-line[data-id].pkp-ol-cur::after{opacity:.75}",
     ".pkp-ol-line[data-count]:not([data-count=''])::after{content:attr(data-count) '   ' attr(data-ref) '  \\203A';opacity:.6}",
+    // The ✕ at the end of a line (settings: "a delete button on each line").
+    ".pkp-ol[data-del='1'] .pkp-ol-line[data-id]::after{content:attr(data-ref) '  \\203A     \\2715'}",
+    ".pkp-ol[data-del='1'] .pkp-ol-line[data-count]:not([data-count=''])::after{content:attr(data-count) '   ' attr(data-ref) '  \\203A     \\2715'}",
+    // Drag handles (settings: "drag handles"): a grip in front of the box.
+    ".pkp-ol[data-handles='1'] .pkp-ol-line{padding-left:calc(3rem + var(--d,0) * " + INDENT_REM + "rem)}",
+    ".pkp-ol[data-handles='1'] .pkp-ol-line::before{left:calc(1.45rem + var(--d,0) * " + INDENT_REM + "rem)}",
+    ".pkp-ol[data-handles='1'] .pkp-ol-line[data-id]:hover{background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 16'%3E%3Cg fill='%23888'%3E%3Ccircle cx='3' cy='3' r='1.3'/%3E%3Ccircle cx='7' cy='3' r='1.3'/%3E%3Ccircle cx='3' cy='8' r='1.3'/%3E%3Ccircle cx='7' cy='8' r='1.3'/%3E%3Ccircle cx='3' cy='13' r='1.3'/%3E%3Ccircle cx='7' cy='13' r='1.3'/%3E%3C/g%3E%3C/svg%3E\");background-repeat:no-repeat;background-size:.6rem 1rem;background-position:calc(.4rem + var(--d,0) * " + INDENT_REM + "rem) .4rem}",
+    ".pkp-ol-line.pkp-ol-dragging{opacity:.4}",
+    ".pkp-ol-line[data-drop='before']{box-shadow:inset 0 2px 0 0 #3b82f6}",
+    ".pkp-ol-line[data-drop='after']{box-shadow:inset 0 -2px 0 0 #3b82f6}",
     ".pkp-ol[data-empty='1'] .pkp-ol-line:first-child::after{content:attr(data-placeholder);left:1.9rem;right:auto;opacity:.45;font-size:.95rem;pointer-events:none}",
     ".pkp-ol[data-readonly='1'] .pkp-ol-line::before{cursor:default}",
     ".pkp-ol-bar{display:flex;gap:.75rem;align-items:center;min-height:1.5rem;font-size:.75rem;opacity:.7;padding:.25rem .35rem}",
@@ -114,6 +124,8 @@
       this.root.spellcheck = true;
       if (this.canEdit) this.root.contentEditable = "true";
       else this.root.dataset.readonly = "1";
+      if (this.canEdit && this.el.dataset.delete === "1") this.root.dataset.del = "1";
+      if (this.canEdit && this.el.dataset.handles === "1") this.root.dataset.handles = "1";
       this.bar = document.createElement("div");
       this.bar.className = "pkp-ol-bar";
       this.el.appendChild(this.root);
@@ -142,6 +154,7 @@
       this.root.addEventListener("copy", function (e) { self.onCopy(e, false); });
       this.root.addEventListener("drop", function (e) { e.preventDefault(); });
       this.root.addEventListener("click", function (e) { self.onClick(e); });
+      this.root.addEventListener("pointerdown", function (e) { self.onPointerDown(e); });
       this.root.addEventListener("compositionstart", function () { self.composing = true; });
       this.root.addEventListener("compositionend", function () {
         self.composing = false;
@@ -802,7 +815,15 @@
       var rect = line.getBoundingClientRect();
       var rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
       var x = e.clientX - rect.left;
-      var gutter = (0.1 + this.depth(line) * INDENT_REM) * rem;
+      var handles = this.root.dataset.handles === "1" ? 1.1 : 0;
+      var gutter = (0.1 + handles + this.depth(line) * INDENT_REM) * rem;
+      // The ✕ is the line's last 1.6rem.
+      if (this.root.dataset.del === "1" && line.dataset.id && !this.locked(line) &&
+          rect.right - e.clientX <= 1.6 * rem && e.clientY - rect.top < 1.9 * rem) {
+        e.preventDefault();
+        this.removeLine(line);
+        return;
+      }
       if (x >= gutter && x <= gutter + 1.6 * rem && e.clientY - rect.top < 1.9 * rem) {
         e.preventDefault();
         this.tick(line);
@@ -819,6 +840,72 @@
       } else if (this.locked(line)) {
         this.open(line);
       }
+    },
+
+    // The ✕: the line goes, as if its text had been cut — the server deletes
+    // the task, or holds it when it carries work. Its subtasks stay, one
+    // level up. Undo brings it back.
+    removeLine: function (line) {
+      if (!this.canEdit || this.locked(line)) return;
+      this.remember();
+      var next = line.nextElementSibling || line.previousElementSibling;
+      this.root.removeChild(line);
+      this.clampDepths();
+      this.refreshEmpty();
+      if (next && next.isConnected) this.setCaret(next, 0);
+      this.changed();
+    },
+
+    // Drag handles: press on the grip, drop above or below another line. The
+    // line moves with everything under it and takes the depth of the line it
+    // lands beside.
+    onPointerDown: function (e) {
+      if (this.root.dataset.handles !== "1" || e.button !== 0) return;
+      var line = this.lineOf(e.target);
+      if (!line || this.locked(line)) return;
+      var rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      var x = e.clientX - line.getBoundingClientRect().left;
+      var grip = this.depth(line) * INDENT_REM * rem;
+      if (x < grip || x > grip + 1.2 * rem) return;
+      e.preventDefault();
+      var self = this;
+      var block = [line].concat(this.branch(line));
+      block.forEach(function (el) { el.classList.add("pkp-ol-dragging"); });
+      var target = null;
+      var where = null;
+      var clear = function () {
+        self.lines().forEach(function (el) { delete el.dataset.drop; });
+      };
+      var move = function (ev) {
+        clear();
+        target = null;
+        var lines = self.lines().filter(function (el) { return block.indexOf(el) === -1; });
+        for (var i = 0; i < lines.length; i++) {
+          var r = lines[i].getBoundingClientRect();
+          if (ev.clientY < r.top + r.height / 2) { target = lines[i]; where = "before"; break; }
+          target = lines[i];
+          where = "after";
+        }
+        if (target) target.dataset.drop = where;
+      };
+      var up = function () {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        block.forEach(function (el) { el.classList.remove("pkp-ol-dragging"); });
+        clear();
+        if (!target) return;
+        self.remember();
+        var shift = self.depth(target) - self.depth(line);
+        var anchor = where === "before" ? target : (self.branch(target).slice(-1)[0] || target).nextSibling;
+        block.forEach(function (el) {
+          self.root.insertBefore(el, anchor);
+          self.setDepth(el, self.depth(el) + shift);
+        });
+        self.clampDepths();
+        self.changed();
+      };
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
     },
 
     tick: function (line, force) {

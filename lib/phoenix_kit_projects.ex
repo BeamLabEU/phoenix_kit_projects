@@ -400,6 +400,23 @@ defmodule PhoenixKitProjects do
           # and in the API. Off, the list stays flat; subtasks already made
           # keep their place.
           %{key: "subtasks", label: gettext_noop("Subtasks"), default: true},
+          # Whom a task waits on and who asked for it. People's business:
+          # off with Assignees, so a plain to-do's form stays a title and a
+          # status (Max, 2026-10-14).
+          %{
+            key: "waiting",
+            label: gettext_noop("Waiting on and requested by"),
+            default: true,
+            requires: ["assignees"]
+          },
+          # A task's own start and end dates (V21). Planning's business: off
+          # with Scheduling, for the same reason.
+          %{
+            key: "dates",
+            label: gettext_noop("Start and end dates"),
+            default: true,
+            requires: ["scheduling"]
+          },
           %{key: "estimates", label: gettext_noop("Estimates & durations"), default: true},
           %{
             key: "progress",

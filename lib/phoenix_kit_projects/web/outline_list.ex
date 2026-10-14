@@ -92,7 +92,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     |> Map.new(fn {key, on?} ->
       {key,
        on? and
-         (key not in ~w(assignees priorities labels estimates progress ledger dependencies)a or
+         (key not in ~w(assignees priorities labels estimates progress ledger dependencies waiting dates)a or
             on_row?(project, key))}
     end)
     |> Map.put(:comments_row, on_row?(project, "discussion"))
@@ -592,6 +592,18 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     _ -> :ok
   end
 
+  @doc """
+  A switch of the typed list from the project's settings
+  (`settings["outline"]["lines"][key]`): `"delete"` (an × at the end of each
+  line, on unless turned off) and `"handles"` (a drag grip before the box,
+  off unless turned on).
+  """
+  @spec line_option(Project.t() | map() | nil, String.t(), boolean()) :: boolean()
+  def line_option(%{settings: %{"outline" => %{"lines" => %{} = lines}}}, key, default),
+    do: Map.get(lines, key, default) == true
+
+  def line_option(_project, _key, default), do: default
+
   @doc "The rows to draw: everything except what sits under a folded task."
   @spec unfolded([Assignment.t()], MapSet.t()) :: [Assignment.t()]
   def unfolded(rows, folded) do
@@ -612,6 +624,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   attr(:id, :string, required: true)
   attr(:lines, :list, required: true)
   attr(:can, :map, required: true)
+  attr(:project, :map, default: nil)
 
   @doc "The text face: one editable field, owned by the `PkpOutline` hook."
   def text_list(assigns) do
@@ -625,6 +638,8 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       data-can-edit={if @can.edit, do: "1", else: "0"}
       data-can-tick={if @can.tick, do: "1", else: "0"}
       data-can-nest={if Map.get(@can, :nest, true), do: "1", else: "0"}
+      data-delete={if line_option(@project, "delete", true), do: "1", else: "0"}
+      data-handles={if line_option(@project, "handles", false), do: "1", else: "0"}
       data-label={gettext("Tasks")}
       data-placeholder={gettext("Type a task and press Enter. Paste a list to add many.")}
       data-hint={
@@ -652,7 +667,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   """
   def held_tray(assigns) do
     ~H"""
-    <div :if={@held != []} class="mt-3 rounded-box border border-dashed border-warning/50 bg-warning/5 p-3">
+    <div :if={@held != []} id={"outline-held-#{@project.uuid}"} class="mt-3 rounded-box border border-dashed border-warning/50 bg-warning/5 p-3">
       <p class="text-xs font-medium text-base-content/70 flex items-center gap-1">
         <.icon name="hero-archive-box-arrow-down" class="w-4 h-4" />
         {gettext("Removed from the list, still kept")}

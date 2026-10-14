@@ -37,9 +37,14 @@ defmodule PhoenixKitProjects.Web.Components.ApiTokenModal do
           else: gettext("Key created — copy it now")}
       </:title>
       <div class="flex flex-col gap-4">
-        <p class="text-sm">
-          {gettext("This is the only time the token is shown; only its hash is stored. Lose it and you rotate the key.")}
-        </p>
+        <div class="flex items-start justify-between gap-3">
+          <p class="text-sm">
+            {gettext("This is the only time the token is shown; only its hash is stored. Lose it and you rotate the key.")}
+          </p>
+          <%!-- Done at the top as well: the prompt below is long, and the
+               modal's own buttons can sit below the fold inside a drawer. --%>
+          <.button type="button" size="sm" phx-click="dismiss_api_token">{gettext("Done")}</.button>
+        </div>
         <div class="flex flex-col gap-1">
           <span class="text-xs font-semibold uppercase tracking-wide text-base-content/60">
             {gettext("Token for \"%{name}\"", name: @api_token.key.name)}
