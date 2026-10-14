@@ -114,6 +114,18 @@ defmodule PhoenixKitProjects.OutlineTest do
       assert Projects.get_assignment(a.uuid).number == a.number
     end
 
+    test "a parent's line removed while its subtask's line stays: the subtask survives" do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [line("Parent"), line("Child", 1)], [])
+      [parent, child] = Projects.list_assignments(p.uuid)
+
+      {:ok, summary} =
+        Outline.sync(p.uuid, [line("Child", 0, child.uuid)], [parent.uuid, child.uuid])
+
+      assert summary.removed == [parent.uuid]
+      assert listed(p) == [{"Child", 0, "todo"}]
+    end
+
     test "a task the browser never knew of is kept, in its place" do
       p = project()
       a = task(p, "Known")

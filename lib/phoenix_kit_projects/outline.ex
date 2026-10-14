@@ -49,21 +49,21 @@ defmodule PhoenixKitProjects.Outline do
   """
   @spec walk([row()]) :: [{row(), non_neg_integer()}]
   def walk(rows) do
-    present = MapSet.new(rows, & &1.uuid)
+    present = Map.new(rows, &{&1.uuid, true})
     by_parent = Enum.group_by(rows, &effective_parent(&1, present))
-    do_walk(Map.get(by_parent, nil, []), by_parent, 0, MapSet.new()) |> elem(0) |> Enum.reverse()
+    do_walk(Map.get(by_parent, nil, []), by_parent, 0, %{}) |> elem(0) |> Enum.reverse()
   end
 
   defp effective_parent(%{parent_uuid: parent}, present) do
-    if parent && MapSet.member?(present, parent), do: parent, else: nil
+    if parent && Map.has_key?(present, parent), do: parent, else: nil
   end
 
   defp do_walk(rows, by_parent, depth, seen) do
     Enum.reduce(rows, {[], seen}, fn row, {acc, seen} ->
-      if MapSet.member?(seen, row.uuid) do
+      if Map.has_key?(seen, row.uuid) do
         {acc, seen}
       else
-        seen = MapSet.put(seen, row.uuid)
+        seen = Map.put(seen, row.uuid, true)
         {below, seen} = do_walk(Map.get(by_parent, row.uuid, []), by_parent, depth + 1, seen)
         {below ++ [{row, depth} | acc], seen}
       end
@@ -99,7 +99,7 @@ defmodule PhoenixKitProjects.Outline do
   @doc "Top-level rows only (a row whose parent is not in `rows` counts as top-level)."
   @spec roots([row()]) :: [row()]
   def roots(rows) do
-    present = MapSet.new(rows, & &1.uuid)
+    present = Map.new(rows, &{&1.uuid, true})
     Enum.filter(rows, &is_nil(effective_parent(&1, present)))
   end
 
@@ -108,7 +108,7 @@ defmodule PhoenixKitProjects.Outline do
   def descendants(rows, uuid) do
     by_parent = Enum.group_by(rows, & &1.parent_uuid)
 
-    do_walk(Map.get(by_parent, uuid, []), by_parent, 0, MapSet.new([uuid]))
+    do_walk(Map.get(by_parent, uuid, []), by_parent, 0, %{uuid => true})
     |> elem(0)
     |> Enum.reverse()
     |> Enum.map(&elem(&1, 0))
@@ -145,7 +145,7 @@ defmodule PhoenixKitProjects.Outline do
     rows
     |> Enum.filter(&Map.has_key?(by_parent, &1.uuid))
     |> Map.new(fn row ->
-      below = do_walk(Map.get(by_parent, row.uuid, []), by_parent, 0, MapSet.new([row.uuid]))
+      below = do_walk(Map.get(by_parent, row.uuid, []), by_parent, 0, %{row.uuid => true})
 
       leaves =
         below
@@ -342,7 +342,7 @@ defmodule PhoenixKitProjects.Outline do
   project's `subtasks.complete_parent` setting, on unless turned off (a
   parent can carry work of its own that the subtasks do not cover).
   """
-  @spec parent_auto?(Project.t() | binary() | nil) :: boolean()
+  @spec parent_auto?(Project.t() | map() | binary() | nil) :: boolean()
   def parent_auto?(%{settings: settings}) when is_map(settings) do
     case settings do
       %{"outline" => %{"complete_parent" => false}} -> false
@@ -376,10 +376,10 @@ defmodule PhoenixKitProjects.Outline do
       )
       |> repo().all()
 
-    named = MapSet.new(order, &elem(&1, 0))
+    named = Map.new(order, &{elem(&1, 0), true})
 
     rest =
-      for {uuid, parent, _pos} <- current, not MapSet.member?(named, uuid), do: {uuid, parent}
+      for {uuid, parent, _pos} <- current, not Map.has_key?(named, uuid), do: {uuid, parent}
 
     wanted =
       (order ++ rest)
@@ -446,42 +446,13 @@ defmodule PhoenixKitProjects.Outline do
         by_uuid = Map.new(rows, &{&1.uuid, &1})
         branch = [a.uuid | rows |> descendants(a.uuid) |> Enum.map(& &1.uuid)]
 
-        cond do
-          not Map.has_key?(by_uuid, a.uuid) ->
-            repo().rollback(:not_found)
-
-          parent_uuid && not Map.has_key?(by_uuid, parent_uuid) ->
-            repo().rollback(:not_found)
-
-          parent_uuid in branch ->
-            repo().rollback(:cycle)
-
-          is_binary(after_uuid) and
-              (not Map.has_key?(by_uuid, after_uuid) or after_uuid in branch or
-                 by_uuid[after_uuid].parent_uuid != parent_uuid) ->
-            repo().rollback(:not_found)
-
-          true ->
-            moved =
-              Enum.map(
-                rows,
-                &if(&1.uuid == a.uuid, do: %{&1 | parent_uuid: parent_uuid}, else: &1)
-              )
-
-            {mine, others} = Enum.split_with(moved, &(&1.uuid in branch))
-            siblings = Enum.filter(others, &(&1.parent_uuid == parent_uuid))
-
-            # The row the branch goes after, among everything that stays.
-            anchor =
-              case after_uuid do
-                nil -> parent_uuid
-                :last -> last_of(others, List.last(siblings), parent_uuid)
-                uuid -> last_of(others, by_uuid[uuid], parent_uuid)
-              end
-
-            placed = insert_after(walk(others), walk_branch(mine, a.uuid), anchor)
-            write_order(a.project_uuid, Enum.map(placed, &{&1.uuid, &1.parent_uuid}))
+        case move_error(by_uuid, branch, a.uuid, parent_uuid, after_uuid) do
+          nil ->
+            place_branch(a, rows, by_uuid, branch, parent_uuid, after_uuid)
             repo().get!(Assignment, a.uuid)
+
+          error ->
+            repo().rollback(error)
         end
       end)
 
@@ -494,6 +465,49 @@ defmodule PhoenixKitProjects.Outline do
 
       {:ok, moved}
     end
+  end
+
+  defp move_error(by_uuid, branch, uuid, parent_uuid, after_uuid) do
+    cond do
+      not Map.has_key?(by_uuid, uuid) ->
+        :not_found
+
+      parent_uuid && not Map.has_key?(by_uuid, parent_uuid) ->
+        :not_found
+
+      parent_uuid in branch ->
+        :cycle
+
+      is_binary(after_uuid) and not sibling_of?(by_uuid, branch, after_uuid, parent_uuid) ->
+        :not_found
+
+      true ->
+        nil
+    end
+  end
+
+  defp sibling_of?(by_uuid, branch, uuid, parent_uuid) do
+    Map.has_key?(by_uuid, uuid) and uuid not in branch and
+      by_uuid[uuid].parent_uuid == parent_uuid
+  end
+
+  defp place_branch(a, rows, by_uuid, branch, parent_uuid, after_uuid) do
+    moved =
+      Enum.map(rows, &if(&1.uuid == a.uuid, do: %{&1 | parent_uuid: parent_uuid}, else: &1))
+
+    {mine, others} = Enum.split_with(moved, &(&1.uuid in branch))
+    siblings = Enum.filter(others, &(&1.parent_uuid == parent_uuid))
+
+    # The row the branch goes after, among everything that stays.
+    anchor =
+      case after_uuid do
+        nil -> parent_uuid
+        :last -> last_of(others, List.last(siblings), parent_uuid)
+        uuid -> last_of(others, by_uuid[uuid], parent_uuid)
+      end
+
+    placed = insert_after(walk(others), walk_branch(mine, a.uuid), anchor)
+    write_order(a.project_uuid, Enum.map(placed, &{&1.uuid, &1.parent_uuid}))
   end
 
   # The last row of `sibling`'s branch (the row itself when nothing is under
@@ -560,7 +574,8 @@ defmodule PhoenixKitProjects.Outline do
     do: {:error, :too_many_lines}
 
   def sync(project_uuid, lines, known, opts) when is_binary(project_uuid) and is_list(lines) do
-    result = with_project_lock(project_uuid, &do_sync(&1, lines, MapSet.new(known), opts))
+    known = Map.new(known, &{&1, true})
+    result = with_project_lock(project_uuid, &do_sync(&1, lines, known, opts))
 
     with {:ok, summary} <- result do
       Enum.each(summary.renamed_tasks, fn {_row_uuid, task} ->
@@ -602,12 +617,12 @@ defmodule PhoenixKitProjects.Outline do
       if Keyword.get(opts, :rename, true), do: rename_lines(lines, by_uuid, opts), else: []
 
     # 4. Known tasks with no line.
-    listed = MapSet.new(lines, & &1.id)
+    listed = Map.new(lines, &{&1.id, true})
 
     gone =
       Enum.filter(rows, fn row ->
         row.review_status == "accepted" and is_nil(row.child_project_uuid) and
-          MapSet.member?(known, row.uuid) and not MapSet.member?(listed, row.uuid)
+          Map.has_key?(known, row.uuid) and not Map.has_key?(listed, row.uuid)
       end)
 
     {removed, held} = remove_rows(gone, rows, listed)
@@ -615,7 +630,7 @@ defmodule PhoenixKitProjects.Outline do
     # 5. The order and the nesting.
     unlisted =
       Enum.filter(rows, fn row ->
-        row.review_status == "accepted" and not MapSet.member?(listed, row.uuid) and
+        row.review_status == "accepted" and not Map.has_key?(listed, row.uuid) and
           row.uuid not in removed and row.uuid not in held
       end)
 
@@ -637,14 +652,14 @@ defmodule PhoenixKitProjects.Outline do
   # that is not this project's is a new line.
   defp normalize_lines(lines, by_uuid) do
     {out, _seen} =
-      Enum.reduce(lines, {[], MapSet.new()}, fn line, {acc, seen} ->
+      Enum.reduce(lines, {[], %{}}, fn line, {acc, seen} ->
         id = line["id"]
         text = line["text"] |> to_string() |> String.replace(~r/\s+/u, " ") |> String.trim()
         text = String.slice(text, 0, @title_max)
         depth = line["depth"] |> to_int() |> max(0)
 
         id =
-          if is_binary(id) and Map.has_key?(by_uuid, id) and not MapSet.member?(seen, id), do: id
+          if is_binary(id) and Map.has_key?(by_uuid, id) and not Map.has_key?(seen, id), do: id
 
         cond do
           text == "" and is_nil(id) ->
@@ -663,7 +678,7 @@ defmodule PhoenixKitProjects.Outline do
               done: line["done"] == true
             }
 
-            {[entry | acc], if(id, do: MapSet.put(seen, id), else: seen)}
+            {[entry | acc], if(id, do: Map.put(seen, id, true), else: seen)}
         end
       end)
 
@@ -760,63 +775,89 @@ defmodule PhoenixKitProjects.Outline do
   defp remove_rows([], _rows, _listed), do: {[], []}
 
   defp remove_rows(gone, rows, listed) do
-    gone_uuids = MapSet.new(gone, & &1.uuid)
+    {delete, hold} = judge_removals(gone, rows, listed)
+    hold_rows(hold)
+    delete_rows(delete, gone, listed)
+    {delete, hold}
+  end
+
+  defp judge_removals(gone, rows, listed) do
+    gone_uuids = Map.new(gone, &{&1.uuid, true})
     carrying = carrying(Enum.map(gone, & &1.uuid))
     by_parent = Enum.group_by(rows, & &1.parent_uuid)
-
     # Deepest first, so a parent is judged after what is under it.
     depths = depths(rows)
 
     {delete, hold} =
       gone
       |> Enum.sort_by(&(-Map.get(depths, &1.uuid, 0)))
-      |> Enum.reduce({MapSet.new(), MapSet.new()}, fn row, {delete, hold} ->
+      |> Enum.reduce({%{}, %{}}, fn row, {delete, hold} ->
         children = Map.get(by_parent, row.uuid, [])
 
-        # A child that stays listed is moved out from under it by the
-        # nesting; one that is held, or was held before, pins it.
-        pinned? =
-          Enum.any?(children, fn child ->
-            MapSet.member?(hold, child.uuid) or
-              (child.review_status == "removed" and not MapSet.member?(listed, child.uuid)) or
-              (not MapSet.member?(gone_uuids, child.uuid) and
-                 not MapSet.member?(listed, child.uuid) and
-                 child.review_status == "accepted")
-          end)
-
-        if pinned? or protected?(row, carrying),
-          do: {delete, MapSet.put(hold, row.uuid)},
-          else: {MapSet.put(delete, row.uuid), hold}
+        if Enum.any?(children, &pins?(&1, hold, gone_uuids, listed)) or protected?(row, carrying),
+          do: {delete, Map.put(hold, row.uuid, true)},
+          else: {Map.put(delete, row.uuid, true), hold}
       end)
 
-    delete = MapSet.to_list(delete)
-    hold = MapSet.to_list(hold)
+    {Map.keys(delete), Map.keys(hold)}
+  end
 
-    if hold != [] do
-      from(a in Assignment, where: a.uuid in ^hold)
-      |> repo().update_all(set: [review_status: "removed", updated_at: now()])
+  # A child that stays listed is moved out from under its parent by the
+  # nesting; one that is held now, was held before, or that the list never
+  # mentioned keeps its parent from being deleted.
+  defp pins?(child, hold, gone_uuids, listed) do
+    cond do
+      Map.has_key?(listed, child.uuid) -> false
+      Map.has_key?(hold, child.uuid) -> true
+      child.review_status == "removed" -> true
+      child.review_status == "accepted" -> not Map.has_key?(gone_uuids, child.uuid)
+      true -> false
+    end
+  end
+
+  defp hold_rows([]), do: :ok
+
+  defp hold_rows(hold) do
+    from(a in Assignment, where: a.uuid in ^hold)
+    |> repo().update_all(set: [review_status: "removed", updated_at: now()])
+
+    :ok
+  end
+
+  defp delete_rows([], _gone, _listed), do: :ok
+
+  defp delete_rows(delete, gone, listed) do
+    # A line kept in the list must not go down with the parent it is being
+    # moved out from under: `parent_uuid` cascades on delete, and the new
+    # nesting is only written after this.
+    keep = Map.keys(listed)
+
+    from(a in Assignment, where: a.parent_uuid in ^delete and a.uuid in ^keep)
+    |> repo().update_all(set: [parent_uuid: nil])
+
+    Enum.each(delete, &PhoenixKitProjects.Portal.delete_attachments_for/1)
+
+    task_uuids =
+      for row <- gone, row.uuid in delete, row.task && row.task.ad_hoc, do: row.task_uuid
+
+    from(a in Assignment, where: a.uuid in ^delete) |> repo().delete_all()
+    delete_orphan_tasks(task_uuids)
+  end
+
+  # A one-off task exists only for its row.
+  defp delete_orphan_tasks([]), do: :ok
+
+  defp delete_orphan_tasks(task_uuids) do
+    used =
+      from(a in Assignment, where: a.task_uuid in ^task_uuids, select: a.task_uuid)
+      |> repo().all()
+
+    case task_uuids -- used do
+      [] -> :ok
+      orphans -> from(t in Task, where: t.uuid in ^orphans) |> repo().delete_all()
     end
 
-    if delete != [] do
-      Enum.each(delete, &PhoenixKitProjects.Portal.delete_attachments_for/1)
-
-      task_uuids =
-        for row <- gone, row.uuid in delete, row.task && row.task.ad_hoc, do: row.task_uuid
-
-      from(a in Assignment, where: a.uuid in ^delete) |> repo().delete_all()
-
-      # A one-off task exists only for its row.
-      if task_uuids != [] do
-        used =
-          from(a in Assignment, where: a.task_uuid in ^task_uuids, select: a.task_uuid)
-          |> repo().all()
-
-        orphans = task_uuids -- used
-        if orphans != [], do: from(t in Task, where: t.uuid in ^orphans) |> repo().delete_all()
-      end
-    end
-
-    {delete, hold}
+    :ok
   end
 
   @doc """
@@ -826,21 +867,40 @@ defmodule PhoenixKitProjects.Outline do
   dates, an estimate, a dependency, or work already begun by someone.
   `carrying` is `carrying/1` for a set that includes the row.
   """
-  @spec protected?(Assignment.t(), MapSet.t(binary())) :: boolean()
+  @spec protected?(Assignment.t(), %{optional(binary()) => true}) :: boolean()
   def protected?(%Assignment{} = a, carrying) do
-    MapSet.member?(carrying, a.uuid) or filled?(a.description) or
-      not is_nil(a.assigned_person_uuid) or not is_nil(a.assigned_team_uuid) or
-      not is_nil(a.assigned_department_uuid) or not is_nil(a.start_date) or
-      not is_nil(a.end_date) or not is_nil(a.estimated_duration) or filled?(a.waiting_on) or
-      a.status == "in_progress" or a.source != "internal" or a.public == true or
-      (a.task && a.task.ad_hoc != true)
+    Map.has_key?(carrying, a.uuid) or has_words?(a) or has_owner_or_dates?(a) or
+      not plain_kind?(a)
+  end
+
+  defp has_words?(a), do: filled?(a.description) or filled?(a.waiting_on)
+
+  defp has_owner_or_dates?(a) do
+    Enum.any?(
+      [
+        a.assigned_person_uuid,
+        a.assigned_team_uuid,
+        a.assigned_department_uuid,
+        a.start_date,
+        a.end_date,
+        a.estimated_duration
+      ],
+      &(not is_nil(&1))
+    )
+  end
+
+  # A one-off task typed in here, not begun, not from the portal, not on a
+  # public board, not a library task.
+  defp plain_kind?(a) do
+    a.status != "in_progress" and a.source == "internal" and a.public != true and
+      (is_nil(a.task) or a.task.ad_hoc == true)
   end
 
   defp filled?(text), do: is_binary(text) and String.trim(text) != ""
 
   @doc "Among `uuids`: the tasks with logged entries, comments, notes or dependencies."
-  @spec carrying([binary()]) :: MapSet.t(binary())
-  def carrying([]), do: MapSet.new()
+  @spec carrying([binary()]) :: %{optional(binary()) => true}
+  def carrying([]), do: %{}
 
   def carrying(uuids) do
     ledger = PhoenixKitProjects.Ledger.totals_for_assignments(uuids)
@@ -859,10 +919,15 @@ defmodule PhoenixKitProjects.Outline do
       |> repo().all()
       |> List.flatten()
 
-    MapSet.new(logged ++ comments ++ notes ++ deps) |> MapSet.intersection(MapSet.new(uuids))
+    asked = Map.new(uuids, &{&1, true})
+
+    for uuid <- logged ++ comments ++ notes ++ deps,
+        Map.has_key?(asked, uuid),
+        into: %{},
+        do: {uuid, true}
   rescue
     # When in doubt, hold: a held task can be deleted, a deleted one cannot be held.
-    _ -> MapSet.new(uuids)
+    _ -> Map.new(uuids, &{&1, true})
   end
 
   # Lines → `[{uuid, parent_uuid}]`: a line sits under the nearest line
@@ -883,7 +948,7 @@ defmodule PhoenixKitProjects.Outline do
   defp weave(order, [], _rows), do: order
 
   defp weave(order, unlisted, rows) do
-    placed = MapSet.new(order, &elem(&1, 0))
+    placed = Map.new(order, &{elem(&1, 0), true})
     server_order = Enum.map(rows, & &1.uuid)
     missing = Map.new(unlisted, &{&1.uuid, &1})
 
@@ -895,11 +960,11 @@ defmodule PhoenixKitProjects.Outline do
 
           row ->
             parent =
-              if row.parent_uuid && MapSet.member?(placed, row.parent_uuid), do: row.parent_uuid
+              if row.parent_uuid && Map.has_key?(placed, row.parent_uuid), do: row.parent_uuid
 
             before = server_order |> Enum.take_while(&(&1 != uuid)) |> Enum.reverse()
-            anchor = Enum.find(before, &MapSet.member?(placed, &1))
-            {put_after(order, {uuid, parent}, anchor), MapSet.put(placed, uuid)}
+            anchor = Enum.find(before, &Map.has_key?(placed, &1))
+            {put_after(order, {uuid, parent}, anchor), Map.put(placed, uuid, true)}
         end
       end)
 

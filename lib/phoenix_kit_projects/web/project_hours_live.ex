@@ -55,8 +55,8 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Project, WorkEntry}
   alias PhoenixKitProjects.Web.Components.ConfirmAction
-  alias PhoenixKitWeb.Components.Core.FormFieldLabel
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitWeb.Components.Core.FormFieldLabel
 
   require Logger
 

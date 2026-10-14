@@ -23,6 +23,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   alias Phoenix.LiveView.JS
   alias PhoenixKit.Mentions
+  alias PhoenixKit.Users.Auth.User
   alias PhoenixKitAI.Components.AITranslate.FormGlue
 
   alias PhoenixKitProjects.{
@@ -37,6 +38,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     Statuses
   }
 
+  alias PhoenixKitProjects.Hours.Format
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Crumbs
@@ -275,7 +277,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp assign_log_people(socket), do: assign(socket, log_people: [], log_person: nil, log_seq: 0)
 
   defp log_member_name(%{user: %{} = user}) do
-    case PhoenixKit.Users.Auth.User.full_name(user) do
+    case User.full_name(user) do
       name when is_binary(name) and name != "" -> name
       _ -> user.email
     end
@@ -1241,7 +1243,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     with true <- Features.on?(project, "ledger"),
          true <- PhoenixKitProjects.Authz.can?(scope, project, :log_time, assignment),
          {:ok, actor} <- log_actor(socket),
-         {:ok, minutes} <- PhoenixKitProjects.Hours.Format.parse_duration(params["duration"]),
+         {:ok, minutes} <- Format.parse_duration(params["duration"]),
          {:ok, _entry} <-
            PhoenixKitProjects.Ledger.log_time(
              assignment.project_uuid,
@@ -1566,12 +1568,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       excluded =
         if own_uuid,
           do:
-            MapSet.new([own_uuid | rows |> Outline.descendants(own_uuid) |> Enum.map(& &1.uuid)]),
-          else: MapSet.new()
+            Map.new(
+              [own_uuid | rows |> Outline.descendants(own_uuid) |> Enum.map(& &1.uuid)],
+              &{&1, true}
+            ),
+          else: %{}
 
       options =
         for {a, depth} <- Outline.walk(rows),
-            not MapSet.member?(excluded, a.uuid),
+            not Map.has_key?(excluded, a.uuid),
             not Assignment.subproject?(a),
             do: {String.duplicate("— ", depth) <> (Assignment.label(a) || ""), a.uuid}
 
@@ -1621,8 +1626,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   rescue
     _ -> :ok
   end
-
-  defp place_under_parent(_socket, _record), do: :ok
 
   # The "Sits under" select changed on a task being edited: moved at once
   # (with its branch), not on the autosave — where a task sits is not a

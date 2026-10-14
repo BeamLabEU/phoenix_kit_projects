@@ -74,15 +74,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   alias PhoenixKitProjects.Web.Crumbs
 
   alias PhoenixKitProjects.Extensions.Registry, as: ExtRegistry
+  alias PhoenixKitProjects.Outline
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Refs
-  alias PhoenixKitProjects.Outline
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
-  alias PhoenixKitProjects.Web.OutlineList
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
   alias PhoenixKitProjects.TaskNotes
   alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.OutlineList
 
   # Schedule/assignee helpers shared with ProjectGanttLive — imported so the
   # template's bare calls resolve. See PhoenixKitProjects.Web.Helpers.

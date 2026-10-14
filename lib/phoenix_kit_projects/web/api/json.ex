@@ -23,8 +23,8 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     TaskNotes
   }
 
-  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
   alias PhoenixKitProjects.Outline.Api, as: OutlineApi
+  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Api.{Assignee, Docs}
 
   @lifecycle ~w(todo in_progress done)

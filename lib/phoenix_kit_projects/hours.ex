@@ -558,14 +558,7 @@ defmodule PhoenixKitProjects.Hours do
           row.task
           |> then(&(&1 && &1.uuid))
           |> chain_above(parents, [])
-          |> Enum.reduce(acc, fn up, acc ->
-            Map.update(
-              acc,
-              up,
-              {row.minutes, row.billable_minutes, row.project},
-              fn {m, b, p} -> {m + row.minutes, b + row.billable_minutes, p} end
-            )
-          end)
+          |> Enum.reduce(acc, &add_below(&2, &1, row))
         end)
 
       listed = MapSet.new(rows, &(&1.task && &1.task.uuid))
@@ -595,6 +588,16 @@ defmodule PhoenixKitProjects.Hours do
     end
   rescue
     _ -> Enum.map(rows, &Map.merge(&1, %{below_minutes: 0.0, below_billable_minutes: 0.0}))
+  end
+
+  # One row's time added to a task it sits under.
+  defp add_below(acc, up, row) do
+    Map.update(
+      acc,
+      up,
+      {row.minutes, row.billable_minutes, row.project},
+      fn {m, b, p} -> {m + row.minutes, b + row.billable_minutes, p} end
+    )
   end
 
   defp chain_above(nil, _parents, acc), do: acc

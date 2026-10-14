@@ -22,6 +22,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.OutlineList
   alias PhoenixKitWeb.Components.Core.ChangeCue
 
   require Logger
@@ -1309,7 +1310,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     current = Map.get(settings, "outline") || %{}
 
     style =
-      if posted["style"] in PhoenixKitProjects.Web.OutlineList.styles(),
+      if posted["style"] in OutlineList.styles(),
         do: posted["style"],
         else: current["style"] || "auto"
 

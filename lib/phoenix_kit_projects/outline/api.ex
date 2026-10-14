@@ -201,28 +201,10 @@ defmodule PhoenixKitProjects.Outline.Api do
         existing =
           rows |> Outline.walk() |> Enum.map(fn {row, _depth} -> {row.uuid, row.parent_uuid} end)
 
-        order =
-          if anchor do
-            Enum.flat_map(existing, fn {uuid, _} = item ->
-              if uuid == anchor, do: [item | block], else: [item]
-            end)
-          else
-            existing ++ block
-          end
-
-        Outline.write_order(project_uuid, order)
+        Outline.write_order(project_uuid, place_after(existing, anchor, block))
 
         # An open task now sits under a done one: that one reopens.
-        if parent_uuid do
-          open =
-            Enum.find(block, fn {uuid, parent} ->
-              parent == parent_uuid and created_open?(created, uuid)
-            end)
-
-          with {uuid, _} <- open,
-               %Assignment{} = a <- repo().get(Assignment, uuid),
-               do: Outline.settle_placed(a)
-        end
+        reopen_parent(block, created, parent_uuid)
 
         Enum.map(created, & &1.uuid)
       end)
@@ -284,5 +266,29 @@ defmodule PhoenixKitProjects.Outline.Api do
       end)
 
     order
+  end
+
+  defp reopen_parent(_block, _created, nil), do: :ok
+
+  defp reopen_parent(block, created, parent_uuid) do
+    open =
+      Enum.find(block, fn {uuid, parent} ->
+        parent == parent_uuid and created_open?(created, uuid)
+      end)
+
+    with {uuid, _} <- open,
+         %Assignment{} = a <- repo().get(Assignment, uuid),
+         do: Outline.settle_placed(a)
+
+    :ok
+  end
+
+  # The new block right after `anchor` (at the end with no anchor).
+  defp place_after(existing, nil, block), do: existing ++ block
+
+  defp place_after(existing, anchor, block) do
+    Enum.flat_map(existing, fn {uuid, _} = item ->
+      if uuid == anchor, do: [item | block], else: [item]
+    end)
   end
 end
