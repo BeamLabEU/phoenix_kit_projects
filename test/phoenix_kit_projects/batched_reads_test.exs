@@ -8,7 +8,19 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
 
   use PhoenixKitProjects.DataCase, async: false
 
-  alias PhoenixKitProjects.{Extensions, Features, Grants, Portal, Projects, QueryCounter}
+  alias PhoenixKitProjects.{
+    Attachments,
+    Extensions,
+    Features,
+    Grants,
+    Portal,
+    Projects,
+    QueryCounter
+  }
+
+  alias PhoenixKit.Modules.Storage.{File, FileInstance, Library}
+  alias PhoenixKitProjects.LiveCase
+  alias PhoenixKitProjects.Test.Repo
 
   describe "Extensions.enabled_map/1" do
     test "answers like enabled?/3 for every extension, from one rows read" do
@@ -146,6 +158,93 @@ defmodule PhoenixKitProjects.BatchedReadsTest do
         assert Map.fetch!(reaches, {g.subject_type, g.subject_uuid}) ==
                  Grants.subject_reach(g.subject_type, g.subject_uuid)
       end
+    end
+  end
+
+  describe "Attachments.download_urls/1" do
+    defp stored_file!(owner_uuid, attrs \\ %{}) do
+      n = System.unique_integer([:positive])
+
+      file =
+        %File{}
+        |> Ecto.Changeset.change(
+          Map.merge(
+            %{
+              user_uuid: owner_uuid,
+              original_file_name: "spec.pdf",
+              file_name: "spec-#{n}.pdf",
+              file_path: "/tmp/spec-#{n}.pdf",
+              ext: "pdf",
+              file_type: "document",
+              mime_type: "application/pdf",
+              file_checksum: "dl-checksum-#{n}",
+              user_file_checksum: "dl-user-checksum-#{n}",
+              size: 123,
+              status: "active"
+            },
+            attrs
+          )
+        )
+        |> Repo.insert!()
+
+      %FileInstance{}
+      |> Ecto.Changeset.change(%{
+        variant_name: "original",
+        file_name: "dl/#{n}/spec-#{n}.pdf",
+        mime_type: "application/pdf",
+        ext: "pdf",
+        checksum: "dl-instance-#{n}",
+        size: 123,
+        file_uuid: file.uuid
+      })
+      |> Repo.insert!()
+
+      file
+    end
+
+    test "answers what core's per-file rule answers, in reads that do not grow with the files" do
+      owner = LiveCase.embed_user_uuid!()
+      ordinary = stored_file!(owner)
+      editing = stored_file!(owner, %{edit_state: "pending"})
+      hidden = stored_file!(owner, %{system_managed: true})
+
+      library =
+        %Library{}
+        |> Ecto.Changeset.change(%{
+          name: "Private",
+          key_prefix: "pk-#{System.unique_integer([:positive])}",
+          slug: "private-#{System.unique_integer([:positive])}",
+          kind: "user",
+          visibility: "private",
+          owner_uuid: owner
+        })
+        |> Repo.insert!()
+
+      private = stored_file!(owner, %{library_uuid: library.uuid})
+      files = [ordinary, editing, hidden, private]
+
+      urls = Attachments.download_urls(files)
+
+      # The reads the module owns (instances, library privacy) are fixed;
+      # `Manager.public_url/2` resolves the bucket per file in core, so the
+      # count is taken over files the app serves itself.
+      {_, q_one} = QueryCounter.count(fn -> Attachments.download_urls([private]) end)
+
+      {_, q_three} =
+        QueryCounter.count(fn -> Attachments.download_urls([private, editing, hidden]) end)
+
+      assert q_three <= q_one
+
+      # Core's rule, file by file: a hidden original gets no link; a file
+      # mid-edit is served by the app (never the bucket's object URL).
+      for file <- files do
+        assert Map.get(urls, file.uuid) == Attachments.download_url(file)
+      end
+
+      refute Map.has_key?(urls, hidden.uuid)
+      assert is_binary(urls[editing.uuid])
+      assert is_binary(urls[private.uuid])
+      assert Attachments.download_urls([]) == %{}
     end
   end
 end

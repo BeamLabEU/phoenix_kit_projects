@@ -63,6 +63,8 @@ defmodule PhoenixKitProjects.Attachments do
     File,
     FileInstance,
     Folder,
+    ImageEditing,
+    Libraries,
     Manager,
     ResourceFolders,
     URLSigner
@@ -298,38 +300,65 @@ defmodule PhoenixKitProjects.Attachments do
   end
 
   @doc """
-  `download_url/1` for a list of files in ONE file-instance read —
-  `%{file_uuid => url}`, a file with no original instance absent. The
-  Files page asked per row, twice (guard + href), on every render (the
-  2026-09-05 N+1 audit). Same URL rule as core's `get_public_url/1`: the
-  storage manager's public URL when it has one, else a signed URL.
+  `download_url/1` for a list of files in two reads — the original file
+  instances, and which of the files' libraries are private —
+  `%{file_uuid => url}`, a file with no original instance (or one core
+  hands no URL for: a system-managed file) absent. The Files page asked per
+  row, twice (guard + href), on every render (the 2026-09-05 N+1 audit).
+
+  The URL rule is core's `get_public_url/1`, restated over the batched reads:
+  a private library or an edit in progress is served by the app, never by
+  the bucket's object URL. `batched_reads_test.exs` pins it against
+  `download_url/1`, so a rule core changes fails there. A core without
+  `Libraries.private_among/1` falls back to `download_url/1` per file.
   """
   @spec download_urls([File.t()]) :: %{binary() => String.t()}
   def download_urls([]), do: %{}
 
   def download_urls(files) when is_list(files) do
-    uuids = Enum.map(files, & &1.uuid)
+    by_uuid = Map.new(files, &{&1.uuid, &1})
 
-    from(fi in FileInstance,
-      where: fi.file_uuid in ^uuids and fi.variant_name == "original",
-      select: {fi.file_uuid, fi.file_name}
-    )
-    |> repo().all()
-    |> Enum.reduce(%{}, fn {file_uuid, path}, acc ->
-      case row_url(file_uuid, path) do
-        nil -> acc
-        url -> Map.put_new(acc, file_uuid, url)
-      end
-    end)
+    if function_exported?(Libraries, :private_among, 1) do
+      private = Libraries.private_among(Enum.map(files, & &1.library_uuid))
+      batched_urls(by_uuid, private)
+    else
+      Map.new(files, &{&1.uuid, download_url(&1)}) |> Map.reject(fn {_, url} -> is_nil(url) end)
+    end
   rescue
     _ -> %{}
   end
 
-  # The same rule as core's `get_public_url/1`, one row at a time so a
-  # file the manager cannot address loses its link alone.
-  defp row_url(file_uuid, path) do
-    Manager.public_url(path) || URLSigner.signed_url(file_uuid, "original", locale: :none)
+  defp batched_urls(by_uuid, private_libraries) do
+    uuids = Map.keys(by_uuid)
+
+    from(fi in FileInstance, where: fi.file_uuid in ^uuids and fi.variant_name == "original")
+    |> repo().all()
+    |> Enum.reduce(%{}, fn instance, acc ->
+      with %File{} = file <- Map.get(by_uuid, instance.file_uuid),
+           url when is_binary(url) <- row_url(file, instance, private_libraries) do
+        Map.put_new(acc, file.uuid, url)
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  # One row at a time so a file the manager cannot address loses its link
+  # alone.
+  defp row_url(%File{system_managed: true}, _instance, _private), do: nil
+
+  defp row_url(%File{} = file, instance, private_libraries) do
+    signed = fn -> signed_url(file, instance) end
+
+    cond do
+      ImageEditing.edit_in_progress?(file) -> signed_url(file, nil)
+      to_string(file.library_uuid) in private_libraries -> signed.()
+      true -> Manager.public_url(instance.file_name, file_uuid: instance.file_uuid) || signed.()
+    end
   rescue
     _ -> nil
   end
+
+  defp signed_url(file, instance),
+    do: URLSigner.signed_url(file.uuid, "original", locale: :none, version: instance)
 end
