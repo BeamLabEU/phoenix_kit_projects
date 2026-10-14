@@ -910,6 +910,11 @@ The three tables a host app depends on. Full prose in
 | `"pubsub_topic"` | all | **Required** when `mode` is `"emit"` or `"popup"` |
 | `"frame_ref"` | all | Race-safe pop identity, inherited from PopupHost |
 | `"close_on"` | all | Subset of `["closed", "saved", "deleted"]`; defaults `["closed"]` |
+| `"project_uuid"` | contributed extension tabs | The project being viewed. Takes the place of `"id"` for a contributed tab — the only key it needs |
+| `"ext_key"` | contributed extension tabs | The `key` of the extension entry that contributed the tab |
+| `"instance_key"` | contributed extension tabs | Which enablement row this render is; always `"default"` |
+| `"config"` | contributed extension tabs | The project's stored values for the extension's `config_schema`; `%{}` when none |
+| `"can_write"` | contributed extension tabs | Boolean the hub resolved for the viewer against the extension's write action (its first `permission_actions` entry other than `:view`); `false` when it declares none or the viewer is unidentified. The tab's only write authorization — it has no scope |
 | `"host_paths"` | contributed extension tabs | `%{"new_task" => path}` — where the hub's own pages are, so a tab (the CRM's "add a task from this meeting") can send someone there without naming this module's routes |
 
 Emit-mode event vocabulary (UI-intent verbs, deliberately disjoint from

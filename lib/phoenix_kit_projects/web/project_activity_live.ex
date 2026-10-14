@@ -3,9 +3,9 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
   Per-project **Activity** — the hub's native audit surface (P2b): core's
   activity log filtered to this project via the `resource_uuid` filter
   (`PhoenixKit.Activity.list/1`), drawn by core's `activity_list/1` and
-  paged with load-more. Read-only; guarded with `Code.ensure_loaded?` so a
-  stripped Activity module degrades to an empty feed (the hello_world
-  events pattern). Embeddable like every LV here.
+  paged with load-more. Read-only. `PhoenixKit.Activity` is called directly —
+  the core floor carries it; a failing read is logged and leaves the feed as
+  it was. Embeddable like every LV here.
   """
 
   use PhoenixKitWeb, :live_view
@@ -98,25 +98,21 @@ defmodule PhoenixKitProjects.Web.ProjectActivityLive do
   end
 
   defp load_page(socket) do
-    if Code.ensure_loaded?(PhoenixKit.Activity) do
-      result =
-        PhoenixKit.Activity.list(
-          resource_uuid: socket.assigns.project.uuid,
-          page: socket.assigns.page,
-          per_page: @per_page,
-          preload: [:actor]
-        )
-
-      socket
-      |> assign(
-        entries: socket.assigns.entries ++ result.entries,
-        total: result.total,
-        page: socket.assigns.page + 1,
-        has_more: result.page < result.total_pages
+    result =
+      PhoenixKit.Activity.list(
+        resource_uuid: socket.assigns.project.uuid,
+        page: socket.assigns.page,
+        per_page: @per_page,
+        preload: [:actor]
       )
-    else
-      socket
-    end
+
+    socket
+    |> assign(
+      entries: socket.assigns.entries ++ result.entries,
+      total: result.total,
+      page: socket.assigns.page + 1,
+      has_more: result.page < result.total_pages
+    )
   rescue
     e ->
       Logger.warning("[Projects] activity feed load failed: #{Exception.message(e)}")
