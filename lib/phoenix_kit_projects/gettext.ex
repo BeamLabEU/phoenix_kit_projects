@@ -25,5 +25,10 @@ defmodule PhoenixKitProjects.Gettext do
   # warnings from Expo.PluralForms — known false positive in gettext ≥ 0.26.
   @dialyzer {:no_opaque, []}
 
-  use Gettext.Backend, otp_app: :phoenix_kit_projects
+  # One compiled module per locale and domain: the catalogues are large, and
+  # split modules compile in parallel instead of one long serial compile that
+  # blocks every app depending on this package. Lookups are unchanged.
+  use Gettext.Backend,
+    otp_app: :phoenix_kit_projects,
+    split_module_by: [:locale, :domain]
 end
