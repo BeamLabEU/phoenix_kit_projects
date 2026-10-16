@@ -1,15 +1,14 @@
 defmodule PhoenixKitProjects.Web.ApiKeyPanel do
   @moduledoc """
-  The pure parts of the "API access" section on a project's Modules &
-  Features page: the access presets a key is minted with (and read back
-  from a key's scopes), the expiry choices, and the setup prompt a person
-  hands their AI — the base URL, the agent guide, the first call to make,
-  and the token when it is in hand.
+  The pure parts of the API key pages: names (`user_name/1`, `kind_label/2`,
+  `display_id/1`), what a member's own key starts as (`personal_attrs/2`),
+  the expiry choices, and the setup prompt a person hands their AI — the
+  base URL, the agent guide, the key's HOME project, how to reach its other
+  projects, and the token when it is in hand.
 
-  Designed with a three-seat panel (grok, zai, codex, 2026-10-05), who
-  agreed on: one preset word per key instead of seven stacked scopes, a
-  key ID that cannot be mistaken for the token, and a prompt that boots
-  an agent in one paste.
+  A key's access is set per project and per area since V24
+  (`PhoenixKitProjects.ApiAccess`); the old one-word presets that lived
+  here are gone with the one-project key.
   """
 
   use Gettext, backend: PhoenixKitProjects.Gettext
@@ -20,63 +19,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
   alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.Api.Docs
 
-  @presets ~w(full read metering custom)
   @expiry_options ~w(never 30 90 365)
-
-  @doc "The preset keys, in the order the form offers them."
-  @spec presets() :: [String.t()]
-  def presets, do: @presets
-
-  @doc "A preset's label."
-  @spec preset_label(String.t()) :: String.t()
-  def preset_label("full"), do: gettext("Full access")
-  def preset_label("read"), do: gettext("Read-only")
-  def preset_label("metering"), do: gettext("Metering")
-  def preset_label(_), do: gettext("Custom")
-
-  @doc "A preset's one-line explanation for the form."
-  @spec preset_hint(String.t()) :: String.t()
-  def preset_hint("full"),
-    do: gettext("Everything this key's role allows — the usual choice for an agent.")
-
-  def preset_hint("read"),
-    do: gettext("Reads only: tasks and the project's records, nothing written.")
-
-  def preset_hint("metering"),
-    do: gettext("Only reports time, tokens and cost — for a runner that does not touch tasks.")
-
-  def preset_hint(_), do: gettext("Pick the scopes yourself.")
-
-  @doc "The scopes a preset stands for; `custom` takes the chosen list."
-  @spec scopes_for(String.t(), [String.t()]) :: [String.t()]
-  def scopes_for("full", _chosen), do: ApiKey.scopes()
-
-  def scopes_for("read", _chosen),
-    do: Enum.filter(ApiKey.scopes(), &String.ends_with?(&1, ":read"))
-
-  def scopes_for("metering", _chosen),
-    do: Enum.filter(ApiKey.scopes(), &(&1 in ~w(time:write usage:write)))
-
-  def scopes_for(_custom, chosen), do: Enum.filter(ApiKey.scopes(), &(&1 in chosen))
-
-  @doc "The preset a key's scopes match exactly, else `custom`."
-  @spec preset_for([String.t()]) :: String.t()
-  def preset_for(scopes) do
-    set = MapSet.new(scopes)
-
-    Enum.find(~w(full read metering), "custom", fn preset ->
-      MapSet.equal?(set, MapSet.new(scopes_for(preset, [])))
-    end)
-  end
-
-  @doc ~S|"Full access · 7 scopes" — the Access cell.|
-  @spec access_label([String.t()]) :: String.t()
-  def access_label(scopes) do
-    count = length(scopes)
-
-    "#{preset_label(preset_for(scopes))} · " <>
-      ngettext("%{count} scope", "%{count} scopes", count, count: count)
-  end
 
   @doc "The expiry choices, in order: never, then days."
   @spec expiry_options() :: [{String.t(), String.t()}]
@@ -121,10 +64,6 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
     |> Enum.map(&{&1.user_uuid, user_name(&1.user || %{uuid: &1.user_uuid})})
   end
 
-  @doc "`people/1` as a select's `{label, value}` pairs — the name shown, the uuid posted."
-  @spec people_options([{String.t(), String.t()}]) :: [{String.t(), String.t()}]
-  def people_options(people), do: Enum.map(people, fn {uuid, name} -> {name, uuid} end)
-
   @doc ~S|"Personal · acts for Max Don" or "Shared agent" — the row's kind line.|
   @spec kind_label(ApiKey.t(), map()) :: String.t()
   def kind_label(%ApiKey{user_uuid: uuid}, names) when is_binary(uuid) do
@@ -158,22 +97,24 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
   def absolute(suffix), do: Routes.base_url() <> Docs.url(suffix)
 
   @doc """
-  The prompt a person pastes to their AI. With `token` in hand (creation,
-  rotation) it is complete; without one it names the key and says where
-  the token went, so the paste still tells the agent everything else.
+  The prompt a person pastes to their AI. `home_name` is the key's HOME
+  project — where a call without `project` acts; `GET /me` lists the rest.
+  With `token` in hand (creation, rotation) the prompt is complete; without
+  one it names the key and says where the token went, so the paste still
+  tells the agent everything else.
   """
   @spec setup_prompt(String.t(), ApiKey.t(), String.t() | nil) :: String.t()
-  def setup_prompt(project_name, %ApiKey{} = key, token) do
+  def setup_prompt(home_name, %ApiKey{} = key, token) do
     acting_line =
       case key.user_uuid do
         uuid when is_binary(uuid) ->
           gettext(
-            "You act for %{name} on this project — their AI, with their role (never above manager). Say so when it matters.",
+            "You act for %{name} — their AI, with their role in each project (never above manager). Say so when it matters.",
             name: user_name(uuid)
           )
 
         _ ->
-          gettext("This key is a shared agent on the project, not a person's.")
+          gettext("This key is a shared agent, not a person's.")
       end
 
     token_line =
@@ -190,8 +131,8 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
       end
 
     [
-      gettext("Use this project's API."),
-      gettext("Project: %{name}", name: project_name),
+      gettext("Use this site's projects API."),
+      gettext("Home project: %{name}", name: home_name),
       gettext("Base URL: %{url}", url: absolute("")),
       gettext("Agent guide (read it first): %{url}", url: absolute("/llms.txt")),
       gettext("OpenAPI: %{url}", url: absolute("/openapi.json")),
@@ -199,7 +140,10 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
       acting_line,
       "",
       gettext(
-        "Send the token as an Authorization: Bearer header on every call and keep it out of chat, logs and output. Start with GET /me to confirm the project and what this key may do, and stay within its scopes. Log your time, tokens and cost as you work. On a 401 stop and tell me — the key may have been rotated or revoked. Ask me before destructive or bulk actions."
+        "Send the token as an Authorization: Bearer header on every call and keep it out of chat, logs and output. Start with GET /me: it lists every project this key reaches and what it may do in each (per area: none, read or write). A call without a project parameter acts on the home project; for any other project pass project=<its key>, e.g. GET /briefing?project=ANDI. A task ref like ANDI-42 selects its own project. Never assume one project's access from another's."
+      ),
+      gettext(
+        "Log your time, tokens and cost as you work. On a 401 stop and tell me — the key may have been rotated or revoked. Ask me before destructive or bulk actions."
       )
     ]
     |> Enum.join("\n")
@@ -211,64 +155,4 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
   """
   @spec display_id(ApiKey.t()) :: String.t()
   def display_id(%ApiKey{key_id: key_id}), do: "pkp_#{key_id}"
-
-  @doc "The new-key form's starting state."
-  @spec new_form() :: map()
-  def new_form do
-    %{
-      "name" => "",
-      "user" => "",
-      "role" => "member",
-      "expires" => "never",
-      "preset" => "full",
-      "scope" => Map.new(ApiKey.scopes(), &{&1, "true"})
-    }
-  end
-
-  @doc """
-  The form after a change: the typed fields carried, the custom scope ticks
-  taken from the params when the checkboxes were on screen, and a key made
-  for a viewer switched from Full access to Read-only (the role would refuse
-  the writes anyway).
-  """
-  @spec form_from(map(), map() | nil) :: map()
-  def form_from(params, previous) do
-    previous = previous || new_form()
-
-    form =
-      previous
-      |> Map.put("name", Map.get(params, "name", previous["name"]))
-      |> Map.put("user", Map.get(params, "user", previous["user"]))
-      |> Map.put("role", Map.get(params, "role", previous["role"]))
-      |> Map.put("expires", Map.get(params, "expires", previous["expires"]))
-      |> Map.put("preset", Map.get(params, "preset", previous["preset"]))
-      |> Map.put("scope", scope_ticks(params, previous))
-
-    form =
-      if form["role"] == "viewer" and previous["role"] != "viewer" and form["preset"] == "full",
-        do: Map.put(form, "preset", "read"),
-        else: form
-
-    # Picking a person turns the role into a cap; "at most manager" is no cap.
-    if form["user"] != "" and previous["user"] == "",
-      do: Map.put(form, "role", "manager"),
-      else: form
-  end
-
-  # Checkboxes post only when ticked, so with the custom row on screen the
-  # absent ones are off; with it hidden nothing posts and the ticks stay.
-  defp scope_ticks(%{"preset" => "custom"} = params, _previous) when is_map_key(params, "scope"),
-    do:
-      Map.new(
-        ApiKey.scopes(),
-        &{&1, if(get_in(params, ["scope", &1]) in ["true", "on"], do: "true", else: "false")}
-      )
-
-  defp scope_ticks(_params, previous), do: previous["scope"]
-
-  @doc "The scopes the form's custom ticks name."
-  @spec ticked_scopes(map()) :: [String.t()]
-  def ticked_scopes(form) do
-    Enum.filter(ApiKey.scopes(), &(Map.get(form["scope"] || %{}, &1) == "true"))
-  end
 end

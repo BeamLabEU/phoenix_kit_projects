@@ -675,7 +675,7 @@ defmodule PhoenixKitProjects do
   # attribute — a compiled Regex holds a reference and cannot be injected
   # into a function body.
   defp projects_list_match,
-    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|hours|overview)(/|$))(/.*)?$}}
+    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|hours|overview|api-keys)(/|$))(/.*)?$}}
 
   @impl PhoenixKit.Module
   def admin_tabs do
@@ -765,6 +765,22 @@ defmodule PhoenixKitProjects do
         parent: :admin_projects,
         live_view: {PhoenixKitProjects.Web.ProjectHoursLive, :index}
       },
+      # Every API key a person has, and what each may do per project
+      # (V24: keys live outside projects — Max, 2026-10-15).
+      %Tab{
+        id: :admin_projects_api_keys,
+        label: "API keys",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-key",
+        path: "projects/api-keys",
+        priority: 665,
+        level: :admin,
+        permission: module_key(),
+        match: :prefix,
+        parent: :admin_projects,
+        live_view: {PhoenixKitProjects.Web.ApiKeysLive, :index}
+      },
       # Last on purpose: the list is where the work is, the Overview is
       # the read-only picture of it. Its pieces are also dashboards-module
       # widgets (`DashboardWidgets`) for anyone who wants them on a board.
@@ -775,7 +791,7 @@ defmodule PhoenixKitProjects do
         gettext_domain: "default",
         icon: "hero-home",
         path: "projects/overview",
-        priority: 665,
+        priority: 666,
         level: :admin,
         permission: module_key(),
         match: :prefix,

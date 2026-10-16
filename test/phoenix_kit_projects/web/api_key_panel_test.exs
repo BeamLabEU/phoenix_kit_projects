@@ -1,26 +1,10 @@
 defmodule PhoenixKitProjects.Web.ApiKeyPanelTest do
-  @moduledoc "The pure parts of the API access section: presets, expiry, the setup prompt."
+  @moduledoc "The pure parts of the key pages: names, expiry, the setup prompt."
 
   use PhoenixKitProjects.DataCase, async: false
 
   alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.ApiKeyPanel
-
-  test "presets map to scope sets and back" do
-    assert ApiKeyPanel.scopes_for("full", []) == ApiKey.scopes()
-
-    assert ApiKeyPanel.scopes_for("read", []) ==
-             Enum.filter(ApiKey.scopes(), &String.ends_with?(&1, ":read"))
-
-    assert ApiKeyPanel.scopes_for("metering", []) == ["time:write", "usage:write"]
-    assert ApiKeyPanel.scopes_for("custom", ["tasks:read", "nope"]) == ["tasks:read"]
-
-    assert ApiKeyPanel.preset_for(ApiKey.scopes()) == "full"
-    assert ApiKeyPanel.preset_for(["usage:write", "time:write"]) == "metering"
-    assert ApiKeyPanel.preset_for(["tasks:read", "time:write"]) == "custom"
-    assert ApiKeyPanel.access_label(["tasks:read", "time:write"]) == "Custom · 2 scopes"
-    assert ApiKeyPanel.access_label(["time:write"]) == "Custom · 1 scope"
-  end
 
   test "a personal key is named after the person, capped at their role, and the prompt says so" do
     user = %{uuid: Ecto.UUID.generate(), first_name: "Max", last_name: "Don", email: "m@x.ee"}
@@ -47,18 +31,10 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanelTest do
 
     assert prompt =~ "API token: <paste"
     # the name is looked up; an unknown uuid reads as a dash rather than crashing
-    assert prompt =~ "You act for — on this project"
+    assert prompt =~ "You act for —"
 
     shared = ApiKeyPanel.setup_prompt("ANDI", %ApiKey{name: "x", key_id: "k"}, "tok")
-    assert shared =~ "shared agent on the project"
-  end
-
-  test "picking a person on the form lifts the role to the manager cap once" do
-    form = ApiKeyPanel.form_from(%{"user" => "u1"}, ApiKeyPanel.new_form())
-    assert form["role"] == "manager"
-    form = ApiKeyPanel.form_from(%{"role" => "viewer"}, form)
-    assert form["role"] == "viewer"
-    assert form["preset"] == "read"
+    assert shared =~ "shared agent, not a person's"
   end
 
   test "expiry choices become a date from now, never is nil" do
@@ -68,41 +44,17 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanelTest do
     assert ApiKeyPanel.expires_at("bogus", now) == nil
   end
 
-  test "the form carries typed fields, takes custom ticks only when shown, and tames a viewer" do
-    form = ApiKeyPanel.new_form()
-    assert form["preset"] == "full"
-    assert ApiKeyPanel.ticked_scopes(form) == ApiKey.scopes()
-
-    # the custom row off screen: nothing posts for scope, ticks stay
-    form = ApiKeyPanel.form_from(%{"name" => "Runner", "preset" => "read"}, form)
-    assert form["name"] == "Runner"
-    assert form["preset"] == "read"
-    assert ApiKeyPanel.ticked_scopes(form) == ApiKey.scopes()
-
-    # custom on screen: the absent boxes are off
-    form =
-      ApiKeyPanel.form_from(%{"preset" => "custom", "scope" => %{"tasks:read" => "true"}}, form)
-
-    assert ApiKeyPanel.ticked_scopes(form) == ["tasks:read"]
-
-    # a viewer cannot write: Full access turns into Read-only once
-    form =
-      ApiKeyPanel.form_from(%{"role" => "viewer", "preset" => "full"}, ApiKeyPanel.new_form())
-
-    assert form["preset"] == "read"
-    form = ApiKeyPanel.form_from(%{"role" => "viewer", "preset" => "full"}, form)
-    assert form["preset"] == "full"
-  end
-
   test "the setup prompt carries the links, the first call, and the token or its place" do
     key = %ApiKey{name: "ANDI agent", key_id: "80ejrvvuf5k7sdo", scopes: ApiKey.scopes()}
 
     with_token = ApiKeyPanel.setup_prompt("ANDI Manager", key, "pkp_80ejrvvuf5k7sdo_secret")
-    assert with_token =~ "Project: ANDI Manager"
+    assert with_token =~ "Home project: ANDI Manager"
     assert with_token =~ "/api/projects/v1/llms.txt"
     assert with_token =~ "/api/projects/v1/openapi.json"
     assert with_token =~ "API token: pkp_80ejrvvuf5k7sdo_secret"
     assert with_token =~ "GET /me"
+    assert with_token =~ "project="
+    assert with_token =~ "ANDI-42"
 
     without = ApiKeyPanel.setup_prompt("ANDI Manager", key, nil)
     refute without =~ "secret"

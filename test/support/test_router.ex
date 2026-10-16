@@ -97,6 +97,7 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/templates", TemplatesLive, :index)
       live("/tasks", TasksLive, :index)
       live("/hours", ProjectHoursLive, :index)
+      live("/api-keys", ApiKeysLive, :index)
       live("/overview", OverviewLive, :index)
 
       # Legacy `list/…` addresses redirect to the same path without the segment.
