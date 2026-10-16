@@ -811,7 +811,12 @@ defmodule PhoenixKitProjects.Web.ApiTest do
     test "usage on a note needs the usage scope; a key with nobody behind it cannot write notes",
          %{conn: conn, project: project, assignment: a, minter: user} do
       {:ok, _, narrow} =
-        ApiKeys.create(project, %{"name" => "Narrow", "scopes" => ["tasks:read", "tasks:write"]},
+        ApiKeys.create(
+          project,
+          %{
+            "name" => "Narrow",
+            "scopes" => ["tasks:read", "tasks:write", "notes:read", "notes:write"]
+          },
           actor_uuid: user.uuid
         )
 

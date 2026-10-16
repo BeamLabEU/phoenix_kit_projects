@@ -13,7 +13,7 @@ defmodule PhoenixKitProjects.Web.Api.PeopleController do
   @limit 100
 
   def index(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
+    with {:ok, conn} <- Json.require_scope(conn, "people:read"),
          {:ok, conn} <- Json.require_feature(conn, :assignees),
          {:ok, conn} <- Json.require_action(conn, :view) do
       q = params["q"] |> to_string() |> String.trim() |> String.downcase()

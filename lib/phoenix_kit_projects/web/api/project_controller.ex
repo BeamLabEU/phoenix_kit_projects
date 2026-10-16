@@ -21,8 +21,8 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
   @max_nesting 7
 
   def show(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "project:read"),
          {:ok, conn} <- Json.require_action(conn, :view) do
       json(conn, %{project: Json.project(conn.assigns.pk_project)})
     else
@@ -31,8 +31,8 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
   end
 
   def set_status(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "project:write"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "project:write"),
          {:ok, conn} <- Json.require_feature(conn, :statuses),
          {:ok, conn} <- Json.require_action(conn, :update_status) do
       Json.idempotent(conn, [], fn -> do_set_status(conn, params["status"]) end)
@@ -42,8 +42,8 @@ defmodule PhoenixKitProjects.Web.Api.ProjectController do
   end
 
   def create_subproject(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_feature(conn, :subprojects),
          {:ok, conn} <- Json.require_action(conn, :create_tasks) do

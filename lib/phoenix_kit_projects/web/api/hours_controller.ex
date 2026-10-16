@@ -17,8 +17,8 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
   @groups ~w(person task day)
 
   def show(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "time:read"),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :view),
          {:ok, opts} <- options(params) do

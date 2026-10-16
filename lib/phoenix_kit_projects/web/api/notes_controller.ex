@@ -26,8 +26,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
   @future_tolerance_seconds 300
 
   def index(conn, %{"id" => id}) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn, a} <- TasksController.fetch(conn, id),
+    with {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "notes:read"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :view) do
@@ -49,8 +49,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
   end
 
   def create(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn, a} <- TasksController.fetch(conn, id),
+    with {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "notes:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks),
@@ -94,8 +94,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   @doc false
   def project_index(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "notes:read"),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :view) do
       since = parse_since(params["since"])
@@ -115,8 +115,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   @doc false
   def project_create(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "notes:write"),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :comment),
          {:ok, conn} <- require_usage_rights(conn, params["usage"]) do

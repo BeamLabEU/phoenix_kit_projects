@@ -39,9 +39,9 @@ defmodule PhoenixKitProjects.Schemas.ApiKey do
   # deleting the project stay with a person.
   @roles ~w(manager member viewer)
 
-  # What a key may do, on top of what its role allows. Default: all of them.
-  # `usage:write` alone is the metering-only key an agent runner wants.
-  @scopes ~w(tasks:read tasks:write time:write usage:write project:write)
+  # What a key may do, on top of what its role allows, per area
+  # (`PhoenixKitProjects.ApiAccess`): read and write scopes. Default: all.
+  @scopes PhoenixKitProjects.ApiAccess.core_scopes()
 
   schema "phoenix_kit_project_api_keys" do
     field(:project_uuid, UUIDv7)
@@ -96,7 +96,7 @@ defmodule PhoenixKitProjects.Schemas.ApiKey do
       :expires_at
     ])
     |> update_change(:name, &String.trim/1)
-    |> validate_required([:project_uuid, :name, :role, :key_id, :secret_hash])
+    |> validate_required([:name, :role, :key_id, :secret_hash])
     |> validate_length(:name, min: 1, max: 80)
     |> validate_inclusion(:role, @roles)
     |> validate_scopes()

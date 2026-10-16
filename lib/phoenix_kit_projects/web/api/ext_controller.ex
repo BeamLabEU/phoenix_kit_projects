@@ -24,8 +24,8 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
     end
   end
 
-  def show(conn, %{"resource" => resource, "id" => id}) do
-    case prepare(conn, resource, :read) do
+  def show(conn, %{"resource" => resource, "id" => id} = params) do
+    case prepare(conn, resource, :read, params) do
       {:ok, conn, provider} -> call(conn, provider, :get, [ctx(conn), id])
       {:halt, conn} -> conn
     end
@@ -55,9 +55,13 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
   end
 
   def update(conn, %{"resource" => resource, "id" => id} = params) do
-    case prepare(conn, resource, :write) do
+    case prepare(conn, resource, :write, params) do
       {:ok, conn, provider} ->
-        call(conn, provider, :update, [ctx(conn), id, Map.drop(params, ["resource", "id"])])
+        call(conn, provider, :update, [
+          ctx(conn),
+          id,
+          Map.drop(params, ["resource", "id", "project"])
+        ])
 
       {:halt, conn} ->
         conn
@@ -68,7 +72,7 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
   # (`project` picks a sub-project within reach for list and create), the
   # extension on it, and the role floor — reads need `:view`, writes the
   # provider's own action.
-  defp prepare(conn, resource, mode, params \\ %{}) do
+  defp prepare(conn, resource, mode, params) do
     case Extensions.api_provider(resource) do
       nil ->
         {:halt,
@@ -79,8 +83,8 @@ defmodule PhoenixKitProjects.Web.Api.ExtController do
         scope = if mode == :read, do: scopes.read, else: scopes.write
         action = if mode == :read, do: :view, else: provider.action()
 
-        with {:ok, conn} <- Json.require_scope(conn, scope),
-             {:ok, conn} <- Json.scope_project(conn, params),
+        with {:ok, conn} <- Json.scope_project(conn, params),
+             {:ok, conn} <- Json.require_scope(conn, scope),
              {:ok, conn} <- require_extension(conn, ext.key),
              {:ok, conn} <- Json.require_action(conn, action) do
           {:ok, conn, provider}

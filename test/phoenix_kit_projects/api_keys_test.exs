@@ -63,7 +63,8 @@ defmodule PhoenixKitProjects.ApiKeysTest do
       assert ApiKey.accountable_uuid(shared) == nil
     end
 
-    test "leaving the project ends the person's keys", %{project: project} do
+    test "leaving the project takes that project from the person's keys, not the keys",
+         %{project: project} do
       owner = user_fixture()
       member = user_fixture()
       {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
@@ -79,9 +80,11 @@ defmodule PhoenixKitProjects.ApiKeysTest do
       {:ok, _} = Members.remove_member(project, member.uuid, actor_uuid: owner.uuid)
 
       assert ApiKeys.list_for_user(project.uuid, member.uuid) == []
-      assert {:error, :revoked} = ApiKeys.authenticate(token)
-      assert_activity_logged("projects.api_key_revoked", resource_uuid: project.uuid)
-      assert ApiKeys.get(other.uuid).revoked_at == nil
+      # V24: the key may reach other projects; only this one is taken away.
+      assert {:ok, _} = ApiKeys.authenticate(token)
+      assert {:error, :no_access} = ApiKeys.access_for(key, project.uuid)
+      assert_activity_logged("projects.api_key_access_removed", resource_uuid: project.uuid)
+      assert {:ok, _} = ApiKeys.access_for(ApiKeys.get(other.uuid), project.uuid)
 
       # a key that somehow outlives the membership is refused at resolve time
       assert {:error, :membership_ended} = ApiKeys.effective_role(key, project)

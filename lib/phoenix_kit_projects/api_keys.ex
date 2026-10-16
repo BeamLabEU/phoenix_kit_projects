@@ -34,8 +34,8 @@ defmodule PhoenixKitProjects.ApiKeys do
 
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Activity, Authz}
-  alias PhoenixKitProjects.Schemas.{ApiIdempotency, ApiKey}
+  alias PhoenixKitProjects.{Activity, Authz, Projects}
+  alias PhoenixKitProjects.Schemas.{ApiIdempotency, ApiKey, ApiKeyGrant}
 
   # Strongest first; anything unrecognised ranks as the weakest.
   @role_rank %{"owner" => 0, "manager" => 1, "member" => 2, "viewer" => 3}
@@ -51,29 +51,297 @@ defmodule PhoenixKitProjects.ApiKeys do
 
   @type token :: String.t()
 
-  @doc "Every key of a project, newest first, revoked ones included."
+  @doc "Every key with access set on a project, newest first, revoked ones included."
   @spec list_for_project(binary()) :: [ApiKey.t()]
   def list_for_project(project_uuid) when is_binary(project_uuid) do
     RepoHelper.repo().all(
-      from(k in ApiKey, where: k.project_uuid == ^project_uuid, order_by: [desc: k.inserted_at])
+      from(k in ApiKey,
+        join: g in ApiKeyGrant,
+        on: g.api_key_uuid == k.uuid,
+        where: g.project_uuid == ^project_uuid,
+        distinct: k.uuid,
+        order_by: [desc: k.uuid]
+      )
     )
+    |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
   end
 
-  @doc "The live (not revoked) keys acting for `user_uuid` on a project, newest first."
+  @doc "The live keys acting for `user_uuid` with access set on a project, newest first."
   @spec list_for_user(binary(), binary()) :: [ApiKey.t()]
   def list_for_user(project_uuid, user_uuid)
       when is_binary(project_uuid) and is_binary(user_uuid) do
-    RepoHelper.repo().all(
-      from(k in ApiKey,
-        where:
-          k.project_uuid == ^project_uuid and k.user_uuid == ^user_uuid and
-            is_nil(k.revoked_at),
-        order_by: [desc: k.inserted_at]
-      )
-    )
+    project_uuid
+    |> list_for_project()
+    |> Enum.filter(&(&1.user_uuid == user_uuid and is_nil(&1.revoked_at)))
   end
 
   def list_for_user(_, _), do: []
+
+  @doc "Every key acting for `user_uuid`, newest first, revoked ones included."
+  @spec list_mine(binary()) :: [ApiKey.t()]
+  def list_mine(user_uuid) when is_binary(user_uuid) do
+    RepoHelper.repo().all(
+      from(k in ApiKey, where: k.user_uuid == ^user_uuid, order_by: [desc: k.inserted_at])
+    )
+  end
+
+  def list_mine(_), do: []
+
+  @doc "Every key on the site, newest first — for administrators."
+  @spec list_all() :: [ApiKey.t()]
+  def list_all, do: RepoHelper.repo().all(from(k in ApiKey, order_by: [desc: k.inserted_at]))
+
+  @doc """
+  The keys that reach a project — a grant on it or on a project above it
+  that covers its sub-projects — newest first, revoked ones left out. What
+  a project's own pages show.
+  """
+  @spec list_reaching(binary()) :: [ApiKey.t()]
+  def list_reaching(project_uuid) when is_binary(project_uuid) do
+    chain = [project_uuid | project_uuid |> Projects.parent_chain() |> Enum.map(& &1.uuid)]
+
+    from(k in ApiKey,
+      join: g in ApiKeyGrant,
+      on: g.api_key_uuid == k.uuid,
+      where: g.project_uuid in ^chain and is_nil(k.revoked_at),
+      distinct: true,
+      select: k
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.filter(&match?({:ok, _}, access_for(&1, project_uuid)))
+    |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
+  rescue
+    _ -> []
+  end
+
+  # ── Grants: what a key may do, per project (V24) ──────────────────
+
+  @doc "A key's grants, oldest first."
+  @spec grants(ApiKey.t() | binary()) :: [ApiKeyGrant.t()]
+  def grants(%ApiKey{uuid: uuid}), do: grants(uuid)
+
+  def grants(key_uuid) when is_binary(key_uuid) do
+    RepoHelper.repo().all(
+      from(g in ApiKeyGrant, where: g.api_key_uuid == ^key_uuid, order_by: g.inserted_at)
+    )
+  end
+
+  @doc """
+  Sets what a key may do in a project: `attrs` carries `"scopes"` (an empty
+  list is "no access" — it stops a parent's grant there), `"role"` (the
+  cap) and `"inherit"`. Creates the grant or replaces it. A key without a
+  home gets this project as its home. Options: `:actor_uuid`.
+  """
+  @spec put_grant(ApiKey.t(), binary(), map(), keyword()) ::
+          {:ok, ApiKeyGrant.t()} | {:error, Ecto.Changeset.t()}
+  def put_grant(%ApiKey{} = key, project_uuid, attrs, opts \\ []) do
+    attrs =
+      attrs
+      |> stringify_keys()
+      |> Map.put("api_key_uuid", key.uuid)
+      |> Map.put("project_uuid", project_uuid)
+      |> Map.put_new("role", key.role || "member")
+
+    existing =
+      RepoHelper.repo().one(
+        from(g in ApiKeyGrant,
+          where: g.api_key_uuid == ^key.uuid and g.project_uuid == ^project_uuid
+        )
+      )
+
+    result =
+      (existing || %ApiKeyGrant{})
+      |> ApiKeyGrant.changeset(attrs)
+      |> RepoHelper.repo().insert_or_update()
+
+    with {:ok, grant} <- result do
+      if is_nil(key.project_uuid) do
+        from(k in ApiKey, where: k.uuid == ^key.uuid and is_nil(k.project_uuid))
+        |> RepoHelper.repo().update_all(set: [project_uuid: project_uuid])
+      end
+
+      Activity.log("projects.api_key_access_set",
+        actor_uuid: Keyword.get(opts, :actor_uuid),
+        resource_type: "project",
+        resource_uuid: project_uuid,
+        metadata: %{
+          "api_key" => key.uuid,
+          "name" => key.name,
+          "scopes" => grant.scopes,
+          "role" => grant.role,
+          "inherit" => grant.inherit
+        }
+      )
+
+      {:ok, grant}
+    end
+  end
+
+  @doc """
+  Takes a key's access to a project away (the grant row goes; a parent's
+  grant may then reach the project again). The key's home moves to another
+  of its grants, or none. Options: `:actor_uuid`.
+  """
+  @spec delete_grant(ApiKey.t(), binary(), keyword()) :: :ok
+  def delete_grant(%ApiKey{} = key, project_uuid, opts \\ []) do
+    {n, _} =
+      from(g in ApiKeyGrant,
+        where: g.api_key_uuid == ^key.uuid and g.project_uuid == ^project_uuid
+      )
+      |> RepoHelper.repo().delete_all()
+
+    if key.project_uuid == project_uuid do
+      next = key |> grants() |> List.first()
+
+      from(k in ApiKey, where: k.uuid == ^key.uuid)
+      |> RepoHelper.repo().update_all(set: [project_uuid: next && next.project_uuid])
+    end
+
+    if n > 0 do
+      Activity.log("projects.api_key_access_removed",
+        actor_uuid: Keyword.get(opts, :actor_uuid),
+        resource_type: "project",
+        resource_uuid: project_uuid,
+        metadata: %{"api_key" => key.uuid, "name" => key.name}
+      )
+    end
+
+    :ok
+  end
+
+  @doc "Makes `project_uuid` — one the key has a grant on — its home (where a call without `project` acts)."
+  @spec set_home(ApiKey.t(), binary()) :: {:ok, ApiKey.t()} | {:error, :no_grant}
+  def set_home(%ApiKey{} = key, project_uuid) do
+    if Enum.any?(grants(key), &(&1.project_uuid == project_uuid)) do
+      key |> Ecto.Changeset.change(project_uuid: project_uuid) |> RepoHelper.repo().update()
+    else
+      {:error, :no_grant}
+    end
+  end
+
+  @doc """
+  What `key` may do in a project right now: `{:ok, %{scopes, role, grant}}`,
+  or `{:error, :no_access}` / `{:error, :membership_ended}`.
+
+  The NEAREST grant up the project's tree decides — the project's own, else
+  its parent's, and so on. A grant on a project above that does not cover
+  sub-projects (`inherit: false`), or a nearest grant with no scopes ("no
+  access"), means no access; nothing further up is consulted. The role is
+  the grant's cap for a shared key; for a personal key the weakest of the
+  cap, the person's current role on the GRANT's project and manager — the
+  grant's project, because sub-projects usually have no members of their
+  own. A person no longer on that project ends the grant
+  (`:membership_ended`), not the key.
+  """
+  @spec access_for(ApiKey.t(), binary() | map()) ::
+          {:ok, %{scopes: [String.t()], role: String.t(), grant: ApiKeyGrant.t()}}
+          | {:error, :no_access | :membership_ended}
+  def access_for(%ApiKey{} = key, %{uuid: uuid}), do: access_for(key, uuid)
+
+  def access_for(%ApiKey{uuid: key_uuid} = key, project_uuid) when is_binary(project_uuid) do
+    by_project = Map.new(grants(key_uuid), &{&1.project_uuid, &1})
+
+    chain = [
+      project_uuid
+      | project_uuid |> Projects.parent_chain() |> Enum.reverse() |> Enum.map(& &1.uuid)
+    ]
+
+    case Enum.find_value(chain, fn uuid -> by_project[uuid] end) do
+      nil ->
+        {:error, :no_access}
+
+      %ApiKeyGrant{scopes: []} ->
+        {:error, :no_access}
+
+      %ApiKeyGrant{project_uuid: ^project_uuid} = grant ->
+        grant_role(key, grant)
+
+      %ApiKeyGrant{inherit: false} ->
+        {:error, :no_access}
+
+      grant ->
+        grant_role(key, grant)
+    end
+  rescue
+    _ -> {:error, :no_access}
+  end
+
+  def access_for(_key, _project), do: {:error, :no_access}
+
+  defp grant_role(%ApiKey{user_uuid: nil}, grant),
+    do: {:ok, %{scopes: grant.scopes, role: grant.role, grant: grant}}
+
+  defp grant_role(%ApiKey{user_uuid: user_uuid}, grant) do
+    case Projects.get_project(grant.project_uuid) do
+      nil ->
+        {:error, :no_access}
+
+      project ->
+        case Authz.effective_role(project, user_uuid) do
+          nil ->
+            {:error, :membership_ended}
+
+          role ->
+            {:ok,
+             %{scopes: grant.scopes, role: weaker(Atom.to_string(role), grant.role), grant: grant}}
+        end
+    end
+  end
+
+  @doc "Whether `key` may use `scope` in a project right now."
+  @spec allows?(ApiKey.t(), binary(), String.t()) :: boolean()
+  def allows?(%ApiKey{} = key, project_uuid, scope) do
+    case access_for(key, project_uuid) do
+      {:ok, %{scopes: scopes}} -> scope in scopes
+      _ -> false
+    end
+  end
+
+  @doc """
+  The key as it acts in `project`: its `role` and `scopes` set to that
+  project's access (`access_for/2`). What every API check reads, so a key
+  never carries one project's rights into another.
+  """
+  @spec view(ApiKey.t(), map() | binary()) ::
+          {:ok, ApiKey.t()} | {:error, :no_access | :membership_ended}
+  def view(%ApiKey{} = key, project) do
+    with {:ok, %{scopes: scopes, role: role}} <- access_for(key, project),
+         do: {:ok, %{key | role: role, scopes: scopes}}
+  end
+
+  @doc """
+  Every project the key reaches, with its access there: the projects it has
+  grants on, and — for grants that cover sub-projects — everything under
+  them. `[%{project, scopes, role, source}]`, `source` `:direct` or
+  `{:inherited, from_project_uuid}`. What `GET /me` lists.
+  """
+  @spec reachable(ApiKey.t()) :: [map()]
+  def reachable(%ApiKey{} = key) do
+    key
+    |> grants()
+    |> Enum.flat_map(fn g ->
+      below =
+        if g.inherit, do: Projects.subtree_uuids(g.project_uuid) -- [g.project_uuid], else: []
+
+      [g.project_uuid | below]
+    end)
+    |> Enum.uniq()
+    |> Enum.flat_map(fn uuid ->
+      with %{} = project <- Projects.get_project(uuid),
+           {:ok, access} <- access_for(key, uuid) do
+        source =
+          if access.grant.project_uuid == uuid,
+            do: :direct,
+            else: {:inherited, access.grant.project_uuid}
+
+        [%{project: project, scopes: access.scopes, role: access.role, source: source}]
+      else
+        _ -> []
+      end
+    end)
+  rescue
+    _ -> []
+  end
 
   @doc """
   The role a key acts with on `project` right now. A shared key: its stored
@@ -99,11 +367,9 @@ defmodule PhoenixKitProjects.ApiKeys do
   still hand an arbitrary uuid.
   """
   @spec resolve(ApiKey.t(), map()) ::
-          {:ok, ApiKey.t()} | {:error, :membership_ended | :account_inactive}
+          {:ok, ApiKey.t()} | {:error, :membership_ended | :account_inactive | :no_access}
   def resolve(%ApiKey{} = key, project) do
-    with :ok <- account_live(key),
-         {:ok, role} <- effective_role(key, project),
-         do: {:ok, %{key | role: role}}
+    with :ok <- account_live(key), do: view(key, project)
   end
 
   defp account_live(%ApiKey{user_uuid: nil}), do: :ok
@@ -121,12 +387,17 @@ defmodule PhoenixKitProjects.ApiKeys do
     Enum.max_by(["manager", cap, role], &Map.get(@role_rank, &1, 3))
   end
 
-  @doc "Revokes every live key acting for `user_uuid` on the project — when they leave it."
+  @doc """
+  Takes the project away from every key acting for `user_uuid` — when they
+  leave it. The keys themselves stay: what they reach elsewhere is not
+  this project's to end (V24; before it a key had one project and was
+  revoked).
+  """
   @spec revoke_for_user(binary(), binary(), keyword()) :: :ok
   def revoke_for_user(project_uuid, user_uuid, opts \\ []) do
     project_uuid
     |> list_for_user(user_uuid)
-    |> Enum.each(&revoke(&1, Keyword.put(opts, :reason, "membership_ended")))
+    |> Enum.each(&delete_grant(&1, project_uuid, opts))
 
     :ok
   rescue
@@ -161,11 +432,16 @@ defmodule PhoenixKitProjects.ApiKeys do
   def get(uuid) when is_binary(uuid), do: RepoHelper.repo().get(ApiKey, uuid)
   def get(_), do: nil
 
-  @doc "A key by uuid that belongs to `project_uuid`, or nil."
+  @doc "A key by uuid that has access set on `project_uuid`, or nil."
   @spec get_for_project(binary(), binary()) :: ApiKey.t() | nil
   def get_for_project(project_uuid, uuid) when is_binary(project_uuid) and is_binary(uuid) do
     RepoHelper.repo().one(
-      from(k in ApiKey, where: k.uuid == ^uuid and k.project_uuid == ^project_uuid)
+      from(k in ApiKey,
+        join: g in ApiKeyGrant,
+        on: g.api_key_uuid == k.uuid,
+        where: k.uuid == ^uuid and g.project_uuid == ^project_uuid,
+        limit: 1
+      )
     )
   end
 
@@ -201,7 +477,7 @@ defmodule PhoenixKitProjects.ApiKeys do
       |> ApiKey.credential_changeset(key_id, hash(secret))
       |> ApiKey.create_changeset(attrs)
 
-    case RepoHelper.repo().insert(changeset) do
+    case insert_with_grant(changeset, attrs) do
       {:ok, key} ->
         Activity.log("projects.api_key_created",
           actor_uuid: actor_uuid,
@@ -219,6 +495,37 @@ defmodule PhoenixKitProjects.ApiKeys do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  # The key and, when it has a project, its grant there — the scopes and
+  # the role it was minted with. One transaction: no key without its access.
+  defp insert_with_grant(changeset, attrs) do
+    RepoHelper.repo().transaction(fn ->
+      with {:ok, key} <- RepoHelper.repo().insert(changeset),
+           :ok <- first_grant(key, attrs) do
+        key
+      else
+        {:error, cs} -> RepoHelper.repo().rollback(cs)
+      end
+    end)
+  end
+
+  defp first_grant(%ApiKey{project_uuid: nil}, _attrs), do: :ok
+
+  defp first_grant(%ApiKey{} = key, attrs) do
+    %ApiKeyGrant{}
+    |> ApiKeyGrant.changeset(%{
+      "api_key_uuid" => key.uuid,
+      "project_uuid" => key.project_uuid,
+      "scopes" => Map.get(attrs, "scopes", key.scopes),
+      "role" => key.role,
+      "inherit" => Map.get(attrs, "inherit", true)
+    })
+    |> RepoHelper.repo().insert()
+    |> case do
+      {:ok, _} -> :ok
+      {:error, cs} -> {:error, cs}
     end
   end
 
@@ -304,16 +611,33 @@ defmodule PhoenixKitProjects.ApiKeys do
 
     # Only from where the caller saw it (and was authorized for it): a key
     # somebody else moved or revoked in the meantime is `:stale`, not moved
-    # a second time on the strength of the first look.
-    moved =
-      from(k in ApiKey,
-        where: k.uuid == ^key.uuid and k.project_uuid == ^from_uuid and is_nil(k.revoked_at),
-        select: k
-      )
-      |> RepoHelper.repo().update_all(set: [project_uuid: to_uuid])
+    # a second time on the strength of the first look. Its grant there goes
+    # with it; its grants elsewhere stay where they are.
+    RepoHelper.repo().transaction(fn ->
+      case from(k in ApiKey,
+             where: k.uuid == ^key.uuid and k.project_uuid == ^from_uuid and is_nil(k.revoked_at),
+             select: k
+           )
+           |> RepoHelper.repo().update_all(set: [project_uuid: to_uuid]) do
+        {1, [moved]} ->
+          from(g in ApiKeyGrant,
+            where: g.api_key_uuid == ^key.uuid and g.project_uuid == ^to_uuid
+          )
+          |> RepoHelper.repo().delete_all()
 
-    case moved do
-      {1, [moved]} ->
+          from(g in ApiKeyGrant,
+            where: g.api_key_uuid == ^key.uuid and g.project_uuid == ^from_uuid
+          )
+          |> RepoHelper.repo().update_all(set: [project_uuid: to_uuid])
+
+          moved
+
+        _ ->
+          RepoHelper.repo().rollback(:stale)
+      end
+    end)
+    |> case do
+      {:ok, moved} ->
         Activity.log("projects.api_key_moved",
           actor_uuid: Keyword.get(opts, :actor_uuid),
           resource_type: "project",
@@ -323,7 +647,7 @@ defmodule PhoenixKitProjects.ApiKeys do
 
         {:ok, moved}
 
-      _ ->
+      {:error, :stale} ->
         {:error, :stale}
     end
   end

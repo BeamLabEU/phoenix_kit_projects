@@ -30,8 +30,8 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   @max_amount WorkEntry.max_amount()
 
   def task_time(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "time:write"),
-         {:ok, conn, a} <- TasksController.fetch(conn, id),
+    with {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "time:write"),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :log_time) do
       Json.idempotent(conn, [required: true], fn -> record_time(conn, a.uuid, params) end)
@@ -51,8 +51,8 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   end
 
   def task_usage(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "usage:write"),
-         {:ok, conn, a} <- TasksController.fetch(conn, id),
+    with {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "usage:write"),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :log_time) do
       Json.idempotent(conn, [required: true], fn -> record_usage(conn, a.uuid, params) end)
@@ -75,8 +75,8 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   # sub-project), newest first — what an agent needs after a reset to find
   # the uuid of the row it wants to correct.
   def index(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "time:read"),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :view) do
       limit = page_limit(params["limit"])
@@ -95,8 +95,8 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   end
 
   def task_index(conn, %{"id" => id}) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn, a} <- TasksController.fetch(conn, id),
+    with {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "time:read"),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :view) do
       entries =
@@ -205,10 +205,18 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
   # for minutes, `usage:write` for tokens and cost. The first check (before
   # the row is looked up) only asks for either, so a key with neither learns
   # nothing about which entries exist.
+  #
+  # Asked of the key's grants anywhere (V24): the entry may sit in another
+  # project than the home, and that project's own access is checked once
+  # the entry is found (`own_entry/2`).
   defp any_write_scope(conn) do
-    if ApiKey.scope?(conn.assigns.pk_api_key, "usage:write"),
-      do: {:ok, conn},
-      else: Json.require_scope(conn, "time:write")
+    key = conn.assigns.pk_api_key
+
+    if Enum.any?(PhoenixKitProjects.ApiKeys.grants(key), fn g ->
+         "usage:write" in g.scopes or "time:write" in g.scopes
+       end),
+       do: {:ok, conn},
+       else: Json.require_scope(conn, "time:write")
   end
 
   defp entry_scope(%{kind: "time"}), do: "time:write"
@@ -235,7 +243,11 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
 
     with %{} = entry <- Ledger.get_entry(id) || :not_found,
          true <- Json.within_reach?(key, entry.project_uuid) || :not_found,
-         %{} = project <- Projects.get_project(entry.project_uuid) || :not_found do
+         %{} = project <- Projects.get_project(entry.project_uuid) || :not_found,
+         # The entry's project's access decides (V24), not the home's.
+         conn = Json.rescope(conn, project),
+         {:ok, conn} <- Json.still_allowed(conn) do
+      key = conn.assigns.pk_api_key
       own? = entry.actor_kind == "ai_agent" and entry.actor_uuid == key.uuid
 
       allowed? =
@@ -243,7 +255,7 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
           (own? and Project.agent_policy(project)["amend_own_ledger"] == true)
 
       if allowed?,
-        do: {:ok, Json.rescope(conn, project), entry},
+        do: {:ok, conn, entry},
         else:
           {:halt,
            Json.error(
@@ -254,6 +266,9 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
              %{policy: "amend_own_ledger"}
            )}
     else
+      {:halt, conn} ->
+        {:halt, conn}
+
       :not_found ->
         {:halt,
          Json.error(

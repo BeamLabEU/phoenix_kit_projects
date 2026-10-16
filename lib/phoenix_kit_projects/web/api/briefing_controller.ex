@@ -12,9 +12,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   use Phoenix.Controller, formats: [:json]
 
-  alias PhoenixKitProjects.{Extensions, Labels, ProjectEvents, Projects, TaskNotes}
+  alias PhoenixKitProjects.{ApiKeys, Extensions, Labels, ProjectEvents, Projects, TaskNotes}
   alias PhoenixKitProjects.Outline.Api, as: OutlineApi
-  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   alias PhoenixKitProjects.Web.Api.{
     Assignee,
@@ -29,8 +29,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   @priority_rank %{"urgent" => 0, "high" => 1, "normal" => 2, "low" => 3}
 
   def show(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view) do
       project = conn.assigns.pk_project
@@ -131,28 +131,32 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   defp client_lines(conn, since) do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
-    with %{ext: ext, module: provider} <- Extensions.api_provider("interactions"),
-         true <- ApiKey.scope?(key, provider.scopes().read) do
-      [project | Enum.reverse(Projects.parent_chain(project.uuid))]
-      |> Enum.filter(&(Json.within_reach?(key, &1.uuid) and Extensions.enabled?(&1, ext.key)))
-      |> Enum.find_value(nil, fn p ->
-        case list_interactions(provider, Json.rescope(conn, p), since) do
-          # one line each: the bodies are the interaction's own read
-          {:ok, %{interactions: rows}} ->
-            %{
-              project_uuid: p.uuid,
-              interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"])),
-              # what is planned with the client, soonest first — and what is
-              # past its time with no outcome said (`overdue`)
-              planned: planned_lines(provider, Json.rescope(conn, p))
-            }
+    case Extensions.api_provider("interactions") do
+      %{ext: ext, module: provider} ->
+        [project | Enum.reverse(Projects.parent_chain(project.uuid))]
+        |> Enum.filter(
+          &(ApiKeys.allows?(key, &1.uuid, provider.scopes().read) and
+              Extensions.enabled?(&1, ext.key))
+        )
+        |> Enum.find_value(nil, fn p ->
+          case list_interactions(provider, Json.rescope(conn, p), since) do
+            # one line each: the bodies are the interaction's own read
+            {:ok, %{interactions: rows}} ->
+              %{
+                project_uuid: p.uuid,
+                interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"])),
+                # what is planned with the client, soonest first — and what is
+                # past its time with no outcome said (`overdue`)
+                planned: planned_lines(provider, Json.rescope(conn, p))
+              }
 
-          _ ->
-            nil
-        end
-      end)
-    else
-      _ -> nil
+            _ ->
+              nil
+          end
+        end)
+
+      _ ->
+        nil
     end
   rescue
     _ -> nil

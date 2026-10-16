@@ -32,7 +32,7 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   def call(conn, _opts) do
     with {:ok, token} <- bearer(conn),
          {:ok, key} <- ApiKeys.authenticate(token),
-         %{} = project <- Projects.get_project(key.project_uuid) || :no_project,
+         %{} = project <- home_project(key) || :no_project,
          {:ok, key} <- ApiKeys.resolve(key, project) do
       conn
       |> rate_limit(key)
@@ -42,7 +42,11 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
 
           # A `#KEY-42` this request writes becomes a link only within the
           # key's reach (`RefText`, "Who is writing").
-          PhoenixKitProjects.RefText.put_writer({:reach, &Json.within_reach?(key, &1)})
+          # Only where it may read tasks: an interactions-only grant must
+          # not turn `#ANDI-12` into a link (and so confirm the task).
+          PhoenixKitProjects.RefText.put_writer(
+            {:reach, &PhoenixKitProjects.ApiKeys.allows?(key, &1, "tasks:read")}
+          )
 
           conn
           |> assign(:pk_api_key, key)
@@ -53,6 +57,15 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
           conn
       end
     else
+      {:error, :no_access} ->
+        conn
+        |> Json.error(
+          :forbidden,
+          "no_access",
+          "This key has no access to its home project. Set it on the API keys page (Projects → API keys)."
+        )
+        |> halt()
+
       {:error, :membership_ended} ->
         conn
         |> Json.error(
@@ -70,6 +83,18 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
           "A valid project API key is required: Authorization: Bearer pkp_…"
         )
         |> halt()
+    end
+  end
+
+  # Where a call without `project` acts: the key's home (V24) — its first
+  # grant's project when the home was taken away.
+  defp home_project(key) do
+    with nil <- key.project_uuid && Projects.get_project(key.project_uuid),
+         [first | _] <- ApiKeys.grants(key) do
+      Projects.get_project(first.project_uuid)
+    else
+      [] -> nil
+      project -> project
     end
   end
 

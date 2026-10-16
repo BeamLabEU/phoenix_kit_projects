@@ -56,6 +56,10 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   @doc "The key must carry `scope`, else 403 `scope_missing`."
   @spec require_scope(Plug.Conn.t(), String.t()) :: {:ok, Plug.Conn.t()} | {:halt, Plug.Conn.t()}
   def require_scope(conn, scope) do
+    # Remembered: a request that moves to another project afterwards
+    # (`rescope/2`) is checked again against THAT project's access.
+    conn = assign(conn, :pk_required, Enum.uniq([scope | conn.assigns[:pk_required] || []]))
+
     if ApiKey.scope?(conn.assigns.pk_api_key, scope),
       do: {:ok, conn},
       else:
@@ -72,25 +76,20 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   end
 
   @doc """
-  A key reaches its own project and every sub-project nested under it.
-  `project_uuid` is within reach when it is the key's project or one of
-  its descendants (the parent chain walked up to the key's project).
+  Whether the key reaches a project at all: the nearest grant up the
+  project's tree gives it some access there (`ApiKeys.access_for/2`, V24).
   """
   @spec within_reach?(ApiKey.t(), String.t()) :: boolean()
-  def within_reach?(%ApiKey{project_uuid: root}, root), do: true
-
-  def within_reach?(%ApiKey{project_uuid: root}, project_uuid) when is_binary(project_uuid) do
-    project_uuid |> Projects.parent_chain() |> Enum.any?(&(&1.uuid == root))
-  rescue
-    _ -> false
-  end
+  def within_reach?(%ApiKey{} = key, project_uuid) when is_binary(project_uuid),
+    do: match?({:ok, _}, ApiKeys.access_for(key, project_uuid))
 
   def within_reach?(_key, _), do: false
 
   @doc """
-  Points the request at `params["project"]` when it names a sub-project
-  within the key's reach (else 404 `not_found`); without the param the
-  request stays on the key's own project. Project-level calls take it;
+  Points the request at `params["project"]` (a key or uuid) when the key
+  reaches that project (else 404 `not_found`), re-resolving the key's
+  rights for it and re-checking every scope already required; without the
+  param the request stays on the key's home project. Project-level calls take it;
   task-level calls find their project through the task (`rescope/2`).
   """
   @spec scope_project(Plug.Conn.t(), map()) :: {:ok, Plug.Conn.t()} | {:halt, Plug.Conn.t()}
@@ -106,7 +105,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
 
           %Project{uuid: uuid} = project ->
             if within_reach?(conn.assigns.pk_api_key, uuid),
-              do: {:ok, rescope(conn, project)},
+              do: conn |> rescope(project) |> still_allowed(),
               else: {:halt, no_such_project(conn)}
 
           _ ->
@@ -118,12 +117,47 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     end
   end
 
-  @doc "The request now acts on `project` (a sub-project within reach): its feature gates and role floors apply."
+  @doc "The request now acts on `project`: the key's role and scopes become that project's grant's, and its feature gates apply."
   @spec rescope(Plug.Conn.t(), Project.t()) :: Plug.Conn.t()
   def rescope(conn, %Project{} = project) do
+    key = conn.assigns.pk_api_key
+
+    # The key as it acts HERE (V24): its role and scopes are this
+    # project's grant's, never the home project's.
+    view =
+      case ApiKeys.view(key, project) do
+        {:ok, view} -> view
+        _ -> %{key | role: nil, scopes: []}
+      end
+
     conn
+    |> assign(:pk_api_key, view)
     |> assign(:pk_project, project)
     |> assign(:pk_fx, Features.gates(project))
+  end
+
+  @doc """
+  After a move to another project (`rescope/2`): every scope the request
+  already required must hold there too, else 403 `scope_missing`.
+  """
+  @spec still_allowed(Plug.Conn.t()) :: {:ok, Plug.Conn.t()} | {:halt, Plug.Conn.t()}
+  def still_allowed(conn) do
+    key = conn.assigns.pk_api_key
+
+    case Enum.reject(conn.assigns[:pk_required] || [], &ApiKey.scope?(key, &1)) do
+      [] ->
+        {:ok, conn}
+
+      [scope | _] ->
+        {:halt,
+         error(
+           conn,
+           :forbidden,
+           "scope_missing",
+           "This key does not carry the #{scope} scope in project #{conn.assigns.pk_project.key || conn.assigns.pk_project.uuid}.",
+           %{scope: scope, project: conn.assigns.pk_project.key}
+         )}
+    end
   end
 
   defp no_such_project(conn) do
@@ -131,7 +165,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       conn,
       :not_found,
       "not_found",
-      "No such project within this key's reach: the key's own project or a sub-project nested under it."
+      "No such project within this key's reach. GET /me lists every project the key reaches."
     )
   end
 
@@ -190,7 +224,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
         "Send an Idempotency-Key header (any unique string per attempt), so a retry cannot record this twice."
       )
     else
-      case ApiKeys.idempotent(key, header, fun) do
+      # The same header on another project is another request (V24: one
+      # key, many projects) — never a replay of the first one's answer.
+      case ApiKeys.idempotent(key, scoped_header(header, conn), fun) do
         {:ok, status, body} ->
           conn |> put_status(status) |> json(body)
 
@@ -202,6 +238,23 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       end
     end
   end
+
+  defp scoped_header(nil, _conn), do: nil
+
+  defp scoped_header(header, conn) do
+    case conn.assigns[:pk_project] do
+      %{uuid: uuid} -> idempotency_scope(header, uuid)
+      _ -> header
+    end
+  end
+
+  @doc """
+  What an `Idempotency-Key` header is stored under for a project: the same
+  header on another project is another request (V24).
+  """
+  @spec idempotency_scope(String.t(), String.t()) :: String.t()
+  def idempotency_scope(header, project_uuid),
+    do: :crypto.hash(:sha256, project_uuid <> ":" <> header) |> Base.encode16(case: :lower)
 
   defp idempotency_key(conn) do
     case get_req_header(conn, "idempotency-key") do

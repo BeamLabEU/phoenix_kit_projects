@@ -14,6 +14,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
   alias PhoenixKitProjects.{ApiKeys, Features, IdempotencyHold, Labels, Ledger, Projects}
   alias PhoenixKitProjects.Schemas.{ApiIdempotency, Assignment, Project}
   alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitProjects.Web.Api.Json
 
   @base "/api/projects/v1"
 
@@ -678,7 +679,8 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
       %ApiIdempotency{}
       |> ApiIdempotency.changeset(%{
         api_key_uuid: elem(ApiKeys.authenticate(token), 1).uuid,
-        idempotency_key: "held",
+        # stored per project (V24): the header scoped to the key's home
+        idempotency_key: Json.idempotency_scope("held", project.uuid),
         status: 0,
         body: %{}
       })
@@ -687,7 +689,7 @@ defmodule PhoenixKitProjects.Web.ApiAgentTest do
     assert pending.status == 0
 
     # a LIVE first request holds the key's lock (a session of its own)
-    holder = IdempotencyHold.hold(pending.api_key_uuid, "held")
+    holder = IdempotencyHold.hold(pending.api_key_uuid, pending.idempotency_key)
 
     assert %{"error" => %{"code" => "in_progress"}} =
              c
