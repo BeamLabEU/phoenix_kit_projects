@@ -71,6 +71,8 @@ defmodule PhoenixKitProjects.Web.Routes do
         post("/tasks/:id/transition", TasksController, :transition)
         get("/tasks/:id/notes", NotesController, :index)
         post("/tasks/:id/notes", NotesController, :create)
+        get("/tasks/:id/comments", CommentsController, :index)
+        post("/tasks/:id/comments", CommentsController, :create)
         # Records an extension puts on the API (`Extensions.ApiProvider`).
         get("/ext/:resource", ExtController, :index)
         post("/ext/:resource", ExtController, :create)
