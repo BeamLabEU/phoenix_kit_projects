@@ -76,7 +76,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/me",
         summary:
-          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent; its `person_uuid` is what `assignee: me` resolves to), the role it acts with right now, its scopes, the project, which features are on, the actions the role allows, and where these docs are. Read this first.",
+          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent; its `person_uuid` is what `assignee: me` resolves to), its home project (`home_project`; `project` is the same, kept for older agents) with the role, scopes, features and allowed actions there, and EVERY project it reaches (`projects`: key, uuid, name, role, `access` per area, `source`). Read this first; pass `project=<key>` to work anywhere but home.",
         auth: true,
         scope: nil,
         action: nil,
@@ -92,7 +92,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "Who a task can be for: the staff people (`me: true` on the one this key acts for), teams and departments, by uuid and name. Use it to assign a task to a colleague you were given by name.",
         auth: true,
-        scope: "tasks:read",
+        scope: "people:read",
         action: "view",
         feature: "assignees",
         idempotency: nil,
@@ -114,7 +114,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "The key's project: name, dates, the current workflow status and the statuses available to it.",
         auth: true,
-        scope: "tasks:read",
+        scope: "project:read",
         action: "view",
         feature: nil,
         idempotency: nil,
@@ -125,7 +125,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+              "another project's key or uuid (from `projects` on /me, or `subprojects` on /project) to act there instead of the key's home project"
           }
         ],
         example: nil
@@ -148,7 +148,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+              "another project's key or uuid (from `projects` on /me, or `subprojects` on /project) to act there instead of the key's home project"
           },
           %{
             name: "status",
@@ -200,7 +200,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "nest it under a sub-project within reach instead of the key's own project (at most 7 levels down)"
+              "nest it under another project the key reaches instead of the home project (at most 7 levels down)"
           }
         ],
         example:
@@ -248,7 +248,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+              "another project's key or uuid (from `projects` on /me, or `subprojects` on /project) to act there instead of the key's home project"
           },
           %{
             name: "status",
@@ -353,7 +353,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+              "another project's key or uuid (from `projects` on /me, or `subprojects` on /project) to act there instead of the key's home project"
           },
           %{name: "title", in: :body, type: "string", required: true, doc: "up to a short line"},
           %{
@@ -514,7 +514,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "Move a task through its lifecycle: todo → in_progress or done; in_progress → done or todo; done → todo. Any other move answers 409 invalid_transition with `allowed_transitions` — reload the task and pick one of those. Completing a task completes every open task under it; when the last task under a parent is done, the parent completes too (unless the project turned that off); reopening a task reopens the done tasks above it; reopening a parent leaves the tasks under it as they are. `also_changed` says how many other tasks moved. Completing a task may complete the project; reopening one may reopen it.",
         auth: true,
-        scope: "tasks:write",
+        scope: "status:write",
         action: "update_status",
         feature: "tasks",
         idempotency: :optional,
@@ -536,7 +536,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         path: "/tasks/{id}/start",
         summary: "Alias of transition to in_progress.",
         auth: true,
-        scope: "tasks:write",
+        scope: "status:write",
         action: "update_status",
         feature: "tasks",
         idempotency: :optional,
@@ -549,7 +549,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         path: "/tasks/{id}/complete",
         summary: "Alias of transition to done.",
         auth: true,
-        scope: "tasks:write",
+        scope: "status:write",
         action: "update_status",
         feature: "tasks",
         idempotency: :optional,
@@ -562,7 +562,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         path: "/tasks/{id}/reopen",
         summary: "Alias of transition to todo.",
         auth: true,
-        scope: "tasks:write",
+        scope: "status:write",
         action: "update_status",
         feature: "tasks",
         idempotency: :optional,
@@ -657,7 +657,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+              "another project's key or uuid (from `projects` on /me, or `subprojects` on /project) to act there instead of the key's home project"
           }
         ],
         example:
@@ -751,7 +751,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+              "another project's key or uuid (from `projects` on /me, or `subprojects` on /project) to act there instead of the key's home project"
           },
           %{
             name: "minutes",
@@ -835,7 +835,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a sub-project's uuid (from `subprojects` on /project) to act on it instead of the key's own project"
+              "another project's key or uuid (from `projects` on /me, or `subprojects` on /project) to act there instead of the key's home project"
           },
           %{name: "tokens", in: :body, type: "integer", required: false, doc: ""},
           %{name: "cost_cents", in: :body, type: "integer", required: false, doc: ""},
@@ -852,7 +852,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "The task's notes thread (the long record, apart from the human discussion), oldest first, plus what to read FIRST: `direction` (the latest redirect a person wrote — follow it; older notes are context), `latest_agent_note` and `latest_human_note`.",
         auth: true,
-        scope: "tasks:read",
+        scope: "notes:read",
         action: "view",
         feature: "tasks",
         idempotency: nil,
@@ -866,7 +866,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "Write a note on the task — your reasoning, what you changed, what came out — with the usage it cost, in one call. `summary` is required: one line (≤ 240 chars) the next worker reads first. Put the long record in `content` (the site's comment length cap applies). `usage` is written to the ledger in the same transaction and counts toward the task's totals. Append-only: send an Idempotency-Key.",
         auth: true,
-        scope: "tasks:write",
+        scope: "notes:write",
         action: "edit_tasks",
         feature: "tasks",
         idempotency: :required,
@@ -923,13 +923,57 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
           ~s({"summary": "Moved the import to the batch API; tests green", "outcome": "done", "content": "## What I tried\\n…", "next_steps": "Deploy to dev and watch the queue", "refs": [{"type": "commit", "id": "a1b2c3d", "url": "https://github.com/acme/app/commit/a1b2c3d"}, {"type": "pr", "id": "42", "label": "Batch import"}], "usage": {"tokens": 18422, "cost_cents": 7, "minutes": 12, "model": "claude-sonnet-5-5"}})
       },
       %{
+        id: "listTaskComments",
+        method: "GET",
+        path: "/tasks/{id}/comments",
+        summary:
+          "The task's discussion — the thread people read and write under the task — oldest first: `{uuid, parent, author, content, inserted_at}`, `parent` set on a reply. Apart from your notes (/tasks/{id}/notes), which are your own record. Needs the comments module switched on for the site.",
+        auth: true,
+        scope: "comments:read",
+        action: "view",
+        feature: nil,
+        idempotency: nil,
+        params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
+        example: nil
+      },
+      %{
+        id: "createTaskComment",
+        method: "POST",
+        path: "/tasks/{id}/comments",
+        summary:
+          "Add to the task's discussion, as the person the key acts for (a shared agent: the person who made it), labelled with the key's name. For talking to people; your working record goes in a note. Append-only: send an Idempotency-Key.",
+        auth: true,
+        scope: "comments:write",
+        action: "comment",
+        feature: nil,
+        idempotency: :required,
+        params: [
+          %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
+          %{
+            name: "content",
+            in: :body,
+            type: "string",
+            required: true,
+            doc: "the comment, at most 10000 bytes; #ANDI-42 refs become links"
+          },
+          %{
+            name: "parent",
+            in: :body,
+            type: "uuid",
+            required: false,
+            doc: "the comment this one replies to"
+          }
+        ],
+        example: ~s({"content": "Done on dev — can someone check the import on staging?"})
+      },
+      %{
         id: "listProjectNotes",
         method: "GET",
         path: "/notes",
         summary:
           "The project's own notes - decisions, research, the block you were in before a reset - oldest first; `since` keeps only the newer ones. Task notes stay under /tasks/{id}/notes.",
         auth: true,
-        scope: "tasks:read",
+        scope: "notes:read",
         action: "view",
         feature: nil,
         idempotency: nil,
@@ -958,7 +1002,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "A note on the project itself, the same shape as a task note (summary, outcome, next_steps, refs, usage); its usage lands in the ledger with no task. Use it for what is not about one task.",
         auth: true,
-        scope: "tasks:write",
+        scope: "notes:write",
         action: "comment",
         feature: nil,
         idempotency: :required,
@@ -1047,7 +1091,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "Logged time summed for a period: `totals` (people's minutes, billable minutes, an agent's `ai_minutes`, tokens, cost, entries, people) and one grouping in `groups` — by person (default), by task or by day. Reads the project and, unless `include_subprojects=false`, everything nested under it. A period is cut on when the work was done (`occurred_at`, else when it was recorded); days are UTC days. The same figures as the Hours tab.",
         auth: true,
-        scope: "tasks:read",
+        scope: "time:read",
         action: "view",
         feature: "ledger",
         idempotency: nil,
@@ -1112,7 +1156,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "The project's ledger entries, newest first (200 at most): time, tokens and cost, who recorded each, the task and the note it belongs to, whether it was an estimate. The read behind a correction: find the uuid, then PATCH or DELETE /entries/{id}.",
         auth: true,
-        scope: "tasks:read",
+        scope: "time:read",
         action: "view",
         feature: "ledger",
         idempotency: nil,
@@ -1140,7 +1184,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         path: "/tasks/{id}/entries",
         summary: "The ledger entries on one task, newest first.",
         auth: true,
-        scope: "tasks:read",
+        scope: "time:read",
         action: "view",
         feature: "ledger",
         idempotency: nil,
@@ -1154,7 +1198,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         summary:
           "The project's own calendar events - milestones, reviews, internal dates - in time order. A meeting planned with the client is NOT here: it is an interaction with status planned (GET /ext/interactions?status=planned). Needs the events extension on the project.",
         auth: true,
-        scope: "tasks:read",
+        scope: "events:read",
         action: "view",
         feature: "events",
         idempotency: nil,
@@ -1189,7 +1233,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         path: "/events/{id}",
         summary: "One planned event of this project.",
         auth: true,
-        scope: "tasks:read",
+        scope: "events:read",
         action: "view",
         feature: "events",
         idempotency: nil,
@@ -1291,13 +1335,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
      "The key is missing, malformed, unknown, revoked or expired. Do not retry; tell your operator."},
     {403, "forbidden",
      "The key's role may not perform this action on this project. Do not retry."},
-    {403, "scope_missing", "The key does not carry the scope this call needs. Do not retry."},
+    {403, "scope_missing",
+     "The key's access in this project does not cover this call (the area is none, or read where it needs write). Access is set per project: check `projects` on /me. Do not retry."},
     {403, "feature_disabled",
      "The project has this feature turned off (see `features` and `extensions` on /me). Do not retry."},
     {403, "membership_ended",
      "This key acts for a person who is no longer a member of the project. Do not retry; tell your operator."},
     {404, "not_found",
-     "No such task, or no such project within this key's reach (its own project and the sub-projects under it). Reload /tasks or /project."},
+     "No such task, or no such project within this key's reach (the projects listed under `projects` on /me). Reload /me, /tasks or /project."},
     {403, "foreign_text",
      "The task's title or description were written by someone else and the project does not let an agent reword them (agent_policy.edit_foreign_text). Leave the words; add a note."},
     {403, "delete_not_allowed",
@@ -1371,9 +1416,9 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     """
     # Projects API #{@version}
 
-    > The JSON API an agent drives one project with: read and create tasks, move them through
-    > their lifecycle, and report the minutes, tokens and cost of the work. One key = one project
-    > and every sub-project nested under it.
+    > The JSON API an agent drives projects with: read and create tasks, move them through
+    > their lifecycle, talk in their discussions, and report the minutes, tokens and cost of the
+    > work. One key can reach several projects, with its own access in each; `GET /me` lists them.
 
     Base URL: `#{base}` (relative to this site). Every path below is under it.
     Send and accept JSON (`Content-Type: application/json`). Ids are UUIDs; a project and a
@@ -1382,16 +1427,59 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     ## Authentication
 
     `Authorization: Bearer pkp_…` on every call except `/llms.txt` and `/openapi.json`.
-    A project manager mints the key on the project's Modules & Features page and hands you the
-    token once; keep it out of URLs, logs and tickets (use an environment variable, e.g. `$PKP_TOKEN`).
+    A person makes the key on the site's Projects → API keys page, gives it access to one or
+    more projects, and hands you the token once; keep it out of URLs, logs and tickets (use an environment variable, e.g. `$PKP_TOKEN`).
     A 401 means the key is gone or wrong — stop and tell your operator; never retry it.
 
     ## Start here
 
-    `GET /me` tells you the project, whom you act for (`acting_for`), which features are on
-    (`features` for the task calls, `extensions` for the `/ext/…` records), what your role may do
-    (`allowed_actions`), the scopes your key carries, and the project's workflow statuses.
+    `GET /me` tells you your home project (`home_project`), EVERY project the key reaches
+    (`projects`, each with its `access` per area), whom you act for (`acting_for`), which features
+    are on at home (`features` for the task calls, `extensions` for the `/ext/…` records), what
+    your role may do there (`allowed_actions`), and the home project's workflow statuses.
     The live set of calls that will work for you follows from that; read it before anything else.
+
+    First steps, in this order:
+
+    1. `GET /me`. Note `home_project` and the `projects` list.
+    2. To work in any project other than home, pass `project=<its key>` on project-level calls
+       (`GET /briefing?project=3DE`, `GET /ext/interactions?project=ANDI&of=client`). A task ref
+       picks its own project: `GET /tasks/ANDI-42` needs no `project`.
+    3. Read each project's `access` before working there. Never assume one project's access from
+       another's: a key may write tasks in one project and only read them, or nothing, in the next.
+
+    ## Projects and access
+
+    A key is not tied to one project. For each project it reaches it has a **grant**: one level
+    per area — `none`, `read` or `write` (write includes read) — and a role cap. `projects` on
+    /me answers, per project: `key`, `uuid`, `name`, `role` (the role you act with there),
+    `access` (area → level), `scopes`, and `source` (`direct`, or `{inherited_from: <uuid>}` when
+    the grant sits on a project above it).
+
+    | Area | read | write |
+    |---|---|---|
+    | `project` | `GET /project` | `POST /project/status` |
+    | `tasks` | `GET /tasks`, `GET /tasks/{id}`, `GET /briefing` | create, `PATCH`, move, batch, delete, `POST /subprojects`, task ↔ interaction links |
+    | `status` | — | `start`, `complete`, `reopen`, `transition` |
+    | `notes` | `GET /tasks/{id}/notes`, `GET /notes` | `POST /tasks/{id}/notes`, `POST /notes` |
+    | `comments` | `GET /tasks/{id}/comments` | `POST /tasks/{id}/comments` |
+    | `time` | `GET /entries`, `GET /tasks/{id}/entries`, `GET /hours` | `POST /time`, `POST /tasks/{id}/time`, correcting time entries |
+    | `usage` | — | `POST /usage`, `POST /tasks/{id}/usage`, `usage` on a note, correcting usage entries |
+    | `events` | `GET /events`, `GET /events/{id}` | — |
+    | `people` | `GET /people` | — |
+
+    Modules add their own areas — the CRM's client interactions are `interactions` read/write for
+    `/ext/interactions`. The scope a call needs is on each endpoint below; a call outside your
+    access is 403 `scope_missing`, which no retry fixes.
+
+    - **The nearest grant up the tree wins.** A sub-project with no grant of its own uses its
+      parent's (when that grant covers sub-projects); a grant of its own — even one set to no
+      access at all — overrides the parent's for it and everything below.
+    - **Your role is capped.** A personal key acts with the weakest of the grant's role cap, the
+      person's own role on the project the grant is on, and manager. A shared agent acts with the
+      grant's role. The role decides what `allowed_actions` lets you do, exactly as for a person.
+    - **Home project.** A call without `project` acts on the key's home project. Everything else
+      needs `project=<its key>` (or its uuid).
 
     ## Short names: a project's key, a task's ref
 
@@ -1418,14 +1506,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     tasks (a feature, a deliverable, a test campaign) so the parent's list stays readable and
     the group's totals are one row.
 
-    Your key reaches its own project **and everything nested under it**, with the same role
-    and scopes everywhere. To work in a sub-project:
+    A grant on a project normally covers everything nested under it (see "Projects and
+    access" — a sub-project's own grant overrides it). To work in a sub-project:
 
     - `GET /project` lists `subprojects` (uuid, name, status); `parent_uuid` says where you are.
     - Project-level calls take `project` — `GET /project?project=…`, `GET /tasks?project=…`,
       and `project` in the body of `POST /tasks`, `POST /time`, `POST /usage`,
       `POST /project/status`, `POST /subprojects` (and the `/ext/…` lists and creates).
-      Without it they act on the key's own project.
+      Without it they act on the key's home project.
     - Task-level calls (`/tasks/{id}…`) need nothing extra: a task is found anywhere within
       reach, and the call acts in that task's project (its features and role floors apply).
     - `POST /subprojects` creates one (`name`, optional `description`); nest deeper by passing
@@ -1670,7 +1758,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         title: "Projects API",
         version: @version,
         description:
-          "The JSON API an agent drives one project with. Read #{base}/llms.txt first: it carries the rules (units, idempotency, what to retry) in prose."
+          "The JSON API an agent drives projects with. One key can reach several projects, with its own access in each (GET /me lists them). Read #{base}/llms.txt first: it carries the rules (units, idempotency, what to retry) in prose."
       },
       servers: [%{url: base}],
       components: %{
@@ -1679,7 +1767,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "http",
             scheme: "bearer",
             description:
-              "A project API key, `pkp_…`: a member's own key from the project's \"Your API key\" page, or a shared agent's from Modules & Features."
+              "A projects API key, `pkp_…`, made on Projects → API keys: a person's own key, or a shared agent's. Its access is set per project; GET /me lists it."
           }
         },
         schemas: %{

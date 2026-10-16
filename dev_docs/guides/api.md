@@ -1,7 +1,8 @@
 # The projects API (`/api/projects/v1`)
 
-The JSON API an outside agent drives ONE project with: read and create tasks,
-move them through their lifecycle, set the project's workflow status, and
+The JSON API an outside agent drives projects with — one key can reach several,
+with its own access in each: read and create tasks, move them through their
+lifecycle, talk in their discussions, set a project's workflow status, and
 report the minutes, tokens and cost of its work into the work ledger. Built
 2026-10-05 for the boss's case — "I run an AI model elsewhere, it does a task,
 it must reach in and submit its token usage and time, and control the tasks."
@@ -14,56 +15,73 @@ The agent-facing contract is **generated from one table of endpoints**
 `GET /api/projects/v1/openapi.json`. Change the table, and both documents
 follow; never write an endpoint the table does not list.
 
-## Keys live on the project, and act for a person
+## Keys live on Projects → API keys, and hold a grant per project
 
-`phoenix_kit_project_api_keys` (chain V17, `user_uuid` in V18). One key = one
-project. A key has a **name** (what the agent is called), a stored **role** —
-`manager`, `member` or `viewer`, never owner — and **scopes** (`tasks:read`,
-`tasks:write`, `time:write`, `usage:write`, `project:write`, plus what extension
-providers declare; a metering-only key carries just time and usage). A key is one
-of two kinds (`ApiKey.kind/1`):
+`phoenix_kit_project_api_keys` (chain V17, `user_uuid` in V18) holds the
+credential; `phoenix_kit_project_api_key_grants` (V24) holds what it may do,
+one row per project it reaches. A key has a **name** (what the agent is
+called) and a **home project** (`project_uuid`: where a call without
+`project` acts; nullable since V24, `ON DELETE SET NULL`). Each grant carries:
 
-- **personal** — `user_uuid` names the member it acts for. The role it acts
-  with is that person's CURRENT membership (`Authz.effective_role/2`), capped by
-  the stored role and never above manager (`ApiKeys.effective_role/2`; the auth
-  plug calls `resolve/2` on every request). Demotion applies on the next call;
-  once the person is off the project the key answers `403 membership_ended`,
-  and `Members.remove_member/3` revokes their keys outright so an old secret
-  cannot wake up when they are re-added. Every member mints, rotates and revokes
-  their own personal keys on the project's **Your API key** page
-  (`/projects/:id/api`, from the header ⋮ menu; `Web.ProjectApiLive`): one
-  click, named "<Name>'s AI", cap at their role, every scope, no expiry. Nobody
-  sees anyone else's keys there.
-- **shared** — no person: a CI runner, "ANDI agent". Its stored role is the
-  authority. Only the owner's **API access** section on Modules & Features
-  (`manage_modules`) mints these, and that section is the project's whole list,
-  both kinds, with an **Acts for** choice on the form (a member, or "Nobody — a
-  shared agent") and a kind line on each row.
+- **scopes** — per **area**, none / read / write (`ApiAccess`; write includes
+  read): `project`, `tasks`, `status` (write only), `notes`, `comments`,
+  `time`, `usage`, `events` (read only), `people` (read only), plus each
+  extension API provider's pair (`interactions:read` / `interactions:write`
+  for the CRM's client interactions). Max, 2026-10-16: *"every setting that we
+  already have in the project should also be for the api permissions"*. An
+  empty list is "no access here".
+- **role** — the cap: `manager`, `member` or `viewer`, never owner.
+- **inherit** — whether it also covers the project's sub-projects.
+
+`ApiKeys.access_for/2` decides what a key may do in a project: the **nearest
+grant up the tree** wins — the project's own, else its parent's, and so on; a
+grant above with `inherit: false`, or a nearest grant with no scopes, means no
+access, and nothing further up is consulted. A key is one of two kinds
+(`ApiKey.kind/1`):
+
+- **personal** — `user_uuid` names the person it acts for. In each project it
+  acts with the weakest of the grant's cap, that person's CURRENT role on the
+  **grant's** project (sub-projects usually have no members of their own) and
+  manager. Demotion applies on the next call; once the person is off the
+  grant's project, that grant answers `membership_ended`. Leaving a project
+  deletes only that project's grant (`Members.remove_member/3` →
+  `ApiKeys.revoke_for_user/3` → `delete_grant/3`); the key's other grants
+  live on.
+- **shared** — no person: a CI runner, "ANDI agent". The grant's role is the
+  authority.
+
+Keys are made, rotated, revoked and given access only on **Projects → API
+keys** (`Web.ApiKeysLive`): the person's own keys, and — for those allowed —
+shared ones; a key's row opens a grid of projects × areas, with presets to
+fill it quickly. `?project=<uuid>` preselects a project for a new key. A
+project's own pages only show: **Your API key** (`/projects/:id/api`,
+`Web.ProjectApiLive`) lists the viewer's own keys that reach the project —
+its access there, where that comes from (set on this project, or from a
+project above), home project, last use, expiry, and **Copy setup prompt** —
+and the **API access** section on Modules & Features lists every key that
+reaches it. Both link to the API keys page.
 
 `created_by_uuid` (the minter) and `user_uuid` are provenance, not FKs: the row
-is audit history once the person is gone. (Panel, 2026-10-05, three seats
-converged: a separate acts-for field; the role derived from membership for a
-person's key, stored for a shared one; self-service for every role; a page off
-the ⋮ menu rather than a tab or a card under the task list.)
+is audit history once the person is gone.
 
 The token is `pkp_<key_id>_<secret>`. `key_id` is public (unique index, the
 lookup), the secret is 32 random bytes and only its SHA-256 is stored; the
 token is shown once, at creation and at **rotation**, which replaces the secret
-on the same row so the key's ledger history stays one agent. **Revoke** ends it.
-`last_used_at` is touched at most once a minute. `expires_at` is optional.
+on the same row so the key's ledger history stays one agent. **Revoke** ends it
+everywhere. `last_used_at` is touched at most once a minute. `expires_at` is
+optional. The **setup prompt** (`ApiKeyPanel.setup_prompt/3`) names the home
+project, the base URL, the agent guide and OpenAPI links and the token (or its
+place), and tells the agent to start with `GET /me`, pass `project=<KEY>` for
+any other project, and never assume one project's access from another's.
 
-The page shows each key as a row — name and role, the public ID
-(`pkp_<key_id>`, never the token), an **access** preset read back from the
-scopes (Full access / Read-only / Metering / Custom · N scopes), last use and
-expiry — with Rotate, Revoke and **Copy setup prompt** in its menu. A new key
-is minted behind "New key": name, role, expiry (never / 30 / 90 / 365 days)
-and a preset, with the seven scopes shown only under Custom. Creation and
-rotation open a modal with the token, a **setup prompt** for the agent (base
-URL, the agent guide, "start with GET /me", the token) and the reference
-links; the same prompt without the token is behind every row's menu. The
-"For your AI" strip under the section title links `/llms.txt` and
-`/openapi.json` at all times. (`Web.ApiKeyPanel` holds the pure parts; the
-shape came from a three-seat UX panel on 2026-10-05.)
+**Before V24** (2026-10-05 → 10-16) a key belonged to one project and reached
+it and everything nested under it with one role and one scope set; members
+minted personal keys on Your API key and owners minted shared keys on Modules
+& Features. The V24 migration gave every existing key exactly the grant it
+had, translating its scopes so every token works as before: `tasks:read` →
+also `project`, `notes`, `time`, `usage`, `events` and `people` read;
+`tasks:write` → also `status:write`, `notes:write`; `time:write` →
+`time:read`; `usage:write` → `usage:read`; `project:write` → `project:read`.
 
 ## The key is its own principal
 
@@ -87,27 +105,38 @@ shape came from a three-seat UX panel on 2026-10-05.)
   it out as `ai_minutes`, and invoicing already bills human actors only. Panel
   2:1 for one kind split by actor over a new kind.
 
-## Reach: the project and everything nested under it
+## Reach: every project a grant covers
 
-A key is minted on one project and reaches that project **and every
-sub-project nested under it** (Max, 2026-10-05: *"ideally the api would be able
-to control everything in its project and everything in the children projects as
-well"*), with the same resolved role and scopes throughout. `Json.within_reach?/2`
-walks the target's `Projects.parent_chain/1` up to the key's project (eight
-hops at most). Project-level calls take a `project` param (`Json.scope_project/2`
-re-points `pk_project` and `pk_fx` at a sub-project within reach, 404
-otherwise): `GET /project`, `POST /project/status`, `GET`/`POST /tasks`,
-`POST /time`, `POST /usage`, `POST /subprojects` and the `/ext/…` lists and
-creates. Task-level calls need nothing: `TasksController.fetch/2` finds a task
-anywhere within reach and rescopes the request to its project (whose `tasks`
-gate must be on), so features and role floors are the child's. `GET /project`
-carries `parent_uuid` and `subprojects` (direct children); `POST /subprojects`
-creates one through `Projects.create_subproject/2` (feature `subprojects`,
-action `create_tasks`, activity `projects.subproject_created` with the API
-metadata), at most seven levels down so what the API creates stays within what
-it can reach. A key minted on a child does not reach its parent. The agent guide
-has a "Sub-projects" section teaching the pattern: one sub-project per piece of
-work, tasks created with `project` set to it.
+A key reaches every project where `access_for/2` finds a grant with scopes —
+its home, the other projects it was given, and (through `inherit`) what is
+nested under them (Max, 2026-10-05: *"ideally the api would be able to control
+everything in its project and everything in the children projects as well"*;
+2026-10-15: *"make API key stuff more global"*). `GET /me` lists them as
+`projects` — `key`, `uuid`, `name`, `role`, `scopes`, `access` (area →
+none / read / write) and `source` (`direct` or `{inherited_from}`).
+
+Project-level calls take a `project` param, a uuid or a key
+(`Json.scope_project/2`; 404 outside reach): `GET /project`, `POST
+/project/status`, `GET /briefing`, `GET`/`POST /tasks`, `POST /time`, `POST
+/usage`, `POST /subprojects`, the notes, hours, entries and events reads, and
+the `/ext/…` lists and creates. Task-level calls need nothing:
+`TasksController.fetch/2` finds a task anywhere within reach — a ref like
+`ANDI-42` names its own project. Either way the request is **rescoped**:
+`Json.rescope/2` puts the key as it acts THERE (`ApiKeys.view/2`: that
+project's role and scopes) in `pk_api_key`, with that project's gates and
+floors. `Json.require_scope/2` remembers each scope it checked in
+`pk_required`, and `Json.still_allowed/1` re-checks all of them after a move.
+**Order matters:** select the project (`scope_project` / `fetch`) first, then
+`require_scope` — the other way round, the home project's access would
+authorise a call in another project; `still_allowed` is the backstop.
+
+`GET /project` carries `parent_uuid` and `subprojects` (direct children);
+`POST /subprojects` creates one through `Projects.create_subproject/2`
+(feature `subprojects`, action `create_tasks`, scope `tasks:write`, activity
+`projects.subproject_created` with the API metadata), at most seven levels
+down. The agent guide's "Projects and access" section teaches the model, its
+"Sub-projects" section the pattern: one sub-project per piece of work, tasks
+created with `project` set to it.
 
 ## Short names: keys and refs
 
@@ -175,8 +204,9 @@ does, for the project's interactions.
 
 ## The calls
 
-`GET /me` is the entry point (key, project, features on, `allowed_actions`,
-docs URLs). Tasks: `GET /tasks[?status=]`, `POST /tasks` (a one-off task at the
+`GET /me` is the entry point (key, `home_project` — `project` is kept as
+its alias for older agents — features on, `allowed_actions` there, every
+project reached as `projects` with its `access`, docs URLs). Tasks: `GET /tasks[?status=]`, `POST /tasks` (a one-off task at the
 bottom of the plan, `ad_hoc: true`), `GET /tasks/:id`, `PATCH /tasks/:id`
 (content and plan fields, never status; title/description only on an ad-hoc
 task — a shared library task answers 409 `library_task`),
@@ -185,7 +215,23 @@ aliases through the same path (panel: one state machine, aliases must not
 drift). Ledger: `POST /tasks/:id/time`, `POST /time` (minutes), `POST
 /tasks/:id/usage`, `POST /usage` (tokens, cost_cents, model). Project:
 `GET /project`, `POST /project/status {slug}` — workflow statuses belong to the
-project, not to tasks, which have only todo / in_progress / done.
+project, not to tasks, which have only todo / in_progress / done. Discussion:
+`GET /tasks/:id/comments`, `POST /tasks/:id/comments {content, parent?}`
+(`CommentsController`, V24) — the thread people write under a task, apart from
+the agent's notes; `comments:read` / `comments:write`, the `:view` /
+`:comment` floors, the comments module switched on, `Idempotency-Key`
+required on a post, written as the person the key acts for (else its maker)
+and labelled with the key's name.
+
+Which scope each call needs is the `scope` column of `Docs.endpoints/0`, kept
+equal to the controller's `require_scope`. In short: `project:read` /
+`:write` — `GET /project` / `POST /project/status`; `tasks:read` — task
+lists, a task, the briefing; `tasks:write` — create, update, move, batch,
+delete, sub-projects, task ↔ interaction links; `status:write` — start,
+complete, reopen, transition; `notes:*` — task and project notes; `time:read`
+— `/entries`, `/tasks/:id/entries`, `/hours`; `time:write` / `usage:write` —
+the ledger appends and corrections of each kind; `events:read`;
+`people:read`.
 
 Every error is `{"error": {"code", "message", "details"?}}` with a stable code;
 messages are English and locale-free on purpose (a machine contract).
@@ -193,7 +239,9 @@ messages are English and locale-free on purpose (a machine contract).
 ## Idempotency
 
 `phoenix_kit_project_api_idempotency` stores `{status, body}` under
-(key, `Idempotency-Key` header); a replay answers the stored response with an
+(key, `Idempotency-Key` header) — the header is scoped per project (stored as
+sha256 of `project_uuid:header`, V24), so the same header sent to two projects
+is two requests; a replay answers the stored response with an
 `Idempotent-Replayed: true` header. **Required** on the ledger POSTs (appends
 nobody can undo), honoured on task create and transitions. Panel: the one
 thing to block v1 on. A retry that arrives while the first request with that key
@@ -297,7 +345,7 @@ either may be left out. `worker` narrows to one or more `worker.key`s as a
 An entry counts on the day the work was done (`occurred_at`), else the day it
 was recorded. A person with both an account and a staff record is one line.
 It is the read behind the Hours tab (`PhoenixKitProjects.Hours`); scope
-`tasks:read`, like `GET /entries`.
+`time:read`, like `GET /entries`.
 
 ## Not in v1
 
