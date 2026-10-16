@@ -194,13 +194,15 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   end
 
   @impl true
+  # Announced beside `:assignment_updated`, which reloads; a cascade of N
+  # rows is N more messages and must not be N more reloads.
+  def handle_info({:projects, :assignment_status_changed, _payload}, socket),
+    do: {:noreply, socket}
+
   # Any change anywhere in the module arrives here, and one act is often
   # several messages (a task done: the task, its project's rollup, the
   # parent's). The first one reloads at once; the rest of a burst wait for
   # the pause that follows and share one reload.
-  def handle_info({:projects, :assignment_status_changed, _payload}, socket),
-    do: {:noreply, socket}
-
   def handle_info({:projects, _event, _payload}, socket) do
     case socket.assigns[:reload] do
       nil ->
