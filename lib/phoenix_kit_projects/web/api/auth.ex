@@ -5,9 +5,11 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   project's feature gates on the conn (`:pk_api_key`, `:pk_project`,
   `:pk_fx`), or one 401 for every refusal (missing, malformed, unknown,
   revoked, expired — a caller cannot tell them apart, on purpose). A key
-  whose project is gone answers 401 too. A personal key whose person has
-  left the project is a 403 `membership_ended` — that one the caller may
-  know, it is their own membership.
+  with no project left answers 401 too. A key that can no longer use its
+  home (no access there, or its person left it) still authenticates: a
+  call naming another project is checked there, and one that stays home
+  is a 403 `no_access` / `membership_ended` (`Json.require_scope/2`), which
+  the caller may know — it is their own key.
 
   Then the key's rate limit (`Web.Api.RateLimit`): every authenticated
   response carries `x-ratelimit-limit` and `x-ratelimit-remaining`; a key
@@ -33,7 +35,7 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
     with {:ok, token} <- bearer(conn),
          {:ok, key} <- ApiKeys.authenticate(token),
          %{} = project <- home_project(key) || :no_project,
-         {:ok, key} <- ApiKeys.resolve(key, project) do
+         {:ok, key, refused} <- home_view(key, project) do
       conn
       |> rate_limit(key)
       |> case do
@@ -48,8 +50,11 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
             {:reach, &PhoenixKitProjects.ApiKeys.allows?(key, &1, "tasks:read")}
           )
 
+          Json.put_view(key)
+
           conn
           |> assign(:pk_api_key, key)
+          |> assign(:pk_home_refused, refused)
           |> assign(:pk_project, project)
           |> assign(:pk_fx, Features.gates(project))
 
@@ -57,24 +62,6 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
           conn
       end
     else
-      {:error, :no_access} ->
-        conn
-        |> Json.error(
-          :forbidden,
-          "no_access",
-          "This key has no access to its home project. Set it on the API keys page (Projects → API keys)."
-        )
-        |> halt()
-
-      {:error, :membership_ended} ->
-        conn
-        |> Json.error(
-          :forbidden,
-          "membership_ended",
-          "This key acts for a person who is no longer a member of the project."
-        )
-        |> halt()
-
       _ ->
         conn
         |> Json.error(
@@ -95,6 +82,23 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
     else
       [] -> nil
       project -> project
+    end
+  end
+
+  # The key as it stands at home. A home it can no longer use (an empty
+  # grant there, a membership that ended) does not stop the key: a call
+  # naming another project is rescoped there and checked on its own, and
+  # one that stays home is refused with this reason (`Json.require_scope/2`).
+  defp home_view(key, project) do
+    case ApiKeys.resolve(key, project) do
+      {:ok, key} ->
+        {:ok, key, nil}
+
+      {:error, reason} when reason in [:no_access, :membership_ended] ->
+        {:ok, %{key | scopes: [], role: "viewer"}, reason}
+
+      error ->
+        error
     end
   end
 

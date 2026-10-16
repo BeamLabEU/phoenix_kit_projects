@@ -23,6 +23,11 @@ defmodule PhoenixKitProjects.ApiKeysTest do
     user
   end
 
+  # The role a key acts with in a project (`access_for/2`).
+  defp role_in(key, project) do
+    with {:ok, %{role: role}} <- ApiKeys.access_for(key, project), do: {:ok, role}
+  end
+
   describe "a personal key acts for a member" do
     test "its role is the person's current membership, capped by the key and by manager",
          %{project: project} do
@@ -37,13 +42,13 @@ defmodule PhoenixKitProjects.ApiKeysTest do
       assert ApiKey.kind(key) == :personal
       assert ApiKey.accountable_uuid(key) == owner.uuid
       # an owner's key acts as a manager, never as the owner
-      assert {:ok, "manager"} = ApiKeys.effective_role(key, project)
+      assert {:ok, "manager"} = role_in(key, project)
       assert {:ok, %ApiKey{role: "manager"}} = ApiKeys.resolve(key, project)
 
       # demotion propagates at once; a viewer cap holds whatever the membership says
       {:ok, _} = Members.add_member(project, user_fixture().uuid, role: "owner")
       {:ok, _} = Members.change_role(project, owner.uuid, "viewer")
-      assert {:ok, "viewer"} = ApiKeys.effective_role(key, project)
+      assert {:ok, "viewer"} = role_in(key, project)
 
       {:ok, capped, _} =
         ApiKeys.create(project, %{
@@ -53,13 +58,13 @@ defmodule PhoenixKitProjects.ApiKeysTest do
         })
 
       {:ok, _} = Members.change_role(project, owner.uuid, "manager")
-      assert {:ok, "viewer"} = ApiKeys.effective_role(capped, project)
-      assert {:ok, "manager"} = ApiKeys.effective_role(key, project)
+      assert {:ok, "viewer"} = role_in(capped, project)
+      assert {:ok, "manager"} = role_in(key, project)
 
       # a shared key keeps its stored role and names its minter
       {:ok, shared, _} = ApiKeys.create(project, %{"name" => "CI", "role" => "member"})
       assert ApiKey.kind(shared) == :shared
-      assert {:ok, "member"} = ApiKeys.effective_role(shared, project)
+      assert {:ok, "member"} = role_in(shared, project)
       assert ApiKey.accountable_uuid(shared) == nil
     end
 
@@ -85,9 +90,6 @@ defmodule PhoenixKitProjects.ApiKeysTest do
       assert {:error, :no_access} = ApiKeys.access_for(key, project.uuid)
       assert_activity_logged("projects.api_key_access_removed", resource_uuid: project.uuid)
       assert {:ok, _} = ApiKeys.access_for(ApiKeys.get(other.uuid), project.uuid)
-
-      # a key that somehow outlives the membership is refused at resolve time
-      assert {:error, :membership_ended} = ApiKeys.effective_role(key, project)
     end
   end
 
@@ -112,8 +114,6 @@ defmodule PhoenixKitProjects.ApiKeysTest do
 
     assert [%ApiKey{uuid: uuid}] = ApiKeys.list_for_project(project.uuid)
     assert uuid == key.uuid
-    assert ApiKeys.get_for_project(project.uuid, key.uuid).uuid == key.uuid
-    assert ApiKeys.get_for_project(fixture_project().uuid, key.uuid) == nil
 
     assert {:ok, revoked} = ApiKeys.revoke(key, [])
     assert %DateTime{} = revoked.revoked_at

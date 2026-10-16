@@ -80,7 +80,13 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :view) do
       limit = page_limit(params["limit"])
-      entries = Ledger.list_entries(conn.assigns.pk_project.uuid, limit: limit + 1)
+
+      entries =
+        Ledger.list_entries(conn.assigns.pk_project.uuid,
+          limit: limit + 1,
+          kinds: readable_kinds()
+        )
+
       {page, more} = Enum.split(entries, limit)
 
       json(conn, %{
@@ -94,13 +100,23 @@ defmodule PhoenixKitProjects.Web.Api.LedgerController do
     end
   end
 
+  # Time entries are the time area's; tokens and cost entries the usage
+  # area's (V24) — a key with `time:read` alone lists only time.
+  defp readable_kinds do
+    if Json.may?("usage:read"), do: ["time", "tokens", "cost"], else: ["time"]
+  end
+
   def task_index(conn, %{"id" => id}) do
     with {:ok, conn, a} <- TasksController.fetch(conn, id),
          {:ok, conn} <- Json.require_scope(conn, "time:read"),
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :view) do
       entries =
-        Ledger.list_entries(conn.assigns.pk_project.uuid, assignment_uuid: a.uuid, limit: 501)
+        Ledger.list_entries(conn.assigns.pk_project.uuid,
+          assignment_uuid: a.uuid,
+          limit: 501,
+          kinds: readable_kinds()
+        )
 
       {page, more} = Enum.split(entries, 500)
 

@@ -5,13 +5,13 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
   shows a person, read from the same place (`PhoenixKitProjects.Hours`).
 
   It reads the key's project — or, with `project`, a sub-project within
-  reach — and by default everything nested under it (`include_subprojects`,
-  every such project being within the same reach). Days are UTC days.
+  reach — and by default everything nested under it (`include_subprojects`)
+  that the key may read time in. Days are UTC days.
   """
 
   use Phoenix.Controller, formats: [:json]
 
-  alias PhoenixKitProjects.Hours
+  alias PhoenixKitProjects.{ApiKeys, Hours}
   alias PhoenixKitProjects.Web.Api.Json
 
   @groups ~w(person task day)
@@ -22,11 +22,21 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
          {:ok, conn} <- Json.require_feature(conn, :ledger),
          {:ok, conn} <- Json.require_action(conn, :view),
          {:ok, opts} <- options(params) do
-      project = conn.assigns.pk_project
+      %{pk_project: project, pk_api_key: key} = conn.assigns
+
+      # Each nested project only where this key may read time there: a
+      # grant can stop at a sub-project, or narrow it (V24).
+      uuids =
+        project.uuid
+        |> Hours.project_uuids(opts.include_subprojects)
+        |> Enum.filter(&(&1 == project.uuid or ApiKeys.allows?(key, &1, "time:read")))
+
+      # Tokens and cost are the usage area's — in EVERY project summed.
+      usage? = Enum.all?(uuids, &ApiKeys.allows?(key, &1, "usage:read"))
 
       filters =
         Hours.filters(
-          project_uuids: Hours.project_uuids(project.uuid, opts.include_subprojects),
+          project_uuids: uuids,
           from: opts.from,
           until: opts.until,
           workers: opts.workers,
@@ -39,7 +49,10 @@ defmodule PhoenixKitProjects.Web.Api.HoursController do
         project_uuid: project.uuid,
         include_subprojects: opts.include_subprojects,
         period: %{from: opts.from, to: opts.until},
-        totals: Map.new(summary.totals, fn {k, v} -> {k, Json.number(v)} end),
+        totals:
+          summary.totals
+          |> Map.drop(if usage?, do: [], else: [:tokens, :cost_cents])
+          |> Map.new(fn {k, v} -> {k, Json.number(v)} end),
         group_by: opts.group_by,
         groups: groups(summary, opts.group_by)
       })

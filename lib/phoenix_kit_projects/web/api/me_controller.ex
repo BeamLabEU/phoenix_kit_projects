@@ -15,6 +15,29 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
   alias PhoenixKitProjects.Web.Api.{Assignee, Docs, Json}
   alias PhoenixKitProjects.Web.ApiKeyPanel
 
+  # A home the key can no longer use (`Auth`): who the key is and what it
+  # reaches elsewhere, nothing about the home itself.
+  def show(%{assigns: %{pk_home_refused: reason}} = conn, _params) when not is_nil(reason) do
+    key = conn.assigns.pk_api_key
+
+    json(conn, %{
+      key: %{
+        uuid: key.uuid,
+        name: key.name,
+        kind: ApiKey.kind(key),
+        key_id: ApiKeys.display_prefix(key),
+        expires_at: key.expires_at
+      },
+      acting_for: acting_for(key),
+      home_project: nil,
+      home_refused: Atom.to_string(reason),
+      project: nil,
+      projects: reachable(key),
+      all_scopes: ApiKey.scopes(),
+      docs: %{llms_txt: Docs.url("/llms.txt"), openapi: Docs.url("/openapi.json")}
+    })
+  end
+
   def show(conn, _params) do
     %{pk_api_key: key, pk_project: project, pk_fx: fx} = conn.assigns
 

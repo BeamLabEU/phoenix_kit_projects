@@ -1,28 +1,32 @@
 defmodule PhoenixKitProjects.ApiKeys do
   @moduledoc """
-  Project API keys (chain V17): the credentials an outside agent presents to
-  drive one project over the JSON API (`PhoenixKitProjects.Web.Api`).
+  API keys (chain V17, made global in V24): the credentials an outside
+  agent presents to work over the JSON API (`PhoenixKitProjects.Web.Api`).
 
-  A key is minted on a project with a `name` (what the agent is called), a
-  `role` of its own (`manager` / `member` / `viewer` — never owner) and a set
-  of scopes; the token `pkp_<key_id>_<secret>` is shown once and only the
-  secret's SHA-256 is stored. `authenticate/1` turns a presented token back
-  into its key: the public `key_id` finds the row, the secret is compared
-  in constant time against the hash, and a revoked or expired key is refused.
+  A key has a `name` (what the agent is called) and reaches projects
+  through GRANTS (`ApiKeyGrant`, one per key and project): what it may do
+  there per area (`PhoenixKitProjects.ApiAccess`), a role cap, and whether
+  the grant covers the project's sub-projects. `access_for/2` is THE rule —
+  the nearest grant up a project's tree decides, an empty one means no
+  access — and `view/2` is the key as it acts in one project. The key's
+  own `project_uuid` is its HOME: where a call that names no project acts.
+  The token `pkp_<key_id>_<secret>` is shown once and only the secret's
+  SHA-256 is stored; `authenticate/1` finds the row by the public `key_id`,
+  compares the secret in constant time, and refuses a revoked or expired
+  key.
 
   A key is **personal** or **shared** (`ApiKey.kind/1`). A personal key acts
-  for a member (`user_uuid`): `effective_role/2` reads that person's current
-  membership, capped by the key's stored role and never above manager, and
-  refuses the key once the person is off the project (`resolve/2` is what the
-  API plug calls; `Members.remove_member/3` also revokes their keys). A
-  shared key has no person — its stored role is the authority. Either way
-  the ledger names the key as the actor of the usage it reports, and the
-  activity log names `ApiKey.accountable_uuid/1` (the person acted for, else
-  the minter) with the key in the metadata. `revoke/2` ends a key;
+  for a person (`user_uuid`): in each project its role is that person's
+  current role on the grant's project, capped by the grant's role and never
+  above manager — `{:error, :membership_ended}` once they are off it (and
+  `Members.remove_member/3` deletes that project's grant). A shared key has
+  no person — each grant's role is the authority. Either way the ledger
+  names the key as the actor of the usage it reports, and the activity log
+  names `ApiKey.accountable_uuid/1` (the person acted for, else the minter)
+  with the key in the metadata. `revoke/2` ends a key everywhere;
   `rotate/2` replaces the secret on the same row so its history stays one
-  agent. Every member may mint, rotate and revoke their own personal keys
-  (`list_for_user/2`); the project's whole list is for whoever may
-  `manage_modules`.
+  agent. Keys are managed on Projects → API keys (`Web.ApiKeysLive`): a
+  person their own, administrators everyone's.
 
   `idempotent/3` is the retry guard for the API's appends: a response stored
   under (key, `Idempotency-Key`) is answered again on replay.
@@ -212,7 +216,7 @@ defmodule PhoenixKitProjects.ApiKeys do
   @doc "Makes `project_uuid` — one the key has a grant on — its home (where a call without `project` acts)."
   @spec set_home(ApiKey.t(), binary()) :: {:ok, ApiKey.t()} | {:error, :no_grant}
   def set_home(%ApiKey{} = key, project_uuid) do
-    if Enum.any?(grants(key), &(&1.project_uuid == project_uuid)) do
+    if Enum.any?(grants(key), &(&1.project_uuid == project_uuid and &1.scopes != [])) do
       key |> Ecto.Changeset.change(project_uuid: project_uuid) |> RepoHelper.repo().update()
     else
       {:error, :no_grant}
@@ -239,6 +243,16 @@ defmodule PhoenixKitProjects.ApiKeys do
   def access_for(%ApiKey{} = key, %{uuid: uuid}), do: access_for(key, uuid)
 
   def access_for(%ApiKey{uuid: key_uuid} = key, project_uuid) when is_binary(project_uuid) do
+    case Projects.get_project(project_uuid) do
+      # Templates are not worked in; no grant reaches one.
+      %{is_template: false} -> nearest_grant(key, key_uuid, project_uuid)
+      _ -> {:error, :no_access}
+    end
+  end
+
+  def access_for(_key, _project), do: {:error, :no_access}
+
+  defp nearest_grant(key, key_uuid, project_uuid) do
     by_project = Map.new(grants(key_uuid), &{&1.project_uuid, &1})
 
     chain = [
@@ -265,8 +279,6 @@ defmodule PhoenixKitProjects.ApiKeys do
   rescue
     _ -> {:error, :no_access}
   end
-
-  def access_for(_key, _project), do: {:error, :no_access}
 
   defp grant_role(%ApiKey{user_uuid: nil}, grant),
     do: {:ok, %{scopes: grant.scopes, role: grant.role, grant: grant}}
@@ -344,23 +356,7 @@ defmodule PhoenixKitProjects.ApiKeys do
   end
 
   @doc """
-  The role a key acts with on `project` right now. A shared key: its stored
-  role. A personal key: the person's current membership (`Authz.effective_role/2`),
-  capped by the stored role and by manager — `{:error, :membership_ended}`
-  when they are no longer on the project.
-  """
-  @spec effective_role(ApiKey.t(), map()) :: {:ok, String.t()} | {:error, :membership_ended}
-  def effective_role(%ApiKey{user_uuid: nil, role: role}, _project), do: {:ok, role}
-
-  def effective_role(%ApiKey{user_uuid: user_uuid, role: cap}, project) do
-    case Authz.effective_role(project, user_uuid) do
-      nil -> {:error, :membership_ended}
-      role -> {:ok, weaker(Atom.to_string(role), cap)}
-    end
-  end
-
-  @doc """
-  The key with its `role` set to `effective_role/2`, for one request. A
+  The key as it acts in `project` for one request (`view/2`). A
   personal key also needs its person's ACCOUNT to be live: a deactivated or
   deleted user's key is `{:error, :account_inactive}` (the API answers it
   with the one 401), whatever the project's "everyone" visibility would
@@ -431,21 +427,6 @@ defmodule PhoenixKitProjects.ApiKeys do
   @spec get(binary()) :: ApiKey.t() | nil
   def get(uuid) when is_binary(uuid), do: RepoHelper.repo().get(ApiKey, uuid)
   def get(_), do: nil
-
-  @doc "A key by uuid that has access set on `project_uuid`, or nil."
-  @spec get_for_project(binary(), binary()) :: ApiKey.t() | nil
-  def get_for_project(project_uuid, uuid) when is_binary(project_uuid) and is_binary(uuid) do
-    RepoHelper.repo().one(
-      from(k in ApiKey,
-        join: g in ApiKeyGrant,
-        on: g.api_key_uuid == k.uuid,
-        where: k.uuid == ^uuid and g.project_uuid == ^project_uuid,
-        limit: 1
-      )
-    )
-  end
-
-  def get_for_project(_, _), do: nil
 
   @doc """
   Mints a key for `project`. `attrs`: `"name"` (required), `"role"` (default
@@ -594,61 +575,36 @@ defmodule PhoenixKitProjects.ApiKeys do
   end
 
   @doc """
-  Points a live key at another project: the token stays the one its holder
-  already has, and from now on it reaches `project` (and what is nested
-  under it) instead of where it was minted. For a project that is moved out
-  from under the project its agent's key belongs to — the key would
-  otherwise stop reaching it. Refused for a revoked key. Options:
-  `:actor_uuid`.
+  Copies a live key's grant on `from_uuid` to `to_uuid`, for a project
+  moved out from under `from_uuid` (`ProjectMove`): the token its agent
+  holds keeps reaching it with the same access. A grant the key already
+  has on `to_uuid` is kept as it is (`{:ok, :kept}`) — it was set on
+  purpose, and may be stricter. Refused for a revoked key, or one with no
+  grant on `from_uuid`. Options: `:actor_uuid`.
   """
-  @spec move(ApiKey.t(), map() | binary(), keyword()) ::
-          {:ok, ApiKey.t()} | {:error, :revoked | :stale}
-  def move(%ApiKey{revoked_at: %DateTime{}}, _project, _opts), do: {:error, :revoked}
+  @spec carry_grant(ApiKey.t(), binary(), binary(), keyword()) ::
+          {:ok, ApiKeyGrant.t() | :kept} | {:error, :revoked | :no_grant | Ecto.Changeset.t()}
+  def carry_grant(key, from_uuid, to_uuid, opts \\ [])
 
-  def move(%ApiKey{} = key, project_or_uuid, opts) do
-    to_uuid = project_uuid(project_or_uuid)
-    from_uuid = key.project_uuid
+  def carry_grant(%ApiKey{revoked_at: %DateTime{}}, _from, _to, _opts), do: {:error, :revoked}
 
-    # Only from where the caller saw it (and was authorized for it): a key
-    # somebody else moved or revoked in the meantime is `:stale`, not moved
-    # a second time on the strength of the first look. Its grant there goes
-    # with it; its grants elsewhere stay where they are.
-    RepoHelper.repo().transaction(fn ->
-      case from(k in ApiKey,
-             where: k.uuid == ^key.uuid and k.project_uuid == ^from_uuid and is_nil(k.revoked_at),
-             select: k
-           )
-           |> RepoHelper.repo().update_all(set: [project_uuid: to_uuid]) do
-        {1, [moved]} ->
-          from(g in ApiKeyGrant,
-            where: g.api_key_uuid == ^key.uuid and g.project_uuid == ^to_uuid
-          )
-          |> RepoHelper.repo().delete_all()
+  def carry_grant(%ApiKey{} = key, from_uuid, to_uuid, opts) do
+    by_project = Map.new(grants(key), &{&1.project_uuid, &1})
 
-          from(g in ApiKeyGrant,
-            where: g.api_key_uuid == ^key.uuid and g.project_uuid == ^from_uuid
-          )
-          |> RepoHelper.repo().update_all(set: [project_uuid: to_uuid])
+    cond do
+      Map.has_key?(by_project, to_uuid) ->
+        {:ok, :kept}
 
-          moved
-
-        _ ->
-          RepoHelper.repo().rollback(:stale)
-      end
-    end)
-    |> case do
-      {:ok, moved} ->
-        Activity.log("projects.api_key_moved",
-          actor_uuid: Keyword.get(opts, :actor_uuid),
-          resource_type: "project",
-          resource_uuid: to_uuid,
-          metadata: %{"api_key" => moved.uuid, "name" => moved.name, "from_project" => from_uuid}
+      grant = by_project[from_uuid] ->
+        put_grant(
+          key,
+          to_uuid,
+          %{"scopes" => grant.scopes, "role" => grant.role, "inherit" => grant.inherit},
+          opts
         )
 
-        {:ok, moved}
-
-      {:error, :stale} ->
-        {:error, :stale}
+      true ->
+        {:error, :no_grant}
     end
   end
 

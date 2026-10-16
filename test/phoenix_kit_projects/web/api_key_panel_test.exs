@@ -6,19 +6,8 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanelTest do
   alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.ApiKeyPanel
 
-  test "a personal key is named after the person, capped at their role, and the prompt says so" do
-    user = %{uuid: Ecto.UUID.generate(), first_name: "Max", last_name: "Don", email: "m@x.ee"}
-
-    assert %{"name" => "Max Don's AI", "role" => "manager", "user_uuid" => uuid} =
-             ApiKeyPanel.personal_attrs(user, :owner)
-
-    assert uuid == user.uuid
-    assert ApiKeyPanel.personal_attrs(user, :viewer)["role"] == "viewer"
-    assert ApiKeyPanel.personal_attrs(user, :member)["role"] == "member"
-
-    assert ApiKeyPanel.personal_attrs(%{uuid: uuid, email: "m@x.ee"}, nil)["name"] ==
-             "m@x.ee's AI"
-
+  test "a personal key's label names its person, and the prompt says so" do
+    uuid = Ecto.UUID.generate()
     names = %{uuid => "Max Don"}
 
     assert ApiKeyPanel.kind_label(%ApiKey{user_uuid: uuid}, names) ==

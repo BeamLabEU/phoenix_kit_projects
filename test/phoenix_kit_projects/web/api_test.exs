@@ -315,8 +315,11 @@ defmodule PhoenixKitProjects.Web.ApiTest do
     assert conn |> api(token2) |> get("#{@base}/me") |> json_response(200)
     Repo.delete!(back)
 
+    assert %{"home_refused" => "membership_ended", "home_project" => nil} =
+             conn |> api(token2) |> get("#{@base}/me") |> json_response(200)
+
     assert %{"error" => %{"code" => "membership_ended"}} =
-             conn |> api(token2) |> get("#{@base}/me") |> json_response(403)
+             conn |> api(token2) |> get("#{@base}/tasks") |> json_response(403)
 
     assert ApiKeys.get(key2.uuid).revoked_at == nil
   end

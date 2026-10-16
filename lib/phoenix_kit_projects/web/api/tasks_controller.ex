@@ -69,6 +69,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
       tasks =
         tasks
+        |> Enum.filter(&Json.visible_row?/1)
         |> filter_under(under, outline)
         |> filter_status(params["status"])
         |> filter_since(params["updated_since"])
@@ -574,8 +575,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
     with %{ext: ext, module: provider} <- Extensions.api_provider("interactions"),
-         true <- function_exported?(provider, :get, 2),
-         true <- ApiKey.scope?(key, provider.scopes().read) do
+         # Read access is checked per project below: the interaction may
+         # sit on a parent the key reads while this project grants none.
+         true <- function_exported?(provider, :get, 2) do
       candidates =
         [project | Enum.reverse(Projects.parent_chain(project.uuid))]
         |> Enum.filter(fn p ->
@@ -1157,14 +1159,15 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         {:error, :not_found}
 
       %Assignment{project_uuid: pid} = a when pid == project.uuid ->
-        {:ok, conn, a}
+        if Json.visible_row?(a), do: {:ok, conn, a}, else: {:error, :not_found}
 
       %Assignment{project_uuid: pid} = a ->
         with true <- Json.within_reach?(key, pid),
              %{} = child <- Projects.get_project(pid),
              conn = Json.rescope(conn, child),
              {:ok, conn} <- Json.still_allowed(conn),
-             {:ok, conn} <- Json.require_feature(conn, :tasks) do
+             {:ok, conn} <- Json.require_feature(conn, :tasks),
+             true <- Json.visible_row?(a) do
           {:ok, conn, a}
         else
           {:halt, conn} -> {:halt, conn}

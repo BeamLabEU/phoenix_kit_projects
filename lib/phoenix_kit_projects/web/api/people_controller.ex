@@ -3,7 +3,9 @@ defmodule PhoenixKitProjects.Web.Api.PeopleController do
   `GET /people`: who a task can be for - the staff people, teams and
   departments the task form offers, by uuid and name (no email, no other
   detail), so a key can assign a task to a colleague it was told about by
-  name. `q` narrows by name.
+  name. `q` narrows by name. The list is the site's (who a task may be
+  for is not limited to one project); `people:read` is checked on the
+  project the call names (`project`, else the key's home).
   """
   use Phoenix.Controller, formats: [:json]
 
@@ -13,7 +15,8 @@ defmodule PhoenixKitProjects.Web.Api.PeopleController do
   @limit 100
 
   def index(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "people:read"),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "people:read"),
          {:ok, conn} <- Json.require_feature(conn, :assignees),
          {:ok, conn} <- Json.require_action(conn, :view) do
       q = params["q"] |> to_string() |> String.trim() |> String.downcase()

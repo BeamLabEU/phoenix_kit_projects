@@ -38,7 +38,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       limit = limit(params["limit"])
 
       key = conn.assigns.pk_api_key
-      all = Projects.list_assignments(project.uuid)
+      all = project.uuid |> Projects.list_assignments() |> Enum.filter(&Json.visible_row?/1)
       outline = OutlineApi.info(project.uuid)
       {done, open_any} = Enum.split_with(all, &(&1.status == "done"))
 
@@ -71,7 +71,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       briefs = Enum.map(shown, &brief_task(&1, labels[&1.uuid] || [], me, outline))
 
       notes =
-        if TaskNotes.available?(),
+        if TaskNotes.available?() and Json.may?("notes:read"),
           do: project.uuid |> TaskNotes.list_for_project(since) |> Enum.take(-@max_notes),
           else: []
 
@@ -112,10 +112,10 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         resume: resume(briefs, notes, key),
         tasks: briefs,
         done_today: done_today,
-        subprojects: brief_subprojects(project),
+        subprojects: brief_subprojects(project, key),
         project_notes: Enum.map(notes, &brief_note/1),
         client: client_lines(conn, since),
-        events: upcoming_events(project)
+        events: if(Json.may?("events:read"), do: upcoming_events(project), else: [])
       })
     else
       {:halt, conn} -> conn
@@ -224,8 +224,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   # Every child summarised in ONE pass (`project_summaries/1`), not a list
   # of tasks per child; a child that fails to summarise is left out rather
   # than taking the briefing down.
-  defp brief_subprojects(project) do
-    children = Projects.child_projects(project.uuid)
+  defp brief_subprojects(project, key) do
+    children =
+      project.uuid |> Projects.child_projects() |> Enum.filter(&Json.within_reach?(key, &1.uuid))
 
     summaries =
       children
@@ -265,7 +266,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
     place = OutlineApi.place(outline, a)
 
     latest =
-      if TaskNotes.available?(), do: TaskNotes.latest(a.uuid), else: %{redirect: nil, agent: nil}
+      if TaskNotes.available?() and Json.may?("notes:read"),
+        do: TaskNotes.latest(a.uuid),
+        else: %{redirect: nil, agent: nil}
 
     agent = latest.agent && latest.agent.metadata
 
@@ -286,7 +289,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       end_date: a.end_date,
       overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
-      interactions: Projects.interactions_of(a),
+      interactions: if(Json.may_read_interactions?(), do: Projects.interactions_of(a), else: []),
       assignee: Assignee.to_json(a),
       assigned_to_me: is_binary(me) and a.assigned_person_uuid == me,
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},

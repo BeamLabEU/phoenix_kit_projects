@@ -36,10 +36,10 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
       json(conn, %{
         task_uuid: a.uuid,
-        direction: latest.redirect && TaskNotes.to_json(latest.redirect),
-        latest_agent_note: latest.agent && TaskNotes.to_json(latest.agent),
-        latest_human_note: latest.human && TaskNotes.to_json(latest.human),
-        notes: Enum.map(notes, &TaskNotes.to_json/1),
+        direction: latest.redirect && Json.note(latest.redirect),
+        latest_agent_note: latest.agent && Json.note(latest.agent),
+        latest_human_note: latest.human && Json.note(latest.human),
+        notes: Enum.map(notes, &Json.note/1),
         count: length(notes)
       })
     else
@@ -105,7 +105,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
         project_uuid: conn.assigns.pk_project.uuid,
         since: since,
         now: DateTime.utc_now() |> DateTime.truncate(:second),
-        notes: Enum.map(notes, &TaskNotes.to_json/1),
+        notes: Enum.map(notes, &Json.note/1),
         count: length(notes)
       })
     else
@@ -153,7 +153,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
         {:ok, %{note: note, entries: entries}} ->
           {201,
            %{
-             note: TaskNotes.to_json(note),
+             note: Json.note(note),
              entries: Enum.map(entries, &Json.entry/1)
            }}
 

@@ -15,6 +15,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   alias PhoenixKitProjects.{
     ApiKeys,
     Authz,
+    Extensions,
     Features,
     Labels,
     Ledger,
@@ -60,9 +61,14 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     # (`rescope/2`) is checked again against THAT project's access.
     conn = assign(conn, :pk_required, Enum.uniq([scope | conn.assigns[:pk_required] || []]))
 
-    if ApiKey.scope?(conn.assigns.pk_api_key, scope),
-      do: {:ok, conn},
-      else:
+    cond do
+      ApiKey.scope?(conn.assigns.pk_api_key, scope) ->
+        {:ok, conn}
+
+      reason = conn.assigns[:pk_home_refused] ->
+        {:halt, home_refused(conn, reason)}
+
+      true ->
         {:halt,
          error(
            conn,
@@ -73,7 +79,27 @@ defmodule PhoenixKitProjects.Web.Api.Json do
              scope: scope
            }
          )}
+    end
   end
+
+  # A request that stays at a home the key can no longer use (`Auth`).
+  defp home_refused(conn, :membership_ended),
+    do:
+      error(
+        conn,
+        :forbidden,
+        "membership_ended",
+        "This key acts for a person who is no longer a member of its home project. Name another project with project=<key>, or change the home on the API keys page."
+      )
+
+  defp home_refused(conn, _no_access),
+    do:
+      error(
+        conn,
+        :forbidden,
+        "no_access",
+        "This key has no access to its home project. Name another project with project=<key>, or set its access on the API keys page (Projects → API keys)."
+      )
 
   @doc """
   Whether the key reaches a project at all: the nearest grant up the
@@ -112,8 +138,16 @@ defmodule PhoenixKitProjects.Web.Api.Json do
             {:halt, no_such_project(conn)}
         end
 
-      _ ->
+      nil ->
         {:ok, conn}
+
+      "" ->
+        {:ok, conn}
+
+      # Anything else (a number, a map) names no project: refused rather
+      # than quietly acting at home.
+      _ ->
+        {:halt, no_such_project(conn)}
     end
   end
 
@@ -132,6 +166,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
 
     conn
     |> assign(:pk_api_key, view)
+    |> assign(:pk_home_refused, nil)
     |> assign(:pk_project, project)
     |> assign(:pk_fx, Features.gates(project))
   end
@@ -146,6 +181,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
 
     case Enum.reject(conn.assigns[:pk_required] || [], &ApiKey.scope?(key, &1)) do
       [] ->
+        put_view(key)
         {:ok, conn}
 
       [scope | _] ->
@@ -263,6 +299,49 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     end
   end
 
+  @doc """
+  The key as the request acts with it, for the serializers below: set by
+  `Auth` and again whenever the request settles in another project
+  (`still_allowed/1`). A field from an area the key cannot read there is
+  left empty (`may?/1`) — a task read with `tasks:read` alone carries no
+  time, usage, notes or interactions. Side lookups that only `rescope/2`
+  (a link checked on a parent) do not move it.
+  """
+  @spec put_view(ApiKey.t()) :: :ok
+  def put_view(%ApiKey{} = key) do
+    Process.put(:pk_api_view, key)
+    :ok
+  end
+
+  @doc "Whether the request's key may read or write `scope` where it acts (true outside the API)."
+  @spec may?(String.t()) :: boolean()
+  def may?(scope) do
+    case Process.get(:pk_api_view) do
+      %ApiKey{} = key -> ApiKey.scope?(key, scope)
+      _ -> true
+    end
+  end
+
+  @doc """
+  Whether the request's key may read client interactions where it acts:
+  the provider's read scope. With no provider there is no scope to hold,
+  so nothing about interactions is shown.
+  """
+  @spec may_read_interactions?() :: boolean()
+  def may_read_interactions? do
+    case Extensions.api_provider("interactions") do
+      %{module: provider} -> may?(provider.scopes().read)
+      _ -> false
+    end
+  end
+
+  @doc "A note as JSON (`TaskNotes.to_json/1`); its `usage` only with `usage:read`."
+  @spec note(map()) :: map()
+  def note(n) do
+    json = TaskNotes.to_json(n)
+    if may?("usage:read"), do: json, else: %{json | usage: nil}
+  end
+
   @doc "The error envelope for a changeset, as a `{422, body}` pair for `idempotent/3`."
   @spec changeset_error(Ecto.Changeset.t()) :: {422, map()}
   def changeset_error(%Ecto.Changeset{} = cs) do
@@ -298,6 +377,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     totals =
       (totals || Map.get(Ledger.totals_for_assignments([a.uuid]), a.uuid))
       |> whole_totals()
+      |> visible_totals()
 
     labels = labels || Map.get(Labels.labels_for_assignments([a.uuid]), a.uuid, [])
     place = OutlineApi.place(outline || OutlineApi.info(a.project_uuid), a)
@@ -344,7 +424,8 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       words_by: if(a.words_by_key_uuid, do: %{key: a.words_by_key_uuid}, else: %{person: true}),
-      interactions: interactions || interaction_uuids(a),
+      interactions:
+        if(may_read_interactions?(), do: interactions || interaction_uuids(a), else: []),
       library_task: library_task?(a),
       completed_at: a.completed_at,
       inserted_at: a.inserted_at,
@@ -362,14 +443,16 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   """
   @spec task_detail(Assignment.t()) :: map()
   def task_detail(%Assignment{} = a) do
-    latest = TaskNotes.latest(a.uuid)
+    latest =
+      if may?("notes:read"), do: TaskNotes.latest(a.uuid), else: %{redirect: nil, agent: nil}
+
     display = TaskNotes.display_summary(description(a), latest)
 
     %{
       subtask_refs: OutlineApi.subtask_refs(OutlineApi.info(a.project_uuid), a.uuid),
-      direction: latest.redirect && TaskNotes.to_json(latest.redirect),
+      direction: latest.redirect && note(latest.redirect),
       last_outcome: latest.agent && latest.agent.metadata["outcome"],
-      latest_agent_note: latest.agent && TaskNotes.to_json(latest.agent),
+      latest_agent_note: latest.agent && note(latest.agent),
       display_summary: display,
       notes_url: Docs.url("/tasks/#{a.uuid}/notes")
     }
@@ -417,6 +500,28 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   def number(f) when is_float(f), do: if(f == Float.round(f), do: trunc(f), else: f)
   def number(n), do: n
 
+  # Minutes are the time area's, tokens and cost the usage area's.
+  defp visible_totals(nil), do: nil
+
+  defp visible_totals(totals) do
+    hidden =
+      if(may?("time:read"), do: [], else: [:minutes]) ++
+        if may?("usage:read"), do: [], else: [:tokens, :cost_cents]
+
+    drop_totals(totals, hidden)
+  end
+
+  defp drop_totals(totals, []), do: totals
+
+  defp drop_totals(%{} = totals, hidden) do
+    totals
+    |> Map.drop(hidden)
+    |> Map.new(fn
+      {k, %{} = own} -> {k, drop_totals(own, hidden)}
+      pair -> pair
+    end)
+  end
+
   defp whole_totals(nil), do: nil
   defp whole_totals(totals), do: Map.new(totals, fn {k, v} -> {k, number(v)} end)
 
@@ -444,7 +549,11 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       caught_up_since: Projects.caught_up_since(p),
       agent_policy: Project.agent_policy(p),
       parent_uuid: parent_uuid(p),
-      subprojects: Enum.map(Projects.child_projects(p.uuid), &subproject/1)
+      subprojects:
+        p.uuid
+        |> Projects.child_projects()
+        |> Enum.filter(&reachable?/1)
+        |> Enum.map(&subproject/1)
     }
   rescue
     _ -> %{uuid: p.uuid, key: p.key, name: p.name}
@@ -454,6 +563,29 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     case Projects.parent_chain(uuid) do
       [] -> nil
       chain -> List.last(chain).uuid
+    end
+  end
+
+  @doc """
+  Whether a row of a task list may be shown to the request's key: every
+  task, and a sub-project's row only when the key reaches that sub-project
+  (a grant can stop there — its name and progress are then not shown).
+  """
+  @spec visible_row?(Assignment.t()) :: boolean()
+  def visible_row?(%Assignment{child_project_uuid: nil}), do: true
+
+  def visible_row?(%Assignment{child_project_uuid: uuid}) do
+    case Process.get(:pk_api_view) do
+      %ApiKey{} = key -> within_reach?(key, uuid)
+      _ -> true
+    end
+  end
+
+  # A child the request's key reaches (a grant can stop at its project).
+  defp reachable?(%Project{uuid: uuid}) do
+    case Process.get(:pk_api_view) do
+      %ApiKey{} = key -> within_reach?(key, uuid)
+      _ -> true
     end
   end
 

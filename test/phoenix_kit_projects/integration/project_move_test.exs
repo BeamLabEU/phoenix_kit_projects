@@ -218,7 +218,10 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
       assert Members.role_of(ctx.child.uuid, ctx.owner.uuid) == :owner
       assert Members.role_of(ctx.child.uuid, ctx.mate.uuid) == :member
       assert Extensions.enabled?(ctx.child.uuid, "events")
-      assert ApiKeys.get(ctx.key.uuid).project_uuid == ctx.child.uuid
+      # The key keeps its home and gets the same access on the moved project.
+      assert ApiKeys.get(ctx.key.uuid).project_uuid == ctx.parent.uuid
+      assert {:ok, _} = ApiKeys.access_for(ctx.key, ctx.child.uuid)
+      assert {:ok, _} = ApiKeys.access_for(ctx.key, ctx.parent.uuid)
       # The parent keeps its own people.
       assert Members.role_of(ctx.parent.uuid, ctx.owner.uuid) == :owner
     end
@@ -233,6 +236,15 @@ defmodule PhoenixKitProjects.Integration.ProjectMoveTest do
       assert Members.list_members(ctx.child.uuid) == []
       assert ApiKeys.get(foreign.uuid).project_uuid == other.uuid
       assert ApiKeys.get(ctx.key.uuid).project_uuid == ctx.parent.uuid
+      assert {:error, :no_access} = ApiKeys.access_for(ctx.key, ctx.child.uuid)
+    end
+
+    test "a key the project's own grant shuts out is not carried there", ctx do
+      {:ok, _} = ApiKeys.put_grant(ctx.key, ctx.child.uuid, %{"scopes" => []})
+      refute Enum.any?(ProjectMove.preview(ctx.child, ctx.scope).keys, &(&1.uuid == ctx.key.uuid))
+
+      assert {:ok, %{keys: 0}} = ProjectMove.run(ctx.child, :top, ctx.scope, keys: [ctx.key.uuid])
+      assert {:error, :no_access} = ApiKeys.access_for(ctx.key, ctx.child.uuid)
     end
 
     test "a carry step that fails does not undo or hide the move", ctx do

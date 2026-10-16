@@ -1,8 +1,7 @@
 defmodule PhoenixKitProjects.Web.ApiKeyPanel do
   @moduledoc """
   The pure parts of the API key pages: names (`user_name/1`, `kind_label/2`,
-  `display_id/1`), what a member's own key starts as (`personal_attrs/2`),
-  the expiry choices, and the setup prompt a person hands their AI — the
+  `display_id/1`), the expiry choices, and the setup prompt a person hands their AI — the
   base URL, the agent guide, the key's HOME project, how to reach its other
   projects, and the token when it is in hand.
 
@@ -71,26 +70,6 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanel do
   end
 
   def kind_label(_key, _names), do: gettext("Shared agent")
-
-  @doc """
-  What "Create my key" mints for `user` on a project where their role is
-  `role` (an atom from `Authz.effective_role/2`): named after them, the cap
-  at their own role (manager at most — the effective role is derived at
-  each call anyway), every scope, no expiry.
-  """
-  @spec personal_attrs(map(), atom() | nil) :: map()
-  def personal_attrs(user, role) do
-    %{
-      "name" => gettext("%{name}'s AI", name: user_name(user)),
-      "role" => personal_cap(role),
-      "scopes" => ApiKey.scopes(),
-      "user_uuid" => Map.get(user, :uuid)
-    }
-  end
-
-  defp personal_cap(role) when role in [:owner, :manager], do: "manager"
-  defp personal_cap(:viewer), do: "viewer"
-  defp personal_cap(_), do: "member"
 
   @doc "The site's absolute URL for a docs suffix (`/llms.txt`, `/me`, …)."
   @spec absolute(String.t()) :: String.t()

@@ -1340,7 +1340,9 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     {403, "feature_disabled",
      "The project has this feature turned off (see `features` and `extensions` on /me). Do not retry."},
     {403, "membership_ended",
-     "This key acts for a person who is no longer a member of the project. Do not retry; tell your operator."},
+     "This key acts for a person who is no longer a member of the project (or of the project its access there comes from). Do not retry there; other projects on /me may still work — tell your operator."},
+    {403, "no_access",
+     "The call stayed in the key's home project and the key has no access there any more (`home_refused` on /me). Name another project with `project`, or tell your operator."},
     {404, "not_found",
      "No such task, or no such project within this key's reach (the projects listed under `projects` on /me). Reload /me, /tasks or /project."},
     {403, "foreign_text",
@@ -1461,16 +1463,19 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     | `project` | `GET /project` | `POST /project/status` |
     | `tasks` | `GET /tasks`, `GET /tasks/{id}`, `GET /briefing` | create, `PATCH`, move, batch, delete, `POST /subprojects`, task ↔ interaction links |
     | `status` | — | `start`, `complete`, `reopen`, `transition` |
-    | `notes` | `GET /tasks/{id}/notes`, `GET /notes` | `POST /tasks/{id}/notes`, `POST /notes` |
+    | `notes` | `GET /tasks/{id}/notes`, `GET /notes`; a task's `direction` / `latest_agent_note`, the briefing's `project_notes` | `POST /tasks/{id}/notes`, `POST /notes` |
     | `comments` | `GET /tasks/{id}/comments` | `POST /tasks/{id}/comments` |
-    | `time` | `GET /entries`, `GET /tasks/{id}/entries`, `GET /hours` | `POST /time`, `POST /tasks/{id}/time`, correcting time entries |
-    | `usage` | — | `POST /usage`, `POST /tasks/{id}/usage`, `usage` on a note, correcting usage entries |
-    | `events` | `GET /events`, `GET /events/{id}` | — |
+    | `time` | `GET /entries`, `GET /tasks/{id}/entries`, `GET /hours`; `minutes` in a task's `totals` | `POST /time`, `POST /tasks/{id}/time`, correcting time entries |
+    | `usage` | `tokens` and `cost_cents` in a task's `totals` and in `GET /hours` | `POST /usage`, `POST /tasks/{id}/usage`, `usage` on a note, correcting usage entries |
+    | `events` | `GET /events`, `GET /events/{id}`; the briefing's `events` | — |
     | `people` | `GET /people` | — |
 
     Modules add their own areas — the CRM's client interactions are `interactions` read/write for
-    `/ext/interactions`. The scope a call needs is on each endpoint below; a call outside your
-    access is 403 `scope_missing`, which no retry fixes.
+    `/ext/interactions`, and a task's `interactions` list. The scope a call needs is on each
+    endpoint below; a call outside your access is 403 `scope_missing`, which no retry fixes. A
+    field that belongs to an area you cannot read comes back empty (missing from `totals`, `null`,
+    or `[]`) rather than refusing the whole call — empty there means "not yours to see", not
+    "nothing logged".
 
     - **The nearest grant up the tree wins.** A sub-project with no grant of its own uses its
       parent's (when that grant covers sub-projects); a grant of its own — even one set to no
@@ -1479,7 +1484,10 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       person's own role on the project the grant is on, and manager. A shared agent acts with the
       grant's role. The role decides what `allowed_actions` lets you do, exactly as for a person.
     - **Home project.** A call without `project` acts on the key's home project. Everything else
-      needs `project=<its key>` (or its uuid).
+      needs `project=<its key>` (or its uuid). If the key can no longer use its home (its access
+      there was removed, or its person left), /me says so in `home_refused` (`no_access` /
+      `membership_ended`) with `home_project: null`, calls that stay home answer that 403, and
+      calls naming another project still work.
 
     ## Short names: a project's key, a task's ref
 
@@ -1670,7 +1678,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       never billable). Task changes are logged under the person this key acts for (`acting_for`
       in /me; for a shared agent, the person who minted it), with the key named — you are their
       AI, say so when it matters. A personal key acts with that person's current project role,
-      never above manager; once they leave the project every call answers 403 `membership_ended`.
+      never above manager; once they leave a project, calls there answer 403 `membership_ended`.
     - **When it happened:** time and usage carry the receipt time unless you send `occurred_at`
       (ISO 8601, not in the future) — do so when you report in a batch after the work.
     - **Notes, not essays, in the description:** the task's `description` is the short human text.

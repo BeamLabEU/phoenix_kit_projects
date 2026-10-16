@@ -1,19 +1,23 @@
 defmodule PhoenixKitProjects.Schemas.ApiKey do
   @moduledoc """
-  A project API key (`phoenix_kit_project_api_keys`, chain V17): the credential
-  an outside agent presents to drive this project over the JSON API
-  (`PhoenixKitProjects.Web.Api`).
+  An API key (`phoenix_kit_project_api_keys`, chain V17; global since V24):
+  the credential an outside agent presents to work over the JSON API
+  (`PhoenixKitProjects.Web.Api`). What it may do, project by project, is
+  in its grants (`ApiKeyGrant`, read through `ApiKeys.access_for/2`);
+  `project_uuid` is its HOME, where a call naming no project acts, and
+  `role` / `scopes` are what it was minted with — the request path never
+  reads them, it reads the grant's.
 
   A key is one of two kinds (`kind/1`):
 
-    * **personal** — `user_uuid` names the member the key acts for. What it
-      may do is that person's CURRENT membership role, capped by the key's
-      stored `role` and never above manager (`ApiKeys.effective_role/2`);
-      the activity feed names the person, with the key in the metadata.
-      When the person leaves the project the key stops working.
-    * **shared** — no person: a project-wide agent (a CI runner). Its stored
-      `role` is the authority, never owner, and `created_by_uuid` — the
-      person who minted it — is who the feed names as accountable.
+    * **personal** — `user_uuid` names the person the key acts for. In each
+      project it has that person's CURRENT role on the grant's project,
+      capped by the grant's role and never above manager; the activity
+      feed names the person, with the key in the metadata. When the person
+      leaves a project, that project's grant goes.
+    * **shared** — no person: an agent of its own (a CI runner). Each
+      grant's `role` is the authority, never owner, and `created_by_uuid`
+      — the person who minted it — is who the feed names as accountable.
 
   Either way the work ledger names the KEY as the actor of the time and
   usage it reports (`actor_kind: "ai_agent"`). `created_by_uuid` and
