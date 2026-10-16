@@ -1149,7 +1149,30 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     ON #{p}phoenix_kit_project_api_key_grants (project_uuid)
     """)
 
-    # One grant per key that has none yet (a replay adds nothing).
+    # A stored response is now found by its project and header together
+    # (`Json.idempotency_scope/2`); one stored before is the key's only
+    # project's, so it is renamed the same way — a retry across the
+    # upgrade still replays instead of writing twice. Run before the
+    # grants backfill and only for keys with no grant yet: that is "before
+    # V24" exactly, so a replay of the chain renames nothing twice.
+    execute("""
+    UPDATE #{p}phoenix_kit_project_api_idempotency i
+    SET idempotency_key =
+          encode(sha256(convert_to(k.project_uuid::text || ':' || i.idempotency_key, 'UTF8')), 'hex')
+    FROM #{p}phoenix_kit_project_api_keys k
+    WHERE k.uuid = i.api_key_uuid
+      AND k.project_uuid IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM #{p}phoenix_kit_project_api_key_grants g WHERE g.api_key_uuid = k.uuid
+      )
+    """)
+
+    # One grant per key that has none yet (a replay adds nothing). What
+    # `tasks:read` / `tasks:write` covered before V24 is split into the
+    # areas it now names. And every write comes with its read — the grid
+    # has "read" and "read and write", never write alone (status, which has
+    # no read, aside) — so a `time:write`-only key may now list the entries
+    # in its project, the one widening this backfill makes, on purpose.
     execute("""
     INSERT INTO #{p}phoenix_kit_project_api_key_grants (api_key_uuid, project_uuid, scopes, role)
     SELECT k.uuid, k.project_uuid,
@@ -1159,10 +1182,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
                   THEN ARRAY['project:read','notes:read','time:read','usage:read','events:read','people:read']
                   ELSE ARRAY[]::text[] END
              || CASE WHEN 'tasks:write' = ANY(k.scopes)
-                  THEN ARRAY['status:write','notes:write'] ELSE ARRAY[]::text[] END
-             || CASE WHEN 'time:write' = ANY(k.scopes) THEN ARRAY['time:read'] ELSE ARRAY[]::text[] END
-             || CASE WHEN 'usage:write' = ANY(k.scopes) THEN ARRAY['usage:read'] ELSE ARRAY[]::text[] END
-             || CASE WHEN 'project:write' = ANY(k.scopes) THEN ARRAY['project:read'] ELSE ARRAY[]::text[] END
+                  THEN ARRAY['status:write','notes:write','notes:read'] ELSE ARRAY[]::text[] END
+             || ARRAY(SELECT replace(w, ':write', ':read') FROM unnest(k.scopes) AS w
+                      WHERE w LIKE '%:write' AND w <> 'status:write')
            ) AS s ORDER BY s),
            k.role
     FROM #{p}phoenix_kit_project_api_keys k
@@ -1189,10 +1211,48 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     """)
   end
 
-  # Back to one project per key: the grants go; a key keeps its home.
+  # Back to one project per key: each key keeps its home — or, its home
+  # gone, its oldest grant that still opens something — with THAT grant's
+  # role and the scopes V23 knows, so it has no more than it had there
+  # (the key's own columns may still hold what it was minted with). A key
+  # with nothing usable left goes. Then the grants go. Responses stored for
+  # retries under V24 are keyed by a hash V23 cannot rebuild; a retry
+  # across the rollback is not recognised (they are kept, not trusted).
   defp down_v24(p) do
-    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_key_grants")
+    execute("""
+    UPDATE #{p}phoenix_kit_project_api_keys k
+    SET project_uuid = (
+      SELECT g.project_uuid FROM #{p}phoenix_kit_project_api_key_grants g
+      WHERE g.api_key_uuid = k.uuid AND g.scopes <> '{}'
+      ORDER BY g.inserted_at LIMIT 1
+    )
+    WHERE k.project_uuid IS NULL
+       OR NOT EXISTS (
+         SELECT 1 FROM #{p}phoenix_kit_project_api_key_grants g
+         WHERE g.api_key_uuid = k.uuid AND g.project_uuid = k.project_uuid AND g.scopes <> '{}'
+       )
+    """)
+
+    execute("""
+    UPDATE #{p}phoenix_kit_project_api_keys k
+    SET role = g.role,
+        scopes = ARRAY(
+          SELECT unnest(g.scopes)
+          INTERSECT
+          SELECT unnest(ARRAY['tasks:write','time:write','usage:write','project:write',
+                              'interactions:read','interactions:write'])
+        )
+        -- V23's tasks:read also read the project, notes, time, usage,
+        -- events and people: only a grant that read all of them gets it back.
+        || CASE WHEN g.scopes @> ARRAY['tasks:read','project:read','notes:read','time:read',
+                                       'usage:read','events:read','people:read']
+             THEN ARRAY['tasks:read'] ELSE ARRAY[]::text[] END
+    FROM #{p}phoenix_kit_project_api_key_grants g
+    WHERE g.api_key_uuid = k.uuid AND g.project_uuid = k.project_uuid
+    """)
+
     execute("DELETE FROM #{p}phoenix_kit_project_api_keys WHERE project_uuid IS NULL")
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_key_grants")
 
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_api_keys
