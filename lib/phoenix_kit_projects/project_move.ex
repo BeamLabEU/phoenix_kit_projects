@@ -37,7 +37,7 @@ defmodule PhoenixKitProjects.ProjectMove do
   require Logger
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Members, Projects}
+  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Members, MoveLock, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Project, ProjectModule}
 
   @type preview :: %{
@@ -179,12 +179,15 @@ defmodule PhoenixKitProjects.ProjectMove do
 
   Returns `{:ok, %{project:, from:, to:, members: n, modules: n, keys: n}}`
   or `{:error, :forbidden | reason}` with `Projects.move_project/2`'s
-  reasons. What is carried is read BEFORE the move (afterwards there is no
+  reasons, or `{:error, {:locked, reason}}` when the host's move lock
+  (`PhoenixKitProjects.MoveLock`) holds the project in place. What is
+  carried is read BEFORE the move (afterwards there is no
   old parent to read it from) and written after it commits.
   """
   @spec run(Project.t(), :top | binary(), term(), keyword()) :: {:ok, map()} | {:error, term()}
   def run(%Project{} = project, target, scope, opts \\ []) do
-    if allowed?(project, target, scope) do
+    with true <- allowed?(project, target, scope) || {:error, :forbidden},
+         nil <- MoveLock.reason(project) do
       before = preview(project, scope)
 
       with {:ok, moved} <- Projects.move_project(project.uuid, target) do
@@ -202,7 +205,8 @@ defmodule PhoenixKitProjects.ProjectMove do
          })}
       end
     else
-      {:error, :forbidden}
+      {:error, _} = error -> error
+      reason when is_binary(reason) -> {:error, {:locked, reason}}
     end
   end
 

@@ -1050,6 +1050,24 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
+  Is `key` already somebody's: held by a live project, or remembered by the
+  registry (renamed away from, or its project deleted — a key is never
+  handed to another project). Normalised like `Refs.normalize_key/1`; a
+  blank or a non-string is not taken.
+  """
+  @spec key_taken?(term()) :: boolean()
+  def key_taken?(key) do
+    case Refs.normalize_key(key) do
+      nil ->
+        false
+
+      key ->
+        repo().exists?(from(k in "phoenix_kit_project_keys", where: k.key == ^key)) or
+          repo().exists?(from(p in Project, where: p.key == ^key))
+    end
+  end
+
+  @doc """
   The key `name` suggests for a new project, free of every key in use or
   retired (`Refs.suggest_key/2`'s rule).
   """
@@ -2736,6 +2754,7 @@ defmodule PhoenixKitProjects.Projects do
                   project_uuid: updated.project_uuid
                 })
 
+                broadcast_status_changed(updated, link.status)
                 recompute_project_completion(updated.project_uuid, depth + 1)
 
               {:error, _cs} ->
@@ -4097,19 +4116,62 @@ defmodule PhoenixKitProjects.Projects do
   @spec update_assignment_form(Assignment.t(), map(), keyword()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_form(%Assignment{} = a, attrs, opts \\ []) do
-    with {:ok, updated} <- a |> Assignment.changeset(attrs) |> repo().update() do
-      updated = if updated.status != a.status, do: status_changed(updated, a), else: updated
+    with {:ok, {updated, was}} <- a |> Assignment.changeset(attrs) |> update_tracking_status(a) do
+      updated =
+        if updated.status != was, do: status_changed(updated, %{a | status: was}), else: updated
 
       if Keyword.get(opts, :broadcast, true) do
         ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
           uuid: updated.uuid,
           project_uuid: updated.project_uuid
         })
+
+        broadcast_status_changed(updated, was)
       end
 
       {:ok, updated}
     end
   end
+
+  # Writes the changeset and says which status the row HAD. A caller's
+  # struct can be stale (another tab, the API); when the write changes the
+  # status the old one is read from the row itself, locked in the same
+  # transaction, so the event never claims a transition that did not happen.
+  defp update_tracking_status(%Ecto.Changeset{} = cs, %Assignment{} = a) do
+    if Map.has_key?(cs.changes, :status) do
+      repo().transaction(fn ->
+        was =
+          repo().one(
+            from(x in Assignment,
+              where: x.uuid == ^a.uuid,
+              select: x.status,
+              lock: "FOR NO KEY UPDATE"
+            )
+          ) || a.status
+
+        case repo().update(cs) do
+          {:ok, updated} -> {updated, was}
+          {:error, changeset} -> repo().rollback(changeset)
+        end
+      end)
+    else
+      with {:ok, updated} <- repo().update(cs), do: {:ok, {updated, a.status}}
+    end
+  end
+
+  # `{:projects, :assignment_status_changed, %{uuid, project_uuid, from, to}}`
+  # — only when the status really moved. The rows `Outline.settle/3` changes
+  # announce themselves from the outline (`Outline.with_project_lock/2`).
+  defp broadcast_status_changed(%Assignment{status: to} = updated, from) when from != to do
+    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, %{
+      uuid: updated.uuid,
+      project_uuid: updated.project_uuid,
+      from: from,
+      to: to
+    })
+  end
+
+  defp broadcast_status_changed(_updated, _from), do: :ok
 
   # A status changed through the form: the completion stamps follow it as
   # they do on every other path (a reopen clears them, a tick sets them),
@@ -4418,13 +4480,16 @@ defmodule PhoenixKitProjects.Projects do
   @spec update_assignment_status(Assignment.t(), map()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_status(%Assignment{} = a, attrs) do
-    with {:ok, updated} <- a |> Assignment.status_changeset(attrs) |> repo().update() do
-      settle_outline(updated, a.status)
+    with {:ok, {updated, was}} <-
+           a |> Assignment.status_changeset(attrs) |> update_tracking_status(a) do
+      settle_outline(updated, was)
 
       ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
         uuid: updated.uuid,
         project_uuid: updated.project_uuid
       })
+
+      broadcast_status_changed(updated, was)
 
       {:ok, updated}
     end

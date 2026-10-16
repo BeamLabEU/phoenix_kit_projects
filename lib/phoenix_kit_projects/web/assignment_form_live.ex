@@ -31,6 +31,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     Features,
     L10n,
     Labels,
+    MoveLock,
     Outline,
     Paths,
     Projects,
@@ -625,11 +626,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           sp_mode: "new",
           link_options:
             if(kind == "subproject",
-              do:
-                Projects.available_projects_to_link(
-                  project,
-                  socket.assigns[:phoenix_kit_current_scope]
-                ),
+              do: nestable_projects(project, socket.assigns[:phoenix_kit_current_scope]),
               else: []
             ),
           project: project,
@@ -1488,6 +1485,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # What the «Project to nest» picker offers: the projects the viewer may
+  # nest here, minus the ones the host's move lock holds in place (nesting
+  # moves a project). One hook call for the whole list.
+  defp nestable_projects(parent, scope) do
+    candidates = Projects.available_projects_to_link(parent, scope)
+    locked = MoveLock.reasons(candidates)
+
+    Enum.reject(candidates, &Map.has_key?(locked, &1.uuid))
+  end
+
   defp link_existing_subproject(socket, child_uuid)
        when child_uuid in [nil, ""] do
     {:noreply, put_flash(socket, :error, gettext("Pick a project to nest."))}
@@ -1500,7 +1507,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     # the picker would offer this viewer right now may be nested.
     eligible =
       parent
-      |> Projects.available_projects_to_link(socket.assigns[:phoenix_kit_current_scope])
+      |> nestable_projects(socket.assigns[:phoenix_kit_current_scope])
       |> Enum.map(& &1.uuid)
 
     if child_uuid in eligible do

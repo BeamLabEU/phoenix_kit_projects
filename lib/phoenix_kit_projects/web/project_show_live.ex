@@ -64,6 +64,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Labels,
     Ledger,
     ListControls,
+    MoveLock,
     Paths,
     Portal,
     Projects,
@@ -368,6 +369,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               review_selected: nil,
               subproject_summaries: %{},
               subproject_child_tasks: %{},
+              move_locks: %{},
               # Work-ledger state (Step 10): totals strip + per-task logged
               # chips, filled by load_ledger/1 below (nil/empty when the
               # `ledger` flag is off). `log_time_uuid` scopes the modal to a
@@ -513,6 +515,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       expanded_subprojects: MapSet.new(),
       subproject_summaries: %{},
       subproject_child_tasks: %{},
+      move_locks: %{},
       ledger_totals: nil,
       ledger_minutes: %{},
       ledger_tokens: %{},
@@ -651,6 +654,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply, load_labels(socket)}
   end
 
+  # Announced for consumers outside the page; its own reloads follow
+  # `:assignment_updated` / `:assignment_reordered`.
+  def handle_info({:projects, :assignment_status_changed, _payload}, socket),
+    do: {:noreply, socket}
+
   def handle_info(msg, socket) do
     Logger.debug("[ProjectShowLive] unexpected handle_info: #{inspect(msg)}")
     {:noreply, socket}
@@ -731,7 +739,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       progress_pct: if(progress_total > 0, do: round(progress_sum / progress_total), else: 0),
       schedule: schedule,
       subproject_summaries: subproject_summaries,
-      subproject_child_tasks: subproject_child_tasks
+      subproject_child_tasks: subproject_child_tasks,
+      move_locks: load_move_locks(socket.assigns.project, assignments)
     )
     |> assign_pending_reviews(project_uuid)
     |> apply_list_lens()
@@ -969,8 +978,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           />
           <%!-- Out of its parent, or under another project — with what it
                takes along (`Components.MoveProject`). --%>
+          <MoveProject.locked_menu_item
+            :if={is_nil(@project.archived_at) and @move_locks[@project.uuid]}
+            reason={@move_locks[@project.uuid]}
+            label={gettext("Move…")}
+          />
           <.table_row_menu_button
-            :if={is_nil(@project.archived_at)}
+            :if={is_nil(@project.archived_at) and !@move_locks[@project.uuid]}
             phx-click="move_project_open"
             phx-value-uuid={@project.uuid}
             icon="hero-arrows-right-left"
@@ -1037,6 +1051,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       active: Enum.count(all, &(&1.status != "done")),
       done: Enum.count(all, &(&1.status == "done"))
     }
+  end
+
+  # The host's move lock for the project and its sub-project rows, asked
+  # once per load (`MoveLock.reasons/1` is one call for the whole list).
+  defp load_move_locks(project, assignments) do
+    children =
+      for a <- assignments, Assignment.subproject?(a), child = a.child_project, do: child
+
+    MoveLock.reasons([project | children])
   end
 
   # `%{linking_assignment_uuid => child_summary}` for every sub-project row.
@@ -2240,31 +2263,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gated_handle_event("detach_subproject", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       %Assignment{child_project_uuid: child_uuid} = a when is_binary(child_uuid) ->
-        case Projects.detach_subproject(a) do
-          {:ok, _} ->
-            Activity.log("projects.subproject_detached",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "project",
-              resource_uuid: child_uuid,
-              metadata: %{"parent_project_uuid" => socket.assigns.project.uuid}
-            )
+        # Taking a sub-project out of its parent moves it: the host's move
+        # lock holds it here like the Move… dialog does.
+        locked = child_uuid |> Projects.get_project() |> locked_reason()
 
-            {:noreply,
-             socket
-             |> put_flash(:info, gettext("Sub-project is now a standalone project."))
-             |> sync_project_completion()
-             |> load_assignments()}
-
-          {:error, _} ->
-            Activity.log_failed("projects.subproject_detached",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "project",
-              resource_uuid: child_uuid,
-              metadata: %{"parent_project_uuid" => socket.assigns.project.uuid}
-            )
-
-            {:noreply, put_flash(socket, :error, gettext("Could not detach the sub-project."))}
-        end
+        if locked,
+          do: {:noreply, put_flash(socket, :error, locked)},
+          else: detach_subproject(socket, a, child_uuid)
 
       _ ->
         {:noreply, socket}
@@ -3504,6 +3509,37 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  defp locked_reason(nil), do: nil
+  defp locked_reason(%Project{} = project), do: MoveLock.reason(project)
+
+  defp detach_subproject(socket, a, child_uuid) do
+    case Projects.detach_subproject(a) do
+      {:ok, _} ->
+        Activity.log("projects.subproject_detached",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: child_uuid,
+          metadata: %{"parent_project_uuid" => socket.assigns.project.uuid}
+        )
+
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Sub-project is now a standalone project."))
+         |> sync_project_completion()
+         |> load_assignments()}
+
+      {:error, _} ->
+        Activity.log_failed("projects.subproject_detached",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "project",
+          resource_uuid: child_uuid,
+          metadata: %{"parent_project_uuid" => socket.assigns.project.uuid}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not detach the sub-project."))}
+    end
+  end
+
   # ── Work-ledger helpers (Step 10) ────────────────────────────────
 
   defp do_save_work_entry(socket, params, record) do
@@ -4569,8 +4605,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             <%!-- Out as its own project, or under another one —
                                  keeps it + its tasks, and offers what it takes
                                  along (`Components.MoveProject`). --%>
+                            <MoveProject.locked_menu_item
+                              :if={@fx.subprojects and @move_locks[child.uuid]}
+                              reason={@move_locks[child.uuid]}
+                              label={gettext("Move out…")}
+                            />
                             <.table_row_menu_button
-                              :if={@fx.subprojects}
+                              :if={@fx.subprojects and !@move_locks[child.uuid]}
                               phx-click="move_project_open"
                               phx-value-uuid={child.uuid}
                               icon="hero-arrows-right-left"

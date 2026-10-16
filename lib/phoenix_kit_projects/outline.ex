@@ -32,6 +32,8 @@ defmodule PhoenixKitProjects.Outline do
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
 
+  @status_events :projects_outline_status_events
+
   @type row :: Assignment.t() | %{uuid: binary(), parent_uuid: binary() | nil}
 
   @max_lines 2000
@@ -235,8 +237,10 @@ defmodule PhoenixKitProjects.Outline do
       itself, when the project lets subtasks complete their parent;
     * stopped being done → every done task above reopens.
 
-  Returns the uuids of the OTHER rows it changed. No broadcast: the caller
-  owns that.
+  Returns the uuids of the OTHER rows it changed. Each of them is announced
+  as `{:projects, :assignment_status_changed, …}` once the project lock's
+  transaction has committed (`with_project_lock/2`); the caller owns the
+  broadcast for the row it changed itself and for `:assignment_reordered`.
   """
   @spec settle(Assignment.t(), String.t() | nil, binary() | nil) :: [binary()]
   def settle(%Assignment{} = a, was, actor_uuid \\ nil) do
@@ -265,7 +269,8 @@ defmodule PhoenixKitProjects.Outline do
   @doc """
   After a task was added, moved or removed: what it now sits under (or no
   longer does) is brought in line — an open task under a done one reopens
-  it. Returns the uuids changed.
+  it. Returns the uuids changed. Like `settle_tree/2` it must run inside
+  `with_project_lock/2`; outside one the status events are sent at once.
   """
   @spec settle_placed(Assignment.t()) :: [binary()]
   def settle_placed(%Assignment{} = a), do: settle_tree(a.project_uuid)
@@ -276,8 +281,9 @@ defmodule PhoenixKitProjects.Outline do
   under a task): a done task with an open subtask reopens; an open one whose
   subtasks are all done ticks itself when the project lets it. Deepest
   first. Only task rows count — a sub-project row is its own project's
-  business. Must run inside the project lock (`with_project_lock/2`).
-  Returns the uuids it changed.
+  business. Must run inside the project lock (`with_project_lock/2`), which
+  announces the status changes after commit (outside one they are sent at
+  once). Returns the uuids it changed.
   """
   @spec settle_tree(binary(), binary() | nil) :: [binary()]
   def settle_tree(project_uuid, actor_uuid \\ nil) do
@@ -297,11 +303,11 @@ defmodule PhoenixKitProjects.Outline do
 
         cond do
           status[parent.uuid] == "done" and not all_done? ->
-            reopen([parent.uuid])
+            reopen(project_uuid, [parent])
             {Map.put(status, parent.uuid, "in_progress"), [parent.uuid | changed]}
 
           status[parent.uuid] != "done" and all_done? and auto? ->
-            mark_done([parent.uuid], actor_uuid)
+            mark_done(project_uuid, [parent], actor_uuid)
             {Map.put(status, parent.uuid, "done"), [parent.uuid | changed]}
 
           true ->
@@ -313,20 +319,19 @@ defmodule PhoenixKitProjects.Outline do
   end
 
   defp tick_below(%Assignment{} = a, actor_uuid) do
-    uuids =
+    open =
       a.project_uuid
       |> shape()
       |> descendants(a.uuid)
       |> Enum.filter(&(&1.status != "done" and is_nil(&1.child_project_uuid)))
-      |> Enum.map(& &1.uuid)
 
-    mark_done(uuids, actor_uuid)
+    mark_done(a.project_uuid, open, actor_uuid)
   end
 
   defp settle_above(%Assignment{} = a, actor_uuid) do
     if parent_auto?(a.project_uuid) do
       rows = shape(a.project_uuid)
-      climb(rows, a.uuid, actor_uuid, [])
+      climb(a.project_uuid, rows, a.uuid, actor_uuid, [])
     else
       []
     end
@@ -334,7 +339,7 @@ defmodule PhoenixKitProjects.Outline do
 
   # One level at a time: a parent whose rows are all done is ticked, and
   # then stands as a done row for the level above it.
-  defp climb(rows, uuid, actor_uuid, acc) do
+  defp climb(project_uuid, rows, uuid, actor_uuid, acc) do
     by_uuid = Map.new(rows, &{&1.uuid, &1})
 
     with %{parent_uuid: parent_uuid} when is_binary(parent_uuid) <- Map.get(by_uuid, uuid),
@@ -344,7 +349,7 @@ defmodule PhoenixKitProjects.Outline do
            rows
            |> Enum.filter(&(&1.parent_uuid == parent_uuid))
            |> Enum.all?(&(&1.status == "done")) do
-      mark_done([parent.uuid], actor_uuid)
+      mark_done(project_uuid, [parent], actor_uuid)
 
       rows =
         Enum.map(rows, fn
@@ -352,7 +357,7 @@ defmodule PhoenixKitProjects.Outline do
           row -> row
         end)
 
-      climb(rows, parent_uuid, actor_uuid, [parent_uuid | acc])
+      climb(project_uuid, rows, parent_uuid, actor_uuid, [parent_uuid | acc])
     else
       _ -> acc
     end
@@ -365,18 +370,20 @@ defmodule PhoenixKitProjects.Outline do
       rows
       |> ancestors(a.uuid)
       |> Enum.filter(&(&1.status == "done" and is_nil(&1.child_project_uuid)))
-      |> Enum.map(& &1.uuid)
 
     if done_above == [] do
       []
     else
-      reopen(done_above)
-      done_above
+      reopen(a.project_uuid, done_above)
+      Enum.map(done_above, & &1.uuid)
     end
   end
 
-  # Under way, not untouched: something below it was done or is.
-  defp reopen(uuids) do
+  # Under way, not untouched: something below it was done or is. `rows` are
+  # `shape/1` rows (uuid and the status they had), read under the lock.
+  defp reopen(project_uuid, rows) do
+    uuids = Enum.map(rows, & &1.uuid)
+
     from(x in Assignment, where: x.uuid in ^uuids)
     |> repo().update_all(
       set: [
@@ -387,12 +394,15 @@ defmodule PhoenixKitProjects.Outline do
       ]
     )
 
+    note_status_changes(project_uuid, rows, "in_progress")
     :ok
   end
 
-  defp mark_done([], _actor_uuid), do: []
+  defp mark_done(_project_uuid, [], _actor_uuid), do: []
 
-  defp mark_done(uuids, actor_uuid) do
+  defp mark_done(project_uuid, rows, actor_uuid) do
+    uuids = Enum.map(rows, & &1.uuid)
+
     from(x in Assignment, where: x.uuid in ^uuids and x.status != "done")
     |> repo().update_all(
       set: [
@@ -405,6 +415,7 @@ defmodule PhoenixKitProjects.Outline do
       ]
     )
 
+    note_status_changes(project_uuid, rows, "done")
     uuids
   end
 
@@ -490,15 +501,82 @@ defmodule PhoenixKitProjects.Outline do
     :ok
   end
 
-  @doc "Runs `fun` in a transaction holding the project's row lock; `{:error, :not_found}` without the project."
+  @doc """
+  Runs `fun` in a transaction holding the project's row lock; `{:error, :not_found}` without the project.
+
+  Rows the completion rules tick or reopen inside `fun` are announced as
+  `:assignment_status_changed` once the transaction has committed (none if
+  it rolls back or raises). They are kept per process; a lock nested in
+  another lock's `fun` hands its changes to the outer one. If the caller
+  itself wraps the lock in a `Repo.transaction`, the announcement comes
+  when the lock returns, before that outer transaction commits.
+  """
   @spec with_project_lock(binary(), (Project.t() -> any())) :: {:ok, any()} | {:error, any()}
   def with_project_lock(project_uuid, fun) do
-    repo().transaction(fn ->
-      case repo().one(from(p in Project, where: p.uuid == ^project_uuid, lock: "FOR UPDATE")) do
-        nil -> repo().rollback(:not_found)
-        project -> fun.(project)
+    outer = Process.put(@status_events, [])
+
+    result =
+      try do
+        repo().transaction(fn ->
+          case repo().one(from(p in Project, where: p.uuid == ^project_uuid, lock: "FOR UPDATE")) do
+            nil -> repo().rollback(:not_found)
+            project -> fun.(project)
+          end
+        end)
+      catch
+        kind, reason ->
+          stacktrace = __STACKTRACE__
+          restore_status_events(outer)
+          :erlang.raise(kind, reason, stacktrace)
       end
-    end)
+
+    announce_status_changes(result, outer)
+  end
+
+  defp restore_status_events(nil), do: Process.delete(@status_events)
+  defp restore_status_events(outer), do: Process.put(@status_events, outer)
+
+  # Rows the completion rules change with `update_all` (`reopen/2`,
+  # `mark_done/3`) have no per-row write to hook, so each batch leaves its
+  # `{uuid, project_uuid, from, to}` here and the lock announces them once
+  # its transaction has committed — nothing for a rolled-back one. Run
+  # outside a lock (`settle_tree/2`'s contract says not to) there is no
+  # buffer to leave them in, and no key is created: they are announced at
+  # once, so a stray call can never mute a later lock.
+  defp note_status_changes(project_uuid, rows, to) do
+    changes =
+      for %{uuid: uuid, status: from} <- rows, from != to, do: {uuid, project_uuid, from, to}
+
+    case Process.get(@status_events) do
+      buffer when is_list(buffer) -> Process.put(@status_events, changes ++ buffer)
+      nil -> Enum.each(Enum.reverse(changes), &announce_status_change/1)
+    end
+  end
+
+  defp announce_status_change({uuid, project_uuid, from, to}) do
+    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, %{
+      uuid: uuid,
+      project_uuid: project_uuid,
+      from: from,
+      to: to
+    })
+  end
+
+  # Inside another lock's transaction (`outer` is its buffer) nothing has
+  # committed yet: hand the changes back to it.
+  defp announce_status_changes(result, outer) when is_list(outer) do
+    mine = Process.delete(@status_events) || []
+    kept = if match?({:ok, _}, result), do: mine ++ outer, else: outer
+    Process.put(@status_events, kept)
+    result
+  end
+
+  defp announce_status_changes(result, nil) do
+    changes = @status_events |> Process.delete() |> List.wrap() |> Enum.reverse()
+
+    with {:ok, _} <- result, do: Enum.each(changes, &announce_status_change/1)
+
+    result
   end
 
   @doc """
