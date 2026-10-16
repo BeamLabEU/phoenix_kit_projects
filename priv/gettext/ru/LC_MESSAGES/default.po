@@ -188,7 +188,7 @@ msgstr "< 1 часа"
 msgid "Actions"
 msgstr "Действия"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:535
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:602
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:3819
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2194
 #: lib/phoenix_kit_projects/web/project_members_live.ex:489
@@ -514,7 +514,7 @@ msgstr "Зависимости"
 msgid "Description"
 msgstr "Описание"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:470
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:536
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:3187
 #: lib/phoenix_kit_projects/web/portal_live.ex:446
 #, elixir-autogen, elixir-format
@@ -704,7 +704,7 @@ msgstr "Месяцы"
 msgid "My tasks"
 msgstr "Мои задачи"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:384
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:442
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2247
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:176
 #: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:396
@@ -849,7 +849,8 @@ msgstr "Выберите дату и время начала проекта. П�
 #: lib/phoenix_kit_projects/hours/report.ex:159
 #: lib/phoenix_kit_projects/resource_links.ex:175
 #: lib/phoenix_kit_projects/resource_links.ex:175
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:445
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:447
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:507
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:69
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:696
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1335
@@ -2492,7 +2493,7 @@ msgstr "Загрузка по проектам"
 msgid "Reading the calendar"
 msgstr "Как читать календарь"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:490
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:556
 #: lib/phoenix_kit_projects/web/project_events_live.ex:556
 #: lib/phoenix_kit_projects/web/project_events_live.ex:559
 #: lib/phoenix_kit_projects/web/project_files_live.ex:280
@@ -2700,7 +2701,6 @@ msgid "Sub-project updated."
 msgstr "Подпроект обновлён."
 
 #: lib/phoenix_kit_projects.ex:435
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:448
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1376
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:96
 #: lib/phoenix_kit_projects/web/widgets/project_schedule_widget.ex:110
@@ -2929,7 +2929,7 @@ msgstr "Задачи окрашены в цвет своего проекта. �
 msgid "A red ring marks a late task — not done, but past its scheduled days."
 msgstr "Красное кольцо отмечает просроченную задачу — не завершена, хотя её запланированные дни прошли."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:399
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:457
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:3419
 #: lib/phoenix_kit_projects/web/components/assignee_filter_panel.ex:119
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:937
@@ -3374,7 +3374,7 @@ msgstr "Добавить файлы"
 msgid "Add the first file"
 msgstr "Добавить первый файл"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:535
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:602
 #: lib/phoenix_kit_projects/web/project_events_live.ex:697
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2195
 #: lib/phoenix_kit_projects/web/project_members_live.ex:488
@@ -3505,7 +3505,7 @@ msgstr "Не удалось обновить модуль."
 msgid "Create the first one"
 msgstr "Создать первую"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:404
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:462
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2733
 #: lib/phoenix_kit_projects/web/project_whiteboards_live.ex:414
 #, elixir-autogen, elixir-format
@@ -3844,7 +3844,7 @@ msgstr "Убрать доску"
 msgid "Requires: %{list}"
 msgstr "Требует: %{list}"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:447
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:509
 #: lib/phoenix_kit_projects/web/project_members_live.ex:485
 #: lib/phoenix_kit_projects/web/project_members_live.ex:562
 #: lib/phoenix_kit_projects/web/project_members_live.ex:686
@@ -4115,8 +4115,9 @@ msgstr "Принять"
 msgid "Accepting…"
 msgstr "Принимается…"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:446
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:533
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:454
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:508
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:600
 #: lib/phoenix_kit_projects/web/project_members_live.ex:501
 #, elixir-autogen, elixir-format
 msgid "Access"
@@ -4132,7 +4133,7 @@ msgstr "Доступ предоставлен."
 msgid "Access not found."
 msgstr "Доступ не найден."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:257
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:306
 #: lib/phoenix_kit_projects/web/project_members_live.ex:327
 #, elixir-autogen, elixir-format
 msgid "Access removed."
@@ -5348,7 +5349,7 @@ msgstr "Автоматически, когда они могут изменит�
 msgid "From this many tasks"
 msgstr "Начиная с такого числа задач"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:28
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:27
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2930
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:772
 #, elixir-autogen, elixir-format
@@ -5796,7 +5797,7 @@ msgstr "записей"
 msgid "That project is archived — restore it before nesting it."
 msgstr "Этот проект в архиве — восстановите его, прежде чем вкладывать."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:429
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:490
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:624
 #, elixir-autogen, elixir-format
 msgid "Rotating…"
@@ -5872,7 +5873,7 @@ msgstr "Убрать задачу"
 msgid "API access"
 msgstr "Доступ к API"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:405
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:463
 #, elixir-autogen, elixir-format
 msgid "Create key"
 msgstr "Создать ключ"
@@ -5884,22 +5885,22 @@ msgstr "Создать ключ"
 msgid "Key"
 msgstr "Ключ"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:290
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:343
 #, elixir-autogen, elixir-format
 msgid "Key revoked."
 msgstr "Ключ отозван."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:381
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:439
 #, elixir-autogen, elixir-format
 msgid "New key"
 msgstr "Новый ключ"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:433
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:494
 #, elixir-autogen, elixir-format
 msgid "Revoke"
 msgstr "Отозвать"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:430
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:491
 #, elixir-autogen, elixir-format
 msgid "Rotate"
 msgstr "Обновить"
@@ -5980,17 +5981,17 @@ msgstr "Направление изменено"
 msgid "Outcome: %{outcome}"
 msgstr "Результат: %{outcome}"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:123
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:102
 #, elixir-autogen, elixir-format
 msgid "API token: %{token}"
 msgstr "API-токен: %{token}"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:126
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:105
 #, elixir-autogen, elixir-format
 msgid "API token: <paste the token saved when the key \"%{name}\" (ID %{key_id}) was created or rotated — it is not stored>"
 msgstr "API-токен: <вставьте токен, сохранённый при создании или ротации ключа \"%{name}\" (ID %{key_id}) — он не хранится>"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:369
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:425
 #: lib/phoenix_kit_projects/web/components/api_token_modal.ex:100
 #: lib/phoenix_kit_projects/web/project_api_live.ex:264
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:831
@@ -5998,12 +5999,12 @@ msgstr "API-токен: <вставьте токен, сохранённый п�
 msgid "Agent guide"
 msgstr "Руководство для агента"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:137
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:116
 #, elixir-autogen, elixir-format
 msgid "Agent guide (read it first): %{url}"
 msgstr "Руководство для агента (прочитай сначала): %{url}"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:136
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:115
 #, elixir-autogen, elixir-format
 msgid "Base URL: %{url}"
 msgstr "Базовый URL: %{url}"
@@ -6054,7 +6055,7 @@ msgstr "Для вашего ИИ:"
 msgid "ID"
 msgstr "ID"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:29
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:28
 #, elixir-autogen, elixir-format
 msgid "In %{days} days"
 msgstr "Через %{days} дней"
@@ -6069,7 +6070,7 @@ msgstr "Ключ создан — скопируйте его сейчас"
 msgid "Key rotated — copy the new token now"
 msgstr "Ключ обновлён — скопируйте новый токен сейчас"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:425
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:486
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:870
 #, elixir-autogen, elixir-format
 msgid "Never used"
@@ -6087,7 +6088,7 @@ msgstr "Без срока"
 msgid "OpenAPI spec"
 msgstr "Спецификация OpenAPI"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:138
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:117
 #, elixir-autogen, elixir-format
 msgid "OpenAPI: %{url}"
 msgstr "OpenAPI: %{url}"
@@ -6112,22 +6113,17 @@ msgstr "Токен показывается только сейчас; хран�
 msgid "Token for \"%{name}\""
 msgstr "Токен для \"%{name}\""
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:84
-#, elixir-autogen, elixir-format
-msgid "%{name}'s AI"
-msgstr "ИИ — %{name}"
-
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:399
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:457
 #, elixir-autogen, elixir-format
 msgid "Acts for"
 msgstr "От имени"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:70
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:69
 #, elixir-autogen, elixir-format
 msgid "Personal · acts for %{name}"
 msgstr "Личный · от имени %{name}"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:73
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:72
 #, elixir-autogen, elixir-format
 msgid "Shared agent"
 msgstr "Общий агент"
@@ -7684,7 +7680,7 @@ msgstr "%{area}: чтение и запись"
 msgid "%{area}, read only"
 msgstr "%{area}: только чтение"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:365
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:421
 #, elixir-autogen, elixir-format
 msgid "A key lets an AI or a script work with your projects. Each key acts for you, so it never does more than you can. Set what it may see and do in each project."
 msgstr "Ключ позволяет ИИ или скрипту работать с вашими проектами. Каждый ключ действует от вашего имени, поэтому никогда не может больше, чем вы. Укажите, что он может видеть и делать в каждом проекте."
@@ -7700,12 +7696,12 @@ msgid "AI usage"
 msgstr "Использование ИИ"
 
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:44
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:363
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:419
 #, elixir-autogen, elixir-format
 msgid "API keys"
 msgstr "API-ключи"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:176
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:219
 #, elixir-autogen, elixir-format
 msgid "Access added."
 msgstr "Доступ добавлен."
@@ -7716,17 +7712,12 @@ msgstr "Доступ добавлен."
 msgid "Access here"
 msgstr "Доступ здесь"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:396
-#, elixir-autogen, elixir-format
-msgid "Access there"
-msgstr "Доступ там"
-
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:421
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:482
 #, elixir-autogen, elixir-format
 msgid "Acts for %{name}"
 msgstr "Действует за: %{name}"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:526
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:597
 #, elixir-autogen, elixir-format
 msgid "Add a project"
 msgstr "Добавить проект"
@@ -7736,17 +7727,12 @@ msgstr "Добавить проект"
 msgid "All keys reaching this project"
 msgstr "Все ключи с доступом к этому проекту"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:484
-#, elixir-autogen, elixir-format
-msgid "Covers its sub-projects"
-msgstr "Включает подпроекты"
-
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:467
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:532
 #, elixir-autogen, elixir-format
 msgid "Custom…"
 msgstr "Настроить…"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:372
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:428
 #, elixir-autogen, elixir-format
 msgid "Everyone's keys"
 msgstr "Ключи всех"
@@ -7761,23 +7747,17 @@ msgstr "Из модуля %{module}"
 msgid "Full"
 msgstr "Полный"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:470
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:536
 #, elixir-autogen, elixir-format
 msgid "Hide details"
 msgstr "Скрыть подробности"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:449
-#, elixir-autogen, elixir-format
-msgid "Home"
-msgstr "Основной"
-
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:487
 #: lib/phoenix_kit_projects/web/project_api_live.ex:232
 #, elixir-autogen, elixir-format
 msgid "Home project"
 msgstr "Основной проект"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:135
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:114
 #, elixir-autogen, elixir-format
 msgid "Home project: %{name}"
 msgstr "Основной проект: %{name}"
@@ -7792,7 +7772,7 @@ msgstr "Его данные и сводка; статус, настройки"
 msgid "Keys an AI agent or a script uses to work on this project over its JSON API. Keys are managed on the API keys page, where each one is given its access per project."
 msgstr "Ключи, которыми ИИ-агент или скрипт работает с этим проектом через JSON API. Ключами управляют на странице API-ключей, где каждому задаётся доступ по проектам."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:425
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:486
 #, elixir-autogen, elixir-format
 msgid "Last used %{when}"
 msgstr "Последнее использование: %{when}"
@@ -7802,12 +7782,12 @@ msgstr "Последнее использование: %{when}"
 msgid "List and open tasks; create, edit, move and nest them"
 msgstr "Список и просмотр задач; создание, правка, перемещение и вложение"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:145
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:124
 #, elixir-autogen, elixir-format
 msgid "Log your time, tokens and cost as you work. On a 401 stop and tell me — the key may have been rotated or revoked. Ask me before destructive or bulk actions."
 msgstr "Записывайте время, токены и стоимость по ходу работы. При 401 остановитесь и сообщите мне — ключ мог быть заменён или отозван. Спрашивайте меня перед разрушительными или массовыми действиями."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:429
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:490
 #, elixir-autogen, elixir-format
 msgid "Make a new token for this key? The old one stops working at once."
 msgstr "Создать новый токен для этого ключа? Старый сразу перестанет работать."
@@ -7828,7 +7808,7 @@ msgid "New key for this project"
 msgstr "Новый ключ для этого проекта"
 
 #: lib/phoenix_kit_projects/api_access.ex:173
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:507
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:573
 #, elixir-autogen, elixir-format
 msgid "No access"
 msgstr "Нет доступа"
@@ -7843,12 +7823,12 @@ msgstr "Здесь нет доступа"
 msgid "No key reaches this project yet. Make one on the API keys page and give it access here."
 msgstr "Пока ни один ключ не имеет доступа к этому проекту. Создайте ключ на странице API-ключей и дайте ему доступ сюда."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:411
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:470
 #, elixir-autogen, elixir-format
 msgid "No keys yet."
 msgstr "Ключей пока нет."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:399
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:457
 #, elixir-autogen, elixir-format
 msgid "Nobody (shared)"
 msgstr "Никто (общий)"
@@ -7858,28 +7838,28 @@ msgstr "Никто (общий)"
 msgid "None of your keys reach this project. Make one with \"New key for this project\", or give an existing key access here on the API keys page."
 msgstr "Ни один из ваших ключей не имеет доступа к этому проекту. Создайте ключ кнопкой «Новый ключ для этого проекта» или дайте доступ существующему ключу на странице API-ключей."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:391
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:528
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:449
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:597
 #, elixir-autogen, elixir-format
 msgid "Pick a project"
 msgstr "Выберите проект"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:158
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:199
 #, elixir-autogen, elixir-format
 msgid "Pick a project the key starts with."
 msgstr "Выберите проект, с которого начнёт ключ."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:179
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:223
 #, elixir-autogen, elixir-format
 msgid "Pick a project."
 msgstr "Выберите проект."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:508
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:574
 #, elixir-autogen, elixir-format
 msgid "Read"
 msgstr "Чтение"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:509
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:575
 #, elixir-autogen, elixir-format
 msgid "Read and write"
 msgstr "Чтение и запись"
@@ -7889,37 +7869,37 @@ msgstr "Чтение и запись"
 msgid "Read only"
 msgstr "Только чтение"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:432
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:493
 #, elixir-autogen, elixir-format
 msgid "Revoke this key? Everything using it stops working, in every project."
 msgstr "Отозвать этот ключ? Всё, что его использует, перестанет работать во всех проектах."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:423
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:484
 #, elixir-autogen, elixir-format
 msgid "Revoked"
 msgstr "Отозван"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:432
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:493
 #, elixir-autogen, elixir-format
 msgid "Revoking…"
 msgstr "Отзыв…"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:142
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:121
 #, elixir-autogen, elixir-format
 msgid "Send the token as an Authorization: Bearer header on every call and keep it out of chat, logs and output. Start with GET /me: it lists every project this key reaches and what it may do in each (per area: none, read or write). A call without a project parameter acts on the home project; for any other project pass project=<its key>, e.g. GET /briefing?project=ANDI. A task ref like ANDI-42 selects its own project. Never assume one project's access from another's."
 msgstr "Передавайте токен в заголовке Authorization: Bearer в каждом запросе и не показывайте его в чате, логах и выводе. Начните с GET /me: он перечисляет все проекты, к которым есть доступ, и что можно в каждом (по областям: нет, чтение или запись). Запрос без параметра project относится к основному проекту; для другого проекта передайте project=<его ключ>, например GET /briefing?project=ANDI. Ссылка на задачу вроде ANDI-42 сама выбирает свой проект. Никогда не выводите доступ к одному проекту из доступа к другому."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:421
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:482
 #, elixir-autogen, elixir-format
 msgid "Shared"
 msgstr "Общий"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:402
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:460
 #, elixir-autogen, elixir-format
 msgid "Shared key's role"
 msgstr "Роль общего ключа"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:155
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:196
 #, elixir-autogen, elixir-format
 msgid "Sign in to make a key."
 msgstr "Войдите, чтобы создать ключ."
@@ -7929,12 +7909,7 @@ msgstr "Войдите, чтобы создать ключ."
 msgid "Start, complete and reopen tasks"
 msgstr "Запуск, завершение и повторное открытие задач"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:389
-#, elixir-autogen, elixir-format
-msgid "Starts in project"
-msgstr "Начинает в проекте"
-
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:490
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:556
 #, elixir-autogen, elixir-format
 msgid "Take this project away from the key?"
 msgstr "Убрать этот проект из ключа?"
@@ -7964,12 +7939,12 @@ msgstr "События календаря проекта"
 msgid "The token was shown once, when the key was made. Lost it? Rotate the key on the API keys page and paste the new setup prompt to your AI."
 msgstr "Токен показывался один раз, при создании ключа. Потеряли? Замените ключ на странице API-ключей и вставьте новую инструкцию вашему ИИ."
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:282
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:335
 #, elixir-autogen, elixir-format
 msgid "This key cannot be rotated."
 msgstr "Этот ключ нельзя заменить."
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:117
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:96
 #, elixir-autogen, elixir-format
 msgid "This key is a shared agent, not a person's."
 msgstr "Этот ключ общего агента, а не человека."
@@ -7984,7 +7959,7 @@ msgstr "Записи времени и отчёт по часам; учёт вр
 msgid "Tokens and cost reported by agents"
 msgstr "Токены и стоимость от агентов"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:134
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:113
 #, elixir-autogen, elixir-format
 msgid "Use this site's projects API."
 msgstr "Используйте API проектов этого сайта."
@@ -7994,12 +7969,12 @@ msgstr "Используйте API проектов этого сайта."
 msgid "Who is on the project, for assigning"
 msgstr "Кто в проекте, для назначения"
 
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:509
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:575
 #, elixir-autogen, elixir-format
 msgid "Write"
 msgstr "Запись"
 
-#: lib/phoenix_kit_projects/web/api_key_panel.ex:111
+#: lib/phoenix_kit_projects/web/api_key_panel.ex:90
 #, elixir-autogen, elixir-format
 msgid "You act for %{name} — their AI, with their role in each project (never above manager). Say so when it matters."
 msgstr "Вы действуете за %{name} — как его ИИ, с его ролью в каждом проекте (не выше менеджера). Говорите об этом, когда это важно."
@@ -8009,11 +7984,6 @@ msgstr "Вы действуете за %{name} — как его ИИ, с его
 #, elixir-autogen, elixir-format
 msgid "acts as %{role}"
 msgstr "действует как %{role}"
-
-#: lib/phoenix_kit_projects/web/api_keys_live.ex:384
-#, elixir-autogen, elixir-format
-msgid "e.g. Max's AI"
-msgstr "напр. ИИ Макса"
 
 #: lib/phoenix_kit_projects/web/project_api_live.ex:150
 #, elixir-autogen, elixir-format
@@ -8029,3 +7999,64 @@ msgstr "здесь не действует"
 #, elixir-autogen, elixir-format
 msgid "set on this project"
 msgstr "задан в этом проекте"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:582
+#, elixir-autogen, elixir-format
+msgid "Also covers its sub-projects"
+msgstr "Включает и подпроекты"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:523
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:553
+#, elixir-autogen, elixir-format
+msgid "Calls that name no project act here"
+msgstr "Запросы без указания проекта действуют здесь"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:523
+#, elixir-autogen, elixir-format
+msgid "Default"
+msgstr "По умолчанию"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:524
+#, elixir-autogen, elixir-format
+msgid "Its sub-projects are not covered"
+msgstr "Подпроекты не включены"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:554
+#, elixir-autogen, elixir-format
+msgid "Make default"
+msgstr "Сделать по умолчанию"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:583
+#, elixir-autogen, elixir-format
+msgid "On unless you want this project alone. A sub-project with its own row here uses that row instead."
+msgstr "Включено, если вам не нужен только этот проект. Подпроект со своей строкой здесь использует её."
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:318
+#, elixir-autogen, elixir-format
+msgid "The default project needs some access there."
+msgstr "В проекте по умолчанию у ключа должен быть какой-то доступ."
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:524
+#, elixir-autogen, elixir-format
+msgid "This project only"
+msgstr "Только этот проект"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:466
+#, elixir-autogen, elixir-format
+msgid "You can give the key more projects once it is made."
+msgstr "После создания ключу можно добавить другие проекты."
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:442
+#, elixir-autogen, elixir-format
+msgid "e.g. Coding assistant"
+msgstr "напр. Помощник по коду"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:625
+#, elixir-autogen, elixir-format
+msgid "read"
+msgstr "чтение"
+
+#: lib/phoenix_kit_projects/web/api_keys_live.ex:624
+#, elixir-autogen, elixir-format
+msgid "write"
+msgstr "запись"
