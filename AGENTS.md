@@ -468,6 +468,35 @@ Messages are `{:projects, event_atom, payload_map}` tuples.
 | `projects:project:<uuid>` | one project (safe against cross-tenant fan-out — you need the uuid) |
 | `projects:popup:<socket id>` | one router-mounted project page's private frame topic; UI-intent verbs only, never content verbs |
 
+`{:projects, :assignment_status_changed, %{uuid, project_uuid, from, to}}` goes
+to `projects:all` and the project's topic from every path that changes an
+assignment's status, and only when the status really moved:
+`update_assignment_status/2`, `update_assignment_form/3`, a sub-project row's
+rollup, and the rows the completion rules tick or reopen (`Outline.settle/3`,
+`settle_tree/2`). `from` is the status the ROW had for the two public update
+functions: when a write changes the status they read the old one from the row
+(locked `FOR NO KEY UPDATE` in the same transaction), so a caller holding a
+stale struct never makes up a transition. A sub-project rollup reads its link
+row fresh, and the cascade rows carry the status `shape/1` read under the
+project lock. Rows born with a
+status (a template clone, the typed list's new lines) are creations, not
+changes.
+
+- The form paths send it beside `:assignment_updated` and honour
+  `broadcast: false` for their own row. The cascade rows are different: they get
+  this event (and the page one `:assignment_reordered`), never
+  `:assignment_updated`, and `broadcast: false` does not silence them.
+- The cascade rows are collected in the process dictionary (key
+  `:projects_outline_status_events`, like `RefText`'s writer) by
+  `Outline.reopen`/`mark_done` and announced by `Outline.with_project_lock/2`
+  after its transaction commits; a rollback or an exception drops them, a lock
+  nested in another hands them to the outer one. A caller that wraps the lock in
+  its own `Repo.transaction` gets them when the lock returns, before that
+  transaction commits. `settle_tree/2` / `settle_placed/1` outside a lock send
+  them at once and leave no key behind.
+- The module's own LiveViews (projects list, overview, project page, calendar,
+  Gantt) ignore it (their reload follows `:assignment_updated`); a cascade of N rows is N+1 messages on `projects:all`.
+
 ### Permissions
 
 `permission: "projects"` on every tab; mount guards, and events trust the mount
@@ -983,6 +1012,11 @@ agreed on is what is built, and where they corrected it is marked.
   sub-project row, the page header and the task drawer; the `#` search
   finds a typed ref; a link to a task carries it. The API answers `key`,
   `ref`, `number`, `parent_ref` and its guide has a "Short names" section.
+- **Is a key free?** `Projects.key_taken?/1` — true for a key a live project
+  holds or the registry remembers (renamed away from, or its project
+  deleted); normalised like `Refs.normalize_key/1`. A host that builds keys of
+  its own checks it before `create_project/2`; check-then-create is still a
+  race, and the changeset's `constraint: :unique` error stays the authority.
 - **Tests that create projects by name are not async.** Two sandboxed
   transactions inserting the same suggested key wait on each other at the
   registry and deadlock once each creates a second project;
@@ -1019,6 +1053,27 @@ modules and its agent's key behind.
 - `Web.Components.MoveProject` — the dialog, in `ConfirmAction`'s shape
   (one modal, one event clause per page): on the project's own ⋮ menu, on
   a sub-project's row ("Move out…") and on a row of the projects list.
+
+- **Host move lock.** `config :phoenix_kit_projects, move_lock: {Mod, :fun}`;
+  `Mod.fun/1` gets a LIST of `%Project{}` and returns `%{project_uuid => reason}`
+  for the ones that must stay where they are (reason: a string shown to the
+  user). One call per page load — `PhoenixKitProjects.MoveLock.reasons/1` — and
+  the pages keep the answer in a `:move_locks` assign, so the hook can answer
+  with one query and HEEX never calls it per row. Unset = nothing locked. A hook
+  that raises, exits or returns a non-map fails OPEN (nothing locked,
+  `Logger.warning`), like the other host hooks. Enforced in
+  `ProjectMove.run/4` (`{:error, {:locked, reason}}`), by `MoveProject`'s
+  `move_project_open` (no dialog, a flash with the reason), and by the «Project
+  to nest» picker in `AssignmentFormLive` (locked projects are not offered and
+  `save_subproject` re-checks), and by the `detach_subproject` event ("Make
+  standalone" — no menu entry renders it any more, but the handler is alive). The
+  hook runs on every reload of the list and the project page, so it must be fast
+  (one query for the whole list). A config value that is not `{Module, :function}`
+  is ignored with one warning. The three «Move…» entries render
+  `MoveProject.locked_menu_item/1` — a greyed `<li aria-disabled="true">`
+  with the reason as `title` and no `phx-click`. `Projects.move_project/2` and
+  `link_subproject/2` stay policy-free: the lock is a rule of the screens and of
+  `ProjectMove`, not of the context.
 
 ### A task's own dates (V21, 2026-10-06)
 

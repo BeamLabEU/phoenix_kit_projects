@@ -175,6 +175,11 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
      |> WebHelpers.close_or_navigate(Paths.projects())}
   end
 
+  # Announced for consumers outside the page; its own reloads follow
+  # `:assignment_updated` / `:assignment_reordered`.
+  def handle_info({:projects, :assignment_status_changed, _payload}, socket),
+    do: {:noreply, socket}
+
   def handle_info(msg, socket) do
     Logger.debug("[ProjectGanttLive] unexpected handle_info: #{inspect(msg)}")
     {:noreply, socket}

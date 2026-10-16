@@ -508,7 +508,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
      )}
   end
 
+  # Announced beside `:assignment_updated` (which reloads); one reload per
+  # change, not two — and none more for every row a tick cascades over.
   @impl true
+  def handle_info({:projects, :assignment_status_changed, _payload}, socket),
+    do: {:noreply, socket}
+
   def handle_info({:projects, _event, _payload}, socket) do
     {:noreply, reload(socket)}
   end

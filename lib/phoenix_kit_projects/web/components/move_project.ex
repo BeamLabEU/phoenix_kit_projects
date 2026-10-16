@@ -23,7 +23,10 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
   `after_move.(socket, result)` runs once the move has committed (reload
   the list, re-open the page) and returns the socket. The mover is checked
   in `ProjectMove.run/4`, not here: an event naming a project they may not
-  move opens nothing and moves nothing.
+  move opens nothing and moves nothing. The same goes for a project the
+  host's move lock holds (`PhoenixKitProjects.MoveLock`); the pages show
+  such a project's menu entry through `locked_menu_item/1`, with the
+  reasons computed once per load into their `:move_locks` assign.
   """
 
   use Phoenix.Component
@@ -33,7 +36,7 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
   import PhoenixKitWeb.Components.Core.Modal, only: [modal: 1]
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
 
-  alias PhoenixKitProjects.{Activity, Authz, L10n, ProjectMove, Projects}
+  alias PhoenixKitProjects.{Activity, Authz, L10n, MoveLock, ProjectMove, Projects}
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
@@ -56,7 +59,8 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
     scope = socket.assigns[:phoenix_kit_current_scope]
 
     with %Project{} = project <- Projects.get_project(uuid),
-         true <- Authz.can?(scope, project, :edit_settings) do
+         true <- Authz.can?(scope, project, :edit_settings),
+         nil <- MoveLock.reason(project) do
       preview = ProjectMove.preview(project, scope)
 
       {:noreply,
@@ -74,6 +78,7 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
          }
        )}
     else
+      reason when is_binary(reason) -> {:noreply, put_flash(socket, :error, reason)}
       _ -> {:noreply, socket}
     end
   end
@@ -178,6 +183,7 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
     gettext(~s("%{name}" is now under "%{parent}".), name: name(project), parent: name(to))
   end
 
+  defp error_message({:locked, reason}) when is_binary(reason), do: reason
   defp error_message(:forbidden), do: gettext("You may not move this project there.")
   defp error_message(:already_there), do: gettext("The project is already there.")
 
@@ -196,6 +202,29 @@ defmodule PhoenixKitProjects.Web.Components.MoveProject do
 
   defp name(%Project{} = project),
     do: Project.localized_name(project, L10n.current_content_lang())
+
+  attr(:reason, :string, required: true, doc: "Why the host holds the project in place.")
+  attr(:label, :string, required: true)
+
+  @doc """
+  The «Move…» menu entry of a project the host's move lock holds: the
+  `table_row_menu_button` look, greyed out, with the reason as its tooltip
+  and nothing to click.
+  """
+  def locked_menu_item(assigns) do
+    ~H"""
+    <li role="none" aria-disabled="true" title={@reason} class="opacity-50 cursor-not-allowed">
+      <span
+        role="menuitem"
+        aria-disabled="true"
+        class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm w-full text-left"
+      >
+        <.icon name="hero-arrows-right-left" class="w-4 h-4 shrink-0 opacity-70" />
+        <span>{@label}</span>
+      </span>
+    </li>
+    """
+  end
 
   attr(:move, :any,
     default: nil,

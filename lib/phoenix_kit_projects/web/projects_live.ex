@@ -49,7 +49,18 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
       f_ext_val: [default: "", url_key: "xval"]
     ]
 
-  alias PhoenixKitProjects.{Activity, Authz, Health, L10n, ListMetrics, Paths, Projects, Statuses}
+  alias PhoenixKitProjects.{
+    Activity,
+    Authz,
+    Health,
+    L10n,
+    ListMetrics,
+    MoveLock,
+    Paths,
+    Projects,
+    Statuses
+  }
+
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.{ConfirmAction, MoveProject}
@@ -135,6 +146,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
         people_options: [],
         ext_filter_options: %{},
         projects: [],
+        move_locks: %{},
         bulk_enabled?: true,
         # `captured_uuids` is the snapshot taken from the DOM at the
         # moment the user clicks an action button (Reorder, etc.). The
@@ -186,6 +198,9 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
   # several messages (a task done: the task, its project's rollup, the
   # parent's). The first one reloads at once; the rest of a burst wait for
   # the pause that follows and share one reload.
+  def handle_info({:projects, :assignment_status_changed, _payload}, socket),
+    do: {:noreply, socket}
+
   def handle_info({:projects, _event, _payload}, socket) do
     case socket.assigns[:reload] do
       nil ->
@@ -268,6 +283,7 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
 
     assign(socket,
       projects: page,
+      move_locks: MoveLock.reasons(page),
       metrics: metrics,
       total_count: total,
       # Sub-projects count: someone who belongs only to a sub-project has
@@ -1132,7 +1148,13 @@ defmodule PhoenixKitProjects.Web.ProjectsLive do
                 icon="hero-pencil"
                 label={gettext("Edit")}
               />
+              <MoveProject.locked_menu_item
+                :if={@move_locks[p.uuid]}
+                reason={@move_locks[p.uuid]}
+                label={gettext("Move…")}
+              />
               <.table_row_menu_button
+                :if={!@move_locks[p.uuid]}
                 phx-click="move_project_open"
                 phx-value-uuid={p.uuid}
                 icon="hero-arrows-right-left"
