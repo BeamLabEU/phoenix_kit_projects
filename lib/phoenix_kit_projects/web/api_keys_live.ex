@@ -48,14 +48,21 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        show_all?: false,
        api_token: nil,
        open_grid: nil,
-       new_project: params["project"]
+       new_key: %{"project" => params["project"]},
+       add_drafts: %{}
      )
      |> load()}
   end
 
   @impl true
   def handle_params(params, _uri, socket) do
-    {:noreply, assign(socket, new_project: params["project"] || socket.assigns.new_project)}
+    case params["project"] do
+      uuid when is_binary(uuid) ->
+        {:noreply, update(socket, :new_key, &Map.put(&1, "project", uuid))}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   defp load(socket) do
@@ -65,7 +72,13 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     rows =
       Enum.map(keys, fn key ->
         grants = ApiKeys.grants(key)
-        %{key: key, grants: grants, editable?: editable?(socket, key)}
+
+        %{
+          key: key,
+          grants: grants,
+          editable?: editable?(socket, key),
+          addable: addable(socket, key, grants)
+        }
       end)
 
     project_names =
@@ -89,7 +102,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   defp projects_for(nil), do: []
 
   defp projects_for(user_uuid) do
-    [viewer: user_uuid]
+    [viewer: user_uuid, include_subprojects: true]
     |> Projects.list_projects()
     |> Enum.reject(& &1.is_template)
   rescue
@@ -99,21 +112,36 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   defp grant_options(socket, %ApiKey{user_uuid: nil}),
     do:
       if(socket.assigns.admin?,
-        do: Enum.reject(Projects.list_projects(), & &1.is_template),
+        do: Enum.reject(Projects.list_projects(include_subprojects: true), & &1.is_template),
         else: []
       )
 
   defp grant_options(_socket, %ApiKey{user_uuid: uuid}), do: projects_for(uuid)
 
+  # The projects a key's "Add a project" offers: what it may be given,
+  # minus what it already has.
+  defp addable(socket, %ApiKey{revoked_at: nil} = key, grants) do
+    if editable?(socket, key) do
+      granted = MapSet.new(grants, & &1.project_uuid)
+
+      for p <- grant_options(socket, key), not MapSet.member?(granted, p.uuid) do
+        {Project.localized_name(p, L10n.current_content_lang()), p.uuid}
+      end
+    else
+      []
+    end
+  end
+
+  defp addable(_socket, _key, _grants), do: []
+
   defp names(uuids), do: Map.new(uuids, &{&1, ApiKeyPanel.user_name(&1)})
 
-  # Who may change a key: the person it acts for, whoever made it, and
-  # administrators.
+  # Who may change a key: the person it acts for, and administrators
+  # (the only ones who make shared keys). Whoever MADE a key for somebody
+  # else does not keep a hand on it — it is that person's now.
   defp editable?(socket, %ApiKey{} = key) do
     me = socket.assigns.me
-
-    socket.assigns.admin? or
-      (is_binary(me) and (key.user_uuid == me or key.created_by_uuid == me))
+    socket.assigns.admin? or (is_binary(me) and key.user_uuid == me)
   end
 
   # ── events ─────────────────────────────────────────────────────────
@@ -121,6 +149,16 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   @impl true
   def handle_event("toggle_all", _params, socket) do
     {:noreply, socket |> assign(show_all?: not socket.assigns.show_all?) |> load()}
+  end
+
+  # The two add forms keep what was typed in assigns, so a save on another
+  # row (which re-renders every card) does not reset them.
+  def handle_event("draft_key", %{"key" => params}, socket) do
+    {:noreply, assign(socket, new_key: params)}
+  end
+
+  def handle_event("draft_grant", %{"grant" => %{"key" => key_uuid} = params}, socket) do
+    {:noreply, update(socket, :add_drafts, &Map.put(&1, key_uuid, params))}
   end
 
   def handle_event("create_key", %{"key" => params}, socket) do
@@ -144,7 +182,10 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         {:ok, key, token} ->
           {:noreply,
            socket
-           |> assign(api_token: %{token: token, key: key, action: :created, project: project})
+           |> assign(
+             api_token: %{token: token, key: key, action: :created, project: project},
+             new_key: %{}
+           )
            |> load()}
 
         {:error, cs} ->
@@ -173,7 +214,10 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
             %{"scopes" => ApiAccess.scopes(grid), "role" => key.role},
             actor_uuid: socket.assigns.me
           )
-          |> flash_result(socket, gettext("Access added."))
+          |> flash_result(
+            update(socket, :add_drafts, &Map.delete(&1, key.uuid)),
+            gettext("Access added.")
+          )
 
         _ ->
           {:noreply, put_flash(socket, :error, gettext("Pick a project."))}
@@ -222,11 +266,16 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         %{"key" => key_uuid, "project" => project_uuid, "role" => role},
         socket
       ) do
-    with_grant(socket, key_uuid, project_uuid, fn key, grant ->
-      ApiKeys.put_grant(key, project_uuid, %{"scopes" => grant.scopes, "role" => role},
-        actor_uuid: socket.assigns.me
-      )
-      |> flash_result(socket, nil)
+    with_grant(socket, key_uuid, project_uuid, fn
+      # A personal key's role there is its person's; only a shared key has one.
+      %ApiKey{user_uuid: user} = _key, _grant when not is_nil(user) ->
+        {:noreply, socket}
+
+      key, grant ->
+        ApiKeys.put_grant(key, project_uuid, %{"scopes" => grant.scopes, "role" => role},
+          actor_uuid: socket.assigns.me
+        )
+        |> flash_result(socket, nil)
     end)
   end
 
@@ -259,10 +308,14 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   end
 
   def handle_event("set_home", %{"key" => key_uuid, "home" => project_uuid}, socket) do
-    with_key(socket, key_uuid, fn key ->
+    with_grant(socket, key_uuid, project_uuid, fn key, _grant ->
       case ApiKeys.set_home(key, project_uuid) do
-        {:ok, _} -> {:noreply, load(socket)}
-        _ -> {:noreply, socket}
+        {:ok, _} ->
+          {:noreply, load(socket)}
+
+        _ ->
+          {:noreply,
+           put_flash(socket, :error, gettext("The default project needs some access there."))}
       end
     end)
   end
@@ -307,12 +360,15 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     end
   end
 
+  # A grant the viewer may change: on a key they may change, and in a
+  # project that key may still be given (`allowed_project/4`) — a grant
+  # left over on a project its person can no longer see is only removed.
   defp with_grant(socket, key_uuid, project_uuid, fun) do
     with_key(socket, key_uuid, fn key ->
-      case Enum.find(ApiKeys.grants(key), &(&1.project_uuid == project_uuid)) do
-        nil -> {:noreply, socket}
-        grant -> fun.(key, grant)
-      end
+      grant = Enum.find(ApiKeys.grants(key), &(&1.project_uuid == project_uuid))
+      allowed? = allowed_project(socket, project_uuid, is_nil(key.user_uuid), key.user_uuid)
+
+      if grant && allowed?, do: fun.(key, grant), else: {:noreply, socket}
     end)
   end
 
@@ -375,42 +431,47 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       </div>
 
       <%!-- A new key: a name, the project it starts in and how much it
-           may do there; more projects are added on its card. --%>
-      <form id="api-key-new" phx-submit="create_key" class="card bg-base-100 border border-base-200 shadow-sm">
+           may do there; more projects are added on its card. The form
+           keeps its draft in assigns (`draft_key`), so a save elsewhere
+           does not clear it. --%>
+      <form id="api-key-new" phx-change="draft_key" phx-submit="create_key" class="card bg-base-100 border border-base-200 shadow-sm">
         <div class="card-body gap-3">
           <h2 class="font-medium">{gettext("New key")}</h2>
           <div class="flex flex-wrap items-end gap-3">
             <div class="flex-1 min-w-48">
-              <.input name="key[name]" value="" label={gettext("Name")} placeholder={gettext("e.g. Max's AI")} required maxlength="80" />
+              <.input name="key[name]" value={@new_key["name"] || ""} label={gettext("Name")} placeholder={gettext("e.g. Coding assistant")} required maxlength="80" />
             </div>
             <div class="w-56">
               <.select
                 name="key[project]"
-                label={gettext("Starts in project")}
-                value={@new_project}
+                label={gettext("Project")}
+                value={@new_key["project"]}
                 prompt={gettext("Pick a project")}
                 options={Enum.map(@my_projects, &{Project.localized_name(&1, L10n.current_content_lang()), &1.uuid})}
               />
             </div>
             <div class="w-60">
-              <.select name="key[preset]" label={gettext("Access there")} value="full" options={preset_options()} />
+              <.select name="key[preset]" label={gettext("Access")} value={@new_key["preset"] || "full"} options={preset_options()} />
             </div>
             <div :if={@admin?} class="w-40">
-              <.select name="key[kind]" label={gettext("Acts for")} value="personal" options={[{gettext("Me"), "personal"}, {gettext("Nobody (shared)"), "shared"}]} />
+              <.select name="key[kind]" label={gettext("Acts for")} value={@new_key["kind"] || "personal"} options={[{gettext("Me"), "personal"}, {gettext("Nobody (shared)"), "shared"}]} />
             </div>
-            <div :if={@admin?} class="w-32">
-              <.select name="key[role]" label={gettext("Shared key's role")} value="member" options={Enum.map(ApiKey.roles(), &{&1, &1})} />
+            <div :if={@admin? and @new_key["kind"] == "shared"} class="w-32">
+              <.select name="key[role]" label={gettext("Shared key's role")} value={@new_key["role"] || "member"} options={Enum.map(ApiKey.roles(), &{&1, &1})} />
             </div>
             <.button type="submit" phx-disable-with={gettext("Creating…")}>
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Create key")}
             </.button>
           </div>
+          <p class="text-xs text-base-content/60">{gettext("You can give the key more projects once it is made.")}</p>
         </div>
       </form>
 
       <p :if={@rows == []} class="text-sm text-base-content/60">{gettext("No keys yet.")}</p>
 
       <div :for={row <- @rows} id={"api-key-#{row.key.uuid}"} class={["card bg-base-100 border shadow-sm", if(row.key.revoked_at, do: "border-base-200 opacity-60", else: "border-base-300")]}>
+        <% several? = length(row.grants) > 1 %>
+        <% live? = row.editable? and is_nil(row.key.revoked_at) %>
         <div class="card-body gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="flex flex-wrap items-center gap-2 min-w-0">
@@ -425,7 +486,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                 {if row.key.last_used_at, do: gettext("Last used %{when}", when: L10n.format_datetime(row.key.last_used_at)), else: gettext("Never used")}
               </span>
             </div>
-            <div :if={row.editable? and is_nil(row.key.revoked_at)} class="flex items-center gap-1">
+            <div :if={live?} class="flex items-center gap-1">
               <button type="button" class="btn btn-ghost btn-xs" phx-click="rotate" phx-value-key={row.key.uuid} phx-disable-with={gettext("Rotating…")} data-confirm={gettext("Make a new token for this key? The old one stops working at once.")}>
                 <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Rotate")}
               </button>
@@ -435,9 +496,10 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
             </div>
           </div>
 
-          <%!-- Per project: how much, and whether it covers the project's
-               sub-projects. The home project is where a call without
-               `project` acts. --%>
+          <%!-- Per project: how much it may do. A grant covers the
+               project's sub-projects unless switched off in Details. The
+               default project (the key's home: where a call without
+               `project` acts) only means something once there are two. --%>
           <div class="overflow-x-auto">
             <table class="table table-sm">
               <thead>
@@ -445,8 +507,6 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                   <th>{gettext("Project")}</th>
                   <th>{gettext("Access")}</th>
                   <th :if={is_nil(row.key.user_uuid)}>{gettext("Role")}</th>
-                  <th>{gettext("Sub-projects")}</th>
-                  <th>{gettext("Home")}</th>
                   <th></th>
                 </tr>
               </thead>
@@ -454,47 +514,53 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                 <%= for grant <- row.grants do %>
                   <% project = Map.get(@projects_by_uuid, grant.project_uuid) %>
                   <% open? = @open_grid == {row.key.uuid, grant.project_uuid} %>
+                  <% home? = row.key.project_uuid == grant.project_uuid %>
                   <tr id={"grant-#{row.key.uuid}-#{grant.project_uuid}"}>
-                    <td class="font-medium">
-                      {project && Project.localized_name(project, L10n.current_content_lang())}
-                      <span :if={project && project.key} class="font-mono text-xs text-base-content/50">{project.key}</span>
+                    <td>
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <span class="font-medium">{(project && Project.localized_name(project, L10n.current_content_lang())) || "—"}</span>
+                        <span :if={project && project.key} class="font-mono text-xs text-base-content/50">{project.key}</span>
+                        <span :if={home? and several?} class="badge badge-sm badge-primary badge-outline" title={gettext("Calls that name no project act here")}>{gettext("Default")}</span>
+                        <span :if={not grant.inherit} class="badge badge-sm badge-ghost" title={gettext("Its sub-projects are not covered")}>{gettext("This project only")}</span>
+                      </div>
                     </td>
                     <td>
-                      <form phx-change="set_preset" class="flex items-center gap-2">
+                      <form id={"preset-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_preset" class="flex items-center gap-2">
                         <input type="hidden" name="key" value={row.key.uuid} />
                         <input type="hidden" name="project" value={grant.project_uuid} />
-                        <select name="preset" class="select select-sm" disabled={not row.editable? or row.key.revoked_at != nil}>
-                          <option :for={{value, label} <- preset_options() ++ [{"custom", gettext("Custom…")}]} value={value} selected={ApiAccess.preset_of(grant.scopes) == value}>{label}</option>
+                        <select name="preset" class="select select-sm" disabled={not live?}>
+                          <option :for={{label, value} <- preset_options() ++ [{gettext("Custom…"), "custom"}]} value={value} selected={ApiAccess.preset_of(grant.scopes) == value}>{label}</option>
                         </select>
                         <button type="button" class="btn btn-ghost btn-xs" phx-click="toggle_grid" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid}>
+                          <.icon name={if open?, do: "hero-chevron-up", else: "hero-adjustments-horizontal"} class="w-3.5 h-3.5" />
                           {if open?, do: gettext("Hide details"), else: gettext("Details")}
                         </button>
                       </form>
+                      <p :if={not open? and ApiAccess.preset_of(grant.scopes) == "custom"} class="text-xs text-base-content/60 mt-1">
+                        {access_summary(grant.scopes)}
+                      </p>
                     </td>
                     <td :if={is_nil(row.key.user_uuid)}>
-                      <form phx-change="set_role">
+                      <form id={"role-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_role">
                         <input type="hidden" name="key" value={row.key.uuid} />
                         <input type="hidden" name="project" value={grant.project_uuid} />
-                        <select name="role" class="select select-sm" disabled={not row.editable?}>
+                        <select name="role" class="select select-sm" disabled={not live?}>
                           <option :for={r <- ApiKey.roles()} value={r} selected={grant.role == r}>{r}</option>
                         </select>
                       </form>
                     </td>
-                    <td>
-                      <input type="checkbox" class="checkbox checkbox-sm" checked={grant.inherit} disabled={not row.editable?} phx-click="toggle_inherit" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} aria-label={gettext("Covers its sub-projects")} />
-                    </td>
-                    <td>
-                      <input type="radio" class="radio radio-sm" name={"home-#{row.key.uuid}"} checked={row.key.project_uuid == grant.project_uuid} disabled={not row.editable?} phx-click="set_home" phx-value-key={row.key.uuid} phx-value-home={grant.project_uuid} aria-label={gettext("Home project")} />
-                    </td>
-                    <td class="text-right">
-                      <button :if={row.editable? and is_nil(row.key.revoked_at)} type="button" class="btn btn-ghost btn-xs text-error" phx-click="remove_grant" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} data-confirm={gettext("Take this project away from the key?")} aria-label={gettext("Remove")}>
+                    <td class="text-right whitespace-nowrap">
+                      <button :if={live? and several? and not home? and grant.scopes != []} type="button" class="btn btn-ghost btn-xs" phx-click="set_home" phx-value-key={row.key.uuid} phx-value-home={grant.project_uuid} title={gettext("Calls that name no project act here")}>
+                        {gettext("Make default")}
+                      </button>
+                      <button :if={live?} type="button" class="btn btn-ghost btn-xs text-error" phx-click="remove_grant" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} data-confirm={gettext("Take this project away from the key?")} aria-label={gettext("Remove")}>
                         <.icon name="hero-x-mark" class="w-4 h-4" />
                       </button>
                     </td>
                   </tr>
                   <tr :if={open?} id={"grid-#{row.key.uuid}-#{grant.project_uuid}"}>
-                    <td colspan="6">
-                      <form phx-change="set_grid" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 py-2">
+                    <td colspan="4" class="bg-base-200/40">
+                      <form id={"grid-form-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_grid" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 py-2">
                         <input type="hidden" name="key" value={row.key.uuid} />
                         <input type="hidden" name="project" value={grant.project_uuid} />
                         <% grid = ApiAccess.grid(grant.scopes) %>
@@ -503,13 +569,20 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                             {area.label}
                             <span :if={area.hint} class="block text-xs text-base-content/50">{area.hint}</span>
                           </span>
-                          <select name={"grid[#{area.key}]"} class="select select-xs" disabled={not row.editable?}>
+                          <select name={"grid[#{area.key}]"} class="select select-xs" disabled={not live?}>
                             <option value="none" selected={grid[area.key] == "none"}>{gettext("No access")}</option>
                             <option :if={area.read} value="read" selected={grid[area.key] == "read"}>{gettext("Read")}</option>
                             <option :if={area.write} value="write" selected={grid[area.key] == "write"}>{if area.read, do: gettext("Read and write"), else: gettext("Write")}</option>
                           </select>
                         </label>
                       </form>
+                      <label class="flex items-start gap-2 text-sm border-t border-base-300 pt-2 mt-1 cursor-pointer">
+                        <input type="checkbox" class="checkbox checkbox-sm mt-0.5" checked={grant.inherit} disabled={not live?} phx-click="toggle_inherit" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} />
+                        <span>
+                          {gettext("Also covers its sub-projects")}
+                          <span class="block text-xs text-base-content/50">{gettext("On unless you want this project alone. A sub-project with its own row here uses that row instead.")}</span>
+                        </span>
+                      </label>
                     </td>
                   </tr>
                 <% end %>
@@ -517,20 +590,14 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
             </table>
           </div>
 
-          <form :if={row.editable? and is_nil(row.key.revoked_at)} id={"grant-add-#{row.key.uuid}"} phx-submit="add_grant" class="flex flex-wrap items-end gap-2">
+          <% draft = Map.get(@add_drafts, row.key.uuid, %{}) %>
+          <form :if={live? and row.addable != []} id={"grant-add-#{row.key.uuid}"} phx-change="draft_grant" phx-submit="add_grant" class="flex flex-wrap items-end gap-2">
             <input type="hidden" name="grant[key]" value={row.key.uuid} />
-            <% granted = MapSet.new(row.grants, & &1.project_uuid) %>
             <div class="w-56">
-              <.select
-                name="grant[project]"
-                label={gettext("Add a project")}
-                value=""
-                prompt={gettext("Pick a project")}
-                options={for p <- grant_options(assigns_socket(assigns), row.key), not MapSet.member?(granted, p.uuid), do: {Project.localized_name(p, L10n.current_content_lang()), p.uuid}}
-              />
+              <.select name="grant[project]" label={gettext("Add a project")} value={draft["project"] || ""} prompt={gettext("Pick a project")} options={row.addable} />
             </div>
             <div class="w-60">
-              <.select name="grant[preset]" label={gettext("Access")} value="read" options={preset_options()} />
+              <.select name="grant[preset]" label={gettext("Access")} value={draft["preset"] || "read"} options={preset_options()} />
             </div>
             <button type="submit" class="btn btn-sm" phx-disable-with={gettext("Adding…")}>{gettext("Add")}</button>
           </form>
@@ -547,9 +614,20 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     """
   end
 
-  # `grant_options/2` reads the socket's admin flag; the template has the
-  # assigns, which carry the same flag.
-  defp assigns_socket(assigns), do: %{assigns: %{admin?: assigns.admin?}}
+  # A custom grant in one line: the areas it opens and how far.
+  defp access_summary(scopes) do
+    grid = ApiAccess.grid(scopes)
+
+    ApiAccess.areas()
+    |> Enum.flat_map(fn area ->
+      case grid[area.key] do
+        "write" -> ["#{area.label}: #{gettext("write")}"]
+        "read" -> ["#{area.label}: #{gettext("read")}"]
+        _ -> []
+      end
+    end)
+    |> Enum.join(" · ")
+  end
 
   defp preset_options,
     do: Enum.map(ApiAccess.presets(), fn {key, label, _grid} -> {label, key} end)

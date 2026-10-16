@@ -219,6 +219,198 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
     end
   end
 
+  describe "each area stays its own (review 2026-10-16)" do
+    test "/hours leaves out a sub-project the key cannot read time in", %{
+      token: token,
+      key: key,
+      home: home
+    } do
+      {:ok, %{child_project: child}} = Projects.create_subproject(home.uuid, %{"name" => "Kid"})
+      {:ok, _} = PhoenixKitProjects.Ledger.log_time(home.uuid, 30)
+      {:ok, _} = PhoenixKitProjects.Ledger.log_time(child.uuid, 600)
+
+      minutes = fn ->
+        api(build_conn(), token)
+        |> get("#{@base}/hours")
+        |> json_response(200)
+        |> get_in(["totals", "minutes"])
+      end
+
+      assert minutes.() == 630
+      {:ok, _} = ApiKeys.put_grant(key, child.uuid, %{"scopes" => []})
+      assert minutes.() == 30
+    end
+
+    test "tasks:read alone shows no time, usage or notes on a task", %{
+      token: token,
+      key: key,
+      home: home
+    } do
+      t = task(home, "Quiet")
+      {:ok, _} = PhoenixKitProjects.Ledger.log_time(home.uuid, 45, assignment_uuid: t.uuid)
+      {:ok, _} = ApiKeys.put_grant(key, home.uuid, %{"scopes" => ["tasks:read"]})
+
+      %{"task" => one} =
+        api(build_conn(), token) |> get("#{@base}/tasks/#{t.uuid}") |> json_response(200)
+
+      refute Map.has_key?(one["totals"] || %{}, "minutes")
+      refute Map.has_key?(one["totals"] || %{}, "tokens")
+      assert one["latest_agent_note"] == nil
+
+      %{"tasks" => [row]} =
+        api(build_conn(), token) |> get("#{@base}/tasks") |> json_response(200)
+
+      refute Map.has_key?(row["totals"] || %{}, "minutes")
+
+      assert %{"project_notes" => [], "events" => []} =
+               api(build_conn(), token) |> get("#{@base}/briefing") |> json_response(200)
+
+      {:ok, _} = ApiKeys.put_grant(key, home.uuid, %{"scopes" => ["tasks:read", "time:read"]})
+
+      %{"task" => one} =
+        api(build_conn(), token) |> get("#{@base}/tasks/#{t.uuid}") |> json_response(200)
+
+      assert one["totals"]["minutes"] == 45
+    end
+
+    test "a sub-project the key cannot reach is not listed on its parent", %{
+      token: token,
+      key: key,
+      home: home
+    } do
+      {:ok, %{child_project: child}} =
+        Projects.create_subproject(home.uuid, %{"name" => "Hidden kid"})
+
+      subs = fn ->
+        api(build_conn(), token)
+        |> get("#{@base}/project")
+        |> json_response(200)
+        |> get_in(["project", "subprojects"])
+      end
+
+      assert [_] = subs.()
+      {:ok, _} = ApiKeys.put_grant(key, child.uuid, %{"scopes" => []})
+      assert [] = subs.()
+    end
+
+    test "a home the key can no longer use does not block its other projects", %{
+      token: token,
+      key: key,
+      home: home,
+      other: other
+    } do
+      {:ok, _} = ApiKeys.put_grant(key, other.uuid, %{"scopes" => grid("read")})
+      {:ok, _} = ApiKeys.put_grant(key, home.uuid, %{"scopes" => []})
+      task(other, "Still here")
+
+      assert %{"tasks" => [_]} =
+               api(build_conn(), token)
+               |> get("#{@base}/tasks?project=#{other.key}")
+               |> json_response(200)
+
+      assert %{"error" => %{"code" => "no_access"}} =
+               api(build_conn(), token) |> get("#{@base}/tasks") |> json_response(403)
+
+      assert %{"home_refused" => "no_access", "projects" => [_ | _]} =
+               api(build_conn(), token) |> get("#{@base}/me") |> json_response(200)
+
+      assert {:error, :no_grant} = ApiKeys.set_home(key, home.uuid)
+    end
+
+    test "no grant reaches a template", %{key: key} do
+      template =
+        fixture_project(%{
+          "name" => "Tpl #{System.unique_integer([:positive])}",
+          "is_template" => true
+        })
+
+      {:ok, _} = ApiKeys.put_grant(key, template.uuid, %{"scopes" => grid("full")})
+      assert {:error, :no_access} = ApiKeys.access_for(key, template.uuid)
+    end
+
+    test "time:read alone lists time entries, not tokens or cost; /hours sums usage only where every project allows it",
+         %{token: token, key: key, home: home} do
+      {:ok, %{child_project: child}} = Projects.create_subproject(home.uuid, %{"name" => "Kid"})
+      {:ok, _} = PhoenixKitProjects.Ledger.log_time(home.uuid, 30)
+      {:ok, _} = PhoenixKitProjects.Ledger.record_ai(home.uuid, %{tokens: 1000, cost_cents: 5})
+      {:ok, _} = PhoenixKitProjects.Ledger.record_ai(child.uuid, %{tokens: 99, cost_cents: 1})
+
+      {:ok, _} =
+        ApiKeys.put_grant(key, home.uuid, %{"scopes" => ["time:read", "project:read"]})
+
+      %{"entries" => entries} =
+        api(build_conn(), token) |> get("#{@base}/entries") |> json_response(200)
+
+      assert Enum.map(entries, & &1["kind"]) == ["time"]
+
+      {:ok, _} = ApiKeys.put_grant(key, home.uuid, %{"scopes" => ["time:read", "usage:read"]})
+      {:ok, _} = ApiKeys.put_grant(key, child.uuid, %{"scopes" => ["time:read"]})
+
+      totals =
+        api(build_conn(), token)
+        |> get("#{@base}/hours")
+        |> json_response(200)
+        |> Map.get("totals")
+
+      refute Map.has_key?(totals, "tokens")
+
+      :ok = ApiKeys.delete_grant(key, child.uuid)
+
+      totals =
+        api(build_conn(), token)
+        |> get("#{@base}/hours")
+        |> json_response(200)
+        |> Map.get("totals")
+
+      assert totals["tokens"] == 1099
+    end
+
+    test "a sub-project the key cannot reach has no row in its parent's task list", %{
+      token: token,
+      key: key,
+      home: home
+    } do
+      {:ok, %{child_project: child}} =
+        Projects.create_subproject(home.uuid, %{"name" => "Secret"})
+
+      {:ok, _} = ApiKeys.put_grant(key, child.uuid, %{"scopes" => []})
+
+      %{"tasks" => rows} =
+        api(build_conn(), token) |> get("#{@base}/tasks") |> json_response(200)
+
+      refute Enum.any?(rows, &(&1["child_project_uuid"] == child.uuid))
+    end
+
+    test "a project move offers only keys whose grant actually reaches the project", %{
+      key: key,
+      home: home
+    } do
+      {:ok, %{child_project: child}} =
+        Projects.create_subproject(home.uuid, %{"name" => "Moving"})
+
+      scope = fake_scope()
+
+      assert Enum.any?(
+               PhoenixKitProjects.ProjectMove.preview(child, scope).keys,
+               &(&1.uuid == key.uuid)
+             )
+
+      {:ok, _} =
+        ApiKeys.put_grant(key, home.uuid, %{"scopes" => grid("full"), "inherit" => false})
+
+      refute Enum.any?(
+               PhoenixKitProjects.ProjectMove.preview(child, scope).keys,
+               &(&1.uuid == key.uuid)
+             )
+    end
+
+    test "a malformed project names no project", %{token: token} do
+      assert api(build_conn(), token)
+             |> post_json("#{@base}/tasks", %{"title" => "x", "project" => %{"a" => 1}})
+             |> json_response(404)
+    end
+  end
+
   describe "comments" do
     setup do
       {:ok, _} = PhoenixKit.Settings.update_setting("comments_enabled", "true")
@@ -295,6 +487,38 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       |> render_click()
 
       assert {:error, _} = ApiKeys.access_for(key, other.uuid)
+    end
+
+    test "a project picked in Add a project survives a change on another row; Default shows only with two",
+         %{conn: conn, other: other} do
+      max = user("draft")
+      third = fixture_project(%{"name" => "Third #{System.unique_integer([:positive])}"})
+      for p <- [other, third], do: {:ok, _} = Members.add_member(p, max.uuid, role: "member")
+      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: ["projects"]))
+
+      {:ok, key, _} =
+        ApiKeys.create(other, %{"name" => "Agent", "user_uuid" => max.uuid}, actor_uuid: max.uuid)
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/api-keys")
+      refute html =~ "Make default"
+
+      view
+      |> form("#grant-add-#{key.uuid}", grant: %{project: third.uuid, preset: "read"})
+      |> render_change()
+
+      html =
+        view
+        |> form("#preset-#{key.uuid}-#{other.uuid}", preset: "read")
+        |> render_change()
+
+      assert {:ok, %{scopes: scopes}} = ApiKeys.access_for(key, other.uuid)
+      refute "tasks:write" in scopes
+
+      assert html =~
+               ~r/<option[^>]*selected[^>]*value="#{third.uuid}"|<option[^>]*value="#{third.uuid}"[^>]*selected/
+
+      view |> form("#grant-add-#{key.uuid}") |> render_submit()
+      assert render(view) =~ "Make default"
     end
   end
 end
