@@ -29,7 +29,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   alias PhoenixKitProjects.{ApiAccess, ApiKeys, ApiUsage, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Web.Api.Docs
-  alias PhoenixKitProjects.Web.{ApiKeyPanel, ApiKeysUsage, ListUi}
+  alias PhoenixKitProjects.Web.{ApiKeyPanel, ApiKeysFilters, ApiKeysUsage, ListUi}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitWeb.TableColumns
 
@@ -60,7 +60,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        key_totals: %{},
        u: nil,
        add_drafts: %{},
-       show_column_modal: false
+       show_column_modal: false,
+       key_params: %{}
      )
      |> then(fn socket ->
        assign(socket,
@@ -87,7 +88,40 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
          |> load_usage()}
 
       _ ->
-        {:noreply, assign(socket, page_title: gettext("API keys"))}
+        {:noreply,
+         socket
+         |> assign(
+           page_title: gettext("API keys"),
+           key_params: Map.take(params, ApiKeysFilters.fields())
+         )
+         |> refilter()}
+    end
+  end
+
+  # Which keys the list shows (`ApiKeysFilters`): the filters only above
+  # its threshold, each only when it tells keys apart.
+  defp refilter(socket) do
+    rows = socket.assigns.rows
+
+    if ApiKeysFilters.shown?(rows) do
+      filters = ApiKeysFilters.from_params(socket.assigns.key_params, rows)
+
+      assign(socket,
+        key_filters: filters,
+        key_filter_options:
+          ApiKeysFilters.options(rows,
+            admin?: socket.assigns.admin?,
+            names: socket.assigns.user_names,
+            projects: socket.assigns.projects_by_uuid
+          ),
+        shown_rows: ApiKeysFilters.apply(rows, filters)
+      )
+    else
+      assign(socket,
+        key_filters: %{},
+        key_filter_options: nil,
+        shown_rows: ApiKeysFilters.apply(rows, %{})
+      )
     end
   end
 
@@ -162,6 +196,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       user_names:
         rows |> Enum.map(& &1.key.user_uuid) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> names()
     )
+    |> refilter()
   end
 
   # The projects whose keys the viewer may manage: those they own.
@@ -275,6 +310,24 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       end
 
     {:noreply, reload_usage(TableColumns.handle_event(event, params, socket, spec, name))}
+  end
+
+  def handle_event("key_filter", params, socket) do
+    params =
+      socket.assigns.key_filters
+      |> Map.merge(Map.take(params, ~w(status kind person project)))
+
+    {:noreply, push_patch(socket, to: Paths.api_keys_list(params))}
+  end
+
+  def handle_event("key_search", params, socket) do
+    q = params["q"] || params["search"] || ""
+
+    {:noreply,
+     push_patch(socket,
+       to: Paths.api_keys_list(Map.put(socket.assigns.key_filters, "q", q)),
+       replace: true
+     )}
   end
 
   def handle_event("usage_filter", params, socket) do
@@ -694,7 +747,19 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
       <.empty_state :if={@rows == []} icon="hero-key" title={gettext("No keys yet.")} />
 
-      <div :for={row <- @rows} id={"api-key-#{row.key.uuid}"} class={["card bg-base-100 shadow-sm", row.key.revoked_at && "opacity-60"]}>
+      <ApiKeysFilters.filter_bar
+        :if={@key_filter_options}
+        options={@key_filter_options}
+        filters={@key_filters}
+        shown={length(@shown_rows)}
+        total={length(@rows)}
+      />
+      <p :if={@rows != [] and @shown_rows == []} class="text-sm text-base-content/60">
+        {gettext("No keys match these filters.")}
+        <.link patch={Paths.api_keys_list(%{"status" => "all"})} class="link link-primary">{gettext("Show all keys")}</.link>
+      </p>
+
+      <div :for={row <- @shown_rows} id={"api-key-#{row.key.uuid}"} class={["card bg-base-100 shadow-sm", row.key.revoked_at && "opacity-60"]}>
         <% several? = length(row.grants) > 1 %>
         <% live? = row.editable? and is_nil(row.key.revoked_at) %>
         <div class="card-body gap-3">

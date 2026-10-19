@@ -454,6 +454,51 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
   end
 
   describe "the API keys page" do
+    test "five keys or fewer: no filters, revoked last; more: filters, revoked hidden until asked",
+         %{conn: conn, other: other} do
+      max = user("filters")
+      {:ok, _} = Members.add_member(other, max.uuid, role: "member")
+      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: ["projects"]))
+
+      make = fn name ->
+        {:ok, key, _} =
+          ApiKeys.create(other, %{"name" => name, "user_uuid" => max.uuid}, actor_uuid: max.uuid)
+
+        key
+      end
+
+      old = make.("Old one")
+      {:ok, _} = ApiKeys.revoke(old, [])
+      for n <- 1..3, do: make.("Key #{n}")
+
+      {:ok, view, html} = live(conn, "/en/admin/projects/api-keys")
+      refute has_element?(view, "#api-key-filters")
+      # revoked sorts after the active ones
+      [first | _] = Regex.scan(~r/id="api-key-([0-9a-f-]{36})"/, html) |> Enum.map(&List.last/1)
+      refute first == old.uuid
+
+      for n <- 4..6, do: make.("Key #{n}")
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys")
+      assert has_element?(view, "#api-key-filters")
+      refute has_element?(view, "#api-key-#{old.uuid}")
+      # only the filters that tell these keys apart: all personal, one project
+      assert has_element?(view, "#api-key-filter-form select[name='status']")
+      refute has_element?(view, "#api-key-filter-form select[name='kind']")
+      refute has_element?(view, "#api-key-filter-form select[name='project']")
+
+      view |> form("#api-key-filter-form", %{"status" => "revoked"}) |> render_change()
+      assert_patch(view, "/en/admin/projects/api-keys?status=revoked")
+      assert has_element?(view, "#api-key-#{old.uuid}")
+      assert render(view) =~ "1 of 7 keys"
+
+      view |> form("#api-key-filter-form", %{"status" => "all"}) |> render_change()
+      assert has_element?(view, "#api-key-#{old.uuid}")
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys?status=all&q=key 4")
+      assert render(view) =~ "1 of 7 keys"
+    end
+
     test "a change to a key's access says it was saved", %{conn: conn, other: other} do
       max = user("feedback")
       {:ok, _} = Members.add_member(other, max.uuid, role: "member")
@@ -550,7 +595,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys/usage")
 
       assert has_element?(view, "#usage-by-key", "3 requests")
-      refute render(view) =~ "43"
+      refute render(view) =~ "43 requests"
       refute render(view) =~ "40 requests"
     end
 

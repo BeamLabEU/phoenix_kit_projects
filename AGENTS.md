@@ -743,7 +743,14 @@ Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
   every key, always (no switch); anyone else their own keys plus the keys
   reaching a project they own (`:manage_modules`) — only those projects'
   rows and usage, which they may change or remove, never rotate, revoke,
-  add projects or set the default. Every save is confirmed with a flash. **Which figures show** (cards, chart switch,
+  add projects or set the default. Every save is confirmed with a flash.
+- **Filters on Keys** (`Web.ApiKeysFilters`, Max 2026-10-19): shown only
+  above 5 keys; each filter (status, kind, person — admins —, project) only
+  when it tells the listed keys apart, offering only values present; search
+  by name. Status starts at Active when the bar shows; at or below 5 keys
+  every key is listed with revoked and expired last. All in the address
+  (`Paths.api_keys_list/1`; `project` there is the filter, the New key
+  form's preselect is the bare `?project=` handled first). **Which figures show** (cards, chart switch,
   breakdown lines, each key's line on Keys) and the tasks table's columns
   are each viewer's choice through core's `column_settings_modal/1` +
   `PhoenixKitWeb.TableColumns` (ViewPrefs keys `projects.api_usage.figures`
