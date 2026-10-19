@@ -38,6 +38,7 @@ defmodule PhoenixKitProjects.ApiKeys do
 
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Permissions
   alias PhoenixKitProjects.{Activity, Authz, Projects}
   alias PhoenixKitProjects.Schemas.{ApiIdempotency, ApiKey, ApiKeyGrant}
 
@@ -357,10 +358,11 @@ defmodule PhoenixKitProjects.ApiKeys do
 
   @doc """
   The key as it acts in `project` for one request (`view/2`). A
-  personal key also needs its person's ACCOUNT to be live: a deactivated or
-  deleted user's key is `{:error, :account_inactive}` (the API answers it
-  with the one 401), whatever the project's "everyone" visibility would
-  still hand an arbitrary uuid.
+  personal key also needs its person's ACCOUNT to be live and to hold the
+  `projects` permission: a deactivated or deleted user's key, or one whose
+  person lost Projects, is `{:error, :account_inactive}` (the API answers
+  it with the one 401), whatever the project's "everyone" visibility or a
+  lingering membership would still hand them.
   """
   @spec resolve(ApiKey.t(), map()) ::
           {:ok, ApiKey.t()} | {:error, :membership_ended | :account_inactive | :no_access}
@@ -370,10 +372,18 @@ defmodule PhoenixKitProjects.ApiKeys do
 
   defp account_live(%ApiKey{user_uuid: nil}), do: :ok
 
+  # A personal key works only while its person could reach the Projects
+  # module themselves: an active account holding the `projects` permission
+  # (or everything, "*"). Taking Projects away from someone stops their keys
+  # even where they are still a member.
   defp account_live(%ApiKey{user_uuid: user_uuid}) do
     case Auth.get_user(user_uuid) do
-      %{is_active: true} -> :ok
-      _ -> {:error, :account_inactive}
+      %{is_active: true} = user ->
+        perms = Permissions.get_permissions_for_user(user)
+        if "projects" in perms or "*" in perms, do: :ok, else: {:error, :account_inactive}
+
+      _ ->
+        {:error, :account_inactive}
     end
   end
 

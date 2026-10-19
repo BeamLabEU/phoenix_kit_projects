@@ -20,7 +20,8 @@ defmodule PhoenixKitProjects.ApiKeysTest do
         password: "ValidPassword123!"
       })
 
-    user
+    # A personal key works only while its person holds Projects.
+    PhoenixKitProjects.Test.Access.grant_projects!(user)
   end
 
   # The role a key acts with in a project (`access_for/2`).
@@ -226,6 +227,17 @@ defmodule PhoenixKitProjects.ApiKeysTest do
       # a shared key has no account to check
       {:ok, shared, _} = ApiKeys.create(project, %{"name" => "CI"})
       assert {:ok, _} = ApiKeys.resolve(shared, project)
+    end
+
+    test "a person who loses the Projects permission loses their keys, membership or not",
+         %{project: project} do
+      user = user_fixture()
+      {:ok, _} = Members.add_member(project, user.uuid, role: "owner")
+      {:ok, key, _} = ApiKeys.create(project, %{"name" => "Mine", "user_uuid" => user.uuid})
+      assert {:ok, _} = ApiKeys.resolve(key, project)
+
+      PhoenixKitProjects.Test.Access.revoke_all!(user)
+      assert {:error, :account_inactive} = ApiKeys.resolve(key, project)
     end
 
     test "deleting the account revokes its keys on every project", %{project: project} do

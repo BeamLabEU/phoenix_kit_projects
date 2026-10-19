@@ -24,6 +24,9 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
         password: "ValidPassword123!"
       })
 
+    # A personal key works only while its person holds Projects.
+    user = PhoenixKitProjects.Test.Access.grant_projects!(user)
+
     {:ok, dept} = Departments.create(%{"name" => "Dept-#{uniq()}"})
 
     {:ok, person} =

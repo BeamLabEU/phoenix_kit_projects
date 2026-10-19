@@ -23,6 +23,8 @@ defmodule PhoenixKitProjects.Web.ApiUsageTest do
         password: "ValidPassword123!"
       })
 
+    user = PhoenixKitProjects.Test.Access.grant_projects!(user)
+
     {:ok, _} = Members.add_member(home, user.uuid, role: "manager")
 
     {:ok, key, token} =

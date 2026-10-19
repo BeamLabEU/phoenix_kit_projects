@@ -13,6 +13,11 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
 
   @base "/api/projects/v1"
 
+  # What a role holding Projects can do with its own keys (the one-time
+  # grant of 2026-10-19).
+  @own_key_rights ~w(projects projects.api_keys_create projects.api_keys_edit
+                     projects.api_keys_rotate projects.api_keys_revoke)
+
   defp user(name) do
     {:ok, u} =
       Auth.register_user(%{
@@ -20,7 +25,8 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
         password: "ValidPassword123!"
       })
 
-    u
+    # A personal key works only while its person holds Projects.
+    PhoenixKitProjects.Test.Access.grant_projects!(u)
   end
 
   defp api(conn, token) do
@@ -454,11 +460,92 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
   end
 
   describe "the API keys page" do
+    test "with Projects alone a person sees the key made for them, and changes nothing", %{
+      conn: conn,
+      other: other
+    } do
+      ada = user("viewer-only")
+      {:ok, _} = Members.add_member(other, ada.uuid, role: "member")
+
+      {:ok, key, _} =
+        ApiKeys.create(other, %{"name" => "Given to Ada", "user_uuid" => ada.uuid})
+
+      conn = put_test_scope(conn, fake_scope(user_uuid: ada.uuid, permissions: ["projects"]))
+      {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys")
+
+      assert has_element?(view, "#api-key-#{key.uuid}")
+      refute has_element?(view, "#api-key-new")
+      refute has_element?(view, "#api-key-#{key.uuid} button[phx-click='rotate']")
+      refute has_element?(view, "#api-key-#{key.uuid} button[phx-click='revoke']")
+      assert has_element?(view, "#preset-#{key.uuid}-#{other.uuid} select[disabled]")
+
+      render_change(view, "set_preset", %{
+        "key" => key.uuid,
+        "project" => other.uuid,
+        "preset" => "none"
+      })
+
+      assert {:ok, _} = ApiKeys.access_for(key, other.uuid)
+      render_click(view, "revoke", %{"key" => key.uuid})
+      assert is_nil(ApiKeys.get(key.uuid).revoked_at)
+      render_submit(view, "create_key", %{"key" => %{"name" => "More", "project" => other.uuid}})
+      assert length(ApiKeys.list_mine(ada.uuid)) == 1
+    end
+
+    test "with Rotate alone a person rotates their key but cannot revoke it or make more", %{
+      conn: conn,
+      other: other
+    } do
+      ada = user("rotate-only")
+      {:ok, _} = Members.add_member(other, ada.uuid, role: "member")
+      {:ok, key, _} = ApiKeys.create(other, %{"name" => "Rotating", "user_uuid" => ada.uuid})
+      old_hash = key.secret_hash
+
+      conn =
+        put_test_scope(
+          conn,
+          fake_scope(user_uuid: ada.uuid, permissions: ["projects", "projects.api_keys_rotate"])
+        )
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys")
+      assert has_element?(view, "#api-key-#{key.uuid} button[phx-click='rotate']")
+      refute has_element?(view, "#api-key-#{key.uuid} button[phx-click='revoke']")
+      refute has_element?(view, "#api-key-new")
+
+      view |> element("#api-key-#{key.uuid} button[phx-click='rotate']") |> render_click()
+      refute ApiKeys.get(key.uuid).secret_hash == old_hash
+    end
+
+    test "whoever manages every key makes one that acts for someone else", %{
+      conn: conn,
+      other: other
+    } do
+      ada = user("given")
+      {:ok, _} = Members.add_member(other, ada.uuid, role: "member")
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys")
+
+      view
+      |> form("#api-key-new", key: %{name: "For Ada", project: other.uuid, kind: "person"})
+      |> render_change()
+
+      render_click(view, "person_pick", %{"uuid" => ada.uuid, "label" => "Ada"})
+
+      view
+      |> form("#api-key-new",
+        key: %{name: "For Ada", project: other.uuid, kind: "person", preset: "read"}
+      )
+      |> render_submit()
+
+      assert [key] = ApiKeys.list_mine(ada.uuid)
+      assert key.name == "For Ada"
+    end
+
     test "five keys or fewer: no filters, revoked last; more: filters, revoked hidden until asked",
          %{conn: conn, other: other} do
       max = user("filters")
       {:ok, _} = Members.add_member(other, max.uuid, role: "member")
-      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: ["projects"]))
+      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: @own_key_rights))
 
       make = fn name ->
         {:ok, key, _} =
@@ -502,7 +589,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
     test "a change to a key's access says it was saved", %{conn: conn, other: other} do
       max = user("feedback")
       {:ok, _} = Members.add_member(other, max.uuid, role: "member")
-      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: ["projects"]))
+      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: @own_key_rights))
 
       {:ok, key, _} =
         ApiKeys.create(other, %{"name" => "Helper", "user_uuid" => max.uuid},
@@ -545,7 +632,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
 
       {:ok, _} = ApiKeys.put_grant(key, other.uuid, %{"scopes" => grid("full")})
 
-      conn = put_test_scope(conn, fake_scope(user_uuid: owner.uuid, permissions: ["projects"]))
+      conn = put_test_scope(conn, fake_scope(user_uuid: owner.uuid, permissions: @own_key_rights))
       {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys")
 
       # the owner's project, not Ada's other one; no rotate or revoke
@@ -591,7 +678,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       for _ <- 1..3, do: PhoenixKitProjects.ApiUsage.record(key.uuid, other.uuid, 200)
       for _ <- 1..40, do: PhoenixKitProjects.ApiUsage.record(key.uuid, stranger.uuid, 200)
 
-      conn = put_test_scope(conn, fake_scope(user_uuid: owner.uuid, permissions: ["projects"]))
+      conn = put_test_scope(conn, fake_scope(user_uuid: owner.uuid, permissions: @own_key_rights))
       {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys/usage")
 
       assert has_element?(view, "#usage-by-key", "3 requests")
@@ -605,7 +692,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
     } do
       max = user("page")
       {:ok, _} = Members.add_member(other, max.uuid, role: "member")
-      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: ["projects"]))
+      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: @own_key_rights))
       start = fixture_project(%{"name" => "Start #{System.unique_integer([:positive])}"})
       {:ok, _} = Members.add_member(start, max.uuid, role: "member")
 
@@ -639,7 +726,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       max = user("draft")
       third = fixture_project(%{"name" => "Third #{System.unique_integer([:positive])}"})
       for p <- [other, third], do: {:ok, _} = Members.add_member(p, max.uuid, role: "member")
-      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: ["projects"]))
+      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: @own_key_rights))
 
       {:ok, key, _} =
         ApiKeys.create(other, %{"name" => "Agent", "user_uuid" => max.uuid}, actor_uuid: max.uuid)

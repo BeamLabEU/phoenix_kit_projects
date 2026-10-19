@@ -744,6 +744,25 @@ Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
   reaching a project they own (`:manage_modules`) — only those projects'
   rows and usage, which they may change or remove, never rotate, revoke,
   add projects or set the default. Every save is confirmed with a flash.
+- **Permissions** (Max, 2026-10-19: "make sure it's all configurable via
+  permissions… you grant someone an API key and you want them to be able to
+  rotate it. But you don't want them to create any extra keys"). Sub-keys
+  of `projects`, checked by `Authz.api_keys?/2`: `api_keys_create` (make
+  keys that act for you), `api_keys_edit` (change your keys' projects and
+  access), `api_keys_rotate`, `api_keys_revoke` (your keys), and
+  `api_keys_manage` (every key: see, make for anyone or shared, change,
+  rotate, revoke — this is the page's "admin", NOT `admin_all`). The base
+  key alone shows your own keys and their usage. `migrate_legacy/0` grants
+  the four own-key rights ONCE to every role holding `projects` (flag
+  `projects_api_keys_permissions_backfilled`); core auto-grants the new
+  sub-keys to Admin. Project owners keep managing their project's row of
+  any key. "Acts for" offers Me / Someone else (core `search_picker` over
+  `Auth.search_users/1`) / Nobody (shared) to `api_keys_manage`.
+- **A personal key needs its person to hold `projects`** (or "*"):
+  `ApiKeys.resolve/2` answers `:account_inactive` (401) otherwise, even
+  where the person is still a member. Tests give key holders "*" through a
+  role (`Test.Access.grant_projects!/1`) because the projects module is not
+  registered in the test environment.
 - **Filters on Keys** (`Web.ApiKeysFilters`, Max 2026-10-19): shown only
   above 5 keys; each filter (status, kind, person — admins —, project) only
   when it tells the listed keys apart, offering only values present; search

@@ -270,6 +270,8 @@ defmodule PhoenixKitProjects.Web.ApiTest do
         last_name: "Don"
       })
 
+    owner = PhoenixKitProjects.Test.Access.grant_projects!(owner)
+
     {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
     {:ok, _} = Members.add_member(project, fixture_user_uuid(), role: "owner")
 
@@ -330,6 +332,8 @@ defmodule PhoenixKitProjects.Web.ApiTest do
         email: "second-#{System.unique_integer([:positive])}@example.com",
         password: "ValidPassword123!"
       })
+
+    user = PhoenixKitProjects.Test.Access.grant_projects!(user)
 
     user.uuid
   end
@@ -714,6 +718,8 @@ defmodule PhoenixKitProjects.Web.ApiTest do
           email: "minter-#{System.unique_integer([:positive])}@example.com",
           password: "ValidPassword123!"
         })
+
+      user = PhoenixKitProjects.Test.Access.grant_projects!(user)
 
       # A key with a person behind it: notes are written as that person.
       {:ok, key, token} =

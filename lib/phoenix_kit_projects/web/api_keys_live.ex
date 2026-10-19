@@ -13,11 +13,12 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   project's sub-projects. One project is the key's HOME: where an API call
   without `project` acts.
 
-  Administrators (`admin_all`) see and manage every key. Everyone else
-  sees their own keys, and the keys that reach a project they own — of
-  those only that project's row (and its usage), which they may change or
-  remove; rotating, revoking, adding projects and the default project stay
-  with the key's person and administrators. Every change is confirmed with
+  Who may do what is permissions (`Authz.api_keys?/2`): with "Manage
+  everyone's API keys" a person sees and manages every key and may make
+  keys for anyone or for nobody (shared); otherwise they see their own keys
+  and do with them only what "Create", "Change access", "Rotate" and
+  "Revoke" allow, plus — as a project's owner — the row of any key on
+  their project (and its usage), which they may change or remove. Every change is confirmed with
   a flash, as core's settings pages do. A project's own pages only show
   the keys that reach it and link here.
   """
@@ -26,6 +27,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiAccess, ApiKeys, ApiUsage, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Web.Api.Docs
@@ -52,7 +54,11 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        page_title: gettext("API keys"),
        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
        me: me,
-       admin?: Authz.admin_all?(scope),
+       # "Admin" on this page is the API key right, not projects' admin_all:
+       # who may see and manage every key (`projects.api_keys_manage`).
+       admin?: Authz.api_keys?(scope, :manage),
+       can: Map.new(~w(create edit rotate revoke)a, &{&1, Authz.api_keys?(scope, &1)}),
+       new_key_person: nil,
        scope: scope,
        api_token: nil,
        open_grid: nil,
@@ -159,6 +165,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       Enum.map(keys, fn key ->
         grants = ApiKeys.grants(key)
         whole? = editable?(socket, key)
+        edit? = may?(socket, key, :edit)
 
         %{
           key: key,
@@ -168,8 +175,11 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               else: Enum.filter(grants, &(&1.project_uuid in owned))
             ),
           editable?: whole?,
+          edit?: edit?,
+          rotate?: may?(socket, key, :rotate),
+          revoke?: may?(socket, key, :revoke),
           manageable:
-            if(whole?,
+            if(edit?,
               do: Enum.map(grants, & &1.project_uuid),
               else: grants |> Enum.map(& &1.project_uuid) |> Enum.filter(&(&1 in owned))
             ),
@@ -193,6 +203,11 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         |> ApiUsage.by_key(),
       projects_by_uuid: project_names,
       my_projects: projects_for(me),
+      all_projects:
+        if(admin?,
+          do: Enum.reject(Projects.list_projects(include_subprojects: true), & &1.is_template),
+          else: []
+        ),
       user_names:
         rows |> Enum.map(& &1.key.user_uuid) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> names()
     )
@@ -244,7 +259,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   # The projects a key's "Add a project" offers: what it may be given,
   # minus what it already has.
   defp addable(socket, %ApiKey{revoked_at: nil} = key, grants) do
-    if editable?(socket, key) do
+    if may?(socket, key, :edit) do
       granted = MapSet.new(grants, & &1.project_uuid)
 
       for p <- grant_options(socket, key), not MapSet.member?(granted, p.uuid) do
@@ -259,12 +274,22 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
   defp names(uuids), do: Map.new(uuids, &{&1, ApiKeyPanel.user_name(&1)})
 
-  # Who may change a key: the person it acts for, and administrators
-  # (the only ones who make shared keys). Whoever MADE a key for somebody
-  # else does not keep a hand on it — it is that person's now.
+  # Whose key the viewer sees whole: their own, and every key for whoever
+  # manages all of them. Whoever MADE a key for somebody else does not keep
+  # a hand on it — it is that person's now.
   defp editable?(socket, %ApiKey{} = key) do
     me = socket.assigns.me
     socket.assigns.admin? or (is_binary(me) and key.user_uuid == me)
+  end
+
+  # May the viewer do `action` (`:edit`, `:rotate`, `:revoke`) with this
+  # key: on every key with "Manage everyone's API keys", on a key that acts
+  # for them with that action's own permission.
+  defp may?(socket, %ApiKey{} = key, action) do
+    me = socket.assigns.me
+
+    socket.assigns.admin? or
+      (is_binary(me) and key.user_uuid == me and Map.get(socket.assigns.can, action, false))
   end
 
   # ── events ─────────────────────────────────────────────────────────
@@ -352,21 +377,60 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     {:noreply, update(socket, :add_drafts, &Map.put(&1, key_uuid, params))}
   end
 
+  # "Acts for" someone else (whoever manages every key): searched as it is
+  # typed, with core's picker; the pick is kept beside the form's draft.
+  def handle_event("person_search", %{"q" => q} = params, socket) do
+    rows =
+      if socket.assigns.admin? do
+        q
+        |> to_string()
+        |> Auth.search_users()
+        |> Enum.map(fn u ->
+          %{kind: "user", uuid: u.uuid, label: ApiKeyPanel.user_name(u), sublabel: u.email}
+        end)
+      else
+        []
+      end
+
+    {:noreply,
+     push_event(socket, "person_results", %{
+       q: q,
+       results: rows,
+       has_more: false,
+       id: params["id"]
+     })}
+  end
+
+  def handle_event("person_pick", %{"uuid" => uuid, "label" => label} = params, socket) do
+    socket = push_event(socket, "person_staged", %{id: params["id"]})
+
+    if socket.assigns.admin?,
+      do: {:noreply, assign(socket, new_key_person: %{uuid: uuid, label: label})},
+      else: {:noreply, socket}
+  end
+
+  def handle_event("person_unpick", _params, socket),
+    do: {:noreply, assign(socket, new_key_person: nil)}
+
+  # A new key: its person is the viewer, or — for whoever manages every
+  # key — someone picked, or nobody (shared). Making one needs "Create API
+  # keys" (or managing every key).
   def handle_event("create_key", %{"key" => params}, socket) do
     me = socket.assigns.me
     shared? = params["kind"] == "shared" and socket.assigns.admin?
-    project_uuid = params["project"]
+    person = key_person(socket, params)
     preset = params["preset"] || "full"
 
-    with true <- is_binary(me) || :no_user,
-         %Project{} = project <- allowed_project(socket, project_uuid, shared?, me) || :no_project do
+    with :ok <- may_create(socket, params, person),
+         %Project{} = project <-
+           allowed_project(socket, params["project"], shared?, person) || :no_project do
       grid = preset_grid(preset)
 
       attrs = %{
         "name" => params["name"],
         "scopes" => ApiAccess.scopes(grid),
         "role" => if(shared?, do: params["role"] || "member", else: "manager"),
-        "user_uuid" => if(shared?, do: nil, else: me)
+        "user_uuid" => if(shared?, do: nil, else: person)
       }
 
       case ApiKeys.create(project, attrs, actor_uuid: me) do
@@ -375,7 +439,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
            socket
            |> assign(
              api_token: %{token: token, key: key, action: :created, project: project},
-             new_key: %{}
+             new_key: %{},
+             new_key_person: nil
            )
            |> load()}
 
@@ -386,13 +451,24 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       :no_user ->
         {:noreply, put_flash(socket, :error, gettext("Sign in to make a key."))}
 
+      :not_allowed ->
+        {:noreply, put_flash(socket, :error, gettext("You may not make API keys."))}
+
+      :no_person ->
+        {:noreply, put_flash(socket, :error, gettext("Pick the person the key acts for."))}
+
       :no_project ->
-        {:noreply, put_flash(socket, :error, gettext("Pick a project the key starts with."))}
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Pick a project the key starts with — one its person is on.")
+         )}
     end
   end
 
   def handle_event("add_grant", %{"grant" => %{"key" => key_uuid} = params}, socket) do
-    with_key(socket, key_uuid, fn key ->
+    with_key(socket, key_uuid, :edit, fn key ->
       shared? = is_nil(key.user_uuid)
 
       case allowed_project(socket, params["project"], shared?, key.user_uuid) do
@@ -529,7 +605,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   # project beyond who may manage this row.
   def handle_event("remove_grant", %{"key" => key_uuid, "project" => project_uuid}, socket) do
     with %ApiKey{revoked_at: nil} = key <- ApiKeys.get(key_uuid),
-         true <- editable?(socket, key) or project_uuid in socket.assigns.owned do
+         true <- may?(socket, key, :edit) or project_uuid in socket.assigns.owned do
       :ok = ApiKeys.delete_grant(key, project_uuid, actor_uuid: socket.assigns.me)
 
       {:noreply,
@@ -548,7 +624,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   end
 
   def handle_event("set_home", %{"key" => key_uuid, "home" => project_uuid}, socket) do
-    with_key(socket, key_uuid, fn key ->
+    with_key(socket, key_uuid, :edit, fn key ->
       case ApiKeys.set_home(key, project_uuid) do
         {:ok, _} ->
           {:noreply,
@@ -570,7 +646,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   end
 
   def handle_event("rotate", %{"key" => key_uuid}, socket) do
-    with_key(socket, key_uuid, fn key ->
+    with_key(socket, key_uuid, :rotate, fn key ->
       case ApiKeys.rotate(key, actor_uuid: socket.assigns.me) do
         {:ok, key, token} ->
           project = key.project_uuid && Projects.get_project(key.project_uuid)
@@ -587,7 +663,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   end
 
   def handle_event("revoke", %{"key" => key_uuid}, socket) do
-    with_key(socket, key_uuid, fn key ->
+    with_key(socket, key_uuid, :revoke, fn key ->
       {:ok, _} = ApiKeys.revoke(key, actor_uuid: socket.assigns.me)
       {:noreply, socket |> put_flash(:info, gettext("Key revoked.")) |> load()}
     end)
@@ -598,11 +674,29 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
+  # Whom a new key acts for: someone picked (only for whoever manages every
+  # key, and only when "Someone else" is chosen), else the viewer.
+  defp key_person(socket, params) do
+    case {params["kind"], socket.assigns.new_key_person} do
+      {"person", %{uuid: uuid}} -> if socket.assigns.admin?, do: uuid, else: socket.assigns.me
+      _ -> socket.assigns.me
+    end
+  end
+
+  defp may_create(socket, params, person) do
+    cond do
+      not is_binary(socket.assigns.me) -> :no_user
+      not (socket.assigns.admin? or socket.assigns.can.create) -> :not_allowed
+      params["kind"] == "person" and person == socket.assigns.me -> :no_person
+      true -> :ok
+    end
+  end
+
   # The key, if the viewer may change it; anything else is ignored.
-  defp with_key(socket, key_uuid, fun) do
+  defp with_key(socket, key_uuid, action, fun) do
     case ApiKeys.get(key_uuid) do
       %ApiKey{revoked_at: nil} = key ->
-        if editable?(socket, key), do: fun.(key), else: {:noreply, socket}
+        if may?(socket, key, action), do: fun.(key), else: {:noreply, socket}
 
       _ ->
         {:noreply, socket}
@@ -627,7 +721,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   end
 
   defp grant_editable?(socket, key, project_uuid) do
-    (editable?(socket, key) and
+    (may?(socket, key, :edit) and
        allowed_project(socket, project_uuid, is_nil(key.user_uuid), key.user_uuid) != nil) or
       project_uuid in socket.assigns.owned
   end
@@ -704,7 +798,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
            may do there; more projects are added on its card. The form
            keeps its draft in assigns (`draft_key`), so a save elsewhere
            does not clear it. --%>
-      <form id="api-key-new" phx-change="draft_key" phx-submit="create_key" class="card bg-base-100 shadow-sm">
+      <form :if={@admin? or @can.create} id="api-key-new" phx-change="draft_key" phx-submit="create_key" class="card bg-base-100 shadow-sm">
         <div class="card-body gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h2 class="card-title text-lg">
@@ -724,14 +818,38 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                 label={gettext("Project")}
                 value={@new_key["project"]}
                 prompt={gettext("Pick a project")}
-                options={Enum.map(@my_projects, &{Project.localized_name(&1, L10n.current_content_lang()), &1.uuid})}
+                options={Enum.map(if(@admin?, do: @all_projects, else: @my_projects), &{Project.localized_name(&1, L10n.current_content_lang()), &1.uuid})}
               />
             </div>
             <div class="w-60">
               <.select name="key[preset]" label={gettext("Access")} value={@new_key["preset"] || "full"} options={preset_options()} />
             </div>
-            <div :if={@admin?} class="w-40">
-              <.select name="key[kind]" label={gettext("Acts for")} value={@new_key["kind"] || "personal"} options={[{gettext("Me"), "personal"}, {gettext("Nobody (shared)"), "shared"}]} />
+            <div :if={@admin?} class="w-44">
+              <.select
+                name="key[kind]"
+                label={gettext("Acts for")}
+                value={@new_key["kind"] || "personal"}
+                options={[{gettext("Me"), "personal"}, {gettext("Someone else"), "person"}, {gettext("Nobody (shared)"), "shared"}]}
+              />
+            </div>
+            <div :if={@admin? and @new_key["kind"] == "person"} class="w-56">
+              <PhoenixKitWeb.Components.Core.FormFieldLabel.label for="api-key-person">{gettext("Person")}</PhoenixKitWeb.Components.Core.FormFieldLabel.label>
+              <.search_picker
+                id="api-key-person"
+                dropdown_id="api-key-person-list"
+                search_event="person_search"
+                results_event="person_results"
+                pick_event="person_pick"
+                staged_event="person_staged"
+                chosen={@new_key_person && @new_key_person.label}
+                clear_event="person_unpick"
+                clear_label={gettext("Clear")}
+                close_on_pick
+                placeholder={gettext("Type a name or email…")}
+                class="input w-full"
+                searching_label={gettext("Searching…")}
+                no_matches_label={gettext("No matches")}
+              />
             </div>
             <div :if={@admin? and @new_key["kind"] == "shared"} class="w-32">
               <.select name="key[role]" label={gettext("Shared key's role")} value={@new_key["role"] || "member"} options={Enum.map(ApiKey.roles(), &{&1, &1})} />
@@ -740,7 +858,12 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               <.icon name="hero-plus" class="w-4 h-4" /> {gettext("Create key")}
             </.button>
           </div>
-          <p class="text-xs text-base-content/60">{gettext("You can give the key more projects once it is made.")}</p>
+          <p class="text-xs text-base-content/60">
+            {gettext("You can give the key more projects once it is made.")}
+            <span :if={@admin? and @new_key["kind"] == "person"}>
+              {gettext("A key made for someone acts as them: never more than their own role in each project. What they may do with it themselves — change, rotate, revoke — is set by their permissions.")}
+            </span>
+          </p>
         </div>
       </form>
 
@@ -761,7 +884,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
       <div :for={row <- @shown_rows} id={"api-key-#{row.key.uuid}"} class={["card bg-base-100 shadow-sm", row.key.revoked_at && "opacity-60"]}>
         <% several? = length(row.grants) > 1 %>
-        <% live? = row.editable? and is_nil(row.key.revoked_at) %>
+        <% live? = row.edit? and is_nil(row.key.revoked_at) %>
         <div class="card-body gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="flex flex-wrap items-center gap-2 min-w-0">
@@ -776,11 +899,11 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                 {if row.key.last_used_at, do: gettext("Last used %{when}", when: L10n.format_datetime(row.key.last_used_at)), else: gettext("Never used")}
               </span>
             </div>
-            <div :if={live?} class="flex items-center gap-1">
-              <.button type="button" variant="ghost" size="xs" phx-click="rotate" phx-value-key={row.key.uuid} phx-disable-with={gettext("Rotating…")} data-confirm={gettext("Make a new token for this key? The old one stops working at once.")}>
+            <div :if={is_nil(row.key.revoked_at) and (row.rotate? or row.revoke?)} class="flex items-center gap-1">
+              <.button :if={row.rotate?} type="button" variant="ghost" size="xs" phx-click="rotate" phx-value-key={row.key.uuid} phx-disable-with={gettext("Rotating…")} data-confirm={gettext("Make a new token for this key? The old one stops working at once.")}>
                 <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Rotate")}
               </.button>
-              <.button type="button" variant="ghost" size="xs" class="text-error" phx-click="revoke" phx-value-key={row.key.uuid} phx-disable-with={gettext("Revoking…")} data-confirm={gettext("Revoke this key? Everything using it stops working, in every project.")}>
+              <.button :if={row.revoke?} type="button" variant="ghost" size="xs" class="text-error" phx-click="revoke" phx-value-key={row.key.uuid} phx-disable-with={gettext("Revoking…")} data-confirm={gettext("Revoke this key? Everything using it stops working, in every project.")}>
                 <.icon name="hero-no-symbol" class="w-3.5 h-3.5" /> {gettext("Revoke")}
               </.button>
             </div>

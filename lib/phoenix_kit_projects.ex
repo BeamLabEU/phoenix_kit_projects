@@ -192,6 +192,38 @@ defmodule PhoenixKitProjects do
           label: "Administer all projects",
           description:
             "See and manage every project on the site, including ones this user is not a member of"
+        },
+        # API keys, one right per action (Max, 2026-10-19: "make sure it's
+        # all configurable via permissions… you grant someone an API key and
+        # you want them to be able to rotate it. But you don't want them to
+        # create any extra keys"). Seeing the keys that act for you needs
+        # only the base key; everything else is one of these.
+        %{
+          key: "api_keys_create",
+          label: "Create API keys",
+          description: "Make API keys that act for this user"
+        },
+        %{
+          key: "api_keys_edit",
+          label: "Change their API keys' access",
+          description:
+            "Add and remove projects and change what a key that acts for this user may do"
+        },
+        %{
+          key: "api_keys_rotate",
+          label: "Rotate their API keys",
+          description: "Get a new token for a key that acts for this user"
+        },
+        %{
+          key: "api_keys_revoke",
+          label: "Revoke their API keys",
+          description: "Turn off a key that acts for this user"
+        },
+        %{
+          key: "api_keys_manage",
+          label: "Manage everyone's API keys",
+          description:
+            "See every API key, make keys for anyone or for nobody (shared), and change, rotate or revoke any key"
         }
       ]
     }
@@ -200,6 +232,12 @@ defmodule PhoenixKitProjects do
   # Set once the split's compatibility backfill has run, so it never runs
   # again and an Owner's revoke sticks.
   @admin_all_backfill_key "projects_admin_all_backfilled"
+  @api_keys_backfill_key "projects_api_keys_permissions_backfilled"
+
+  # What a role holding the base key could do with its own keys before the
+  # API key rights were split out (2026-10-19).
+  @own_key_rights ~w(projects.api_keys_create projects.api_keys_edit
+                     projects.api_keys_rotate projects.api_keys_revoke)
 
   @doc """
   One-time data repairs for installs that predate a change here. Core calls
@@ -236,10 +274,32 @@ defmodule PhoenixKitProjects do
       Settings.update_setting_with_module(@admin_all_backfill_key, "true", module_key())
     end
 
+    backfill_api_key_rights()
     backfill_checklist_flags()
   rescue
     error ->
       {:error, Exception.message(error)}
+  end
+
+  # Once: every role that holds the base key keeps what it could already do
+  # with its own keys (make them, change them, rotate and revoke them).
+  # Managing everyone's keys is new and goes to Admin through core's
+  # auto-grant, Owner through "*". Revoke one later and it stays revoked.
+  defp backfill_api_key_rights do
+    alias PhoenixKit.Settings
+    alias PhoenixKit.Users.{Permissions, Roles}
+
+    unless Settings.get_setting(@api_keys_backfill_key) == "true" do
+      for role <- Roles.list_roles(),
+          granted = Permissions.get_permissions_for_role(role.uuid),
+          "projects" in granted,
+          key <- @own_key_rights,
+          key not in granted do
+        Permissions.grant_permission(role.uuid, key, nil)
+      end
+
+      Settings.update_setting_with_module(@api_keys_backfill_key, "true", module_key())
+    end
   end
 
   # The "simple to-do list" preset shipped incomplete: it turned off the

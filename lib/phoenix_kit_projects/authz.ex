@@ -198,6 +198,26 @@ defmodule PhoenixKitProjects.Authz do
   @spec admin_all?(term()) :: boolean()
   def admin_all?(subject), do: admin_override?(subject)
 
+  @doc """
+  May this subject do `action` with API keys (`:create`, `:edit`,
+  `:rotate`, `:revoke` — on keys that act for them — or `:manage`, on every
+  key)? Each is its own sub-permission of `projects`
+  (`projects.api_keys_<action>`), so a site can let someone rotate the key
+  it gave them without letting them make more.
+  """
+  @spec api_keys?(term(), :create | :edit | :rotate | :revoke | :manage) :: boolean()
+  def api_keys?(%Scope{} = scope, action)
+      when action in [:create, :edit, :rotate, :revoke, :manage] do
+    Scope.has_module_access?(scope, "projects") and
+      Scope.has_module_access?(scope, "projects.api_keys_#{action}")
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
+  end
+
+  def api_keys?(_subject, _action), do: false
+
   @doc "The user uuid behind a scope, a user struct, or a bare uuid."
   @spec subject_user_uuid_of(term()) :: binary() | nil
   def subject_user_uuid_of(subject), do: subject_user_uuid(subject)
