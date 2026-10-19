@@ -718,11 +718,21 @@ Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
 - **`ApiUsage.rows/2`** merges both into `%{key, project, day, requests,
   errors, denied, minutes, tokens, cost_cents}`; `totals/1`, `by_project/1`
   and `days/3` (every day present, for the chart) shape it.
-- **The page** (`ApiKeysLive`): a Usage card (last 7 / 30 days for the keys
-  shown, the busiest key, one switch for what the charts draw) and per key
-  its figures and a 30-day stacked bar per project (core's `bar_chart`,
-  colours from `Components.VizPalette`, shared with the Hours tab). Core's
-  chart draws empty bars for all zeros, so the page shows a line instead.
+- **The page** (`ApiKeysLive`) has two tabs (Max, 2026-10-19: "give the
+  API keys their own sub-tabs"): **Keys** (`projects/api-keys`, each key
+  with one line of its last 30 days and a link) and **Usage**
+  (`projects/api-keys/usage`, a hidden tab declared first among the hidden
+  ones so `projects/:id` never takes `api-keys` for an id; the visible
+  "API keys" tab matches by prefix and stays lit). Usage is drawn by
+  `Web.ApiKeysUsage` from one map `ApiKeysLive.load_usage/1` builds:
+  period 7 / 30 / 90 days against the period before, one key or all
+  (`?key=` is honoured only for a key the page shows), the figure per day
+  stacked by key (or by project for one key), failures per day with the
+  refused apart, per key, per project, and the tasks the reported work
+  went to (`ApiUsage.by_task/3`). Colours (`Components.VizPalette`, shared
+  with the Hours tab) follow the busiest series by requests, so they hold
+  when the figure is switched. Core's chart draws empty bars for all zeros,
+  so the page shows a line instead.
 
 ### API keys across projects (V24, 2026-10-16)
 
