@@ -739,8 +739,11 @@ Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
   shadow-sm` with `card-title` headings; controls are core's `<.select>`,
   `<.checkbox variant="toggle">`, `<.button>`, `<.table_default>`,
   `<.nav_tabs>` (the figure switch), `<.stat_card>` (the figures) and
-  `<.empty_state>`. "Whose keys" is a filter on Usage and a switch on Keys,
-  for administrators only. **Which figures show** (cards, chart switch,
+  `<.empty_state>`. **Who sees what** (Max, 2026-10-19): administrators
+  every key, always (no switch); anyone else their own keys plus the keys
+  reaching a project they own (`:manage_modules`) — only those projects'
+  rows and usage, which they may change or remove, never rotate, revoke,
+  add projects or set the default. Every save is confirmed with a flash. **Which figures show** (cards, chart switch,
   breakdown lines, each key's line on Keys) and the tasks table's columns
   are each viewer's choice through core's `column_settings_modal/1` +
   `PhoenixKitWeb.TableColumns` (ViewPrefs keys `projects.api_usage.figures`

@@ -454,6 +454,106 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
   end
 
   describe "the API keys page" do
+    test "a change to a key's access says it was saved", %{conn: conn, other: other} do
+      max = user("feedback")
+      {:ok, _} = Members.add_member(other, max.uuid, role: "member")
+      conn = put_test_scope(conn, fake_scope(user_uuid: max.uuid, permissions: ["projects"]))
+
+      {:ok, key, _} =
+        ApiKeys.create(other, %{"name" => "Helper", "user_uuid" => max.uuid},
+          actor_uuid: max.uuid
+        )
+
+      {:ok, view, _} = live(conn, "/en/admin/projects/api-keys")
+
+      html =
+        view
+        |> form("#preset-#{key.uuid}-#{other.uuid}", preset: "read")
+        |> render_change()
+
+      assert html =~ "Saved: Helper in"
+      assert html =~ "Read only"
+    end
+
+    test "an administrator sees everyone's keys at once", %{conn: conn, key: key} do
+      conn = put_test_scope(conn, fake_scope())
+      {:ok, view, html} = live(conn, "/en/admin/projects/api-keys")
+
+      assert has_element?(view, "#api-key-#{key.uuid}")
+      refute html =~ "Show everyone"
+    end
+
+    test "a project's owner manages only that project's row of someone else's key", %{
+      conn: conn,
+      other: other,
+      stranger: stranger
+    } do
+      owner = user("owner")
+      ada = user("ada")
+      {:ok, _} = Members.add_member(other, owner.uuid, role: "owner")
+      for p <- [other, stranger], do: {:ok, _} = Members.add_member(p, ada.uuid, role: "member")
+
+      {:ok, key, _} =
+        ApiKeys.create(stranger, %{"name" => "Ada's AI", "user_uuid" => ada.uuid},
+          actor_uuid: ada.uuid
+        )
+
+      {:ok, _} = ApiKeys.put_grant(key, other.uuid, %{"scopes" => grid("full")})
+
+      conn = put_test_scope(conn, fake_scope(user_uuid: owner.uuid, permissions: ["projects"]))
+      {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys")
+
+      # the owner's project, not Ada's other one; no rotate or revoke
+      assert has_element?(view, "#grant-#{key.uuid}-#{other.uuid}")
+      refute has_element?(view, "#grant-#{key.uuid}-#{stranger.uuid}")
+      refute has_element?(view, "#api-key-#{key.uuid} button[phx-click='revoke']")
+
+      view
+      |> form("#preset-#{key.uuid}-#{other.uuid}", preset: "read")
+      |> render_change()
+
+      assert {:ok, %{scopes: scopes}} = ApiKeys.access_for(key, other.uuid)
+      refute "tasks:write" in scopes
+
+      # a forged change to the row they do not own is ignored
+      render_change(view, "set_preset", %{
+        "key" => key.uuid,
+        "project" => stranger.uuid,
+        "preset" => "none"
+      })
+
+      assert {:ok, _} = ApiKeys.access_for(key, stranger.uuid)
+      render_click(view, "revoke", %{"key" => key.uuid})
+      assert is_nil(ApiKeys.get(key.uuid).revoked_at)
+    end
+
+    test "on Usage, an owner sees someone else's key only in their own project", %{
+      conn: conn,
+      other: other,
+      stranger: stranger
+    } do
+      owner = user("usage-owner")
+      ada = user("usage-ada")
+      {:ok, _} = Members.add_member(other, owner.uuid, role: "owner")
+      for p <- [other, stranger], do: {:ok, _} = Members.add_member(p, ada.uuid, role: "member")
+
+      {:ok, key, _} =
+        ApiKeys.create(stranger, %{"name" => "Ada's AI", "user_uuid" => ada.uuid},
+          actor_uuid: ada.uuid
+        )
+
+      {:ok, _} = ApiKeys.put_grant(key, other.uuid, %{"scopes" => grid("full")})
+      for _ <- 1..3, do: PhoenixKitProjects.ApiUsage.record(key.uuid, other.uuid, 200)
+      for _ <- 1..40, do: PhoenixKitProjects.ApiUsage.record(key.uuid, stranger.uuid, 200)
+
+      conn = put_test_scope(conn, fake_scope(user_uuid: owner.uuid, permissions: ["projects"]))
+      {:ok, view, _html} = live(conn, "/en/admin/projects/api-keys/usage")
+
+      assert has_element?(view, "#usage-by-key", "3 requests")
+      refute render(view) =~ "43"
+      refute render(view) =~ "40 requests"
+    end
+
     test "a person makes a key, gives it a second project read-only, and takes it away", %{
       conn: conn,
       other: other
@@ -518,7 +618,7 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
                ~r/<option[^>]*selected[^>]*value="#{third.uuid}"|<option[^>]*value="#{third.uuid}"[^>]*selected/
 
       view |> form("#grant-add-#{key.uuid}") |> render_submit()
-      assert render(view) =~ "Make default"
+      assert render(view) =~ "Set as default"
     end
   end
 end

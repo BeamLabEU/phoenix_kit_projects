@@ -147,18 +147,20 @@ defmodule PhoenixKitProjects.Web.ApiUsageTest do
     refute html =~ "$0.00"
   end
 
-  test "an administrator picks whose keys the usage covers", %{conn: conn, user: user, home: home} do
+  test "an administrator sees every key's usage, with no switch", %{
+    conn: conn,
+    user: user,
+    home: home
+  } do
     {:ok, _shared, shared_token} =
       ApiKeys.create(home, %{"name" => "Shared bot", "role" => "member"})
 
     api(shared_token) |> get("#{@base}/me") |> json_response(200)
 
     conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid))
-    {:ok, view, html} = live(conn, "/en/admin/projects/api-keys/usage")
-    refute html =~ "Shared bot"
-
-    view |> form("#usage-filters", %{"whose" => "all"}) |> render_change()
-    assert render(view) =~ "Shared bot"
+    {:ok, _view, html} = live(conn, "/en/admin/projects/api-keys/usage")
+    assert html =~ "Shared bot"
+    refute html =~ "Whose keys"
   end
 
   test "a key nobody has used says so", %{conn: conn, user: user} do

@@ -13,9 +13,13 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   project's sub-projects. One project is the key's HOME: where an API call
   without `project` acts.
 
-  Everyone sees and edits their own keys; administrators (`admin_all`)
-  can switch to everyone's. A project's own pages only show the keys that
-  reach it and link here.
+  Administrators (`admin_all`) see and manage every key. Everyone else
+  sees their own keys, and the keys that reach a project they own — of
+  those only that project's row (and its usage), which they may change or
+  remove; rotating, revoking, adding projects and the default project stay
+  with the key's person and administrators. Every change is confirmed with
+  a flash, as core's settings pages do. A project's own pages only show
+  the keys that reach it and link here.
   """
 
   use PhoenixKitWeb, :live_view
@@ -49,7 +53,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
        me: me,
        admin?: Authz.admin_all?(scope),
-       show_all?: false,
+       scope: scope,
        api_token: nil,
        open_grid: nil,
        new_key: %{"project" => params["project"]},
@@ -87,18 +91,54 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     end
   end
 
+  # Whose keys this page shows (Max, 2026-10-19: "this is a page for an
+  # admin to manage the keys… if you set up the permissions just right, you
+  # could allow someone to manage the API keys for their project"):
+  #
+  #   * an administrator (`admin_all`): every key, all of it;
+  #   * anyone else: their own keys, all of them — and the keys that reach
+  #     a project they own (`:manage_modules`, the right the project's own
+  #     API page already uses), showing and changing only those projects'
+  #     rows, and only those projects' usage. Rotate, revoke, adding a
+  #     project and the default stay the key's person's and admins'.
   defp load(socket) do
-    %{me: me, admin?: admin?, show_all?: all?} = socket.assigns
-    keys = if admin? and all?, do: ApiKeys.list_all(), else: ApiKeys.list_mine(me)
+    %{me: me, admin?: admin?} = socket.assigns
+    owned = if admin?, do: [], else: owned_projects(socket)
+
+    keys =
+      if admin? do
+        ApiKeys.list_all()
+      else
+        others =
+          owned
+          |> Enum.flat_map(&ApiKeys.list_for_project/1)
+          |> Enum.filter(&is_nil(&1.revoked_at))
+
+        (ApiKeys.list_mine(me) ++ others)
+        |> Enum.uniq_by(& &1.uuid)
+        |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
+      end
+
+    socket = assign(socket, owned: owned)
 
     rows =
       Enum.map(keys, fn key ->
         grants = ApiKeys.grants(key)
+        whole? = editable?(socket, key)
 
         %{
           key: key,
-          grants: grants,
-          editable?: editable?(socket, key),
+          grants:
+            if(whole?,
+              do: grants,
+              else: Enum.filter(grants, &(&1.project_uuid in owned))
+            ),
+          editable?: whole?,
+          manageable:
+            if(whole?,
+              do: Enum.map(grants, & &1.project_uuid),
+              else: grants |> Enum.map(& &1.project_uuid) |> Enum.filter(&(&1 in owned))
+            ),
           addable: addable(socket, key, grants)
         }
       end)
@@ -111,12 +151,37 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
     assign(socket,
       rows: rows,
-      key_totals: keys |> Enum.map(& &1.uuid) |> ApiUsage.rows(@usage_days) |> ApiUsage.by_key(),
+      key_totals:
+        keys
+        |> Enum.map(& &1.uuid)
+        |> ApiUsage.rows(@usage_days)
+        |> Enum.filter(&usage_visible?(socket, rows, &1))
+        |> ApiUsage.by_key(),
       projects_by_uuid: project_names,
       my_projects: projects_for(me),
       user_names:
         rows |> Enum.map(& &1.key.user_uuid) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> names()
     )
+  end
+
+  # The projects whose keys the viewer may manage: those they own.
+  defp owned_projects(socket) do
+    socket.assigns.me
+    |> projects_for()
+    |> Enum.filter(&Authz.can?(socket.assigns.scope, &1, :manage_modules))
+    |> Enum.map(& &1.uuid)
+  rescue
+    _ -> []
+  end
+
+  # A usage row the viewer may see: all of a key they manage whole, else
+  # only its rows in projects they own.
+  defp usage_visible?(socket, rows, %{key: key_uuid, project: project_uuid}) do
+    case Enum.find(rows, &(&1.key.uuid == key_uuid)) do
+      %{editable?: true} -> true
+      %{} -> project_uuid in socket.assigns.owned
+      nil -> false
+    end
   end
 
   # The projects a person may give a key access to: those they can see
@@ -215,16 +280,6 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   def handle_event("usage_filter", params, socket) do
     u = socket.assigns.u
 
-    # Whose keys (administrators): which keys the page shows at all.
-    socket =
-      case params["whose"] do
-        whose when whose in ["mine", "all"] and socket.assigns.admin? ->
-          socket |> assign(show_all?: whose == "all") |> load()
-
-        _ ->
-          socket
-      end
-
     {:noreply,
      push_patch(socket,
        to:
@@ -236,16 +291,6 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
      )}
   end
 
-  def handle_event("toggle_all", _params, socket) do
-    socket = socket |> assign(show_all?: not socket.assigns.show_all?) |> load()
-
-    if socket.assigns.live_action == :usage,
-      do: {:noreply, load_usage(socket)},
-      else: {:noreply, socket}
-  end
-
-  # The two add forms keep what was typed in assigns, so a save on another
-  # row (which re-renders every card) does not reset them.
   def handle_event("draft_key", %{"key" => params}, socket) do
     {:noreply, assign(socket, new_key: params)}
   end
@@ -333,7 +378,14 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
           %{"scopes" => ApiAccess.scopes(preset_grid(preset)), "role" => grant.role},
           actor_uuid: socket.assigns.me
         )
-        |> flash_result(socket, nil)
+        |> flash_result(
+          socket,
+          gettext("Saved: %{key} in %{project} — %{access}.",
+            key: key.name,
+            project: project_label(project_uuid),
+            access: preset_label(preset)
+          )
+        )
       end
     end)
   end
@@ -350,7 +402,13 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         %{"scopes" => ApiAccess.scopes(grid), "role" => grant.role},
         actor_uuid: socket.assigns.me
       )
-      |> flash_result(socket, nil)
+      |> flash_result(
+        socket,
+        gettext("Saved: %{key}'s access in %{project}.",
+          key: key.name,
+          project: project_label(project_uuid)
+        )
+      )
     end)
   end
 
@@ -368,7 +426,14 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         ApiKeys.put_grant(key, project_uuid, %{"scopes" => grant.scopes, "role" => role},
           actor_uuid: socket.assigns.me
         )
-        |> flash_result(socket, nil)
+        |> flash_result(
+          socket,
+          gettext("Saved: %{key} acts as %{role} in %{project}.",
+            key: key.name,
+            role: role,
+            project: project_label(project_uuid)
+          )
+        )
     end)
   end
 
@@ -380,7 +445,21 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         %{"scopes" => grant.scopes, "role" => grant.role, "inherit" => not grant.inherit},
         actor_uuid: socket.assigns.me
       )
-      |> flash_result(socket, nil)
+      |> flash_result(
+        socket,
+        if(grant.inherit,
+          do:
+            gettext("Saved: %{key} in %{project} no longer covers its sub-projects.",
+              key: key.name,
+              project: project_label(project_uuid)
+            ),
+          else:
+            gettext("Saved: %{key} in %{project} covers its sub-projects again.",
+              key: key.name,
+              project: project_label(project_uuid)
+            )
+        )
+      )
     end)
   end
 
@@ -393,18 +472,42 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     {:noreply, assign(socket, open_grid: open)}
   end
 
+  # Taking access away only narrows a key, so it needs no check on the
+  # project beyond who may manage this row.
   def handle_event("remove_grant", %{"key" => key_uuid, "project" => project_uuid}, socket) do
-    with_key(socket, key_uuid, fn key ->
+    with %ApiKey{revoked_at: nil} = key <- ApiKeys.get(key_uuid),
+         true <- editable?(socket, key) or project_uuid in socket.assigns.owned do
       :ok = ApiKeys.delete_grant(key, project_uuid, actor_uuid: socket.assigns.me)
-      {:noreply, socket |> put_flash(:info, gettext("Access removed.")) |> load()}
-    end)
+
+      {:noreply,
+       socket
+       |> put_flash(
+         :info,
+         gettext("%{project} taken away from %{key}.",
+           project: project_label(project_uuid),
+           key: key.name
+         )
+       )
+       |> load()}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   def handle_event("set_home", %{"key" => key_uuid, "home" => project_uuid}, socket) do
-    with_grant(socket, key_uuid, project_uuid, fn key, _grant ->
+    with_key(socket, key_uuid, fn key ->
       case ApiKeys.set_home(key, project_uuid) do
         {:ok, _} ->
-          {:noreply, load(socket)}
+          {:noreply,
+           socket
+           |> put_flash(
+             :info,
+             gettext("Saved: %{project} is now %{key}'s default project.",
+               project: project_label(project_uuid),
+               key: key.name
+             )
+           )
+           |> load()}
 
         _ ->
           {:noreply,
@@ -456,13 +559,31 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   # A grant the viewer may change: on a key they may change, and in a
   # project that key may still be given (`allowed_project/4`) — a grant
   # left over on a project its person can no longer see is only removed.
+  # A grant the viewer may change: on a key they manage whole, in a project
+  # that key may still be given (`allowed_project/4`) — a grant left over on
+  # a project its person can no longer see is only removed — or in a
+  # project the viewer owns, on any key that reaches it.
   defp with_grant(socket, key_uuid, project_uuid, fun) do
-    with_key(socket, key_uuid, fn key ->
-      grant = Enum.find(ApiKeys.grants(key), &(&1.project_uuid == project_uuid))
-      allowed? = allowed_project(socket, project_uuid, is_nil(key.user_uuid), key.user_uuid)
+    with %ApiKey{revoked_at: nil} = key <- ApiKeys.get(key_uuid),
+         %{} = grant <- Enum.find(ApiKeys.grants(key), &(&1.project_uuid == project_uuid)),
+         true <- grant_editable?(socket, key, project_uuid) do
+      fun.(key, grant)
+    else
+      _ -> {:noreply, socket}
+    end
+  end
 
-      if grant && allowed?, do: fun.(key, grant), else: {:noreply, socket}
-    end)
+  defp grant_editable?(socket, key, project_uuid) do
+    (editable?(socket, key) and
+       allowed_project(socket, project_uuid, is_nil(key.user_uuid), key.user_uuid) != nil) or
+      project_uuid in socket.assigns.owned
+  end
+
+  defp project_label(uuid) do
+    case Projects.get_project(uuid) do
+      %Project{} = p -> Project.localized_name(p, L10n.current_content_lang())
+      _ -> gettext("the project")
+    end
   end
 
   # A project the key may be given: one its person can see (any, for a
@@ -478,14 +599,19 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
   defp allowed_project(_socket, _project, _shared?, _user), do: nil
 
+  defp preset_label(preset) do
+    case Enum.find(ApiAccess.presets(), fn {key, _label, _grid} -> key == preset end) do
+      {_key, label, _grid} -> label
+      nil -> preset
+    end
+  end
+
   defp preset_grid(preset) do
     case Enum.find(ApiAccess.presets(), fn {key, _label, _grid} -> key == preset end) do
       {_key, _label, grid} -> grid
       nil -> preset_grid("read")
     end
   end
-
-  defp flash_result({:ok, _}, socket, nil), do: {:noreply, load(socket)}
 
   defp flash_result({:ok, _}, socket, msg),
     do: {:noreply, socket |> put_flash(:info, msg) |> load()}
@@ -514,7 +640,6 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         :if={@live_action == :usage}
         u={@u}
         admin?={@admin?}
-        show_all?={@show_all?}
         show_column_modal={@show_column_modal}
         figures={@figures}
         task_columns={@task_columns}
@@ -566,16 +691,6 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         </div>
       </form>
 
-      <div :if={@admin?} class="flex justify-end">
-        <.checkbox
-          id="api-keys-show-all"
-          name="show_all"
-          variant="toggle"
-          label={gettext("Show everyone's keys")}
-          checked={@show_all?}
-          phx-click="toggle_all"
-        />
-      </div>
 
       <.empty_state :if={@rows == []} icon="hero-key" title={gettext("No keys yet.")} />
 
@@ -644,12 +759,13 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                 <% project = Map.get(@projects_by_uuid, grant.project_uuid) %>
                 <% open? = @open_grid == {row.key.uuid, grant.project_uuid} %>
                 <% home? = row.key.project_uuid == grant.project_uuid %>
+                <% can? = grant.project_uuid in row.manageable and is_nil(row.key.revoked_at) %>
                 <.table_default_row id={"grant-#{row.key.uuid}-#{grant.project_uuid}"} hover={false}>
                   <.table_default_cell>
                     <div class="flex flex-wrap items-center gap-1.5">
                       <span class="font-medium">{(project && Project.localized_name(project, L10n.current_content_lang())) || "—"}</span>
                       <span :if={project && project.key} class="font-mono text-xs text-base-content/50">{project.key}</span>
-                      <span :if={home? and several?} class="badge badge-sm badge-primary badge-outline" title={gettext("Calls that name no project act here")}>{gettext("Default")}</span>
+                      <span :if={home? and several?} class="badge badge-sm badge-primary badge-outline" title={gettext("Calls that name no project act here")}>{gettext("Default project")}</span>
                       <span :if={not grant.inherit} class="badge badge-sm badge-ghost" title={gettext("Its sub-projects are not covered")}>{gettext("This project only")}</span>
                     </div>
                   </.table_default_cell>
@@ -663,7 +779,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                           class="select-sm"
                           value={ApiAccess.preset_of(grant.scopes)}
                           options={preset_options() ++ [{gettext("Custom…"), "custom"}]}
-                          disabled={not live?}
+                          disabled={not can?}
                         />
                       </div>
                       <.button type="button" variant="ghost" size="xs" phx-click="toggle_grid" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid}>
@@ -679,14 +795,14 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                     <form id={"role-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_role" class="min-w-28">
                       <input type="hidden" name="key" value={row.key.uuid} />
                       <input type="hidden" name="project" value={grant.project_uuid} />
-                      <.select name="role" class="select-sm" value={grant.role} options={Enum.map(ApiKey.roles(), &{&1, &1})} disabled={not live?} />
+                      <.select name="role" class="select-sm" value={grant.role} options={Enum.map(ApiKey.roles(), &{&1, &1})} disabled={not can?} />
                     </form>
                   </.table_default_cell>
                   <.table_default_cell class="text-right whitespace-nowrap">
                     <.button :if={live? and several? and not home? and grant.scopes != []} type="button" variant="ghost" size="xs" phx-click="set_home" phx-value-key={row.key.uuid} phx-value-home={grant.project_uuid} title={gettext("Calls that name no project act here")}>
-                      {gettext("Make default")}
+                      {gettext("Set as default")}
                     </.button>
-                    <.button :if={live?} type="button" variant="ghost" size="xs" class="text-error" phx-click="remove_grant" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} data-confirm={gettext("Take this project away from the key?")} aria-label={gettext("Remove")}>
+                    <.button :if={can?} type="button" variant="ghost" size="xs" class="text-error" phx-click="remove_grant" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} data-confirm={gettext("Take this project away from the key?")} aria-label={gettext("Remove")}>
                       <.icon name="hero-x-mark" class="w-4 h-4" />
                     </.button>
                   </.table_default_cell>
@@ -709,7 +825,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                             class="select-xs"
                             value={grid[area.key]}
                             options={level_options(area)}
-                            disabled={not live?}
+                            disabled={not can?}
                             aria-label={area.label}
                           />
                         </div>
@@ -721,7 +837,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                         name="inherit"
                         label={gettext("Also covers its sub-projects")}
                         checked={grant.inherit}
-                        disabled={not live?}
+                        disabled={not can?}
                         phx-click="toggle_inherit"
                         phx-value-key={row.key.uuid}
                         phx-value-project={grant.project_uuid}
@@ -736,6 +852,13 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               <% end %>
             </.table_default_body>
           </.table_default>
+
+          <p :if={live? and several?} class="text-xs text-base-content/60">
+            {gettext("Default project: where this key's calls go when they don't name a project. Calls naming a project (project=KEY, or a task ref like KEY-12) go there instead.")}
+          </p>
+          <p :if={not row.editable?} class="text-xs text-base-content/60">
+            {gettext("You see and manage this key's access to the projects you own. Its other projects, rotating and revoking are for the person it acts for and administrators.")}
+          </p>
 
           <% draft = Map.get(@add_drafts, row.key.uuid, %{}) %>
           <form :if={live? and row.addable != []} id={"grant-add-#{row.key.uuid}"} phx-change="draft_grant" phx-submit="add_grant" class="flex flex-wrap items-end gap-2">
@@ -778,7 +901,12 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     key = if Map.has_key?(key_names, params["key"]), do: params["key"]
 
     uuids = if key, do: [key], else: Map.keys(key_names)
-    all = ApiUsage.rows(uuids, 2 * days)
+    # A key the viewer manages only in some projects (an owner's view of
+    # someone else's key) shows only its usage there.
+    all =
+      uuids
+      |> ApiUsage.rows(2 * days)
+      |> Enum.filter(&usage_visible?(socket, socket.assigns.rows, &1))
 
     # The chart can draw the figures the viewer shows (Columns); requests
     # when they show none of the drawable ones.
@@ -862,9 +990,34 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
             })
           end)
           |> Enum.sort_by(&(-Map.fetch!(&1, metric))),
-        by_task: uuids |> ApiUsage.by_task(days) |> Enum.map(&task_row(&1, projects))
+        by_task: socket |> visible_tasks(uuids, days) |> Enum.map(&task_row(&1, projects))
       }
     )
+  end
+
+  # The tasks the reported work went to: everything for the keys the viewer
+  # manages whole, and for the others only the tasks in projects they own.
+  defp visible_tasks(socket, uuids, days) do
+    whole = for r <- socket.assigns.rows, r.editable?, r.key.uuid in uuids, do: r.key.uuid
+    partial = uuids -- whole
+
+    (ApiUsage.by_task(whole, days, 50) ++
+       (partial
+        |> ApiUsage.by_task(days, 50)
+        |> Enum.filter(&(&1.project in socket.assigns.owned))))
+    |> Enum.group_by(&{&1.assignment, &1.project})
+    |> Enum.map(fn {_k, [first | _] = parts} ->
+      Enum.reduce(parts, %{first | minutes: 0.0, tokens: 0.0, cost_cents: 0.0}, fn p, acc ->
+        %{
+          acc
+          | minutes: acc.minutes + p.minutes,
+            tokens: acc.tokens + p.tokens,
+            cost_cents: acc.cost_cents + p.cost_cents
+        }
+      end)
+    end)
+    |> Enum.sort_by(&{-&1.cost_cents, -&1.tokens, -&1.minutes})
+    |> Enum.take(10)
   end
 
   defp reload_usage(socket),

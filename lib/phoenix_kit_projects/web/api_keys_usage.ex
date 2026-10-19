@@ -55,7 +55,6 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
 
   attr(:u, :map, required: true)
   attr(:admin?, :boolean, default: false)
-  attr(:show_all?, :boolean, default: false)
   attr(:show_column_modal, :boolean, default: false)
   attr(:figures, :list, default: [])
   attr(:task_columns, :list, default: [])
@@ -68,15 +67,6 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
            or all, and the figure the main chart draws. The period, key and
            figure are in the address, so a view can be kept. --%>
       <form id="usage-filters" phx-change="usage_filter" class="flex flex-wrap items-end gap-3">
-        <div :if={@admin?} class="w-44">
-          <.select
-            id="usage-whose"
-            name="whose"
-            label={gettext("Whose keys")}
-            value={if @show_all?, do: "all", else: "mine"}
-            options={[{gettext("My keys"), "mine"}, {gettext("Everyone's keys"), "all"}]}
-          />
-        </div>
         <div class="w-44">
           <.select
             id="usage-days"
