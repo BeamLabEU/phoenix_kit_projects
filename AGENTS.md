@@ -740,9 +740,15 @@ Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
   `<.checkbox variant="toggle">`, `<.button>`, `<.table_default>`,
   `<.nav_tabs>` (the figure switch), `<.stat_card>` (the figures) and
   `<.empty_state>`. "Whose keys" is a filter on Usage and a switch on Keys,
-  for administrators only. **Cost** shows only when an agent reported one
-  in the period (agents paid per call through an API); on a subscription
-  the figure, the switch entry and the column are left out.
+  for administrators only. **Which figures show** (cards, chart switch,
+  breakdown lines, each key's line on Keys) and the tasks table's columns
+  are each viewer's choice through core's `column_settings_modal/1` +
+  `PhoenixKitWeb.TableColumns` (ViewPrefs keys `projects.api_usage.figures`
+  / `projects.api_usage.tasks`; specs in `ApiKeysUsage`). Cost is in by
+  default (agents paid per call through an API) and one click to hide on a
+  subscription — Max: not automatic, customizable. The cards use
+  `stat_card`'s full layout (icon on its own row) in an auto-fit grid so the
+  row is always full.
 
 ### API keys across projects (V24, 2026-10-16)
 

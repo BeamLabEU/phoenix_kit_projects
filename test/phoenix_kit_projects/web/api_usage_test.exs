@@ -123,7 +123,7 @@ defmodule PhoenixKitProjects.Web.ApiUsageTest do
     assert html =~ "per day, by key"
   end
 
-  test "with no cost reported (a subscription) cost is left out", %{
+  test "a viewer hides AI cost with Columns, and it stays hidden", %{
     conn: conn,
     token: token,
     user: user
@@ -131,10 +131,20 @@ defmodule PhoenixKitProjects.Web.ApiUsageTest do
     api(token) |> get("#{@base}/me") |> json_response(200)
 
     conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid, permissions: ["projects"]))
-    {:ok, view, html} = live(conn, "/en/admin/projects/api-keys/usage?metric=cost_cents")
+    {:ok, view, html} = live(conn, "/en/admin/projects/api-keys/usage")
+    assert html =~ "AI cost"
 
+    render_click(view, "open_column_modal", %{})
+    render_click(view, "remove_column", %{"column_id" => "cost_cents", "section" => "figures"})
+    render_click(view, "remove_column", %{"column_id" => "cost_cents", "section" => "tasks"})
+    render_click(view, "hide_column_modal", %{})
+    refute render(view) =~ "AI cost"
+
+    {:ok, _view, html} = live(conn, "/en/admin/projects/api-keys/usage?metric=cost_cents")
     refute html =~ "AI cost"
-    assert has_element?(view, "a.tab-active", "Requests")
+
+    {:ok, _view, html} = live(conn, "/en/admin/projects/api-keys")
+    refute html =~ "$0.00"
   end
 
   test "an administrator picks whose keys the usage covers", %{conn: conn, user: user, home: home} do

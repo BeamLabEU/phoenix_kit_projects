@@ -23,6 +23,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
 
   import PhoenixKitProjects.Web.Components.VizPalette
   import PhoenixKitWeb.Components.Core.Chart, only: [bar_chart: 1]
+  import PhoenixKitWeb.Components.Core.ColumnSettings, only: [column_settings_modal: 1]
   import PhoenixKitWeb.Components.Core.EmptyState, only: [empty_state: 1]
   import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
   import PhoenixKitWeb.Components.Core.NavTabs, only: [nav_tabs: 1]
@@ -41,6 +42,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
 
   alias PhoenixKitProjects.Hours.Format
   alias PhoenixKitProjects.{L10n, Paths}
+  alias PhoenixKitProjects.Web.ListUi
 
   @metrics [:requests, :tokens, :cost_cents, :minutes]
   @periods [7, 30, 90]
@@ -54,6 +56,9 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
   attr(:u, :map, required: true)
   attr(:admin?, :boolean, default: false)
   attr(:show_all?, :boolean, default: false)
+  attr(:show_column_modal, :boolean, default: false)
+  attr(:figures, :list, default: [])
+  attr(:task_columns, :list, default: [])
 
   @doc "The whole Usage tab."
   def usage_tab(assigns) do
@@ -91,7 +96,29 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
             options={Enum.map(@u.key_options, fn {uuid, name} -> {name, uuid} end)}
           />
         </div>
+        <div class="ml-auto">
+          <ListUi.columns_button />
+        </div>
       </form>
+
+      <.column_settings_modal
+        show={@show_column_modal}
+        id="api-usage-columns"
+        sections={[
+          %{
+            id: "figures",
+            title: gettext("Figures"),
+            columns: figures_spec().columns,
+            selected: @figures
+          },
+          %{
+            id: "tasks",
+            title: gettext("Tasks table"),
+            columns: task_columns_spec().columns,
+            selected: @task_columns
+          }
+        ]}
+      />
 
       <.nav_tabs
         active_tab={to_string(@u.metric)}
@@ -113,10 +140,10 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
       />
 
       <%!-- The period's figures, each against the one before it. --%>
-      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3" id="usage-figures">
+      <%!-- As many columns as figures, so the row is always full. --%>
+      <div :if={@u.figures != []} class="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3" id="usage-figures">
         <.stat_card
-          :for={{label, field, fmt, icon, color} <- tiles(@u.cost?)}
-          compact
+          :for={{label, field, fmt, icon, color} <- tiles(@u.figures)}
           color={color}
           value={fmt.(Map.fetch!(@u.now, field))}
           title={label}
@@ -188,7 +215,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
           title={gettext("By key")}
           rows={@u.by_key}
           metric={@u.metric}
-          cost?={@u.cost?}
+          figures={@u.figures}
           slots={if @u.key, do: %{}, else: @u.slots}
         />
         <.breakdown
@@ -196,7 +223,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
           title={gettext("By project")}
           rows={@u.by_project}
           metric={@u.metric}
-          cost?={@u.cost?}
+          figures={@u.figures}
           slots={if @u.key, do: @u.slots, else: %{}}
         />
       </div>
@@ -214,9 +241,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
               <.table_default_row>
                 <.table_default_header_cell>{gettext("Task")}</.table_default_header_cell>
                 <.table_default_header_cell>{gettext("Project")}</.table_default_header_cell>
-                <.table_default_header_cell :if={@u.cost?} class="text-right">{gettext("AI cost")}</.table_default_header_cell>
-                <.table_default_header_cell class="text-right">{gettext("AI tokens")}</.table_default_header_cell>
-                <.table_default_header_cell class="text-right">{gettext("AI time")}</.table_default_header_cell>
+                <.table_default_header_cell :for={c <- @u.task_columns} class="text-right">{metric_label(c)}</.table_default_header_cell>
               </.table_default_row>
             </.table_default_header>
             <.table_default_body>
@@ -228,9 +253,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
                   <span :if={!t.href} class="text-base-content/50">{gettext("(deleted task)")}</span>
                 </.table_default_cell>
                 <.table_default_cell class="text-base-content/70">{t.project_name}</.table_default_cell>
-                <.table_default_cell :if={@u.cost?} class="text-right tabular-nums">{Format.cost(t.cost_cents)}</.table_default_cell>
-                <.table_default_cell class="text-right tabular-nums">{Format.tokens(t.tokens)}</.table_default_cell>
-                <.table_default_cell class="text-right tabular-nums">{Format.duration(t.minutes)}</.table_default_cell>
+                <.table_default_cell :for={c <- @u.task_columns} class="text-right tabular-nums">{metric_value(c, Map.fetch!(t, c))}</.table_default_cell>
               </.table_default_row>
             </.table_default_body>
           </.table_default>
@@ -238,7 +261,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
       </section>
 
       <p class="text-xs text-base-content/50">
-        {gettext("Requests are counted for every call. Tokens, AI time and cost are what agents report — cost only for agents paid per call through an API; on a subscription there is none. Days are UTC.")}
+        {gettext("Requests are counted for every call. Tokens, AI time and cost are what agents report — cost only for agents paid per call through an API (on a subscription there is none — hide it with Columns). Days are UTC.")}
       </p>
     </div>
     """
@@ -344,7 +367,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
   attr(:title, :string, required: true)
   attr(:rows, :list, required: true)
   attr(:metric, :atom, required: true)
-  attr(:cost?, :boolean, default: true)
+  attr(:figures, :list, required: true)
   attr(:slots, :map, required: true)
 
   # One row per key or project: a bar for the switched figure, then every
@@ -374,11 +397,12 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
               <div class="h-full bg-primary/70" style={"width: #{pct(Map.fetch!(row, @metric), @max)}%"}></div>
             </div>
             <div class="text-xs text-base-content/50 tabular-nums">
-              {ngettext("%{count} request", "%{count} requests", row.requests)}
-              <span :if={row.errors > 0} class="text-warning">· {gettext("%{count} failed", count: row.errors)}</span>
-              · {Format.tokens(row.tokens)} {gettext("tokens")}
-              <span :if={@cost?}>· {Format.cost(row.cost_cents)}</span>
-              · {Format.duration(row.minutes)}
+              <span
+                :for={{field, i} <- Enum.with_index(@figures)}
+                class={[field in [:errors, :denied] and Map.fetch!(row, field) > 0 && "text-warning"]}
+              >
+                {if i > 0, do: " · "}{figure_text(field, row)}
+              </span>
             </div>
           </li>
         </ul>
@@ -389,20 +413,67 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
 
   # ── shaping ──
 
-  # The figures, their icons and colours. Cost only when an agent reported
-  # one: on a subscription there is no per-call cost to show.
-  defp tiles(cost?) do
-    [
-      {gettext("Requests"), :requests, &to_string/1, "hero-arrows-right-left", "info"},
-      {gettext("Failed"), :errors, &failed_text/1, "hero-exclamation-triangle", "warning"},
-      {gettext("AI tokens"), :tokens, &Format.tokens/1, "hero-cpu-chip", "primary"},
-      cost? && {gettext("AI cost"), :cost_cents, &Format.cost/1, "hero-banknotes", "success"},
-      {gettext("AI time"), :minutes, &Format.duration/1, "hero-clock", "secondary"}
-    ]
-    |> Enum.filter(& &1)
+  # The figures the viewer shows, in their order, with icons and colours.
+  defp tiles(figures) do
+    Enum.map(figures, fn field ->
+      {icon, color} = figure_look(field)
+      {figure_label(field), field, &metric_value(field, &1), icon, color}
+    end)
   end
 
-  defp failed_text(n), do: to_string(n)
+  defp figure_look(:requests), do: {"hero-arrows-right-left", "info"}
+  defp figure_look(:errors), do: {"hero-exclamation-triangle", "warning"}
+  defp figure_look(:denied), do: {"hero-no-symbol", "error"}
+  defp figure_look(:tokens), do: {"hero-cpu-chip", "primary"}
+  defp figure_look(:cost_cents), do: {"hero-banknotes", "success"}
+  defp figure_look(:minutes), do: {"hero-clock", "secondary"}
+
+  @doc "A figure's name on a card or in a list."
+  def figure_label(:errors), do: gettext("Failed")
+  def figure_label(:denied), do: gettext("Refused")
+  def figure_label(field), do: metric_label(field)
+
+  @doc ~S|A figure in running text: "12 requests", "3 failed", "1.2k tokens", "$0.40", "2h".|
+  def figure_text(:requests, t), do: ngettext("%{count} request", "%{count} requests", t.requests)
+  def figure_text(:errors, t), do: gettext("%{count} failed", count: t.errors)
+  def figure_text(:denied, t), do: gettext("%{count} refused", count: t.denied)
+  def figure_text(:tokens, t), do: "#{Format.tokens(t.tokens)} #{gettext("tokens")}"
+  def figure_text(:cost_cents, t), do: Format.cost(t.cost_cents)
+  def figure_text(:minutes, t), do: Format.duration(t.minutes)
+
+  @doc """
+  The figures a viewer may show (core's `TableColumns`, edited with the
+  Usage page's Columns): the cards, the chart switch and each key's line.
+  Cost is one of them by default — useful for agents paid per call through
+  an API, and one click to hide on a subscription.
+  """
+  def figures_spec do
+    %{
+      key: "projects.api_usage.figures",
+      columns: [
+        %{id: "requests", label: fn -> gettext("Requests") end},
+        %{id: "errors", label: fn -> gettext("Failed") end},
+        %{id: "denied", label: fn -> gettext("Refused") end},
+        %{id: "tokens", label: fn -> gettext("AI tokens") end},
+        %{id: "cost_cents", label: fn -> gettext("AI cost") end},
+        %{id: "minutes", label: fn -> gettext("AI time") end}
+      ],
+      defaults: ["requests", "errors", "tokens", "cost_cents", "minutes"]
+    }
+  end
+
+  @doc "The tasks table's figure columns (the task and project always show)."
+  def task_columns_spec do
+    %{
+      key: "projects.api_usage.tasks",
+      columns: [
+        %{id: "cost_cents", label: fn -> gettext("AI cost") end},
+        %{id: "tokens", label: fn -> gettext("AI tokens") end},
+        %{id: "minutes", label: fn -> gettext("AI time") end}
+      ],
+      defaults: ["cost_cents", "tokens", "minutes"]
+    }
+  end
 
   defp bars(days, _metric, slots, names) do
     Enum.map(days, fn day ->

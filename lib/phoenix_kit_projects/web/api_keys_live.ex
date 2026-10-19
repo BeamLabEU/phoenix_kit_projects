@@ -23,11 +23,11 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   use PhoenixKitProjects.Web.Components
 
   alias PhoenixKitProjects.{ApiAccess, ApiKeys, ApiUsage, Authz, L10n, Paths, Projects}
-  alias PhoenixKitProjects.Hours.Format
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Web.Api.Docs
-  alias PhoenixKitProjects.Web.{ApiKeyPanel, ApiKeysUsage}
+  alias PhoenixKitProjects.Web.{ApiKeyPanel, ApiKeysUsage, ListUi}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitWeb.TableColumns
 
   @default_wrapper_class "flex flex-col mx-auto max-w-5xl px-4 py-6 gap-6"
 
@@ -55,8 +55,15 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        new_key: %{"project" => params["project"]},
        key_totals: %{},
        u: nil,
-       add_drafts: %{}
+       add_drafts: %{},
+       show_column_modal: false
      )
+     |> then(fn socket ->
+       assign(socket,
+         figures: ListUi.load_columns(socket, ApiKeysUsage.figures_spec()),
+         task_columns: ListUi.load_columns(socket, ApiKeysUsage.task_columns_spec())
+       )
+     end)
      |> load()}
   end
 
@@ -163,6 +170,48 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   # ── events ─────────────────────────────────────────────────────────
 
   @impl true
+  # Core's column picker on the Usage page: which figures show (the cards,
+  # the chart switch, each key's line) and which columns the tasks table
+  # has — each viewer's own choice, saved by `TableColumns`.
+  def handle_event("open_column_modal", _params, socket),
+    do: {:noreply, assign(socket, show_column_modal: true)}
+
+  def handle_event("hide_column_modal", _params, socket),
+    do: {:noreply, assign(socket, show_column_modal: false)}
+
+  def handle_event("reset_columns", params, socket) do
+    socket =
+      TableColumns.handle_event(
+        "reset_columns",
+        params,
+        socket,
+        ApiKeysUsage.figures_spec(),
+        :figures
+      )
+
+    socket =
+      TableColumns.handle_event(
+        "reset_columns",
+        params,
+        socket,
+        ApiKeysUsage.task_columns_spec(),
+        :task_columns
+      )
+
+    {:noreply, reload_usage(socket)}
+  end
+
+  def handle_event(event, %{"section" => section} = params, socket)
+      when event in ~w(add_column remove_column reorder_columns) do
+    {spec, name} =
+      case section do
+        "tasks" -> {ApiKeysUsage.task_columns_spec(), :task_columns}
+        _ -> {ApiKeysUsage.figures_spec(), :figures}
+      end
+
+    {:noreply, reload_usage(TableColumns.handle_event(event, params, socket, spec, name))}
+  end
+
   def handle_event("usage_filter", params, socket) do
     u = socket.assigns.u
 
@@ -461,7 +510,15 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       <.viz_palette />
 
 
-      <ApiKeysUsage.usage_tab :if={@live_action == :usage} u={@u} admin?={@admin?} show_all?={@show_all?} />
+      <ApiKeysUsage.usage_tab
+        :if={@live_action == :usage}
+        u={@u}
+        admin?={@admin?}
+        show_all?={@show_all?}
+        show_column_modal={@show_column_modal}
+        figures={@figures}
+        task_columns={@task_columns}
+      />
 
       <%= if @live_action != :usage do %>
 
@@ -556,11 +613,12 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
             <span :if={!t}>{gettext("No use in the last 30 days.")}</span>
             <span :if={t} class="tabular-nums">
               {gettext("Last 30 days:")}
-              <span class="text-base-content">{ngettext("%{count} request", "%{count} requests", t.requests)}</span>
-              <span :if={t.errors > 0} class="text-warning">{" · "}{gettext("%{count} failed", count: t.errors)}</span>
-              · {Format.tokens(t.tokens)} {gettext("tokens")}
-              <span :if={t.cost_cents > 0}>· {Format.cost(t.cost_cents)}</span>
-              · {Format.duration(t.minutes)}
+              <span
+                :for={{field, i} <- Enum.with_index(@figures)}
+                class={[field in ["errors", "denied"] and Map.get(t, String.to_existing_atom(field), 0) > 0 && "text-warning"]}
+              >
+                {if i > 0, do: " · "}{ApiKeysUsage.figure_text(String.to_existing_atom(field), t)}
+              </span>
             </span>
             <.link :if={t} patch={Paths.api_keys_usage(key: row.key.uuid)} class="link link-hover text-primary">
               {gettext("Usage")} →
@@ -722,11 +780,17 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     uuids = if key, do: [key], else: Map.keys(key_names)
     all = ApiUsage.rows(uuids, 2 * days)
 
-    # Cost is for agents paid per call through an API; with no cost
-    # reported (a subscription) the page leaves it out altogether.
-    cost? = Enum.any?(all, &(&1.cost_cents > 0))
-    metrics = if cost?, do: ApiKeysUsage.metrics(), else: ApiKeysUsage.metrics() -- [:cost_cents]
-    metric = pick(params["metric"], metrics, :requests, &String.to_existing_atom/1)
+    # The chart can draw the figures the viewer shows (Columns); requests
+    # when they show none of the drawable ones.
+    shown = Enum.map(socket.assigns.figures, &String.to_existing_atom/1)
+
+    metrics =
+      case Enum.filter(shown, &(&1 in ApiKeysUsage.metrics())) do
+        [] -> [:requests]
+        some -> some
+      end
+
+    metric = pick(params["metric"], metrics, hd(metrics), &String.to_existing_atom/1)
     now = ApiUsage.within(all, days)
     by = if key, do: :project, else: :key
 
@@ -752,7 +816,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         key: key,
         metric: metric,
         metrics: metrics,
-        cost?: cost?,
+        figures: shown,
+        task_columns: Enum.map(socket.assigns.task_columns, &String.to_existing_atom/1),
         rows: now,
         key_options: Enum.map(keys, &{&1.uuid, &1.name}),
         now: ApiUsage.totals(now),
@@ -801,6 +866,9 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       }
     )
   end
+
+  defp reload_usage(socket),
+    do: if(socket.assigns.live_action == :usage, do: load_usage(socket), else: socket)
 
   defp pick(value, allowed, default, parse) when is_binary(value) do
     parsed = parse.(value)
