@@ -166,6 +166,16 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   def handle_event("usage_filter", params, socket) do
     u = socket.assigns.u
 
+    # Whose keys (administrators): which keys the page shows at all.
+    socket =
+      case params["whose"] do
+        whose when whose in ["mine", "all"] and socket.assigns.admin? ->
+          socket |> assign(show_all?: whose == "all") |> load()
+
+        _ ->
+          socket
+      end
+
     {:noreply,
      push_patch(socket,
        to:
@@ -448,29 +458,10 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   def render(assigns) do
     ~H"""
     <div class={@wrapper_class}>
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 class="text-xl font-semibold">{@page_title}</h1>
-          <p :if={@live_action != :usage} class="text-sm text-base-content/70 max-w-2xl">
-            {gettext("A key lets an AI or a script work with your projects. Each key acts for you, so it never does more than you can. Set what it may see and do in each project.")}
-          </p>
-          <p :if={@live_action == :usage} class="text-sm text-base-content/70 max-w-2xl">
-            {gettext("What your keys did: requests, failures, and the AI time, tokens and cost their agents reported.")}
-          </p>
-        </div>
-        <div class="flex items-center gap-3 text-sm">
-          <a href={Docs.url("/llms.txt")} target="_blank" rel="noopener" class="link link-hover">{gettext("Agent guide")}</a>
-          <label :if={@admin?} class="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" class="toggle toggle-sm" checked={@show_all?} phx-click="toggle_all" />
-            {gettext("Everyone's keys")}
-          </label>
-        </div>
-      </div>
-
       <.viz_palette />
 
 
-      <ApiKeysUsage.usage_tab :if={@live_action == :usage} u={@u} />
+      <ApiKeysUsage.usage_tab :if={@live_action == :usage} u={@u} admin?={@admin?} show_all?={@show_all?} />
 
       <%= if @live_action != :usage do %>
 
@@ -478,9 +469,16 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
            may do there; more projects are added on its card. The form
            keeps its draft in assigns (`draft_key`), so a save elsewhere
            does not clear it. --%>
-      <form id="api-key-new" phx-change="draft_key" phx-submit="create_key" class="card bg-base-100 border border-base-200 shadow-sm">
+      <form id="api-key-new" phx-change="draft_key" phx-submit="create_key" class="card bg-base-100 shadow-sm">
         <div class="card-body gap-3">
-          <h2 class="font-medium">{gettext("New key")}</h2>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="card-title text-lg">
+              <.icon name="hero-plus-circle" class="w-5 h-5" /> {gettext("New key")}
+            </h2>
+            <a href={Docs.url("/llms.txt")} target="_blank" rel="noopener" class="link link-hover text-sm">
+              {gettext("Agent guide")} <.icon name="hero-arrow-top-right-on-square" class="w-3.5 h-3.5" />
+            </a>
+          </div>
           <div class="flex flex-wrap items-end gap-3">
             <div class="flex-1 min-w-48">
               <.input name="key[name]" value={@new_key["name"] || ""} label={gettext("Name")} placeholder={gettext("e.g. Coding assistant")} required maxlength="80" />
@@ -511,9 +509,20 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         </div>
       </form>
 
-      <p :if={@rows == []} class="text-sm text-base-content/60">{gettext("No keys yet.")}</p>
+      <div :if={@admin?} class="flex justify-end">
+        <.checkbox
+          id="api-keys-show-all"
+          name="show_all"
+          variant="toggle"
+          label={gettext("Show everyone's keys")}
+          checked={@show_all?}
+          phx-click="toggle_all"
+        />
+      </div>
 
-      <div :for={row <- @rows} id={"api-key-#{row.key.uuid}"} class={["card bg-base-100 border shadow-sm", if(row.key.revoked_at, do: "border-base-200 opacity-60", else: "border-base-300")]}>
+      <.empty_state :if={@rows == []} icon="hero-key" title={gettext("No keys yet.")} />
+
+      <div :for={row <- @rows} id={"api-key-#{row.key.uuid}"} class={["card bg-base-100 shadow-sm", row.key.revoked_at && "opacity-60"]}>
         <% several? = length(row.grants) > 1 %>
         <% live? = row.editable? and is_nil(row.key.revoked_at) %>
         <div class="card-body gap-3">
@@ -531,12 +540,12 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               </span>
             </div>
             <div :if={live?} class="flex items-center gap-1">
-              <button type="button" class="btn btn-ghost btn-xs" phx-click="rotate" phx-value-key={row.key.uuid} phx-disable-with={gettext("Rotating…")} data-confirm={gettext("Make a new token for this key? The old one stops working at once.")}>
+              <.button type="button" variant="ghost" size="xs" phx-click="rotate" phx-value-key={row.key.uuid} phx-disable-with={gettext("Rotating…")} data-confirm={gettext("Make a new token for this key? The old one stops working at once.")}>
                 <.icon name="hero-arrow-path" class="w-3.5 h-3.5" /> {gettext("Rotate")}
-              </button>
-              <button type="button" class="btn btn-ghost btn-xs text-error" phx-click="revoke" phx-value-key={row.key.uuid} phx-disable-with={gettext("Revoking…")} data-confirm={gettext("Revoke this key? Everything using it stops working, in every project.")}>
+              </.button>
+              <.button type="button" variant="ghost" size="xs" class="text-error" phx-click="revoke" phx-value-key={row.key.uuid} phx-disable-with={gettext("Revoking…")} data-confirm={gettext("Revoke this key? Everything using it stops working, in every project.")}>
                 <.icon name="hero-no-symbol" class="w-3.5 h-3.5" /> {gettext("Revoke")}
-              </button>
+              </.button>
             </div>
           </div>
 
@@ -549,7 +558,9 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               {gettext("Last 30 days:")}
               <span class="text-base-content">{ngettext("%{count} request", "%{count} requests", t.requests)}</span>
               <span :if={t.errors > 0} class="text-warning">{" · "}{gettext("%{count} failed", count: t.errors)}</span>
-              · {Format.tokens(t.tokens)} {gettext("tokens")} · {Format.cost(t.cost_cents)} · {Format.duration(t.minutes)}
+              · {Format.tokens(t.tokens)} {gettext("tokens")}
+              <span :if={t.cost_cents > 0}>· {Format.cost(t.cost_cents)}</span>
+              · {Format.duration(t.minutes)}
             </span>
             <.link :if={t} patch={Paths.api_keys_usage(key: row.key.uuid)} class="link link-hover text-primary">
               {gettext("Usage")} →
@@ -561,95 +572,112 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                project's sub-projects unless switched off in Details. The
                default project (the key's home: where a call without
                `project` acts) only means something once there are two. --%>
-          <div class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead>
-                <tr>
-                  <th>{gettext("Project")}</th>
-                  <th>{gettext("Access")}</th>
-                  <th :if={is_nil(row.key.user_uuid)}>{gettext("Role")}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <%= for grant <- row.grants do %>
-                  <% project = Map.get(@projects_by_uuid, grant.project_uuid) %>
-                  <% open? = @open_grid == {row.key.uuid, grant.project_uuid} %>
-                  <% home? = row.key.project_uuid == grant.project_uuid %>
-                  <tr id={"grant-#{row.key.uuid}-#{grant.project_uuid}"}>
-                    <td>
-                      <div class="flex flex-wrap items-center gap-1.5">
-                        <span class="font-medium">{(project && Project.localized_name(project, L10n.current_content_lang())) || "—"}</span>
-                        <span :if={project && project.key} class="font-mono text-xs text-base-content/50">{project.key}</span>
-                        <span :if={home? and several?} class="badge badge-sm badge-primary badge-outline" title={gettext("Calls that name no project act here")}>{gettext("Default")}</span>
-                        <span :if={not grant.inherit} class="badge badge-sm badge-ghost" title={gettext("Its sub-projects are not covered")}>{gettext("This project only")}</span>
+          <.table_default size="sm" wrapper_class="overflow-x-auto">
+            <.table_default_header>
+              <.table_default_row>
+                <.table_default_header_cell>{gettext("Project")}</.table_default_header_cell>
+                <.table_default_header_cell>{gettext("Access")}</.table_default_header_cell>
+                <.table_default_header_cell :if={is_nil(row.key.user_uuid)}>{gettext("Role")}</.table_default_header_cell>
+                <.table_default_header_cell></.table_default_header_cell>
+              </.table_default_row>
+            </.table_default_header>
+            <.table_default_body>
+              <%= for grant <- row.grants do %>
+                <% project = Map.get(@projects_by_uuid, grant.project_uuid) %>
+                <% open? = @open_grid == {row.key.uuid, grant.project_uuid} %>
+                <% home? = row.key.project_uuid == grant.project_uuid %>
+                <.table_default_row id={"grant-#{row.key.uuid}-#{grant.project_uuid}"} hover={false}>
+                  <.table_default_cell>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <span class="font-medium">{(project && Project.localized_name(project, L10n.current_content_lang())) || "—"}</span>
+                      <span :if={project && project.key} class="font-mono text-xs text-base-content/50">{project.key}</span>
+                      <span :if={home? and several?} class="badge badge-sm badge-primary badge-outline" title={gettext("Calls that name no project act here")}>{gettext("Default")}</span>
+                      <span :if={not grant.inherit} class="badge badge-sm badge-ghost" title={gettext("Its sub-projects are not covered")}>{gettext("This project only")}</span>
+                    </div>
+                  </.table_default_cell>
+                  <.table_default_cell>
+                    <form id={"preset-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_preset" class="flex items-center gap-2">
+                      <input type="hidden" name="key" value={row.key.uuid} />
+                      <input type="hidden" name="project" value={grant.project_uuid} />
+                      <div class="min-w-40">
+                        <.select
+                          name="preset"
+                          class="select-sm"
+                          value={ApiAccess.preset_of(grant.scopes)}
+                          options={preset_options() ++ [{gettext("Custom…"), "custom"}]}
+                          disabled={not live?}
+                        />
                       </div>
-                    </td>
-                    <td>
-                      <form id={"preset-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_preset" class="flex items-center gap-2">
-                        <input type="hidden" name="key" value={row.key.uuid} />
-                        <input type="hidden" name="project" value={grant.project_uuid} />
-                        <select name="preset" class="select select-sm min-w-36" disabled={not live?}>
-                          <option :for={{label, value} <- preset_options() ++ [{gettext("Custom…"), "custom"}]} value={value} selected={ApiAccess.preset_of(grant.scopes) == value}>{label}</option>
-                        </select>
-                        <button type="button" class="btn btn-ghost btn-xs" phx-click="toggle_grid" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid}>
-                          <.icon name={if open?, do: "hero-chevron-up", else: "hero-adjustments-horizontal"} class="w-3.5 h-3.5" />
-                          {if open?, do: gettext("Hide details"), else: gettext("Details")}
-                        </button>
-                      </form>
-                      <p :if={not open? and ApiAccess.preset_of(grant.scopes) == "custom"} class="text-xs text-base-content/60 mt-1">
-                        {access_summary(grant.scopes)}
-                      </p>
-                    </td>
-                    <td :if={is_nil(row.key.user_uuid)}>
-                      <form id={"role-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_role">
-                        <input type="hidden" name="key" value={row.key.uuid} />
-                        <input type="hidden" name="project" value={grant.project_uuid} />
-                        <select name="role" class="select select-sm min-w-28" disabled={not live?}>
-                          <option :for={r <- ApiKey.roles()} value={r} selected={grant.role == r}>{r}</option>
-                        </select>
-                      </form>
-                    </td>
-                    <td class="text-right whitespace-nowrap">
-                      <button :if={live? and several? and not home? and grant.scopes != []} type="button" class="btn btn-ghost btn-xs" phx-click="set_home" phx-value-key={row.key.uuid} phx-value-home={grant.project_uuid} title={gettext("Calls that name no project act here")}>
-                        {gettext("Make default")}
-                      </button>
-                      <button :if={live?} type="button" class="btn btn-ghost btn-xs text-error" phx-click="remove_grant" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} data-confirm={gettext("Take this project away from the key?")} aria-label={gettext("Remove")}>
-                        <.icon name="hero-x-mark" class="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                  <tr :if={open?} id={"grid-#{row.key.uuid}-#{grant.project_uuid}"}>
-                    <td colspan="4" class="bg-base-200/40">
-                      <form id={"grid-form-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_grid" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 py-2">
-                        <input type="hidden" name="key" value={row.key.uuid} />
-                        <input type="hidden" name="project" value={grant.project_uuid} />
-                        <% grid = ApiAccess.grid(grant.scopes) %>
-                        <label :for={area <- ApiAccess.areas()} class="flex items-center justify-between gap-3 text-sm">
-                          <span>
-                            {area.label}
-                            <span :if={area.hint} class="block text-xs text-base-content/50">{area.hint}</span>
-                          </span>
-                          <select name={"grid[#{area.key}]"} class="select select-xs" disabled={not live?}>
-                            <option value="none" selected={grid[area.key] == "none"}>{gettext("No access")}</option>
-                            <option :if={area.read} value="read" selected={grid[area.key] == "read"}>{gettext("Read")}</option>
-                            <option :if={area.write} value="write" selected={grid[area.key] == "write"}>{if area.read, do: gettext("Read and write"), else: gettext("Write")}</option>
-                          </select>
-                        </label>
-                      </form>
-                      <label class="flex items-start gap-2 text-sm border-t border-base-300 pt-2 mt-1 cursor-pointer">
-                        <input type="checkbox" class="checkbox checkbox-sm mt-0.5" checked={grant.inherit} disabled={not live?} phx-click="toggle_inherit" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} />
+                      <.button type="button" variant="ghost" size="xs" phx-click="toggle_grid" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid}>
+                        <.icon name={if open?, do: "hero-chevron-up", else: "hero-adjustments-horizontal"} class="w-3.5 h-3.5" />
+                        {if open?, do: gettext("Hide details"), else: gettext("Details")}
+                      </.button>
+                    </form>
+                    <p :if={not open? and ApiAccess.preset_of(grant.scopes) == "custom"} class="text-xs text-base-content/60 mt-1">
+                      {access_summary(grant.scopes)}
+                    </p>
+                  </.table_default_cell>
+                  <.table_default_cell :if={is_nil(row.key.user_uuid)}>
+                    <form id={"role-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_role" class="min-w-28">
+                      <input type="hidden" name="key" value={row.key.uuid} />
+                      <input type="hidden" name="project" value={grant.project_uuid} />
+                      <.select name="role" class="select-sm" value={grant.role} options={Enum.map(ApiKey.roles(), &{&1, &1})} disabled={not live?} />
+                    </form>
+                  </.table_default_cell>
+                  <.table_default_cell class="text-right whitespace-nowrap">
+                    <.button :if={live? and several? and not home? and grant.scopes != []} type="button" variant="ghost" size="xs" phx-click="set_home" phx-value-key={row.key.uuid} phx-value-home={grant.project_uuid} title={gettext("Calls that name no project act here")}>
+                      {gettext("Make default")}
+                    </.button>
+                    <.button :if={live?} type="button" variant="ghost" size="xs" class="text-error" phx-click="remove_grant" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid} data-confirm={gettext("Take this project away from the key?")} aria-label={gettext("Remove")}>
+                      <.icon name="hero-x-mark" class="w-4 h-4" />
+                    </.button>
+                  </.table_default_cell>
+                </.table_default_row>
+                <.table_default_row :if={open?} id={"grid-#{row.key.uuid}-#{grant.project_uuid}"} hover={false}>
+                  <.table_default_cell colspan={4} class="bg-base-200/40">
+                    <form id={"grid-form-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_grid" class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 py-2">
+                      <input type="hidden" name="key" value={row.key.uuid} />
+                      <input type="hidden" name="project" value={grant.project_uuid} />
+                      <% grid = ApiAccess.grid(grant.scopes) %>
+                      <div :for={area <- ApiAccess.areas()} class="flex items-center justify-between gap-3 text-sm">
                         <span>
-                          {gettext("Also covers its sub-projects")}
-                          <span class="block text-xs text-base-content/50">{gettext("On unless you want this project alone. A sub-project with its own row here uses that row instead.")}</span>
+                          {area.label}
+                          <span :if={area.hint} class="block text-xs text-base-content/50">{area.hint}</span>
                         </span>
-                      </label>
-                    </td>
-                  </tr>
-                <% end %>
-              </tbody>
-            </table>
-          </div>
+                        <div class="w-40 shrink-0">
+                          <.select
+                            id={"grid-#{row.key.uuid}-#{grant.project_uuid}-#{area.key}"}
+                            name={"grid[#{area.key}]"}
+                            class="select-xs"
+                            value={grid[area.key]}
+                            options={level_options(area)}
+                            disabled={not live?}
+                            aria-label={area.label}
+                          />
+                        </div>
+                      </div>
+                    </form>
+                    <div class="border-t border-base-300 pt-2 mt-1">
+                      <.checkbox
+                        id={"inherit-#{row.key.uuid}-#{grant.project_uuid}"}
+                        name="inherit"
+                        label={gettext("Also covers its sub-projects")}
+                        checked={grant.inherit}
+                        disabled={not live?}
+                        phx-click="toggle_inherit"
+                        phx-value-key={row.key.uuid}
+                        phx-value-project={grant.project_uuid}
+                      >
+                        <:description>
+                          {gettext("On unless you want this project alone. A sub-project with its own row here uses that row instead.")}
+                        </:description>
+                      </.checkbox>
+                    </div>
+                  </.table_default_cell>
+                </.table_default_row>
+              <% end %>
+            </.table_default_body>
+          </.table_default>
 
           <% draft = Map.get(@add_drafts, row.key.uuid, %{}) %>
           <form :if={live? and row.addable != []} id={"grant-add-#{row.key.uuid}"} phx-change="draft_grant" phx-submit="add_grant" class="flex flex-wrap items-end gap-2">
@@ -660,7 +688,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
             <div class="w-60">
               <.select name="grant[preset]" label={gettext("Access")} value={draft["preset"] || "read"} options={preset_options()} />
             </div>
-            <button type="submit" class="btn btn-sm" phx-disable-with={gettext("Adding…")}>{gettext("Add")}</button>
+            <.button type="submit" size="sm" phx-disable-with={gettext("Adding…")}>{gettext("Add")}</.button>
           </form>
         </div>
       </div>
@@ -689,11 +717,16 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     key_names = Map.new(keys, &{&1.uuid, &1.name})
 
     days = pick(params["days"], ApiKeysUsage.periods(), 30, &String.to_integer/1)
-    metric = pick(params["metric"], ApiKeysUsage.metrics(), :requests, &String.to_existing_atom/1)
     key = if Map.has_key?(key_names, params["key"]), do: params["key"]
 
     uuids = if key, do: [key], else: Map.keys(key_names)
     all = ApiUsage.rows(uuids, 2 * days)
+
+    # Cost is for agents paid per call through an API; with no cost
+    # reported (a subscription) the page leaves it out altogether.
+    cost? = Enum.any?(all, &(&1.cost_cents > 0))
+    metrics = if cost?, do: ApiKeysUsage.metrics(), else: ApiKeysUsage.metrics() -- [:cost_cents]
+    metric = pick(params["metric"], metrics, :requests, &String.to_existing_atom/1)
     now = ApiUsage.within(all, days)
     by = if key, do: :project, else: :key
 
@@ -718,6 +751,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         days: days,
         key: key,
         metric: metric,
+        metrics: metrics,
+        cost?: cost?,
         rows: now,
         key_options: Enum.map(keys, &{&1.uuid, &1.name}),
         now: ApiUsage.totals(now),
@@ -814,6 +849,16 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       href: a && project && Paths.task(project, a),
       project_name: (project && project_name(project)) || gettext("(deleted project)")
     })
+  end
+
+  # The levels an area offers, as a select's options.
+  defp level_options(area) do
+    [{gettext("No access"), "none"}] ++
+      if(area.read, do: [{gettext("Read"), "read"}], else: []) ++
+      if(area.write,
+        do: [{if(area.read, do: gettext("Read and write"), else: gettext("Write")), "write"}],
+        else: []
+      )
   end
 
   # A custom grant in one line: the areas it opens and how far.

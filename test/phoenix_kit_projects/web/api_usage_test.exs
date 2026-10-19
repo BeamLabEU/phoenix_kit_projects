@@ -102,7 +102,7 @@ defmodule PhoenixKitProjects.Web.ApiUsageTest do
     assert has_element?(view, "#usage-main-chart")
     assert has_element?(view, "#usage-by-key a", "Counter")
     assert has_element?(view, "#usage-by-task", "Costly task")
-    assert html =~ "new"
+    assert html =~ "New in this period"
 
     view |> element("a", "AI cost") |> render_click()
     assert_patch(view, "/en/admin/projects/api-keys/usage?days=30&metric=cost_cents")
@@ -121,6 +121,34 @@ defmodule PhoenixKitProjects.Web.ApiUsageTest do
       live(conn, "/en/admin/projects/api-keys/usage?key=#{Ecto.UUID.generate()}")
 
     assert html =~ "per day, by key"
+  end
+
+  test "with no cost reported (a subscription) cost is left out", %{
+    conn: conn,
+    token: token,
+    user: user
+  } do
+    api(token) |> get("#{@base}/me") |> json_response(200)
+
+    conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid, permissions: ["projects"]))
+    {:ok, view, html} = live(conn, "/en/admin/projects/api-keys/usage?metric=cost_cents")
+
+    refute html =~ "AI cost"
+    assert has_element?(view, "a.tab-active", "Requests")
+  end
+
+  test "an administrator picks whose keys the usage covers", %{conn: conn, user: user, home: home} do
+    {:ok, _shared, shared_token} =
+      ApiKeys.create(home, %{"name" => "Shared bot", "role" => "member"})
+
+    api(shared_token) |> get("#{@base}/me") |> json_response(200)
+
+    conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid))
+    {:ok, view, html} = live(conn, "/en/admin/projects/api-keys/usage")
+    refute html =~ "Shared bot"
+
+    view |> form("#usage-filters", %{"whose" => "all"}) |> render_change()
+    assert render(view) =~ "Shared bot"
   end
 
   test "a key nobody has used says so", %{conn: conn, user: user} do

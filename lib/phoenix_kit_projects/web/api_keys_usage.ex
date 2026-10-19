@@ -23,6 +23,21 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
 
   import PhoenixKitProjects.Web.Components.VizPalette
   import PhoenixKitWeb.Components.Core.Chart, only: [bar_chart: 1]
+  import PhoenixKitWeb.Components.Core.EmptyState, only: [empty_state: 1]
+  import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
+  import PhoenixKitWeb.Components.Core.NavTabs, only: [nav_tabs: 1]
+  import PhoenixKitWeb.Components.Core.Select, only: [select: 1]
+  import PhoenixKitWeb.Components.Core.StatCard, only: [stat_card: 1]
+
+  import PhoenixKitWeb.Components.Core.TableDefault,
+    only: [
+      table_default: 1,
+      table_default_body: 1,
+      table_default_cell: 1,
+      table_default_header: 1,
+      table_default_header_cell: 1,
+      table_default_row: 1
+    ]
 
   alias PhoenixKitProjects.Hours.Format
   alias PhoenixKitProjects.{L10n, Paths}
@@ -37,68 +52,90 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
   def periods, do: @periods
 
   attr(:u, :map, required: true)
+  attr(:admin?, :boolean, default: false)
+  attr(:show_all?, :boolean, default: false)
 
   @doc "The whole Usage tab."
   def usage_tab(assigns) do
     ~H"""
     <div class="flex flex-col gap-6" id="api-usage">
-      <%!-- What to look at: the period, one key or all, and the figure the
-           main chart draws. Each is in the address, so a view can be kept. --%>
-      <div class="flex flex-wrap items-end gap-3">
-        <form id="usage-filters" phx-change="usage_filter" class="flex flex-wrap items-end gap-3">
-          <label class="flex flex-col gap-1 text-xs text-base-content/60">
-            {gettext("Period")}
-            <select name="days" class="select select-sm">
-              <option :for={d <- periods()} value={d} selected={@u.days == d}>
-                {gettext("Last %{count} days", count: d)}
-              </option>
-            </select>
-          </label>
-          <label class="flex flex-col gap-1 text-xs text-base-content/60">
-            {gettext("Key")}
-            <select name="key" class="select select-sm min-w-48">
-              <option value="" selected={is_nil(@u.key)}>{gettext("All keys")}</option>
-              <option :for={{uuid, name} <- @u.key_options} value={uuid} selected={@u.key == uuid}>{name}</option>
-            </select>
-          </label>
-        </form>
-        <div class="join ml-auto" role="group" aria-label={gettext("What the charts show")}>
-          <.link
-            :for={metric <- metrics()}
-            patch={Paths.api_keys_usage(days: @u.days, key: @u.key, metric: metric)}
-            class={["join-item btn btn-sm", if(@u.metric == metric, do: "btn-primary", else: "btn-ghost")]}
-            aria-current={@u.metric == metric && "true"}
-          >
-            {metric_label(metric)}
-          </.link>
+      <%!-- What to look at: whose keys (administrators), the period, one key
+           or all, and the figure the main chart draws. The period, key and
+           figure are in the address, so a view can be kept. --%>
+      <form id="usage-filters" phx-change="usage_filter" class="flex flex-wrap items-end gap-3">
+        <div :if={@admin?} class="w-44">
+          <.select
+            id="usage-whose"
+            name="whose"
+            label={gettext("Whose keys")}
+            value={if @show_all?, do: "all", else: "mine"}
+            options={[{gettext("My keys"), "mine"}, {gettext("Everyone's keys"), "all"}]}
+          />
         </div>
-      </div>
+        <div class="w-44">
+          <.select
+            id="usage-days"
+            name="days"
+            label={gettext("Period")}
+            value={@u.days}
+            options={Enum.map(periods(), &{gettext("Last %{count} days", count: &1), &1})}
+          />
+        </div>
+        <div class="w-56">
+          <.select
+            id="usage-key"
+            name="key"
+            label={gettext("Key")}
+            value={@u.key || ""}
+            prompt={gettext("All keys")}
+            options={Enum.map(@u.key_options, fn {uuid, name} -> {name, uuid} end)}
+          />
+        </div>
+      </form>
 
-      <p :if={@u.rows == []} class="text-sm text-base-content/60">
-        {gettext("Nothing yet in the last %{count} days.", count: @u.days)}
-      </p>
+      <.nav_tabs
+        active_tab={to_string(@u.metric)}
+        tabs={
+          for metric <- @u.metrics do
+            %{
+              id: to_string(metric),
+              label: metric_label(metric),
+              patch: Paths.api_keys_usage(days: @u.days, key: @u.key, metric: metric)
+            }
+          end
+        }
+      />
+
+      <.empty_state
+        :if={@u.rows == []}
+        icon="hero-chart-bar"
+        title={gettext("Nothing yet in the last %{count} days.", count: @u.days)}
+      />
 
       <%!-- The period's figures, each against the one before it. --%>
-      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2" id="usage-figures">
-        <div :for={{label, field, fmt} <- tiles()} class="rounded-box border border-base-200 bg-base-100 p-3">
-          <div class="text-xs text-base-content/60">{label}</div>
-          <div class={["text-2xl font-bold tabular-nums", field in [:errors, :denied] and Map.fetch!(@u.now, field) > 0 && "text-warning"]}>
-            {fmt.(Map.fetch!(@u.now, field))}
-          </div>
-          <.change now={Map.fetch!(@u.now, field)} before={Map.fetch!(@u.before, field)} worse_up={field in [:errors, :denied]} />
-        </div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3" id="usage-figures">
+        <.stat_card
+          :for={{label, field, fmt, icon, color} <- tiles(@u.cost?)}
+          compact
+          color={color}
+          value={fmt.(Map.fetch!(@u.now, field))}
+          title={label}
+          subtitle={change_text(Map.fetch!(@u.now, field), Map.fetch!(@u.before, field))}
+        >
+          <:icon><.icon name={icon} class="w-5 h-5" /></:icon>
+        </.stat_card>
       </div>
 
       <%!-- The figure per day, a part per key (all keys) or per project
            (one key), each in its colour. --%>
-      <section class="card bg-base-100 border border-base-200 shadow-sm pk-hours-viz" id="usage-main">
+      <section class="card bg-base-100 shadow-sm pk-hours-viz" id="usage-main">
         <div class="card-body p-4 gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <h3 class="text-sm font-semibold">
+            <h2 class="card-title text-base">
               {if @u.key,
                 do: gettext("%{metric} per day, by project", metric: metric_label(@u.metric)),
                 else: gettext("%{metric} per day, by key", metric: metric_label(@u.metric))}
-            </h3>
+            </h2>
             <.legend series={@u.series} slots={@u.slots} metric={@u.metric} />
           </div>
           <.day_chart
@@ -115,10 +152,10 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
 
       <%!-- Failures: the calls that answered 4xx/5xx, the refused (403)
            ones apart — usually a key whose access is set too narrowly. --%>
-      <section :if={@u.now.errors > 0} class="card bg-base-100 border border-base-200 shadow-sm" id="usage-failures">
+      <section :if={@u.now.errors > 0} class="card bg-base-100 shadow-sm" id="usage-failures">
         <div class="card-body p-4 gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <h3 class="text-sm font-semibold">{gettext("Failed requests per day")}</h3>
+            <h2 class="card-title text-base">{gettext("Failed requests per day")}</h2>
             <ul class="flex gap-3 text-xs text-base-content/70">
               <li class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-warning"></span>{gettext("Refused (403)")}</li>
               <li class="flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-sm bg-error"></span>{gettext("Other failures")}</li>
@@ -151,6 +188,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
           title={gettext("By key")}
           rows={@u.by_key}
           metric={@u.metric}
+          cost?={@u.cost?}
           slots={if @u.key, do: %{}, else: @u.slots}
         />
         <.breakdown
@@ -158,50 +196,49 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
           title={gettext("By project")}
           rows={@u.by_project}
           metric={@u.metric}
+          cost?={@u.cost?}
           slots={if @u.key, do: @u.slots, else: %{}}
         />
       </div>
 
       <%!-- Where the reported work went: tasks only (work reported on a
            project as a whole is in the figures above, not here). --%>
-      <section class="card bg-base-100 border border-base-200 shadow-sm" id="usage-by-task">
+      <section class="card bg-base-100 shadow-sm" id="usage-by-task">
         <div class="card-body p-4 gap-2">
-          <h3 class="text-sm font-semibold">{gettext("Tasks the reported work went to")}</h3>
+          <h2 class="card-title text-base">{gettext("Tasks the reported work went to")}</h2>
           <p :if={@u.by_task == []} class="text-sm text-base-content/50">
             {gettext("No tokens, cost or AI time reported on a task in this period.")}
           </p>
-          <div :if={@u.by_task != []} class="overflow-x-auto">
-            <table class="table table-sm">
-              <thead>
-                <tr>
-                  <th>{gettext("Task")}</th>
-                  <th>{gettext("Project")}</th>
-                  <th class="text-right">{gettext("AI cost")}</th>
-                  <th class="text-right">{gettext("AI tokens")}</th>
-                  <th class="text-right">{gettext("AI time")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr :for={t <- @u.by_task}>
-                  <td class="max-w-72">
-                    <.link :if={t.href} navigate={t.href} class="link link-hover">
-                      <span :if={t.ref} class="font-mono text-xs text-base-content/50 mr-1">{t.ref}</span>{t.title}
-                    </.link>
-                    <span :if={!t.href} class="text-base-content/50">{gettext("(deleted task)")}</span>
-                  </td>
-                  <td class="text-base-content/70">{t.project_name}</td>
-                  <td class="text-right tabular-nums">{Format.cost(t.cost_cents)}</td>
-                  <td class="text-right tabular-nums">{Format.tokens(t.tokens)}</td>
-                  <td class="text-right tabular-nums">{Format.duration(t.minutes)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <.table_default :if={@u.by_task != []} size="sm" wrapper_class="overflow-x-auto">
+            <.table_default_header>
+              <.table_default_row>
+                <.table_default_header_cell>{gettext("Task")}</.table_default_header_cell>
+                <.table_default_header_cell>{gettext("Project")}</.table_default_header_cell>
+                <.table_default_header_cell :if={@u.cost?} class="text-right">{gettext("AI cost")}</.table_default_header_cell>
+                <.table_default_header_cell class="text-right">{gettext("AI tokens")}</.table_default_header_cell>
+                <.table_default_header_cell class="text-right">{gettext("AI time")}</.table_default_header_cell>
+              </.table_default_row>
+            </.table_default_header>
+            <.table_default_body>
+              <.table_default_row :for={t <- @u.by_task}>
+                <.table_default_cell class="max-w-72">
+                  <.link :if={t.href} navigate={t.href} class="link link-hover">
+                    <span :if={t.ref} class="font-mono text-xs text-base-content/50 mr-1">{t.ref}</span>{t.title}
+                  </.link>
+                  <span :if={!t.href} class="text-base-content/50">{gettext("(deleted task)")}</span>
+                </.table_default_cell>
+                <.table_default_cell class="text-base-content/70">{t.project_name}</.table_default_cell>
+                <.table_default_cell :if={@u.cost?} class="text-right tabular-nums">{Format.cost(t.cost_cents)}</.table_default_cell>
+                <.table_default_cell class="text-right tabular-nums">{Format.tokens(t.tokens)}</.table_default_cell>
+                <.table_default_cell class="text-right tabular-nums">{Format.duration(t.minutes)}</.table_default_cell>
+              </.table_default_row>
+            </.table_default_body>
+          </.table_default>
         </div>
       </section>
 
       <p class="text-xs text-base-content/50">
-        {gettext("Requests are counted for every call. Tokens, cost and AI time are what agents report — an agent that does not report shows requests only. Days are UTC.")}
+        {gettext("Requests are counted for every call. Tokens, AI time and cost are what agents report — cost only for agents paid per call through an API; on a subscription there is none. Days are UTC.")}
       </p>
     </div>
     """
@@ -209,38 +246,20 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
 
   # ── pieces ──
 
-  attr(:now, :any, required: true)
-  attr(:before, :any, required: true)
-  attr(:worse_up, :boolean, default: false)
+  # The change against the period before: "+12% vs previous", "new", or
+  # nothing to compare.
+  defp change_text(now, before) when before == 0 and now == 0,
+    do: gettext("Nothing before either")
 
-  # The change against the period before: "+12%", "−3%", "new", or
-  # nothing when both are zero. Up is good unless it counts failures.
-  defp change(assigns) do
-    ~H"""
-    <div :if={@now > 0 or @before > 0} class={["text-xs tabular-nums", change_class(@now, @before, @worse_up)]}>
-      {change_text(@now, @before)}
-      <span class="text-base-content/40">{gettext("vs previous")}</span>
-    </div>
-    """
-  end
-
-  defp change_text(_now, before) when before == 0, do: gettext("new")
+  defp change_text(_now, before) when before == 0, do: gettext("New in this period")
 
   defp change_text(now, before) do
     pct = round((now - before) / before * 100)
 
     cond do
-      pct > 0 -> "+#{pct}%"
-      pct < 0 -> "−#{abs(pct)}%"
-      true -> "±0%"
-    end
-  end
-
-  defp change_class(now, before, worse_up) do
-    cond do
-      now == before -> "text-base-content/50"
-      now > before != worse_up -> "text-success"
-      true -> "text-warning"
+      pct > 0 -> gettext("+%{pct}% vs previous", pct: pct)
+      pct < 0 -> gettext("−%{pct}% vs previous", pct: abs(pct))
+      true -> gettext("Same as previous")
     end
   end
 
@@ -325,6 +344,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
   attr(:title, :string, required: true)
   attr(:rows, :list, required: true)
   attr(:metric, :atom, required: true)
+  attr(:cost?, :boolean, default: true)
   attr(:slots, :map, required: true)
 
   # One row per key or project: a bar for the switched figure, then every
@@ -336,9 +356,9 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
       )
 
     ~H"""
-    <section class="card bg-base-100 border border-base-200 shadow-sm pk-hours-viz" id={@id}>
+    <section class="card bg-base-100 shadow-sm pk-hours-viz" id={@id}>
       <div class="card-body p-4 gap-2">
-        <h3 class="text-sm font-semibold">{@title}</h3>
+        <h2 class="card-title text-base">{@title}</h2>
         <p :if={@rows == []} class="text-sm text-base-content/50">{gettext("Nothing here.")}</p>
         <ul class="flex flex-col gap-3">
           <li :for={row <- @rows} class="flex flex-col gap-1">
@@ -357,7 +377,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
               {ngettext("%{count} request", "%{count} requests", row.requests)}
               <span :if={row.errors > 0} class="text-warning">· {gettext("%{count} failed", count: row.errors)}</span>
               · {Format.tokens(row.tokens)} {gettext("tokens")}
-              · {Format.cost(row.cost_cents)}
+              <span :if={@cost?}>· {Format.cost(row.cost_cents)}</span>
               · {Format.duration(row.minutes)}
             </div>
           </li>
@@ -369,16 +389,20 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
 
   # ── shaping ──
 
-  defp tiles do
+  # The figures, their icons and colours. Cost only when an agent reported
+  # one: on a subscription there is no per-call cost to show.
+  defp tiles(cost?) do
     [
-      {gettext("Requests"), :requests, &to_string/1},
-      {gettext("Failed"), :errors, &to_string/1},
-      {gettext("Refused"), :denied, &to_string/1},
-      {gettext("AI tokens"), :tokens, &Format.tokens/1},
-      {gettext("AI cost"), :cost_cents, &Format.cost/1},
-      {gettext("AI time"), :minutes, &Format.duration/1}
+      {gettext("Requests"), :requests, &to_string/1, "hero-arrows-right-left", "info"},
+      {gettext("Failed"), :errors, &failed_text/1, "hero-exclamation-triangle", "warning"},
+      {gettext("AI tokens"), :tokens, &Format.tokens/1, "hero-cpu-chip", "primary"},
+      cost? && {gettext("AI cost"), :cost_cents, &Format.cost/1, "hero-banknotes", "success"},
+      {gettext("AI time"), :minutes, &Format.duration/1, "hero-clock", "secondary"}
     ]
+    |> Enum.filter(& &1)
   end
+
+  defp failed_text(n), do: to_string(n)
 
   defp bars(days, _metric, slots, names) do
     Enum.map(days, fn day ->

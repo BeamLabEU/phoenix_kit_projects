@@ -734,6 +734,15 @@ Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
   with the Hours tab) follow the busiest series by requests, so they hold
   when the figure is switched. Core's chart draws empty bars for all zeros,
   so the page shows a line instead.
+- **Core's look and components** (Max, 2026-10-19): no page heading or
+  intro — the admin layout shows the title; cards are `card bg-base-100
+  shadow-sm` with `card-title` headings; controls are core's `<.select>`,
+  `<.checkbox variant="toggle">`, `<.button>`, `<.table_default>`,
+  `<.nav_tabs>` (the figure switch), `<.stat_card>` (the figures) and
+  `<.empty_state>`. "Whose keys" is a filter on Usage and a switch on Keys,
+  for administrators only. **Cost** shows only when an agent reported one
+  in the period (agents paid per call through an API); on a subscription
+  the figure, the switch entry and the column are left out.
 
 ### API keys across projects (V24, 2026-10-16)
 
