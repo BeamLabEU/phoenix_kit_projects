@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 24
+  @current_version 25
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -121,6 +121,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v22_refs(p, prefix)
     v23_subtasks(p, prefix)
     v24_key_grants(p, prefix)
+    v25_key_usage(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -1043,6 +1044,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # V19–V21 each added columns to the assignments table (and V20 the link
   # table); newest first.
   defp down_task_columns(p, target) do
+    if target < 25, do: down_v25(p)
     if target < 24, do: down_v24(p)
     if target < 23, do: down_v23(p)
     if target < 22, do: down_v22(p)
@@ -1105,6 +1107,35 @@ defmodule PhoenixKitProjects.Migrations.Schema do
           ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
       execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
     end
+  end
+
+  # V25 — how much each API key is used (Max, 2026-10-19: "some kind of
+  # usage stats and graph"; "do 1, 2, and 3"). One row per key, project and
+  # UTC day: the requests it made there, how many of them failed (4xx/5xx)
+  # and how many of those were refused (403) — the one count an agent
+  # cannot skip, unlike the time and usage it reports to the ledger. A row
+  # is an upsert counter, never a log of requests.
+  defp v25_key_usage(p) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_api_key_usage (
+      api_key_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_project_api_keys(uuid) ON DELETE CASCADE,
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      day DATE NOT NULL,
+      requests INTEGER NOT NULL DEFAULT 0,
+      errors INTEGER NOT NULL DEFAULT 0,
+      denied INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (api_key_uuid, project_uuid, day)
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_api_key_usage_day_index
+    ON #{p}phoenix_kit_project_api_key_usage (day)
+    """)
+  end
+
+  defp down_v25(p) do
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_key_usage")
   end
 
   # V24 — API keys that reach several projects (Max, 2026-10-15: "make API

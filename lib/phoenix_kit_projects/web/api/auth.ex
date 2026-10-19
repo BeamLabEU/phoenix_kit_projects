@@ -17,14 +17,16 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   before any controller runs, so a refused call is never stored as an
   idempotent response.
 
-  `last_used_at` is touched here, throttled by `ApiKeys.touch_last_used/1`.
+  `last_used_at` is touched here, throttled by `ApiKeys.touch_last_used/1`,
+  and every authenticated call is counted per key, project and day once it
+  is answered (`PhoenixKitProjects.ApiUsage.record/3`).
   """
 
   @behaviour Plug
 
   import Plug.Conn
 
-  alias PhoenixKitProjects.{ApiKeys, Features, Projects}
+  alias PhoenixKitProjects.{ApiKeys, ApiUsage, Features, Projects}
   alias PhoenixKitProjects.Web.Api.{Json, RateLimit}
 
   @impl true
@@ -37,6 +39,7 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
          %{} = project <- home_project(key) || :no_project,
          {:ok, key, refused} <- home_view(key, project) do
       conn
+      |> count_request(key, project)
       |> rate_limit(key)
       |> case do
         {:ok, conn} ->
@@ -100,6 +103,18 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
       error ->
         error
     end
+  end
+
+  # Every authenticated call is counted once it is answered (`ApiUsage`,
+  # the API keys page's charts): in the project it ended up acting in —
+  # the home unless it named another — with its status, so refusals and
+  # rate-limited calls count too.
+  defp count_request(conn, key, home) do
+    register_before_send(conn, fn conn ->
+      project = conn.assigns[:pk_project] || home
+      ApiUsage.record(key.uuid, project.uuid, conn.status || 200)
+      conn
+    end)
   end
 
   defp rate_limit(conn, key) do
