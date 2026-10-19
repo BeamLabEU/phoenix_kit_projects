@@ -718,12 +718,13 @@ Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
 - **`ApiUsage.rows/2`** merges both into `%{key, project, day, requests,
   errors, denied, minutes, tokens, cost_cents}`; `totals/1`, `by_project/1`
   and `days/3` (every day present, for the chart) shape it.
-- **The page** (`ApiKeysLive`) has two tabs (Max, 2026-10-19: "give the
-  API keys their own sub-tabs"): **Keys** (`projects/api-keys`, each key
-  with one line of its last 30 days and a link) and **Usage**
-  (`projects/api-keys/usage`, a hidden tab declared first among the hidden
-  ones so `projects/:id` never takes `api-keys` for an id; the visible
-  "API keys" tab matches by prefix and stays lit). Usage is drawn by
+- **The page** (`ApiKeysLive`) is a sidebar section with two subtabs
+  (Max, 2026-10-19: "use the Phoenix kit admin sidebar subtabs"), shaped
+  like core's Settings › Integrations: the parent `:admin_projects_api_keys`
+  has no LiveView and `redirect_to_first_subtab`; **Keys**
+  (`projects/api-keys`, `:index`, each key with one line of its last 30
+  days and a link) and **Usage** (`projects/api-keys/usage`, `:usage`).
+  Their labels are `gettext_noop` so they stay in the catalogue. Usage is drawn by
   `Web.ApiKeysUsage` from one map `ApiKeysLive.load_usage/1` builds:
   period 7 / 30 / 90 days against the period before, one key or all
   (`?key=` is honoured only for a key the page shows), the figure per day

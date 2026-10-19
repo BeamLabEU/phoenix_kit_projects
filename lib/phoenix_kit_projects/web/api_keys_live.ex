@@ -450,9 +450,12 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     <div class={@wrapper_class}>
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 class="text-xl font-semibold">{gettext("API keys")}</h1>
-          <p class="text-sm text-base-content/70 max-w-2xl">
+          <h1 class="text-xl font-semibold">{@page_title}</h1>
+          <p :if={@live_action != :usage} class="text-sm text-base-content/70 max-w-2xl">
             {gettext("A key lets an AI or a script work with your projects. Each key acts for you, so it never does more than you can. Set what it may see and do in each project.")}
+          </p>
+          <p :if={@live_action == :usage} class="text-sm text-base-content/70 max-w-2xl">
+            {gettext("What your keys did: requests, failures, and the AI time, tokens and cost their agents reported.")}
           </p>
         </div>
         <div class="flex items-center gap-3 text-sm">
@@ -466,25 +469,6 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
       <.viz_palette />
 
-      <%!-- Keys and their usage, one page with two tabs (Max, 2026-10-19:
-           "give the API keys their own sub-tabs"). --%>
-      <nav role="tablist" class="flex items-center gap-5 text-sm border-b border-base-200 -mt-2">
-        <.link
-          :for={{action, label, href} <- [{:index, gettext("Keys"), Paths.api_keys()}, {:usage, gettext("Usage"), Paths.api_keys_usage()}]}
-          patch={href}
-          role="tab"
-          aria-selected={to_string(@live_action == action)}
-          class={[
-            "py-2 -mb-px border-b-2 transition-colors",
-            if(@live_action == action,
-              do: "border-primary font-semibold text-base-content",
-              else: "border-transparent text-base-content/60 hover:text-base-content"
-            )
-          ]}
-        >
-          {label}
-        </.link>
-      </nav>
 
       <ApiKeysUsage.usage_tab :if={@live_action == :usage} u={@u} />
 

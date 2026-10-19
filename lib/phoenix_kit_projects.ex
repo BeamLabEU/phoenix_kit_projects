@@ -767,6 +767,10 @@ defmodule PhoenixKitProjects do
       },
       # Every API key a person has, and what each may do per project
       # (V24: keys live outside projects — Max, 2026-10-15).
+      # A section of its own with two children in the sidebar (Max,
+      # 2026-10-19: "use the Phoenix kit admin sidebar subtabs"), the same
+      # shape as core's Settings › Integrations: the parent only links to
+      # its first child.
       %Tab{
         id: :admin_projects_api_keys,
         label: "API keys",
@@ -779,7 +783,37 @@ defmodule PhoenixKitProjects do
         permission: module_key(),
         match: :prefix,
         parent: :admin_projects,
+        subtab_display: :when_active,
+        redirect_to_first_subtab: true,
+        highlight_with_subtabs: false
+      },
+      %Tab{
+        id: :admin_projects_api_keys_list,
+        label: gettext_noop("Keys"),
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-key",
+        path: "projects/api-keys",
+        priority: 665,
+        level: :admin,
+        permission: module_key(),
+        match: :exact,
+        parent: :admin_projects_api_keys,
         live_view: {PhoenixKitProjects.Web.ApiKeysLive, :index}
+      },
+      %Tab{
+        id: :admin_projects_api_keys_usage,
+        label: gettext_noop("Usage"),
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-chart-bar",
+        path: "projects/api-keys/usage",
+        priority: 665,
+        level: :admin,
+        permission: module_key(),
+        match: :exact,
+        parent: :admin_projects_api_keys,
+        live_view: {PhoenixKitProjects.Web.ApiKeysLive, :usage}
       },
       # Last on purpose: the list is where the work is, the Overview is
       # the read-only picture of it. Its pieces are also dashboards-module
@@ -801,24 +835,6 @@ defmodule PhoenixKitProjects do
     ]
 
     hidden_subtabs = [
-      # The API keys page's Usage tab (Max, 2026-10-19: "give the API keys
-      # their own sub-tabs"). The visible "API keys" tab matches by prefix,
-      # so it stays lit here; declared first so no `projects/:id` route
-      # can take `api-keys` for an id.
-      %Tab{
-        id: :admin_projects_api_keys_usage,
-        label: "API key usage",
-        gettext_backend: PhoenixKitProjects.Gettext,
-        gettext_domain: "default",
-        path: "projects/api-keys/usage",
-        priority: 665,
-        level: :admin,
-        permission: module_key(),
-        match: :exact,
-        parent: :admin_projects,
-        visible: false,
-        live_view: {PhoenixKitProjects.Web.ApiKeysLive, :usage}
-      },
       # Legacy `projects/list/…` addresses (the list lived there until
       # 2026-09, with every project page nested under it). Both tabs
       # redirect to the same path without the segment, so bookmarks and
