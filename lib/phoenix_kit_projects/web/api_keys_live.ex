@@ -458,7 +458,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       <section :if={@rows != []} id="api-usage-summary" class="card bg-base-100 border border-base-200 shadow-sm">
         <div class="card-body gap-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="font-medium">{gettext("Usage")}</h2>
+            <h2 class="font-medium">{gettext("Usage, last 30 days")}</h2>
             <div class="join" role="group" aria-label={gettext("What the charts show")}>
               <button
                 :for={{metric, label} <- usage_metric_options()}
@@ -472,20 +472,25 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               </button>
             </div>
           </div>
-          <div :for={{label, days} <- [{gettext("Last 7 days"), 7}, {gettext("Last 30 days"), 30}]} class="flex flex-col gap-1">
-            <% t = @usage_all |> within_days(days) |> ApiUsage.totals() %>
-            <div class="text-xs text-base-content/60">{label}</div>
-            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
-              <.stat_tile label={gettext("Requests")} value={t.requests} />
-              <.stat_tile label={gettext("Failed")} value={failed_text(t)} value_class={if(t.denied > 0, do: "text-warning")} />
-              <.stat_tile label={gettext("AI tokens")} value={Format.tokens(t.tokens)} />
-              <.stat_tile label={gettext("AI cost")} value={Format.cost(t.cost_cents)} />
-              <.stat_tile label={gettext("AI time")} value={Format.duration(t.minutes)} />
+          <% month = @usage_all |> within_days(30) |> ApiUsage.totals() %>
+          <% week = @usage_all |> within_days(7) |> ApiUsage.totals() %>
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div :for={{label, field, fmt} <- summary_tiles()} class="rounded-box border border-base-200 p-3">
+              <div class="text-xs text-base-content/60">{label}</div>
+              <div class={["text-xl font-bold tabular-nums", field == :errors and month.denied > 0 && "text-warning"]}>
+                {fmt.(Map.fetch!(month, field))}
+              </div>
+              <div :if={field == :errors and month.denied > 0} class="text-xs text-warning">
+                {gettext("%{count} refused", count: month.denied)}
+              </div>
+              <div class="text-xs text-base-content/50 tabular-nums">
+                {gettext("7 days: %{value}", value: fmt.(Map.fetch!(week, field)))}
+              </div>
             </div>
           </div>
           <% top = top_key(@usage, @rows, @usage_metric) %>
           <p :if={top} class="text-sm text-base-content/70">
-            {gettext("Most in the last 30 days: %{key} — %{value}", key: top.name, value: metric_value(@usage_metric, top.value))}
+            {gettext("Most: %{key} — %{value}", key: top.name, value: metric_value(@usage_metric, top.value))}
           </p>
           <p class="text-xs text-base-content/50">
             {gettext("Requests are counted for every call. Tokens, cost and AI time are what agents report — an agent that does not report shows requests only. Days are UTC.")}
@@ -638,7 +643,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                       <form id={"preset-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_preset" class="flex items-center gap-2">
                         <input type="hidden" name="key" value={row.key.uuid} />
                         <input type="hidden" name="project" value={grant.project_uuid} />
-                        <select name="preset" class="select select-sm" disabled={not live?}>
+                        <select name="preset" class="select select-sm min-w-36" disabled={not live?}>
                           <option :for={{label, value} <- preset_options() ++ [{gettext("Custom…"), "custom"}]} value={value} selected={ApiAccess.preset_of(grant.scopes) == value}>{label}</option>
                         </select>
                         <button type="button" class="btn btn-ghost btn-xs" phx-click="toggle_grid" phx-value-key={row.key.uuid} phx-value-project={grant.project_uuid}>
@@ -654,7 +659,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
                       <form id={"role-#{row.key.uuid}-#{grant.project_uuid}"} phx-change="set_role">
                         <input type="hidden" name="key" value={row.key.uuid} />
                         <input type="hidden" name="project" value={grant.project_uuid} />
-                        <select name="role" class="select select-sm" disabled={not live?}>
+                        <select name="role" class="select select-sm min-w-28" disabled={not live?}>
                           <option :for={r <- ApiKey.roles()} value={r} selected={grant.role == r}>{r}</option>
                         </select>
                       </form>
@@ -725,6 +730,17 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   end
 
   # ── usage ──
+
+  # The Usage card's figures: label, field, how to print it.
+  defp summary_tiles do
+    [
+      {gettext("Requests"), :requests, &to_string/1},
+      {gettext("Failed"), :errors, &to_string/1},
+      {gettext("AI tokens"), :tokens, &Format.tokens/1},
+      {gettext("AI cost"), :cost_cents, &Format.cost/1},
+      {gettext("AI time"), :minutes, &Format.duration/1}
+    ]
+  end
 
   defp usage_metric_options do
     Enum.map(@usage_metrics, &{&1, metric_label(&1)})
@@ -797,7 +813,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
   defp project_label(projects, uuid) do
     case Map.get(projects, uuid) do
-      %Project{} = p -> p.key || Project.localized_name(p, L10n.current_content_lang())
+      %Project{} = p -> Project.localized_name(p, L10n.current_content_lang())
       _ -> gettext("(deleted project)")
     end
   end
