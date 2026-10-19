@@ -801,6 +801,24 @@ defmodule PhoenixKitProjects do
     ]
 
     hidden_subtabs = [
+      # The API keys page's Usage tab (Max, 2026-10-19: "give the API keys
+      # their own sub-tabs"). The visible "API keys" tab matches by prefix,
+      # so it stays lit here; declared first so no `projects/:id` route
+      # can take `api-keys` for an id.
+      %Tab{
+        id: :admin_projects_api_keys_usage,
+        label: "API key usage",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/api-keys/usage",
+        priority: 665,
+        level: :admin,
+        permission: module_key(),
+        match: :exact,
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ApiKeysLive, :usage}
+      },
       # Legacy `projects/list/…` addresses (the list lived there until
       # 2026-09, with every project page nested under it). Both tabs
       # redirect to the same path without the segment, so bookmarks and

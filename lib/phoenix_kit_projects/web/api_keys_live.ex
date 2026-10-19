@@ -22,20 +22,17 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
-  import PhoenixKitWeb.Components.Core.Chart, only: [bar_chart: 1]
-
-  alias PhoenixKitProjects.{ApiAccess, ApiKeys, ApiUsage, Authz, L10n, Projects}
+  alias PhoenixKitProjects.{ApiAccess, ApiKeys, ApiUsage, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Hours.Format
-  alias PhoenixKitProjects.Schemas.{ApiKey, Project}
+  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
   alias PhoenixKitProjects.Web.Api.Docs
-  alias PhoenixKitProjects.Web.ApiKeyPanel
+  alias PhoenixKitProjects.Web.{ApiKeyPanel, ApiKeysUsage}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   @default_wrapper_class "flex flex-col mx-auto max-w-5xl px-4 py-6 gap-6"
 
-  # How far back the usage charts look, in UTC days.
+  # How far back each key's one-line usage looks, in UTC days.
   @usage_days 30
-  @usage_metrics [:requests, :tokens, :cost_cents, :minutes]
 
   @impl true
   def mount(params, session, socket) do
@@ -56,7 +53,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
        api_token: nil,
        open_grid: nil,
        new_key: %{"project" => params["project"]},
-       usage_metric: :requests,
+       key_totals: %{},
+       u: nil,
        add_drafts: %{}
      )
      |> load()}
@@ -64,12 +62,21 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
-    case params["project"] do
-      uuid when is_binary(uuid) ->
-        {:noreply, update(socket, :new_key, &Map.put(&1, "project", uuid))}
+    socket =
+      case params["project"] do
+        uuid when is_binary(uuid) -> update(socket, :new_key, &Map.put(&1, "project", uuid))
+        _ -> socket
+      end
+
+    case socket.assigns.live_action do
+      :usage ->
+        {:noreply,
+         socket
+         |> assign(page_title: gettext("API key usage"), usage_params: params)
+         |> load_usage()}
 
       _ ->
-        {:noreply, socket}
+        {:noreply, assign(socket, page_title: gettext("API keys"))}
     end
   end
 
@@ -89,20 +96,15 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         }
       end)
 
-    usage = ApiUsage.rows(Enum.map(keys, & &1.uuid), @usage_days)
-
     project_names =
       rows
       |> Enum.flat_map(fn r -> Enum.map(r.grants, & &1.project_uuid) end)
-      |> Enum.concat(Enum.map(usage, & &1.project))
       |> Enum.uniq()
       |> Projects.get_projects()
 
     assign(socket,
       rows: rows,
-      usage: Enum.group_by(usage, & &1.key),
-      usage_all: usage,
-      usage_slots: usage_slots(usage),
+      key_totals: keys |> Enum.map(& &1.uuid) |> ApiUsage.rows(@usage_days) |> ApiUsage.by_key(),
       projects_by_uuid: project_names,
       my_projects: projects_for(me),
       user_names:
@@ -161,15 +163,26 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   # ── events ─────────────────────────────────────────────────────────
 
   @impl true
-  def handle_event("usage_metric", %{"metric" => metric}, socket) do
-    case Enum.find(@usage_metrics, &(Atom.to_string(&1) == metric)) do
-      nil -> {:noreply, socket}
-      m -> {:noreply, assign(socket, usage_metric: m)}
-    end
+  def handle_event("usage_filter", params, socket) do
+    u = socket.assigns.u
+
+    {:noreply,
+     push_patch(socket,
+       to:
+         Paths.api_keys_usage(
+           days: params["days"] || u.days,
+           key: blank_to_nil(params["key"]),
+           metric: u.metric
+         )
+     )}
   end
 
   def handle_event("toggle_all", _params, socket) do
-    {:noreply, socket |> assign(show_all?: not socket.assigns.show_all?) |> load()}
+    socket = socket |> assign(show_all?: not socket.assigns.show_all?) |> load()
+
+    if socket.assigns.live_action == :usage,
+      do: {:noreply, load_usage(socket)},
+      else: {:noreply, socket}
   end
 
   # The two add forms keep what was typed in assigns, so a save on another
@@ -453,50 +466,29 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
       <.viz_palette />
 
-      <%!-- What the keys on this page did: the last 7 and 30 days, and the
-           figure the charts below draw (one switch for all of them). --%>
-      <section :if={@rows != []} id="api-usage-summary" class="card bg-base-100 border border-base-200 shadow-sm">
-        <div class="card-body gap-3">
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <h2 class="font-medium">{gettext("Usage, last 30 days")}</h2>
-            <div class="join" role="group" aria-label={gettext("What the charts show")}>
-              <button
-                :for={{metric, label} <- usage_metric_options()}
-                type="button"
-                class={["join-item btn btn-xs", if(@usage_metric == metric, do: "btn-primary", else: "btn-ghost")]}
-                phx-click="usage_metric"
-                phx-value-metric={metric}
-                aria-pressed={to_string(@usage_metric == metric)}
-              >
-                {label}
-              </button>
-            </div>
-          </div>
-          <% month = @usage_all |> within_days(30) |> ApiUsage.totals() %>
-          <% week = @usage_all |> within_days(7) |> ApiUsage.totals() %>
-          <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
-            <div :for={{label, field, fmt} <- summary_tiles()} class="rounded-box border border-base-200 p-3">
-              <div class="text-xs text-base-content/60">{label}</div>
-              <div class={["text-xl font-bold tabular-nums", field == :errors and month.denied > 0 && "text-warning"]}>
-                {fmt.(Map.fetch!(month, field))}
-              </div>
-              <div :if={field == :errors and month.denied > 0} class="text-xs text-warning">
-                {gettext("%{count} refused", count: month.denied)}
-              </div>
-              <div class="text-xs text-base-content/50 tabular-nums">
-                {gettext("7 days: %{value}", value: fmt.(Map.fetch!(week, field)))}
-              </div>
-            </div>
-          </div>
-          <% top = top_key(@usage, @rows, @usage_metric) %>
-          <p :if={top} class="text-sm text-base-content/70">
-            {gettext("Most: %{key} — %{value}", key: top.name, value: metric_value(@usage_metric, top.value))}
-          </p>
-          <p class="text-xs text-base-content/50">
-            {gettext("Requests are counted for every call. Tokens, cost and AI time are what agents report — an agent that does not report shows requests only. Days are UTC.")}
-          </p>
-        </div>
-      </section>
+      <%!-- Keys and their usage, one page with two tabs (Max, 2026-10-19:
+           "give the API keys their own sub-tabs"). --%>
+      <nav role="tablist" class="flex items-center gap-5 text-sm border-b border-base-200 -mt-2">
+        <.link
+          :for={{action, label, href} <- [{:index, gettext("Keys"), Paths.api_keys()}, {:usage, gettext("Usage"), Paths.api_keys_usage()}]}
+          patch={href}
+          role="tab"
+          aria-selected={to_string(@live_action == action)}
+          class={[
+            "py-2 -mb-px border-b-2 transition-colors",
+            if(@live_action == action,
+              do: "border-primary font-semibold text-base-content",
+              else: "border-transparent text-base-content/60 hover:text-base-content"
+            )
+          ]}
+        >
+          {label}
+        </.link>
+      </nav>
+
+      <ApiKeysUsage.usage_tab :if={@live_action == :usage} u={@u} />
+
+      <%= if @live_action != :usage do %>
 
       <%!-- A new key: a name, the project it starts in and how much it
            may do there; more projects are added on its card. The form
@@ -564,52 +556,22 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
             </div>
           </div>
 
-          <%!-- What this key did in the last 30 days: its figures, and the
-               switched figure per day, one colour per project. --%>
-          <% key_usage = Map.get(@usage, row.key.uuid, []) %>
-          <p :if={key_usage == []} class="text-xs text-base-content/50">{gettext("No use in the last 30 days.")}</p>
-          <div :if={key_usage != []} id={"usage-#{row.key.uuid}"} class="pk-hours-viz grid gap-3 sm:grid-cols-[13rem_minmax(0,1fr)] items-start">
-            <% t = ApiUsage.totals(key_usage) %>
-            <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm">
-              <dt class="text-base-content/60">{gettext("Requests")}</dt>
-              <dd class="tabular-nums text-right">{t.requests}</dd>
-              <dt class="text-base-content/60">{gettext("Failed")}</dt>
-              <dd class={["tabular-nums text-right", t.denied > 0 && "text-warning"]}>{failed_text(t)}</dd>
-              <dt class="text-base-content/60">{gettext("AI tokens")}</dt>
-              <dd class="tabular-nums text-right">{Format.tokens(t.tokens)}</dd>
-              <dt class="text-base-content/60">{gettext("AI cost")}</dt>
-              <dd class="tabular-nums text-right">{Format.cost(t.cost_cents)}</dd>
-              <dt class="text-base-content/60">{gettext("AI time")}</dt>
-              <dd class="tabular-nums text-right">{Format.duration(t.minutes)}</dd>
-            </dl>
-            <div class="min-w-0 flex flex-col gap-1">
-              <%!-- Core's chart draws a row of empty bars for all zeros, so
-                   a figure with nothing in the period says so instead. --%>
-              <div :if={Map.fetch!(t, @usage_metric) > 0} class="h-24 border-b border-base-300">
-                <.bar_chart
-                  id={"usage-chart-#{row.key.uuid}"}
-                  data={usage_bars(key_usage, @usage_metric, @usage_slots, @projects_by_uuid)}
-                  height={96}
-                  value_format={&metric_value(@usage_metric, &1)}
-                  aria_label={gettext("%{metric} per day, last 30 days", metric: metric_label(@usage_metric))}
-                />
-              </div>
-              <p :if={Map.fetch!(t, @usage_metric) == 0} class="h-24 border-b border-base-300 text-xs text-base-content/50 pt-8 text-center">
-                {gettext("None of this in the last 30 days.")}
-              </p>
-              <div class="flex justify-between text-[10px] text-base-content/50">
-                <span>{short_day(chart_start())}</span>
-                <span>{gettext("today")}</span>
-              </div>
-              <ul class="flex flex-wrap gap-x-3 gap-y-1 text-xs text-base-content/70">
-                <li :for={{uuid, figures} <- legend(key_usage)} class="flex items-center gap-1">
-                  <span class="inline-block w-2.5 h-2.5 rounded-sm" style={viz_slot_style(Map.get(@usage_slots, uuid, 0))}></span>
-                  {project_label(@projects_by_uuid, uuid)}
-                  <span class="text-base-content/50 tabular-nums">{metric_value(@usage_metric, Map.fetch!(figures, @usage_metric))}</span>
-                </li>
-              </ul>
-            </div>
+          <%!-- What this key did in the last 30 days, in one line; the
+               Usage tab has the rest. --%>
+          <% t = Map.get(@key_totals, row.key.uuid) %>
+          <div id={"usage-#{row.key.uuid}"} class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-base-content/60">
+            <span :if={!t}>{gettext("No use in the last 30 days.")}</span>
+            <span :if={t} class="tabular-nums">
+              {gettext("Last 30 days:")}
+              <span class="text-base-content">{ngettext("%{count} request", "%{count} requests", t.requests)}</span>
+              <span :if={t.errors > 0} class="text-warning">{" · "}{gettext("%{count} failed", count: t.errors)}</span>
+              · {Format.tokens(t.tokens)} {gettext("tokens")} · {Format.cost(t.cost_cents)} · {Format.duration(t.minutes)}
+            </span>
+            <.link :if={t} patch={Paths.api_keys_usage(key: row.key.uuid)} class="link link-hover text-primary">
+              {gettext("Usage")} →
+            </.link>
           </div>
+
 
           <%!-- Per project: how much it may do. A grant covers the
                project's sub-projects unless switched off in Details. The
@@ -719,6 +681,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         </div>
       </div>
 
+      <% end %>
+
       <.api_token_modal
         :if={@api_token}
         id="api-keys-token-modal"
@@ -729,98 +693,144 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     """
   end
 
-  # ── usage ──
+  # ── the Usage tab ──
 
-  # The Usage card's figures: label, field, how to print it.
-  defp summary_tiles do
-    [
-      {gettext("Requests"), :requests, &to_string/1},
-      {gettext("Failed"), :errors, &to_string/1},
-      {gettext("AI tokens"), :tokens, &Format.tokens/1},
-      {gettext("AI cost"), :cost_cents, &Format.cost/1},
-      {gettext("AI time"), :minutes, &Format.duration/1}
-    ]
-  end
+  # Everything the Usage tab draws (`ApiKeysUsage`), for the keys this page
+  # shows (yours; everyone's for an administrator who asked): the period
+  # and the one before it, the main chart by key — or by project for one
+  # key — the failures, and the breakdowns.
+  defp load_usage(socket) do
+    params = socket.assigns[:usage_params] || %{}
+    keys = Enum.map(socket.assigns.rows, & &1.key)
+    key_names = Map.new(keys, &{&1.uuid, &1.name})
 
-  defp usage_metric_options do
-    Enum.map(@usage_metrics, &{&1, metric_label(&1)})
-  end
+    days = pick(params["days"], ApiKeysUsage.periods(), 30, &String.to_integer/1)
+    metric = pick(params["metric"], ApiKeysUsage.metrics(), :requests, &String.to_existing_atom/1)
+    key = if Map.has_key?(key_names, params["key"]), do: params["key"]
 
-  defp metric_label(:requests), do: gettext("Requests")
-  defp metric_label(:tokens), do: gettext("AI tokens")
-  defp metric_label(:cost_cents), do: gettext("AI cost")
-  defp metric_label(:minutes), do: gettext("AI time")
+    uuids = if key, do: [key], else: Map.keys(key_names)
+    all = ApiUsage.rows(uuids, 2 * days)
+    now = ApiUsage.within(all, days)
+    by = if key, do: :project, else: :key
 
-  defp metric_value(:requests, v), do: to_string(round(v))
-  defp metric_value(:tokens, v), do: Format.tokens(v)
-  defp metric_value(:cost_cents, v), do: Format.cost(v)
-  defp metric_value(:minutes, v), do: Format.duration(v)
+    projects = all |> Enum.map(& &1.project) |> Projects.get_projects()
+    project_names = Map.new(projects, fn {uuid, p} -> {uuid, project_name(p)} end)
+    names = if key, do: project_names, else: key_names
 
-  defp failed_text(%{errors: 0}), do: "0"
+    totals = if key, do: ApiUsage.by_project(now), else: ApiUsage.by_key(now)
 
-  defp failed_text(%{errors: errors, denied: denied}),
-    do: gettext("%{errors} (%{denied} refused)", errors: errors, denied: denied)
+    # Colours follow the busiest series (by requests, then cost), so they
+    # do not move when the figure is switched.
+    slots =
+      totals
+      |> Enum.sort_by(fn {uuid, t} -> {-t.requests, -t.cost_cents, uuid} end)
+      |> Enum.with_index(1)
+      |> Map.new(fn {{uuid, _t}, i} -> {uuid, if(i <= 7, do: i, else: 0)} end)
 
-  defp within_days(rows, days) do
-    from = Date.add(Date.utc_today(), 1 - days)
-    Enum.filter(rows, &(Date.compare(&1.day, from) != :lt))
-  end
+    days_main = ApiUsage.days(now, metric, days, by)
 
-  # The key with the most of `metric` in the period, when any has some.
-  defp top_key(usage, rows, metric) do
-    names = Map.new(rows, &{&1.key.uuid, &1.key.name})
-
-    usage
-    |> Enum.map(fn {uuid, rs} ->
-      %{name: names[uuid], value: Map.fetch!(ApiUsage.totals(rs), metric)}
-    end)
-    |> Enum.filter(&(&1.value > 0 and is_binary(&1.name)))
-    |> Enum.max_by(& &1.value, fn -> nil end)
-  end
-
-  # One colour per project across the page, the busiest first: seven
-  # colours, then the neutral "others" slot.
-  defp usage_slots(usage) do
-    usage
-    |> ApiUsage.by_project()
-    |> Enum.sort_by(fn {_p, t} -> {-t.requests, -t.cost_cents} end)
-    |> Enum.with_index(1)
-    |> Map.new(fn {{project, _t}, i} -> {project, if(i <= 7, do: i, else: 0)} end)
-  end
-
-  defp usage_bars(rows, metric, slots, projects) do
-    rows
-    |> ApiUsage.days(metric, @usage_days)
-    |> Enum.map(fn day ->
-      %{
-        label: L10n.format_date(day.date),
-        parts:
-          Enum.map(day.parts, fn {project, value} ->
-            %{
-              label: project_label(projects, project),
-              value: value,
-              class: viz_slot_class(Map.get(slots, project, 0))
-            }
+    assign(socket,
+      u: %{
+        days: days,
+        key: key,
+        metric: metric,
+        rows: now,
+        key_options: Enum.map(keys, &{&1.uuid, &1.name}),
+        now: ApiUsage.totals(now),
+        before: all |> ApiUsage.previous(days) |> ApiUsage.totals(),
+        slots: slots,
+        series_names: names,
+        series:
+          totals
+          |> Enum.map(fn {uuid, t} ->
+            %{uuid: uuid, name: Map.get(names, uuid, "—"), value: Map.fetch!(t, metric)}
           end)
+          |> Enum.filter(&(&1.value > 0))
+          |> Enum.sort_by(&(-&1.value)),
+        days_main: days_main,
+        top_main:
+          days_main |> Enum.map(&day_sum/1) |> Enum.max(fn -> 0 end) |> ApiKeysUsage.nice_top(),
+        failure_bars: failure_bars(now, days),
+        top_failures:
+          now
+          |> ApiUsage.days(:errors, days, :key)
+          |> Enum.map(&day_sum/1)
+          |> Enum.max(fn -> 0 end)
+          |> ApiKeysUsage.nice_top(),
+        by_key:
+          now
+          |> ApiUsage.by_key()
+          |> Enum.map(fn {uuid, t} ->
+            Map.merge(t, %{
+              uuid: uuid,
+              name: Map.get(key_names, uuid, "—"),
+              href: Paths.api_keys_usage(days: days, key: uuid, metric: metric)
+            })
+          end)
+          |> Enum.sort_by(&(-Map.fetch!(&1, metric))),
+        by_project:
+          now
+          |> ApiUsage.by_project()
+          |> Enum.map(fn {uuid, t} ->
+            Map.merge(t, %{
+              uuid: uuid,
+              name: Map.get(project_names, uuid, gettext("(deleted project)"))
+            })
+          end)
+          |> Enum.sort_by(&(-Map.fetch!(&1, metric))),
+        by_task: uuids |> ApiUsage.by_task(days) |> Enum.map(&task_row(&1, projects))
       }
-    end)
+    )
   end
 
-  # A key's projects for the legend, the most used first.
-  defp legend(rows) do
-    rows |> ApiUsage.by_project() |> Enum.sort_by(fn {_p, t} -> -t.requests end)
+  defp pick(value, allowed, default, parse) when is_binary(value) do
+    parsed = parse.(value)
+    if parsed in allowed, do: parsed, else: default
+  rescue
+    _ -> default
   end
 
-  defp project_label(projects, uuid) do
-    case Map.get(projects, uuid) do
-      %Project{} = p -> Project.localized_name(p, L10n.current_content_lang())
-      _ -> gettext("(deleted project)")
+  defp pick(_value, _allowed, default, _parse), do: default
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(v), do: v
+
+  defp day_sum(%{parts: parts}), do: parts |> Enum.map(&elem(&1, 1)) |> Enum.sum()
+
+  defp project_name(%Project{} = p), do: Project.localized_name(p, L10n.current_content_lang())
+
+  # Failed calls per day: the refused (403) part, then the rest.
+  defp failure_bars(rows, days) do
+    by_day = Enum.group_by(rows, & &1.day)
+    today = Date.utc_today()
+
+    for offset <- (days - 1)..0//-1 do
+      date = Date.add(today, -offset)
+      t = by_day |> Map.get(date, []) |> ApiUsage.totals()
+
+      %{
+        label: L10n.format_date(date),
+        parts: [
+          %{label: gettext("Refused (403)"), value: t.denied, class: "text-warning"},
+          %{label: gettext("Other failures"), value: t.errors - t.denied, class: "text-error"}
+        ]
+      }
     end
   end
 
-  defp chart_start, do: Date.add(Date.utc_today(), 1 - @usage_days)
+  # A task the reported work went to, ready to print: its ref, title and
+  # link (nil when the task is gone).
+  defp task_row(t, projects) do
+    project = Map.get(projects, t.project)
+    a = Projects.get_assignment(t.assignment)
 
-  defp short_day(%Date{} = d), do: "#{L10n.short_month(d.month)} #{d.day}"
+    Map.merge(t, %{
+      ref: a && Assignment.ref(a),
+      title: a && Assignment.label(a),
+      href: a && project && Paths.task(project, a),
+      project_name: (project && project_name(project)) || gettext("(deleted project)")
+    })
+  end
 
   # A custom grant in one line: the areas it opens and how far.
   defp access_summary(scopes) do

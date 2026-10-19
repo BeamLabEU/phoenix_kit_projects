@@ -27,6 +27,14 @@ defmodule PhoenixKitProjects.Paths do
   @doc "Projects → API keys: every key a person has, and what each may do per project."
   def api_keys, do: Routes.path("#{@base}/api-keys")
 
+  @doc "The API keys page's Usage tab; `params` (days, key, metric) go in the query."
+  def api_keys_usage(params \\ []) do
+    case URI.encode_query(Enum.reject(params, fn {_k, v} -> is_nil(v) end)) do
+      "" -> Routes.path("#{@base}/api-keys/usage")
+      q -> Routes.path("#{@base}/api-keys/usage?#{q}")
+    end
+  end
+
   @doc "The API keys page, set to make a new key that starts on `project_uuid`."
   def api_keys(project_uuid), do: Routes.path("#{@base}/api-keys?project=#{project_uuid}")
 

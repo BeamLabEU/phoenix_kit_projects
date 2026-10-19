@@ -177,13 +177,41 @@ defmodule PhoenixKitProjects.ApiUsage do
     rows |> Enum.group_by(& &1.project) |> Map.new(fn {p, rs} -> {p, totals(rs)} end)
   end
 
+  @doc "The figures of `rows` summed per key: `%{key_uuid => figures}`."
+  @spec by_key([row()]) :: %{binary() => map()}
+  def by_key(rows) do
+    rows |> Enum.group_by(& &1.key) |> Map.new(fn {k, rs} -> {k, totals(rs)} end)
+  end
+
+  @doc "The rows from `days` UTC days ago up to today (today counts as one)."
+  @spec within([row()], pos_integer()) :: [row()]
+  def within(rows, days) do
+    from = Date.add(Date.utc_today(), 1 - days)
+    Enum.filter(rows, &(Date.compare(&1.day, from) != :lt))
+  end
+
   @doc """
-  The last `days` UTC days, oldest first, each with `metric` per project —
-  `[%{date, parts: [{project_uuid, value}]}]` — every day present, empty
-  ones too, so a chart's bars line up with the calendar.
+  The `days` UTC days before the last `days` (the period to compare with):
+  for 30, days 31–60 back.
   """
-  @spec days([row()], atom(), pos_integer()) :: [%{date: Date.t(), parts: [{binary(), number()}]}]
-  def days(rows, metric, days \\ 30) do
+  @spec previous([row()], pos_integer()) :: [row()]
+  def previous(rows, days) do
+    today = Date.utc_today()
+    from = Date.add(today, 1 - 2 * days)
+    until = Date.add(today, -days)
+
+    Enum.filter(rows, &(Date.compare(&1.day, from) != :lt and Date.compare(&1.day, until) != :gt))
+  end
+
+  @doc """
+  The last `days` UTC days, oldest first, each with `metric` per `by`
+  (`:project` or `:key`) — `[%{date, parts: [{uuid, value}]}]` — every
+  day present, empty ones too, so a chart's bars line up with the
+  calendar.
+  """
+  @spec days([row()], atom(), pos_integer(), :project | :key) ::
+          [%{date: Date.t(), parts: [{binary(), number()}]}]
+  def days(rows, metric, days \\ 30, by \\ :project) do
     today = Date.utc_today()
     by_day = Enum.group_by(rows, & &1.day)
 
@@ -193,10 +221,55 @@ defmodule PhoenixKitProjects.ApiUsage do
       parts =
         by_day
         |> Map.get(date, [])
-        |> Enum.map(&{&1.project, Map.fetch!(&1, metric)})
-        |> Enum.filter(fn {_p, v} -> v > 0 end)
+        |> Enum.group_by(&Map.fetch!(&1, by), &Map.fetch!(&1, metric))
+        |> Enum.map(fn {uuid, values} -> {uuid, Enum.sum(values)} end)
+        |> Enum.filter(fn {_uuid, v} -> v > 0 end)
+        |> Enum.sort()
 
       %{date: date, parts: parts}
     end
+  end
+
+  @doc """
+  The tasks the keys' reported work went to in the last `days` UTC days,
+  the most cost first (then tokens, then time), at most `limit`:
+  `[%{assignment: uuid, project: uuid, minutes, tokens, cost_cents}]`.
+  Work reported on a project rather than a task is left out.
+  """
+  @spec by_task([binary()], pos_integer(), pos_integer()) :: [map()]
+  def by_task(key_uuids, days, limit \\ 10)
+  def by_task([], _days, _limit), do: []
+
+  def by_task(key_uuids, days, limit) do
+    since = DateTime.new!(Date.add(Date.utc_today(), 1 - days), ~T[00:00:00], "Etc/UTC")
+
+    from(e in WorkEntry,
+      where:
+        e.actor_kind == "ai_agent" and e.actor_uuid in ^key_uuids and
+          not is_nil(e.assignment_uuid) and coalesce(e.ended_at, e.inserted_at) >= ^since,
+      group_by: [e.assignment_uuid, e.project_uuid, e.kind],
+      select: {e.assignment_uuid, e.project_uuid, e.kind, sum(e.amount)}
+    )
+    |> RepoHelper.repo().all()
+    |> Enum.group_by(fn {a, p, _k, _s} -> {a, p} end)
+    |> Enum.map(fn {{a, p}, parts} ->
+      Enum.reduce(
+        parts,
+        %{assignment: a, project: p, minutes: 0.0, tokens: 0.0, cost_cents: 0.0},
+        fn
+          {_a, _p, kind, sum}, acc ->
+            case field_of(kind) do
+              nil -> acc
+              field -> Map.update!(acc, field, &(&1 + to_float(sum)))
+            end
+        end
+      )
+    end)
+    |> Enum.sort_by(&{-&1.cost_cents, -&1.tokens, -&1.minutes})
+    |> Enum.take(limit)
+  rescue
+    e ->
+      Logger.warning("ApiUsage.by_task failed: #{Exception.message(e)}")
+      []
   end
 end

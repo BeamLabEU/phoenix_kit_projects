@@ -68,25 +68,67 @@ defmodule PhoenixKitProjects.Web.ApiUsageTest do
     assert List.last(days).parts == [{home.uuid, 5}]
   end
 
-  test "the page shows the figures and switches what the charts draw",
+  test "the Keys tab shows each key's last 30 days in one line, linking to its usage",
        %{conn: conn, token: token, key: key, user: user} do
     api(token) |> get("#{@base}/me") |> json_response(200)
 
     conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid, permissions: ["projects"]))
     {:ok, view, html} = live(conn, "/en/admin/projects/api-keys")
 
-    assert html =~ "api-usage-summary"
-    assert has_element?(view, "#usage-#{key.uuid}")
-    assert has_element?(view, "#usage-chart-#{key.uuid}")
-
-    html = view |> element("button[phx-value-metric='tokens']") |> render_click()
-    assert html =~ "None of this in the last 30 days."
+    assert html =~ ~r/1 request\b/
+    assert has_element?(view, "#usage-#{key.uuid} a[href*='api-keys/usage?key=#{key.uuid}']")
   end
 
-  test "a key nobody has used says so", %{conn: conn, key: key, user: user} do
+  test "the Usage tab draws the period, compares it, and narrows to one key",
+       %{conn: conn, token: token, key: key, user: user, home: home} do
+    {:ok, %{assignment: a}} =
+      PhoenixKitProjects.Projects.create_task_with_assignment(
+        home.uuid,
+        %{"title" => "Costly task", "ad_hoc" => true},
+        %{}
+      )
+
+    api(token) |> get("#{@base}/me") |> json_response(200)
+
+    api(token)
+    |> put_req_header("idempotency-key", "t1")
+    |> post("#{@base}/tasks/#{a.uuid}/usage", Jason.encode!(%{tokens: 900, cost_cents: 12}))
+    |> json_response(201)
+
     conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid, permissions: ["projects"]))
-    {:ok, view, html} = live(conn, "/en/admin/projects/api-keys")
+    {:ok, view, html} = live(conn, "/en/admin/projects/api-keys/usage")
+
+    assert html =~ "usage-figures"
+    assert has_element?(view, "#usage-main-chart")
+    assert has_element?(view, "#usage-by-key a", "Counter")
+    assert has_element?(view, "#usage-by-task", "Costly task")
+    assert html =~ "new"
+
+    view |> element("a", "AI cost") |> render_click()
+    assert_patch(view, "/en/admin/projects/api-keys/usage?days=30&metric=cost_cents")
+
+    view |> form("#usage-filters", %{"days" => "7", "key" => key.uuid}) |> render_change()
+
+    assert_patch(
+      view,
+      "/en/admin/projects/api-keys/usage?days=7&key=#{key.uuid}&metric=cost_cents"
+    )
+
+    assert render(view) =~ "per day, by project"
+
+    # someone else's key in the address is ignored, not shown
+    {:ok, _view, html} =
+      live(conn, "/en/admin/projects/api-keys/usage?key=#{Ecto.UUID.generate()}")
+
+    assert html =~ "per day, by key"
+  end
+
+  test "a key nobody has used says so", %{conn: conn, user: user} do
+    conn = put_test_scope(conn, fake_scope(user_uuid: user.uuid, permissions: ["projects"]))
+    {:ok, _view, html} = live(conn, "/en/admin/projects/api-keys")
     assert html =~ "No use in the last 30 days."
-    refute has_element?(view, "#usage-#{key.uuid}")
+
+    {:ok, _view, html} = live(conn, "/en/admin/projects/api-keys/usage")
+    assert html =~ "Nothing yet in the last 30 days."
   end
 end
