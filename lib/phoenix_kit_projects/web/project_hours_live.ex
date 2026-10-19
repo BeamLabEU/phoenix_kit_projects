@@ -1157,6 +1157,7 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     ~H"""
     <div class={@wrapper_class} id={@dom}>
       <.url_state_sync :if={@mode == :all and @routed?} mode={:history} id={"#{@dom}-url-state"} />
+      <.viz_palette />
       <.viz_style />
       <%!-- Inline flash on the tab: a nested live_render LV gets no app
            layout, so put_flash would otherwise be invisible. --%>
@@ -1269,14 +1270,11 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
     """
   end
 
-  # The chart's colours: eight categorical slots (a validated palette, the
-  # dark steps chosen for a dark surface), written once so the bars, the
-  # legend and the timesheet share them. Slot 0 is "Others", a neutral.
+  # The chart's colours are `viz_palette/1` (shared with the API keys
+  # page); this is the report's print rules.
   defp viz_style(assigns) do
     ~H"""
     <style>
-      .pk-hours-viz{--pkh-0:#8a8985;--pkh-1:#2a78d6;--pkh-2:#eb6834;--pkh-3:#1baf7a;--pkh-4:#eda100;--pkh-5:#e87ba4;--pkh-6:#008300;--pkh-7:#4a3aa7}
-      [data-theme*="dark"] .pk-hours-viz,[data-theme="night"] .pk-hours-viz,[data-theme="dim"] .pk-hours-viz{--pkh-0:#8a8985;--pkh-1:#3987e5;--pkh-2:#d95926;--pkh-3:#199e70;--pkh-4:#c98500;--pkh-5:#d55181;--pkh-6:#008300;--pkh-7:#9085e9}
       @media print{
         body *{visibility:hidden !important}
         .pk-hours-report,.pk-hours-report *{visibility:visible !important}
@@ -1590,22 +1588,11 @@ defmodule PhoenixKitProjects.Web.ProjectHoursLive do
         label: L10n.format_date(day.date),
         parts:
           Enum.map(day.parts, fn {series, minutes} ->
-            %{label: series.name, value: minutes, class: slot_class(series.slot)}
+            %{label: series.name, value: minutes, class: viz_slot_class(series.slot)}
           end)
       }
     end)
   end
-
-  # A series' colour as a text colour (core's chart draws in currentColor).
-  # Spelled out: Tailwind only ships the classes it can read in the source.
-  defp slot_class(0), do: "text-[var(--pkh-0)]"
-  defp slot_class(1), do: "text-[var(--pkh-1)]"
-  defp slot_class(2), do: "text-[var(--pkh-2)]"
-  defp slot_class(3), do: "text-[var(--pkh-3)]"
-  defp slot_class(4), do: "text-[var(--pkh-4)]"
-  defp slot_class(5), do: "text-[var(--pkh-5)]"
-  defp slot_class(6), do: "text-[var(--pkh-6)]"
-  defp slot_class(_), do: "text-[var(--pkh-7)]"
 
   defp pct(_part, whole) when whole <= 0, do: 0
   defp pct(part, whole), do: Float.round(part / whole * 100, 2)
