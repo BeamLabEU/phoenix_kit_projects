@@ -442,6 +442,7 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
 | `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — the credentials of `Web.Api`; since V24 `project_uuid` is the key's HOME project, nullable, `ON DELETE SET NULL`) |
 | `Schemas.ApiKeyGrant` | `phoenix_kit_project_api_key_grants` (V24 — what a key may do in one project: scopes, role cap, `inherit`; see "API keys across projects") |
+| `Schemas.ApiKeyUsage` | `phoenix_kit_project_api_key_usage` (V25 — requests, errors and refusals per key, project and UTC day; see "API key usage") |
 | `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation; who holds it is a Postgres session advisory lock pinned for the request, so a live holder is 409 `in_progress` and a dead one's row is taken over — see `ApiKeys.idempotent/3`) |
 | (no schema modules) | `phoenix_kit_project_keys` (V22 — every key a project has had; trigger-maintained) and `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
@@ -700,6 +701,28 @@ rate limit (`Web.Api.RateLimit`, a bucket per key on core's Hammer backend,
 as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
 mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
 them.
+
+### API key usage (V25, 2026-10-19)
+
+Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
+
+- **Requests.** `Web.Api.Auth` registers a `before_send` on every
+  authenticated call that bumps `phoenix_kit_project_api_key_usage` (one
+  row per key, project, UTC day: `requests`, `errors` for ≥ 400, `denied`
+  for 403) through `ApiUsage.record/3` — an upsert, never a request log, and
+  it never raises. The project is the one the call ended up acting in
+  (`pk_project`), else the home; rate-limited calls count as errors.
+- **Work.** The AI time, tokens and cost a key reported are the ledger's
+  `actor_kind: "ai_agent"` rows with `actor_uuid` = the key, summed per day
+  of the work (`ended_at`, else `inserted_at` — the Hours tab's rule).
+- **`ApiUsage.rows/2`** merges both into `%{key, project, day, requests,
+  errors, denied, minutes, tokens, cost_cents}`; `totals/1`, `by_project/1`
+  and `days/3` (every day present, for the chart) shape it.
+- **The page** (`ApiKeysLive`): a Usage card (last 7 / 30 days for the keys
+  shown, the busiest key, one switch for what the charts draw) and per key
+  its figures and a 30-day stacked bar per project (core's `bar_chart`,
+  colours from `Components.VizPalette`, shared with the Hours tab). Core's
+  chart draws empty bars for all zeros, so the page shows a line instead.
 
 ### API keys across projects (V24, 2026-10-16)
 
