@@ -50,6 +50,7 @@ AGENTS.md has the full account ("API keys across projects", "API key usage").
 ## Checks
 
 - 2066 tests, 0 failures, against core main.
+- One older test changed to pass against core main: "no user-facing copy calls a task a template" searched the form's raw HTML, and core's date field now draws its calendar in an HTML `<template>` element. It now checks the visible text and the read-out attributes.
 - `credo --strict` clean; dialyzer clean (7 skipped, as before).
 - et/ru translated; other locales' new strings left empty.
 - Live on dev.greenoak.ee: migrated to `pkp_schema:25`, every existing key's grants checked.
