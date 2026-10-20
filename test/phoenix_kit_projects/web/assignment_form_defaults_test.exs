@@ -63,12 +63,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormDefaultsTest do
     _ = fixture_task()
     {view, html} = new_form_html(conn, p)
 
-    refute html =~ ~r/template/i
+    refute copy(html) =~ ~r/template/i
     assert html =~ "Add to the task library"
 
     html = view |> element("button[phx-value-tab='existing']") |> render_click()
-    refute html =~ ~r/template/i
+    refute copy(html) =~ ~r/template/i
     assert html =~ ">Task"
+  end
+
+  # What a reader sees: the text between tags, and the attributes that are
+  # read out or shown (labels, titles, placeholders). Markup is not copy —
+  # core's date field draws its calendar in an HTML `<template>` element.
+  defp copy(html) do
+    attrs =
+      ~r/(?:placeholder|title|aria-label|alt)="([^"]*)"/
+      |> Regex.scan(html)
+      |> Enum.map_join(" ", &List.last/1)
+
+    Regex.replace(~r/<[^>]*>/, html, " ") <> " " <> attrs
   end
 
   describe "the project's Task library flag" do
