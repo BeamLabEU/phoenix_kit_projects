@@ -11,11 +11,13 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   is a 403 `no_access` / `membership_ended` (`Json.require_scope/2`), which
   the caller may know — it is their own key.
 
-  Then the key's rate limit (`Web.Api.RateLimit`): every authenticated
-  response carries `x-ratelimit-limit` and `x-ratelimit-remaining`; a key
-  over its window answers 429 `rate_limited` with `retry-after` (seconds)
-  before any controller runs, so a refused call is never stored as an
-  idempotent response.
+  The key's rate limit (`Web.Api.RateLimit`) comes right after the token
+  is checked, before the account, grants and project are read: every
+  authenticated response carries `x-ratelimit-limit` and
+  `x-ratelimit-remaining`; a key over its window answers 429 `rate_limited`
+  with `retry-after` (seconds) before any controller runs, so a refused call
+  is never stored as an idempotent response and a flood of them costs the
+  database almost nothing.
 
   `last_used_at` is touched here, throttled by `ApiKeys.touch_last_used/1`,
   and every authenticated call is counted per key, project and day once it
@@ -35,45 +37,53 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   @impl true
   def call(conn, _opts) do
     with {:ok, token} <- bearer(conn),
-         {:ok, key} <- ApiKeys.authenticate(token),
-         %{} = project <- home_project(key) || :no_project,
-         {:ok, key, refused} <- home_view(key, project) do
-      conn
-      |> count_request(key, project)
-      |> rate_limit(key)
-      |> case do
-        {:ok, conn} ->
-          key = ApiKeys.touch_last_used(key)
-
-          # A `#KEY-42` this request writes becomes a link only within the
-          # key's reach (`RefText`, "Who is writing").
-          # Only where it may read tasks: an interactions-only grant must
-          # not turn `#ANDI-12` into a link (and so confirm the task).
-          PhoenixKitProjects.RefText.put_writer(
-            {:reach, &PhoenixKitProjects.ApiKeys.allows?(key, &1, "tasks:read")}
-          )
-
-          Json.put_view(key)
-
-          conn
-          |> assign(:pk_api_key, key)
-          |> assign(:pk_home_refused, refused)
-          |> assign(:pk_project, project)
-          |> assign(:pk_fx, Features.gates(project))
-
-        {:halt, conn} ->
-          conn
+         {:ok, key} <- ApiKeys.authenticate(token) do
+      # The limit is taken before anything else is read about the key: a
+      # key over its window costs the key lookup and one counter write, not
+      # the account, grant and project reads a served call makes.
+      case rate_limit(conn, key) do
+        {:ok, conn} -> admit(conn, key)
+        {:halt, conn} -> count_refused(conn, key)
       end
     else
-      _ ->
-        conn
-        |> Json.error(
-          :unauthorized,
-          "unauthorized",
-          "A valid project API key is required: Authorization: Bearer pkp_…"
-        )
-        |> halt()
+      _ -> unauthorized(conn)
     end
+  end
+
+  defp admit(conn, key) do
+    with %{} = project <- home_project(key) || :no_project,
+         {:ok, key, refused} <- home_view(key, project) do
+      key = ApiKeys.touch_last_used(key)
+
+      # A `#KEY-42` this request writes becomes a link only within the
+      # key's reach (`RefText`, "Who is writing").
+      # Only where it may read tasks: an interactions-only grant must
+      # not turn `#ANDI-12` into a link (and so confirm the task).
+      PhoenixKitProjects.RefText.put_writer(
+        {:reach, &PhoenixKitProjects.ApiKeys.allows?(key, &1, "tasks:read")}
+      )
+
+      Json.put_view(key)
+
+      conn
+      |> count_request(key, project)
+      |> assign(:pk_api_key, key)
+      |> assign(:pk_home_refused, refused)
+      |> assign(:pk_project, project)
+      |> assign(:pk_fx, Features.gates(project))
+    else
+      _ -> unauthorized(conn)
+    end
+  end
+
+  defp unauthorized(conn) do
+    conn
+    |> Json.error(
+      :unauthorized,
+      "unauthorized",
+      "A valid project API key is required: Authorization: Bearer pkp_…"
+    )
+    |> halt()
   end
 
   # Where a call without `project` acts: the key's home (V24) — its first
@@ -107,14 +117,22 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
 
   # Every authenticated call is counted once it is answered (`ApiUsage`,
   # the API keys page's charts): in the project it ended up acting in —
-  # the home unless it named another — with its status, so refusals and
-  # rate-limited calls count too.
+  # the home unless it named another — with its status, so refusals count
+  # too.
   defp count_request(conn, key, home) do
     register_before_send(conn, fn conn ->
       project = conn.assigns[:pk_project] || home
       ApiUsage.record(key.uuid, project.uuid, conn.status || 200)
       conn
     end)
+  end
+
+  # A call over its rate limit is counted as the error it is, but it never
+  # looked the home up (that is the point of limiting first): it goes
+  # against the key's stored home, and is not counted for a key without one.
+  defp count_refused(conn, key) do
+    ApiUsage.record(key.uuid, key.project_uuid, conn.status || 429)
+    conn
   end
 
   defp rate_limit(conn, key) do

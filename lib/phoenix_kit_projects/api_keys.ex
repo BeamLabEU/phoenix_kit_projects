@@ -71,6 +71,25 @@ defmodule PhoenixKitProjects.ApiKeys do
     |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
   end
 
+  @doc """
+  Every key with access set on any of `project_uuids`, newest first,
+  revoked ones included — `list_for_project/1` for a list, in one read.
+  """
+  @spec list_for_projects([binary()]) :: [ApiKey.t()]
+  def list_for_projects([]), do: []
+
+  def list_for_projects(project_uuids) when is_list(project_uuids) do
+    RepoHelper.repo().all(
+      from(k in ApiKey,
+        join: g in ApiKeyGrant,
+        on: g.api_key_uuid == k.uuid,
+        where: g.project_uuid in ^project_uuids,
+        distinct: k.uuid
+      )
+    )
+    |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
+  end
+
   @doc "The live keys acting for `user_uuid` with access set on a project, newest first."
   @spec list_for_user(binary(), binary()) :: [ApiKey.t()]
   def list_for_user(project_uuid, user_uuid)
@@ -131,6 +150,19 @@ defmodule PhoenixKitProjects.ApiKeys do
     )
   end
 
+  @doc "The grants of several keys in one read: `%{key_uuid => [grant]}`, each oldest first."
+  @spec grants_by_key([ApiKey.t()]) :: %{binary() => [ApiKeyGrant.t()]}
+  def grants_by_key([]), do: %{}
+
+  def grants_by_key(keys) when is_list(keys) do
+    uuids = Enum.map(keys, & &1.uuid)
+
+    RepoHelper.repo().all(
+      from(g in ApiKeyGrant, where: g.api_key_uuid in ^uuids, order_by: g.inserted_at)
+    )
+    |> Enum.group_by(& &1.api_key_uuid)
+  end
+
   @doc """
   Sets what a key may do in a project: `attrs` carries `"scopes"` (an empty
   list is "no access" — it stops a parent's grant there), `"role"` (the
@@ -185,7 +217,8 @@ defmodule PhoenixKitProjects.ApiKeys do
   @doc """
   Takes a key's access to a project away (the grant row goes; a parent's
   grant may then reach the project again). The key's home moves to another
-  of its grants, or none. Options: `:actor_uuid`.
+  of its grants that opens something (an empty grant is "no access", and
+  `set_home/2` refuses one), or none. Options: `:actor_uuid`.
   """
   @spec delete_grant(ApiKey.t(), binary(), keyword()) :: :ok
   def delete_grant(%ApiKey{} = key, project_uuid, opts \\ []) do
@@ -196,7 +229,7 @@ defmodule PhoenixKitProjects.ApiKeys do
       |> RepoHelper.repo().delete_all()
 
     if key.project_uuid == project_uuid do
-      next = key |> grants() |> List.first()
+      next = key |> grants() |> Enum.find(&(&1.scopes != []))
 
       from(k in ApiKey, where: k.uuid == ^key.uuid)
       |> RepoHelper.repo().update_all(set: [project_uuid: next && next.project_uuid])

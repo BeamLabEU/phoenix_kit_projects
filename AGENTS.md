@@ -563,7 +563,7 @@ browsing the public portal is a visitor.
 - `projects.project_archived/unarchived`
 - `projects.template_created/updated/deleted`, `projects.project_created_from_template`
 - `projects.task_created/updated/deleted`, `projects.task_promoted`
-- `projects.api_key_created/rotated/revoked` (resource: the project); `projects.project_status_changed`
+- `projects.api_key_created/rotated/revoked`, `projects.api_key_access_set/removed` (resource: the project); `projects.project_status_changed`
   (the workflow status set over the API). Every entry the API writes carries
   `metadata.via = "api"`, `metadata.api_key` and `metadata.api_key_name`, with the
   key's minter as `actor_uuid`.

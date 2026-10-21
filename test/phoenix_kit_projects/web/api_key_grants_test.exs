@@ -102,6 +102,18 @@ defmodule PhoenixKitProjects.Web.ApiKeyGrantsTest do
       assert {:ok, _} = ApiKeys.access_for(key, home.uuid)
     end
 
+    test "taking away the home moves it to a grant that opens something, not an empty one",
+         %{home: home, other: other, key: key} do
+      {:ok, %{child_project: child}} = Projects.create_subproject(home.uuid, %{"name" => "Child"})
+      {:ok, _} = ApiKeys.put_grant(key, child.uuid, %{"scopes" => []})
+      {:ok, _} = ApiKeys.put_grant(key, other.uuid, %{"scopes" => grid("read")})
+      assert ApiKeys.get(key.uuid).project_uuid == home.uuid
+
+      :ok = ApiKeys.delete_grant(key, home.uuid)
+
+      assert ApiKeys.get(key.uuid).project_uuid == other.uuid
+    end
+
     test "a personal key's grant follows its person's role there; leaving takes only that project",
          %{home: home, other: other} do
       max = user("max")

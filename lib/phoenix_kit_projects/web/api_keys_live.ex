@@ -149,10 +149,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
       if admin? do
         ApiKeys.list_all()
       else
-        others =
-          owned
-          |> Enum.flat_map(&ApiKeys.list_for_project/1)
-          |> Enum.filter(&is_nil(&1.revoked_at))
+        others = owned |> ApiKeys.list_for_projects() |> Enum.reject(& &1.revoked_at)
 
         (ApiKeys.list_mine(me) ++ others)
         |> Enum.uniq_by(& &1.uuid)
@@ -161,9 +158,14 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
 
     socket = assign(socket, owned: owned)
 
+    # One read of every key's grants and one of the projects each person
+    # (or, for a shared key, the site) may give a key — not a pair per key.
+    grants_by_key = ApiKeys.grants_by_key(keys)
+    options = project_options(socket, keys)
+
     rows =
       Enum.map(keys, fn key ->
-        grants = ApiKeys.grants(key)
+        grants = Map.get(grants_by_key, key.uuid, [])
         whole? = editable?(socket, key)
         edit? = may?(socket, key, :edit)
 
@@ -183,7 +185,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
               do: Enum.map(grants, & &1.project_uuid),
               else: grants |> Enum.map(& &1.project_uuid) |> Enum.filter(&(&1 in owned))
             ),
-          addable: addable(socket, key, grants)
+          addable: addable(socket, key, grants, options)
         }
       end)
 
@@ -202,12 +204,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         |> Enum.filter(&usage_visible?(socket, rows, &1))
         |> ApiUsage.by_key(),
       projects_by_uuid: project_names,
-      my_projects: projects_for(me),
-      all_projects:
-        if(admin?,
-          do: Enum.reject(Projects.list_projects(include_subprojects: true), & &1.is_template),
-          else: []
-        ),
+      my_projects: Map.get(options, me) || projects_for(me),
+      all_projects: Map.get(options, nil, []),
       user_names:
         rows |> Enum.map(& &1.key.user_uuid) |> Enum.reject(&is_nil/1) |> Enum.uniq() |> names()
     )
@@ -247,22 +245,40 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     _ -> []
   end
 
-  defp grant_options(socket, %ApiKey{user_uuid: nil}),
+  # The projects a shared key may be given: any, for whoever manages every key.
+  defp site_options(socket),
     do:
       if(socket.assigns.admin?,
         do: Enum.reject(Projects.list_projects(include_subprojects: true), & &1.is_template),
         else: []
       )
 
-  defp grant_options(_socket, %ApiKey{user_uuid: uuid}), do: projects_for(uuid)
+  # The projects each key of a page may be given, read once per
+  # distinct person: `%{user_uuid | nil => [project]}`, nil being the site
+  # (shared keys, administrators only) and the viewer's own list always
+  # present. Only keys the viewer may edit need an answer.
+  defp project_options(socket, keys) do
+    me = socket.assigns.me
+
+    keys
+    |> Enum.filter(&(is_nil(&1.revoked_at) and may?(socket, &1, :edit)))
+    |> Enum.map(& &1.user_uuid)
+    |> then(&[me | &1])
+    |> Enum.uniq()
+    |> Map.new(fn
+      nil -> {nil, site_options(socket)}
+      user_uuid -> {user_uuid, projects_for(user_uuid)}
+    end)
+    |> Map.put_new_lazy(nil, fn -> site_options(socket) end)
+  end
 
   # The projects a key's "Add a project" offers: what it may be given,
   # minus what it already has.
-  defp addable(socket, %ApiKey{revoked_at: nil} = key, grants) do
+  defp addable(socket, %ApiKey{revoked_at: nil} = key, grants, options) do
     if may?(socket, key, :edit) do
       granted = MapSet.new(grants, & &1.project_uuid)
 
-      for p <- grant_options(socket, key), not MapSet.member?(granted, p.uuid) do
+      for p <- Map.get(options, key.user_uuid, []), not MapSet.member?(granted, p.uuid) do
         {Project.localized_name(p, L10n.current_content_lang()), p.uuid}
       end
     else
@@ -270,7 +286,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
     end
   end
 
-  defp addable(_socket, _key, _grants), do: []
+  defp addable(_socket, _key, _grants, _options), do: []
 
   defp names(uuids), do: Map.new(uuids, &{&1, ApiKeyPanel.user_name(&1)})
 
@@ -523,7 +539,8 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
         "set_grid",
         %{"key" => key_uuid, "project" => project_uuid, "grid" => grid},
         socket
-      ) do
+      )
+      when is_map(grid) do
     with_grant(socket, key_uuid, project_uuid, fn key, grant ->
       ApiKeys.put_grant(
         key,
@@ -738,7 +755,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysLive do
   defp allowed_project(socket, project_uuid, shared?, user_uuid) when is_binary(project_uuid) do
     options =
       if shared?,
-        do: grant_options(socket, %ApiKey{user_uuid: nil}),
+        do: site_options(socket),
         else: projects_for(user_uuid)
 
     Enum.find(options, &(&1.uuid == project_uuid))
