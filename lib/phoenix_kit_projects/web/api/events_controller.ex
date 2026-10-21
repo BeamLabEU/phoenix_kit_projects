@@ -12,8 +12,8 @@ defmodule PhoenixKitProjects.Web.Api.EventsController do
   alias PhoenixKitProjects.Web.Api.Json
 
   def index(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "events:read"),
          {:ok, conn} <- require_events(conn),
          {:ok, conn} <- Json.require_action(conn, :view) do
       opts =
@@ -29,8 +29,8 @@ defmodule PhoenixKitProjects.Web.Api.EventsController do
   end
 
   def show(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "events:read"),
          {:ok, conn} <- require_events(conn),
          {:ok, conn} <- Json.require_action(conn, :view) do
       case ProjectEvents.get(conn.assigns.pk_project.uuid, id) do

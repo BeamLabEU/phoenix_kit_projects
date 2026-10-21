@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 23
+  @current_version 25
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -120,6 +120,8 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v21_task_dates(p)
     v22_refs(p, prefix)
     v23_subtasks(p, prefix)
+    v24_key_grants(p, prefix)
+    v25_key_usage(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -1042,6 +1044,8 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # V19–V21 each added columns to the assignments table (and V20 the link
   # table); newest first.
   defp down_task_columns(p, target) do
+    if target < 25, do: down_v25(p)
+    if target < 24, do: down_v24(p)
     if target < 23, do: down_v23(p)
     if target < 22, do: down_v22(p)
     if target < 21, do: down_v21(p)
@@ -1103,6 +1107,199 @@ defmodule PhoenixKitProjects.Migrations.Schema do
           ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
       execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
     end
+  end
+
+  # V25 — how much each API key is used (Max, 2026-10-19: "some kind of
+  # usage stats and graph"; "do 1, 2, and 3"). One row per key, project and
+  # UTC day: the requests it made there, how many of them failed (4xx/5xx)
+  # and how many of those were refused (403) — the one count an agent
+  # cannot skip, unlike the time and usage it reports to the ledger. A row
+  # is an upsert counter, never a log of requests.
+  defp v25_key_usage(p) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_api_key_usage (
+      api_key_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_project_api_keys(uuid) ON DELETE CASCADE,
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      day DATE NOT NULL,
+      requests INTEGER NOT NULL DEFAULT 0,
+      errors INTEGER NOT NULL DEFAULT 0,
+      denied INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (api_key_uuid, project_uuid, day)
+    )
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_api_key_usage_day_index
+    ON #{p}phoenix_kit_project_api_key_usage (day)
+    """)
+  end
+
+  defp down_v25(p) do
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_key_usage")
+  end
+
+  # V24 — API keys that reach several projects (Max, 2026-10-15: "make API
+  # key stuff more global… set up permissions and what they can see and do
+  # per project"; 2026-10-16: "every setting that we already have in the
+  # project should also be for the api permissions").
+  #
+  #   * `phoenix_kit_project_api_key_grants`: one row per project a key
+  #     reaches — its scopes there (per area: none / read / write,
+  #     `PhoenixKitProjects.ApiAccess`), its role cap there, and whether it
+  #     covers the project's sub-projects. The nearest grant up a project's
+  #     tree decides (`ApiKeys.access_for/2`); an empty scope list is "no
+  #     access" and stops a parent's grant at that project.
+  #   * every existing key gets exactly the grant it had: its project, its
+  #     role, its scopes in the new vocabulary — each old scope brings the
+  #     reads it used to imply, nothing more — so every token works as
+  #     before.
+  #   * the key's `project_uuid` is now its HOME project (the one a call
+  #     without `project` acts on), and deleting that project no longer
+  #     deletes the key with every other grant it holds.
+  defp v24_key_grants(p, prefix) do
+    execute("""
+    CREATE TABLE IF NOT EXISTS #{p}phoenix_kit_project_api_key_grants (
+      uuid UUID PRIMARY KEY DEFAULT #{prefix}.uuid_generate_v7(),
+      api_key_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_project_api_keys(uuid) ON DELETE CASCADE,
+      project_uuid UUID NOT NULL REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE,
+      scopes TEXT[] NOT NULL DEFAULT '{}',
+      role VARCHAR(16) NOT NULL DEFAULT 'member',
+      inherit BOOLEAN NOT NULL DEFAULT true,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """)
+
+    execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS phoenix_kit_project_api_key_grants_key_project_index
+    ON #{p}phoenix_kit_project_api_key_grants (api_key_uuid, project_uuid)
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_api_key_grants_project_index
+    ON #{p}phoenix_kit_project_api_key_grants (project_uuid)
+    """)
+
+    # A stored response is now found by its project and header together
+    # (`Json.idempotency_scope/2`); one stored before is the key's only
+    # project's, so it is renamed the same way — a retry across the
+    # upgrade still replays instead of writing twice. Run before the
+    # grants backfill and only for keys with no grant yet: that is "before
+    # V24" exactly, so a replay of the chain renames nothing twice.
+    execute("""
+    UPDATE #{p}phoenix_kit_project_api_idempotency i
+    SET idempotency_key =
+          encode(sha256(convert_to(k.project_uuid::text || ':' || i.idempotency_key, 'UTF8')), 'hex')
+    FROM #{p}phoenix_kit_project_api_keys k
+    WHERE k.uuid = i.api_key_uuid
+      AND k.project_uuid IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM #{p}phoenix_kit_project_api_key_grants g WHERE g.api_key_uuid = k.uuid
+      )
+    """)
+
+    # One grant per key that has none yet (a replay adds nothing). What
+    # `tasks:read` / `tasks:write` covered before V24 is split into the
+    # areas it now names. And every write comes with its read — the grid
+    # has "read" and "read and write", never write alone (status, which has
+    # no read, aside) — so a `time:write`-only key may now list the entries
+    # in its project, the one widening this backfill makes, on purpose.
+    execute("""
+    INSERT INTO #{p}phoenix_kit_project_api_key_grants (api_key_uuid, project_uuid, scopes, role)
+    SELECT k.uuid, k.project_uuid,
+           ARRAY(SELECT DISTINCT s FROM unnest(
+             k.scopes
+             || CASE WHEN 'tasks:read' = ANY(k.scopes)
+                  THEN ARRAY['project:read','notes:read','time:read','usage:read','events:read','people:read']
+                  ELSE ARRAY[]::text[] END
+             || CASE WHEN 'tasks:write' = ANY(k.scopes)
+                  THEN ARRAY['status:write','notes:write','notes:read'] ELSE ARRAY[]::text[] END
+             || ARRAY(SELECT replace(w, ':write', ':read') FROM unnest(k.scopes) AS w
+                      WHERE w LIKE '%:write' AND w <> 'status:write')
+           ) AS s ORDER BY s),
+           k.role
+    FROM #{p}phoenix_kit_project_api_keys k
+    WHERE k.project_uuid IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM #{p}phoenix_kit_project_api_key_grants g WHERE g.api_key_uuid = k.uuid
+      )
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      ALTER COLUMN project_uuid DROP NOT NULL
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      DROP CONSTRAINT IF EXISTS phoenix_kit_project_api_keys_project_uuid_fkey
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      ADD CONSTRAINT phoenix_kit_project_api_keys_project_uuid_fkey
+      FOREIGN KEY (project_uuid) REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE SET NULL
+    """)
+  end
+
+  # Back to one project per key: each key keeps its home — or, its home
+  # gone, its oldest grant that still opens something — with THAT grant's
+  # role and the scopes V23 knows, so it has no more than it had there
+  # (the key's own columns may still hold what it was minted with). A key
+  # with nothing usable left goes. Then the grants go. Responses stored for
+  # retries under V24 are keyed by a hash V23 cannot rebuild; a retry
+  # across the rollback is not recognised (they are kept, not trusted).
+  defp down_v24(p) do
+    execute("""
+    UPDATE #{p}phoenix_kit_project_api_keys k
+    SET project_uuid = (
+      SELECT g.project_uuid FROM #{p}phoenix_kit_project_api_key_grants g
+      WHERE g.api_key_uuid = k.uuid AND g.scopes <> '{}'
+      ORDER BY g.inserted_at LIMIT 1
+    )
+    WHERE k.project_uuid IS NULL
+       OR NOT EXISTS (
+         SELECT 1 FROM #{p}phoenix_kit_project_api_key_grants g
+         WHERE g.api_key_uuid = k.uuid AND g.project_uuid = k.project_uuid AND g.scopes <> '{}'
+       )
+    """)
+
+    execute("""
+    UPDATE #{p}phoenix_kit_project_api_keys k
+    SET role = g.role,
+        scopes = ARRAY(
+          SELECT unnest(g.scopes)
+          INTERSECT
+          SELECT unnest(ARRAY['tasks:write','time:write','usage:write','project:write',
+                              'interactions:read','interactions:write'])
+        )
+        -- V23's tasks:read also read the project, notes, time, usage,
+        -- events and people: only a grant that read all of them gets it back.
+        || CASE WHEN g.scopes @> ARRAY['tasks:read','project:read','notes:read','time:read',
+                                       'usage:read','events:read','people:read']
+             THEN ARRAY['tasks:read'] ELSE ARRAY[]::text[] END
+    FROM #{p}phoenix_kit_project_api_key_grants g
+    WHERE g.api_key_uuid = k.uuid AND g.project_uuid = k.project_uuid
+    """)
+
+    execute("DELETE FROM #{p}phoenix_kit_project_api_keys WHERE project_uuid IS NULL")
+    execute("DROP TABLE IF EXISTS #{p}phoenix_kit_project_api_key_grants")
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      DROP CONSTRAINT IF EXISTS phoenix_kit_project_api_keys_project_uuid_fkey
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      ADD CONSTRAINT phoenix_kit_project_api_keys_project_uuid_fkey
+      FOREIGN KEY (project_uuid) REFERENCES #{p}phoenix_kit_projects(uuid) ON DELETE CASCADE
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_api_keys
+      ALTER COLUMN project_uuid SET NOT NULL
+    """)
   end
 
   # V23 — tasks under tasks (Max, 2026-10-14: "let's make proper subtasks

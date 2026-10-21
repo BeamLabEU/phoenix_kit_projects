@@ -440,7 +440,9 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.Label` | `phoenix_kit_project_labels` |
 | `Schemas.Portal` | `phoenix_kit_project_portals` |
 | `Schemas.PortalSubmission` | `phoenix_kit_project_portal_submissions` |
-| `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — a project's API keys, the credentials of `Web.Api`) |
+| `Schemas.ApiKey` | `phoenix_kit_project_api_keys` (V17 — the credentials of `Web.Api`; since V24 `project_uuid` is the key's HOME project, nullable, `ON DELETE SET NULL`) |
+| `Schemas.ApiKeyGrant` | `phoenix_kit_project_api_key_grants` (V24 — what a key may do in one project: scopes, role cap, `inherit`; see "API keys across projects") |
+| `Schemas.ApiKeyUsage` | `phoenix_kit_project_api_key_usage` (V25 — requests, errors and refusals per key, project and UTC day; see "API key usage") |
 | `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation; who holds it is a Postgres session advisory lock pinned for the request, so a live holder is 409 `in_progress` and a dead one's row is taken over — see `ApiKeys.idempotent/3`) |
 | (no schema modules) | `phoenix_kit_project_keys` (V22 — every key a project has had; trigger-maintained) and `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
@@ -679,10 +681,11 @@ slider-audit coalescing window (runtime default 1s) so tests can wait it out.
 
 ### The JSON API (`/api/projects/v1`)
 
-The surface an outside agent drives ONE project with — `dev_docs/guides/api.md`
-is the full account. In short: per-project API keys (`ApiKeys`, minted on the
-Modules & Features page) are their own principal — a role of their own, never
-owner, plus scopes — authorised by `Authz.can_role?/3` (the project's floors
+The surface an outside agent drives projects with — `dev_docs/guides/api.md`
+is the full account. In short: API keys (`ApiKeys`, made on Projects → API
+keys; one key can reach several projects, each through its own grant — see
+"API keys across projects (V24)") are their own principal — per project a
+role of their own, never owner, plus scopes — authorised by `Authz.can_role?/3` (the project's floors
 and overrides, nothing else) and the project's feature gates; `Web.Api.Auth`
 is the bearer plug, `Web.Api.Json` the shared checks and shapes, the
 controllers call the same context functions the LiveViews do. The agent-facing
@@ -698,6 +701,145 @@ rate limit (`Web.Api.RateLimit`, a bucket per key on core's Hammer backend,
 as an idempotent reply. The routes come from `Web.Routes.generate/1` and are
 mirrored in `test/support/test_router.ex`; the test endpoint parses JSON for
 them.
+
+### API key usage (V25, 2026-10-19)
+
+Max, 2026-10-19: "some kind of usage stats and graph" on the API keys page.
+
+- **Requests.** `Web.Api.Auth` registers a `before_send` on every
+  authenticated call that bumps `phoenix_kit_project_api_key_usage` (one
+  row per key, project, UTC day: `requests`, `errors` for ≥ 400, `denied`
+  for 403) through `ApiUsage.record/3` — an upsert, never a request log, and
+  it never raises. The project is the one the call ended up acting in
+  (`pk_project`), else the home; rate-limited calls count as errors.
+- **Work.** The AI time, tokens and cost a key reported are the ledger's
+  `actor_kind: "ai_agent"` rows with `actor_uuid` = the key, summed per day
+  of the work (`ended_at`, else `inserted_at` — the Hours tab's rule).
+- **`ApiUsage.rows/2`** merges both into `%{key, project, day, requests,
+  errors, denied, minutes, tokens, cost_cents}`; `totals/1`, `by_project/1`
+  and `days/3` (every day present, for the chart) shape it.
+- **The page** (`ApiKeysLive`) is a sidebar section with two subtabs
+  (Max, 2026-10-19: "use the Phoenix kit admin sidebar subtabs"), shaped
+  like core's Settings › Integrations: the parent `:admin_projects_api_keys`
+  has no LiveView and `redirect_to_first_subtab`; **Keys**
+  (`projects/api-keys`, `:index`, each key with one line of its last 30
+  days and a link) and **Usage** (`projects/api-keys/usage`, `:usage`).
+  Their labels are `gettext_noop` so they stay in the catalogue. Usage is drawn by
+  `Web.ApiKeysUsage` from one map `ApiKeysLive.load_usage/1` builds:
+  period 7 / 30 / 90 days against the period before, one key or all
+  (`?key=` is honoured only for a key the page shows), the figure per day
+  stacked by key (or by project for one key), failures per day with the
+  refused apart, per key, per project, and the tasks the reported work
+  went to (`ApiUsage.by_task/3`). Colours (`Components.VizPalette`, shared
+  with the Hours tab) follow the busiest series by requests, so they hold
+  when the figure is switched. Core's chart draws empty bars for all zeros,
+  so the page shows a line instead.
+- **Core's look and components** (Max, 2026-10-19): no page heading or
+  intro — the admin layout shows the title; cards are `card bg-base-100
+  shadow-sm` with `card-title` headings; controls are core's `<.select>`,
+  `<.checkbox variant="toggle">`, `<.button>`, `<.table_default>`,
+  `<.nav_tabs>` (the figure switch), `<.stat_card>` (the figures) and
+  `<.empty_state>`. **Who sees what** (Max, 2026-10-19): administrators
+  every key, always (no switch); anyone else their own keys plus the keys
+  reaching a project they own (`:manage_modules`) — only those projects'
+  rows and usage, which they may change or remove, never rotate, revoke,
+  add projects or set the default. Every save is confirmed with a flash.
+- **Permissions** (Max, 2026-10-19: "make sure it's all configurable via
+  permissions… you grant someone an API key and you want them to be able to
+  rotate it. But you don't want them to create any extra keys"). Sub-keys
+  of `projects`, checked by `Authz.api_keys?/2`: `api_keys_create` (make
+  keys that act for you), `api_keys_edit` (change your keys' projects and
+  access), `api_keys_rotate`, `api_keys_revoke` (your keys), and
+  `api_keys_manage` (every key: see, make for anyone or shared, change,
+  rotate, revoke — this is the page's "admin", NOT `admin_all`). The base
+  key alone shows your own keys and their usage. `migrate_legacy/0` grants
+  the four own-key rights ONCE to every role holding `projects` (flag
+  `projects_api_keys_permissions_backfilled`); core auto-grants the new
+  sub-keys to Admin. Project owners keep managing their project's row of
+  any key. "Acts for" offers Me / Someone else (core `search_picker` over
+  `Auth.search_users/1`) / Nobody (shared) to `api_keys_manage`.
+- **A personal key needs its person to hold `projects`** (or "*"):
+  `ApiKeys.resolve/2` answers `:account_inactive` (401) otherwise, even
+  where the person is still a member. Tests give key holders "*" through a
+  role (`Test.Access.grant_projects!/1`) because the projects module is not
+  registered in the test environment.
+- **Filters on Keys** (`Web.ApiKeysFilters`, Max 2026-10-19): shown only
+  above 5 keys; each filter (status, kind, person — admins —, project) only
+  when it tells the listed keys apart, offering only values present; search
+  by name. Status starts at Active when the bar shows; at or below 5 keys
+  every key is listed with revoked and expired last. All in the address
+  (`Paths.api_keys_list/1`; `project` there is the filter, the New key
+  form's preselect is the bare `?project=` handled first). **Which figures show** (cards, chart switch,
+  breakdown lines, each key's line on Keys) and the tasks table's columns
+  are each viewer's choice through core's `column_settings_modal/1` +
+  `PhoenixKitWeb.TableColumns` (ViewPrefs keys `projects.api_usage.figures`
+  / `projects.api_usage.tasks`; specs in `ApiKeysUsage`). Cost is in by
+  default (agents paid per call through an API) and one click to hide on a
+  subscription — Max: not automatic, customizable. The cards use
+  `stat_card`'s full layout (icon on its own row) in an auto-fit grid so the
+  row is always full.
+
+### API keys across projects (V24, 2026-10-16)
+
+Max, 2026-10-15/16: keys move out of the single project onto **Projects → API
+keys**, and "every setting that we already have in the project should also be
+for the api permissions" — per project, per area, none / read / write.
+
+- **Grants.** `phoenix_kit_project_api_key_grants` (`Schemas.ApiKeyGrant`):
+  `api_key_uuid`, `project_uuid`, `scopes`, `role` (the cap), `inherit`
+  (covers sub-projects); unique on key + project. The key's own
+  `project_uuid` is its HOME — where a call without `project` acts
+  (`ApiKeys.set_home/2` needs a grant there) — and its FK is now `ON DELETE
+  SET NULL`: deleting the home project no longer deletes a key that holds
+  other grants.
+- **Areas** (`ApiAccess`): `project`, `tasks`, `status` (write only: start /
+  complete / reopen / transition), `notes`, `comments`, `time`, `usage`,
+  `events` (read), `people` (read), then each extension API provider's pair
+  (`interactions:read` / `:write` for the CRM). Write includes read;
+  `ApiAccess.grid/1` and `scopes/1` convert, `presets/0` only fills the grid.
+  Which scope each endpoint needs is the `scope` column of
+  `Web.Api.Docs.endpoints/0` — keep it equal to the controller's
+  `require_scope` (the briefing is `tasks:read`, `/subprojects` `tasks:write`).
+- **`ApiKeys.access_for/2`** — the NEAREST grant up the project's tree
+  decides; a grant above with `inherit: false`, or a nearest grant with empty
+  scopes ("no access"), is no access — nothing further up is consulted. The
+  role: a shared key gets the grant's cap; a personal key the weakest of the
+  cap, the person's role on the GRANT's project (sub-projects usually have no
+  members) and manager. A person off that project is `:membership_ended`.
+  `list_reaching/1` (a project's pages) and `reachable/1` (`GET /me`'s
+  `projects`, with `access` per area and `source`) are built on it.
+- **Per-request rescoping.** `Json.rescope/2` swaps `pk_api_key` for
+  `ApiKeys.view/2` — the key with THAT project's role and scopes — whenever a
+  request moves to another project (`scope_project/2` for `project=`,
+  `TasksController.fetch/2` for a task ref). `Json.require_scope/2` records
+  each scope in `pk_required`, and `Json.still_allowed/1` re-checks them all
+  after the move. **The order rule:** select the project first
+  (`scope_project` / `fetch`), THEN `require_scope` — checked the other way
+  round, the home project's access would authorise a call in another
+  project. `still_allowed` is the backstop, not the plan.
+- **Idempotency is per project**: the stored key is sha256 of
+  `project_uuid:Idempotency-Key`, so the same header in two projects is two
+  requests.
+- **Leaving a project** deletes only that project's grant
+  (`ApiKeys.revoke_for_user/3` → `delete_grant/3`); the key and its other
+  grants live on.
+- **The migration** gave every existing key exactly the grant it had, with
+  its old scopes translated so every token works as before: `tasks:read` →
+  also `project/notes/time/usage/events/people:read`; `tasks:write` → also
+  `status:write`, `notes:write`; `time:write` → `time:read`; `usage:write` →
+  `usage:read`; `project:write` → `project:read`.
+- **Pages.** Keys are made, rotated, revoked and granted only on Projects →
+  API keys (`Web.ApiKeysLive`). A project's "Your API key" page
+  (`Web.ProjectApiLive`) is a read-only list of the viewer's own keys that
+  reach it; Modules & Features' "API access" is a read-only list of every
+  key that does. Both link to the API keys page (`?project=<uuid>`
+  preselects the project). `ApiKeyPanel.setup_prompt/3` names the home
+  project and tells the agent to start with `GET /me` and pass `project=`.
+- **Comments over the API** (`CommentsController`): `GET` / `POST
+  /tasks/{id}/comments`, `comments:read` / `comments:write`, the `:view` /
+  `:comment` floors and the comments module switched on; a post needs an
+  `Idempotency-Key` and `content` (optional `parent`), and is written as the
+  person the key acts for (else its maker), labelled with the key's name.
 
 ### What the first agent on the API asked for (2026-10-05) — built, as settings
 

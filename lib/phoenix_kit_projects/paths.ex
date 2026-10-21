@@ -24,6 +24,28 @@ defmodule PhoenixKitProjects.Paths do
   @spec overview() :: String.t()
   def overview, do: Routes.path("#{@base}/overview")
 
+  @doc "Projects → API keys: every key a person has, and what each may do per project."
+  def api_keys, do: Routes.path("#{@base}/api-keys")
+
+  @doc "The API keys page with its filters (status, kind, person, project, q) in the query."
+  def api_keys_list(params) do
+    case URI.encode_query(Enum.reject(params, fn {_k, v} -> v in [nil, ""] end)) do
+      "" -> api_keys()
+      q -> Routes.path("#{@base}/api-keys?#{q}")
+    end
+  end
+
+  @doc "The API keys page's Usage tab; `params` (days, key, metric) go in the query."
+  def api_keys_usage(params \\ []) do
+    case URI.encode_query(Enum.reject(params, fn {_k, v} -> is_nil(v) end)) do
+      "" -> Routes.path("#{@base}/api-keys/usage")
+      q -> Routes.path("#{@base}/api-keys/usage?#{q}")
+    end
+  end
+
+  @doc "The API keys page, set to make a new key that starts on `project_uuid`."
+  def api_keys(project_uuid), do: Routes.path("#{@base}/api-keys?project=#{project_uuid}")
+
   @doc "Projects settings page (global, under the core Settings area)."
   @spec settings() :: String.t()
   def settings, do: Routes.path("/admin/settings/projects")

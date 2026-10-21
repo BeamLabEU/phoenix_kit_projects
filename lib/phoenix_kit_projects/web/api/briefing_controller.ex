@@ -12,9 +12,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
 
   use Phoenix.Controller, formats: [:json]
 
-  alias PhoenixKitProjects.{Extensions, Labels, ProjectEvents, Projects, TaskNotes}
+  alias PhoenixKitProjects.{ApiKeys, Extensions, Labels, ProjectEvents, Projects, TaskNotes}
   alias PhoenixKitProjects.Outline.Api, as: OutlineApi
-  alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project}
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   alias PhoenixKitProjects.Web.Api.{
     Assignee,
@@ -29,8 +29,8 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   @priority_rank %{"urgent" => 0, "high" => 1, "normal" => 2, "low" => 3}
 
   def show(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view) do
       project = conn.assigns.pk_project
@@ -38,7 +38,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       limit = limit(params["limit"])
 
       key = conn.assigns.pk_api_key
-      all = Projects.list_assignments(project.uuid)
+      all = project.uuid |> Projects.list_assignments() |> Enum.filter(&Json.visible_row?/1)
       outline = OutlineApi.info(project.uuid)
       {done, open_any} = Enum.split_with(all, &(&1.status == "done"))
 
@@ -71,7 +71,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       briefs = Enum.map(shown, &brief_task(&1, labels[&1.uuid] || [], me, outline))
 
       notes =
-        if TaskNotes.available?(),
+        if TaskNotes.available?() and Json.may?("notes:read"),
           do: project.uuid |> TaskNotes.list_for_project(since) |> Enum.take(-@max_notes),
           else: []
 
@@ -112,10 +112,10 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         resume: resume(briefs, notes, key),
         tasks: briefs,
         done_today: done_today,
-        subprojects: brief_subprojects(project),
+        subprojects: brief_subprojects(project, key),
         project_notes: Enum.map(notes, &brief_note/1),
         client: client_lines(conn, since),
-        events: upcoming_events(project)
+        events: if(Json.may?("events:read"), do: upcoming_events(project), else: [])
       })
     else
       {:halt, conn} -> conn
@@ -131,28 +131,32 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   defp client_lines(conn, since) do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
-    with %{ext: ext, module: provider} <- Extensions.api_provider("interactions"),
-         true <- ApiKey.scope?(key, provider.scopes().read) do
-      [project | Enum.reverse(Projects.parent_chain(project.uuid))]
-      |> Enum.filter(&(Json.within_reach?(key, &1.uuid) and Extensions.enabled?(&1, ext.key)))
-      |> Enum.find_value(nil, fn p ->
-        case list_interactions(provider, Json.rescope(conn, p), since) do
-          # one line each: the bodies are the interaction's own read
-          {:ok, %{interactions: rows}} ->
-            %{
-              project_uuid: p.uuid,
-              interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"])),
-              # what is planned with the client, soonest first — and what is
-              # past its time with no outcome said (`overdue`)
-              planned: planned_lines(provider, Json.rescope(conn, p))
-            }
+    case Extensions.api_provider("interactions") do
+      %{ext: ext, module: provider} ->
+        [project | Enum.reverse(Projects.parent_chain(project.uuid))]
+        |> Enum.filter(
+          &(ApiKeys.allows?(key, &1.uuid, provider.scopes().read) and
+              Extensions.enabled?(&1, ext.key))
+        )
+        |> Enum.find_value(nil, fn p ->
+          case list_interactions(provider, Json.rescope(conn, p), since) do
+            # one line each: the bodies are the interaction's own read
+            {:ok, %{interactions: rows}} ->
+              %{
+                project_uuid: p.uuid,
+                interactions: Enum.map(rows, &Map.drop(&1, [:body, "body"])),
+                # what is planned with the client, soonest first — and what is
+                # past its time with no outcome said (`overdue`)
+                planned: planned_lines(provider, Json.rescope(conn, p))
+              }
 
-          _ ->
-            nil
-        end
-      end)
-    else
-      _ -> nil
+            _ ->
+              nil
+          end
+        end)
+
+      _ ->
+        nil
     end
   rescue
     _ -> nil
@@ -220,8 +224,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
   # Every child summarised in ONE pass (`project_summaries/1`), not a list
   # of tasks per child; a child that fails to summarise is left out rather
   # than taking the briefing down.
-  defp brief_subprojects(project) do
-    children = Projects.child_projects(project.uuid)
+  defp brief_subprojects(project, key) do
+    children =
+      project.uuid |> Projects.child_projects() |> Enum.filter(&Json.within_reach?(key, &1.uuid))
 
     summaries =
       children
@@ -261,7 +266,9 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
     place = OutlineApi.place(outline, a)
 
     latest =
-      if TaskNotes.available?(), do: TaskNotes.latest(a.uuid), else: %{redirect: nil, agent: nil}
+      if TaskNotes.available?() and Json.may?("notes:read"),
+        do: TaskNotes.latest(a.uuid),
+        else: %{redirect: nil, agent: nil}
 
     agent = latest.agent && latest.agent.metadata
 
@@ -282,7 +289,7 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
       end_date: a.end_date,
       overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
-      interactions: Projects.interactions_of(a),
+      interactions: if(Json.may_read_interactions?(), do: Projects.interactions_of(a), else: []),
       assignee: Assignee.to_json(a),
       assigned_to_me: is_binary(me) and a.assigned_person_uuid == me,
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},

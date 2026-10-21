@@ -17,6 +17,7 @@ defmodule PhoenixKitProjects.Web.Components do
     quote do
       import PhoenixKitProjects.Web.Components.PageHeader
       import PhoenixKitProjects.Web.Components.StatTile
+      import PhoenixKitProjects.Web.Components.VizPalette
       import PhoenixKitProjects.Web.Components.TierPill
       import PhoenixKitProjects.Web.Components.RunningCard
       import PhoenixKitProjects.Web.Components.DerivedStatusBadge

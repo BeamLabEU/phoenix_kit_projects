@@ -422,6 +422,12 @@ defmodule PhoenixKitProjects.Ledger do
         _ -> query
       end
 
+    query =
+      case Keyword.get(opts, :kinds) do
+        kinds when is_list(kinds) -> where(query, [e], e.kind in ^kinds)
+        _ -> query
+      end
+
     RepoHelper.repo().all(query)
   rescue
     _ -> []

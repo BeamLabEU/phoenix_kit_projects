@@ -289,4 +289,54 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       assert Projects.get_assignment(holder.uuid).parent_uuid == other.uuid
     end
   end
+
+  describe "a plain to-do, as Max tried it" do
+    test "its task form is a title, a status and a description — and has Delete", %{conn: conn} do
+      p = simple()
+
+      {:ok, _} =
+        Outline.sync(p.uuid, [%{"text" => "Hello"}, %{"text" => "Under", "depth" => 1}], [])
+
+      [hello, _under] = Projects.list_assignments(p.uuid)
+
+      {:ok, view, html} =
+        live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{hello.uuid}/edit")
+
+      refute html =~ ~s(name="assignment[waiting_on]")
+      refute html =~ ~s(name="assignment[origin]")
+      refute html =~ ~s(name="assignment[start_date]")
+      assert html =~ ~s(name="assignment[description]")
+      assert html =~ "Delete this task and its subtask?"
+
+      view |> element("#assignment-delete") |> render_click()
+      assert titles(p) == []
+    end
+
+    test "a richer project's form keeps them", %{conn: conn} do
+      p = project()
+      {:ok, _} = Outline.sync(p.uuid, [%{"text" => "Full"}], [])
+      [a] = Projects.list_assignments(p.uuid)
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a.uuid}/edit")
+      assert html =~ ~s(name="assignment[waiting_on]")
+      assert html =~ ~s(name="assignment[start_date]")
+    end
+
+    test "the text list's × is on and its drag handles off, unless the project says otherwise",
+         %{conn: conn} do
+      p = simple()
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
+      assert html =~ ~s(data-delete="1")
+      assert html =~ ~s(data-handles="0")
+
+      settings =
+        Map.put(p.settings || %{}, "outline", %{
+          "lines" => %{"delete" => false, "handles" => true}
+        })
+
+      {:ok, _} = Projects.update_project(p, %{"settings" => settings})
+      {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
+      assert html =~ ~s(data-delete="0")
+      assert html =~ ~s(data-handles="1")
+    end
+  end
 end

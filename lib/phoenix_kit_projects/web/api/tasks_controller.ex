@@ -27,6 +27,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   alias PhoenixKitProjects.{
     Activity,
+    ApiKeys,
     Authz,
     Extensions,
     Features,
@@ -56,8 +57,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   @status_filters ~w(todo in_progress done open)
 
   def index(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view),
          {:ok, conn} <- known_status(conn, params["status"]),
@@ -68,6 +69,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
       tasks =
         tasks
+        |> Enum.filter(&Json.visible_row?/1)
         |> filter_under(under, outline)
         |> filter_status(params["status"])
         |> filter_since(params["updated_since"])
@@ -249,8 +251,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   defp filter_status(tasks, _), do: tasks
 
   def show(conn, %{"id" => id}) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn, a} <- fetch(conn, id),
+    with {:ok, conn, a} <- fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :view) do
       json(conn, %{task: Map.merge(Json.task(a), Json.task_detail(a))})
@@ -261,8 +263,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   def create(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :create_tasks) do
       Json.idempotent(conn, [], fn -> do_create(conn, params) end)
@@ -341,8 +343,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   def update(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn, a} <- fetch(conn, id),
+    with {:ok, conn, a} <- fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks) do
       Json.idempotent(conn, [], fn -> do_update(conn, a, params) end)
@@ -522,8 +524,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   def link(conn, %{"id" => id, "interaction" => uuid}) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn, a} <- fetch(conn, id),
+    with {:ok, conn, a} <- fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks) do
       case link_interaction(conn, a, uuid) do
@@ -541,8 +543,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   end
 
   def unlink(conn, %{"id" => id, "interaction" => uuid}) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn, a} <- fetch(conn, id),
+    with {:ok, conn, a} <- fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks) do
       :ok = Projects.unlink_interaction(a, uuid)
@@ -573,13 +575,19 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     %{pk_api_key: key, pk_project: project} = conn.assigns
 
     with %{ext: ext, module: provider} <- Extensions.api_provider("interactions"),
-         true <- function_exported?(provider, :get, 2),
-         true <- ApiKey.scope?(key, provider.scopes().read) do
+         # Read access is checked per project below: the interaction may
+         # sit on a parent the key reads while this project grants none.
+         true <- function_exported?(provider, :get, 2) do
       candidates =
         [project | Enum.reverse(Projects.parent_chain(project.uuid))]
         |> Enum.filter(fn p ->
-          Json.within_reach?(key, p.uuid) and Extensions.enabled?(p, ext.key) and
-            Authz.can_role?(p, key.role, :view)
+          with true <- ApiKeys.allows?(key, p.uuid, provider.scopes().read),
+               true <- Extensions.enabled?(p, ext.key),
+               {:ok, view} <- ApiKeys.view(key, p) do
+            Authz.can_role?(p, view.role, :view)
+          else
+            _ -> false
+          end
         end)
 
       Enum.find_value(candidates, :error, fn p ->
@@ -751,8 +759,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   defp update_fields(a, attrs), do: Projects.update_assignment_form(a, attrs)
 
   def transition(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn, a} <- fetch(conn, id),
+    with {:ok, conn, a} <- fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "status:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :update_status) do
       Json.idempotent(conn, [], fn -> do_transition(conn, a, params["status"]) end)
@@ -765,8 +773,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   def start(conn, params), do: transition(conn, Map.put(params, "status", "in_progress"))
 
   def delete(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn, a} <- fetch(conn, id),
+    with {:ok, conn, a} <- fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :delete_tasks) do
       %{pk_api_key: key, pk_project: project} = conn.assigns
@@ -847,8 +855,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   under that parent to go after, null to go first, absent to go last.
   """
   def move(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn, a} <- fetch(conn, id),
+    with {:ok, conn, a} <- fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks) do
       Json.idempotent(conn, [], fn -> do_move(conn, a, params) end)
@@ -914,8 +922,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   puts the whole batch under a task (depth 0 sits directly under it).
   """
   def batch(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- Json.require_action(conn, :create_tasks) do
       Json.idempotent(conn, [], fn -> do_batch(conn, params) end)
@@ -1151,13 +1159,15 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
         {:error, :not_found}
 
       %Assignment{project_uuid: pid} = a when pid == project.uuid ->
-        {:ok, conn, a}
+        if Json.visible_row?(a), do: {:ok, conn, a}, else: {:error, :not_found}
 
       %Assignment{project_uuid: pid} = a ->
         with true <- Json.within_reach?(key, pid),
              %{} = child <- Projects.get_project(pid),
              conn = Json.rescope(conn, child),
-             {:ok, conn} <- Json.require_feature(conn, :tasks) do
+             {:ok, conn} <- Json.still_allowed(conn),
+             {:ok, conn} <- Json.require_feature(conn, :tasks),
+             true <- Json.visible_row?(a) do
           {:ok, conn, a}
         else
           {:halt, conn} -> {:halt, conn}

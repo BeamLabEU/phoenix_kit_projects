@@ -1500,7 +1500,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                not one more chip among the others (Max, 2026-10-14). It
                opens the task's form on the field that says it. --%>
           <.smart_link
-            :if={@a.waiting_on}
+            :if={@a.waiting_on != nil and @fx[:waiting] != false}
             navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid) <> "?focus=waiting_on"}
             emit={
               {PhoenixKitProjects.Web.AssignmentFormLive,
@@ -1532,7 +1532,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% dates = task_dates_label(@a) %>
             <% overdue = Assignment.overdue?(@a) %>
             <span
-              :if={dates}
+              :if={dates != nil and @fx[:dates] != false}
               class={["badge badge-sm gap-1", if(overdue, do: "badge-error", else: "badge-outline")]}
               title={if(overdue, do: gettext("Past its end date"), else: gettext("The task's dates"))}
             >
@@ -4218,8 +4218,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            2026-10-05); the start bar's badges say Ongoing / All caught up. --%>
       <% show_progress = @fx.tasks and @total_tasks > 0 and not @is_template and not Project.ongoing?(@project) %>
       <% show_effort = @fx.ledger and @ledger_totals != nil %>
+      <%!-- Every block around the list carries an id: a block that appears
+           (this one, with the first task) must be inserted, not matched
+           against the next block by position — that rebuilt the typed list
+           under the cursor and lost the line just begun. --%>
       <%= if show_schedule or show_progress or show_effort do %>
-        <div class="bg-base-200/50 rounded-t-lg overflow-hidden">
+        <div id={"project-summary-#{@project.uuid}"} class="bg-base-200/50 rounded-t-lg overflow-hidden">
           <%= if show_schedule do %>
             <% {rem_v, rem_u} = humanize_hours(@schedule.remaining_hours) %>
             <div class="flex flex-wrap items-center gap-3 px-4 py-2 text-xs">
@@ -4349,7 +4353,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       </div>
 
       <%!-- List tab --%>
-      <div class={if(@active_tab != :list, do: "hidden")}>
+      <div id={"project-list-tab-#{@project.uuid}"} class={if(@active_tab != :list, do: "hidden")}>
       <%!-- Timeline --%>
       <%!-- The lens bar. Every count is drawn from the FULL set and every
            one of them is a link into its own slice: filtering the list is
@@ -4358,6 +4362,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            what you happen to be reading. --%>
       <div
         :if={@assignments != [] and (@list_controls? or @pending_reviews != [])}
+        id={"project-list-lens-#{@project.uuid}"}
         class="flex flex-wrap items-center gap-2 mb-4"
       >
         <%!-- Active and Done partition the project exactly — Active means
@@ -4433,7 +4438,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
            nothing the project has switched on needs a row of its own, or
            when the project chose it (settings → "How the list looks"). --%>
       <%= if @outline_style == :text and not @is_template do %>
-        <OutlineList.text_list id={@outline_dom_id} lines={@outline_lines} can={@outline_can} />
+        <OutlineList.text_list
+          id={@outline_dom_id}
+          lines={@outline_lines}
+          can={@outline_can}
+          project={@project}
+        />
       <% else %>
       <%= if @assignments != [] and @visible_assignments == [] do %>
         <.empty_state icon="hero-funnel" title={gettext("Nothing matches this filter.")}>

@@ -193,8 +193,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <% end %>
 
             <%!-- Whom the task waits on and where it came from: straight
-                 under the description, where the task's state is read. --%>
-            <div class="flex gap-2">
+                 under the description, where the task's state is read.
+                 People's business — off with the "waiting" feature (and so
+                 with Assignees), so a plain to-do's form is a title and a
+                 status. --%>
+            <div :if={@fx[:waiting] != false} class="flex gap-2">
               <div
                 class="flex-1"
                 id="assignment-waiting-on"
@@ -1073,6 +1076,34 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  def handle_event("delete_task", _params, socket) do
+    with %Assignment{} = a <- socket.assigns[:assignment],
+         %Assignment{} = fresh <- Projects.get_assignment(a.uuid),
+         true <- can_delete?(socket, fresh) do
+      socket = cancel_autosave(socket)
+
+      case Projects.delete_assignment(fresh) do
+        {:ok, _} ->
+          log_subtask_act(socket, "projects.assignment_removed", fresh.uuid, %{
+            "task" => Assignment.label(fresh)
+          })
+
+          fallback = Paths.project(socket.assigns.project.uuid)
+
+          {:noreply,
+           socket
+           |> WebHelpers.notify_deleted(:assignment, fresh.uuid)
+           |> WebHelpers.close_or_navigate(fallback)}
+
+        {:error, _} ->
+          log_subtask_act(socket, "projects.assignment_removed", fresh.uuid, %{}, :failed)
+          {:noreply, put_flash(socket, :error, gettext("Could not remove task."))}
+      end
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   def handle_event("subtask_toggle", %{"uuid" => uuid}, socket) do
     with %Assignment{} = parent <- socket.assigns[:assignment],
          %Assignment{parent_uuid: p} = sub when p == parent.uuid <- Projects.get_assignment(uuid),
@@ -1613,14 +1644,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         subtasks: subtasks,
         subtask_counts: Outline.counts(rows)
       )
+      |> assign_delete(rows)
     else
-      assign(socket,
+      socket
+      |> assign(
         subtasks_on?: false,
         parent_options: [],
         parent_task: nil,
         subtasks: [],
         subtask_counts: %{}
       )
+      |> then(fn s ->
+        if match?(%Project{}, s.assigns[:project]),
+          do: assign_delete(s, Projects.list_assignments(s.assigns.project.uuid)),
+          else: assign(s, can_delete_task?: false, subtask_total: 0)
+      end)
     end
   rescue
     _ ->
@@ -1629,8 +1667,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         parent_options: [],
         parent_task: nil,
         subtasks: [],
-        subtask_counts: %{}
+        subtask_counts: %{},
+        can_delete_task?: false,
+        subtask_total: 0
       )
+  end
+
+  # The form's Delete: shown to whoever may delete this task, and the
+  # question names how many subtasks go with it.
+  defp assign_delete(socket, rows) do
+    case socket.assigns[:assignment] do
+      %Assignment{uuid: uuid} = a when is_binary(uuid) ->
+        assign(socket,
+          can_delete_task?: socket.assigns[:live_action] == :edit and can_delete?(socket, a),
+          subtask_total: rows |> Outline.descendants(uuid) |> length()
+        )
+
+      _ ->
+        assign(socket, can_delete_task?: false, subtask_total: 0)
+    end
+  rescue
+    _ -> assign(socket, can_delete_task?: false, subtask_total: 0)
   end
 
   defp place_under_parent(socket, %Assignment{} = record) do
@@ -1697,6 +1754,26 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   rescue
     _ -> :ok
   end
+
+  defp can_delete?(socket, %Assignment{} = a) do
+    PhoenixKitProjects.Authz.can?(
+      socket.assigns[:phoenix_kit_current_scope],
+      socket.assigns.project,
+      :delete_tasks,
+      a
+    )
+  end
+
+  defp delete_question(0),
+    do: gettext("Delete this task? This cannot be undone.")
+
+  defp delete_question(n),
+    do:
+      ngettext(
+        "Delete this task and its subtask? This cannot be undone.",
+        "Delete this task and its %{count} subtasks? This cannot be undone.",
+        n
+      )
 
   defp may?(socket, action) do
     PhoenixKitProjects.Authz.can?(
@@ -2698,6 +2775,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end)
     |> then(fn a -> if fx.scheduling, do: a, else: Map.drop(a, ~w(counts_weekends)) end)
     |> then(fn a -> if fx.priorities, do: a, else: Map.drop(a, ~w(priority)) end)
+    |> then(fn a -> if fx[:waiting] != false, do: a, else: Map.drop(a, ~w(waiting_on origin)) end)
+    |> then(fn a -> if fx[:dates] != false, do: a, else: Map.drop(a, ~w(start_date end_date)) end)
   end
 
   # To do / In progress / Done — the middle one only with the in-progress
@@ -3381,7 +3460,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </div>
             </fieldset>
 
-            <div class="divider text-xs text-base-content/50 my-1">{gettext("Planning")}</div>
+            <div
+              :if={@fx.estimates or @fx[:dates] != false or @fx.scheduling or (@fx.labels and @project_labels != [])}
+              class="divider text-xs text-base-content/50 my-1"
+            >
+              {gettext("Planning")}
+            </div>
 
             <%!-- The ESTIMATE: planned effort, not time already spent (that is
                  the box above). --%>
@@ -3401,8 +3485,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
             <%!-- The task's own dates (Max, 2026-10-06): optional, either
                  alone. A dated task sits on these days in the calendar and
-                 the timeline instead of where its duration would put it. --%>
-            <div class="flex gap-2">
+                 the timeline instead of where its duration would put it.
+                 Off with the "dates" feature (and so with Scheduling). --%>
+            <div :if={@fx[:dates] != false} class="flex gap-2">
               <div class="flex-1">
                 <.input field={@form[:start_date]} type="date" label={gettext("Start date")} />
               </div>
@@ -3696,9 +3781,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 {gettext("Changes are saved as you make them.")}
             <% end %>
           </span>
-          <button type="button" phx-click="close_form" class="btn btn-sm">
-            {gettext("Done")}
-          </button>
+          <div class="flex items-center gap-1">
+            <%!-- Deleting a task from its own form (Max, 2026-10-14: "I'm not
+                 seeing a delete button"). Its subtasks go with it, and the
+                 question says how many. --%>
+            <button
+              :if={@kind == "task" and @can_delete_task?}
+              type="button"
+              id="assignment-delete"
+              phx-click="delete_task"
+              phx-disable-with={gettext("Deleting…")}
+              data-confirm={delete_question(@subtask_total)}
+              class="btn btn-ghost btn-sm text-error"
+            >
+              <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Delete")}
+            </button>
+            <button type="button" phx-click="close_form" class="btn btn-sm">
+              {gettext("Done")}
+            </button>
+          </div>
         </div>
         <div :if={@live_action != :edit} class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 mt-2 py-2 px-3 rounded-box border border-base-300 bg-base-100 shadow">
           <button

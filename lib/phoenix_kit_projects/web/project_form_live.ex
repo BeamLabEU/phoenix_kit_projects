@@ -1323,8 +1323,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           current["row"] || %{}
       end
 
+    lines =
+      case posted["lines"] do
+        %{} = l -> %{"delete" => l["delete"] != "false", "handles" => l["handles"] == "true"}
+        _ -> current["lines"] || %{}
+      end
+
     outline =
       current
+      |> Map.put("lines", lines)
       |> Map.put("style", style)
       |> Map.put("complete_parent", posted["complete_parent"] != "false")
       |> Map.put("row", row)
@@ -2816,6 +2823,32 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                   class="checkbox checkbox-primary checkbox-sm"
                 />
                 {gettext("Tick a task when its last subtask is ticked")}
+              </label>
+              <%!-- The text list's extras (Max, 2026-10-14: "an X to delete
+                   the task, or maybe even like drag handles… maybe that
+                   should be all in the settings"). --%>
+              <% lines = outline["lines"] || %{} %>
+              <label class="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="hidden" name="outline[lines][delete]" value="false" />
+                <input
+                  type="checkbox"
+                  name="outline[lines][delete]"
+                  value="true"
+                  checked={lines["delete"] != false}
+                  class="checkbox checkbox-primary checkbox-sm"
+                />
+                {gettext("In the text list, an × at the end of each line deletes it")}
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="hidden" name="outline[lines][handles]" value="false" />
+                <input
+                  type="checkbox"
+                  name="outline[lines][handles]"
+                  value="true"
+                  checked={lines["handles"] == true}
+                  class="checkbox checkbox-primary checkbox-sm"
+                />
+                {gettext("In the text list, drag handles before each line")}
               </label>
               <details class="text-sm">
                 <summary class="cursor-pointer opacity-70">{gettext("What the task cards show")}</summary>

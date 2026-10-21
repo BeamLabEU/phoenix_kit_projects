@@ -160,6 +160,8 @@ defmodule PhoenixKitProjects.Features do
     :library,
     :in_progress,
     :subtasks,
+    :waiting,
+    :dates,
     :assignees,
     :estimates,
     :progress,

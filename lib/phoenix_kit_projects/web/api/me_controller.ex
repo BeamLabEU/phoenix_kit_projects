@@ -1,17 +1,42 @@
 defmodule PhoenixKitProjects.Web.Api.MeController do
   @moduledoc """
   `GET /me` — the agent's entry point: who the key is and whom it acts
-  for, what it may do on this project (the role it acts with right now),
-  which features are on, and where the docs are. An agent reads this
-  first instead of probing endpoints for 403s.
+  for, its HOME project (where a call without `project` acts) with what it
+  may do there, and EVERY project it reaches with its access in each —
+  per area none / read / write (V24) — so an agent never infers one
+  project's rights from another's. An agent reads this first instead of
+  probing endpoints for 403s.
   """
 
   use Phoenix.Controller, formats: [:json]
 
-  alias PhoenixKitProjects.{ApiKeys, Authz, Extensions}
+  alias PhoenixKitProjects.{ApiAccess, ApiKeys, Authz, Extensions}
   alias PhoenixKitProjects.Schemas.{ApiKey, Project}
   alias PhoenixKitProjects.Web.Api.{Assignee, Docs, Json}
   alias PhoenixKitProjects.Web.ApiKeyPanel
+
+  # A home the key can no longer use (`Auth`): who the key is and what it
+  # reaches elsewhere, nothing about the home itself.
+  def show(%{assigns: %{pk_home_refused: reason}} = conn, _params) when not is_nil(reason) do
+    key = conn.assigns.pk_api_key
+
+    json(conn, %{
+      key: %{
+        uuid: key.uuid,
+        name: key.name,
+        kind: ApiKey.kind(key),
+        key_id: ApiKeys.display_prefix(key),
+        expires_at: key.expires_at
+      },
+      acting_for: acting_for(key),
+      home_project: nil,
+      home_refused: Atom.to_string(reason),
+      project: nil,
+      projects: reachable(key),
+      all_scopes: ApiKey.scopes(),
+      docs: %{llms_txt: Docs.url("/llms.txt"), openapi: Docs.url("/openapi.json")}
+    })
+  end
 
   def show(conn, _params) do
     %{pk_api_key: key, pk_project: project, pk_fx: fx} = conn.assigns
@@ -35,7 +60,10 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
         expires_at: key.expires_at
       },
       acting_for: acting_for(key),
+      home_project: Json.project(project),
+      # Kept for agents written before V24: the same as `home_project`.
       project: Json.project(project),
+      projects: reachable(key),
       # Every gate of the task tracker (labels, dependencies, subprojects,
       # … included) — the guide names them and an agent reads them here.
       features: fx,
@@ -45,6 +73,30 @@ defmodule PhoenixKitProjects.Web.Api.MeController do
       all_scopes: ApiKey.scopes(),
       docs: %{llms_txt: Docs.url("/llms.txt"), openapi: Docs.url("/openapi.json")}
     })
+  end
+
+  # Every project the key reaches: its key (what to pass as `project`), its
+  # access per area, the role the key acts with there, and where that
+  # access comes from (its own grant, or a parent's that covers it).
+  defp reachable(key) do
+    key
+    |> ApiKeys.reachable()
+    |> Enum.map(fn %{project: p, scopes: scopes, role: role, source: source} ->
+      %{
+        key: p.key,
+        uuid: p.uuid,
+        name: p.name,
+        archived: not is_nil(p.archived_at),
+        role: role,
+        scopes: scopes,
+        access: ApiAccess.grid(scopes),
+        source:
+          case source do
+            :direct -> "direct"
+            {:inherited, from} -> %{inherited_from: from}
+          end
+      }
+    end)
   end
 
   # The person a personal key acts for; a shared agent has none.

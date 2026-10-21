@@ -66,6 +66,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
   use Phoenix.Component
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import PhoenixKitWeb.Components.Core.Icon, only: [icon: 1]
   import PhoenixKitWeb.Components.Core.Modal, only: [modal: 1]
 
   attr(:modal_stack, :list, required: true)
@@ -152,6 +153,22 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
         <div class="popup-host-frame-spinner absolute inset-0 z-10 flex items-center justify-center bg-base-100/85 rounded-2xl pointer-events-none">
           <span class="loading loading-spinner loading-lg text-primary" />
         </div>
+        <%!-- A way out that is always there (Max, 2026-10-14: a drawer he
+             could not close — the backdrop is a no-op while a field holds
+             typed text, by `close_guard={:input}`, and there was no other
+             control). A click on × is deliberate, so it closes; it asks
+             first only while the form says it has unsaved changes. --%>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm btn-circle absolute right-2 top-2 z-20"
+          phx-click={@on_close}
+          phx-value-frame-ref={frame.frame_ref}
+          aria-label={gettext("Close")}
+          title={gettext("Close")}
+          data-confirm={Map.get(frame, :closeable, true) == false && gettext("Close without saving?")}
+        >
+          <.icon name="hero-x-mark" class="w-5 h-5" />
+        </button>
         {render_slot(@frame, frame)}
       </.modal>
     </div>

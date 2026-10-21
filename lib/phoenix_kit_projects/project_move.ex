@@ -19,8 +19,10 @@ defmodule PhoenixKitProjects.ProjectMove do
     * **modules** — the old parent's module switches and their settings
       (the linked client, …) are copied for every module the project has
       not made its own choice about;
-    * **keys** — chosen API keys of the old ancestors are pointed at the
-      project, so the token an agent already holds keeps working.
+    * **keys** — chosen API keys that reached the project through an old
+      ancestor get the same access on the project itself, so the token an
+      agent already holds keeps working (a grant a key already has on the
+      project is left as it is).
 
   `preview/2` says what a move would leave behind; `run/4` does it.
 
@@ -48,6 +50,7 @@ defmodule PhoenixKitProjects.ProjectMove do
           members: [map()],
           modules: [ProjectModule.t()],
           keys: [ApiKey.t()],
+          key_from: %{binary() => binary()},
           links: %{count: non_neg_integer(), own?: boolean(), carried?: boolean()}
         }
 
@@ -71,6 +74,7 @@ defmodule PhoenixKitProjects.ProjectMove do
 
     source = if parent_open?, do: parent
     modules = carried_modules(project, source)
+    carried_keys = ancestor_keys(project, ancestors, scope)
 
     %{
       project: project,
@@ -79,7 +83,8 @@ defmodule PhoenixKitProjects.ProjectMove do
       targets: targets(project, parent, scope),
       members: carried_members(project, source),
       modules: modules,
-      keys: ancestor_keys(ancestors, scope),
+      keys: carried_keys |> Enum.map(&elem(&1, 0)) |> Enum.uniq_by(& &1.uuid),
+      key_from: Map.new(carried_keys, fn {key, from} -> {key.uuid, from} end),
       links: outside_links(project, modules)
     }
   end
@@ -156,15 +161,34 @@ defmodule PhoenixKitProjects.ProjectMove do
     |> Enum.reject(&MapSet.member?(own, {&1.ext_key, &1.instance_key}))
   end
 
-  defp ancestor_keys([], _scope), do: []
+  defp ancestor_keys(_project, [], _scope), do: []
 
-  defp ancestor_keys(ancestors, scope) do
+  # The live keys that reach the project NOW through a grant on one of its
+  # ancestors — the grant `ApiKeys.access_for/2` actually picks, so a grant
+  # that stops above the project (`inherit: false`) or that a nearer one
+  # shadows is never offered — as `{key, source_project_uuid}`. Only for
+  # someone who manages that source, and a personal key only when its
+  # person is on the project itself (the copied grant reads their role
+  # there; anywhere else it would carry nothing).
+  defp ancestor_keys(project, ancestors, scope) do
     now = DateTime.utc_now()
+    by_uuid = Map.new(ancestors, &{&1.uuid, &1})
 
     ancestors
-    |> Enum.filter(&Authz.can?(scope, &1, :manage_modules))
     |> Enum.flat_map(&ApiKeys.list_for_project(&1.uuid))
+    |> Enum.uniq_by(& &1.uuid)
     |> Enum.filter(&ApiKey.active?(&1, now))
+    |> Enum.flat_map(fn key ->
+      with {:ok, %{grant: %{project_uuid: from}}} <- ApiKeys.access_for(key, project.uuid),
+           %{} = source <- by_uuid[from],
+           true <- Authz.can?(scope, source, :manage_modules),
+           true <-
+             is_nil(key.user_uuid) or not is_nil(Authz.effective_role(project, key.user_uuid)) do
+        [{key, from}]
+      else
+        _ -> []
+      end
+    end)
   end
 
   @doc """
@@ -279,14 +303,17 @@ defmodule PhoenixKitProjects.ProjectMove do
     )
   end
 
-  defp carry_keys(%{keys: keys, project: project}, scope, opts, actor) do
+  defp carry_keys(%{keys: keys, key_from: key_from, project: project}, _scope, opts, actor) do
     wanted = opts |> Keyword.get(:keys, []) |> List.wrap() |> MapSet.new()
 
     keys
     |> Enum.filter(&MapSet.member?(wanted, &1.uuid))
     |> Enum.count(fn key ->
-      Authz.can?(scope, Projects.get_project(key.project_uuid), :manage_modules) and
-        match?({:ok, _}, ApiKeys.move(key, project.uuid, actor_uuid: actor))
+      from = key_from[key.uuid]
+
+      # `key_from` was worked out before the move, for this mover.
+      is_binary(from) and
+        match?({:ok, _}, ApiKeys.carry_grant(key, from, project.uuid, actor_uuid: actor))
     end)
   end
 end

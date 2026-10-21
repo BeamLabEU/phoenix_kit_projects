@@ -26,8 +26,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
   @future_tolerance_seconds 300
 
   def index(conn, %{"id" => id}) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn, a} <- TasksController.fetch(conn, id),
+    with {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "notes:read"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :view) do
@@ -36,10 +36,10 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
       json(conn, %{
         task_uuid: a.uuid,
-        direction: latest.redirect && TaskNotes.to_json(latest.redirect),
-        latest_agent_note: latest.agent && TaskNotes.to_json(latest.agent),
-        latest_human_note: latest.human && TaskNotes.to_json(latest.human),
-        notes: Enum.map(notes, &TaskNotes.to_json/1),
+        direction: latest.redirect && Json.note(latest.redirect),
+        latest_agent_note: latest.agent && Json.note(latest.agent),
+        latest_human_note: latest.human && Json.note(latest.human),
+        notes: Enum.map(notes, &Json.note/1),
         count: length(notes)
       })
     else
@@ -49,8 +49,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
   end
 
   def create(conn, %{"id" => id} = params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn, a} <- TasksController.fetch(conn, id),
+    with {:ok, conn, a} <- TasksController.fetch(conn, id),
+         {:ok, conn} <- Json.require_scope(conn, "notes:write"),
          {:ok, conn} <- Json.require_feature(conn, :tasks),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :edit_tasks),
@@ -94,8 +94,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   @doc false
   def project_index(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:read"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "notes:read"),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :view) do
       since = parse_since(params["since"])
@@ -105,7 +105,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
         project_uuid: conn.assigns.pk_project.uuid,
         since: since,
         now: DateTime.utc_now() |> DateTime.truncate(:second),
-        notes: Enum.map(notes, &TaskNotes.to_json/1),
+        notes: Enum.map(notes, &Json.note/1),
         count: length(notes)
       })
     else
@@ -115,8 +115,8 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
 
   @doc false
   def project_create(conn, params) do
-    with {:ok, conn} <- Json.require_scope(conn, "tasks:write"),
-         {:ok, conn} <- Json.scope_project(conn, params),
+    with {:ok, conn} <- Json.scope_project(conn, params),
+         {:ok, conn} <- Json.require_scope(conn, "notes:write"),
          {:ok, conn} <- require_notes(conn),
          {:ok, conn} <- Json.require_action(conn, :comment),
          {:ok, conn} <- require_usage_rights(conn, params["usage"]) do
@@ -153,7 +153,7 @@ defmodule PhoenixKitProjects.Web.Api.NotesController do
         {:ok, %{note: note, entries: entries}} ->
           {201,
            %{
-             note: TaskNotes.to_json(note),
+             note: Json.note(note),
              entries: Enum.map(entries, &Json.entry/1)
            }}
 
