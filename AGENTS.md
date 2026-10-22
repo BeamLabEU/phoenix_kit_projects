@@ -843,7 +843,7 @@ for the api permissions" — per project, per area, none / read / write.
 
 ### What the first agent on the API asked for (2026-10-05) — built, as settings
 
-The 3D-editor session's Claude read the guide, ran 27 calls on ANDI Manager
+The 3D-editor session's Claude read the guide, ran 27 calls on ACME Manager
 and reviewed the API from the agent's seat. Max: *"go ahead and build
 everything that the other AI needs… make sure that everything is
 controllable via settings. We want projects to be very flexible."* A
@@ -944,7 +944,7 @@ seconds wherever a poll reads it back (`updated_at` has no microseconds);
 change lands on dev, `Extensions.Registry.refresh()` over the node (the
 `/ext/companies` rows vanished from the guide until it ran; the CRM extension
 declares `api: [ProjectApi, CompanyApi]` and the stale list held one). The
-"events" extension was off on ANDI Manager although it had a planned event —
+"events" extension was off on ACME Manager although it had a planned event —
 switched on by hand.
 
 The earlier list, for the record:
@@ -1089,8 +1089,8 @@ friendly. Ideally, we'd have better internal structures, kind of like Jira
 style."* The plan went to codex, grok, zai and gemini first; what they
 agreed on is what is built, and where they corrected it is marked.
 
-- **A project has a `key`** (`ANDI`, 2–10 of `A-Z0-9` with a letter) and
-  **a task a `number`** in its project; `ANDI-42` is the task's **ref**
+- **A project has a `key`** (`ACME`, 2–10 of `A-Z0-9` with a letter) and
+  **a task a `number`** in its project; `ACME-42` is the task's **ref**
   (`PhoenixKitProjects.Refs`: the shape, the one strict parser — a uuid, a
   key or `KEY-number`, nothing looser — and the key a name suggests). The
   uuid stays the identity of every row and valid everywhere; code that
@@ -1136,7 +1136,7 @@ agreed on is what is built, and where they corrected it is marked.
   table (grok), so numbering never locks the project row a form is saving.
   Numbers are never reused.
 - **Where a key comes from.** `Projects.create_project/2` suggests one from
-  the name for a real project (`ANDI Manager` → `ANDI`, `3D editor` →
+  the name for a real project (`ACME Manager` → `ACME`, `3D editor` →
   `3DE`, `PhoenixKit` → `PK`, `Kitchen` → `KIT`, a taken one → `KIT2`); the
   form shows the suggestion and takes a typed one; a project inserted with
   none gets a placeholder from a sequence (`P7`, and `TPL7` for a template,
@@ -1149,7 +1149,7 @@ agreed on is what is built, and where they corrected it is marked.
   param resolves both. Resolve first, then authorize: a foreign ref is the
   same not-found as an unknown one.
 - **Where it shows.** `Paths.*` take a project struct and then spell the
-  key (`/admin/projects/ANDI/tasks?task=ANDI-42`); the project page mirrors
+  key (`/admin/projects/ACME/tasks?task=ACME-42`); the project page mirrors
   that address into the bar; `<.ref_chip>` on task rows, board cards, the
   sub-project row, the page header and the task drawer; the `#` search
   finds a typed ref; a link to a task carries it. The API answers `key`,

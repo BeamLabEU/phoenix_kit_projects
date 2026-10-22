@@ -58,7 +58,7 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
       # A `#KEY-42` this request writes becomes a link only within the
       # key's reach (`RefText`, "Who is writing").
       # Only where it may read tasks: an interactions-only grant must
-      # not turn `#ANDI-12` into a link (and so confirm the task).
+      # not turn `#ACME-12` into a link (and so confirm the task).
       PhoenixKitProjects.RefText.put_writer(
         {:reach, &PhoenixKitProjects.ApiKeys.allows?(key, &1, "tasks:read")}
       )

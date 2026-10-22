@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.Web.Components.RefChip do
   @moduledoc """
-  A project's key or a task's ref (`ANDI`, `ANDI-42` —
+  A project's key or a task's ref (`ACME`, `ACME-42` —
   `PhoenixKitProjects.Refs`) as a small monospace chip: the name to say
   aloud, type into a search box or the address bar, or paste into a commit
   message. Selecting it takes the whole ref (`select-all`); nothing renders

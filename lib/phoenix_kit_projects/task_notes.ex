@@ -449,7 +449,7 @@ defmodule PhoenixKitProjects.TaskNotes do
       %{
         # A usage-only note has nothing to say but its figures; the
         # comments module wants text or media, so the summary stands in.
-        # A `#ANDI-42` in the text becomes the link it names.
+        # A `#ACME-42` in the text becomes the link it names.
         content: RefText.expand(fields[:content] || fields[:summary] || ""),
         metadata: metadata,
         # Server-side: a note is never queued for moderation.

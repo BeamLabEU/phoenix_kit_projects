@@ -1,6 +1,6 @@
 defmodule PhoenixKitProjects.RefText do
   @moduledoc """
-  Short refs in the text people write: `#ANDI-42` instead of the stored
+  Short refs in the text people write: `#ACME-42` instead of the stored
   `#[project_task:018e…|label]`.
 
   The stored form does not change. A link in text is core's mention token
@@ -37,7 +37,7 @@ defmodule PhoenixKitProjects.RefText do
 
   A `#` that starts a word, then a key (2–10 of `A–Z0-9`) and, for a task,
   `-` and its number, then the end of the word. A task ref is read in any
-  case (`#andi-42`); a bare project key only as typed in capitals, because
+  case (`#acme-42`); a bare project key only as typed in capitals, because
   `#todo` is far more often a tag than a project called TODO. A retired key
   resolves like the current one and the token is labelled with the current
   ref.
@@ -54,7 +54,7 @@ defmodule PhoenixKitProjects.RefText do
   # `>`, emphasis marks, a dash). So not after a letter or digit, not
   # inside a URL (`/`, `?`, `=`, `&`, `:`, `.`), not after another `#` (a
   # Markdown heading), a backslash (escaped), or a Markdown link's text
-  # `[#…` or target `](#…`. A ref in plain brackets, `(#ANDI-42)`, is one.
+  # `[#…` or target `](#…`. A ref in plain brackets, `(#ACME-42)`, is one.
   @ref ~r/(?<![^\s("'“‘«,;>*_~{–—])(?<!\]\()#([A-Za-z0-9]{2,10})(?:-([0-9]{1,9}))?(?![\p{L}\p{N}_\-])/u
 
   # Left exactly as written: fenced and inline code, and URLs.
@@ -291,7 +291,7 @@ defmodule PhoenixKitProjects.RefText do
 
   @doc """
   The short ref a `#` pick should put in the text for `type` and `uuid`
-  (`"#ANDI-42"`), or nil when it has none and the token is what goes in.
+  (`"#ACME-42"`), or nil when it has none and the token is what goes in.
   """
   @spec short(String.t(), String.t()) :: String.t() | nil
   def short(type, uuid) when type in @types and is_binary(uuid) do

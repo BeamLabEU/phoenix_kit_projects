@@ -989,7 +989,7 @@ defmodule PhoenixKitProjects.Projects do
     do: where(q, [p], p.current_status_slug == ^slug)
 
   @doc """
-  Fetches a project by uuid or by key (`ANDI`, a current or former one —
+  Fetches a project by uuid or by key (`ACME`, a current or former one —
   `PhoenixKitProjects.Refs`), or `nil`. Anything that is neither answers
   `nil` rather than raising, so a page can take its `:id` segment as typed.
   """
@@ -1078,7 +1078,7 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
-  The task a ref names (`ANDI-42`, through the project's current or a
+  The task a ref names (`ACME-42`, through the project's current or a
   former key) or a uuid; `nil` otherwise. Preloaded like `get_assignment/1`.
   """
   @spec assignment_by_ref(term()) :: Assignment.t() | nil

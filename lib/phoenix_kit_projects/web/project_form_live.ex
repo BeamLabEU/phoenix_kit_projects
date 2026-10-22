@@ -491,7 +491,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         |> WebHelpers.close_or_navigate(Paths.projects())
 
       project ->
-        # The record the form edits holds short refs (`#ANDI-42`) where the
+        # The record the form edits holds short refs (`#ACME-42`) where the
         # row holds tokens: an untouched description is then no change, and
         # a changed one is expanded again when it is written.
         project = PhoenixKitProjects.RefText.collapse_fields(project, [:description])
@@ -2269,8 +2269,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             />
           </.multilang_fields_wrapper>
 
-          <%!-- The project's short name (`ANDI`): its tasks are ANDI-1,
-               ANDI-2, … in links, search and on the API. Not translated,
+          <%!-- The project's short name (`ACME`): its tasks are ACME-1,
+               ACME-2, … in links, search and on the API. Not translated,
                so it sits under the language tabs' fields. --%>
           <div :if={@key_field} class="card-body pt-0">
             <.input

@@ -80,13 +80,13 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
       assert html =~ "Manage API keys"
       assert html =~ "/admin/projects/api-keys?project=#{project.uuid}"
 
-      {:ok, key, _} = ApiKeys.create(project, %{"name" => "ANDI agent"})
+      {:ok, key, _} = ApiKeys.create(project, %{"name" => "ACME agent"})
       {:ok, gone, _} = ApiKeys.create(project, %{"name" => "Old one"})
       {:ok, _} = ApiKeys.revoke(gone, [])
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/modules")
       assert html =~ ~s(id="project-api-keys-#{project.uuid}")
-      assert html =~ "ANDI agent"
+      assert html =~ "ACME agent"
       assert html =~ "ID pkp_#{key.key_id}"
       assert html =~ "Shared agent"
       assert html =~ "set on this project"

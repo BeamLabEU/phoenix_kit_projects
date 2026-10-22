@@ -106,7 +106,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
     test "a new viewer sees status, the extension's column, progress, tasks, hours, last edited",
          %{conn: conn} do
       project = fixture_project()
-      client!(project, "ANDI Mööbel OÜ")
+      client!(project, "ACME Mööbel OÜ")
       done = task!(project)
       {:ok, _} = Projects.complete_assignment(done, nil)
       task!(project)
@@ -121,7 +121,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert has_element?(
                view,
                ~s|a[href="/en/admin/crm/companies/#{project.uuid}"]|,
-               "ANDI Mööbel OÜ"
+               "ACME Mööbel OÜ"
              )
 
       assert html =~ "1/2"
@@ -271,7 +271,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       project = fixture_project()
       member = user!()
       {:ok, _} = Members.add_member(project, member.uuid, role: "member")
-      client!(project, "ANDI")
+      client!(project, "ACME")
 
       {:ok, view, html} = live(conn, @path)
       refute html =~ ~s|id="projects-filters"|
@@ -283,7 +283,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       assert has_element?(
                view,
                ~s|#projects-filters select[name="ext[#{@client}]"] option|,
-               "ANDI"
+               "ACME"
              )
     end
 
@@ -293,7 +293,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       {:ok, _} = Projects.start_project(a)
       {:ok, _} = Projects.update_project(b, %{"settings" => %{"completion" => "manual"}})
       task!(c, %{"end_date" => Date.add(Date.utc_today(), -1)})
-      client!(a, "ANDI")
+      client!(a, "ACME")
       client!(c, "Other")
 
       {:ok, view, _} = live(conn, @path)
@@ -311,10 +311,10 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       html = render_change(view, "filter", %{"overdue" => "true"})
       assert order(html, projects) == [c.name]
 
-      html = render_change(view, "filter", %{"ext" => %{@client => "ANDI"}})
+      html = render_change(view, "filter", %{"ext" => %{@client => "ACME"}})
       assert order(html, projects) == [a.name]
 
-      html = render_change(view, "filter", %{"ext" => %{@client => "ANDI"}, "overdue" => "true"})
+      html = render_change(view, "filter", %{"ext" => %{@client => "ACME"}, "overdue" => "true"})
       assert order(html, projects) == []
       assert html =~ "No projects match."
       assert has_element?(view, "#projects-filters-toggle .badge", "2")
@@ -345,9 +345,9 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       {:ok, _} = Projects.start_project(a)
       {:ok, _} = Projects.start_project(b)
       task!(a, %{"end_date" => Date.add(Date.utc_today(), -1)})
-      client!(a, "ANDI")
-      client!(b, "ANDI")
-      client!(c, "ANDI")
+      client!(a, "ACME")
+      client!(b, "ACME")
+      client!(c, "ACME")
 
       {:ok, view, _} = live(conn, @path)
       view |> element("#projects-filters-toggle") |> render_click()
@@ -355,13 +355,13 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       render_change(view, "filter", %{
         "state" => "running",
         "overdue" => "true",
-        "ext" => %{@client => "ANDI"}
+        "ext" => %{@client => "ACME"}
       })
 
       assert_push_event(view, "phoenix_kit_url_state", %{query: query})
       params = URI.decode_query(query)
 
-      assert %{"state" => "running", "overdue" => "true", "xcol" => @client, "xval" => "ANDI"} =
+      assert %{"state" => "running", "overdue" => "true", "xcol" => @client, "xval" => "ACME"} =
                params
 
       {:ok, _view, html} = live(conn, @path <> "?" <> query)
@@ -452,8 +452,8 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
 
       archived = fixture_project(%{"name" => "ScopeForeignArchived"})
       {:ok, _} = Projects.archive_project(archived)
-      client!(foreign, "ANDI")
-      client!(mine, "ANDI")
+      client!(foreign, "ACME")
+      client!(mine, "ACME")
       {:ok, _} = Ledger.log_time(foreign.uuid, 600)
 
       conn =
@@ -464,7 +464,7 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
             "?sort=hours&dir=desc",
             "?subs=true",
             "?archived=all",
-            "?xcol=#{@client}&xval=ANDI",
+            "?xcol=#{@client}&xval=ACME",
             "?state=setup&subs=true&archived=all&sort=ext&sortx=#{@client}"
           ] do
         {:ok, view, html} = live(conn, @path <> query)

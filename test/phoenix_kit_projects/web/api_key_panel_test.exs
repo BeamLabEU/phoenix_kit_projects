@@ -16,13 +16,13 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanelTest do
     assert ApiKeyPanel.kind_label(%ApiKey{}, names) == "Shared agent"
 
     prompt =
-      ApiKeyPanel.setup_prompt("ANDI", %ApiKey{name: "x", key_id: "k", user_uuid: uuid}, nil)
+      ApiKeyPanel.setup_prompt("ACME", %ApiKey{name: "x", key_id: "k", user_uuid: uuid}, nil)
 
     assert prompt =~ "API token: <paste"
     # the name is looked up; an unknown uuid reads as a dash rather than crashing
     assert prompt =~ "You act for —"
 
-    shared = ApiKeyPanel.setup_prompt("ANDI", %ApiKey{name: "x", key_id: "k"}, "tok")
+    shared = ApiKeyPanel.setup_prompt("ACME", %ApiKey{name: "x", key_id: "k"}, "tok")
     assert shared =~ "shared agent, not a person's"
   end
 
@@ -34,18 +34,18 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanelTest do
   end
 
   test "the setup prompt carries the links, the first call, and the token or its place" do
-    key = %ApiKey{name: "ANDI agent", key_id: "80ejrvvuf5k7sdo", scopes: ApiKey.scopes()}
+    key = %ApiKey{name: "ACME agent", key_id: "80ejrvvuf5k7sdo", scopes: ApiKey.scopes()}
 
-    with_token = ApiKeyPanel.setup_prompt("ANDI Manager", key, "pkp_80ejrvvuf5k7sdo_secret")
-    assert with_token =~ "Home project: ANDI Manager"
+    with_token = ApiKeyPanel.setup_prompt("ACME Manager", key, "pkp_80ejrvvuf5k7sdo_secret")
+    assert with_token =~ "Home project: ACME Manager"
     assert with_token =~ "/api/projects/v1/llms.txt"
     assert with_token =~ "/api/projects/v1/openapi.json"
     assert with_token =~ "API token: pkp_80ejrvvuf5k7sdo_secret"
     assert with_token =~ "GET /me"
     assert with_token =~ "project="
-    assert with_token =~ "ANDI-42"
+    assert with_token =~ "ACME-42"
 
-    without = ApiKeyPanel.setup_prompt("ANDI Manager", key, nil)
+    without = ApiKeyPanel.setup_prompt("ACME Manager", key, nil)
     refute without =~ "secret"
     assert without =~ "ID pkp_80ejrvvuf5k7sdo"
     assert without =~ "not stored"

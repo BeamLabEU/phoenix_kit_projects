@@ -413,7 +413,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   # index). Never fails the save: a mention that does not index is a
   # missing backlink, not lost work.
   defp sync_mentions(assignment_uuid, description, key) when is_binary(description) do
-    # As it was stored: a `#ANDI-42` in the submitted text is a token there.
+    # As it was stored: a `#ACME-42` in the submitted text is a token there.
     Mentions.sync("project_task", assignment_uuid, RefText.expand(description),
       field: "description",
       actor_uuid: ApiKey.accountable_uuid(key)

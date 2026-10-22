@@ -1568,7 +1568,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   end
 
   # V22 — the names people use instead of a uuid (`PhoenixKitProjects.Refs`):
-  # a project's KEY (`ANDI`) and a task's NUMBER in its project (`ANDI-42`).
+  # a project's KEY (`ACME`) and a task's NUMBER in its project (`ACME-42`).
   #
   # Both rules live in the database, so no insert path can skip them (a
   # clone inserts hundreds of rows; the next code path will not call the

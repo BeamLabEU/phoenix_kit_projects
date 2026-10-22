@@ -37,7 +37,7 @@ defmodule PhoenixKitProjects.Integration.RefsIntegrationTest do
     test "comes from its name, and the next one with that name gets a number" do
       assert project!("Kitchen Ref").key == "KR"
       assert project!("Kitchen Ref").key == "KR2"
-      assert project!("ANDI Manager").key == "ANDI"
+      assert project!("ACME Manager").key == "ACME"
       assert project!("3D editor").key == "3DE"
     end
 

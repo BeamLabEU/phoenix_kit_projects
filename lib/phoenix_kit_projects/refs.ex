@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.Refs do
   @moduledoc """
   The short names people and agents use instead of a uuid: a project's
-  **key** (`ANDI`) and a task's **ref** (`ANDI-42` — the key and the
+  **key** (`ACME`) and a task's **ref** (`ACME-42` — the key and the
   task's number in that project).
 
   The uuid stays the identity of every row and stays valid everywhere; a
@@ -67,7 +67,7 @@ defmodule PhoenixKitProjects.Refs do
   def reserved?(key) when is_binary(key), do: String.upcase(key) in @reserved
   def reserved?(_), do: false
 
-  @doc ~S|A task's ref: `"ANDI-42"`. `nil` when either part is missing.|
+  @doc ~S|A task's ref: `"ACME-42"`. `nil` when either part is missing.|
   @spec task_ref(String.t() | nil, integer() | nil) :: String.t() | nil
   def task_ref(key, number) when is_binary(key) and is_integer(number), do: "#{key}-#{number}"
   def task_ref(_, _), do: nil
@@ -120,7 +120,7 @@ defmodule PhoenixKitProjects.Refs do
   function saying whether a candidate is already somebody's key or old
   key):
 
-    * a leading acronym is kept — `"ANDI Manager"` → `ANDI`, and a short
+    * a leading acronym is kept — `"ACME Manager"` → `ACME`, and a short
       one takes the initials after it: `"3D editor"` → `3DE`;
     * several words give their initials — `"Phoenix Kit"` and
       `"PhoenixKit"` → `PK`;
@@ -165,7 +165,7 @@ defmodule PhoenixKitProjects.Refs do
     |> String.split(~r/[^A-Za-z0-9]+/, trim: true)
   end
 
-  # Written in capitals (or digits) by whoever named the project: `ANDI`,
+  # Written in capitals (or digits) by whoever named the project: `ACME`,
   # `CRM`, `3D`.
   defp acronym?(word) do
     len = String.length(word)

@@ -187,7 +187,7 @@ kept for the same scope reason ever since), not a new regression introduced by t
 
 ## Gate (project `mix precommit` chain) — all green
 
-Run from the repo root against installed deps (this checkout has no `/www/app` parent workspace):
+Run from the repo root against installed deps (this checkout has no `<host-app>/` parent workspace):
 
 | Step | Result |
 |---|---|

@@ -60,7 +60,7 @@ defmodule PhoenixKitProjects.TaskNotesTest do
         a,
         fields,
         user_uuid: user.uuid,
-        label: "ANDI agent",
+        label: "ACME agent",
         actor: %{kind: "ai_agent", uuid: agent},
         metadata: %{"api_key" => agent, "via" => "api"}
       )
@@ -68,7 +68,7 @@ defmodule PhoenixKitProjects.TaskNotesTest do
     assert note.resource_type == TaskNotes.resource_type()
     assert note.resource_uuid == a.uuid
     assert note.status == "published"
-    assert note.author_display_name == "ANDI agent"
+    assert note.author_display_name == "ACME agent"
     assert note.metadata["kind"] == "agent_note"
     assert note.metadata["api_key"] == agent
     assert note.metadata["usage"]["tokens"] == 1800
@@ -103,7 +103,7 @@ defmodule PhoenixKitProjects.TaskNotesTest do
     assert TaskNotes.count_for_assignments([a.uuid]) == %{a.uuid => 1}
     assert [listed] = TaskNotes.list(a.uuid)
     assert listed.uuid == note.uuid
-    assert TaskNotes.to_json(listed).author == "ANDI agent"
+    assert TaskNotes.to_json(listed).author == "ACME agent"
 
     assert TaskNotes.to_json(listed).refs == note.metadata["refs"]
 

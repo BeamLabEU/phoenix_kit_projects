@@ -28,7 +28,7 @@ Everything built on dev.greenoak.ee since the last PR (#48), on top of 0.30.0, e
 **Projects.**
 - An ongoing status for work that has no end, and a way to end it in the settings.
 - A Move dialog: a project out of its parent, or under another one.
-- Short names: a key for every project and a ref for every task (`ANDI-42`), also usable as `#ANDI-42` in text.
+- Short names: a key for every project and a ref for every task (`ACME-42`), also usable as `#ACME-42` in text.
 - Task start and end dates.
 - The projects list gets columns, sorting and filters; key, client, human, AI and total hours.
 - The project's key on every sub-page.
