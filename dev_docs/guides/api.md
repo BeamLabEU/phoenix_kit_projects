@@ -47,7 +47,7 @@ access, and nothing further up is consulted. A key is one of two kinds
   deletes only that project's grant (`Members.remove_member/3` →
   `ApiKeys.revoke_for_user/3` → `delete_grant/3`); the key's other grants
   live on.
-- **shared** — no person: a CI runner, "ANDI agent". The grant's role is the
+- **shared** — no person: a CI runner, "ACME agent". The grant's role is the
   authority.
 
 Keys are made, rotated, revoked and given access only on **Projects → API
@@ -121,7 +121,7 @@ Project-level calls take a `project` param, a uuid or a key
 /usage`, `POST /subprojects`, the notes, hours, entries and events reads, and
 the `/ext/…` lists and creates. Task-level calls need nothing:
 `TasksController.fetch/2` finds a task anywhere within reach — a ref like
-`ANDI-42` names its own project. Either way the request is **rescoped**:
+`ACME-42` names its own project. Either way the request is **rescoped**:
 `Json.rescope/2` puts the key as it acts THERE (`ApiKeys.view/2`: that
 project's role and scopes) in `pk_api_key`, with that project's gates and
 floors. `Json.require_scope/2` remembers each scope it checked in
@@ -140,8 +140,8 @@ created with `project` set to it.
 
 ## Short names: keys and refs
 
-A project has a **key** (`ANDI`) and a task a **number** in its project; together
-they are the task's **ref**, `ANDI-42` (`PhoenixKitProjects.Refs`, chain V22;
+A project has a **key** (`ACME`) and a task a **number** in its project; together
+they are the task's **ref**, `ACME-42` (`PhoenixKitProjects.Refs`, chain V22;
 Max for the boss, 2026-10-10: *"everything uses the UUID, which is very not user
 friendly… kind of like Jira style"*). The uuid stays the identity; a ref is a
 locator on top of it.
@@ -179,9 +179,9 @@ unless the project turned that off; reopening a subtask reopens its parents;
 notes, `updated_since` the poll. AGENTS.md ("What the first agent on the API
 asked for") has the map from each ask to its code.
 
-**Short refs in text.** Write `#ANDI-42` (or `#ANDI` for a project) in a
+**Short refs in text.** Write `#ACME-42` (or `#ACME` for a project) in a
 description or a note and it is stored as a link to that task: the text comes
-back as `#[project_task:uuid|ANDI-42]`, the stored form, which points at the
+back as `#[project_task:uuid|ACME-42]`, the stored form, which points at the
 uuid and so survives a renamed key or a moved project. A ref that names nothing,
 or a project outside the key's reach, stays the text it was (so writing a ref
 never says whether something the key cannot open exists).

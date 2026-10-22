@@ -71,7 +71,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarItemsTest do
         ends_at: nil,
         all_day: false,
         status: "planned",
-        location: "ANDI showroom",
+        location: "ACME showroom",
         url: "/en/admin/crm/companies/x?tab=interactions",
         updated_at: nil
       },
@@ -124,7 +124,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarItemsTest do
     assert html =~ ~s(phx-click="select_item")
 
     html = render_click(view, "select_item", %{"id" => "ext:crm:#{planned.id}"})
-    assert html =~ "ANDI showroom"
+    assert html =~ "ACME showroom"
     assert html =~ "Meeting"
     # nothing to change it with here: only the way to where it is managed
     assert html =~ planned.url

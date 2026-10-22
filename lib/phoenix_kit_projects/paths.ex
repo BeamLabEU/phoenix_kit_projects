@@ -142,7 +142,7 @@ defmodule PhoenixKitProjects.Paths do
   @doc """
   A link to one task: its project's Tasks tab, naming the task so the page
   scrolls to the row and opens it. With the project's key and the task's
-  number in hand it reads `…/ANDI/tasks?task=ANDI-42`; the fragment is the
+  number in hand it reads `…/ACME/tasks?task=ACME-42`; the fragment is the
   row's DOM id (always the uuid).
   """
   @spec task(project_ref(), map()) :: String.t()
@@ -157,7 +157,7 @@ defmodule PhoenixKitProjects.Paths do
   end
 
   # A project's URL segment: its key when the caller has the project in
-  # hand (`…/projects/ANDI`), else whatever id it passed. Both resolve
+  # hand (`…/projects/ACME`), else whatever id it passed. Both resolve
   # (`Projects.get_project/1`).
   defp seg(%{key: key}) when is_binary(key) and key != "", do: key
   defp seg(%{uuid: uuid}), do: uuid

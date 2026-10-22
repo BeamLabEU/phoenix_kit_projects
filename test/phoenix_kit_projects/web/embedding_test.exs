@@ -75,7 +75,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   end
 
   describe "ProjectShowLive off-router mount — assigns set by router on_mount" do
-    # Regression for the Andi field report (PR #16 follow-up, 2026-05-20):
+    # Regression for the consuming-app field report (PR #16 follow-up, 2026-05-20):
     # `project_show_live.ex:1820` used bang-form `@phoenix_kit_current_scope`
     # for the comments drawer. The assign is set by phoenix_kit core's
     # router-level `on_mount` callback, so off-router mounts via
@@ -156,7 +156,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
       # bracket-access pattern; if anyone adds a new one, this test
       # will fail at the next CI run instead of waiting for a host
       # integration to hit it. Mirror the audit pattern documented in
-      # the Andi field report.
+      # the consuming-app field report.
       offenders =
         :phoenix_kit_projects
         |> :code.priv_dir()

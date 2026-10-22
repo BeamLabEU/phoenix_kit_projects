@@ -122,7 +122,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   def scope_project(conn, params) do
     case Map.get(params, "project") do
       ref when is_binary(ref) and ref != "" ->
-        # A uuid or a key (`ANDI`): resolved first, then held to the key's
+        # A uuid or a key (`ACME`): resolved first, then held to the key's
         # reach, so a key that names somebody else's project answers the
         # same 404 as one that names nothing.
         case Projects.get_project(ref) do
@@ -385,13 +385,13 @@ defmodule PhoenixKitProjects.Web.Api.Json do
     %{
       totals: totals,
       uuid: a.uuid,
-      # the short name: `ANDI-42` for a task; for a sub-project row the
+      # the short name: `ACME-42` for a task; for a sub-project row the
       # CHILD's key (work goes to the child — `parent_ref` is the row's
       # own place in this list). Accepted wherever a task uuid is.
       ref: Assignment.ref(a),
       number: a.number,
       parent_ref: if(a.child_project_uuid, do: Assignment.row_ref(a)),
-      # the task this one sits under (`ANDI-40`), null at the top level;
+      # the task this one sits under (`ACME-40`), null at the top level;
       # how deep it sits; and, for a task with tasks under it, how many of
       # the ones at the bottom of its branch are done
       parent_task: place.parent_task,

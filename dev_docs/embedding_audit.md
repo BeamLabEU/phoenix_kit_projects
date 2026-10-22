@@ -15,7 +15,7 @@ test convention that stops them from being re-introduced.
 
 ## Why embedding matters
 
-Host apps (the canonical case is Tymofii's Andi app — sub-order
+Host apps (the canonical case is a consuming application — sub-order
 "Project" tab) want to drop the **module's own** LiveView into their
 own workflow via `live_render/3` so any upstream UX improvement lands
 in their app for free, instead of re-implementing the timeline /
@@ -203,7 +203,7 @@ of the module. Five root causes:
    `term()` in practice). The contract is enforced only at mount
    time on the embed code path that was never exercised.
 
-Issue #5 surfaced externally because the reporter (Andi) is the first
+Issue #5 surfaced externally because the reporter (a consuming app) is the first
 external embedder of a phoenix_kit module. Max's own apps consume
 modules only via admin routes, so the bug was structurally invisible
 to Max's testing surface. Same reason the wrapper-class hardcoding

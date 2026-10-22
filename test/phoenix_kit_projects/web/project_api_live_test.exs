@@ -33,14 +33,14 @@ defmodule PhoenixKitProjects.Web.ProjectApiLiveTest do
 
     {:ok, _} = Members.add_member(project, other.uuid, role: "member")
     {:ok, _theirs, _} = ApiKeys.create(project, %{"name" => "Theirs", "user_uuid" => other.uuid})
-    {:ok, _shared, _} = ApiKeys.create(project, %{"name" => "ANDI agent"})
+    {:ok, _shared, _} = ApiKeys.create(project, %{"name" => "ACME agent"})
 
     {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/api")
     assert html =~ "Your API key"
     assert html =~ "None of your keys reach this project"
     assert html =~ "/api/projects/v1/llms.txt"
     refute html =~ "Theirs"
-    refute html =~ "ANDI agent"
+    refute html =~ "ACME agent"
     # an owner also gets the way to the whole list
     assert html =~ "All keys reaching this project"
 

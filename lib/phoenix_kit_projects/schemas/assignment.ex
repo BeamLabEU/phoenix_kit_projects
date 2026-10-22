@@ -113,8 +113,8 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:waiting_on, :string)
     field(:origin, :string)
     # The task's own dates (V21): optional calendar days, either alone.
-    # The task's number in its project (`ANDI-42` is number 42 of the
-    # project keyed `ANDI`; chain V22). The database hands it out on insert
+    # The task's number in its project (`ACME-42` is number 42 of the
+    # project keyed `ACME`; chain V22). The database hands it out on insert
     # and never reuses one — never cast.
     field(:number, :integer, read_after_writes: true)
     field(:start_date, :date)
@@ -257,7 +257,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   def overdue?(_, _), do: false
 
   @doc """
-  What this row is called: a task's ref (`ANDI-42` — its project's key and
+  What this row is called: a task's ref (`ACME-42` — its project's key and
   its number there), and for a sub-project row the CHILD's own key, since
   work is logged against the child and not against the row that embeds it.
   `nil` until the project (or child) is loaded or keyed.

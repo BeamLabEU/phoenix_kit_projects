@@ -3,7 +3,7 @@ defmodule PhoenixKitProjects.Web.Mentions do
   `use PhoenixKitProjects.Web.Mentions` in place of core's
   `use PhoenixKit.Mentions.Live`: the same `@`/`#` typeahead and
   request-access events, with one difference — picking a project or a task
-  puts its short ref in the text (`#ANDI-42`) instead of the long token.
+  puts its short ref in the text (`#ACME-42`) instead of the long token.
 
   The field is one whose text is saved through a projects changeset, and
   `RefText.expand_on_write/2` turns the ref into the token there, so what

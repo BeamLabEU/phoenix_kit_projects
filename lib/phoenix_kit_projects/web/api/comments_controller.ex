@@ -56,7 +56,7 @@ defmodule PhoenixKitProjects.Web.Api.CommentsController do
          uuid when is_binary(uuid) <- ApiKey.accountable_uuid(key) || :no_person,
          {:ok, comment} <-
            PhoenixKitComments.create_comment(@resource_type, a.uuid, uuid, %{
-             # `#ANDI-42` becomes the link it names, within the key's reach.
+             # `#ACME-42` becomes the link it names, within the key's reach.
              content: RefText.expand(content),
              parent_uuid: params["parent"],
              status: "published",

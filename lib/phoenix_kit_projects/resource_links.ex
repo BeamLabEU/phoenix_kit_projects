@@ -204,7 +204,7 @@ defmodule PhoenixKitProjects.ResourceLinks do
     end)
   end
 
-  # A typed ref (`ANDI-42`) finds exactly that task, next to whatever the
+  # A typed ref (`ACME-42`) finds exactly that task, next to whatever the
   # same text matches in a title.
   defp match_title_or_ref(queryable, query) do
     pattern = "%#{escape_like(query)}%"

@@ -401,7 +401,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # `?task=<uuid or ANDI-42>` (what a link to a task carries, see `Paths.task/2`):
+  # `?task=<uuid or ACME-42>` (what a link to a task carries, see `Paths.task/2`):
   # the row is ringed, the lens widens if it was hiding the row, the URL's
   # `#task-<uuid>` scrolls to it, and the page's drawer opens the task
   # (`popup_open/1`). A uuid that is not a row of this project is ignored.
@@ -421,7 +421,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp focus_task(socket, _uuid), do: socket
 
-  # By uuid, or by ref (`ANDI-42`) when the key is this project's — its
+  # By uuid, or by ref (`ACME-42`) when the key is this project's — its
   # current one or one it was renamed from.
   defp find_task(assignments, ref, project) do
     case Refs.parse(ref) do

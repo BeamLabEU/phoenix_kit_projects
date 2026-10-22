@@ -362,7 +362,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a `#ANDI-42` or `#ANDI` in the text that names a task or project within the key's reach is stored as a link to it (read back as `#[project_task:uuid|ANDI-42]`)"
+              "a `#ACME-42` or `#ACME` in the text that names a task or project within the key's reach is stored as a link to it (read back as `#[project_task:uuid|ACME-42]`)"
           },
           %{
             name: "priority",
@@ -480,7 +480,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "a `#ANDI-42` or `#ANDI` in the text that names a task or project within the key's reach is stored as a link to it (read back as `#[project_task:uuid|ANDI-42]`)"
+              "a `#ACME-42` or `#ACME` in the text that names a task or project within the key's reach is stored as a link to it (read back as `#[project_task:uuid|ACME-42]`)"
           },
           %{
             name: "priority",
@@ -622,7 +622,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
               "a task under that parent to go right after; null to go first; leave it out to go last"
           }
         ],
-        example: ~s({"parent": "ANDI-40", "after": "ANDI-41"})
+        example: ~s({"parent": "ACME-40", "after": "ACME-41"})
       },
       %{
         id: "batchCreateTasks",
@@ -661,7 +661,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
           }
         ],
         example:
-          ~s({"parent": "ANDI-40", "lines": ["Which rooms?", "Matte or gloss?", {"text": "Delivery date", "depth": 0}, {"text": "Ask about Saturdays", "depth": 1}]})
+          ~s({"parent": "ACME-40", "lines": ["Which rooms?", "Matte or gloss?", {"text": "Delivery date", "depth": 0}, {"text": "Ask about Saturdays", "depth": 1}]})
       },
       %{
         id: "linkInteraction",
@@ -954,7 +954,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             in: :body,
             type: "string",
             required: true,
-            doc: "the comment, at most 10000 bytes; #ANDI-42 refs become links"
+            doc: "the comment, at most 10000 bytes; #ACME-42 refs become links"
           },
           %{
             name: "parent",
@@ -1445,8 +1445,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
 
     1. `GET /me`. Note `home_project` and the `projects` list.
     2. To work in any project other than home, pass `project=<its key>` on project-level calls
-       (`GET /briefing?project=3DE`, `GET /ext/interactions?project=ANDI&of=client`). A task ref
-       picks its own project: `GET /tasks/ANDI-42` needs no `project`.
+       (`GET /briefing?project=3DE`, `GET /ext/interactions?project=ACME&of=client`). A task ref
+       picks its own project: `GET /tasks/ACME-42` needs no `project`.
     3. Read each project's `access` before working there. Never assume one project's access from
        another's: a key may write tasks in one project and only read them, or nothing, in the next.
 
@@ -1491,12 +1491,12 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
 
     ## Short names: a project's key, a task's ref
 
-    Every project has a `key` (`ANDI`) and every task a `ref` — the key and the task's number
-    in that project (`ANDI-42`). They are what people say and what belongs in a commit message,
-    a branch name or a note: `ANDI-42: fix the hinge offset`.
+    Every project has a `key` (`ACME`) and every task a `ref` — the key and the task's number
+    in that project (`ACME-42`). They are what people say and what belongs in a commit message,
+    a branch name or a note: `ACME-42: fix the hinge offset`.
 
-    - Wherever a task's uuid goes in a path, its ref works too: `GET /tasks/ANDI-42`,
-      `POST /tasks/ANDI-42/start`. Wherever `project` takes a uuid, the key works: `?project=3DE`.
+    - Wherever a task's uuid goes in a path, its ref works too: `GET /tasks/ACME-42`,
+      `POST /tasks/ACME-42/start`. Wherever `project` takes a uuid, the key works: `?project=3DE`.
       Case does not matter. A ref outside your reach is the same 404 as one that does not exist.
     - A task answers `ref`, `number` and `uuid`; a project `key` and `uuid`. A sub-project has
       its OWN key and numbers its tasks from 1; its row on the parent's list answers the child's
@@ -1560,14 +1560,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     task - its own number, owner, dates, hours and notes; there are no lighter "items". Four
     questions relayed from a client are four subtasks of one task, added in one call:
 
-        POST /tasks/batch  {"parent": "ANDI-40", "lines": ["Which rooms?", "Matte or gloss?",
+        POST /tasks/batch  {"parent": "ACME-40", "lines": ["Which rooms?", "Matte or gloss?",
                             "Delivery date?", "Saturday installs?"]}
 
     (or create the parent in the same batch: its line at depth 0, the questions at depth 1).
     `parent` on create and PATCH puts a task under another (null: back to the top level);
     `POST /tasks/{id}/move` places it exactly. Every task says `parent_task` (the ref above it, or
     null), `depth`, and `subtasks: {done, total}` - counted over the tasks at the bottom of its
-    branch, the ones with nothing under them. `GET /tasks?parent=ANDI-40` lists what is directly
+    branch, the ones with nothing under them. `GET /tasks?parent=ACME-40` lists what is directly
     under one; `parent=none` the top level only.
 
     The tick rules, the same in the admin and here:

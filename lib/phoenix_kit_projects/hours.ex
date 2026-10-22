@@ -705,7 +705,7 @@ defmodule PhoenixKitProjects.Hours do
   picker: `{[%{uuid, title, ref, project_uuid}], more?}`, at most `limit`
   of them, in plan order. An empty query is the first page. The match is
   made in the database (a title containing the words, or the task's
-  number — `42` or `ANDI-42`), so a project with any number of tasks
+  number — `42` or `ACME-42`), so a project with any number of tasks
   answers the same way; nothing is ever listed whole.
   """
   @spec search_tasks([binary()] | :all, String.t(), pos_integer(), String.t() | nil) ::
@@ -984,7 +984,7 @@ defmodule PhoenixKitProjects.Hours do
       uuids ->
         lang = lang || L10n.current_content_lang()
 
-        # `:project` for the row's ref (`ANDI-42`, `Assignment.ref/1`).
+        # `:project` for the row's ref (`ACME-42`, `Assignment.ref/1`).
         # `parent: :task` — a subtask is named with the task it sits under.
         from(a in Assignment,
           where: a.uuid in ^uuids,

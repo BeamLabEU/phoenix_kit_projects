@@ -103,7 +103,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumnsTest do
         ext: [
           %{
             id: "ext:crm_client:client",
-            values: %{a.uuid => %{text: "Zeta OÜ", url: nil}, b.uuid => %{text: "ANDI", url: nil}}
+            values: %{a.uuid => %{text: "Zeta OÜ", url: nil}, b.uuid => %{text: "ACME", url: nil}}
           }
         ]
       }
@@ -203,7 +203,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumnsTest do
 
       col = %{
         id: "ext:crm_client:client",
-        values: %{a.uuid => %{text: "ANDI", url: nil}, b.uuid => %{text: "ANDI", url: nil}}
+        values: %{a.uuid => %{text: "ACME", url: nil}, b.uuid => %{text: "ACME", url: nil}}
       }
 
       metrics = %{
@@ -211,7 +211,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumnsTest do
         ext: [col]
       }
 
-      client = %{@no_filters | ext_col: col.id, ext_val: "ANDI"}
+      client = %{@no_filters | ext_col: col.id, ext_val: "ACME"}
       assert names(Columns.filter([a, b, c], client, metrics, nil)) == ~w(A B)
 
       assert names(Columns.filter([a, b, c], %{@no_filters | overdue: true}, metrics, nil)) ==
@@ -221,7 +221,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumnsTest do
 
       assert Columns.active_count(%{client | overdue: true}) == 2
       assert Columns.filter_families(%{client | overdue: true}) == [:due, :ext]
-      assert Columns.ext_options(col) == ["ANDI"]
+      assert Columns.ext_options(col) == ["ACME"]
       # half an extension filter is no filter
       assert Columns.active_count(%{@no_filters | ext_col: col.id}) == 0
     end

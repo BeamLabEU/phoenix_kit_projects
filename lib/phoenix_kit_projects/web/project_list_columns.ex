@@ -84,7 +84,7 @@ defmodule PhoenixKitProjects.Web.ProjectListColumns do
   @spec specs() :: [spec()]
   def specs do
     [
-      # The project's short name (`ANDI`, `PhoenixKitProjects.Refs`).
+      # The project's short name (`ACME`, `PhoenixKitProjects.Refs`).
       col("key", gettext("Key"), nil, :key),
       col("status", gettext("Status"), nil, :state),
       col("progress", gettext("Progress"), :tasks, :progress),

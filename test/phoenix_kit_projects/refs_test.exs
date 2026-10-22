@@ -6,7 +6,7 @@ defmodule PhoenixKitProjects.RefsTest do
   describe "suggest_key/2" do
     test "names people actually give projects" do
       for {name, key} <- [
-            {"ANDI Manager", "ANDI"},
+            {"ACME Manager", "ACME"},
             {"3D editor", "3DE"},
             {"PhoenixKit", "PK"},
             {"Phoenix Kit", "PK"},
@@ -56,20 +56,20 @@ defmodule PhoenixKitProjects.RefsTest do
     test "a uuid, a key, a task ref — and nothing looser" do
       uuid = Ecto.UUID.generate()
       assert Refs.parse(uuid) == {:uuid, uuid}
-      assert Refs.parse(" andi ") == {:project, "ANDI"}
+      assert Refs.parse(" acme ") == {:project, "ACME"}
       assert Refs.parse("3de") == {:project, "3DE"}
-      assert Refs.parse("andi-42") == {:task, "ANDI", 42}
+      assert Refs.parse("acme-42") == {:task, "ACME", 42}
       assert Refs.parse("3DE-7") == {:task, "3DE", 7}
 
       for bad <- [
             "",
             "42",
             "A",
-            "ANDI-",
-            "ANDI-0",
-            "ANDI-x",
+            "ACME-",
+            "ACME-0",
+            "ACME-x",
             "AN DI",
-            "ANDI-1-2",
+            "ACME-1-2",
             "12-3",
             "ABCDEFGHIJK",
             nil,
@@ -89,16 +89,16 @@ defmodule PhoenixKitProjects.RefsTest do
   end
 
   test "valid_key?/1 and task_ref/2" do
-    assert Refs.valid_key?("ANDI")
+    assert Refs.valid_key?("ACME")
     assert Refs.valid_key?("3D")
-    refute Refs.valid_key?("andi")
+    refute Refs.valid_key?("acme")
     refute Refs.valid_key?("A")
     refute Refs.valid_key?("123")
     refute Refs.valid_key?("NEW")
     refute Refs.valid_key?("AN-DI")
-    assert Refs.task_ref("ANDI", 42) == "ANDI-42"
+    assert Refs.task_ref("ACME", 42) == "ACME-42"
     assert Refs.task_ref(nil, 42) == nil
-    assert Refs.normalize_key(" andi ") == "ANDI"
+    assert Refs.normalize_key(" acme ") == "ACME"
     assert Refs.normalize_key("  ") == nil
   end
 end

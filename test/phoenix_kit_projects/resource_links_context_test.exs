@@ -11,16 +11,16 @@ defmodule PhoenixKitProjects.ResourceLinksContextTest do
   alias PhoenixKitProjects.{Members, Projects, ResourceLinks}
 
   setup do
-    main = fixture_project(%{"name" => "ANDI Manager"})
-    other = fixture_project(%{"name" => "ANDI Website"})
+    main = fixture_project(%{"name" => "ACME Manager"})
+    other = fixture_project(%{"name" => "ACME Website"})
 
     {:ok, %{child_project: editor}} =
-      Projects.create_subproject(main.uuid, %{"name" => "ANDI 3D editor"})
+      Projects.create_subproject(main.uuid, %{"name" => "ACME 3D editor"})
 
     for {project, title} <- [
-          {main, "ANDI brief"},
-          {editor, "ANDI walls"},
-          {other, "ANDI landing"}
+          {main, "ACME brief"},
+          {editor, "ACME walls"},
+          {other, "ACME landing"}
         ] do
       task = fixture_task(%{"title" => title})
 
@@ -38,10 +38,10 @@ defmodule PhoenixKitProjects.ResourceLinksContextTest do
   defp titles(results), do: results |> Enum.map(& &1.title) |> Enum.sort()
 
   test "without a context the admin sees every project and task", %{scope: scope} do
-    all = ResourceLinks.search_resources("ANDI", scope: scope)
-    assert "ANDI Website" in titles(all)
-    assert "ANDI landing" in titles(all)
-    assert "ANDI 3D editor" in titles(all)
+    all = ResourceLinks.search_resources("ACME", scope: scope)
+    assert "ACME Website" in titles(all)
+    assert "ACME landing" in titles(all)
+    assert "ACME 3D editor" in titles(all)
   end
 
   test "inside a project, only that project, its sub-projects and their tasks", %{
@@ -50,15 +50,15 @@ defmodule PhoenixKitProjects.ResourceLinksContextTest do
     editor: editor
   } do
     inside =
-      ResourceLinks.search_resources("ANDI", scope: scope, context: %{"project" => main.uuid})
+      ResourceLinks.search_resources("ACME", scope: scope, context: %{"project" => main.uuid})
 
-    assert titles(inside) == ["ANDI 3D editor", "ANDI Manager", "ANDI brief", "ANDI walls"]
+    assert titles(inside) == ["ACME 3D editor", "ACME Manager", "ACME brief", "ACME walls"]
 
     # from the sub-project, only its own subtree
     leaf =
-      ResourceLinks.search_resources("ANDI", scope: scope, context: %{"project" => editor.uuid})
+      ResourceLinks.search_resources("ACME", scope: scope, context: %{"project" => editor.uuid})
 
-    assert titles(leaf) == ["ANDI 3D editor", "ANDI walls"]
+    assert titles(leaf) == ["ACME 3D editor", "ACME walls"]
   end
 
   test "the context narrows but never widens: a member of another project gets nothing", %{
@@ -74,22 +74,22 @@ defmodule PhoenixKitProjects.ResourceLinksContextTest do
     member = fake_scope(user_uuid: user.uuid, email: user.email, permissions: ["projects"])
     {:ok, _} = Members.add_member(other, user.uuid, role: "member")
 
-    assert ResourceLinks.search_resources("ANDI",
+    assert ResourceLinks.search_resources("ACME",
              scope: member,
              context: %{"project" => main.uuid}
            ) == []
 
     theirs =
-      ResourceLinks.search_resources("ANDI", scope: member, context: %{"project" => other.uuid})
+      ResourceLinks.search_resources("ACME", scope: member, context: %{"project" => other.uuid})
 
-    assert titles(theirs) == ["ANDI Website", "ANDI landing"]
+    assert titles(theirs) == ["ACME Website", "ACME landing"]
   end
 
   test "a member of the root sees a grandchild's records too", %{main: main, editor: editor} do
     {:ok, %{child_project: deeper}} =
       Projects.create_subproject(editor.uuid, %{"name" => "Walls"})
 
-    task = fixture_task(%{"title" => "ANDI plaster"})
+    task = fixture_task(%{"title" => "ACME plaster"})
 
     {:ok, a} =
       Projects.create_assignment(%{

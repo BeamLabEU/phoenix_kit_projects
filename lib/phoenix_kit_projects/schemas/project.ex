@@ -105,7 +105,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # external system; holds an id, UUID, or slug. No UI — set programmatically
     # by host apps/integrations. Indexed for lookup; not unique.
     field(:external_id, :string)
-    # The short name people use instead of the uuid (`ANDI`, chain V22;
+    # The short name people use instead of the uuid (`ACME`, chain V22;
     # `PhoenixKitProjects.Refs`). Unique across every key any project has
     # had; the database fills a placeholder when none is given, hence
     # `read_after_writes`.

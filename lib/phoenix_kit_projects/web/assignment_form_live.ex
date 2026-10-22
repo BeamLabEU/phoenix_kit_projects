@@ -710,7 +710,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         # Sub-project linking row (V127): edit the CHILD project's name +
         # assignee, plus this row's dependencies. The assignee lives on the
         # child, so `assign_type` + `sp_form` come from it.
-        # Short refs in the edit box (`#ANDI-42`), tokens in the row.
+        # Short refs in the edit box (`#ACME-42`), tokens in the row.
         child =
           RefText.collapse_fields(
             Projects.get_project_with_assignee(child_uuid) || %Project{},
@@ -762,7 +762,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         task_name =
           assignment.task && Task.localized_title(assignment.task, L10n.current_content_lang())
 
-        # The record the form edits holds short refs (`#ANDI-42`) where the
+        # The record the form edits holds short refs (`#ACME-42`) where the
         # row holds tokens: an untouched description is then no change, and
         # a changed one is expanded again when it is written.
         # A one-off task written over the API (or by the quick-add composer
@@ -785,7 +785,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         )
         |> assign(edit_titles(task_name))
         |> assign(
-          # `ANDI-42`, beside the heading: the name to quote for this task.
+          # `ACME-42`, beside the heading: the name to quote for this task.
           task_ref: PhoenixKitProjects.Refs.task_ref(project.key, assignment.number),
           kind: "task",
           sp_form: to_form(Projects.change_project(%Project{}), as: :subproject),
@@ -1853,7 +1853,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # says "from this meeting" is listed on the meeting — and so a `#` in a
   # task is a backlink at all, which it was not before V8 of the CRM asked.
   defp sync_task_mentions(socket, assignment_uuid, description) when is_binary(description) do
-    # As it was stored: a `#ANDI-42` in the submitted text is a token there.
+    # As it was stored: a `#ACME-42` in the submitted text is a token there.
     description = RefText.expand(description)
 
     case Mentions.sync("project_task", assignment_uuid, description,
