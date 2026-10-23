@@ -156,10 +156,11 @@ defmodule PhoenixKitProjects.Ledger do
     * `"task"`/`"template"`/anything else → not ours (library tasks and
       templates have no project) — `:skipped`.
 
-  UNIT TRAP (scout-verified): phoenix_kit_ai's `cost_cents` column is
-  NANODOLLARS despite the name (1e-6 dollars); the ledger stores CENTS.
-  Divide by 10_000 as a Decimal so sub-cent calls stay positive
-  fractions instead of silently rounding to zero.
+  UNIT TRAP: phoenix_kit_ai's `cost_nanodollars` is billionths of a
+  dollar (a cent is 10_000_000); an older phoenix_kit_ai sends
+  `cost_cents` instead, which held MILLIONTHS despite the name (a cent is
+  10_000). The ledger stores CENTS, divided as a Decimal so sub-cent calls
+  stay positive fractions instead of silently rounding to zero.
 
   The AI actor identity is the ENDPOINT uuid (`agent_uuid`) — the
   stable "which AI did the work" until first-class agent records exist.
@@ -172,18 +173,11 @@ defmodule PhoenixKitProjects.Ledger do
     with %{} <- attribution || :skipped,
          {:ok, project_uuid, assignment_uuid} <- resolve_attribution(attribution) do
       tokens = field(request, :total_tokens)
-      nanodollars = field(request, :cost_cents)
-
-      cost_cents =
-        case nanodollars do
-          n when is_integer(n) and n > 0 -> Decimal.div(Decimal.new(n), 10_000)
-          _ -> nil
-        end
 
       usage =
         %{
           tokens: tokens,
-          cost_cents: cost_cents,
+          cost_cents: ai_cost_cents(request),
           model: field(request, :model),
           request_uuid: field(request, :uuid),
           agent_uuid: field(request, :endpoint_uuid)
@@ -193,6 +187,16 @@ defmodule PhoenixKitProjects.Ledger do
       record_ai(project_uuid, usage, assignment_uuid: assignment_uuid)
     else
       _ -> :skipped
+    end
+  end
+
+  # The request's cost in cents: `cost_nanodollars`, else an older
+  # phoenix_kit_ai's `cost_cents` (millionths of a dollar); nil for no cost.
+  defp ai_cost_cents(request) do
+    case {field(request, :cost_nanodollars), field(request, :cost_cents)} do
+      {nano, _} when is_integer(nano) and nano > 0 -> Decimal.div(Decimal.new(nano), 10_000_000)
+      {nil, micro} when is_integer(micro) and micro > 0 -> Decimal.div(Decimal.new(micro), 10_000)
+      _ -> nil
     end
   end
 
