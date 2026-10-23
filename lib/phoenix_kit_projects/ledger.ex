@@ -156,11 +156,11 @@ defmodule PhoenixKitProjects.Ledger do
     * `"task"`/`"template"`/anything else → not ours (library tasks and
       templates have no project) — `:skipped`.
 
-  UNIT TRAP: phoenix_kit_ai's `cost_nanodollars` is billionths of a
-  dollar (a cent is 10_000_000); an older phoenix_kit_ai sends
-  `cost_cents` instead, which held MILLIONTHS despite the name (a cent is
-  10_000). The ledger stores CENTS, divided as a Decimal so sub-cent calls
-  stay positive fractions instead of silently rounding to zero.
+  UNIT TRAP: phoenix_kit_ai sends `cost` in US dollars (a `Decimal`, or its
+  string); an older phoenix_kit_ai sends `cost_cents` instead, which held
+  MILLIONTHS of a dollar despite the name (a cent is 10_000). The ledger
+  stores CENTS (`× 100`), as a Decimal so sub-cent calls stay positive
+  fractions instead of silently rounding to zero.
 
   The AI actor identity is the ENDPOINT uuid (`agent_uuid`) — the
   stable "which AI did the work" until first-class agent records exist.
@@ -190,16 +190,16 @@ defmodule PhoenixKitProjects.Ledger do
     end
   end
 
-  # The request's cost in cents: `cost_nanodollars`, else an older
+  # The request's cost in cents: `cost` (dollars), else an older
   # phoenix_kit_ai's `cost_cents` (millionths of a dollar); nil for no cost.
   # Rounded to the ledger's four decimals (`amount NUMERIC(14,4)`, > 0): a
-  # cost below 0.00005 cents (500 n$) has no amount the row can hold, and
-  # left to the column it would fail the check and roll the tokens back too.
+  # cost below 0.00005 cents has no amount the row can hold, and left to the
+  # column it would fail the check and roll the tokens back too.
   defp ai_cost_cents(request) do
     cents =
-      case {field(request, :cost_nanodollars), field(request, :cost_cents)} do
-        {nano, _} when is_integer(nano) and nano > 0 ->
-          Decimal.div(Decimal.new(nano), 10_000_000)
+      case {dollars(field(request, :cost)), field(request, :cost_cents)} do
+        {%Decimal{} = dollars, _} ->
+          Decimal.mult(dollars, 100)
 
         {nil, micro} when is_integer(micro) and micro > 0 ->
           Decimal.div(Decimal.new(micro), 10_000)
@@ -216,6 +216,17 @@ defmodule PhoenixKitProjects.Ledger do
       _ -> nil
     end
   end
+
+  defp dollars(%Decimal{} = dollars), do: dollars
+
+  defp dollars(value) when is_binary(value) do
+    case Decimal.parse(String.trim(value)) do
+      {dollars, ""} -> dollars
+      _ -> nil
+    end
+  end
+
+  defp dollars(_value), do: nil
 
   defp field(request, key) when is_map(request),
     do: Map.get(request, key) || Map.get(request, to_string(key))

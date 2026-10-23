@@ -120,8 +120,8 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
       request = %{
         "uuid" => Ecto.UUID.generate(),
         "total_tokens" => 4321,
-        # billionths of a dollar: 1_234_567_000 n$ = $1.234567 = 123.4567 cents.
-        "cost_nanodollars" => 1_234_567_000,
+        # dollars: $1.234567 = 123.4567 cents.
+        "cost" => Decimal.new("1.234567"),
         "model" => "claude-fable-5",
         "endpoint_uuid" => Ecto.UUID.generate(),
         "metadata" => %{
@@ -133,7 +133,7 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
       assert tokens_entry.assignment_uuid == a.uuid
       assert tokens_entry.project_uuid == project.uuid
       assert Decimal.equal?(tokens_entry.amount, Decimal.new(4321))
-      # 1_234_567_000 / 10_000_000 = 123.4567 cents — the unit trap, as a fraction.
+      # $1.234567 × 100 = 123.4567 cents — dollars in, cents out, as a fraction.
       assert Decimal.equal?(cost_entry.amount, Decimal.new("123.4567"))
       assert tokens_entry.actor_uuid == request["endpoint_uuid"]
       assert tokens_entry.actor_kind == "ai_agent"
@@ -142,7 +142,7 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
     test "a SUB-CENT cost still records as a positive fraction", %{project: project} do
       request = %{
         "total_tokens" => 10,
-        "cost_nanodollars" => 500_000,
+        "cost" => Decimal.new("0.0005"),
         "metadata" => %{
           "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
         }
@@ -166,7 +166,7 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
     end
 
     test "a zero or missing cost writes the tokens only", %{project: project} do
-      for cost <- [%{"cost_nanodollars" => 0}, %{"cost_nanodollars" => nil}, %{}] do
+      for cost <- [%{"cost" => Decimal.new(0)}, %{"cost" => nil}, %{"cost" => "junk"}, %{}] do
         request =
           Map.merge(
             %{
@@ -184,13 +184,13 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
     end
 
     # The ledger keeps four decimals of a cent (NUMERIC(14,4), amount > 0):
-    # a cost below 0.00005 cents (500 n$) has no amount it can store, and
+    # a cost below 0.00005 cents ($0.0000005) has no amount it can store, and
     # must not take the tokens entry down with it.
     test "a cost too small for the ledger writes the tokens only", %{project: project} do
-      for nano <- [40, 499] do
+      for dollars <- ["0.00000004", "0.000000499"] do
         request = %{
           "total_tokens" => 10,
-          "cost_nanodollars" => nano,
+          "cost" => Decimal.new(dollars),
           "metadata" => %{
             "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
           }
@@ -202,7 +202,7 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
 
       request = %{
         "total_tokens" => 10,
-        "cost_nanodollars" => 500,
+        "cost" => Decimal.new("0.0000005"),
         "metadata" => %{
           "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
         }
@@ -210,6 +210,21 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
 
       assert {:ok, [_tokens, cost_entry]} = Ledger.record_ai_request(request)
       assert Decimal.equal?(cost_entry.amount, Decimal.new("0.0001"))
+    end
+
+    test "a cost sent as a dollar string (a JSON-encoded row) is read the same" do
+      project = fixture_project()
+
+      request = %{
+        "total_tokens" => 10,
+        "cost" => "0.25",
+        "metadata" => %{
+          "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
+        }
+      }
+
+      assert {:ok, [_tokens, cost_entry]} = Ledger.record_ai_request(request)
+      assert Decimal.equal?(cost_entry.amount, Decimal.new("25"))
     end
 
     test "non-projects attributions and junk are skipped", %{project: project} do
