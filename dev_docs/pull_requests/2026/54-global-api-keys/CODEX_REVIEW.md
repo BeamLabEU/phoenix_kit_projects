@@ -390,3 +390,27 @@ The main `ApiKeys` and `ApiKey` module documentation still describes a key as be
 5. The global API-key LiveView has an IDOR-style creator authorization path and does not re-check authority over existing grant projects.
 6. An unusable home blocks requests to otherwise valid target projects.
 7. `ApiKeys.move/3` deletes the target grant—including explicit denies—and replaces it with the home grant.
+
+
+## Post-merge recheck — 2026-10-23
+
+Rechecked Claude's follow-up at `7286e44`: the rate limit precedes project /
+account / grant resolution; refused calls are counted using the stored home;
+page loading batches grants and project-key lists; deleting the home skips
+empty grants. The related functional and query-count tests remain in the
+suite. No additional access-control defect confirmed in this pass.
+
+**BUG - MEDIUM (validation dependency, not attributed to this PR):** the full
+`mix precommit` gate stopped at `mix hex.audit` because the locked
+`plug_crypto 2.2.0` was subject to EEF-CVE-2026-105963 / GHSA-ffw9-w85g-f2vh
+(secret key base exposed in stack-trace arguments when Plug.Crypto receives
+wrongly typed arguments). `mix deps.update plug_crypto` resolved 2.2.1;
+`mix.lock` changes only that package. No dependency requirements changed.
+
+The previously noted per-project access walk in `GET /me` and the task
+serializers remains a performance limitation for large project trees.
+The unrelated empty translations also remain; this pass fills the five
+missing translations of the setup instruction changed by #55.
+
+See [PR #55's Codex review](../55-neutral-example-key/CODEX_REVIEW.md) for the
+final validation results.

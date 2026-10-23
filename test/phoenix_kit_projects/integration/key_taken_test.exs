@@ -41,6 +41,21 @@ defmodule PhoenixKitProjects.Integration.KeyTakenTest do
     assert Projects.key_taken?("DELK")
   end
 
+  test "registry readers agree on retired keys, including a deleted project's key" do
+    project = project!("Registry Readers", %{"key" => "REG"})
+    assert {:ok, renamed} = Projects.update_project(project, %{"key" => "REG2"})
+
+    assert Projects.project_by_key("reg").uuid == project.uuid
+    assert Projects.former_keys(renamed) == ["REG"]
+    assert Projects.suggest_project_key("REG") == "REG3"
+
+    assert {:ok, _} = Projects.delete_project(renamed)
+    assert Projects.project_by_key("REG") == nil
+    assert Projects.key_taken?("REG")
+    assert Projects.key_taken?("REG2")
+    assert Projects.suggest_project_key("REG") == "REG3"
+  end
+
   test "a free key, a blank and a non-string are not taken" do
     refute Projects.key_taken?("FREEK")
     refute Projects.key_taken?("")

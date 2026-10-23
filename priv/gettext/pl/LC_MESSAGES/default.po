@@ -7893,7 +7893,7 @@ msgstr ""
 #: lib/phoenix_kit_projects/web/api_key_panel.ex:121
 #, elixir-autogen, elixir-format
 msgid "Send the token as an Authorization: Bearer header on every call and keep it out of chat, logs and output. Start with GET /me: it lists every project this key reaches and what it may do in each (per area: none, read or write). A call without a project parameter acts on the home project; for any other project pass project=<its key>, e.g. GET /briefing?project=ACME. A task ref like ACME-42 selects its own project. Never assume one project's access from another's."
-msgstr ""
+msgstr "Wysyłaj token w nagłówku Authorization: Bearer przy każdym wywołaniu i nie umieszczaj go w czatach, dziennikach ani danych wyjściowych. Zacznij od GET /me: wyświetla wszystkie projekty dostępne dla tego klucza oraz dozwolone działania w każdym z nich (dla każdego obszaru: brak dostępu, odczyt lub zapis). Wywołanie bez parametru project dotyczy projektu domyślnego; dla innego projektu podaj project=<jego klucz>, np. GET /briefing?project=ACME. Odwołanie do zadania, takie jak ACME-42, wybiera jego własny projekt. Nigdy nie wnioskuj o dostępie do jednego projektu na podstawie dostępu do innego."
 
 #: lib/phoenix_kit_projects/web/api_keys_filters.ex:142
 #: lib/phoenix_kit_projects/web/api_keys_live.ex:887

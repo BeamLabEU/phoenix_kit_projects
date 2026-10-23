@@ -69,7 +69,6 @@ defmodule PhoenixKitProjects.DataCase do
     task
   end
 
-  @doc "Creates a real (non-template) Project with a unique name."
   @doc """
   The address of the module's admin root as the app writes it: with the
   language segment (`/en/admin/projects`) on a multilingual site and
@@ -80,6 +79,7 @@ defmodule PhoenixKitProjects.DataCase do
   """
   def admin_projects, do: Routes.path("/admin/projects")
 
+  @doc "Creates a real (non-template) Project with a unique name."
   def fixture_project(attrs \\ %{}) do
     {:ok, project} =
       PhoenixKitProjects.Projects.create_project(

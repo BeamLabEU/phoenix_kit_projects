@@ -51,4 +51,29 @@ defmodule PhoenixKitProjects.Web.ApiKeyPanelTest do
     assert without =~ "not stored"
     assert ApiKeyPanel.display_id(key) == "pkp_80ejrvvuf5k7sdo"
   end
+
+  test "every locale translates the access instructions and keeps the API examples" do
+    key = %ApiKey{name: "Example", key_id: "example"}
+
+    instruction = fn locale ->
+      Gettext.with_locale(locale, fn ->
+        "ACME"
+        |> ApiKeyPanel.setup_prompt(key, nil)
+        |> String.split("\n")
+        |> Enum.find(&String.contains?(&1, "GET /briefing?project=ACME"))
+      end)
+    end
+
+    english = instruction.("en")
+    assert is_binary(english)
+
+    for locale <- Gettext.known_locales(PhoenixKitProjects.Gettext) do
+      translated = instruction.(locale)
+      assert is_binary(translated), "#{locale} lost the briefing example"
+      refute translated == english, "#{locale} falls back to English"
+      assert translated =~ "Authorization: Bearer"
+      assert translated =~ "GET /me"
+      assert translated =~ "ACME-42"
+    end
+  end
 end

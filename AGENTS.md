@@ -444,11 +444,12 @@ dashboard); `PortalLive` (public); `ProjectsSettingsLive`; `ListRedirectLive`
 | `Schemas.ApiKeyGrant` | `phoenix_kit_project_api_key_grants` (V24 — what a key may do in one project: scopes, role cap, `inherit`; see "API keys across projects") |
 | `Schemas.ApiKeyUsage` | `phoenix_kit_project_api_key_usage` (V25 — requests, errors and refusals per key, project and UTC day; see "API key usage") |
 | `Schemas.ApiIdempotency` | `phoenix_kit_project_api_idempotency` (V17 — stored API responses, by key + `Idempotency-Key`; a status-0 row is a reservation; who holds it is a Postgres session advisory lock pinned for the request, so a live holder is 409 `in_progress` and a dead one's row is taken over — see `ApiKeys.idempotent/3`) |
-| (no schema modules) | `phoenix_kit_project_keys` (V22 — every key a project has had; trigger-maintained) and `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
+| `Schemas.ProjectKey` | `phoenix_kit_project_keys` (V22 — every key a project has had; trigger-maintained, read-only schema) |
+| (no schema module) | `phoenix_kit_project_task_counters` (V22 — the last task number handed out per project) |
 | (join table, no schema module) | `phoenix_kit_project_task_interactions` (V20 — task ↔ CRM interaction link, written by `Projects.link_interaction/4`) |
 | `People.{Person,Team,Department,TeamMembership}` | `phoenix_kit_staff_*` (read-only shadows over core-owned tables) |
 
-All UUIDv7 PKs; every table-backed schema applies `use PhoenixKit.SchemaPrefix`
+UUIDv7 PKs except the registry's string `key`; every table-backed schema applies `use PhoenixKit.SchemaPrefix`
 (`schema_prefix_conformance_test.exs` pins it).
 
 Schema-level invariants: `Assignment` enforces a single assignee and the
@@ -587,7 +588,7 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V22**. `mix phoenix_kit.update` applies it
+`phoenix_kit_projects`, currently **V25**. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against
 `migrated_version_runtime/1`; tests run it through
 `PhoenixKitProjects.Test.SchemaMigration`, keyed on
@@ -843,7 +844,7 @@ for the api permissions" — per project, per area, none / read / write.
 
 ### What the first agent on the API asked for (2026-10-05) — built, as settings
 
-The 3D-editor session's Claude read the guide, ran 27 calls on ACME Manager
+The 3D-editor session's Claude read the guide, ran 27 calls on the host's project
 and reviewed the API from the agent's seat. Max: *"go ahead and build
 everything that the other AI needs… make sure that everything is
 controllable via settings. We want projects to be very flexible."* A
@@ -944,7 +945,7 @@ seconds wherever a poll reads it back (`updated_at` has no microseconds);
 change lands on dev, `Extensions.Registry.refresh()` over the node (the
 `/ext/companies` rows vanished from the guide until it ran; the CRM extension
 declares `api: [ProjectApi, CompanyApi]` and the stale list held one). The
-"events" extension was off on ACME Manager although it had a planned event —
+"events" extension was off on that project although it had a planned event —
 switched on by hand.
 
 The earlier list, for the record:

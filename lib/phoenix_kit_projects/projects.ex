@@ -13,7 +13,15 @@ defmodule PhoenixKitProjects.Projects do
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Refs
-  alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project, Task, TaskDependency}
+
+  alias PhoenixKitProjects.Schemas.{
+    Assignment,
+    Dependency,
+    Project,
+    ProjectKey,
+    Task,
+    TaskDependency
+  }
 
   # Dialyzer loses opacity on `MapSet.t()` whenever an empty MapSet
   # (`MapSet.new()` — `%MapSet{map: %{}}`) seeds a recursive helper
@@ -1023,7 +1031,7 @@ defmodule PhoenixKitProjects.Projects do
     key &&
       repo().one(
         from(p in Project,
-          join: k in "phoenix_kit_project_keys",
+          join: k in ProjectKey,
           on: k.project_uuid == p.uuid,
           where: k.key == ^key,
           limit: 1
@@ -1041,7 +1049,7 @@ defmodule PhoenixKitProjects.Projects do
   @spec former_keys(Project.t()) :: [String.t()]
   def former_keys(%Project{uuid: uuid, key: current}) do
     repo().all(
-      from(k in "phoenix_kit_project_keys",
+      from(k in ProjectKey,
         where: k.project_uuid == type(^uuid, UUIDv7) and k.key != ^(current || ""),
         order_by: [desc: k.inserted_at],
         select: k.key
@@ -1062,7 +1070,7 @@ defmodule PhoenixKitProjects.Projects do
         false
 
       key ->
-        repo().exists?(from(k in "phoenix_kit_project_keys", where: k.key == ^key)) or
+        repo().exists?(from(k in ProjectKey, where: k.key == ^key)) or
           repo().exists?(from(p in Project, where: p.key == ^key))
     end
   end
@@ -1073,7 +1081,7 @@ defmodule PhoenixKitProjects.Projects do
   """
   @spec suggest_project_key(String.t() | nil) :: String.t()
   def suggest_project_key(name) do
-    taken = MapSet.new(repo().all(from(k in "phoenix_kit_project_keys", select: k.key)))
+    taken = MapSet.new(repo().all(from(k in ProjectKey, select: k.key)))
     Refs.suggest_key(name, &MapSet.member?(taken, &1))
   end
 
