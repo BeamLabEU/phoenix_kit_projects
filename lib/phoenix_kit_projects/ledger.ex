@@ -192,10 +192,27 @@ defmodule PhoenixKitProjects.Ledger do
 
   # The request's cost in cents: `cost_nanodollars`, else an older
   # phoenix_kit_ai's `cost_cents` (millionths of a dollar); nil for no cost.
+  # Rounded to the ledger's four decimals (`amount NUMERIC(14,4)`, > 0): a
+  # cost below 0.00005 cents (500 n$) has no amount the row can hold, and
+  # left to the column it would fail the check and roll the tokens back too.
   defp ai_cost_cents(request) do
-    case {field(request, :cost_nanodollars), field(request, :cost_cents)} do
-      {nano, _} when is_integer(nano) and nano > 0 -> Decimal.div(Decimal.new(nano), 10_000_000)
-      {nil, micro} when is_integer(micro) and micro > 0 -> Decimal.div(Decimal.new(micro), 10_000)
+    cents =
+      case {field(request, :cost_nanodollars), field(request, :cost_cents)} do
+        {nano, _} when is_integer(nano) and nano > 0 ->
+          Decimal.div(Decimal.new(nano), 10_000_000)
+
+        {nil, micro} when is_integer(micro) and micro > 0 ->
+          Decimal.div(Decimal.new(micro), 10_000)
+
+        _ ->
+          nil
+      end
+
+    with %Decimal{} <- cents,
+         rounded = Decimal.round(cents, 4),
+         :gt <- Decimal.compare(rounded, 0) do
+      rounded
+    else
       _ -> nil
     end
   end

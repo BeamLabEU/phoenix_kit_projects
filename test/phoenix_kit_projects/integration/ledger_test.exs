@@ -183,6 +183,35 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
       end
     end
 
+    # The ledger keeps four decimals of a cent (NUMERIC(14,4), amount > 0):
+    # a cost below 0.00005 cents (500 n$) has no amount it can store, and
+    # must not take the tokens entry down with it.
+    test "a cost too small for the ledger writes the tokens only", %{project: project} do
+      for nano <- [40, 499] do
+        request = %{
+          "total_tokens" => 10,
+          "cost_nanodollars" => nano,
+          "metadata" => %{
+            "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
+          }
+        }
+
+        assert {:ok, [tokens_entry]} = Ledger.record_ai_request(request)
+        assert tokens_entry.kind == "tokens"
+      end
+
+      request = %{
+        "total_tokens" => 10,
+        "cost_nanodollars" => 500,
+        "metadata" => %{
+          "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
+        }
+      }
+
+      assert {:ok, [_tokens, cost_entry]} = Ledger.record_ai_request(request)
+      assert Decimal.equal?(cost_entry.amount, Decimal.new("0.0001"))
+    end
+
     test "non-projects attributions and junk are skipped", %{project: project} do
       refute_entries = fn -> assert Ledger.list_entries(project.uuid) == [] end
 
