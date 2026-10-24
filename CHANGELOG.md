@@ -1,5 +1,107 @@
 # Changelog
 
+## 0.31.0 - 2026-10-24
+
+PRs #50–#56 plus their post-merge reviews
+(`dev_docs/pull_requests/2026/50-extension-tab-session-docs/` through
+`56-ai-cost-in-dollars/`).
+
+### Changed
+
+- **Requires `phoenix_kit` >= 2.63.0** (pin `>= 2.63.0 and < 3.0.0`, was
+  `>= 2.49.0`): the Hours page's pickers use `search_picker`'s `chosen` state
+  (core 2.63.0), and the projects, tasks and templates lists use core's
+  `<.table_default fit>` with the header cells' `priority` / `lead` (2.54.0).
+- **Schema chain V20 → V25** — run `mix phoenix_kit.update`. V21 task start and
+  end dates; V22 project keys and task numbers (both backfilled, behind
+  triggers and a key registry); V23 tasks under tasks (`parent_uuid` with a
+  same-project / no-cycle trigger, task titles up to 500 characters, V19
+  checklist items converted to subtasks and the column dropped); V24 API key
+  grants per project and area (every existing key keeps exactly the access it
+  had, and the down restores it); V25 API request counts per key, project and
+  day.
+- **API: checklists are replaced by subtasks.** The checklist calls are gone;
+  use `parent`, `POST /tasks/{id}/move`, `POST /tasks/batch` and the cascade
+  delete. Task JSON carries the assignee, dates, `key`, `ref`, `number` and
+  `parent_ref`; a project param takes a key.
+- **API keys reach projects through grants**, not one project: per project and
+  area (project, tasks, status, notes, comments, time, AI usage, events,
+  people, and each extension's), none / read / write, the nearest grant up the
+  tree deciding. The key's `project_uuid` is its default project. Every request
+  is checked in the project it acts in, after the rate limit; a field from an
+  area the key cannot read comes back empty, and idempotency keys are per
+  project. `/me` lists every project the key reaches. A personal key stops
+  working when its person loses the `projects` permission.
+- **API key rights are sub-permissions of `projects`**: `api_keys_create`,
+  `api_keys_edit`, `api_keys_rotate`, `api_keys_revoke` (own keys) and
+  `api_keys_manage` (every key). Roles that hold `projects` get the four
+  own-key rights in a one-time grant.
+- The task form saves as it is changed, shows the task's discussion, agent
+  notes, human and AI time, tokens and cost, and a plain to-do's form is a
+  title, a status and a description (Waiting on / Requested by and dates follow
+  the new `waiting` and `dates` features). Delete is in the form.
+- The projects list gets columns, sorting and filters (key, client, human, AI
+  and total hours, one Ongoing filter); the project's key shows on every
+  sub-page.
+- The Gettext backend is split by locale and domain, so it compiles in
+  parallel (#52).
+- The AI usage sink reads phoenix_kit_ai's `cost` in dollars (a Decimal or its
+  string) and still reads an older release's `cost_cents` (#56).
+- Dependencies refreshed to PhoenixKit 2.64.1 and phoenix_kit_ai 0.26.1.
+
+### Added
+
+- **Tasks under tasks** (#51): to any depth; counts and progress use the leaf
+  tasks; ticking a task ticks what is under it, the last subtask ticked ticks
+  its parent (a project setting), reopening a subtask reopens its parents.
+- **A task list you type into** (#51): a project with nothing extra switched on
+  shows its list as one text field (the `PkpOutline` hook, shipped through
+  `js_sources/0`) — a line is a task, Enter adds the next, Tab makes a subtask,
+  paste adds a task per line, cut-and-paste moves a task with its work; × and
+  drag handles per line are settings. A removed line whose task carries
+  hours, notes, an owner or dates is held below the list until restored or
+  deleted. Richer projects keep nested, foldable cards; a project picks
+  Automatic, Always text or Always cards.
+- **Short names**: a key for every project and a ref for every task
+  (`ACME-42`). Pages and API paths resolve a uuid or a ref, a renamed-from key
+  keeps resolving and is never reused, and `#ACME-42` typed in a description or
+  a note becomes a link.
+- **Hours**: the work ledger read back as a project tab (with the `ledger`
+  flag), a site-wide page, a printable / CSV report and `GET /hours`, with
+  people and AI agents apart, a stacked chart and a weekly timesheet. A project
+  setting decides who logs time for others.
+- **An ongoing status** for projects that end only when someone ends them, and
+  End / Reopen in the project's settings (`Projects.end_project/1`,
+  `resume_project/1`).
+- **A Move dialog**: a project out of its parent or under another, carrying the
+  old parent's members, module settings and the chosen API keys
+  (`Projects.move_project/2`).
+- **Projects › API keys**, a sidebar section with Keys (make, grant per
+  project with a preset or a per-area grid, rotate, revoke, filters) and Usage
+  (requests, failures and refusals per key / project / day next to the AI
+  time, tokens and cost, over 7 / 30 / 90 days, figures and columns chosen per
+  viewer).
+- Task comments over the API: `GET` / `POST /tasks/:id/comments`.
+- Host hooks (#53): `Projects.key_taken?/1`; a
+  `{:projects, :assignment_status_changed, %{uuid, project_uuid, from, to}}`
+  broadcast from every status-changing path; and
+  `config :phoenix_kit_projects, move_lock: {Mod, :fun}` to hold projects in
+  place (fails open). Thanks to timujinne.
+- Task start and end dates; extension items on the project's Calendar tab; a
+  link that names a task scrolls to it.
+
+### Fixed
+
+- An AI cost below the ledger's precision, or a non-finite one, no longer rolls
+  back the call's tokens entry.
+- Project key lookups honour the configured PostgreSQL prefix.
+- The API setup instructions are translated in every locale.
+- The task row crashed on a task with Waiting on or dates.
+- The Files page's batched download URLs follow core's rule.
+- A removed parent line no longer cascade-deletes a subtask whose line stays;
+  a held subtask counts in the delete check; malformed lines from the browser
+  are skipped instead of crashing the page.
+
 ## 0.30.0 - 2026-10-13
 
 ### Added

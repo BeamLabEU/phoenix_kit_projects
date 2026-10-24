@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.30.0"
+  @version "0.31.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -150,10 +150,10 @@ defmodule PhoenixKitProjects.MixProject do
       # form, so the ceiling stays open through every later 2.x minor (see
       # test/core_pin_conformance_test.exs).
       #
-      # 2.54.0 since the list pages use `<.table_default fit>` with the
-      # header cells' `priority` / `lead` as declared (the column fitting
-      # first shipped there); 2.49.0 was the floor before.
-      pk_dep(:phoenix_kit, ">= 2.54.0 and < 3.0.0"),
+      # 2.63.0 since the Hours page's pickers use `search_picker`'s `chosen`
+      # state (first shipped there); 2.54.0 before, for `<.table_default fit>`
+      # with the header cells' `priority` / `lead`; 2.49.0 before that.
+      pk_dep(:phoenix_kit, ">= 2.63.0 and < 3.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move

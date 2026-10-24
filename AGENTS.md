@@ -11,8 +11,8 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 2.54.0 and < 3.0.0` (Hex — the release
-  that carries `<.table_default fit>`'s column fitting, on top of `activity_list/1`, `Storage.ResourceFolders`,
+- **Depends on:** `phoenix_kit` `>= 2.63.0 and < 3.0.0` (Hex — the release
+  that carries `search_picker`'s `chosen` state, on top of `<.table_default fit>`'s column fitting, `activity_list/1`, `Storage.ResourceFolders`,
   `PhoenixKitWeb.Actor`, `Activity.log/3`, `TableColumns` and the
   `form_actions` / `bulk_actions_toolbar` / `form_section` attrs and slots
   the LiveViews use; the compound form keeps the ceiling open across later 2.x
