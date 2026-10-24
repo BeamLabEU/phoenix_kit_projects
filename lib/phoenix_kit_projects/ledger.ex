@@ -156,9 +156,10 @@ defmodule PhoenixKitProjects.Ledger do
     * `"task"`/`"template"`/anything else → not ours (library tasks and
       templates have no project) — `:skipped`.
 
-  UNIT TRAP (scout-verified): phoenix_kit_ai's `cost_cents` column is
-  NANODOLLARS despite the name (1e-6 dollars); the ledger stores CENTS.
-  Divide by 10_000 as a Decimal so sub-cent calls stay positive
+  UNIT TRAP: phoenix_kit_ai sends `cost` in US dollars (a `Decimal`, or its
+  string); an older phoenix_kit_ai sends `cost_cents` instead, which held
+  MILLIONTHS of a dollar despite the name (a cent is 10_000). The ledger
+  stores CENTS (`× 100`), as a Decimal so sub-cent calls stay positive
   fractions instead of silently rounding to zero.
 
   The AI actor identity is the ENDPOINT uuid (`agent_uuid`) — the
@@ -172,18 +173,11 @@ defmodule PhoenixKitProjects.Ledger do
     with %{} <- attribution || :skipped,
          {:ok, project_uuid, assignment_uuid} <- resolve_attribution(attribution) do
       tokens = field(request, :total_tokens)
-      nanodollars = field(request, :cost_cents)
-
-      cost_cents =
-        case nanodollars do
-          n when is_integer(n) and n > 0 -> Decimal.div(Decimal.new(n), 10_000)
-          _ -> nil
-        end
 
       usage =
         %{
           tokens: tokens,
-          cost_cents: cost_cents,
+          cost_cents: ai_cost_cents(request),
           model: field(request, :model),
           request_uuid: field(request, :uuid),
           agent_uuid: field(request, :endpoint_uuid)
@@ -195,6 +189,44 @@ defmodule PhoenixKitProjects.Ledger do
       _ -> :skipped
     end
   end
+
+  # The request's cost in cents: `cost` (dollars), else an older
+  # phoenix_kit_ai's `cost_cents` (millionths of a dollar); nil for no cost.
+  # Rounded to the ledger's four decimals (`amount NUMERIC(14,4)`, > 0): a
+  # cost below 0.00005 cents has no amount the row can hold, and left to the
+  # column it would fail the check and roll the tokens back too.
+  defp ai_cost_cents(request) do
+    cents =
+      case {dollars(field(request, :cost)), field(request, :cost_cents)} do
+        {%Decimal{} = dollars, _} ->
+          Decimal.mult(dollars, 100)
+
+        {nil, micro} when is_integer(micro) and micro > 0 ->
+          Decimal.div(Decimal.new(micro), 10_000)
+
+        _ ->
+          nil
+      end
+
+    with %Decimal{} <- cents,
+         rounded = Decimal.round(cents, 4),
+         :gt <- Decimal.compare(rounded, 0) do
+      rounded
+    else
+      _ -> nil
+    end
+  end
+
+  defp dollars(%Decimal{} = dollars), do: dollars
+
+  defp dollars(value) when is_binary(value) do
+    case Decimal.parse(String.trim(value)) do
+      {dollars, ""} -> dollars
+      _ -> nil
+    end
+  end
+
+  defp dollars(_value), do: nil
 
   defp field(request, key) when is_map(request),
     do: Map.get(request, key) || Map.get(request, to_string(key))
