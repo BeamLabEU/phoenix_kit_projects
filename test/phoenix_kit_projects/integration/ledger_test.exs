@@ -165,6 +165,60 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
       assert Decimal.equal?(cost_entry.amount, Decimal.new("0.05"))
     end
 
+    test "dollar costs take priority over legacy cost_cents, including zero", %{project: project} do
+      for cost <- [Decimal.new("0.25"), "0.25", Decimal.new(0), "0"] do
+        request = %{
+          cost: cost,
+          cost_cents: 1_000_000,
+          total_tokens: 10,
+          metadata: %{
+            "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
+          }
+        }
+
+        assert {:ok, [%{kind: "tokens"} | costs]} = Ledger.record_ai_request(request)
+
+        if cost in [Decimal.new(0), "0"] do
+          assert costs == []
+        else
+          assert [%{kind: "cost", amount: amount}] = costs
+          assert Decimal.equal?(amount, Decimal.new(25))
+        end
+      end
+    end
+
+    test "the module callback accepts an AI request struct and its JSON representation", %{
+      project: project
+    } do
+      request = %PhoenixKitAI.Request{
+        uuid: Ecto.UUID.generate(),
+        endpoint_uuid: Ecto.UUID.generate(),
+        total_tokens: 42,
+        cost: Decimal.new("0.0005"),
+        metadata: %{
+          "attribution" => %{"resource_type" => "project", "resource_uuid" => project.uuid}
+        }
+      }
+
+      # Request's JSON encoder omits endpoint_uuid; the live sink receives
+      # the struct, which retains the actor identity.
+      json = request |> Jason.encode!() |> Jason.decode!()
+
+      for {payload, actor_uuid} <- [{request, request.endpoint_uuid}, {json, nil}] do
+        assert {:ok, [%{kind: "tokens"} = tokens, %{kind: "cost"} = cost]} =
+                 PhoenixKitProjects.handle_ai_usage(payload)
+
+        assert Decimal.equal?(tokens.amount, Decimal.new(42))
+        assert Decimal.equal?(cost.amount, Decimal.new("0.05"))
+
+        for entry <- [tokens, cost] do
+          assert entry.project_uuid == project.uuid
+          assert entry.actor_uuid == actor_uuid
+          assert entry.metadata["request_uuid"] == request.uuid
+        end
+      end
+    end
+
     test "a zero, negative, non-finite or missing cost writes the tokens only", %{
       project: project
     } do
@@ -173,7 +227,10 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
             %{"cost" => nil},
             %{"cost" => "junk"},
             %{"cost" => "NaN"},
+            %{"cost" => Decimal.new("NaN")},
             %{"cost" => "Infinity"},
+            %{"cost" => "-Infinity"},
+            %{"cost" => Decimal.new("Infinity")},
             %{"cost" => Decimal.new("-Infinity")},
             %{"cost" => Decimal.new("-0.5")},
             %{}
@@ -189,8 +246,9 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
             cost
           )
 
-        assert {:ok, [tokens_entry]} = Ledger.record_ai_request(request)
+        assert {:ok, [%{kind: "tokens"} = tokens_entry]} = Ledger.record_ai_request(request)
         assert Decimal.equal?(tokens_entry.amount, Decimal.new(10))
+        assert Repo.get!(WorkEntry, tokens_entry.uuid).kind == "tokens"
       end
     end
 
