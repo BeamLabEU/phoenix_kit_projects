@@ -217,11 +217,15 @@ defmodule PhoenixKitProjects.Ledger do
     end
   end
 
-  defp dollars(%Decimal{} = dollars), do: dollars
+  # Finite only: `Decimal.parse/1` takes "NaN" and "Infinity", and either
+  # raises in the rounding below, before the tokens entry is written.
+  defp dollars(%Decimal{} = dollars) do
+    if Decimal.nan?(dollars) or Decimal.inf?(dollars), do: nil, else: dollars
+  end
 
   defp dollars(value) when is_binary(value) do
     case Decimal.parse(String.trim(value)) do
-      {dollars, ""} -> dollars
+      {dollars, ""} -> dollars(dollars)
       _ -> nil
     end
   end

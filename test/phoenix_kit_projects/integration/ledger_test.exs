@@ -165,8 +165,19 @@ defmodule PhoenixKitProjects.Integration.LedgerTest do
       assert Decimal.equal?(cost_entry.amount, Decimal.new("0.05"))
     end
 
-    test "a zero or missing cost writes the tokens only", %{project: project} do
-      for cost <- [%{"cost" => Decimal.new(0)}, %{"cost" => nil}, %{"cost" => "junk"}, %{}] do
+    test "a zero, negative, non-finite or missing cost writes the tokens only", %{
+      project: project
+    } do
+      for cost <- [
+            %{"cost" => Decimal.new(0)},
+            %{"cost" => nil},
+            %{"cost" => "junk"},
+            %{"cost" => "NaN"},
+            %{"cost" => "Infinity"},
+            %{"cost" => Decimal.new("-Infinity")},
+            %{"cost" => Decimal.new("-0.5")},
+            %{}
+          ] do
         request =
           Map.merge(
             %{
