@@ -549,17 +549,22 @@ defmodule PhoenixKitProjects.Outline do
 
     case Process.get(@status_events) do
       buffer when is_list(buffer) -> Process.put(@status_events, changes ++ buffer)
-      nil -> Enum.each(Enum.reverse(changes), &announce_status_change/1)
+      nil -> changes |> Enum.reverse() |> announce_and_hand_off()
     end
   end
 
   defp announce_status_change({uuid, project_uuid, from, to}) do
-    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, %{
-      uuid: uuid,
-      project_uuid: project_uuid,
-      from: from,
-      to: to
-    })
+    change = %{uuid: uuid, project_uuid: project_uuid, from: from, to: to}
+    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, change)
+    change
+  end
+
+  # The tick rules moved these rows; nobody else logs them. One hand-off
+  # pass for the whole write (`Handoffs.statuses_changed/2`).
+  defp announce_and_hand_off(changes) do
+    changes
+    |> Enum.map(&announce_status_change/1)
+    |> PhoenixKitProjects.Handoffs.statuses_changed(:auto)
   end
 
   # Inside another lock's transaction (`outer` is its buffer) nothing has
@@ -574,7 +579,7 @@ defmodule PhoenixKitProjects.Outline do
   defp announce_status_changes(result, nil) do
     changes = @status_events |> Process.delete() |> List.wrap() |> Enum.reverse()
 
-    with {:ok, _} <- result, do: Enum.each(changes, &announce_status_change/1)
+    with {:ok, _} <- result, do: announce_and_hand_off(changes)
 
     result
   end

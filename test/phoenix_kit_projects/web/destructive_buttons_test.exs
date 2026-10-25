@@ -117,19 +117,26 @@ defmodule PhoenixKitProjects.Web.DestructiveButtonsTest do
       assert_disable_with(html, "complete")
     end
 
-    test "reopen (status=done) carries phx-disable-with", %{conn: conn} do
+    test "reopen (status=done) asks why, and its dialog's submit carries phx-disable-with",
+         %{conn: conn} do
       project = fixture_project(%{"start_mode" => "immediate"})
       task = fixture_task()
 
-      {:ok, _assignment} =
+      {:ok, assignment} =
         PhoenixKitProjects.Projects.create_assignment(%{
           "project_uuid" => project.uuid,
           "task_uuid" => task.uuid,
           "status" => "done"
         })
 
-      {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert_disable_with(html, "reopen")
+      {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      # The row's Reopen only opens the dialog (nothing to double-submit);
+      # the dialog's own submit is the write.
+      assert html =~ ~s(phx-click="ask_reopen")
+
+      html = render_click(view, "ask_reopen", %{"uuid" => assignment.uuid})
+      assert html =~ ~r/<button[^>]*type="submit"[^>]*phx-disable-with=[^>]*>.*Reopen/s
     end
   end
 

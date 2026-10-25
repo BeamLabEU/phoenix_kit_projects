@@ -29,6 +29,7 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
   import Plug.Conn
 
   alias PhoenixKitProjects.{ApiKeys, ApiUsage, Features, Projects}
+  alias PhoenixKitProjects.Schemas.ApiKey
   alias PhoenixKitProjects.Web.Api.{Json, RateLimit}
 
   @impl true
@@ -64,6 +65,8 @@ defmodule PhoenixKitProjects.Web.Api.Auth do
       )
 
       Json.put_view(key)
+      PhoenixKitProjects.Actor.put(ApiKey.accountable_uuid(key))
+      PhoenixKitProjects.L10n.reset_viewer_zone()
 
       conn
       |> count_request(key, project)

@@ -72,15 +72,18 @@ defmodule PhoenixKitProjects do
     [
       %{
         key: "projects",
-        label: "Projects",
-        description: "Membership, health, and task updates in your projects",
+        # Core shows the labels through this backend, in the reader's
+        # language (a core that does not know the key shows them as written).
+        gettext_backend: PhoenixKitProjects.Gettext,
+        label: gettext_noop("Projects"),
+        description: gettext_noop("Membership, health, and task updates in your projects"),
         actions: [],
         default: true,
         sub_types: [
           %{
             key: "membership",
-            label: "Membership",
-            description: "Added to a project, role changes, removals",
+            label: gettext_noop("Membership"),
+            description: gettext_noop("Added to a project, role changes, removals"),
             actions: [
               "projects.member_added",
               "projects.member_role_changed",
@@ -90,28 +93,53 @@ defmodule PhoenixKitProjects do
           },
           %{
             key: "tasks",
-            label: "Task updates",
-            description: "Tasks assigned to you created, edited, or moved",
+            label: gettext_noop("Task updates"),
+            description:
+              gettext_noop(
+                "Your tasks given to you, changed, started, done, reopened, handed on or removed"
+              ),
             actions: [
               "projects.assignment_created",
               "projects.assignment_updated",
               "projects.assignment_started",
               "projects.assignment_completed",
-              "projects.assignment_reopened"
+              "projects.assignment_reopened",
+              "projects.assignment_reassigned",
+              "projects.assignment_removed"
             ],
             default: true
           },
           %{
+            key: "handoffs",
+            label: gettext_noop("Your turn"),
+            description:
+              gettext_noop(
+                "A task of yours can start, or is on hold because work before it was reopened"
+              ),
+            actions: ["projects.assignment_ready", "projects.assignment_on_hold"],
+            default: true
+          },
+          %{
+            key: "comments",
+            label: gettext_noop("Comments"),
+            description:
+              gettext_noop(
+                "Comments and notes on your tasks, on tasks you commented on, and on projects you manage"
+              ),
+            actions: ["projects.comment_added"],
+            default: true
+          },
+          %{
             key: "health",
-            label: "Project health",
-            description: "Health judgments on your projects",
+            label: gettext_noop("Project health"),
+            description: gettext_noop("Health judgments on your projects"),
             actions: ["projects.health_updated"],
             default: true
           },
           %{
             key: "events",
-            label: "Project events",
-            description: "Meetings, milestones, and reviews added to your projects",
+            label: gettext_noop("Project events"),
+            description: gettext_noop("Meetings, milestones, and reviews added to your projects"),
             actions: [
               "projects.event_created",
               "projects.event_updated",
@@ -1160,6 +1188,18 @@ defmodule PhoenixKitProjects do
         live_view: {PhoenixKitProjects.Web.ProjectShowLive, :comments}
       },
       %Tab{
+        id: :admin_projects_project_history,
+        label: "History",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/history",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :history}
+      },
+      %Tab{
         id: :admin_projects_template_new,
         label: "New Template",
         gettext_backend: PhoenixKitProjects.Gettext,
@@ -1221,7 +1261,8 @@ defmodule PhoenixKitProjects do
       },
       # `/projects/:id/<extension tab>` — LAST on purpose: Phoenix matches in
       # declaration order, so every literal sibling above (edit, files,
-      # members, modules, api, activity, board, gantt, calendar, tasks, comments)
+      # members, modules, api, activity, board, gantt, calendar, tasks, comments,
+      # history)
       # AND `projects/templates/*` (whose first segment would otherwise read
       # as an id) win before this catch-all; an unknown segment lands on the
       # project's first tab. Extension tab keys must not reuse those literals.

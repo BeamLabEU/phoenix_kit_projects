@@ -58,6 +58,7 @@ defmodule PhoenixKitProjects.Web.ProjectWhiteboardsLive do
   @impl true
   def mount(:not_mounted_at_router, session, socket) do
     WebHelpers.maybe_put_locale(session)
+    WebHelpers.put_session_viewer_zone(session)
 
     project_uuid = session["project_uuid"]
     project = project_uuid && Projects.get_project(project_uuid)

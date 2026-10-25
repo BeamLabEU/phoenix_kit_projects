@@ -114,7 +114,11 @@ defmodule PhoenixKitProjects.LiveCase do
     # on the struct, so a synthetic map crashed every page hosting the
     # comments component. The struct is unsaved; the role lookup is a plain
     # `exists?` that answers false for a uuid with no assignments.
-    user = %PhoenixKit.Users.Auth.User{uuid: user_uuid, email: email}
+    user = %PhoenixKit.Users.Auth.User{
+      uuid: user_uuid,
+      email: email,
+      user_timezone: Keyword.get(opts, :user_timezone)
+    }
 
     %PhoenixKit.Users.Auth.Scope{
       user: user,

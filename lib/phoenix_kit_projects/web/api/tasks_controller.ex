@@ -33,6 +33,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     Features,
     Labels,
     Ledger,
+    Notices,
     Outline,
     Projects,
     RefText
@@ -368,21 +369,37 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          :ok <- check_labels(params["labels"]),
          {:ok, parent} <- parent_change(project, params),
          :ok <- precheck(a, content, assignment_attrs),
-         :ok <- reparent(a, parent),
-         {:ok, _} <- update_content(a, content),
-         {:ok, _} <- update_fields(a, assignment_attrs),
-         :ok <- stamp_words(a, key, content),
-         :ok <- keep_interaction_tokens(conn, a),
-         :ok <- apply_labels(project, a, params["labels"]),
-         :ok <- link_interaction(conn, a, params["interaction"]) do
+         {:ok, _} <-
+           write_update(fn ->
+             with :ok <- reparent(a, parent),
+                  {:ok, _} <- update_content(a, content),
+                  {:ok, _} <- update_fields(a, assignment_attrs),
+                  :ok <- stamp_words(a, key, content),
+                  :ok <- keep_interaction_tokens(conn, a),
+                  :ok <- apply_labels(project, a, params["labels"]),
+                  :ok <- link_interaction(conn, a, params["interaction"]) do
+               {:ok, :written}
+             end
+           end) do
       changed =
         Map.keys(Map.merge(content, assignment_attrs)) ++
           Enum.filter(["labels", "interaction", "parent"], &Map.has_key?(params, &1))
 
+      reassigned? =
+        Notices.reassigned(
+          a,
+          Projects.get_assignment(a.uuid),
+          ApiKey.accountable_uuid(key),
+          api_metadata(key, %{})
+        )
+
+      # A handed-over task was told so already; a move or a meeting link is
+      # the list's bookkeeping. Otherwise its people hear the task changed.
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
         resource_uuid: a.uuid,
+        tell: not reassigned? and changed -- ~w(parent position interaction) != [],
         metadata: api_metadata(key, %{"fields" => changed})
       )
 
@@ -394,6 +411,23 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       {:error, {status, _} = pair} when is_integer(status) -> pair
       {:error, %Ecto.Changeset{} = cs} -> Json.changeset_error(cs)
     end
+  end
+
+  # The PATCH's writes are one transaction: a refusal half-way (a database
+  # constraint, a failed link) leaves nothing written. The pages hear of it
+  # once it has committed (`PubSub.after_commit/1`), and the people the
+  # change concerns only then (the hand-off batch, dropped on a rollback).
+  defp write_update(fun) do
+    PhoenixKitProjects.Handoffs.batch(fn ->
+      case PhoenixKitProjects.PubSub.after_commit(fun) do
+        {:ok, _} = ok ->
+          ok
+
+        {:error, _} = error ->
+          PhoenixKitProjects.Handoffs.discard()
+          error
+      end
+    end)
   end
 
   # A changed `parent` moves the task, with everything under it, to the
@@ -562,10 +596,12 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   defp log_link(conn, a, uuid, what) do
     key = conn.assigns.pk_api_key
 
+    # A link to a meeting is bookkeeping, not news for the task's people.
     Activity.log("projects.assignment_updated",
       actor_uuid: ApiKey.accountable_uuid(key),
       resource_type: "assignment",
       resource_uuid: a.uuid,
+      tell: false,
       metadata:
         api_metadata(key, %{"fields" => ["interactions"], "interaction" => uuid, "change" => what})
     )
@@ -808,26 +844,32 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
           delete_refused(conn, project)
 
         true ->
-          case Projects.delete_assignment(a) do
-            {:ok, _} ->
-              Activity.log("projects.assignment_removed",
-                actor_uuid: ApiKey.accountable_uuid(key),
-                resource_type: "assignment",
-                resource_uuid: a.uuid,
-                metadata:
-                  api_metadata(key, %{"task" => Assignment.label(a), "subtasks" => length(below)})
-              )
-
-              sync_project_completion(conn)
-              json(conn, %{deleted: a.uuid, also_deleted: Enum.map(below, & &1.uuid)})
-
-            {:error, _} ->
-              Json.error(conn, :conflict, "conflict", "The task could not be deleted.")
-          end
+          delete_branch(conn, a, below, key)
       end
     else
       {:halt, conn} -> conn
       {:error, :not_found} -> not_found(conn)
+    end
+  end
+
+  defp delete_branch(conn, a, below, key) do
+    delete = fn -> Projects.delete_assignment(a) end
+
+    case Notices.removing(a, ApiKey.accountable_uuid(key), api_metadata(key, %{}), delete) do
+      {:ok, _} ->
+        Activity.log("projects.assignment_removed",
+          actor_uuid: ApiKey.accountable_uuid(key),
+          resource_type: "assignment",
+          resource_uuid: a.uuid,
+          metadata:
+            api_metadata(key, %{"task" => Assignment.label(a), "subtasks" => length(below)})
+        )
+
+        sync_project_completion(conn)
+        json(conn, %{deleted: a.uuid, also_deleted: Enum.map(below, & &1.uuid)})
+
+      {:error, _} ->
+        Json.error(conn, :conflict, "conflict", "The task could not be deleted.")
     end
   end
 
@@ -873,10 +915,12 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          parent_uuid = if(parent == :keep, do: a.parent_uuid, else: parent),
          {:ok, place} <- after_of(project, params),
          {:ok, _} <- move_result(Outline.move(a, parent_uuid, place)) do
+      # A place in the list is the list's business, not news for its people.
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
         resource_uuid: a.uuid,
+        tell: false,
         metadata: api_metadata(key, %{"fields" => ["parent", "position"]})
       )
 
@@ -947,10 +991,13 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
            ) do
       Enum.zip(uuids, lines)
       |> Enum.each(fn {uuid, line} ->
+        # A batch's lines are born unassigned: nobody to tell, and no reason
+        # to read 500 tasks back to find that out.
         Activity.log("projects.assignment_created",
           actor_uuid: ApiKey.accountable_uuid(key),
           resource_type: "assignment",
           resource_uuid: uuid,
+          tell: false,
           metadata: api_metadata(key, %{"task" => line.text, "batch" => length(uuids)})
         )
       end)
@@ -1064,12 +1111,21 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
         case result do
           {:ok, _} ->
+            reason = reopen_reason(conn, to, a, key)
+
             Activity.log(action,
               actor_uuid: ApiKey.accountable_uuid(key),
               resource_type: "assignment",
               resource_uuid: a.uuid,
               target_uuid: Activity.assignee_target_uuid(a),
-              metadata: api_metadata(key, %{"task" => Assignment.label(a)})
+              metadata:
+                api_metadata(
+                  key,
+                  if(reason,
+                    do: %{"task" => Assignment.label(a), "reason" => reason},
+                    else: %{"task" => Assignment.label(a)}
+                  )
+                )
             )
 
             sync_project_completion(conn)
@@ -1084,6 +1140,52 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
             Json.changeset_error(cs)
         end
     end
+  end
+
+  # A reopen's `reason`, as on the project page: posted to the task's
+  # discussion (as the key's person, labelled with the key) when the project
+  # has discussions on, and quoted by the reopen's notice either way.
+  defp reopen_reason(conn, "todo", a, key) do
+    case conn.params["reason"] do
+      reason when is_binary(reason) ->
+        case reason |> String.trim() |> String.slice(0, 2_000) do
+          "" ->
+            nil
+
+          reason ->
+            # Only a key that may also comment posts it as a comment; the
+            # notice quotes it either way.
+            # The same gates as POST /tasks/{id}/comments: the scope and the
+            # project's :comment floor for this key's role.
+            if ApiKey.scope?(key, "comments:write") and
+                 Authz.can_role?(conn.assigns.pk_project, key.role, :comment),
+               do: post_reason(a, key, reason)
+
+            reason
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp reopen_reason(_conn, _to, _a, _key), do: nil
+
+  defp post_reason(a, key, reason) do
+    person = ApiKey.accountable_uuid(key)
+
+    if is_binary(person) and PhoenixKitProjects.Extensions.enabled?(a.project_uuid, "discussions") and
+         Code.ensure_loaded?(PhoenixKitComments) and PhoenixKitComments.enabled?() do
+      PhoenixKitComments.create_comment("assignment", a.uuid, person, %{
+        content: reason,
+        metadata: %{"reopen_reason" => true},
+        attribution: %{mode: "personal", label: key.name}
+      })
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects API] reopen reason comment failed: #{inspect(e.__struct__)}")
+      :ok
   end
 
   # The same moves the project page makes, with the same side effects: a

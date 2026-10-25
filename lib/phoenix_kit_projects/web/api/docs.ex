@@ -526,6 +526,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: true,
             doc: "todo | in_progress | done"
+          },
+          %{
+            name: "reason",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "when reopening: what is wrong or missing - posted to the task's discussion and quoted in the notice the assignee gets"
           }
         ],
         example: ~s({"status": "in_progress"})
@@ -566,8 +574,18 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         action: "update_status",
         feature: "tasks",
         idempotency: :optional,
-        params: [%{name: "id", in: :path, type: "uuid", required: true, doc: ""}],
-        example: nil
+        params: [
+          %{name: "id", in: :path, type: "uuid", required: true, doc: ""},
+          %{
+            name: "reason",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "when reopening: what is wrong or missing - posted to the task's discussion and quoted in the notice the assignee gets"
+          }
+        ],
+        example: ~s({"reason": "The cutting list has the wrong board thickness."})
       },
       %{
         id: "deleteTask",

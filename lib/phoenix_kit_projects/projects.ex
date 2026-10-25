@@ -2619,10 +2619,17 @@ defmodule PhoenixKitProjects.Projects do
     # unavailable or the project is already cemented (see Statuses).
     txn =
       repo().transaction(fn ->
+        # Read under a lock whether it had started: a second Start (a stale
+        # dialog, another tab) must not tell everyone again.
+        was_started? =
+          repo().one(
+            from(x in Project, where: x.uuid == ^p.uuid, lock: "FOR UPDATE", select: x.started_at)
+          ) != nil
+
         case p |> Project.changeset(%{started_at: started_at}) |> repo().update() do
           {:ok, updated} ->
             PhoenixKitProjects.Statuses.cement_project_statuses(updated)
-            updated
+            {updated, was_started?}
 
           {:error, changeset} ->
             repo().rollback(changeset)
@@ -2630,8 +2637,9 @@ defmodule PhoenixKitProjects.Projects do
       end)
 
     case txn do
-      {:ok, updated} ->
+      {:ok, {updated, was_started?}} ->
         ProjectsPubSub.broadcast_project(:project_started, project_payload(updated))
+        unless was_started?, do: PhoenixKitProjects.Handoffs.project_started(updated)
         {:ok, updated}
 
       {:error, _} = err ->
@@ -2762,7 +2770,7 @@ defmodule PhoenixKitProjects.Projects do
                   project_uuid: updated.project_uuid
                 })
 
-                broadcast_status_changed(updated, link.status)
+                broadcast_status_changed(updated, link.status, :auto)
                 recompute_project_completion(updated.project_uuid, depth + 1)
 
               {:error, _cs} ->
@@ -2982,10 +2990,14 @@ defmodule PhoenixKitProjects.Projects do
   #{@max_subproject_depth} levels). A project with no rows maps to `[]`.
   The batched base the tree summaries and `ScheduleLayout.trees/1` read
   from, so a dashboard of N projects costs O(depth) queries, not O(nodes).
+
+  `depth: 1` reads the given projects' own rows only (one statement) — for
+  a caller that shows a project's tasks and not what is nested under them.
   """
-  @spec assignments_by_project([uuid()]) :: %{uuid() => [Assignment.t()]}
-  def assignments_by_project(project_uuids) when is_list(project_uuids) do
-    load_forest(Enum.uniq(project_uuids), %{}, @max_subproject_depth)
+  @spec assignments_by_project([uuid()], keyword()) :: %{uuid() => [Assignment.t()]}
+  def assignments_by_project(project_uuids, opts \\ []) when is_list(project_uuids) do
+    depth = opts |> Keyword.get(:depth, @max_subproject_depth) |> min(@max_subproject_depth)
+    load_forest(Enum.uniq(project_uuids), %{}, depth)
   end
 
   defp load_forest([], acc, _hops), do: acc
@@ -3609,6 +3621,29 @@ defmodule PhoenixKitProjects.Projects do
   """
   @spec available_projects_to_link(Project.t(), term()) :: [Project.t()]
   def available_projects_to_link(%Project{} = parent, scope \\ :all) do
+    parent
+    |> link_candidates(scope)
+    |> order_by([p], asc: p.name, asc: p.uuid)
+    |> repo().all()
+  end
+
+  @doc """
+  The one project `available_projects_to_link/2` would offer with this
+  uuid, or nil — the same rule, asked for one row (a save re-checks the
+  pick without listing every candidate).
+  """
+  @spec linkable_project(Project.t(), term(), term()) :: Project.t() | nil
+  def linkable_project(%Project{} = parent, scope, uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, uuid} ->
+        parent |> link_candidates(scope) |> where([p], p.uuid == ^uuid) |> repo().one()
+
+      :error ->
+        nil
+    end
+  end
+
+  defp link_candidates(parent, scope) do
     excluded = [parent.uuid | project_ancestor_uuids(parent.uuid)]
 
     Project
@@ -3616,8 +3651,6 @@ defmodule PhoenixKitProjects.Projects do
     |> where([p], p.uuid not in ^excluded)
     |> exclude_subprojects()
     |> scope_link_candidates(if parent.is_template, do: :all, else: scope)
-    |> order_by([p], asc: p.name, asc: p.uuid)
-    |> repo().all()
   end
 
   defp scope_link_candidates(query, :all), do: query
@@ -4124,6 +4157,11 @@ defmodule PhoenixKitProjects.Projects do
   @spec update_assignment_form(Assignment.t(), map(), keyword()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_form(%Assignment{} = a, attrs, opts \\ []) do
+    # One hand-off pass for the row and whatever the tick rules move with it.
+    PhoenixKitProjects.Handoffs.batch(fn -> do_update_assignment_form(a, attrs, opts) end)
+  end
+
+  defp do_update_assignment_form(a, attrs, opts) do
     with {:ok, {updated, was}} <- a |> Assignment.changeset(attrs) |> update_tracking_status(a) do
       updated =
         if updated.status != was, do: status_changed(updated, %{a | status: was}), else: updated
@@ -4170,16 +4208,18 @@ defmodule PhoenixKitProjects.Projects do
   # `{:projects, :assignment_status_changed, %{uuid, project_uuid, from, to}}`
   # — only when the status really moved. The rows `Outline.settle/3` changes
   # announce themselves from the outline (`Outline.with_project_lock/2`).
-  defp broadcast_status_changed(%Assignment{status: to} = updated, from) when from != to do
-    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, %{
-      uuid: updated.uuid,
-      project_uuid: updated.project_uuid,
-      from: from,
-      to: to
-    })
+  # `cause` is `:direct` when the caller logs the change itself, `:auto` for a
+  # rollup no caller sees; `Handoffs` writes the latter's history line and,
+  # for both, tells the people downstream.
+  defp broadcast_status_changed(updated, from, cause \\ :direct)
+
+  defp broadcast_status_changed(%Assignment{status: to} = updated, from, cause) when from != to do
+    change = %{uuid: updated.uuid, project_uuid: updated.project_uuid, from: from, to: to}
+    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, change)
+    PhoenixKitProjects.Handoffs.status_changed(change, cause)
   end
 
-  defp broadcast_status_changed(_updated, _from), do: :ok
+  defp broadcast_status_changed(_updated, _from, _cause), do: :ok
 
   # A status changed through the form: the completion stamps follow it as
   # they do on every other path (a reopen clears them, a tick sets them),
@@ -4488,6 +4528,10 @@ defmodule PhoenixKitProjects.Projects do
   @spec update_assignment_status(Assignment.t(), map()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_status(%Assignment{} = a, attrs) do
+    PhoenixKitProjects.Handoffs.batch(fn -> do_update_assignment_status(a, attrs) end)
+  end
+
+  defp do_update_assignment_status(a, attrs) do
     with {:ok, {updated, was}} <-
            a |> Assignment.status_changeset(attrs) |> update_tracking_status(a) do
       settle_outline(updated, was)

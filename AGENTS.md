@@ -11,8 +11,9 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 2.63.0 and < 3.0.0` (Hex — the release
-  that carries `search_picker`'s `chosen` state, on top of `<.table_default fit>`'s column fitting, `activity_list/1`, `Storage.ResourceFolders`,
+- **Depends on:** `phoenix_kit` `>= 2.64.0 and < 3.0.0` (Hex — the release
+  that carries `Storage.direct_urls/1`, on top of `search_picker`'s `chosen`
+  state, `<.table_default fit>`'s column fitting, `activity_list/1`, `Storage.ResourceFolders`,
   `PhoenixKitWeb.Actor`, `Activity.log/3`, `TableColumns` and the
   `form_actions` / `bulk_actions_toolbar` / `form_section` attrs and slots
   the LiveViews use; the compound form keeps the ceiling open across later 2.x
@@ -264,8 +265,7 @@ Repo-local aliases:
   statements too, so assert N-independence, never an exact count. Known and
   left (low weight, one-off or a handful of rows): `Web.Crumbs`' per-ancestor
   `Authz.can?` for non-admins, `PortalLinks`' per-slug `Portal.resolve/2` in
-  comment rendering, `Grants.subject_reach("role", …)` per role (core has no
-  batched form).
+  comment rendering.
 - **Embedding: identity ≠ authorization.** The `permission: "projects"` gate
   lives in core's `:phoenix_kit_ensure_admin` `on_mount`, which runs only for
   router-mounted admin pages — never for an off-router `live_render`. Embedded
@@ -338,7 +338,7 @@ Repo-local aliases:
   extension catch-all and must stay LAST — after `templates/*`, whose first
   segment would otherwise read as an id. Extension tab keys must not reuse a
   literal sibling (`edit`, `files`, `members`, `modules`, `activity`, `board`,
-  `gantt`, `calendar`, `tasks`, `comments`).
+  `gantt`, `calendar`, `tasks`, `comments`, `history`).
 - **Tests that drive the project page's drawer need a REAL user in the page
   scope** — `fake_scope(user_uuid: embed_user_uuid!())`. The sheet's form
   mounts off-router and rebuilds identity from the page's
@@ -628,7 +628,9 @@ While iterating ahead of that, develop and test via
 
 ## Testing
 
-Test DB `phoenix_kit_projects_test` (override with `PGDATABASE`). Three levels:
+Test DB `phoenix_kit_projects_test` plus `MIX_TEST_PARTITION` (override with
+`PGDATABASE` — a value exported for other work redirects the suite too, and
+partitions then share that one database). Three levels:
 
 - **Unit tests** in `test/phoenix_kit_projects/` — schemas, changesets, pure
   helpers (duration math, the `Errors` atom dispatcher). Always run.
@@ -1358,6 +1360,7 @@ secret, retries with backoff, and a delivery log). Until then an agent polls
 | Multilang user-input content | Non-translatable fields must be siblings OUTSIDE `<.multilang_fields_wrapper>` — the wrapper keys its id on `@current_lang`, so morphdom re-mounts everything inside on a tab switch and their state is lost. An `:edit` form opens on the viewing language (`mount_multilang(open_on: :viewing_language)`); `:new` opens on the main language, which holds the required fields. | [`dev_docs/guides/multilang-content.md`](dev_docs/guides/multilang-content.md) |
 | Whiteboards | A board's shapes are core annotations anchored by `target_type: "projects_whiteboard"` + `target_uuid`; `file_uuid` stays nullable so file-backed boards keep rendering through the file viewer. | [`dev_docs/guides/whiteboards.md`](dev_docs/guides/whiteboards.md) |
 | Dashboard widgets | One-way contract: this module never depends on `phoenix_kit_dashboards`. Every widget guards its reads behind `Helpers.available?/0` and `Statuses.available?/0` and renders an empty state rather than crashing the host board; a stateful LiveComponent's `render/1` returns a single static root. | [`dev_docs/guides/dashboard-widgets.md`](dev_docs/guides/dashboard-widgets.md) |
+| History, hand-offs and notices | A project's story is READ, never copied: `History.list/2` merges the activity rows of the project and its tasks, the comments and the ledger at read time. Every status change passes `Handoffs.status_changed/2` from the two announce sites (`Projects.broadcast_status_changed/3`, `Outline.announce_status_change/1`) — a new status path must go through one of them. Notices are written per recipient in THEIR language (`Notices`); `Activity.log/2` decorates any entry with a `target_uuid` and writes history actions `permanent`. Times print in the viewer's zone (`L10n`, settled in `assign_embed_user/2`); a typed time is read with `L10n.from_wall/1`. | [`dev_docs/guides/history-and-handoffs.md`](dev_docs/guides/history-and-handoffs.md) |
 | Schedule math and completion | Durations normalize to hours through `Task.to_hours/3` only; per-task `counts_weekends` overrides the project setting. `recompute_project_completion/1` runs after every assignment status/progress/removal change. | [`dev_docs/guides/schedule-math.md`](dev_docs/guides/schedule-math.md) |
 
 ### Embedding host contract
@@ -1369,7 +1372,7 @@ The three tables a host app depends on. Full prose in
 
 | Key | Applies to | Meaning |
 |---|---|---|
-| `"id"` | `ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`, form LVs on `:edit` | **Required.** String UUID of the record |
+| `"id"` | `ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`, `ProjectHistoryLive`, form LVs on `:edit` | **Required.** String UUID of the record |
 | `"project_id"` | `AssignmentFormLive` (`:new` and `:edit`) | **Required.** Owning project UUID |
 | `"live_action"` | form LVs | `"new"` \| `"edit"`; defaults `:new`, resolved via `String.to_existing_atom/1` so unknown values fall back |
 | `"template"` | `ProjectFormLive` `:new` | Template UUID that prefills the picker |
@@ -1384,12 +1387,7 @@ The three tables a host app depends on. Full prose in
 | `"pubsub_topic"` | all | **Required** when `mode` is `"emit"` or `"popup"` |
 | `"frame_ref"` | all | Race-safe pop identity, inherited from PopupHost |
 | `"close_on"` | all | Subset of `["closed", "saved", "deleted"]`; defaults `["closed"]` |
-| `"project_uuid"` | contributed extension tabs | The project being viewed. Takes the place of `"id"` for a contributed tab — the only key it needs |
-| `"ext_key"` | contributed extension tabs | The `key` of the extension entry that contributed the tab |
-| `"instance_key"` | contributed extension tabs | Which enablement row this render is; always `"default"` |
-| `"config"` | contributed extension tabs | The project's stored values for the extension's `config_schema`; `%{}` when none |
-| `"can_write"` | contributed extension tabs | Boolean the hub resolved for the viewer against the extension's write action (its first `permission_actions` entry other than `:view`); `false` when it declares none or the viewer is unidentified. The tab's only write authorization — it has no scope |
-| `"host_paths"` | contributed extension tabs | `%{"new_task" => path}` — where the hub's own pages are, so a tab (the CRM's "add a task from this meeting") can send someone there without naming this module's routes |
+| (their own session) | contributed extension tabs | Listed once, in `PhoenixKitProjects.Extensions.Extension`'s moduledoc ("Contributed tab LVs …with this session"); `ext_tab_session_test.exs` holds the hub's `live_render` to that list |
 
 Emit-mode event vocabulary (UI-intent verbs, deliberately disjoint from
 `PhoenixKitProjects.PubSub`'s content verbs so `handle_info` clauses never
@@ -1505,8 +1503,8 @@ size, pinned in `hours_test.exs` with `QueryCounter`), `timesheet/1`,
   `Ledger.totals_for_project/1` makes.
 - **Days are cut with ONE offset per read** (`Hours.Period.offset_seconds/2`),
   so a period across a daylight-saving switch has its days an hour off on one
-  side; totals are unaffected. Core's per-instant `TimeZone` helpers are newer
-  than this module's core floor.
+  side; totals are unaffected. Core's per-instant `TimeZone` helpers
+  (`date_start/2`, `local_date/2`) are within the core floor and would fix it.
 - **Ask `Authz.can?/5` with the project STRUCT.** With a bare uuid the resolver
   cannot read the project's own "who can do what" floors and judges by the
   defaults; `Hours.projects_by_uuid/1` is the batched read the page uses.

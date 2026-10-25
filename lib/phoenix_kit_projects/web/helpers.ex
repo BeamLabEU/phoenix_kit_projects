@@ -46,9 +46,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   # ─────────────────────────────────────────────────────────────────
 
   @doc """
-  The display label for an assignment's assignee (person email / team /
-  department name), or `nil` when unassigned. Requires the assignee assocs
-  to be preloaded.
+  The display label for an assignment's assignee (the person's name — staff
+  name, else the account's name, else its email — or the team / department
+  name), or `nil` when unassigned. Requires the assignee assocs to be
+  preloaded.
   """
   @spec assignee_label(
           PhoenixKitProjects.Schemas.Assignment.t()
@@ -56,10 +57,17 @@ defmodule PhoenixKitProjects.Web.Helpers do
         ) :: String.t() | nil
   def assignee_label(a) do
     cond do
-      a.assigned_person && a.assigned_person.user -> a.assigned_person.user.email
-      a.assigned_team -> a.assigned_team.name
-      a.assigned_department -> a.assigned_department.name
-      true -> nil
+      a.assigned_person && a.assigned_person.user ->
+        PhoenixKitProjects.People.display_name(a.assigned_person)
+
+      a.assigned_team ->
+        a.assigned_team.name
+
+      a.assigned_department ->
+        a.assigned_department.name
+
+      true ->
+        nil
     end
   end
 
@@ -271,13 +279,11 @@ defmodule PhoenixKitProjects.Web.Helpers do
   Normalises `<input type="datetime-local">` form values to ISO 8601
   strings Ecto's `:utc_datetime` cast accepts.
 
-  Browsers post `YYYY-MM-DDTHH:mm` (or `:ss`) with no timezone info.
-  Ecto's `:utc_datetime` cast rejects naive strings without an offset,
-  so we attach `Z` (UTC) before handing to the changeset. The user's
-  picked clock-time is treated as already-UTC — PhoenixKit doesn't
-  thread per-user timezone preferences yet, and the date/time pickers
-  in browsers are timezone-agnostic anyway, so what the user types is
-  what gets stored.
+  Browsers post `YYYY-MM-DDTHH:mm` (or `:ss`) with no timezone info: the
+  wall clock where the viewer is. It is read in the viewer's zone
+  (`L10n.from_wall/1`, settled per LiveView) and handed to the changeset
+  as a UTC ISO 8601 string — the pages print every instant back in the
+  same zone.
 
   `fields` is a list of string keys to normalise (typically
   `["scheduled_start_date"]` for the project form). Missing/empty
@@ -299,15 +305,23 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   defp normalize_local_to_utc(val) do
     # `datetime-local` posts `YYYY-MM-DDTHH:mm` (16 chars, no seconds)
-    # or `YYYY-MM-DDTHH:mm:ss`. Pad seconds when missing, then append
-    # `Z` so the result parses as UTC. Pass-through on parse failure —
+    # or `YYYY-MM-DDTHH:mm:ss`. Pad seconds when missing, then read it in
+    # the viewer's zone. Pass-through on parse failure —
     # let Ecto's cast surface the actual validation error rather than
     # eating it here.
     with_seconds = if String.length(val) == 16, do: val <> ":00", else: val
 
     case NaiveDateTime.from_iso8601(with_seconds) do
-      {:ok, _ndt} -> with_seconds <> "Z"
-      {:error, _} -> val
+      {:ok, ndt} ->
+        case PhoenixKitProjects.L10n.from_wall(ndt) do
+          %DateTime{} = at -> DateTime.to_iso8601(at)
+          # A wall clock that does not exist in the viewer's zone (the hour
+          # skipped when clocks go forward): refused, never stored as UTC.
+          nil -> "invalid"
+        end
+
+      _ ->
+        val
     end
   end
 
@@ -685,12 +699,34 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   def assign_embed_user(socket, _session), do: declare_ref_writer(socket)
 
+  @doc """
+  Settles the zone this LiveView prints times in for a page that has no scope
+  of its own — an extension tab mounted with only `"current_user_uuid"` in its
+  session. Unknown or absent → the site's zone.
+  """
+  @spec put_session_viewer_zone(map()) :: :ok
+  def put_session_viewer_zone(session) when is_map(session) do
+    user =
+      case Map.get(session, "current_user_uuid") do
+        uuid when is_binary(uuid) and uuid != "" -> PhoenixKit.Users.Auth.get_user(uuid)
+        _ -> nil
+      end
+
+    PhoenixKitProjects.L10n.put_viewer_zone(user)
+  rescue
+    _ -> PhoenixKitProjects.L10n.put_viewer_zone(nil)
+  end
+
   # The viewer is settled here for every page of the module, router-mounted
   # or embedded, so this is where the LiveView's process says who writes
   # the text it saves: `RefText` links a typed `#KEY-42` only when that
-  # person may open what it names.
+  # person may open what it names. Same place, same reason: the zone this
+  # process prints times in, and who is acting (`Actor`).
   defp declare_ref_writer(socket) do
-    PhoenixKitProjects.RefText.put_writer({:scope, socket.assigns[:phoenix_kit_current_scope]})
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    PhoenixKitProjects.RefText.put_writer({:scope, scope})
+    PhoenixKitProjects.L10n.put_viewer_zone(scope)
+    PhoenixKitProjects.Actor.put(PhoenixKitProjects.Activity.actor_uuid(socket))
     socket
   end
 

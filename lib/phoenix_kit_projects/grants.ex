@@ -276,7 +276,7 @@ defmodule PhoenixKitProjects.Grants do
 
     team_counts = team_member_counts(Map.get(by_type, "team", []))
     dept_counts = department_member_counts(Map.get(by_type, "department", []))
-    role_counts = Map.new(Map.get(by_type, "role", []), &{&1, subject_reach("role", &1)})
+    role_counts = role_member_counts(Map.get(by_type, "role", []))
 
     Map.new(grants, fn %{subject_type: type, subject_uuid: uuid} ->
       count =
@@ -473,5 +473,33 @@ defmodule PhoenixKitProjects.Grants do
     )
   rescue
     _ -> :ok
+  end
+
+  # Accounts holding each role, in one read — `subject_reach("role", …)`
+  # (core's `Roles.users_with_role/1`) counted per role.
+  defp role_member_counts([]), do: %{}
+
+  defp role_member_counts(role_uuids) do
+    from(ra in PhoenixKit.Users.RoleAssignment,
+      where: ra.role_uuid in ^role_uuids,
+      group_by: ra.role_uuid,
+      select: {ra.role_uuid, count(ra.user_uuid, :distinct)}
+    )
+    |> RepoHelper.repo().all()
+    |> Map.new()
+  rescue
+    _ -> %{}
+  end
+
+  @doc "Role names by uuid, in one read (`%{uuid => name}`)."
+  @spec role_names([binary()]) :: %{binary() => String.t()}
+  def role_names([]), do: %{}
+
+  def role_names(role_uuids) when is_list(role_uuids) do
+    from(r in PhoenixKit.Users.Role, where: r.uuid in ^role_uuids, select: {r.uuid, r.name})
+    |> RepoHelper.repo().all()
+    |> Map.new()
+  rescue
+    _ -> %{}
   end
 end

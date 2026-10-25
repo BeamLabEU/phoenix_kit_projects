@@ -1,16 +1,84 @@
 defmodule PhoenixKitProjects.Activity do
   @moduledoc "Activity logging wrapper for the Projects module."
 
+  import Ecto.Query, only: [from: 2]
+
   @module "projects"
 
   @doc """
   Logs a projects activity entry through `PhoenixKit.Activity.log/3`,
   which never raises — a failure is logged there and returned as
   `{:error, _}`.
+
+  An entry that names a recipient (`target_uuid`) gets its notification
+  line, icon and link in the recipient's language on the way through
+  (`PhoenixKitProjects.Notices.decorate/3`). A task event that names none
+  tells the task's people itself (`Notices.tell_assignees/2`) unless the
+  caller passes `tell: false`.
+
+  A project's history is read from these rows (`PhoenixKitProjects.History`),
+  and an order is looked back on long after core's activity retention would
+  have pruned it, so the rows that make up that story are written
+  `permanent` (never pruned) — comment notices included, since they are
+  how History says who a comment told.
   """
   @spec log(binary(), keyword()) :: {:ok, struct()} | {:error, term()}
-  def log(action, opts) when is_binary(action) and is_list(opts),
-    do: PhoenixKit.Activity.log(@module, action, opts)
+  def log(action, opts) when is_binary(action) and is_list(opts) do
+    {tell?, opts} = Keyword.pop(opts, :tell, true)
+    {subject, opts} = Keyword.pop(opts, :notice_subject)
+
+    opts =
+      action
+      |> PhoenixKitProjects.Notices.decorate(opts, subject)
+      |> with_project_uuid()
+      |> then(&if(history?(action), do: Keyword.put(&1, :permanent, true), else: &1))
+
+    result = PhoenixKit.Activity.log(@module, action, opts)
+
+    if tell? and match?({:ok, _}, result),
+      do: PhoenixKitProjects.Notices.tell_assignees(action, opts)
+
+    result
+  end
+
+  # A task's row names its project too, so the project's History still finds
+  # it once the task is deleted (it is found by the task's uuid until then).
+  defp with_project_uuid(opts) do
+    meta = Keyword.get(opts, :metadata) || %{}
+
+    with "assignment" <- Keyword.get(opts, :resource_type),
+         uuid when is_binary(uuid) <- Keyword.get(opts, :resource_uuid),
+         false <- Map.has_key?(meta, "project_uuid"),
+         project_uuid when is_binary(project_uuid) <- project_of_assignment(uuid) do
+      Keyword.put(opts, :metadata, Map.put(meta, "project_uuid", project_uuid))
+    else
+      _ -> opts
+    end
+  end
+
+  defp project_of_assignment(uuid) do
+    PhoenixKit.RepoHelper.repo().one(
+      from(a in PhoenixKitProjects.Schemas.Assignment,
+        where: a.uuid == ^uuid,
+        select: a.project_uuid
+      )
+    )
+  rescue
+    _ -> nil
+  end
+
+  # `projects.comment_added` too: the notice rows are how History says who
+  # a comment told, long after core would have pruned them.
+  @history_prefixes ~w(projects.assignment_ projects.project_ projects.member_
+                       projects.subproject_ projects.dependency_ projects.event_
+                       projects.task_list_edited projects.health_updated
+                       projects.comment_added projects.work_amended
+                       projects.work_removed)
+
+  @doc "Whether `action` is part of a project's lasting history."
+  @spec history?(binary()) :: boolean()
+  def history?(action) when is_binary(action),
+    do: Enum.any?(@history_prefixes, &String.starts_with?(action, &1))
 
   @doc """
   Logs a user-driven mutation that did NOT land cleanly — the success

@@ -105,6 +105,30 @@ defmodule PhoenixKitProjects.DataCase do
   end
 
   @doc """
+  Turns the comments module on for one test the way a host has it: listed
+  in core's module registry (the test environment registers none, so a
+  project's `discussions` reads off) and switched on. Restored on exit;
+  for `async: false` tests only — the registry is global.
+  """
+  def with_comments_module do
+    key = {PhoenixKit, :registered_modules}
+    before = :persistent_term.get(key, :not_initialized)
+    current = if before == :not_initialized, do: [], else: before
+    :persistent_term.put(key, Enum.uniq([PhoenixKitComments | current]))
+    {:ok, _} = PhoenixKit.Settings.update_setting("comments_enabled", "true")
+
+    ExUnit.Callbacks.on_exit(fn ->
+      if before == :not_initialized,
+        do: :persistent_term.erase(key),
+        else: :persistent_term.put(key, before)
+
+      PhoenixKit.Settings.update_setting("comments_enabled", "false")
+    end)
+
+    :ok
+  end
+
+  @doc """
   A project key no other fixture has: `F` and nine random letters and
   digits. Random rather than a counter, so it cannot meet a key some
   earlier run left committed (a test that leaves the sandbox).

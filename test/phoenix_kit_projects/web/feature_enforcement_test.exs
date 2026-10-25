@@ -251,7 +251,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       refute html =~ "embedded-project-gantt"
     end
 
-    test "with every alternate view off the strip disappears entirely",
+    test "with every alternate view off the strip holds only Tasks and History",
          %{conn: conn, project: project} do
       {:ok, _} =
         Features.set_flags(project, %{
@@ -263,8 +263,12 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
           "ledger" => false
         })
 
+      # History tells the work of any project with tasks, so a tasks-only
+      # project keeps a two-tab strip: Tasks and History, no task views.
       {:ok, _view, html} = live(conn, show_path(project))
-      refute html =~ ~s(id="project-tabs-#{project.uuid}")
+      assert html =~ ~s(phx-value-tab="history")
+      refute html =~ "ext:tasks:hours"
+      refute html =~ ~s(phx-value-tab="board")
 
       {:ok, _} = Features.set_flags(project, %{"ledger" => true})
       {:ok, _view, html} = live(conn, show_path(project))

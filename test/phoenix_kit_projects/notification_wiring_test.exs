@@ -20,6 +20,8 @@ defmodule PhoenixKitProjects.NotificationWiringTest do
       assert "projects.member_added" in subs["membership"].actions
       assert "projects.assignment_completed" in subs["tasks"].actions
       assert "projects.health_updated" in subs["health"].actions
+      assert "projects.assignment_ready" in subs["handoffs"].actions
+      assert "projects.comment_added" in subs["comments"].actions
 
       # Sub keys are declared BARE (core's Types.normalize/1 composes the
       # dotted form) and contain no dots themselves.
@@ -38,13 +40,34 @@ defmodule PhoenixKitProjects.NotificationWiringTest do
           "lib/phoenix_kit_projects/health.ex",
           "lib/phoenix_kit_projects/web/project_show_live.ex",
           "lib/phoenix_kit_projects/web/assignment_form_live.ex",
-          "lib/phoenix_kit_projects/project_events.ex"
+          "lib/phoenix_kit_projects/project_events.ex",
+          "lib/phoenix_kit_projects/handoffs.ex",
+          "lib/phoenix_kit_projects/comment_notices.ex",
+          "lib/phoenix_kit_projects/notices.ex"
         ]
         |> Enum.map_join("\n", &File.read!/1)
 
       for action <- declared do
         assert source =~ ~s("#{action}") or source =~ ~s(#{action}"),
                "declared action #{action} has no emitting call site"
+      end
+    end
+  end
+
+  describe "notification_types/0 labels" do
+    test "name this module's backend, and every label and description has its Estonian and Russian" do
+      [type] = PhoenixKitProjects.notification_types()
+      assert type.gettext_backend == PhoenixKitProjects.Gettext
+
+      texts = Enum.flat_map([type | type.sub_types], &[&1.label, &1.description])
+
+      for locale <- ["et", "ru"], text <- texts do
+        translated =
+          Gettext.with_locale(PhoenixKitProjects.Gettext, locale, fn ->
+            Gettext.gettext(PhoenixKitProjects.Gettext, text)
+          end)
+
+        refute translated == text, "#{inspect(text)} has no #{locale} translation"
       end
     end
   end

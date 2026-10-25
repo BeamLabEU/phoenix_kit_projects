@@ -89,6 +89,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> assign_edit_title()
       |> assign_outline(resolved_params)
       |> assign_threads()
+      |> assign_task_history()
       |> assign_ai_translate()
       # Unsaved edits? Flipped by the first change event; the host's
       # dialog (emit mode) stops closing on Esc/backdrop while true and
@@ -356,6 +357,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp assign_threads(socket), do: assign(socket, :threads, nil)
+
+  # The task's own lines of the project's history (`History`): who started,
+  # finished, reopened it and why, who was told, its comments and time.
+  defp assign_task_history(
+         %{
+           assigns: %{
+             live_action: :edit,
+             project: %Project{is_template: false} = project,
+             assignment: %Assignment{uuid: uuid}
+           }
+         } = socket
+       )
+       when is_binary(uuid) do
+    assign(socket, :task_history, PhoenixKitProjects.History.list(project, task: uuid).entries)
+  rescue
+    e ->
+      Logger.warning("[Projects] task history load failed: #{inspect(e.__struct__)}")
+      assign(socket, :task_history, [])
+  end
+
+  defp assign_task_history(socket), do: assign(socket, :task_history, [])
 
   # The task's own name, for the top of the edit form (`task_title_field/1`).
   defp assign_edit_title(
@@ -1082,7 +1104,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          true <- can_delete?(socket, fresh) do
       socket = cancel_autosave(socket)
 
-      case Projects.delete_assignment(fresh) do
+      case PhoenixKitProjects.Notices.removing(fresh, Activity.actor_uuid(socket), fn ->
+             Projects.delete_assignment(fresh)
+           end) do
         {:ok, _} ->
           log_subtask_act(socket, "projects.assignment_removed", fresh.uuid, %{
             "task" => Assignment.label(fresh)
@@ -1535,13 +1559,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     parent = socket.assigns.project
 
     # Re-resolved at save time, not trusted from the client: only a project
-    # the picker would offer this viewer right now may be nested.
-    eligible =
-      parent
-      |> nestable_projects(socket.assigns[:phoenix_kit_current_scope])
-      |> Enum.map(& &1.uuid)
+    # the picker would offer this viewer right now may be nested — the
+    # picker's own rule, asked for this one project.
+    eligible? =
+      case Projects.linkable_project(
+             parent,
+             socket.assigns[:phoenix_kit_current_scope],
+             child_uuid
+           ) do
+        nil -> false
+        project -> not Map.has_key?(MoveLock.reasons([project]), project.uuid)
+      end
 
-    if child_uuid in eligible do
+    if eligible? do
       do_link_existing_subproject(socket, parent, child_uuid)
     else
       {:noreply, put_flash(socket, :error, link_error_message(:not_available))}
@@ -2543,9 +2573,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         end
 
         apply_pending_labels(socket, updated)
+        told? = log_typed_changes(socket, socket.assigns.assignment, updated)
 
         socket
-        |> log_edit_once(updated)
+        |> log_edit_once(updated, told?)
         |> hold_saved(updated)
         |> assign(
           pending_params: nil,
@@ -2591,20 +2622,91 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     )
   end
 
+  # A status or a waiting-on changed through the form is its own line in the
+  # project's history (the page's buttons log theirs the same way); the
+  # generic "updated" row above says only that the form was used.
+  defp log_typed_changes(socket, %Assignment{} = was, %Assignment{} = now) do
+    base = [
+      actor_uuid: Activity.actor_uuid(socket),
+      resource_type: "assignment",
+      resource_uuid: now.uuid
+    ]
+
+    meta = %{"project" => socket.assigns.project.name, "project_uuid" => now.project_uuid}
+
+    status_action =
+      cond do
+        was.status == now.status -> nil
+        now.status == "done" -> "projects.assignment_completed"
+        was.status == "done" -> "projects.assignment_reopened"
+        now.status == "in_progress" -> "projects.assignment_started"
+        true -> "projects.assignment_reopened"
+      end
+
+    reassigned? = PhoenixKitProjects.Notices.reassigned(was, now, Activity.actor_uuid(socket))
+
+    # Handed on in the same save: the new people hear "gave you a task", not
+    # also that it started.
+    if status_action do
+      Activity.log(
+        status_action,
+        base ++
+          [
+            target_uuid: if(not reassigned?, do: Activity.assignee_target_uuid(now)),
+            tell: not reassigned?,
+            metadata: meta
+          ]
+      )
+    end
+
+    if blank_waiting(was.waiting_on) != blank_waiting(now.waiting_on) do
+      Activity.log(
+        "projects.assignment_waiting",
+        base ++ [metadata: Map.put(meta, "waiting_on", blank_waiting(now.waiting_on))]
+      )
+    end
+
+    # Whether the people were told of this save already: the generic
+    # "changed your task" row then tells nobody.
+    status_action != nil or reassigned?
+  end
+
+  defp log_typed_changes(_socket, _was, _now), do: false
+
+  defp blank_waiting(v) when is_binary(v) do
+    case String.trim(v) do
+      "" -> nil
+      t -> t
+    end
+  end
+
+  defp blank_waiting(_), do: nil
+
   # One line in the project's activity per visit to the form, not one per
   # pause in typing.
-  defp log_edit_once(%{assigns: %{edit_logged?: true}} = socket, _updated), do: socket
+  # The task's people hear "changed your task" once per visit too — from the
+  # first save that was not already news to them (a status change or a hand
+  # over tells them in its own words).
+  defp log_edit_once(
+         %{assigns: %{edit_logged?: true, edit_told?: true}} = socket,
+         _updated,
+         _told?
+       ),
+       do: socket
 
-  defp log_edit_once(socket, updated) do
+  defp log_edit_once(%{assigns: %{edit_logged?: true}} = socket, _updated, true), do: socket
+
+  defp log_edit_once(socket, updated, told?) do
     Activity.log("projects.assignment_updated",
       actor_uuid: Activity.actor_uuid(socket),
       resource_type: "assignment",
       resource_uuid: updated.uuid,
-      target_uuid: Activity.assignee_target_uuid(updated),
+      target_uuid: if(not told?, do: Activity.assignee_target_uuid(updated)),
+      tell: not told?,
       metadata: %{"project" => socket.assigns.project.name}
     )
 
-    assign(socket, :edit_logged?, true)
+    assign(socket, edit_logged?: true, edit_told?: not told?)
   end
 
   defp save_edit(socket, attrs) do
@@ -2625,11 +2727,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           attrs["description"] || (task_words && task_words["description"])
         )
 
+        told? = log_typed_changes(socket, socket.assigns.assignment, updated)
+
         Activity.log("projects.assignment_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: updated.uuid,
-          target_uuid: Activity.assignee_target_uuid(updated),
+          target_uuid: if(not told?, do: Activity.assignee_target_uuid(updated)),
+          tell: not told?,
           metadata: %{"project" => socket.assigns.project.name}
         )
 
@@ -3854,10 +3959,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
            Outside the form above (each has forms of its own), folded until
            asked for, and there only while the project's Discussions are on. --%>
       <div
-        :if={@live_action == :edit and @kind == "task" and @threads}
+        :if={@live_action == :edit and @kind == "task" and (@threads || @task_history != [])}
         id="assignment-threads"
         class="flex flex-col gap-3 mt-4 mb-16"
       >
+        <.accordion :if={@task_history != []} id={"assignment-history-#{@assignment.uuid}"} cue={true}>
+          <:title>
+            {gettext("History")}
+            <span class="ml-2 text-xs font-normal opacity-50">{length(@task_history)}</span>
+          </:title>
+          <:content>
+            <PhoenixKitProjects.Web.Components.HistoryFeed.history_feed
+              id={"task-history-#{@assignment.uuid}"}
+              entries={@task_history}
+              project={@project}
+              compact={true}
+            />
+          </:content>
+        </.accordion>
+        <%= if @threads do %>
         <.accordion id="assignment-discussion" cue={true}>
           <:title>
             {gettext("Discussion")}
@@ -3894,6 +4014,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             />
           </:content>
         </.accordion>
+        <% end %>
       </div>
       <% end %>
     </div>

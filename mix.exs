@@ -150,10 +150,11 @@ defmodule PhoenixKitProjects.MixProject do
       # form, so the ceiling stays open through every later 2.x minor (see
       # test/core_pin_conformance_test.exs).
       #
-      # 2.63.0 since the Hours page's pickers use `search_picker`'s `chosen`
-      # state (first shipped there); 2.54.0 before, for `<.table_default fit>`
-      # with the header cells' `priority` / `lead`; 2.49.0 before that.
-      pk_dep(:phoenix_kit, ">= 2.63.0 and < 3.0.0"),
+      # 2.64.0 for `Storage.direct_urls/1` (the Files page's links in a
+      # fixed number of reads); 2.63.0 before, for `search_picker`'s `chosen`
+      # state on the Hours page; 2.54.0 before that, for `<.table_default
+      # fit>` with the header cells' `priority` / `lead`; 2.49.0 before that.
+      pk_dep(:phoenix_kit, ">= 2.64.0 and < 3.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move
@@ -207,7 +208,7 @@ defmodule PhoenixKitProjects.MixProject do
       # `mix gettext.extract` / `mix gettext.merge` run against this app's
       # own `PhoenixKitProjects.Gettext` backend (call sites for project-
       # domain strings; common strings still resolve via core's backend).
-      {:gettext, "~> 0.26 or ~> 1.0"},
+      {:gettext, "~> 1.0"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},

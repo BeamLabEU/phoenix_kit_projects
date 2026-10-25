@@ -29,6 +29,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   @impl true
   def mount(:not_mounted_at_router, session, socket) do
     WebHelpers.maybe_put_locale(session)
+    WebHelpers.put_session_viewer_zone(session)
 
     project_uuid = session["project_uuid"]
     project = project_uuid && Projects.get_project(project_uuid)
@@ -43,8 +44,8 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
        project: project,
        current_user_uuid: session["current_user_uuid"],
        can_write: session["can_write"] == true,
-       anchor_date: Date.utc_today(),
-       today: Date.utc_today(),
+       anchor_date: L10n.local_date(DateTime.utc_now()),
+       today: L10n.local_date(DateTime.utc_now()),
        selected: nil,
        selected_item: nil,
        modal_open: false,
@@ -148,7 +149,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
              |> assign(
                modal_open: false,
                modal_date: nil,
-               anchor_date: DateTime.to_date(event.starts_at)
+               anchor_date: event_date(event, event.starts_at)
              )
              |> load_events()
              |> put_flash(:info, gettext("Event added."))}
@@ -194,7 +195,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
       project ->
         events = ProjectEvents.list_for_project(project.uuid)
         now = DateTime.utc_now()
-        today = Date.utc_today()
+        today = L10n.local_date(now)
         items = extension_items(project, socket.assigns.anchor_date, now)
 
         assign(socket,
@@ -249,9 +250,9 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   # A chip like a timed event's, in the extension's own colour; a cancelled
   # one stays on the grid, greyed and marked, so the day still explains itself.
   defp item_to_calendar_event(item) do
-    start_d = DateTime.to_date(item.starts_at)
-    end_d = Date.add(DateTime.to_date(Map.get(item, :ends_at) || item.starts_at), 1)
-    time = Calendar.strftime(item.starts_at, "%H:%M")
+    start_d = L10n.local_date(item.starts_at)
+    end_d = Date.add(L10n.local_date(Map.get(item, :ends_at) || item.starts_at), 1)
+    time = L10n.local_time(item.starts_at)
     cancelled = item_cancelled?(item)
 
     PhoenixLiveCalendar.event(item_id(item), start_d,
@@ -264,10 +265,10 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
 
   defp item_time_label(item) do
     start_label =
-      "#{L10n.format_date(item.starts_at)} #{Calendar.strftime(item.starts_at, "%H:%M")}"
+      "#{L10n.format_date(item.starts_at)} #{L10n.local_time(item.starts_at)}"
 
     case Map.get(item, :ends_at) do
-      %DateTime{} = ends_at -> "#{start_label} – #{Calendar.strftime(ends_at, "%H:%M")}"
+      %DateTime{} = ends_at -> "#{start_label} – #{L10n.local_time(ends_at)}"
       _ -> start_label
     end
   end
@@ -301,19 +302,19 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
   # HH:MM prefix — the Calendar-tab convention of keeping the month grid
   # all-day-honest.
   defp to_calendar_event(%ProjectEvent{} = e) do
-    start_d = DateTime.to_date(e.starts_at)
+    start_d = event_date(e, e.starts_at)
 
     end_d =
       case e.ends_at do
         nil -> Date.add(start_d, 1)
-        ends_at -> Date.add(DateTime.to_date(ends_at), 1)
+        ends_at -> Date.add(event_date(e, ends_at), 1)
       end
 
     title =
       if e.all_day do
         e.title
       else
-        "#{Calendar.strftime(e.starts_at, "%H:%M")} #{e.title}"
+        "#{L10n.local_time(e.starts_at)} #{e.title}"
       end
 
     PhoenixLiveCalendar.event(e.uuid, start_d,
@@ -375,11 +376,20 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
           end
         end
 
-      DateTime.new!(date, time, "Etc/UTC")
+      # An all-day moment is a calendar date, stored as UTC midnight and read
+      # back as that date; a timed one is what the viewer typed, where they are.
+      if all_day,
+        do: DateTime.new!(date, time, "Etc/UTC"),
+        else: L10n.from_wall(NaiveDateTime.new!(date, time))
     else
       _ -> nil
     end
   end
+
+  # The day an event's instant falls on: an all-day event's stored date as it
+  # is, a timed one's in the viewer's zone.
+  defp event_date(%ProjectEvent{all_day: true}, dt), do: DateTime.to_date(dt)
+  defp event_date(_event, dt), do: L10n.local_date(dt)
 
   defp blank_to_nil(v) when is_binary(v) do
     case String.trim(v) do
@@ -401,17 +411,20 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
 
   defp event_time_label(%ProjectEvent{all_day: true} = e) do
     case e.ends_at do
-      nil -> L10n.format_date(e.starts_at)
-      ends_at -> "#{L10n.format_date(e.starts_at)} – #{L10n.format_date(ends_at)}"
+      nil ->
+        L10n.format_date(DateTime.to_date(e.starts_at))
+
+      ends_at ->
+        "#{L10n.format_date(DateTime.to_date(e.starts_at))} – #{L10n.format_date(DateTime.to_date(ends_at))}"
     end
   end
 
   defp event_time_label(%ProjectEvent{} = e) do
-    start_label = "#{L10n.format_date(e.starts_at)} #{Calendar.strftime(e.starts_at, "%H:%M")}"
+    start_label = "#{L10n.format_date(e.starts_at)} #{L10n.local_time(e.starts_at)}"
 
     case e.ends_at do
       nil -> start_label
-      ends_at -> "#{start_label} – #{Calendar.strftime(ends_at, "%H:%M")}"
+      ends_at -> "#{start_label} – #{L10n.local_time(ends_at)}"
     end
   end
 
@@ -658,7 +671,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
                 type="time"
                 name="start_time"
                 value=""
-                label={gettext("Start time (UTC)")}
+                label={gettext("Start time")}
                 class="input-sm"
                 wrapper_class="flex-1"
               />
@@ -667,7 +680,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
                 type="time"
                 name="end_time"
                 value=""
-                label={gettext("End time (UTC)")}
+                label={gettext("End time")}
                 class="input-sm"
                 wrapper_class="flex-1"
               />

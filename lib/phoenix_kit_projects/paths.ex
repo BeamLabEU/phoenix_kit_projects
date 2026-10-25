@@ -107,6 +107,10 @@ defmodule PhoenixKitProjects.Paths do
   @doc "The Comments tab of a project."
   @spec project_comments(project_ref()) :: String.t()
   def project_comments(id), do: Routes.path("#{@base}/#{seg(id)}/comments")
+
+  @doc "A project's History tab."
+  @spec project_history(project_ref()) :: String.t()
+  def project_history(id), do: Routes.path("#{@base}/#{seg(id)}/history")
   @doc "A contributed extension tab of a project, by the tab's key (`\"whiteboards\"`)."
   @spec project_ext_tab(project_ref(), String.t()) :: String.t()
   def project_ext_tab(id, tab_key), do: Routes.path("#{@base}/#{seg(id)}/#{tab_key}")

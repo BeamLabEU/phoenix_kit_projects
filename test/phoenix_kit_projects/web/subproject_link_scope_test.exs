@@ -65,6 +65,25 @@ defmodule PhoenixKitProjects.Web.SubprojectLinkScopeTest do
            )
   end
 
+  test "a visible project is nested; the one-row check agrees with the picker", ctx do
+    assert Projects.linkable_project(ctx.parent, ctx.member, ctx.visible.uuid).uuid ==
+             ctx.visible.uuid
+
+    assert Projects.linkable_project(ctx.parent, ctx.member, ctx.hidden.uuid) == nil
+    assert Projects.linkable_project(ctx.parent, ctx.member, ctx.parent.uuid) == nil
+    assert Projects.linkable_project(ctx.parent, ctx.member, "not-a-uuid") == nil
+
+    {:ok, view, _html} =
+      live(ctx.conn, "/en/admin/projects/#{ctx.parent.uuid}/assignments/new?kind=subproject")
+
+    render_submit(view, "save_subproject", %{"link_child_uuid" => ctx.visible.uuid})
+
+    assert Enum.any?(
+             Projects.list_assignments(ctx.parent.uuid),
+             &(&1.child_project_uuid == ctx.visible.uuid)
+           )
+  end
+
   test "templates stay a shared library: template nesting is not narrowed", ctx do
     parent = fixture_project(%{"is_template" => "true", "name" => "T-parent"})
     other = fixture_project(%{"is_template" => "true", "name" => "T-child"})

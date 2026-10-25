@@ -183,19 +183,9 @@ defmodule PhoenixKitProjects.Web.ProjectMembersLive do
     |> Map.merge(role_names(Map.get(by_type, "role", [])))
   end
 
-  # Core has no batched role lookup; roles on a project are one or two, and
-  # one bad lookup must not blank the others.
   defp role_names(uuids) do
-    Map.new(uuids, fn uuid -> {{"role", uuid}, role_name(uuid)} end)
-  end
-
-  defp role_name(uuid) do
-    case Roles.get_role_by_uuid(uuid) do
-      %{name: name} -> name
-      _ -> nil
-    end
-  rescue
-    _ -> nil
+    names = Grants.role_names(uuids)
+    Map.new(uuids, fn uuid -> {{"role", uuid}, Map.get(names, uuid)} end)
   end
 
   # The options a grant can point at. Staff is optional, so a site without
