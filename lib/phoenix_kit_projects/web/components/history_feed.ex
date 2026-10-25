@@ -35,14 +35,14 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
             id={"#{@id}-#{e.id}"}
             class="flex gap-3 py-2 border-b border-base-200 last:border-b-0"
           >
-            <div class={["mt-0.5 shrink-0 rounded-full p-1.5", tone(e)]}>
+            <div class={["mt-0.5 shrink-0 self-start rounded-full p-1.5", tone(e)]}>
               <.icon name={icon_for(e)} class="w-4 h-4" />
             </div>
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-baseline gap-x-2">
                 <span class="text-sm">
                   <span :if={is_binary(e.actor) and e.auto != true and actor_first?(e)} class="font-medium">{e.actor}</span>
-                  {sentence(e)}
+                  {if @compact, do: compact_sentence(e), else: sentence(e)}
                   <.link
                     :if={e.task && not @compact}
                     navigate={Paths.task(@project, %{uuid: e.task.uuid})}
@@ -113,6 +113,60 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
       7 -> gettext("Sunday")
     end
   end
+
+  # ── One task's lines (the drawer): the task is implied, so no sentence
+  # may end waiting for its name. ──────────────────────────────────────
+
+  defp compact_sentence(%{kind: :comment} = e),
+    do: if(e[:reply], do: gettext("replied"), else: gettext("commented"))
+
+  defp compact_sentence(%{kind: :note}), do: gettext("wrote a note")
+
+  defp compact_sentence(%{kind: :time} = e),
+    do: gettext("logged %{time}", time: duration(e[:minutes]))
+
+  defp compact_sentence(%{kind: :activity} = e), do: compact_activity(e.action, e)
+
+  defp compact_activity("projects.assignment_created", _), do: gettext("added the task")
+
+  defp compact_activity("projects.assignment_started", %{auto: true}),
+    do: gettext("Work started under it")
+
+  defp compact_activity("projects.assignment_started", _), do: gettext("started")
+
+  defp compact_activity("projects.assignment_completed", %{auto: true}),
+    do: gettext("Everything under it is done")
+
+  defp compact_activity("projects.assignment_completed", _), do: gettext("finished")
+
+  defp compact_activity("projects.assignment_reopened", %{auto: true}),
+    do: gettext("Open again, because work under it was reopened")
+
+  defp compact_activity("projects.assignment_reopened", %{quote: q})
+       when is_binary(q) and q != "",
+       do: gettext("reopened it, because:")
+
+  defp compact_activity("projects.assignment_reopened", _), do: gettext("reopened")
+
+  defp compact_activity("projects.assignment_ready", %{meta: %{"resume" => true}}),
+    do: gettext("It can go on again")
+
+  defp compact_activity("projects.assignment_ready", _), do: gettext("It can start now")
+
+  defp compact_activity("projects.assignment_on_hold", _),
+    do: gettext("On hold, because work before it was reopened")
+
+  defp compact_activity(action, %{meta: %{"waiting_on" => w}})
+       when action in ["projects.assignment_waiting", "projects.assignment_updated"] and
+              is_binary(w) and w != "",
+       do: gettext("is waiting on “%{what}”", what: w)
+
+  defp compact_activity(action, %{meta: %{"waiting_on" => _}})
+       when action in ["projects.assignment_waiting", "projects.assignment_updated"],
+       do: gettext("is no longer waiting")
+
+  defp compact_activity("projects.assignment_removed", _), do: gettext("removed the task")
+  defp compact_activity(_action, _), do: gettext("changed it")
 
   # ── The sentence ────────────────────────────────────────────────────
   #

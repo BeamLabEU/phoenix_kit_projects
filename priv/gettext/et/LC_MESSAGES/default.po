@@ -8368,7 +8368,7 @@ msgstr "Kirjuta nimi või e-post…"
 msgid "You may not make API keys."
 msgstr "Sul pole lubatud API võtmeid teha."
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:228
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:282
 #, elixir-autogen, elixir-format
 msgid " — because:"
 msgstr " — põhjus:"
@@ -8433,17 +8433,17 @@ msgstr "%{actor} alustas sinu ülesannet „%{task}“"
 msgid "%{actor} updated %{project}"
 msgstr "%{actor} muutis projekti %{project}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:253
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:307
 #, elixir-autogen, elixir-format
 msgid "%{h} h"
 msgstr "%{h} h"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:254
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:308
 #, elixir-autogen, elixir-format
 msgid "%{h} h %{m} min"
 msgstr "%{h} h %{m} min"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:252
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:306
 #, elixir-autogen, elixir-format
 msgid "%{m} min"
 msgstr "%{m} min"
@@ -8465,7 +8465,7 @@ msgid_plural "%{count} lines"
 msgstr[0] "1 rida"
 msgstr[1] "%{count} rida"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:201
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:255
 #, elixir-autogen, elixir-format
 msgid "Can go on again:"
 msgstr "Saab jätkata:"
@@ -8480,7 +8480,7 @@ msgstr "Muudatused"
 msgid "Everything"
 msgstr "Kõik"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:181
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:235
 #, elixir-autogen, elixir-format
 msgid "Everything under it is done:"
 msgstr "Kõik selle all on tehtud:"
@@ -8522,7 +8522,7 @@ msgstr "Vanemaid ridu ei näidata: selle projekti ajalugu on väga pikk."
 msgid "On hold — waiting for %{tasks}"
 msgstr "Ootel — ootab: %{tasks}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:206
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:260
 #, elixir-autogen, elixir-format
 msgid "On hold, because work before it was reopened:"
 msgstr "Ootel, sest varasem töö avati uuesti:"
@@ -8532,12 +8532,12 @@ msgstr "Ootel, sest varasem töö avati uuesti:"
 msgid "On hold: “%{task}” — %{actor} reopened “%{after}”"
 msgstr "Ootel: „%{task}“ — %{actor} avas „%{after}“ uuesti"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:186
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:240
 #, elixir-autogen, elixir-format
 msgid "Open again, because work under it was reopened:"
 msgstr "Jälle avatud, sest selle all olev töö avati uuesti:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:203
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:257
 #, elixir-autogen, elixir-format
 msgid "Ready to start:"
 msgstr "Valmis alustamiseks:"
@@ -8562,12 +8562,12 @@ msgstr "Näita vanemaid"
 msgid "Sunday"
 msgstr "Pühapäev"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:152
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:206
 #, elixir-autogen, elixir-format
 msgid "The project is complete"
 msgstr "Projekt on valmis"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:153
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:207
 #, elixir-autogen, elixir-format
 msgid "The project is open again"
 msgstr "Projekt on jälle avatud"
@@ -8592,7 +8592,7 @@ msgstr "Kolmapäev"
 msgid "What is wrong or missing? Whoever works on it is told, with your words."
 msgstr "Mis on valesti või puudu? Tegijale saadetakse teade sinu sõnadega."
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:176
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:230
 #, elixir-autogen, elixir-format
 msgid "Work started under"
 msgstr "Töö algas ülesande all"
@@ -8619,82 +8619,82 @@ msgstr "Sinu kord: „%{task}“ võib alata"
 msgid "Your turn: “%{task}” — “%{after}” is done"
 msgstr "Sinu kord: „%{task}“ — „%{after}“ on tehtud"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:173
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:227
 #, elixir-autogen, elixir-format
 msgid "added"
 msgstr "lisas"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:164
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:218
 #, elixir-autogen, elixir-format
 msgid "added %{who} to the project"
 msgstr "lisas projekti: %{who}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:172
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:226
 #, elixir-autogen, elixir-format
 msgid "added a task"
 msgstr "lisas ülesande"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:218
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:272
 #, elixir-autogen, elixir-format
 msgid "added an event"
 msgstr "lisas sündmuse"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:158
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:212
 #, elixir-autogen, elixir-format
 msgid "archived the project"
 msgstr "arhiveeris projekti"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:161
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:215
 #, elixir-autogen, elixir-format
 msgid "brought the project back from the archive"
 msgstr "tõi projekti arhiivist tagasi"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:223
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:277
 #, elixir-autogen, elixir-format
 msgid "changed"
 msgstr "muutis"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:170
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:224
 #, elixir-autogen, elixir-format
 msgid "changed %{who}'s role"
 msgstr "muutis rolli: %{who}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:217
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:271
 #, elixir-autogen, elixir-format
 msgid "changed a sub-project"
 msgstr "muutis alamprojekti"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:219
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:273
 #, elixir-autogen, elixir-format
 msgid "changed an event"
 msgstr "muutis sündmust"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:212
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:266
 #, elixir-autogen, elixir-format
 msgid "changed the estimate of"
 msgstr "muutis hinnangut:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:222
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:276
 #, elixir-autogen, elixir-format
 msgid "changed the project"
 msgstr "muutis projekti"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:156
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:210
 #, elixir-autogen, elixir-format
 msgid "changed the project's settings"
 msgstr "muutis projekti seadeid"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:138
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:192
 #, elixir-autogen, elixir-format
 msgid "commented on"
 msgstr "kommenteeris:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:134
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:188
 #, elixir-autogen, elixir-format
 msgid "commented on the project"
 msgstr "kommenteeris projekti"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:150
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:204
 #, elixir-autogen, elixir-format
 msgid "created the project"
 msgstr "lõi projekti"
@@ -8704,121 +8704,126 @@ msgstr "lõi projekti"
 msgid "e.g. Wall A says 3420 but the plan says 3240 — please measure it again."
 msgstr "nt Sein A on 3420, aga plaanil 3240 — palun mõõda uuesti."
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:196
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:250
 #, elixir-autogen, elixir-format
 msgid "edited"
 msgstr "muutis"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:216
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:270
 #, elixir-autogen, elixir-format
 msgid "edited the task list"
 msgstr "muutis ülesannete nimekirja"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:183
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:140
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:237
 #, elixir-autogen, elixir-format
 msgid "finished"
 msgstr "lõpetas"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:195
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:249
 #, elixir-autogen, elixir-format
 msgid "is no longer waiting on"
 msgstr "ei oota enam:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:194
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:248
 #, elixir-autogen, elixir-format
 msgid "is waiting on “%{what}” for"
 msgstr "ootab „%{what}“ ülesande jaoks"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:144
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:126
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:198
 #, elixir-autogen, elixir-format
 msgid "logged %{time}"
 msgstr "märkis aega %{time}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:146
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:200
 #, elixir-autogen, elixir-format
 msgid "logged %{time} on"
 msgstr "märkis aega %{time}:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:167
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:221
 #, elixir-autogen, elixir-format
 msgid "removed %{who} from the project"
 msgstr "eemaldas projektist: %{who}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:215
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:269
 #, elixir-autogen, elixir-format
 msgid "removed a step before"
 msgstr "eemaldas eelneva sammu:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:220
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:274
 #, elixir-autogen, elixir-format
 msgid "removed an event"
 msgstr "eemaldas sündmuse"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:189
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:168
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:243
 #, elixir-autogen, elixir-format
 msgid "removed the task"
 msgstr "eemaldas ülesande"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:188
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:149
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:242
 #, elixir-autogen, elixir-format
 msgid "reopened"
 msgstr "avas uuesti"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:138
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:192
 #, elixir-autogen, elixir-format
 msgid "replied on"
 msgstr "vastas:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:133
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:187
 #, elixir-autogen, elixir-format
 msgid "replied on the project"
 msgstr "vastas projektis"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:221
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:275
 #, elixir-autogen, elixir-format
 msgid "set the project's health"
 msgstr "määras projekti seisundi"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:214
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:268
 #, elixir-autogen, elixir-format
 msgid "set what comes before"
 msgstr "määras eelneva sammu:"
 
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:71
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:75
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:164
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:167
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:170
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:218
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:221
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:224
 #, elixir-autogen, elixir-format
 msgid "someone"
 msgstr "keegi"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:178
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:135
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:232
 #, elixir-autogen, elixir-format
 msgid "started"
 msgstr "alustas"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:151
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:205
 #, elixir-autogen, elixir-format
 msgid "started the project"
 msgstr "alustas projekti"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:209
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:263
 #, elixir-autogen, elixir-format
 msgid "updated the progress of"
 msgstr "muutis edenemist:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:141
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:195
 #, elixir-autogen, elixir-format
 msgid "wrote a note on"
 msgstr "kirjutas märkme:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:140
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:194
 #, elixir-autogen, elixir-format
 msgid "wrote a project note"
 msgstr "kirjutas projekti märkme"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:232
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:286
 #, elixir-autogen, elixir-format
 msgid " and 1 more task"
 msgid_plural " and %{count} more tasks"
@@ -8831,3 +8836,73 @@ msgid "Your turn: “%{task}” and 1 more task — “%{after}” is done"
 msgid_plural "Your turn: “%{task}” and %{count} more tasks — “%{after}” is done"
 msgstr[0] "Sinu kord: „%{task}“ ja veel 1 ülesanne — „%{after}“ on tehtud"
 msgstr[1] "Sinu kord: „%{task}“ ja veel %{count} ülesannet — „%{after}“ on tehtud"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:138
+#, elixir-autogen, elixir-format
+msgid "Everything under it is done"
+msgstr "Kõik selle all on tehtud"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:152
+#, elixir-autogen, elixir-format
+msgid "It can go on again"
+msgstr "Saab jätkata"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:154
+#, elixir-autogen, elixir-format
+msgid "It can start now"
+msgstr "Võib alata"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:157
+#, elixir-autogen, elixir-format
+msgid "On hold, because work before it was reopened"
+msgstr "Ootel, sest varasem töö avati uuesti"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:143
+#, elixir-autogen, elixir-format
+msgid "Open again, because work under it was reopened"
+msgstr "Jälle avatud, sest selle all olev töö avati uuesti"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:133
+#, elixir-autogen, elixir-format
+msgid "Work started under it"
+msgstr "Selle all algas töö"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:130
+#, elixir-autogen, elixir-format
+msgid "added the task"
+msgstr "lisas ülesande"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:169
+#, elixir-autogen, elixir-format
+msgid "changed it"
+msgstr "muutis"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:121
+#, elixir-autogen, elixir-format
+msgid "commented"
+msgstr "kommenteeris"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:166
+#, elixir-autogen, elixir-format
+msgid "is no longer waiting"
+msgstr "ei oota enam"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:162
+#, elixir-autogen, elixir-format
+msgid "is waiting on “%{what}”"
+msgstr "ootab: „%{what}“"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:147
+#, elixir-autogen, elixir-format
+msgid "reopened it, because:"
+msgstr "avas uuesti, põhjus:"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:121
+#, elixir-autogen, elixir-format
+msgid "replied"
+msgstr "vastas"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:123
+#, elixir-autogen, elixir-format
+msgid "wrote a note"
+msgstr "kirjutas märkme"

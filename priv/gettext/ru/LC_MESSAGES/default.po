@@ -8394,7 +8394,7 @@ msgstr "Введите имя или e-mail…"
 msgid "You may not make API keys."
 msgstr "Вам нельзя создавать API-ключи."
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:228
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:282
 #, elixir-autogen, elixir-format
 msgid " — because:"
 msgstr " — причина:"
@@ -8459,17 +8459,17 @@ msgstr "%{actor} начал(а) вашу задачу «%{task}»"
 msgid "%{actor} updated %{project}"
 msgstr "%{actor} изменил(а) проект %{project}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:253
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:307
 #, elixir-autogen, elixir-format
 msgid "%{h} h"
 msgstr "%{h} ч"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:254
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:308
 #, elixir-autogen, elixir-format
 msgid "%{h} h %{m} min"
 msgstr "%{h} ч %{m} мин"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:252
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:306
 #, elixir-autogen, elixir-format
 msgid "%{m} min"
 msgstr "%{m} мин"
@@ -8492,7 +8492,7 @@ msgstr[0] "%{count} строка"
 msgstr[1] "%{count} строки"
 msgstr[2] "%{count} строк"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:201
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:255
 #, elixir-autogen, elixir-format
 msgid "Can go on again:"
 msgstr "Можно продолжать:"
@@ -8507,7 +8507,7 @@ msgstr "Изменения"
 msgid "Everything"
 msgstr "Всё"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:181
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:235
 #, elixir-autogen, elixir-format
 msgid "Everything under it is done:"
 msgstr "Всё, что внутри, выполнено:"
@@ -8549,7 +8549,7 @@ msgstr "Более старые строки не показаны: истори
 msgid "On hold — waiting for %{tasks}"
 msgstr "Приостановлено — ждёт: %{tasks}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:206
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:260
 #, elixir-autogen, elixir-format
 msgid "On hold, because work before it was reopened:"
 msgstr "Приостановлено, потому что предыдущая работа снова открыта:"
@@ -8559,12 +8559,12 @@ msgstr "Приостановлено, потому что предыдущая �
 msgid "On hold: “%{task}” — %{actor} reopened “%{after}”"
 msgstr "Приостановлено: «%{task}» — %{actor} снова открыл(а) «%{after}»"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:186
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:240
 #, elixir-autogen, elixir-format
 msgid "Open again, because work under it was reopened:"
 msgstr "Снова открыто, потому что работа внутри снова открыта:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:203
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:257
 #, elixir-autogen, elixir-format
 msgid "Ready to start:"
 msgstr "Можно начинать:"
@@ -8589,12 +8589,12 @@ msgstr "Показать более ранние"
 msgid "Sunday"
 msgstr "Воскресенье"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:152
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:206
 #, elixir-autogen, elixir-format
 msgid "The project is complete"
 msgstr "Проект завершён"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:153
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:207
 #, elixir-autogen, elixir-format
 msgid "The project is open again"
 msgstr "Проект снова открыт"
@@ -8619,7 +8619,7 @@ msgstr "Среда"
 msgid "What is wrong or missing? Whoever works on it is told, with your words."
 msgstr "Что не так или чего не хватает? Исполнитель получит уведомление с вашими словами."
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:176
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:230
 #, elixir-autogen, elixir-format
 msgid "Work started under"
 msgstr "Начата работа внутри"
@@ -8647,82 +8647,82 @@ msgstr "Ваша очередь: можно начинать «%{task}»"
 msgid "Your turn: “%{task}” — “%{after}” is done"
 msgstr "Ваша очередь: «%{task}» — «%{after}» выполнено"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:173
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:227
 #, elixir-autogen, elixir-format
 msgid "added"
 msgstr "добавил(а)"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:164
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:218
 #, elixir-autogen, elixir-format
 msgid "added %{who} to the project"
 msgstr "добавил(а) в проект: %{who}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:172
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:226
 #, elixir-autogen, elixir-format
 msgid "added a task"
 msgstr "добавил(а) задачу"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:218
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:272
 #, elixir-autogen, elixir-format
 msgid "added an event"
 msgstr "добавил(а) событие"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:158
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:212
 #, elixir-autogen, elixir-format
 msgid "archived the project"
 msgstr "архивировал(а) проект"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:161
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:215
 #, elixir-autogen, elixir-format
 msgid "brought the project back from the archive"
 msgstr "вернул(а) проект из архива"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:223
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:277
 #, elixir-autogen, elixir-format
 msgid "changed"
 msgstr "изменил(а)"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:170
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:224
 #, elixir-autogen, elixir-format
 msgid "changed %{who}'s role"
 msgstr "изменил(а) роль: %{who}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:217
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:271
 #, elixir-autogen, elixir-format
 msgid "changed a sub-project"
 msgstr "изменил(а) подпроект"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:219
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:273
 #, elixir-autogen, elixir-format
 msgid "changed an event"
 msgstr "изменил(а) событие"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:212
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:266
 #, elixir-autogen, elixir-format
 msgid "changed the estimate of"
 msgstr "изменил(а) оценку:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:222
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:276
 #, elixir-autogen, elixir-format
 msgid "changed the project"
 msgstr "изменил(а) проект"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:156
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:210
 #, elixir-autogen, elixir-format
 msgid "changed the project's settings"
 msgstr "изменил(а) настройки проекта"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:138
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:192
 #, elixir-autogen, elixir-format
 msgid "commented on"
 msgstr "прокомментировал(а):"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:134
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:188
 #, elixir-autogen, elixir-format
 msgid "commented on the project"
 msgstr "прокомментировал(а) проект"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:150
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:204
 #, elixir-autogen, elixir-format
 msgid "created the project"
 msgstr "создал(а) проект"
@@ -8732,121 +8732,126 @@ msgstr "создал(а) проект"
 msgid "e.g. Wall A says 3420 but the plan says 3240 — please measure it again."
 msgstr "напр. Стена A — 3420, а на плане 3240 — пожалуйста, перемерьте."
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:196
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:250
 #, elixir-autogen, elixir-format
 msgid "edited"
 msgstr "изменил(а)"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:216
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:270
 #, elixir-autogen, elixir-format
 msgid "edited the task list"
 msgstr "изменил(а) список задач"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:183
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:140
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:237
 #, elixir-autogen, elixir-format
 msgid "finished"
 msgstr "завершил(а)"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:195
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:249
 #, elixir-autogen, elixir-format
 msgid "is no longer waiting on"
 msgstr "больше не ждёт:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:194
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:248
 #, elixir-autogen, elixir-format
 msgid "is waiting on “%{what}” for"
 msgstr "ждёт «%{what}» для"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:144
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:126
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:198
 #, elixir-autogen, elixir-format
 msgid "logged %{time}"
 msgstr "записал(а) %{time}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:146
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:200
 #, elixir-autogen, elixir-format
 msgid "logged %{time} on"
 msgstr "записал(а) %{time} на"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:167
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:221
 #, elixir-autogen, elixir-format
 msgid "removed %{who} from the project"
 msgstr "удалил(а) из проекта: %{who}"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:215
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:269
 #, elixir-autogen, elixir-format
 msgid "removed a step before"
 msgstr "убрал(а) предыдущий шаг:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:220
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:274
 #, elixir-autogen, elixir-format
 msgid "removed an event"
 msgstr "удалил(а) событие"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:189
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:168
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:243
 #, elixir-autogen, elixir-format
 msgid "removed the task"
 msgstr "удалил(а) задачу"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:188
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:149
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:242
 #, elixir-autogen, elixir-format
 msgid "reopened"
 msgstr "снова открыл(а)"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:138
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:192
 #, elixir-autogen, elixir-format
 msgid "replied on"
 msgstr "ответил(а):"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:133
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:187
 #, elixir-autogen, elixir-format
 msgid "replied on the project"
 msgstr "ответил(а) в проекте"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:221
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:275
 #, elixir-autogen, elixir-format
 msgid "set the project's health"
 msgstr "отметил(а) состояние проекта"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:214
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:268
 #, elixir-autogen, elixir-format
 msgid "set what comes before"
 msgstr "задал(а) предыдущий шаг:"
 
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:71
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:75
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:164
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:167
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:170
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:218
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:221
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:224
 #, elixir-autogen, elixir-format
 msgid "someone"
 msgstr "кто-то"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:178
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:135
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:232
 #, elixir-autogen, elixir-format
 msgid "started"
 msgstr "начал(а)"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:151
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:205
 #, elixir-autogen, elixir-format
 msgid "started the project"
 msgstr "начал(а) проект"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:209
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:263
 #, elixir-autogen, elixir-format
 msgid "updated the progress of"
 msgstr "обновил(а) прогресс:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:141
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:195
 #, elixir-autogen, elixir-format
 msgid "wrote a note on"
 msgstr "написал(а) заметку:"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:140
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:194
 #, elixir-autogen, elixir-format
 msgid "wrote a project note"
 msgstr "написал(а) заметку проекта"
 
-#: lib/phoenix_kit_projects/web/components/history_feed.ex:232
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:286
 #, elixir-autogen, elixir-format
 msgid " and 1 more task"
 msgid_plural " and %{count} more tasks"
@@ -8861,3 +8866,73 @@ msgid_plural "Your turn: “%{task}” and %{count} more tasks — “%{after}�
 msgstr[0] "Ваша очередь: «%{task}» и ещё %{count} задача — «%{after}» выполнено"
 msgstr[1] "Ваша очередь: «%{task}» и ещё %{count} задачи — «%{after}» выполнено"
 msgstr[2] "Ваша очередь: «%{task}» и ещё %{count} задач — «%{after}» выполнено"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:138
+#, elixir-autogen, elixir-format
+msgid "Everything under it is done"
+msgstr "Всё, что внутри, выполнено"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:152
+#, elixir-autogen, elixir-format
+msgid "It can go on again"
+msgstr "Можно продолжать"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:154
+#, elixir-autogen, elixir-format
+msgid "It can start now"
+msgstr "Можно начинать"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:157
+#, elixir-autogen, elixir-format
+msgid "On hold, because work before it was reopened"
+msgstr "Приостановлено, потому что предыдущая работа снова открыта"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:143
+#, elixir-autogen, elixir-format
+msgid "Open again, because work under it was reopened"
+msgstr "Снова открыто, потому что работа внутри снова открыта"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:133
+#, elixir-autogen, elixir-format
+msgid "Work started under it"
+msgstr "Внутри началась работа"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:130
+#, elixir-autogen, elixir-format
+msgid "added the task"
+msgstr "добавил(а) задачу"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:169
+#, elixir-autogen, elixir-format
+msgid "changed it"
+msgstr "изменил(а)"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:121
+#, elixir-autogen, elixir-format
+msgid "commented"
+msgstr "прокомментировал(а)"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:166
+#, elixir-autogen, elixir-format
+msgid "is no longer waiting"
+msgstr "больше не ждёт"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:162
+#, elixir-autogen, elixir-format
+msgid "is waiting on “%{what}”"
+msgstr "ждёт: «%{what}»"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:147
+#, elixir-autogen, elixir-format
+msgid "reopened it, because:"
+msgstr "снова открыл(а), причина:"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:121
+#, elixir-autogen, elixir-format
+msgid "replied"
+msgstr "ответил(а)"
+
+#: lib/phoenix_kit_projects/web/components/history_feed.ex:123
+#, elixir-autogen, elixir-format
+msgid "wrote a note"
+msgstr "написал(а) заметку"
