@@ -108,6 +108,11 @@ defmodule PhoenixKitProjects.History do
   # the comment or time entry that came with it.
   defp order(%{kind: :activity, action: action}) when action in @notice_actions, do: 4
   defp order(%{kind: :activity, auto: true}), do: 3
+
+  defp order(%{kind: :activity, action: action})
+       when action in ["projects.project_completed", "projects.project_reopened"],
+       do: 3
+
   defp order(%{kind: :activity}), do: 2
   defp order(%{kind: :comment}), do: 1
   defp order(_), do: 0
