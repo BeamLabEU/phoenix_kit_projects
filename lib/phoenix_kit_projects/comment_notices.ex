@@ -13,9 +13,10 @@ defmodule PhoenixKitProjects.CommentNotices do
   Told, each once, never the author:
 
     * a task comment — the task's assignee (a team or department: its
-      people), and everyone who commented on that task before;
+      people), and everyone who commented on that task before and may still
+      open the project;
     * a project comment — the project's owners and managers, and everyone
-      who commented on the project before.
+      who commented on the project before and may still open it.
 
   People @-mentioned in the text are left out: core's mention ping
   (`PhoenixKit.Mentions.notify/2`) already told them. A comment written as
@@ -31,8 +32,10 @@ defmodule PhoenixKitProjects.CommentNotices do
 
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.RepoHelper
+  alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitComments.Comment
-  alias PhoenixKitProjects.{Members, Notices, People, Projects, ResourceLinks}
+  alias PhoenixKitProjects.{Authz, Members, Notices, People, Projects, ResourceLinks}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @impl true
@@ -89,7 +92,7 @@ defmodule PhoenixKitProjects.CommentNotices do
         do: MapSet.new(People.assignee_user_uuids(subject)),
         else: MapSet.new()
 
-    (own_people(type, subject) ++ earlier_commenters(type, subject.uuid))
+    (own_people(type, subject) ++ earlier_commenters(type, subject))
     |> Enum.uniq()
     |> Enum.reject(
       &(&1 == comment.user_uuid or MapSet.member?(mentioned, &1) or
@@ -109,13 +112,34 @@ defmodule PhoenixKitProjects.CommentNotices do
   defp reopen_reason?(%Comment{metadata: %{"reopen_reason" => true}}), do: true
   defp reopen_reason?(_), do: false
 
-  defp earlier_commenters(type, uuid) do
+  # Everyone who commented on the thread before — and may still open the
+  # project: a member who was removed, or whose role lost the module, must
+  # not keep receiving the thread's words in their bell.
+  defp earlier_commenters(type, subject) do
+    project = project_of(subject)
+
     from(c in Comment,
-      where: c.resource_type == ^type and c.resource_uuid == ^uuid and c.status == "published",
+      where:
+        c.resource_type == ^type and c.resource_uuid == ^subject.uuid and c.status == "published",
       select: c.user_uuid,
       distinct: true
     )
     |> RepoHelper.repo().all()
     |> Enum.reject(&is_nil/1)
+    |> Enum.filter(&may_view?(&1, project))
+  end
+
+  defp project_of(%Project{} = p), do: p
+  defp project_of(%Assignment{project: %Project{} = p}), do: p
+  defp project_of(%Assignment{project_uuid: uuid}), do: Projects.get_project(uuid)
+
+  defp may_view?(_user_uuid, nil), do: false
+
+  defp may_view?(user_uuid, project) do
+    case Auth.get_user(user_uuid) do
+      %{is_active: false} -> false
+      %{} = user -> Authz.can?(Scope.for_user(user), project, :view)
+      _ -> false
+    end
   end
 end

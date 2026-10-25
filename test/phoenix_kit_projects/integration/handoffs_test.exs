@@ -21,6 +21,9 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
     people = Map.new(~w(alice bob carl dave)a, &{&1, person!(&1)})
     project = fixture_project(%{"start_mode" => "immediate"})
 
+    for {_, p} <- people,
+        do: {:ok, _} = PhoenixKitProjects.Members.add_member(project, p.user, role: "member")
+
     %{people: people, project: project}
   end
 
@@ -110,6 +113,26 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert notice.metadata["notification_text"] =~ "Your turn"
       assert notice.metadata["notification_text"] =~ "3D model"
       assert notice.metadata["notification_link"] =~ "task="
+    end
+
+    test "the line is written in the reader's language, not the sender's", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+
+      Repo.update_all(
+        from(u in PhoenixKit.Users.Auth.User, where: u.uuid == ^bob.user),
+        set: [custom_fields: %{"preferred_locale" => "et"}]
+      )
+
+      measure = task!(ctx.project, "Measure the room", alice)
+      model = task!(ctx.project, "3D model", bob)
+      {:ok, _} = Projects.add_dependency(model.uuid, measure.uuid)
+
+      Gettext.with_locale("en", fn -> set_status!(measure, "done", alice.user) end)
+
+      assert [notice] = notices("projects.assignment_ready", bob.user)
+      assert notice.metadata["notification_text"] =~ "Sinu kord"
+      # The sender's own process keeps its language.
+      assert Gettext.get_locale() == "en"
     end
 
     test "nobody is told about their own hand-off", ctx do
@@ -292,6 +315,26 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       first = Enum.find(entries, &(&1.kind == :comment and &1.quote == "Wall A does not add up."))
       assert Enum.map(first.told, & &1.uuid) == [bob.user]
       refute Enum.any?(entries, &(&1[:action] == "projects.comment_added"))
+    end
+
+    test "someone who commented and has since left the project is not told", ctx do
+      %{alice: alice, bob: bob, carl: carl} = ctx.people
+      model = task!(ctx.project, "Model", bob)
+
+      {:ok, _} =
+        PhoenixKitComments.create_comment("assignment", model.uuid, carl.user, %{
+          content: "First."
+        })
+
+      {:ok, _} = PhoenixKitProjects.Members.remove_member(ctx.project.uuid, carl.user)
+
+      {:ok, _} =
+        PhoenixKitComments.create_comment("assignment", model.uuid, alice.user, %{
+          content: "Second."
+        })
+
+      assert notices("projects.comment_added", carl.user) == []
+      assert [_ | _] = notices("projects.comment_added", bob.user)
     end
 
     test "a reopen's reason does not tell the assignee twice", ctx do
