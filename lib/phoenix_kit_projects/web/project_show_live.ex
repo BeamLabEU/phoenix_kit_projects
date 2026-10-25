@@ -717,10 +717,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # refreshed child task list so a change in the child reflects immediately.
     subproject_summaries = load_subproject_summaries(assignments)
 
-    # One grouped read for every expanded child (it was one per child, on
-    # every refresh) — the child's own descendants come along, unused here.
+    # One read for every expanded child's own rows (it was one per child,
+    # on every refresh); what is nested under them is not shown here.
     child_assignments =
-      Projects.assignments_by_project(Enum.map(expanded_subs, & &1.child_project_uuid))
+      Projects.assignments_by_project(Enum.map(expanded_subs, & &1.child_project_uuid),
+        depth: 1
+      )
 
     subproject_child_tasks =
       Map.new(expanded_subs, fn a ->

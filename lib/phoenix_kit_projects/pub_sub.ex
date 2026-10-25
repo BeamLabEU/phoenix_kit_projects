@@ -57,6 +57,70 @@ defmodule PhoenixKitProjects.PubSub do
   @spec topic_project(binary()) :: String.t()
   def topic_project(uuid), do: "projects:project:#{uuid}"
 
+  @deferred :projects_pubsub_after_commit
+
+  @doc """
+  Runs `fun` in one transaction and holds every broadcast made inside it
+  until the transaction commits; a rollback drops them, so no page reloads
+  for a change that never happened, nor before the change is visible.
+  `fun` returns `{:ok, value}` or `{:error, reason}` (which rolls back);
+  the answer is the transaction's. Inside another `after_commit/1` it
+  joins the outer one.
+  """
+  @spec after_commit((-> {:ok, term()} | {:error, term()})) :: {:ok, term()} | {:error, term()}
+  def after_commit(fun) when is_function(fun, 0) do
+    repo = PhoenixKit.RepoHelper.repo()
+    outer = Process.get(@deferred)
+    Process.put(@deferred, [])
+
+    result =
+      try do
+        repo.transaction(fn ->
+          case fun.() do
+            {:ok, value} -> value
+            {:error, reason} -> repo.rollback(reason)
+          end
+        end)
+      catch
+        kind, reason ->
+          restore_deferred(outer)
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+
+    held = Process.get(@deferred, [])
+    restore_deferred(outer)
+
+    cond do
+      not match?({:ok, _}, result) ->
+        :ok
+
+      is_list(outer) ->
+        Process.put(@deferred, held ++ outer)
+
+      true ->
+        held
+        |> Enum.reverse()
+        |> Enum.uniq()
+        |> Enum.each(fn {t, m} -> Manager.broadcast(t, m) end)
+    end
+
+    result
+  end
+
+  defp restore_deferred(nil), do: Process.delete(@deferred)
+  defp restore_deferred(outer), do: Process.put(@deferred, outer)
+
+  defp send_msg(topic, msg) do
+    case Process.get(@deferred) do
+      held when is_list(held) ->
+        Process.put(@deferred, [{topic, msg} | held])
+        :ok
+
+      _ ->
+        Manager.broadcast(topic, msg)
+    end
+  end
+
   @doc "Subscribes the calling process to the given PubSub topic."
   @spec subscribe(String.t()) :: :ok | {:error, term()}
   def subscribe(topic), do: Manager.subscribe(topic)
@@ -65,15 +129,15 @@ defmodule PhoenixKitProjects.PubSub do
   @spec broadcast_project(atom(), map()) :: :ok | {:error, term()}
   def broadcast_project(event, %{uuid: uuid, is_template: true} = payload) do
     msg = {:projects, event, payload}
-    Manager.broadcast(topic_all(), msg)
-    Manager.broadcast(topic_templates(), msg)
-    Manager.broadcast(topic_project(uuid), msg)
+    send_msg(topic_all(), msg)
+    send_msg(topic_templates(), msg)
+    send_msg(topic_project(uuid), msg)
   end
 
   def broadcast_project(event, %{uuid: uuid} = payload) do
     msg = {:projects, event, payload}
-    Manager.broadcast(topic_all(), msg)
-    Manager.broadcast(topic_project(uuid), msg)
+    send_msg(topic_all(), msg)
+    send_msg(topic_project(uuid), msg)
   end
 
   @doc """
@@ -83,30 +147,30 @@ defmodule PhoenixKitProjects.PubSub do
   """
   @spec broadcast_to_project(binary(), atom(), map()) :: :ok | {:error, term()}
   def broadcast_to_project(project_uuid, event, payload) when is_binary(project_uuid),
-    do: Manager.broadcast(topic_project(project_uuid), {:projects, event, payload})
+    do: send_msg(topic_project(project_uuid), {:projects, event, payload})
 
   @doc "Broadcasts a task-library event to the all-projects and tasks topics."
   @spec broadcast_task(atom(), map()) :: :ok | {:error, term()}
   def broadcast_task(event, %{uuid: _uuid} = payload) do
     msg = {:projects, event, payload}
-    Manager.broadcast(topic_all(), msg)
-    Manager.broadcast(topic_tasks(), msg)
+    send_msg(topic_all(), msg)
+    send_msg(topic_tasks(), msg)
   end
 
   @doc "Broadcasts an assignment event to the all-projects and the parent project's topic."
   @spec broadcast_assignment(atom(), map()) :: :ok | {:error, term()}
   def broadcast_assignment(event, %{project_uuid: project_uuid} = payload) do
     msg = {:projects, event, payload}
-    Manager.broadcast(topic_all(), msg)
-    Manager.broadcast(topic_project(project_uuid), msg)
+    send_msg(topic_all(), msg)
+    send_msg(topic_project(project_uuid), msg)
   end
 
   @doc "Broadcasts a dependency event to the all-projects and the parent project's topic."
   @spec broadcast_dependency(atom(), map()) :: :ok | {:error, term()}
   def broadcast_dependency(event, %{project_uuid: project_uuid} = payload) do
     msg = {:projects, event, payload}
-    Manager.broadcast(topic_all(), msg)
-    Manager.broadcast(topic_project(project_uuid), msg)
+    send_msg(topic_all(), msg)
+    send_msg(topic_project(project_uuid), msg)
   end
 
   @doc """

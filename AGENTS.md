@@ -11,8 +11,9 @@ dependency chains within a project, sub-projects, workflow statuses, a
 per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
-- **Depends on:** `phoenix_kit` `>= 2.54.0 and < 3.0.0` (Hex — the release
-  that carries `<.table_default fit>`'s column fitting, on top of `activity_list/1`, `Storage.ResourceFolders`,
+- **Depends on:** `phoenix_kit` `>= 2.64.0 and < 3.0.0` (Hex — the release
+  that carries `Storage.direct_urls/1`, on top of `<.table_default fit>`'s
+  column fitting, `activity_list/1`, `Storage.ResourceFolders`,
   `PhoenixKitWeb.Actor`, `Activity.log/3`, `TableColumns` and the
   `form_actions` / `bulk_actions_toolbar` / `form_section` attrs and slots
   the LiveViews use; the compound form keeps the ceiling open across later 2.x
@@ -264,8 +265,7 @@ Repo-local aliases:
   statements too, so assert N-independence, never an exact count. Known and
   left (low weight, one-off or a handful of rows): `Web.Crumbs`' per-ancestor
   `Authz.can?` for non-admins, `PortalLinks`' per-slug `Portal.resolve/2` in
-  comment rendering, `Grants.subject_reach("role", …)` per role (core has no
-  batched form).
+  comment rendering.
 - **Embedding: identity ≠ authorization.** The `permission: "projects"` gate
   lives in core's `:phoenix_kit_ensure_admin` `on_mount`, which runs only for
   router-mounted admin pages — never for an off-router `live_render`. Embedded
@@ -1387,12 +1387,7 @@ The three tables a host app depends on. Full prose in
 | `"pubsub_topic"` | all | **Required** when `mode` is `"emit"` or `"popup"` |
 | `"frame_ref"` | all | Race-safe pop identity, inherited from PopupHost |
 | `"close_on"` | all | Subset of `["closed", "saved", "deleted"]`; defaults `["closed"]` |
-| `"project_uuid"` | contributed extension tabs | The project being viewed. Takes the place of `"id"` for a contributed tab — the only key it needs |
-| `"ext_key"` | contributed extension tabs | The `key` of the extension entry that contributed the tab |
-| `"instance_key"` | contributed extension tabs | Which enablement row this render is; always `"default"` |
-| `"config"` | contributed extension tabs | The project's stored values for the extension's `config_schema`; `%{}` when none |
-| `"can_write"` | contributed extension tabs | Boolean the hub resolved for the viewer against the extension's write action (its first `permission_actions` entry other than `:view`); `false` when it declares none or the viewer is unidentified. The tab's only write authorization — it has no scope |
-| `"host_paths"` | contributed extension tabs | `%{"new_task" => path}` — where the hub's own pages are, so a tab (the CRM's "add a task from this meeting") can send someone there without naming this module's routes |
+| (their own session) | contributed extension tabs | Listed once, in `PhoenixKitProjects.Extensions.Extension`'s moduledoc ("Contributed tab LVs …with this session"); `ext_tab_session_test.exs` holds the hub's `live_render` to that list |
 
 Emit-mode event vocabulary (UI-intent verbs, deliberately disjoint from
 `PhoenixKitProjects.PubSub`'s content verbs so `handle_info` clauses never

@@ -150,10 +150,9 @@ defmodule PhoenixKitProjects.MixProject do
       # form, so the ceiling stays open through every later 2.x minor (see
       # test/core_pin_conformance_test.exs).
       #
-      # 2.54.0 since the list pages use `<.table_default fit>` with the
-      # header cells' `priority` / `lead` as declared (the column fitting
-      # first shipped there); 2.49.0 was the floor before.
-      pk_dep(:phoenix_kit, ">= 2.54.0 and < 3.0.0"),
+      # 2.64.0 for `Storage.direct_urls/1` (the Files page's links in a
+      # fixed number of reads); 2.54.0 before, for `<.table_default fit>`.
+      pk_dep(:phoenix_kit, ">= 2.64.0 and < 3.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move

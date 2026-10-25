@@ -17,11 +17,11 @@ expected to fail against the fixed code.
   **Fixed** in `3621023`. `TasksController.do_update/3` runs `precheck/3`
   (`lib/phoenix_kit_projects/web/api/tasks_controller.ex:370`, `:717-728`),
   which builds the task and assignment changesets and refuses an invalid one
-  before anything is written. Still true: the writes after it (`reparent`,
-  `update_content`, `update_fields`, labels, interaction, `:371-377`) run one
-  at a time outside a transaction, so a failure the changesets cannot see
-  (a database constraint) leaves the earlier writes; wrapping them in one
-  transaction, with activity and broadcasts after the commit, would close it.
+  before anything is written. The writes after it now run in one
+  transaction (`write_update/1`, this sweep): a failure the changesets
+  cannot see rolls them all back, the pages hear of the change only once it
+  commits (`PubSub.after_commit/1`) and the people it concerns only then
+  (the hand-off batch, dropped on a rollback — `after_commit_test.exs`).
 - **BUG - MEDIUM: accepted durations can break the parent rollup silently** —
   **Fixed** in `3621023`. A task over `@max_task_minutes` (about eleven
   years, `tasks_controller.ex:54`) is a 422; `build_child_rollup/2` clamps

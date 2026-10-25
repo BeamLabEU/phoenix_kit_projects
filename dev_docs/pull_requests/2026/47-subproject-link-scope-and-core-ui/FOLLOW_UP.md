@@ -16,8 +16,8 @@ How each finding in `CLAUDE_REVIEW.md` stands against the current code.
   **Fixed** in `fcd140d` (events, members, modules, whiteboards and show
   LiveViews; whitespace only).
 - **NITPICK: the save-time eligibility check loads every candidate** —
-  **Open.** `link_existing_subproject/2`
-  (`lib/phoenix_kit_projects/web/assignment_form_live.ex:1556-1566`) still
-  builds the whole `nestable_projects/2` list to test one uuid. A targeted
-  check would need the picker's filter as one shared query (so the two cannot
-  drift), with `nestable_projects/2` and the check both built on it.
+  **Fixed in this sweep.** The picker's filter is one query builder
+  (`Projects.link_candidates/2`); `available_projects_to_link/2` lists it and
+  `Projects.linkable_project/3` asks it for the one picked uuid, which
+  `link_existing_subproject/2` checks with the move lock
+  (`subproject_link_scope_test.exs`).

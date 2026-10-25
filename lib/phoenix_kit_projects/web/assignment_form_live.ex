@@ -1557,13 +1557,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     parent = socket.assigns.project
 
     # Re-resolved at save time, not trusted from the client: only a project
-    # the picker would offer this viewer right now may be nested.
-    eligible =
-      parent
-      |> nestable_projects(socket.assigns[:phoenix_kit_current_scope])
-      |> Enum.map(& &1.uuid)
+    # the picker would offer this viewer right now may be nested — the
+    # picker's own rule, asked for this one project.
+    eligible? =
+      case Projects.linkable_project(
+             parent,
+             socket.assigns[:phoenix_kit_current_scope],
+             child_uuid
+           ) do
+        nil -> false
+        project -> not Map.has_key?(MoveLock.reasons([project]), project.uuid)
+      end
 
-    if child_uuid in eligible do
+    if eligible? do
       do_link_existing_subproject(socket, parent, child_uuid)
     else
       {:noreply, put_flash(socket, :error, link_error_message(:not_available))}

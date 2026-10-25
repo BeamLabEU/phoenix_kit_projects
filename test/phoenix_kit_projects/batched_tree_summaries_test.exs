@@ -182,6 +182,19 @@ defmodule PhoenixKitProjects.BatchedTreeSummariesTest do
       [link] = Enum.filter(root_rows, & &1.child_project_uuid)
       assert Map.has_key?(by_project, link.child_project_uuid)
     end
+
+    test "depth: 1 reads the given projects' own rows only, in one statement" do
+      root = forest_root("D")
+
+      {own, queries} =
+        count_queries(fn -> Projects.assignments_by_project([root.uuid], depth: 1) end)
+
+      assert Map.keys(own) == [root.uuid]
+      assert length(own[root.uuid]) == 3
+
+      {_, full} = count_queries(fn -> Projects.assignments_by_project([root.uuid]) end)
+      assert queries < full
+    end
   end
 
   describe "ScheduleLayout.trees/1" do

@@ -2990,10 +2990,14 @@ defmodule PhoenixKitProjects.Projects do
   #{@max_subproject_depth} levels). A project with no rows maps to `[]`.
   The batched base the tree summaries and `ScheduleLayout.trees/1` read
   from, so a dashboard of N projects costs O(depth) queries, not O(nodes).
+
+  `depth: 1` reads the given projects' own rows only (one statement) — for
+  a caller that shows a project's tasks and not what is nested under them.
   """
-  @spec assignments_by_project([uuid()]) :: %{uuid() => [Assignment.t()]}
-  def assignments_by_project(project_uuids) when is_list(project_uuids) do
-    load_forest(Enum.uniq(project_uuids), %{}, @max_subproject_depth)
+  @spec assignments_by_project([uuid()], keyword()) :: %{uuid() => [Assignment.t()]}
+  def assignments_by_project(project_uuids, opts \\ []) when is_list(project_uuids) do
+    depth = opts |> Keyword.get(:depth, @max_subproject_depth) |> min(@max_subproject_depth)
+    load_forest(Enum.uniq(project_uuids), %{}, depth)
   end
 
   defp load_forest([], acc, _hops), do: acc
@@ -3617,6 +3621,29 @@ defmodule PhoenixKitProjects.Projects do
   """
   @spec available_projects_to_link(Project.t(), term()) :: [Project.t()]
   def available_projects_to_link(%Project{} = parent, scope \\ :all) do
+    parent
+    |> link_candidates(scope)
+    |> order_by([p], asc: p.name, asc: p.uuid)
+    |> repo().all()
+  end
+
+  @doc """
+  The one project `available_projects_to_link/2` would offer with this
+  uuid, or nil — the same rule, asked for one row (a save re-checks the
+  pick without listing every candidate).
+  """
+  @spec linkable_project(Project.t(), term(), term()) :: Project.t() | nil
+  def linkable_project(%Project{} = parent, scope, uuid) do
+    case Ecto.UUID.cast(uuid) do
+      {:ok, uuid} ->
+        parent |> link_candidates(scope) |> where([p], p.uuid == ^uuid) |> repo().one()
+
+      :error ->
+        nil
+    end
+  end
+
+  defp link_candidates(parent, scope) do
     excluded = [parent.uuid | project_ancestor_uuids(parent.uuid)]
 
     Project
@@ -3624,8 +3651,6 @@ defmodule PhoenixKitProjects.Projects do
     |> where([p], p.uuid not in ^excluded)
     |> exclude_subprojects()
     |> scope_link_candidates(if parent.is_template, do: :all, else: scope)
-    |> order_by([p], asc: p.name, asc: p.uuid)
-    |> repo().all()
   end
 
   defp scope_link_candidates(query, :all), do: query

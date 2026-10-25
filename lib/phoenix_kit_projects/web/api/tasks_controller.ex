@@ -369,21 +369,37 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          :ok <- check_labels(params["labels"]),
          {:ok, parent} <- parent_change(project, params),
          :ok <- precheck(a, content, assignment_attrs),
-         :ok <- reparent(a, parent),
-         {:ok, _} <- update_content(a, content),
-         {:ok, _} <- update_fields(a, assignment_attrs),
-         :ok <- stamp_words(a, key, content),
-         :ok <- keep_interaction_tokens(conn, a),
-         :ok <- apply_labels(project, a, params["labels"]),
-         :ok <- link_interaction(conn, a, params["interaction"]) do
+         {:ok, _} <-
+           write_update(fn ->
+             with :ok <- reparent(a, parent),
+                  {:ok, _} <- update_content(a, content),
+                  {:ok, _} <- update_fields(a, assignment_attrs),
+                  :ok <- stamp_words(a, key, content),
+                  :ok <- keep_interaction_tokens(conn, a),
+                  :ok <- apply_labels(project, a, params["labels"]),
+                  :ok <- link_interaction(conn, a, params["interaction"]) do
+               {:ok, :written}
+             end
+           end) do
       changed =
         Map.keys(Map.merge(content, assignment_attrs)) ++
           Enum.filter(["labels", "interaction", "parent"], &Map.has_key?(params, &1))
 
+      reassigned? =
+        Notices.reassigned(
+          a,
+          Projects.get_assignment(a.uuid),
+          ApiKey.accountable_uuid(key),
+          api_metadata(key, %{})
+        )
+
+      # A handed-over task was told so already; otherwise its people hear
+      # that the task changed.
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
         resource_uuid: a.uuid,
+        tell: not reassigned?,
         metadata: api_metadata(key, %{"fields" => changed})
       )
 
@@ -395,6 +411,23 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       {:error, {status, _} = pair} when is_integer(status) -> pair
       {:error, %Ecto.Changeset{} = cs} -> Json.changeset_error(cs)
     end
+  end
+
+  # The PATCH's writes are one transaction: a refusal half-way (a database
+  # constraint, a failed link) leaves nothing written. The pages hear of it
+  # once it has committed (`PubSub.after_commit/1`), and the people the
+  # change concerns only then (the hand-off batch, dropped on a rollback).
+  defp write_update(fun) do
+    PhoenixKitProjects.Handoffs.batch(fn ->
+      case PhoenixKitProjects.PubSub.after_commit(fun) do
+        {:ok, _} = ok ->
+          ok
+
+        {:error, _} = error ->
+          PhoenixKitProjects.Handoffs.discard()
+          error
+      end
+    end)
   end
 
   # A changed `parent` moves the task, with everything under it, to the

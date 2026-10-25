@@ -65,7 +65,6 @@ defmodule PhoenixKitProjects.Attachments do
     Folder,
     ImageEditing,
     Libraries,
-    Manager,
     ResourceFolders,
     URLSigner
   }
@@ -306,36 +305,32 @@ defmodule PhoenixKitProjects.Attachments do
   hands no URL for: a system-managed file) absent. The Files page asked per
   row, twice (guard + href), on every render (the 2026-09-05 N+1 audit).
 
-  The URL rule is core's `get_public_url/1`, restated over the batched reads:
-  a private library or an edit in progress is served by the app, never by
-  the bucket's object URL. `batched_reads_test.exs` pins it against
-  `download_url/1`, so a rule core changes fails there. A core without
-  `Libraries.private_among/1` falls back to `download_url/1` per file.
+  The bucket's object URLs come from core's `Storage.direct_urls/1` (a
+  fixed number of reads, no bucket request); what it leaves out — a private
+  library, an edit in progress, a type not shown inline, a local or signed
+  bucket — is served by the app through a signed URL, as `download_url/1`
+  serves it. `batched_reads_test.exs` pins the count.
   """
   @spec download_urls([File.t()]) :: %{binary() => String.t()}
   def download_urls([]), do: %{}
 
   def download_urls(files) when is_list(files) do
     by_uuid = Map.new(files, &{&1.uuid, &1})
-
-    if function_exported?(Libraries, :private_among, 1) do
-      private = Libraries.private_among(Enum.map(files, & &1.library_uuid))
-      batched_urls(by_uuid, private)
-    else
-      Map.new(files, &{&1.uuid, download_url(&1)}) |> Map.reject(fn {_, url} -> is_nil(url) end)
-    end
+    private = Libraries.private_among(Enum.map(files, & &1.library_uuid))
+    direct = Storage.direct_urls(Enum.map(files, &{to_string(&1.uuid), "original"}))
+    batched_urls(by_uuid, private, direct)
   rescue
     _ -> %{}
   end
 
-  defp batched_urls(by_uuid, private_libraries) do
+  defp batched_urls(by_uuid, private_libraries, direct) do
     uuids = Map.keys(by_uuid)
 
     from(fi in FileInstance, where: fi.file_uuid in ^uuids and fi.variant_name == "original")
     |> repo().all()
     |> Enum.reduce(%{}, fn instance, acc ->
       with %File{} = file <- Map.get(by_uuid, instance.file_uuid),
-           url when is_binary(url) <- row_url(file, instance, private_libraries) do
+           url when is_binary(url) <- row_url(file, instance, private_libraries, direct) do
         Map.put_new(acc, file.uuid, url)
       else
         _ -> acc
@@ -345,15 +340,15 @@ defmodule PhoenixKitProjects.Attachments do
 
   # One row at a time so a file the manager cannot address loses its link
   # alone.
-  defp row_url(%File{system_managed: true}, _instance, _private), do: nil
+  defp row_url(%File{system_managed: true}, _instance, _private, _direct), do: nil
 
-  defp row_url(%File{} = file, instance, private_libraries) do
+  defp row_url(%File{} = file, instance, private_libraries, direct) do
     signed = fn -> signed_url(file, instance) end
 
     cond do
       ImageEditing.edit_in_progress?(file) -> signed_url(file, nil)
       to_string(file.library_uuid) in private_libraries -> signed.()
-      true -> Manager.public_url(instance.file_name, file_uuid: instance.file_uuid) || signed.()
+      true -> Map.get(direct, {to_string(file.uuid), "original"}) || signed.()
     end
   rescue
     _ -> nil

@@ -9,20 +9,16 @@ How each finding in `CLAUDE_REVIEW.md` stands against the current code.
   private library (`Libraries.private_among/1`), else the bucket URL or the
   signed one; `batched_reads_test.exs` pins it against `download_url/1`.
 - **IMPROVEMENT - MEDIUM: `Manager.public_url/2` still resolves the bucket
-  per file** — **Open.** `row_url/3` calls `Manager.public_url/2` once per
-  file (`attachments.ex:356`). Core 2.64.0 now ships a batched form,
-  `Storage.direct_urls/1` (fixed query count; private and ineligible files
-  keep the app URL); adopting it needs the core floor raised to
-  `>= 2.64.0` and the batched-vs-`download_url/1` test kept green.
+  per file** — **Fixed in this sweep.** `download_urls/1` takes the bucket
+  URLs from core's batched `Storage.direct_urls/1` (a fixed number of reads,
+  no bucket request); what it leaves out keeps the app's signed URL. The
+  core floor is `>= 2.64.0` for it.
 - **IMPROVEMENT - MEDIUM: `ProjectShowLive` loads each expanded child's whole
-  descendant forest** — **Open.** `project_show_live.ex:720-721` still calls
-  `Projects.assignments_by_project/1`, which follows links to the full depth
-  (`projects.ex:2995`), and uses only each child's own rows. A `depth:`
-  option on `load_forest/3` (stop after the roots) would fix it.
-- **NITPICK: roles are still one `Roles` read each** — **Open.**
-  `Grants.subject_reaches/1` calls `subject_reach("role", …)` per distinct
-  role (`grants.ex:279`, which does `get_role_by_uuid` + `users_with_role`
-  at `:218-220`), and the members page's `role_names/1` does one
-  `get_role_by_uuid` per role (`web/project_members_live.ex:188-197`). Core
-  lacks a batched by-uuid role lookup and a batched per-role user count; the
-  names alone could come from the page's existing `Roles.list_roles/0` read.
+  descendant forest** — **Fixed in this sweep.**
+  `Projects.assignments_by_project/2` takes `depth: 1` (the given projects'
+  own rows, one statement), and the page passes it
+  (`batched_tree_summaries_test.exs`).
+- **NITPICK: roles are still one `Roles` read each** — **Fixed in this
+  sweep:** one grouped read of core's role assignments for the counts and
+  one of its roles for the names (`Grants.role_member_counts/1`,
+  `Grants.role_names/1`).
