@@ -42,6 +42,8 @@ defmodule PhoenixKitProjects.Handoffs do
 
   @type change :: %{uuid: binary(), project_uuid: binary(), from: term(), to: term()}
 
+  @batch :projects_handoff_batch
+
   @doc """
   Reacts to one task's status change. `cause` is `:direct` (the caller logs
   the change itself) or `:auto` (tick rules, rollups: logged here).
@@ -58,15 +60,82 @@ defmodule PhoenixKitProjects.Handoffs do
   def statuses_changed([], _cause), do: :ok
 
   def statuses_changed(changes, cause) when is_list(changes) do
+    tagged = Enum.map(changes, &{&1, cause})
+
+    case Process.get(@batch) do
+      buffered when is_list(buffered) -> Process.put(@batch, buffered ++ tagged)
+      _ -> run(tagged)
+    end
+
+    :ok
+  end
+
+  @doc """
+  Runs `fun` as one write: the status changes announced inside it — the
+  caller's own and the rows the tick rules moved with it, which announce
+  first — are reacted to together when it returns, so a person told about
+  the subtask and its parent is told once. Nested calls join the outer one;
+  an exception drops what was collected.
+  """
+  @spec batch((-> result)) :: result when result: term()
+  def batch(fun) when is_function(fun, 0) do
+    if is_list(Process.get(@batch)) do
+      fun.()
+    else
+      Process.put(@batch, [])
+
+      result =
+        try do
+          fun.()
+        rescue
+          error ->
+            Process.delete(@batch)
+            reraise error, __STACKTRACE__
+        catch
+          kind, reason ->
+            Process.delete(@batch)
+            :erlang.raise(kind, reason, __STACKTRACE__)
+        end
+
+      run(Process.delete(@batch) || [])
+      result
+    end
+  end
+
+  @doc """
+  Drops what the current `batch/1` collected — for a caller whose writes
+  rolled back inside the batch (nobody is told of a change that did not
+  happen). Outside a batch it does nothing.
+  """
+  @spec discard() :: :ok
+  def discard do
+    if is_list(Process.get(@batch)), do: Process.put(@batch, [])
+    :ok
+  end
+
+  defp run([]), do: :ok
+
+  defp run(tagged) do
     actor = Actor.get()
 
-    changes
-    |> Enum.group_by(& &1.project_uuid)
-    |> Enum.each(fn {project_uuid, mine} ->
+    tagged
+    |> Enum.group_by(fn {change, _cause} -> change.project_uuid end)
+    |> Enum.each(fn {project_uuid, pairs} ->
       shape = load(project_uuid)
-      if cause == :auto, do: Enum.each(mine, &log_auto(&1, shape, actor))
+
+      pairs
+      |> Enum.filter(&match?({_, :auto}, &1))
+      |> Enum.each(fn {change, _} -> log_auto(change, shape, actor) end)
+
+      mine = Enum.map(pairs, &elem(&1, 0))
       wake(mine, shape, actor)
       hold(mine, shape, actor)
+
+      # The rows above exist now: the project's History reloads with them
+      # (the status broadcast went out before they were written).
+      PhoenixKitProjects.PubSub.broadcast_to_project(project_uuid, :history_changed, %{
+        project_uuid: project_uuid
+      })
     end)
 
     :ok
@@ -119,12 +188,12 @@ defmodule PhoenixKitProjects.Handoffs do
         row ->
           cond do
             ready?(row, shape) ->
-              [{row, %{"after" => after_label}}]
+              [{row, %{"after" => after_label, "after_uuid" => uuid}}]
 
             # Work already under way that was waiting on this — on hold since
             # it was reopened, or started early: it can go on now.
             row.status == "in_progress" and clear?(row.uuid, shape, 0) ->
-              [{row, %{"after" => after_label, "resume" => true}}]
+              [{row, %{"after" => after_label, "after_uuid" => uuid, "resume" => true}}]
 
             true ->
               []
@@ -148,23 +217,24 @@ defmodule PhoenixKitProjects.Handoffs do
       |> Enum.flat_map(&[&1 | descendants(&1, shape)])
       |> Enum.map(&Map.get(shape.rows, &1))
       |> Enum.filter(&(&1 && &1.status == "in_progress"))
-      |> Enum.map(&{&1, %{"after" => after_label}})
+      |> Enum.map(&{&1, %{"after" => after_label, "after_uuid" => uuid}})
     end)
     |> Enum.uniq_by(fn {row, _} -> row.uuid end)
     |> tell("projects.assignment_on_hold", actor)
   end
 
-  # One notice per person: the first of their rows (in the list's order) is
-  # named, the rest are counted. The assignee lists are read per row — a
-  # person is a key, a team or department one read each.
+  # One notice per person and kind ("your turn" apart from "go on"): the
+  # first of their rows (in the list's order) is named, the rest are
+  # counted. The assignee lists are read per row — a person is a key, a team
+  # or department one read each.
   defp tell(rows, action, actor) do
     rows
     |> Enum.flat_map(fn {row, meta} ->
       Enum.map(People.assignee_user_uuids(row), &{&1, row, meta})
     end)
     |> Enum.reject(fn {user_uuid, _, _} -> user_uuid == actor end)
-    |> Enum.group_by(&elem(&1, 0), &{elem(&1, 1), elem(&1, 2)})
-    |> Enum.each(fn {user_uuid, mine} ->
+    |> Enum.group_by(&{elem(&1, 0), elem(&1, 2)["resume"] == true}, &{elem(&1, 1), elem(&1, 2)})
+    |> Enum.each(fn {{user_uuid, _resume?}, mine} ->
       [{first, meta} | rest] = Enum.sort_by(mine, fn {row, _} -> row.position end)
       meta = if rest == [], do: meta, else: Map.put(meta, "more", length(rest))
 
@@ -202,10 +272,23 @@ defmodule PhoenixKitProjects.Handoffs do
 
   # ── The project's shape ─────────────────────────────────────────────
 
+  @typedoc "A project's rows and dependencies, as `load/1` reads them."
+  @type shape :: %{
+          rows: %{binary() => map()},
+          deps: %{binary() => [binary()]},
+          dependents: %{binary() => [binary()]},
+          children: %{binary() => [binary()]}
+        }
+
+  # Deeper than any real outline; a guard against a cycle the database
+  # trigger should already make impossible.
+  @max_depth 100
+
   @doc false
   # Every accepted row of the project and its dependencies, in two reads:
   # `rows` by uuid, `deps` (a row → what it waits on), `dependents` (a row →
   # what waits on it), `children` (a row → the rows directly under it).
+  @spec load(binary()) :: shape()
   def load(project_uuid) do
     rows =
       from(a in Assignment,
@@ -249,11 +332,12 @@ defmodule PhoenixKitProjects.Handoffs do
 
   @doc false
   # Still to do, and nothing it — or any task above it — waits on is open.
+  @spec ready?(map(), shape()) :: boolean()
   def ready?(%{status: "todo"} = row, shape), do: clear?(row.uuid, shape, 0)
   def ready?(_row, _shape), do: false
 
   defp clear?(nil, _shape, _depth), do: true
-  defp clear?(_uuid, _shape, depth) when depth > 100, do: false
+  defp clear?(_uuid, _shape, depth) when depth > @max_depth, do: false
 
   defp clear?(uuid, shape, depth) do
     met? =

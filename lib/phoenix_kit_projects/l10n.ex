@@ -31,6 +31,16 @@ defmodule PhoenixKitProjects.L10n do
     :ok
   end
 
+  @doc """
+  Forgets the viewer zone: a process that serves the API after a page (a
+  reused connection) prints UTC again, not the last viewer's zone.
+  """
+  @spec reset_viewer_zone() :: :ok
+  def reset_viewer_zone do
+    Process.delete(@zone_key)
+    :ok
+  end
+
   @doc "A UTC `DateTime` as the viewer's wall clock (unchanged when no zone is set)."
   @spec local(DateTime.t()) :: DateTime.t()
   def local(%DateTime{} = dt), do: TimeZone.shift(dt, Process.get(@zone_key))

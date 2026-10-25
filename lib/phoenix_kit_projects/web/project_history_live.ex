@@ -7,7 +7,9 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLive do
   `handle_params/3`).
 
   Session: `"id"` (the project, required), `"current_user_uuid"`,
-  `"locale"`, `"wrapper_class"`.
+  `"locale"`, `"wrapper_class"`, and the emit contract (`"mode"`,
+  `"pubsub_topic"`, `"frame_ref"`) — in `"emit"` mode task names are plain
+  text, because a link would navigate the host page.
 
   The raw audit log stays on the project's ⋮ → Activity page.
   """
@@ -115,7 +117,10 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLive do
     {:noreply, socket |> assign(reload_ref: nil) |> load()}
   end
 
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  def handle_info(msg, socket) do
+    Logger.debug("[ProjectHistoryLive] unexpected handle_info: #{inspect(msg)}")
+    {:noreply, socket}
+  end
 
   @impl true
   def render(assigns) do
@@ -144,6 +149,7 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLive do
             id={"project-history-#{@project.uuid}"}
             entries={Enum.take(@entries, @shown)}
             project={@project}
+            links={@embed_mode != :emit}
           />
           <div :if={length(@entries) > @shown} class="flex justify-center mt-3">
             <button type="button" phx-click="load_more" class="btn btn-ghost btn-sm">

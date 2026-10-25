@@ -33,6 +33,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     Features,
     Labels,
     Ledger,
+    Notices,
     Outline,
     Projects,
     RefText
@@ -562,10 +563,12 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   defp log_link(conn, a, uuid, what) do
     key = conn.assigns.pk_api_key
 
+    # A link to a meeting is bookkeeping, not news for the task's people.
     Activity.log("projects.assignment_updated",
       actor_uuid: ApiKey.accountable_uuid(key),
       resource_type: "assignment",
       resource_uuid: a.uuid,
+      tell: false,
       metadata:
         api_metadata(key, %{"fields" => ["interactions"], "interaction" => uuid, "change" => what})
     )
@@ -818,6 +821,8 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
                   api_metadata(key, %{"task" => Assignment.label(a), "subtasks" => length(below)})
               )
 
+              Notices.removed(a, ApiKey.accountable_uuid(key), api_metadata(key, %{}))
+
               sync_project_completion(conn)
               json(conn, %{deleted: a.uuid, also_deleted: Enum.map(below, & &1.uuid)})
 
@@ -873,10 +878,12 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          parent_uuid = if(parent == :keep, do: a.parent_uuid, else: parent),
          {:ok, place} <- after_of(project, params),
          {:ok, _} <- move_result(Outline.move(a, parent_uuid, place)) do
+      # A place in the list is the list's business, not news for its people.
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
         resource_uuid: a.uuid,
+        tell: false,
         metadata: api_metadata(key, %{"fields" => ["parent", "position"]})
       )
 
@@ -1108,7 +1115,12 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
           reason ->
             # Only a key that may also comment posts it as a comment; the
             # notice quotes it either way.
-            if ApiKey.scope?(key, "comments:write"), do: post_reason(a, key, reason)
+            # The same gates as POST /tasks/{id}/comments: the scope and the
+            # project's :comment floor for this key's role.
+            if ApiKey.scope?(key, "comments:write") and
+                 Authz.can_role?(conn.assigns.pk_project, key.role, :comment),
+               do: post_reason(a, key, reason)
+
             reason
         end
 
@@ -1131,7 +1143,9 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       })
     end
   rescue
-    _ -> :ok
+    e ->
+      Logger.warning("[Projects API] reopen reason comment failed: #{inspect(e.__struct__)}")
+      :ok
   end
 
   # The same moves the project page makes, with the same side effects: a

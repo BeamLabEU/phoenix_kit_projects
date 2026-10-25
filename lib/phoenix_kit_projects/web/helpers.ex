@@ -311,11 +311,17 @@ defmodule PhoenixKitProjects.Web.Helpers do
     # eating it here.
     with_seconds = if String.length(val) == 16, do: val <> ":00", else: val
 
-    with {:ok, ndt} <- NaiveDateTime.from_iso8601(with_seconds),
-         %DateTime{} = at <- PhoenixKitProjects.L10n.from_wall(ndt) do
-      DateTime.to_iso8601(at)
-    else
-      _ -> val
+    case NaiveDateTime.from_iso8601(with_seconds) do
+      {:ok, ndt} ->
+        case PhoenixKitProjects.L10n.from_wall(ndt) do
+          %DateTime{} = at -> DateTime.to_iso8601(at)
+          # A wall clock that does not exist in the viewer's zone (the hour
+          # skipped when clocks go forward): refused, never stored as UTC.
+          nil -> "invalid"
+        end
+
+      _ ->
+        val
     end
   end
 
@@ -693,10 +699,6 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   def assign_embed_user(socket, _session), do: declare_ref_writer(socket)
 
-  # The viewer is settled here for every page of the module, router-mounted
-  # or embedded, so this is where the LiveView's process says who writes
-  # the text it saves: `RefText` links a typed `#KEY-42` only when that
-  # person may open what it names.
   @doc """
   Settles the zone this LiveView prints times in for a page that has no scope
   of its own — an extension tab mounted with only `"current_user_uuid"` in its
@@ -715,7 +717,11 @@ defmodule PhoenixKitProjects.Web.Helpers do
     _ -> PhoenixKitProjects.L10n.put_viewer_zone(nil)
   end
 
-  # Same place, same reason: the zone this process prints times in.
+  # The viewer is settled here for every page of the module, router-mounted
+  # or embedded, so this is where the LiveView's process says who writes
+  # the text it saves: `RefText` links a typed `#KEY-42` only when that
+  # person may open what it names. Same place, same reason: the zone this
+  # process prints times in, and who is acting (`Actor`).
   defp declare_ref_writer(socket) do
     scope = socket.assigns[:phoenix_kit_current_scope]
     PhoenixKitProjects.RefText.put_writer({:scope, scope})

@@ -351,6 +351,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # they keep the assigns coherent if either helper short-circuits.
               assignments: [],
               deps_by_assignment: %{},
+              held_by: %{},
               total_tasks: 0,
               done_tasks: 0,
               progress_pct: 0,
@@ -382,6 +383,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               log_time_open: false,
               log_time_uuid: nil,
               reopen_uuid: nil,
+              reopen_task: nil,
               assignment_labels: %{},
               invoice_ready?: false
             )
@@ -499,6 +501,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       history_mounted?: false,
       assignments: [],
       deps_by_assignment: %{},
+      held_by: %{},
       total_tasks: 0,
       done_tasks: 0,
       progress_pct: 0,
@@ -526,6 +529,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       log_time_open: false,
       log_time_uuid: nil,
       reopen_uuid: nil,
+      reopen_task: nil,
       assignment_labels: %{},
       invoice_ready?: false
     ]
@@ -739,6 +743,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> assign(
       assignments: assignments,
       deps_by_assignment: deps_by_assignment,
+      held_by:
+        held_by(
+          assignments ++ Enum.flat_map(Map.values(subproject_child_tasks), & &1),
+          deps_by_assignment
+        ),
       total_tasks: total,
       done_tasks: done,
       progress_pct: if(progress_total > 0, do: round(progress_sum / progress_total), else: 0),
@@ -1309,6 +1318,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:comments_enabled, :boolean, default: false)
   attr(:assignment_comment_counts, :map, default: %{})
   attr(:deps_by_assignment, :map, default: %{})
+  attr(:held_by, :map, default: %{})
   attr(:ledger_minutes, :map, default: %{})
   attr(:ledger_ai_minutes, :map, default: %{})
   attr(:ledger_tokens, :map, default: %{})
@@ -1657,8 +1667,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <%!-- Dependencies. Work that started and then had something
                before it reopened is ON HOLD — derived, never stored: it
                clears itself when what it waits on is done again. --%>
+          <%!-- What it waits on that is still open — its own dependencies and
+               every task's above it, as the hand-offs count them. --%>
           <% deps = Map.get(@deps_by_assignment, @a.uuid, []) %>
-          <% open_deps = Enum.reject(deps, &match?(%{depends_on: %{status: "done"}}, &1)) %>
+          <% open_deps = Map.get(@held_by, @a.uuid, []) %>
           <div
             :if={@fx.dependencies and @a.status == "in_progress" and open_deps != []}
             class="mt-1"
@@ -1667,7 +1679,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <.icon name="hero-pause-circle" class="w-3.5 h-3.5" />
               {gettext("On hold — waiting for %{tasks}",
                 tasks:
-                  Enum.map_join(open_deps, ", ", &"“#{Assignment.label(&1.depends_on, L10n.current_content_lang())}”")
+                  Enum.map_join(
+                    open_deps,
+                    ", ",
+                    &gettext("“%{task}”",
+                      task: Assignment.label(&1.depends_on, L10n.current_content_lang())
+                    )
+                  )
               )}
             </span>
           </div>
@@ -1695,6 +1713,32 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Accepts any assignment currently displayed on the page: one belonging to the
   # shown project, or a task inside an expanded sub-project (V127). Child-task
   # rows render the same `task_card` and their events flow through here.
+  # The open tasks each row waits on: its own dependencies and those of
+  # every task above it (`Handoffs.ready?/2`'s rule) — a subtask of a task
+  # put on hold is on hold too.
+  defp held_by(rows, deps_by_assignment) do
+    parents = Map.new(rows, &{&1.uuid, &1.parent_uuid})
+
+    Map.new(rows, fn row ->
+      {row.uuid,
+       row.uuid
+       |> open_deps_up(parents, deps_by_assignment, 0)
+       |> Enum.uniq_by(& &1.depends_on_uuid)}
+    end)
+  end
+
+  defp open_deps_up(nil, _parents, _deps, _depth), do: []
+  defp open_deps_up(_uuid, _parents, _deps, depth) when depth > 100, do: []
+
+  defp open_deps_up(uuid, parents, deps, depth) do
+    own =
+      deps
+      |> Map.get(uuid, [])
+      |> Enum.reject(&match?(%{depends_on: %{status: "done"}}, &1))
+
+    own ++ open_deps_up(Map.get(parents, uuid), parents, deps, depth + 1)
+  end
+
   defp scoped_assignment(socket, uuid) do
     case Projects.get_assignment(uuid) do
       %{project_uuid: pid} = a when pid == socket.assigns.project.uuid ->
@@ -1743,6 +1787,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     # extension): with the step off, Start is neither shown nor accepted.
     "start_task" => :in_progress,
     "reopen" => :tasks,
+    # The dialog that asks why opens under the same gates as the reopen.
+    "ask_reopen" => :tasks,
     "remove_assignment" => :tasks,
     "reorder_assignments" => :tasks,
     "review_submission" => :tasks,
@@ -1783,6 +1829,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     "complete" => :update_status,
     "start_task" => :update_status,
     "reopen" => :update_status,
+    "ask_reopen" => :update_status,
     "change_workflow_status" => :update_status,
     "update_progress" => :update_status,
     "toggle_tracking" => :update_status,
@@ -1820,7 +1867,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # their own task even when the floor is higher. Resolving the record
   # here (rather than passing nil) is what keeps "assignees can update
   # their own status" true through the interceptor.
-  @record_param_events ~w(complete start_task reopen change_workflow_status
+  @record_param_events ~w(complete start_task reopen ask_reopen change_workflow_status
                           update_progress toggle_tracking remove_assignment save_duration)
 
   @impl true
@@ -2127,7 +2174,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gated_handle_event("ask_reopen", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       nil -> {:noreply, socket}
-      _a -> {:noreply, assign(socket, reopen_uuid: uuid)}
+      # Kept whole: a task inside an expanded sub-project is not in
+      # `@assignments`, and the dialog must open for it too.
+      a -> {:noreply, assign(socket, reopen_uuid: uuid, reopen_task: a)}
     end
   end
 
@@ -2254,13 +2303,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       a ->
         case Projects.delete_assignment(a) do
           {:ok, _} ->
+            # The task is gone now: the row names its project itself, so the
+            # project's History still finds it.
             Activity.log("projects.assignment_removed",
               actor_uuid: Activity.actor_uuid(socket),
               resource_type: "assignment",
               resource_uuid: uuid,
-              metadata: %{"task" => Assignment.label(a)}
+              metadata: %{"task" => Assignment.label(a), "project_uuid" => a.project_uuid}
             )
 
+            PhoenixKitProjects.Notices.removed(a, Activity.actor_uuid(socket))
             recompute_owning_subproject(socket, a)
 
             {:noreply,
@@ -2308,7 +2360,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              expanded_subprojects: MapSet.put(expanded, uuid),
              subproject_child_tasks:
                Map.put(socket.assigns.subproject_child_tasks, uuid, child_tasks),
-             deps_by_assignment: Map.merge(socket.assigns.deps_by_assignment, child_deps)
+             deps_by_assignment: Map.merge(socket.assigns.deps_by_assignment, child_deps),
+             held_by:
+               Map.merge(
+                 socket.assigns[:held_by] || %{},
+                 held_by(child_tasks, Map.merge(socket.assigns.deps_by_assignment, child_deps))
+               )
            )
            |> load_ledger()}
         end
@@ -4869,6 +4926,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       assignment_note_counts={@assignment_note_counts}
                                       assignment_labels={@assignment_labels}
                                       deps_by_assignment={@deps_by_assignment}
+                                      held_by={@held_by}
                                     />
                                   </div>
                                 </div>
@@ -4905,6 +4963,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       assignment_note_counts={@assignment_note_counts}
                       assignment_labels={@assignment_labels}
                       deps_by_assignment={@deps_by_assignment}
+                      held_by={@held_by}
                     />
                   <% end %>
                 </div>
@@ -5244,13 +5303,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               "id" => @project.uuid,
               "locale" => L10n.current_content_lang(),
               "current_user_uuid" =>
-                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
+                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid,
+              # The emit contract, as for the Timeline: an emit-embedded page
+              # must not have its History links navigate the host away.
+              "mode" => @embed_mode,
+              "pubsub_topic" => @embed_pubsub_topic,
+              "frame_ref" => @embed_frame_ref
             })}
         <% end %>
       </div>
 
       <%!-- Reopen asks why. --%>
-      <% reopening = @reopen_uuid && Enum.find(@assignments, &(&1.uuid == @reopen_uuid)) %>
+      <% reopening = @reopen_uuid && @reopen_task %>
       <.modal :if={reopening} show on_close="close_reopen" id={"project-reopen-#{@project.uuid}"} max_width="md" close_guard={:input}>
         <:title>{gettext("Reopen “%{task}”", task: Assignment.label(reopening))}</:title>
         <.form for={%{}} id={"reopen-form-#{@project.uuid}"} phx-submit="reopen" class="flex flex-col gap-3">

@@ -66,6 +66,11 @@ defmodule PhoenixKitProjects.ResourceLinks do
   def on_comment_created(type, uuid, comment),
     do: PhoenixKitProjects.CommentNotices.on_comment_created(type, uuid, comment)
 
+  @doc "A deleted project comment's words leave its notices (`CommentNotices`)."
+  @spec on_comment_deleted(String.t(), String.t(), struct()) :: any()
+  def on_comment_deleted(type, uuid, comment),
+    do: PhoenixKitProjects.CommentNotices.on_comment_deleted(type, uuid, comment)
+
   # ── Resolve ─────────────────────────────────────────────────────────
 
   @doc """

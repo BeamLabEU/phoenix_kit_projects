@@ -12,11 +12,15 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{Actor, History, Outline, Projects}
+  alias PhoenixKitProjects.Web.Components.HistoryFeed
   alias PhoenixKitStaff.Schemas.Person
 
   setup do
     Actor.put(nil)
     on_exit(fn -> Actor.put(nil) end)
+
+    # History shows comments only while discussions are on.
+    :ok = with_comments_module()
 
     people = Map.new(~w(alice bob carl dave)a, &{&1, person!(&1)})
     project = fixture_project(%{"start_mode" => "immediate"})
@@ -394,7 +398,8 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert notices("projects.comment_added", bob.user) == []
     end
 
-    test "a team-assigned task's reopen reason still reaches the team", ctx do
+    test "a team-assigned task's reopen reason is not a second notice (the reopen tells the team)",
+         ctx do
       %{alice: alice, bob: bob} = ctx.people
 
       {:ok, dept} =
@@ -425,7 +430,7 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
           metadata: %{"reopen_reason" => true}
         })
 
-      assert [_] = notices("projects.comment_added", bob.user)
+      assert notices("projects.comment_added", bob.user) == []
     end
 
     test "a reopen's reason does not tell the assignee twice", ctx do
@@ -498,6 +503,437 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert gone != []
       assert Enum.all?(gone, &(&1.task[:gone] == true and &1.task.label == "Measure"))
       assert Enum.all?(only_model, &(&1.task == nil or &1.task.uuid == model.uuid))
+    end
+  end
+
+  describe "the module's own registration" do
+    test "task comments are handled by CommentNotices, which is no `#` search handler" do
+      links = PhoenixKitProjects.resource_links()
+      assert links["assignment"] == PhoenixKitProjects.CommentNotices
+      refute function_exported?(PhoenixKitProjects.CommentNotices, :search_resources, 2)
+      Code.ensure_loaded!(PhoenixKitProjects.CommentNotices)
+      assert function_exported?(PhoenixKitProjects.CommentNotices, :visible_resource_uuids, 2)
+    end
+  end
+
+  describe "with the module's real comment handlers" do
+    setup do
+      previous = Application.get_env(:phoenix_kit, :comment_resource_handlers)
+
+      Application.put_env(
+        :phoenix_kit,
+        :comment_resource_handlers,
+        PhoenixKitProjects.resource_links()
+      )
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:phoenix_kit, :comment_resource_handlers, previous),
+          else: Application.delete_env(:phoenix_kit, :comment_resource_handlers)
+      end)
+    end
+
+    test "a project comment tells the managers, never the author; the notice is permanent", ctx do
+      %{alice: alice, bob: bob, carl: carl} = ctx.people
+      {:ok, _} = PhoenixKitProjects.Members.add_member(ctx.project, bob.user, role: "manager")
+
+      PhoenixKitProjects.PubSub.subscribe(
+        PhoenixKitProjects.PubSub.topic_project(ctx.project.uuid)
+      )
+
+      {:ok, comment} =
+        PhoenixKitComments.create_comment("project", ctx.project.uuid, alice.user, %{
+          content: "Kitchen handed over."
+        })
+
+      assert [n] = notices("projects.comment_added", bob.user)
+      assert n.permanent
+      assert n.metadata["project_uuid"] == ctx.project.uuid
+      assert notices("projects.comment_added", carl.user) == []
+      assert_receive {:projects, :comment_added, %{project_uuid: _}}
+
+      # Deleting the comment takes its words out of the notice.
+      {:ok, _} = PhoenixKitComments.delete_comment(comment)
+      [scrubbed] = notices("projects.comment_added", bob.user)
+      refute Map.has_key?(scrubbed.metadata, "excerpt")
+      refute scrubbed.metadata["notification_text"] =~ "Kitchen handed over"
+      assert scrubbed.metadata["notification_text"] =~ "deleted"
+    end
+  end
+
+  describe "rows and gates" do
+    test "a department assignee's people are told", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+
+      {:ok, dept} =
+        Repo.insert(%PhoenixKitStaff.Schemas.Department{
+          name: "Install #{System.unique_integer([:positive])}"
+        })
+
+      Repo.update_all(from(p in PhoenixKitStaff.Schemas.Person, where: p.uuid == ^bob.person),
+        set: [primary_department_uuid: dept.uuid]
+      )
+
+      first = task!(ctx.project, "First", alice)
+
+      {:ok, %{assignment: second}} =
+        Projects.create_task_with_assignment(
+          ctx.project.uuid,
+          %{"title" => "Second", "ad_hoc" => true},
+          %{
+            "assigned_department_uuid" => dept.uuid
+          }
+        )
+
+      {:ok, _} = Projects.add_dependency(second.uuid, first.uuid)
+      set_status!(first, "done", alice.user)
+
+      assert [_] = notices("projects.assignment_ready", bob.user)
+    end
+
+    test "a task's row names its project even when the caller did not", ctx do
+      %{alice: alice} = ctx.people
+      t = task!(ctx.project, "Stamped", alice)
+
+      {:ok, entry} =
+        PhoenixKitProjects.Activity.log("projects.assignment_updated",
+          actor_uuid: alice.user,
+          resource_type: "assignment",
+          resource_uuid: t.uuid,
+          metadata: %{"task" => "Stamped"}
+        )
+
+      assert entry.metadata["project_uuid"] == ctx.project.uuid
+      assert entry.permanent
+    end
+
+    test "a change tells the project's History to reload after its notices exist", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      a = task!(ctx.project, "A", alice)
+      b = task!(ctx.project, "B", bob)
+      {:ok, _} = Projects.add_dependency(b.uuid, a.uuid)
+
+      PhoenixKitProjects.PubSub.subscribe(
+        PhoenixKitProjects.PubSub.topic_project(ctx.project.uuid)
+      )
+
+      set_status!(a, "done", alice.user)
+
+      assert_receive {:projects, :history_changed, %{project_uuid: _}}
+      assert [_] = notices("projects.assignment_ready", bob.user)
+    end
+
+    test "a corrected or removed time entry is a line of its own, on the project and on the task",
+         ctx do
+      %{alice: alice} = ctx.people
+      t = task!(ctx.project, "Carcass", alice)
+      project = Projects.get_project(ctx.project.uuid)
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(project, %{"ledger" => true})
+
+      {:ok, entry} =
+        PhoenixKitProjects.Ledger.log_time(ctx.project.uuid, 60,
+          assignment_uuid: t.uuid,
+          actor_uuid: alice.user
+        )
+
+      {:ok, _} = PhoenixKitProjects.Ledger.update_time(entry, 30, actor_uuid: alice.user)
+      {:ok, _} = PhoenixKitProjects.Ledger.delete_entry(entry.uuid, actor_uuid: alice.user)
+
+      project = Projects.get_project(ctx.project.uuid)
+
+      for entries <- [History.list(project).entries, History.list(project, task: t.uuid).entries] do
+        assert [amended] = Enum.filter(entries, &(&1[:action] == "projects.work_amended"))
+        assert amended.task.uuid == t.uuid
+        assert amended.meta["amount_was"] == "60"
+        assert [_removed] = Enum.filter(entries, &(&1[:action] == "projects.work_removed"))
+      end
+
+      # Corrections are part of the order's story: never pruned.
+      assert Repo.all(
+               from(e in Entry,
+                 where: e.action in ["projects.work_amended", "projects.work_removed"],
+                 select: e.permanent
+               )
+             ) == [true, true]
+
+      require Phoenix.LiveViewTest
+
+      html =
+        Phoenix.LiveViewTest.render_component(
+          &HistoryFeed.history_feed/1,
+          id: "h",
+          entries: History.list(project).entries,
+          project: project,
+          links: false
+        )
+
+      assert html =~ "1 h"
+      assert html =~ "30 min"
+    end
+
+    test "History leaves out what the project switched off", ctx do
+      %{alice: alice} = ctx.people
+      t = task!(ctx.project, "T", alice)
+
+      {:ok, _} =
+        PhoenixKitProjects.Ledger.log_time(ctx.project.uuid, 30,
+          assignment_uuid: t.uuid,
+          actor_uuid: alice.user
+        )
+
+      project = Projects.get_project(ctx.project.uuid)
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(project, %{"ledger" => true})
+
+      assert Enum.any?(
+               History.list(Projects.get_project(project.uuid)).entries,
+               &(&1.kind == :time)
+             )
+
+      {:ok, _} = PhoenixKitProjects.Features.set_flags(project, %{"ledger" => false})
+
+      refute Enum.any?(
+               History.list(Projects.get_project(project.uuid)).entries,
+               &(&1.kind == :time)
+             )
+    end
+  end
+
+  describe "the panel's last sweep" do
+    defp team!(name, members, dept \\ nil) do
+      dept =
+        dept ||
+          Repo.insert!(%PhoenixKitStaff.Schemas.Department{
+            name: "#{name} dept #{System.unique_integer([:positive])}"
+          })
+
+      team = Repo.insert!(%PhoenixKitStaff.Schemas.Team{name: name, department_uuid: dept.uuid})
+
+      for p <- members,
+          do:
+            Repo.insert!(%PhoenixKitStaff.Schemas.TeamMembership{
+              team_uuid: team.uuid,
+              staff_person_uuid: p.person
+            })
+
+      {team, dept}
+    end
+
+    defp group_task!(project, title, field, uuid) do
+      {:ok, %{assignment: a}} =
+        Projects.create_task_with_assignment(
+          project.uuid,
+          %{"title" => title, "ad_hoc" => true},
+          %{field => uuid}
+        )
+
+      a
+    end
+
+    test "a tick that also closes the parent tells the task after both once", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      production = task!(ctx.project, "Production", alice)
+      pack = task!(ctx.project, "Pack", alice, under: production)
+      install = task!(ctx.project, "Install", bob)
+      {:ok, _} = Projects.add_dependency(install.uuid, production.uuid)
+      {:ok, _} = Projects.add_dependency(install.uuid, pack.uuid)
+
+      set_status!(pack, "done", alice.user)
+
+      assert Projects.get_assignment(production.uuid).status == "done"
+      assert [_one] = notices("projects.assignment_ready", bob.user)
+    end
+
+    test "starting a project twice tells everyone once" do
+      %{user: alice_user} = alice = person!(:alice)
+      %{user: bob_user} = bob = person!(:bob)
+
+      project =
+        fixture_project(%{
+          "start_mode" => "scheduled",
+          "scheduled_start_date" => DateTime.add(DateTime.utc_now(), 7, :day)
+        })
+
+      for p <- [alice, bob],
+          do: {:ok, _} = PhoenixKitProjects.Members.add_member(project, p.user, role: "member")
+
+      task!(project, "Measure", bob)
+      Actor.put(alice_user)
+
+      {:ok, _} = Projects.start_project(project)
+      {:ok, _} = Projects.start_project(project)
+
+      assert [_one] = notices("projects.assignment_ready", bob_user)
+    end
+
+    test "a task's line is not written for someone who may not open the project", ctx do
+      %{alice: alice} = ctx.people
+      outsider = person!(:olga)
+      t = task!(ctx.project, "Secret kitchen", alice)
+
+      {:ok, entry} =
+        PhoenixKitProjects.Activity.log("projects.assignment_reopened",
+          actor_uuid: alice.user,
+          resource_type: "assignment",
+          resource_uuid: t.uuid,
+          target_uuid: outsider.user,
+          metadata: %{"task" => "Secret kitchen", "reason" => "The client's address is wrong"}
+        )
+
+      refute Map.has_key?(entry.metadata, "notification_text")
+
+      {:ok, member_row} =
+        PhoenixKitProjects.Activity.log("projects.assignment_reopened",
+          actor_uuid: alice.user,
+          resource_type: "assignment",
+          resource_uuid: t.uuid,
+          target_uuid: ctx.people.bob.user,
+          metadata: %{"task" => "Secret kitchen"}
+        )
+
+      assert member_row.metadata["notification_text"] =~ "Secret kitchen"
+    end
+
+    test "reopening a team's task tells its people, quoting the reason; History names them on the reopen's line",
+         ctx do
+      %{alice: alice, bob: bob, carl: carl} = ctx.people
+      {team, _} = team!("Workshop", [bob, carl])
+      quote_task = group_task!(ctx.project, "Quote", "assigned_team_uuid", team.uuid)
+      set_status!(quote_task, "done", alice.user)
+
+      Actor.put(alice.user)
+      set_status!(quote_task, "todo", alice.user)
+
+      # The page's own row: a team's task names no recipient, so the row
+      # tells the team's people itself.
+      {:ok, _} =
+        PhoenixKitProjects.Activity.log("projects.assignment_reopened",
+          actor_uuid: alice.user,
+          resource_type: "assignment",
+          resource_uuid: quote_task.uuid,
+          target_uuid: PhoenixKitProjects.Activity.assignee_target_uuid(quote_task),
+          metadata: %{"task" => "Quote", "reason" => "Wrong board thickness."}
+        )
+
+      for p <- [bob, carl] do
+        assert [n] = notices("projects.assignment_reopened", p.user)
+        assert n.metadata["notification_text"] =~ "Wrong board thickness."
+      end
+
+      assert notices("projects.assignment_reopened", alice.user) == []
+
+      entries = History.list(Projects.get_project(ctx.project.uuid)).entries
+
+      assert [line] =
+               Enum.filter(
+                 entries,
+                 &(&1.action == "projects.assignment_reopened" and not &1.auto)
+               )
+
+      assert line.quote == "Wrong board thickness." or
+               line.meta["reason"] == "Wrong board thickness."
+
+      assert line.told |> Enum.map(& &1.uuid) |> Enum.sort() == Enum.sort([bob.user, carl.user])
+    end
+
+    test "a person assignee is told once — by the row's own notice", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      t = task!(ctx.project, "Mine", bob)
+
+      {:ok, _} =
+        PhoenixKitProjects.Activity.log("projects.assignment_reopened",
+          actor_uuid: alice.user,
+          resource_type: "assignment",
+          resource_uuid: t.uuid,
+          target_uuid:
+            PhoenixKitProjects.Activity.assignee_target_uuid(Projects.get_assignment(t.uuid)),
+          metadata: %{"task" => "Mine"}
+        )
+
+      assert [_one] = notices("projects.assignment_reopened", bob.user)
+    end
+
+    test "a department's people include its teams' members", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      {_team, dept} = team!("Production crew", [bob])
+      first = task!(ctx.project, "First", alice)
+      second = group_task!(ctx.project, "Second", "assigned_department_uuid", dept.uuid)
+      {:ok, _} = Projects.add_dependency(second.uuid, first.uuid)
+
+      set_status!(first, "done", alice.user)
+
+      assert [_] = notices("projects.assignment_ready", bob.user)
+    end
+
+    test "work that can go on and work that can start are two notices, each naming its own",
+         ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      drawings = task!(ctx.project, "Drawings", alice)
+      order = task!(ctx.project, "Order materials", bob)
+      boards = task!(ctx.project, "Boards", bob)
+      hinges = task!(ctx.project, "Hinges", bob)
+
+      for t <- [order, boards, hinges],
+          do: {:ok, _} = Projects.add_dependency(t.uuid, drawings.uuid)
+
+      set_status!(order, "in_progress", bob.user)
+      set_status!(drawings, "done", alice.user)
+
+      ready = notices("projects.assignment_ready", bob.user)
+      assert [go_on] = Enum.filter(ready, &(&1.metadata["resume"] == true))
+      assert go_on.metadata["notification_text"] =~ "Order materials"
+      assert [start] = Enum.reject(ready, &(&1.metadata["resume"] == true))
+      assert start.metadata["notification_text"] =~ "Boards"
+      assert start.metadata["more"] == 1
+    end
+
+    test "the prerequisite is named in the reader's language" do
+      ctx = %{project: fixture_project(%{"start_mode" => "immediate"})}
+      alice = person!(:alice)
+      bob = person!(:bob)
+
+      for p <- [alice, bob],
+          do:
+            {:ok, _} = PhoenixKitProjects.Members.add_member(ctx.project, p.user, role: "member")
+
+      measure = task!(ctx.project, "Measure", alice)
+      model = task!(ctx.project, "Model", bob)
+      {:ok, _} = Projects.add_dependency(model.uuid, measure.uuid)
+
+      measure_task = Projects.get_assignment(measure.uuid).task
+
+      {:ok, _} =
+        measure_task
+        |> Ecto.Changeset.change(translations: %{"et" => %{"title" => "Mõõtmine"}})
+        |> Repo.update()
+
+      Repo.update_all(from(u in PhoenixKit.Users.Auth.User, where: u.uuid == ^bob.user),
+        set: [custom_fields: %{"preferred_locale" => "et"}]
+      )
+
+      set_status!(measure, "done", alice.user)
+      assert [n] = notices("projects.assignment_ready", bob.user)
+      # the row keeps the primary name; the line is the reader's
+      assert n.metadata["after"] == "Measure"
+      assert n.metadata["after_uuid"] == measure.uuid
+      assert n.metadata["notification_text"] =~ "Mõõtmine"
+    end
+
+    test "a change that failed is not part of the story", ctx do
+      %{alice: alice} = ctx.people
+      t = task!(ctx.project, "Failing", alice)
+
+      {:ok, _} =
+        PhoenixKitProjects.Activity.log_failed("projects.assignment_reopened",
+          actor_uuid: alice.user,
+          resource_type: "assignment",
+          resource_uuid: t.uuid,
+          metadata: %{"task" => "Failing"}
+        )
+
+      refute Enum.any?(
+               History.list(Projects.get_project(ctx.project.uuid)).entries,
+               &(&1[:action] == "projects.assignment_reopened")
+             )
     end
   end
 end

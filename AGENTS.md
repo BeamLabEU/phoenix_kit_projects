@@ -338,7 +338,7 @@ Repo-local aliases:
   extension catch-all and must stay LAST — after `templates/*`, whose first
   segment would otherwise read as an id. Extension tab keys must not reuse a
   literal sibling (`edit`, `files`, `members`, `modules`, `activity`, `board`,
-  `gantt`, `calendar`, `tasks`, `comments`).
+  `gantt`, `calendar`, `tasks`, `comments`, `history`).
 - **Tests that drive the project page's drawer need a REAL user in the page
   scope** — `fake_scope(user_uuid: embed_user_uuid!())`. The sheet's form
   mounts off-router and rebuilds identity from the page's
@@ -1372,7 +1372,7 @@ The three tables a host app depends on. Full prose in
 
 | Key | Applies to | Meaning |
 |---|---|---|
-| `"id"` | `ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`, form LVs on `:edit` | **Required.** String UUID of the record |
+| `"id"` | `ProjectShowLive`, `ProjectGanttLive`, `ProjectCalendarLive`, `ProjectHistoryLive`, form LVs on `:edit` | **Required.** String UUID of the record |
 | `"project_id"` | `AssignmentFormLive` (`:new` and `:edit`) | **Required.** Owning project UUID |
 | `"live_action"` | form LVs | `"new"` \| `"edit"`; defaults `:new`, resolved via `String.to_existing_atom/1` so unknown values fall back |
 | `"template"` | `ProjectFormLive` `:new` | Template UUID that prefills the picker |

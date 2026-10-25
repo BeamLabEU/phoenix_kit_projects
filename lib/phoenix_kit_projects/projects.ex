@@ -2619,10 +2619,17 @@ defmodule PhoenixKitProjects.Projects do
     # unavailable or the project is already cemented (see Statuses).
     txn =
       repo().transaction(fn ->
+        # Read under a lock whether it had started: a second Start (a stale
+        # dialog, another tab) must not tell everyone again.
+        was_started? =
+          repo().one(
+            from(x in Project, where: x.uuid == ^p.uuid, lock: "FOR UPDATE", select: x.started_at)
+          ) != nil
+
         case p |> Project.changeset(%{started_at: started_at}) |> repo().update() do
           {:ok, updated} ->
             PhoenixKitProjects.Statuses.cement_project_statuses(updated)
-            updated
+            {updated, was_started?}
 
           {:error, changeset} ->
             repo().rollback(changeset)
@@ -2630,9 +2637,9 @@ defmodule PhoenixKitProjects.Projects do
       end)
 
     case txn do
-      {:ok, updated} ->
+      {:ok, {updated, was_started?}} ->
         ProjectsPubSub.broadcast_project(:project_started, project_payload(updated))
-        PhoenixKitProjects.Handoffs.project_started(updated)
+        unless was_started?, do: PhoenixKitProjects.Handoffs.project_started(updated)
         {:ok, updated}
 
       {:error, _} = err ->
@@ -4125,6 +4132,11 @@ defmodule PhoenixKitProjects.Projects do
   @spec update_assignment_form(Assignment.t(), map(), keyword()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_form(%Assignment{} = a, attrs, opts \\ []) do
+    # One hand-off pass for the row and whatever the tick rules move with it.
+    PhoenixKitProjects.Handoffs.batch(fn -> do_update_assignment_form(a, attrs, opts) end)
+  end
+
+  defp do_update_assignment_form(a, attrs, opts) do
     with {:ok, {updated, was}} <- a |> Assignment.changeset(attrs) |> update_tracking_status(a) do
       updated =
         if updated.status != was, do: status_changed(updated, %{a | status: was}), else: updated
@@ -4491,6 +4503,10 @@ defmodule PhoenixKitProjects.Projects do
   @spec update_assignment_status(Assignment.t(), map()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def update_assignment_status(%Assignment{} = a, attrs) do
+    PhoenixKitProjects.Handoffs.batch(fn -> do_update_assignment_status(a, attrs) end)
+  end
+
+  defp do_update_assignment_status(a, attrs) do
     with {:ok, {updated, was}} <-
            a |> Assignment.status_changeset(attrs) |> update_tracking_status(a) do
       settle_outline(updated, was)

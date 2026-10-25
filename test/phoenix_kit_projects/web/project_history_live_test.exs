@@ -67,6 +67,19 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLiveTest do
     assert row.permanent
   end
 
+  test "work under a task put on hold shows On hold too", ctx do
+    walls = task!(ctx.project, "Walls", "in_progress")
+
+    {:ok, _} =
+      PhoenixKitProjects.Outline.move(Projects.get_assignment(walls.uuid), ctx.model.uuid, :last)
+
+    {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}")
+    html = render_click(view, "reopen", %{"uuid" => ctx.measure.uuid})
+
+    # The model waits on the measurement; the walls, under the model, too.
+    assert length(String.split(html, "On hold — waiting for")) - 1 == 2
+  end
+
   test "a reopen without a reason still works (the typed list's tick)", ctx do
     {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}")
     render_click(view, "reopen", %{"uuid" => ctx.measure.uuid})

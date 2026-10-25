@@ -19,6 +19,7 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   attr(:project, :map, required: true)
   attr(:id, :string, required: true)
   attr(:compact, :boolean, default: false, doc: "one task's lines: no task names, no day headers")
+  attr(:links, :boolean, default: true, doc: "task names as links (false in an emit-mode embed)")
 
   def history_feed(assigns) do
     assigns = assign(assigns, :days, group_by_day(assigns.entries))
@@ -46,11 +47,12 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-baseline gap-x-2">
                 <span class="text-sm">
-                  <span :if={is_binary(e.actor) and e.auto != true and actor_first?(e)} class="font-medium">{e.actor}</span>
+                  <span :if={e.auto != true and actor_first?(e)} class="font-medium">{e.actor || gettext("Someone")}</span>
                   {if @compact, do: compact_sentence(e), else: sentence(e)}
                   <span :if={e.task && not @compact && e.task[:gone]} class="font-medium line-through decoration-base-content/40">{e.task.label}</span>
+                  <span :if={e.task && not @compact && !e.task[:gone] && not @links} class="font-medium">{e.task.label}</span>
                   <.link
-                    :if={e.task && not @compact && !e.task[:gone]}
+                    :if={e.task && not @compact && !e.task[:gone] && @links}
                     navigate={Paths.task(@project, %{uuid: e.task.uuid})}
                     class="link link-hover font-medium"
                   >
@@ -104,7 +106,7 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
     cond do
       day == today -> gettext("Today")
       day == Date.add(today, -1) -> gettext("Yesterday")
-      true -> "#{weekday(day)}, #{L10n.format_date(day)}"
+      true -> gettext("%{weekday}, %{date}", weekday: weekday(day), date: L10n.format_date(day))
     end
   end
 
@@ -170,6 +172,27 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   defp compact_activity(action, %{meta: %{"waiting_on" => _}})
        when action in ["projects.assignment_waiting", "projects.assignment_updated"],
        do: gettext("is no longer waiting")
+
+  defp compact_activity("projects.assignment_reassigned", %{meta: %{"to" => to}})
+       when is_binary(to) and to != "",
+       do: gettext("handed it to %{who}", who: to)
+
+  defp compact_activity("projects.assignment_reassigned", _),
+    do: gettext("took it off its assignee")
+
+  defp compact_activity("projects.work_amended", %{meta: %{"kind" => "time"} = m}),
+    do:
+      gettext("changed logged time from %{was} to %{now}",
+        was: duration(minutes(m["amount_was"])),
+        now: duration(minutes(m["amount"]))
+      )
+
+  defp compact_activity("projects.work_amended", _), do: gettext("corrected a usage entry")
+
+  defp compact_activity("projects.work_removed", %{meta: %{"kind" => "time"} = m}),
+    do: gettext("removed %{time} of logged time", time: duration(minutes(m["amount"])))
+
+  defp compact_activity("projects.work_removed", _), do: gettext("removed a usage entry")
 
   defp compact_activity("projects.assignment_removed", _), do: gettext("removed the task")
   defp compact_activity(_action, _), do: gettext("changed it")
@@ -279,6 +302,28 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   defp activity_sentence("projects.event_updated", _), do: gettext("changed an event")
   defp activity_sentence("projects.event_deleted", _), do: gettext("removed an event")
   defp activity_sentence("projects.health_updated", _), do: gettext("set the project's health")
+  defp activity_sentence("projects.assignment_reassigned", _), do: gettext("handed")
+
+  defp activity_sentence("projects.work_amended", %{meta: %{"kind" => "time"}, task: nil} = e),
+    do:
+      gettext("changed logged time from %{was} to %{now}",
+        was: duration(minutes(e.meta["amount_was"])),
+        now: duration(minutes(e.meta["amount"]))
+      )
+
+  defp activity_sentence("projects.work_amended", %{meta: %{"kind" => "time"}}),
+    do: gettext("changed the time logged on")
+
+  defp activity_sentence("projects.work_amended", _), do: gettext("corrected a usage entry")
+
+  defp activity_sentence("projects.work_removed", %{meta: %{"kind" => "time"}, task: nil} = e),
+    do: gettext("removed %{time} of logged time", time: duration(minutes(e.meta["amount"])))
+
+  defp activity_sentence("projects.work_removed", %{meta: %{"kind" => "time"}}),
+    do: gettext("removed logged time from")
+
+  defp activity_sentence("projects.work_removed", _), do: gettext("removed a usage entry")
+
   defp activity_sentence(_action, %{task: nil}), do: gettext("changed the project")
   defp activity_sentence(_action, _), do: gettext("changed")
 
@@ -291,6 +336,33 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
        when is_integer(n) and n > 0,
        do: ngettext(" and 1 more task", " and %{count} more tasks", n)
 
+  defp tail(%{
+         kind: :activity,
+         action: "projects.work_amended",
+         meta: %{"kind" => "time"} = m,
+         task: %{}
+       }),
+       do:
+         gettext(" from %{was} to %{now}",
+           was: duration(minutes(m["amount_was"])),
+           now: duration(minutes(m["amount"]))
+         )
+
+  defp tail(%{
+         kind: :activity,
+         action: "projects.work_removed",
+         meta: %{"kind" => "time"} = m,
+         task: %{}
+       }),
+       do: gettext(" (%{time})", time: duration(minutes(m["amount"])))
+
+  defp tail(%{kind: :activity, action: "projects.assignment_reassigned", meta: %{"to" => to}})
+       when is_binary(to) and to != "",
+       do: gettext(" to %{who}", who: to)
+
+  defp tail(%{kind: :activity, action: "projects.assignment_reassigned"}),
+    do: gettext(" to nobody")
+
   defp tail(_), do: ""
 
   # A reopen's reason, a comment, a note's text or a time entry's note.
@@ -300,6 +372,18 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
 
   defp quote_text(%{kind: :activity, quote: q}) when is_binary(q) and q != "", do: String.trim(q)
   defp quote_text(_), do: nil
+
+  # A ledger amount as the row keeps it (a plain decimal string).
+  defp minutes(n) when is_number(n), do: n
+
+  defp minutes(s) when is_binary(s) do
+    case Float.parse(s) do
+      {n, _} -> n
+      :error -> nil
+    end
+  end
+
+  defp minutes(_), do: nil
 
   defp duration(nil), do: "—"
 
@@ -326,6 +410,8 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   defp icon_for(%{action: "projects.assignment_ready"}), do: "hero-arrow-right"
   defp icon_for(%{action: "projects.assignment_on_hold"}), do: "hero-pause"
   defp icon_for(%{action: "projects.assignment_waiting"}), do: "hero-hand-raised"
+  defp icon_for(%{action: "projects.assignment_reassigned"}), do: "hero-arrows-right-left"
+  defp icon_for(%{action: "projects.work_" <> _}), do: "hero-clock"
 
   defp icon_for(%{action: "projects.assignment_updated", meta: %{"waiting_on" => _}}),
     do: "hero-hand-raised"

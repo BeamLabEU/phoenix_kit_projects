@@ -372,7 +372,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
        when is_binary(uuid) do
     assign(socket, :task_history, PhoenixKitProjects.History.list(project, task: uuid).entries)
   rescue
-    _ -> assign(socket, :task_history, [])
+    e ->
+      Logger.warning("[Projects] task history load failed: #{inspect(e.__struct__)}")
+      assign(socket, :task_history, [])
   end
 
   defp assign_task_history(socket), do: assign(socket, :task_history, [])
@@ -2563,10 +2565,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         end
 
         apply_pending_labels(socket, updated)
-        log_typed_changes(socket, socket.assigns.assignment, updated)
+        told? = log_typed_changes(socket, socket.assigns.assignment, updated)
 
         socket
-        |> log_edit_once(updated)
+        |> log_edit_once(updated, told?)
         |> hold_saved(updated)
         |> assign(
           pending_params: nil,
@@ -2647,10 +2649,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       )
     end
 
-    :ok
+    reassigned? = PhoenixKitProjects.Notices.reassigned(was, now, Activity.actor_uuid(socket))
+
+    # Whether the people were told of this save already: the generic
+    # "changed your task" row then tells nobody.
+    status_action != nil or reassigned?
   end
 
-  defp log_typed_changes(_socket, _was, _now), do: :ok
+  defp log_typed_changes(_socket, _was, _now), do: false
 
   defp blank_waiting(v) when is_binary(v) do
     case String.trim(v) do
@@ -2663,14 +2669,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # One line in the project's activity per visit to the form, not one per
   # pause in typing.
-  defp log_edit_once(%{assigns: %{edit_logged?: true}} = socket, _updated), do: socket
+  defp log_edit_once(%{assigns: %{edit_logged?: true}} = socket, _updated, _told?), do: socket
 
-  defp log_edit_once(socket, updated) do
+  defp log_edit_once(socket, updated, told?) do
     Activity.log("projects.assignment_updated",
       actor_uuid: Activity.actor_uuid(socket),
       resource_type: "assignment",
       resource_uuid: updated.uuid,
-      target_uuid: Activity.assignee_target_uuid(updated),
+      target_uuid: if(not told?, do: Activity.assignee_target_uuid(updated)),
+      tell: not told?,
       metadata: %{"project" => socket.assigns.project.name}
     )
 
@@ -2695,15 +2702,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           attrs["description"] || (task_words && task_words["description"])
         )
 
+        told? = log_typed_changes(socket, socket.assigns.assignment, updated)
+
         Activity.log("projects.assignment_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "assignment",
           resource_uuid: updated.uuid,
-          target_uuid: Activity.assignee_target_uuid(updated),
+          target_uuid: if(not told?, do: Activity.assignee_target_uuid(updated)),
+          tell: not told?,
           metadata: %{"project" => socket.assigns.project.name}
         )
-
-        log_typed_changes(socket, socket.assigns.assignment, updated)
 
         {:noreply,
          socket
@@ -3930,7 +3938,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         id="assignment-threads"
         class="flex flex-col gap-3 mt-4 mb-16"
       >
-        <.accordion :if={@task_history != []} id="assignment-history" cue={true}>
+        <.accordion :if={@task_history != []} id={"assignment-history-#{@assignment.uuid}"} cue={true}>
           <:title>
             {gettext("History")}
             <span class="ml-2 text-xs font-normal opacity-50">{length(@task_history)}</span>

@@ -72,15 +72,18 @@ defmodule PhoenixKitProjects do
     [
       %{
         key: "projects",
-        label: "Projects",
-        description: "Membership, health, and task updates in your projects",
+        # Core shows the labels through this backend, in the reader's
+        # language (a core that does not know the key shows them as written).
+        gettext_backend: PhoenixKitProjects.Gettext,
+        label: gettext_noop("Projects"),
+        description: gettext_noop("Membership, health, and task updates in your projects"),
         actions: [],
         default: true,
         sub_types: [
           %{
             key: "membership",
-            label: "Membership",
-            description: "Added to a project, role changes, removals",
+            label: gettext_noop("Membership"),
+            description: gettext_noop("Added to a project, role changes, removals"),
             actions: [
               "projects.member_added",
               "projects.member_role_changed",
@@ -90,44 +93,53 @@ defmodule PhoenixKitProjects do
           },
           %{
             key: "tasks",
-            label: "Task updates",
-            description: "Tasks assigned to you created, edited, or moved",
+            label: gettext_noop("Task updates"),
+            description:
+              gettext_noop(
+                "Your tasks given to you, changed, started, done, reopened, handed on or removed"
+              ),
             actions: [
               "projects.assignment_created",
               "projects.assignment_updated",
               "projects.assignment_started",
               "projects.assignment_completed",
-              "projects.assignment_reopened"
+              "projects.assignment_reopened",
+              "projects.assignment_reassigned",
+              "projects.assignment_removed"
             ],
             default: true
           },
           %{
             key: "handoffs",
-            label: "Your turn",
+            label: gettext_noop("Your turn"),
             description:
-              "A task of yours can start, or is on hold because work before it was reopened",
+              gettext_noop(
+                "A task of yours can start, or is on hold because work before it was reopened"
+              ),
             actions: ["projects.assignment_ready", "projects.assignment_on_hold"],
             default: true
           },
           %{
             key: "comments",
-            label: "Comments",
+            label: gettext_noop("Comments"),
             description:
-              "Comments on your tasks, on tasks you commented on, and on projects you manage",
+              gettext_noop(
+                "Comments and notes on your tasks, on tasks you commented on, and on projects you manage"
+              ),
             actions: ["projects.comment_added"],
             default: true
           },
           %{
             key: "health",
-            label: "Project health",
-            description: "Health judgments on your projects",
+            label: gettext_noop("Project health"),
+            description: gettext_noop("Health judgments on your projects"),
             actions: ["projects.health_updated"],
             default: true
           },
           %{
             key: "events",
-            label: "Project events",
-            description: "Meetings, milestones, and reviews added to your projects",
+            label: gettext_noop("Project events"),
+            description: gettext_noop("Meetings, milestones, and reviews added to your projects"),
             actions: [
               "projects.event_created",
               "projects.event_updated",

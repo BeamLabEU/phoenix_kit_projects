@@ -1,6 +1,8 @@
 defmodule PhoenixKitProjects.Activity do
   @moduledoc "Activity logging wrapper for the Projects module."
 
+  import Ecto.Query, only: [from: 2]
+
   @module "projects"
 
   @doc """
@@ -10,7 +12,9 @@ defmodule PhoenixKitProjects.Activity do
 
   An entry that names a recipient (`target_uuid`) gets its notification
   line, icon and link in the recipient's language on the way through
-  (`PhoenixKitProjects.Notices.decorate/2`).
+  (`PhoenixKitProjects.Notices.decorate/2`). A task event that names none
+  tells the task's people itself (`Notices.tell_assignees/2`) unless the
+  caller passes `tell: false`.
 
   A project's history is read from these rows (`PhoenixKitProjects.History`),
   and an order is looked back on long after core's activity retention would
@@ -20,13 +24,21 @@ defmodule PhoenixKitProjects.Activity do
   """
   @spec log(binary(), keyword()) :: {:ok, struct()} | {:error, term()}
   def log(action, opts) when is_binary(action) and is_list(opts) do
+    {tell?, opts} = Keyword.pop(opts, :tell, true)
+    {subject, opts} = Keyword.pop(opts, :notice_subject)
+
     opts =
       action
-      |> PhoenixKitProjects.Notices.decorate(opts)
+      |> PhoenixKitProjects.Notices.decorate(opts, subject)
       |> with_project_uuid()
       |> then(&if(history?(action), do: Keyword.put(&1, :permanent, true), else: &1))
 
-    PhoenixKit.Activity.log(@module, action, opts)
+    result = PhoenixKit.Activity.log(@module, action, opts)
+
+    if tell? and match?({:ok, _}, result),
+      do: PhoenixKitProjects.Notices.tell_assignees(action, opts)
+
+    result
   end
 
   # A task's row names its project too, so the project's History still finds
@@ -45,8 +57,6 @@ defmodule PhoenixKitProjects.Activity do
   end
 
   defp project_of_assignment(uuid) do
-    import Ecto.Query, only: [from: 2]
-
     PhoenixKit.RepoHelper.repo().one(
       from(a in PhoenixKitProjects.Schemas.Assignment,
         where: a.uuid == ^uuid,
@@ -62,7 +72,8 @@ defmodule PhoenixKitProjects.Activity do
   @history_prefixes ~w(projects.assignment_ projects.project_ projects.member_
                        projects.subproject_ projects.dependency_ projects.event_
                        projects.task_list_edited projects.health_updated
-                       projects.comment_added)
+                       projects.comment_added projects.work_amended
+                       projects.work_removed)
 
   @doc "Whether `action` is part of a project's lasting history."
   @spec history?(binary()) :: boolean()

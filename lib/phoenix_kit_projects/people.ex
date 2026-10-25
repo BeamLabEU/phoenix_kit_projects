@@ -192,11 +192,21 @@ defmodule PhoenixKitProjects.People do
     _ -> []
   end
 
+  # A department's people are those whose primary department it is AND the
+  # members of its teams — the same reach as "My tasks" (`Assignees`).
   def assignee_user_uuids(%{assigned_department_uuid: uuid}) when is_binary(uuid) do
+    in_teams =
+      from(m in TeamMembership,
+        join: t in Team,
+        on: t.uuid == m.team_uuid,
+        where: t.department_uuid == ^uuid,
+        select: m.staff_person_uuid
+      )
+
     from(p in Person,
       where:
-        p.primary_department_uuid == ^uuid and p.status != @trashed and
-          not is_nil(p.user_uuid),
+        (p.primary_department_uuid == ^uuid or p.uuid in subquery(in_teams)) and
+          p.status != @trashed and not is_nil(p.user_uuid),
       select: p.user_uuid,
       distinct: true
     )
@@ -206,6 +216,32 @@ defmodule PhoenixKitProjects.People do
   end
 
   def assignee_user_uuids(_), do: []
+
+  @doc """
+  The name of a task's assignee — the person's, the team's or the
+  department's (primary names, as audit rows keep them) — or nil.
+  """
+  @spec assignee_name(map()) :: String.t() | nil
+  def assignee_name(%{assigned_person_uuid: uuid}) when is_binary(uuid) do
+    case get_person(uuid, preload: [:user]) do
+      %Person{} = p -> display_name(p)
+      _ -> nil
+    end
+  end
+
+  def assignee_name(%{assigned_team_uuid: uuid}) when is_binary(uuid),
+    do: name_of(Team, uuid)
+
+  def assignee_name(%{assigned_department_uuid: uuid}) when is_binary(uuid),
+    do: name_of(Department, uuid)
+
+  def assignee_name(_), do: nil
+
+  defp name_of(schema, uuid) do
+    RepoHelper.repo().one(from(x in schema, where: x.uuid == ^uuid, select: x.name))
+  rescue
+    _ -> nil
+  end
 
   @doc "A person's team memberships with `team: [:department]` preloaded."
   @spec list_memberships_for_person(binary()) :: [TeamMembership.t()]

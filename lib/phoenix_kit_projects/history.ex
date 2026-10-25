@@ -36,7 +36,7 @@ defmodule PhoenixKitProjects.History do
   alias PhoenixKit.RepoHelper
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKitComments.Comment
-  alias PhoenixKitProjects.{L10n, TaskNotes}
+  alias PhoenixKitProjects.{Extensions, Features, L10n, TaskNotes}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, WorkEntry}
 
   @cap 2_000
@@ -61,7 +61,14 @@ defmodule PhoenixKitProjects.History do
   def list(%Project{} = project, opts \\ []) do
     tasks = task_index(project.uuid)
     only = Keyword.get(opts, :task)
-    kinds = Keyword.get(opts, :kinds, [:activity, :comment, :note, :time])
+
+    # What the project has switched off is not shown here either: its
+    # discussions (comments and notes) and its work ledger (time).
+    hidden =
+      if(discussions?(project), do: [], else: [:comment, :note]) ++
+        if Features.on?(project, "ledger"), do: [], else: [:time]
+
+    kinds = opts |> Keyword.get(:kinds, [:activity, :comment, :note, :time]) |> Kernel.--(hidden)
 
     task_uuids = if only, do: [only], else: Map.keys(tasks)
 
@@ -75,7 +82,9 @@ defmodule PhoenixKitProjects.History do
        end},
       {:note,
        fn ->
-         comments(project, task_uuids, only, [TaskNotes.resource_type(), "project_notes"])
+         project
+         |> comments(task_uuids, only, [TaskNotes.resource_type(), "project_notes"])
+         |> with_comment_told()
        end},
       {:time, fn -> time(project, task_uuids, only) end}
     ]
@@ -90,7 +99,8 @@ defmodule PhoenixKitProjects.History do
     entries =
       raw
       |> Enum.flat_map(fn {kind, rows} -> Enum.map(rows, &normalize(kind, &1, tasks)) end)
-      |> Enum.reject(&is_nil/1)
+      # Nothing for a dropped row; the ledger's corrections go with the ledger.
+      |> Enum.reject(&(is_nil(&1) or (:time in hidden and ledger_row?(&1))))
       |> fold_notices()
       |> name_people()
       # By the second, then by what caused what, then by the instant: the
@@ -101,6 +111,14 @@ defmodule PhoenixKitProjects.History do
       )
 
     %{entries: entries, total: length(entries), truncated: truncated}
+  end
+
+  defp ledger_row?(%{kind: :activity, action: "projects.work_" <> _}), do: true
+  defp ledger_row?(_), do: false
+
+  defp discussions?(project) do
+    Code.ensure_loaded?(PhoenixKitComments) and PhoenixKitComments.enabled?() and
+      Extensions.enabled?(project, "discussions")
   end
 
   # Lines of the same instant, newest first: what a change caused ("ready",
@@ -135,14 +153,23 @@ defmodule PhoenixKitProjects.History do
 
     query =
       from(e in Entry,
-        where: e.module == "projects" and e.action not in ^@dropped,
+        # A change that failed is logged `db_pending` for the audit feed;
+        # the story is only what happened.
+        where:
+          e.module == "projects" and e.action not in ^@dropped and
+            fragment("(?->>'db_pending') IS DISTINCT FROM 'true'", e.metadata),
         order_by: [desc: e.inserted_at],
         limit: @cap
       )
 
     query =
       if only do
-        where(query, [e], e.resource_uuid in ^ids)
+        # A ledger correction is logged on the project and names the task.
+        where(
+          query,
+          [e],
+          e.resource_uuid in ^ids or fragment("?->>'assignment_uuid' = ?", e.metadata, ^only)
+        )
       else
         where(
           query,
@@ -239,7 +266,9 @@ defmodule PhoenixKitProjects.History do
       action: e.action,
       actor_uuid: e.actor_uuid,
       target_uuid: e.target_uuid,
-      task: task_ref(e.resource_type, e.resource_uuid, meta, tasks),
+      task:
+        task_ref(e.resource_type, e.resource_uuid, meta, tasks) ||
+          task_ref("assignment", meta["assignment_uuid"], meta, tasks),
       quote: meta["reason"],
       told: told,
       auto: meta["auto"] == true,
@@ -255,8 +284,8 @@ defmodule PhoenixKitProjects.History do
   defp normalize(:comment, {%Comment{} = c, told}, tasks),
     do: %{normalize(:note_or_comment, c, tasks) | kind: :comment, told: told}
 
-  defp normalize(:note, %Comment{} = c, tasks),
-    do: %{normalize(:note_or_comment, c, tasks) | kind: :note}
+  defp normalize(:note, {%Comment{} = c, told}, tasks),
+    do: %{normalize(:note_or_comment, c, tasks) | kind: :note, told: told}
 
   defp normalize(:note_or_comment, %Comment{} = c, tasks) do
     %{
@@ -327,7 +356,30 @@ defmodule PhoenixKitProjects.History do
         %{first | told: Enum.flat_map(group, & &1.told), target_uuid: nil}
       end)
 
-    rest ++ folded
+    attach_notices(rest) ++ folded
+  end
+
+  # A change's extra notices (a team's people told of a reopen, one row
+  # each) are who its own line told, not lines of their own. One left with
+  # no line of the same change to join stays as it is.
+  defp attach_notices(entries) do
+    {extra, lines} = Enum.split_with(entries, &(&1.kind == :activity and &1.notice))
+
+    {lines, orphans} =
+      Enum.reduce(extra, {lines, []}, fn n, {lines, orphans} ->
+        case Enum.find_index(lines, &same_change?(&1, n)) do
+          nil -> {lines, [n | orphans]}
+          i -> {List.update_at(lines, i, &%{&1 | told: &1.told ++ n.told}), orphans}
+        end
+      end)
+
+    lines ++ orphans
+  end
+
+  defp same_change?(line, notice) do
+    line.kind == :activity and not line.notice and line.action == notice.action and
+      (line.task && line.task.uuid) == (notice.task && notice.task.uuid) and
+      abs(DateTime.diff(line.at, notice.at)) <= 2
   end
 
   # Names for every actor and everyone told, in one read.
