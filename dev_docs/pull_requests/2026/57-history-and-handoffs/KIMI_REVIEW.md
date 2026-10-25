@@ -50,3 +50,38 @@ Reviewer: Moonshot Kimi (K3.1 Pro). Each section is one round, reproduced as ans
   - **IMPROVEMENT - MEDIUM — Test gaps:** No behavioral coverage for non-UTC changes in `l10n.ex`, `helpers.ex`, `member_projects_live.ex`, `project_events_live.ex`, `project_form_live.ex`, `project_whiteboards_live.ex`; API `auth.ex`, `docs.ex`, or reopen `reason`; task-form history/typed logging; `pub_sub.ex` broadcasts; `resource_links.ex` assignment registration; or the gettext manifest addition.
 
   - **NITPICK:** `AssignmentFormLive` uses the static accordion id `assignment-history`; two embedded task drawers duplicate it despite the namespaced-DOM convention.
+
+## Post-merge recheck — 2026-10-25
+
+Reviewed the PR #57 merge (`a40f5fd`), Claude's follow-up (`549c4e1`) and
+Codex's follow-up (`c8b8ed9`) on current `main`. PR #57 is the newest merged
+PR; #56 and #55 already have their own review records.
+
+### Result
+
+No additional defect confirmed in this pass; no production change made.
+
+- `History.list/2` rejects a task outside the project before reading any
+  source. The strengthened regression uses a real foreign task with rows in
+  every source, so it exercises the guard rather than merely an empty result.
+- Assignee fan-out and reassignment notices carry the originating activity
+  UUID. History folds them by that identity, not by timing; the legacy
+  fallback also requires the same actor. Delayed and rapid-edit/handover
+  cases are covered.
+- Notice rows still fold when their source is present and remain visible as
+  orphans when it is not, avoiding both silent loss and misattribution.
+- Rechecked History's project/task/comment/note/time scoping, access checks
+  on reload, direct-recipient visibility and template suppression,
+  notice/auto recursion guards, comment publication and deletion hooks,
+  reassignment/removal fan-out, and the handoff batching/discard paths.
+- `PubSub.after_commit/1` retains its documented outermost-transaction
+  requirement. No new caller violating that contract was found.
+- Previously recorded per-recipient read costs and the read-cap/orphan
+  trade-offs remain design limitations, not new regressions from these
+  follow-ups.
+
+### Validation
+
+- Full PostgreSQL-backed suite: **2163 tests, 0 failures, 1 excluded**.
+- `mix format && mix precommit`: passed (format, warnings-as-errors compile,
+  Credo strict and Dialyzer).
