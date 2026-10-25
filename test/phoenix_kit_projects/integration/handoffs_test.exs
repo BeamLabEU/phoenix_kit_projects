@@ -276,6 +276,12 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       %{alice: alice, bob: bob} = ctx.people
       measure = task!(ctx.project, "Measure", bob)
 
+      # Even when the assignee commented on the task before.
+      {:ok, _} =
+        PhoenixKitComments.create_comment("assignment", measure.uuid, bob.user, %{
+          content: "Measured."
+        })
+
       {:ok, _} =
         PhoenixKitComments.create_comment("assignment", measure.uuid, alice.user, %{
           content: "You forgot the radiator.",

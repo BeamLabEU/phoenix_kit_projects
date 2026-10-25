@@ -82,16 +82,24 @@ defmodule PhoenixKitProjects.CommentNotices do
       |> Enum.filter(&(&1.kind == :user))
       |> MapSet.new(& &1.uuid)
 
-    (own_people(type, subject, comment) ++ earlier_commenters(type, subject.uuid))
+    # The assignee of a task reopened with this reason hears it from the
+    # reopen's notice, which quotes it — even when they commented before.
+    told_by_reopen =
+      if type == "assignment" and reopen_reason?(comment),
+        do: MapSet.new(People.assignee_user_uuids(subject)),
+        else: MapSet.new()
+
+    (own_people(type, subject) ++ earlier_commenters(type, subject.uuid))
     |> Enum.uniq()
-    |> Enum.reject(&(&1 == comment.user_uuid or MapSet.member?(mentioned, &1)))
+    |> Enum.reject(
+      &(&1 == comment.user_uuid or MapSet.member?(mentioned, &1) or
+          MapSet.member?(told_by_reopen, &1))
+    )
   end
 
-  defp own_people("assignment", %Assignment{} = a, comment) do
-    if reopen_reason?(comment), do: [], else: People.assignee_user_uuids(a)
-  end
+  defp own_people("assignment", %Assignment{} = a), do: People.assignee_user_uuids(a)
 
-  defp own_people("project", %Project{} = p, _comment) do
+  defp own_people("project", %Project{} = p) do
     p.uuid
     |> Members.list_members()
     |> Enum.filter(&(&1.role in ["owner", "manager"]))
