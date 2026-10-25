@@ -93,7 +93,12 @@ defmodule PhoenixKitProjects.History do
       |> Enum.reject(&is_nil/1)
       |> fold_notices()
       |> name_people()
-      |> Enum.sort_by(&{DateTime.to_unix(&1.at, :microsecond), order(&1)}, :desc)
+      # By the second, then by what caused what, then by the instant: the
+      # page writes a change's notices a moment before the change's own row.
+      |> Enum.sort_by(
+        &{DateTime.to_unix(&1.at), order(&1), DateTime.to_unix(&1.at, :microsecond)},
+        :desc
+      )
 
     %{entries: entries, total: length(entries), truncated: truncated}
   end
