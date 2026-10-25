@@ -286,6 +286,12 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert [_] = notices("projects.comment_added", alice.user)
       assert notices("projects.comment_added", dave.user) == []
       assert notices("projects.comment_added", carl.user) == []
+
+      # History hangs the people told on the comment's own line.
+      %{entries: entries} = History.list(Projects.get_project(ctx.project.uuid))
+      first = Enum.find(entries, &(&1.kind == :comment and &1.quote == "Wall A does not add up."))
+      assert Enum.map(first.told, & &1.uuid) == [bob.user]
+      refute Enum.any?(entries, &(&1[:action] == "projects.comment_added"))
     end
 
     test "a reopen's reason does not tell the assignee twice", ctx do

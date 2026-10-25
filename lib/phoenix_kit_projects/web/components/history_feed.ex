@@ -236,9 +236,9 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   # A reopen's reason, a comment, a note's text or a time entry's note.
   defp quote_text(%{kind: kind, quote: q})
        when kind in [:comment, :note, :time] and is_binary(q) and q != "",
-       do: Token.to_plain_text(q)
+       do: q |> Token.to_plain_text() |> String.trim()
 
-  defp quote_text(%{kind: :activity, quote: q}) when is_binary(q) and q != "", do: q
+  defp quote_text(%{kind: :activity, quote: q}) when is_binary(q) and q != "", do: String.trim(q)
   defp quote_text(_), do: nil
 
   defp duration(nil), do: "—"

@@ -67,7 +67,12 @@ defmodule PhoenixKitProjects.History do
 
     sources = [
       {:activity, fn -> activity(project, task_uuids, only) end},
-      {:comment, fn -> comments(project, task_uuids, only, ["assignment", "project"]) end},
+      {:comment,
+       fn ->
+         project
+         |> comments(task_uuids, only, ["assignment", "project"])
+         |> with_comment_told()
+       end},
       {:note,
        fn ->
          comments(project, task_uuids, only, [TaskNotes.resource_type(), "project_notes"])
@@ -177,6 +182,28 @@ defmodule PhoenixKitProjects.History do
     |> RepoHelper.repo().all()
   end
 
+  # Who each comment's notices reached, and when they saw it: one read over
+  # the notice rows (`metadata.comment`) and their notifications.
+  defp with_comment_told([]), do: []
+
+  defp with_comment_told(comments) do
+    ids = Enum.map(comments, & &1.uuid)
+
+    told =
+      from(n in Notification,
+        join: e in Entry,
+        on: e.uuid == n.activity_uuid,
+        where:
+          e.module == "projects" and e.action == "projects.comment_added" and
+            fragment("?->>'comment'", e.metadata) in type(^ids, {:array, :string}),
+        select: {fragment("?->>'comment'", e.metadata), n.recipient_uuid, n.seen_at}
+      )
+      |> RepoHelper.repo().all()
+      |> Enum.group_by(&elem(&1, 0), fn {_, who, seen} -> %{uuid: who, seen_at: seen} end)
+
+    Enum.map(comments, &{&1, Map.get(told, &1.uuid, [])})
+  end
+
   defp time(project, task_uuids, only) do
     query =
       from(w in WorkEntry,
@@ -212,13 +239,20 @@ defmodule PhoenixKitProjects.History do
   end
 
   # A reopen's reason is quoted by the reopen's own line.
-  defp normalize(:comment, %Comment{metadata: %{"reopen_reason" => true}}, _tasks), do: nil
+  defp normalize(:comment, {%Comment{metadata: %{"reopen_reason" => true}}, _told}, _tasks),
+    do: nil
 
-  defp normalize(kind, %Comment{} = c, tasks) when kind in [:comment, :note] do
+  defp normalize(:comment, {%Comment{} = c, told}, tasks),
+    do: %{normalize(:note_or_comment, c, tasks) | kind: :comment, told: told}
+
+  defp normalize(:note, %Comment{} = c, tasks),
+    do: %{normalize(:note_or_comment, c, tasks) | kind: :note}
+
+  defp normalize(:note_or_comment, %Comment{} = c, tasks) do
     %{
       id: "c-" <> c.uuid,
       at: c.inserted_at,
-      kind: kind,
+      kind: :comment,
       action: nil,
       actor_uuid: c.user_uuid,
       target_uuid: nil,
