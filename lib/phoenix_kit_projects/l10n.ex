@@ -13,12 +13,54 @@ defmodule PhoenixKitProjects.L10n do
 
   use Gettext, backend: PhoenixKitWeb.Gettext
 
+  alias PhoenixKit.Utils.TimeZone
+
+  @zone_key :phoenix_kit_projects_viewer_zone
+
+  @doc """
+  Settles the time zone this process prints instants in — the viewer's
+  (`TimeZone.for_viewer/1`: their profile, else the site's). Called once per
+  LiveView by `Web.Helpers.assign_embed_user/2`, like the Gettext locale: a
+  LiveView renders in its own process, so every helper below reads it without
+  threading a zone through each template. A process that never set one (a job,
+  the API) prints UTC, as before.
+  """
+  @spec put_viewer_zone(term()) :: :ok
+  def put_viewer_zone(viewer) do
+    Process.put(@zone_key, TimeZone.for_viewer(viewer))
+    :ok
+  end
+
+  @doc "A UTC `DateTime` as the viewer's wall clock (unchanged when no zone is set)."
+  @spec local(DateTime.t()) :: DateTime.t()
+  def local(%DateTime{} = dt), do: TimeZone.shift(dt, Process.get(@zone_key))
+
+  @doc """
+  A typed wall clock read in the viewer's zone, as the UTC instant to store
+  (`TimeZone.from_wall/2`); `nil` when it cannot be resolved.
+  """
+  @spec from_wall(NaiveDateTime.t()) :: DateTime.t() | nil
+  def from_wall(%NaiveDateTime{} = naive) do
+    case TimeZone.from_wall(naive, Process.get(@zone_key)) do
+      {:ok, dt} -> dt
+      :error -> nil
+    end
+  end
+
+  @doc "The viewer's local date of an instant."
+  @spec local_date(DateTime.t()) :: Date.t()
+  def local_date(%DateTime{} = dt), do: dt |> local() |> DateTime.to_date()
+
+  @doc "The viewer's `HH:MM` of an instant."
+  @spec local_time(DateTime.t()) :: String.t()
+  def local_time(%DateTime{} = dt), do: dt |> local() |> format_time()
+
   @doc "Formats a `Date`/`DateTime` as `Mon DD, YYYY`. Returns `nil` for nil."
   @spec format_date(Date.t() | DateTime.t() | NaiveDateTime.t() | nil) :: String.t() | nil
   def format_date(nil), do: nil
 
   def format_date(%DateTime{} = dt),
-    do: dt |> DateTime.to_date() |> format_date()
+    do: dt |> local() |> DateTime.to_date() |> format_date()
 
   def format_date(%NaiveDateTime{} = dt),
     do: dt |> NaiveDateTime.to_date() |> format_date()
@@ -33,6 +75,8 @@ defmodule PhoenixKitProjects.L10n do
   def format_datetime(nil), do: nil
 
   def format_datetime(%DateTime{} = dt) do
+    dt = local(dt)
+
     gettext("%{month} %{day}, %{year} at %{time}",
       month: short_month(dt.month),
       day: dt.day,
@@ -46,6 +90,8 @@ defmodule PhoenixKitProjects.L10n do
   def format_month_day_time(nil), do: nil
 
   def format_month_day_time(%DateTime{} = dt) do
+    dt = local(dt)
+
     gettext("%{month} %{day} %{time}",
       month: short_month(dt.month),
       day: dt.day,

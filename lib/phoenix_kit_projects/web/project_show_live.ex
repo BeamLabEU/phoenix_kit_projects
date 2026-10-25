@@ -1644,7 +1644,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             <span :if={@a.completed_by} class="badge badge-success badge-sm gap-1">
               <.icon name="hero-check-circle" class="w-3 h-3" />
-              {@a.completed_by.email}<%= if @a.completed_at do %>
+              {PhoenixKit.Users.Auth.User.display_name(@a.completed_by)}<%= if @a.completed_at do %>
                 · {L10n.format_month_day_time(@a.completed_at)}
               <% end %>
             </span>

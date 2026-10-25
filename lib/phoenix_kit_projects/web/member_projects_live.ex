@@ -41,6 +41,7 @@ defmodule PhoenixKitProjects.Web.MemberProjectsLive do
   @impl true
   def mount(_params, _session, socket) do
     user = socket.assigns[:phoenix_kit_current_user]
+    PhoenixKitProjects.L10n.put_viewer_zone(user)
 
     {:ok,
      assign(socket,

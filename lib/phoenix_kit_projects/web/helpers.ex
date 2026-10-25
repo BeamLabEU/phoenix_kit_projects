@@ -46,9 +46,10 @@ defmodule PhoenixKitProjects.Web.Helpers do
   # ─────────────────────────────────────────────────────────────────
 
   @doc """
-  The display label for an assignment's assignee (person email / team /
-  department name), or `nil` when unassigned. Requires the assignee assocs
-  to be preloaded.
+  The display label for an assignment's assignee (the person's name — staff
+  name, else the account's name, else its email — or the team / department
+  name), or `nil` when unassigned. Requires the assignee assocs to be
+  preloaded.
   """
   @spec assignee_label(
           PhoenixKitProjects.Schemas.Assignment.t()
@@ -56,10 +57,17 @@ defmodule PhoenixKitProjects.Web.Helpers do
         ) :: String.t() | nil
   def assignee_label(a) do
     cond do
-      a.assigned_person && a.assigned_person.user -> a.assigned_person.user.email
-      a.assigned_team -> a.assigned_team.name
-      a.assigned_department -> a.assigned_department.name
-      true -> nil
+      a.assigned_person && a.assigned_person.user ->
+        PhoenixKitProjects.People.display_name(a.assigned_person)
+
+      a.assigned_team ->
+        a.assigned_team.name
+
+      a.assigned_department ->
+        a.assigned_department.name
+
+      true ->
+        nil
     end
   end
 
@@ -689,8 +697,29 @@ defmodule PhoenixKitProjects.Web.Helpers do
   # or embedded, so this is where the LiveView's process says who writes
   # the text it saves: `RefText` links a typed `#KEY-42` only when that
   # person may open what it names.
+  @doc """
+  Settles the zone this LiveView prints times in for a page that has no scope
+  of its own — an extension tab mounted with only `"current_user_uuid"` in its
+  session. Unknown or absent → the site's zone.
+  """
+  @spec put_session_viewer_zone(map()) :: :ok
+  def put_session_viewer_zone(session) when is_map(session) do
+    user =
+      case Map.get(session, "current_user_uuid") do
+        uuid when is_binary(uuid) and uuid != "" -> PhoenixKit.Users.Auth.get_user(uuid)
+        _ -> nil
+      end
+
+    PhoenixKitProjects.L10n.put_viewer_zone(user)
+  rescue
+    _ -> PhoenixKitProjects.L10n.put_viewer_zone(nil)
+  end
+
+  # Same place, same reason: the zone this process prints times in.
   defp declare_ref_writer(socket) do
-    PhoenixKitProjects.RefText.put_writer({:scope, socket.assigns[:phoenix_kit_current_scope]})
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    PhoenixKitProjects.RefText.put_writer({:scope, scope})
+    PhoenixKitProjects.L10n.put_viewer_zone(scope)
     socket
   end
 
