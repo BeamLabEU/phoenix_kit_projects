@@ -628,7 +628,9 @@ While iterating ahead of that, develop and test via
 
 ## Testing
 
-Test DB `phoenix_kit_projects_test` (override with `PGDATABASE`). Three levels:
+Test DB `phoenix_kit_projects_test` plus `MIX_TEST_PARTITION` (override with
+`PGDATABASE` — a value exported for other work redirects the suite too, and
+partitions then share that one database). Three levels:
 
 - **Unit tests** in `test/phoenix_kit_projects/` — schemas, changesets, pure
   helpers (duration math, the `Errors` atom dispatcher). Always run.

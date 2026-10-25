@@ -207,7 +207,7 @@ defmodule PhoenixKitProjects.MixProject do
       # `mix gettext.extract` / `mix gettext.merge` run against this app's
       # own `PhoenixKitProjects.Gettext` backend (call sites for project-
       # domain strings; common strings still resolve via core's backend).
-      {:gettext, "~> 0.26 or ~> 1.0"},
+      {:gettext, "~> 1.0"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
