@@ -199,6 +199,17 @@ defmodule PhoenixKitProjects.Notices do
     )
   end
 
+  defp text("projects.assignment_ready", %{meta: %{"after" => after_task, "more" => n}} = c)
+       when is_binary(after_task) and after_task != "" and is_integer(n) and n > 0 do
+    ngettext(
+      "Your turn: “%{task}” and 1 more task — “%{after}” is done",
+      "Your turn: “%{task}” and %{count} more tasks — “%{after}” is done",
+      n,
+      task: c.task,
+      after: after_task
+    )
+  end
+
   defp text("projects.assignment_ready", %{meta: %{"after" => after_task}} = c)
        when is_binary(after_task) and after_task != "" do
     gettext("Your turn: “%{task}” — “%{after}” is done", task: c.task, after: after_task)

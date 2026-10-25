@@ -227,6 +227,10 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
        when is_binary(q) and q != "",
        do: gettext(" — because:")
 
+  defp tail(%{kind: :activity, action: "projects.assignment_ready", meta: %{"more" => n}})
+       when is_integer(n) and n > 0,
+       do: ngettext(" and 1 more task", " and %{count} more tasks", n)
+
   defp tail(_), do: ""
 
   # A reopen's reason, a comment, a note's text or a time entry's note.

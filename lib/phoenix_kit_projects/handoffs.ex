@@ -100,36 +100,43 @@ defmodule PhoenixKitProjects.Handoffs do
 
     after_label = label_of(uuid)
 
-    waiting
-    |> Enum.flat_map(&[&1 | descendants(&1, shape)])
-    |> Enum.uniq()
-    |> Enum.map(&Map.get(shape.rows, &1))
-    |> Enum.each(fn
-      nil ->
-        :ok
+    woken =
+      waiting
+      |> Enum.flat_map(&[&1 | descendants(&1, shape)])
+      |> Enum.uniq()
+      |> Enum.map(&Map.get(shape.rows, &1))
+      |> Enum.flat_map(fn
+        nil ->
+          []
 
-      row ->
-        cond do
-          ready?(row, shape) ->
-            notify_ready(row.uuid, People.assignee_user_uuids(row), actor, %{
-              "after" => after_label
-            })
+        row ->
+          cond do
+            ready?(row, shape) ->
+              [{row, %{"after" => after_label}}]
 
-          # Work already under way that was waiting on this — on hold since
-          # it was reopened, or started early: it can go on now.
-          row.status == "in_progress" and clear?(row.uuid, shape, 0) ->
-            notify_ready(row.uuid, People.assignee_user_uuids(row), actor, %{
-              "after" => after_label,
-              "resume" => true
-            })
+            # Work already under way that was waiting on this — on hold since
+            # it was reopened, or started early: it can go on now.
+            row.status == "in_progress" and clear?(row.uuid, shape, 0) ->
+              [{row, %{"after" => after_label, "resume" => true}}]
 
-          true ->
-            :ok
-        end
+            true ->
+              []
+          end
+      end)
+
+    # One notice per person per change: a container that became ready with
+    # three subtasks of the same person is one line naming the first.
+    woken
+    |> Enum.flat_map(fn {row, meta} ->
+      Enum.map(People.assignee_user_uuids(row), &{&1, row, meta})
+    end)
+    |> Enum.group_by(&elem(&1, 0), &{elem(&1, 1), elem(&1, 2)})
+    |> Enum.each(fn {user_uuid, rows} ->
+      [{first, meta} | rest] = Enum.sort_by(rows, fn {row, _} -> row.position end)
+      meta = if rest == [], do: meta, else: Map.put(meta, "more", length(rest))
+      notify_ready(first.uuid, [user_uuid], actor, meta)
     end)
   end
-
-  defp notify_ready(_uuid, [], _actor, _meta), do: :ok
 
   defp notify_ready(uuid, recipients, actor, meta) do
     case Projects.get_assignment(uuid) do

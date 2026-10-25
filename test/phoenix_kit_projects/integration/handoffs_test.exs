@@ -155,6 +155,22 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert notices("projects.assignment_ready", dave.user) == []
     end
 
+    test "a container and its subtasks woken for one person are one notice", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      drawings = task!(ctx.project, "Drawings", alice)
+      order = task!(ctx.project, "Order materials", bob)
+      task!(ctx.project, "Boards", bob, under: order)
+      task!(ctx.project, "Hinges", bob, under: order)
+      {:ok, _} = Projects.add_dependency(order.uuid, drawings.uuid)
+
+      set_status!(drawings, "done", alice.user)
+
+      assert [n] = notices("projects.assignment_ready", bob.user)
+      assert n.resource_uuid == order.uuid
+      assert n.metadata["more"] == 2
+      assert n.metadata["notification_text"] =~ "2 more tasks"
+    end
+
     test "starting a project tells each person once about what is ready", ctx do
       %{alice: alice, bob: bob} = ctx.people
 
