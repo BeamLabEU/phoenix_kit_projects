@@ -35,8 +35,13 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
             id={"#{@id}-#{e.id}"}
             class="flex gap-3 py-2 border-b border-base-200 last:border-b-0"
           >
-            <div class={["mt-0.5 shrink-0 self-start rounded-full p-1.5", tone(e)]}>
-              <.icon name={icon_for(e)} class="w-4 h-4" />
+            <%!-- A fixed square, the icon centred: the icon is inline, so a
+                 padded box took the line's height and came out oval. --%>
+            <div class={[
+              "mt-0.5 shrink-0 self-start flex items-center justify-center w-7 h-7 rounded-full",
+              tone(e)
+            ]}>
+              <.icon name={icon_for(e)} class="w-4 h-4 block" />
             </div>
             <div class="min-w-0 flex-1">
               <div class="flex flex-wrap items-baseline gap-x-2">
