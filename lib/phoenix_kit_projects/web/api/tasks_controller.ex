@@ -393,13 +393,13 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
           api_metadata(key, %{})
         )
 
-      # A handed-over task was told so already; otherwise its people hear
-      # that the task changed.
+      # A handed-over task was told so already; a move or a meeting link is
+      # the list's bookkeeping. Otherwise its people hear the task changed.
       Activity.log("projects.assignment_updated",
         actor_uuid: ApiKey.accountable_uuid(key),
         resource_type: "assignment",
         resource_uuid: a.uuid,
-        tell: not reassigned?,
+        tell: not reassigned? and changed -- ~w(parent position interaction) != [],
         metadata: api_metadata(key, %{"fields" => changed})
       )
 
@@ -844,28 +844,32 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
           delete_refused(conn, project)
 
         true ->
-          case Projects.delete_assignment(a) do
-            {:ok, _} ->
-              Activity.log("projects.assignment_removed",
-                actor_uuid: ApiKey.accountable_uuid(key),
-                resource_type: "assignment",
-                resource_uuid: a.uuid,
-                metadata:
-                  api_metadata(key, %{"task" => Assignment.label(a), "subtasks" => length(below)})
-              )
-
-              Notices.removed(a, ApiKey.accountable_uuid(key), api_metadata(key, %{}))
-
-              sync_project_completion(conn)
-              json(conn, %{deleted: a.uuid, also_deleted: Enum.map(below, & &1.uuid)})
-
-            {:error, _} ->
-              Json.error(conn, :conflict, "conflict", "The task could not be deleted.")
-          end
+          delete_branch(conn, a, below, key)
       end
     else
       {:halt, conn} -> conn
       {:error, :not_found} -> not_found(conn)
+    end
+  end
+
+  defp delete_branch(conn, a, below, key) do
+    delete = fn -> Projects.delete_assignment(a) end
+
+    case Notices.removing(a, ApiKey.accountable_uuid(key), api_metadata(key, %{}), delete) do
+      {:ok, _} ->
+        Activity.log("projects.assignment_removed",
+          actor_uuid: ApiKey.accountable_uuid(key),
+          resource_type: "assignment",
+          resource_uuid: a.uuid,
+          metadata:
+            api_metadata(key, %{"task" => Assignment.label(a), "subtasks" => length(below)})
+        )
+
+        sync_project_completion(conn)
+        json(conn, %{deleted: a.uuid, also_deleted: Enum.map(below, & &1.uuid)})
+
+      {:error, _} ->
+        Json.error(conn, :conflict, "conflict", "The task could not be deleted.")
     end
   end
 
@@ -987,10 +991,13 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
            ) do
       Enum.zip(uuids, lines)
       |> Enum.each(fn {uuid, line} ->
+        # A batch's lines are born unassigned: nobody to tell, and no reason
+        # to read 500 tasks back to find that out.
         Activity.log("projects.assignment_created",
           actor_uuid: ApiKey.accountable_uuid(key),
           resource_type: "assignment",
           resource_uuid: uuid,
+          tell: false,
           metadata: api_metadata(key, %{"task" => line.text, "batch" => length(uuids)})
         )
       end)

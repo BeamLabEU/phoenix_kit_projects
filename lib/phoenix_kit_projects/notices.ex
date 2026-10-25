@@ -187,6 +187,9 @@ defmodule PhoenixKitProjects.Notices do
     _ -> false
   end
 
+  defp tellable?(_user_uuid, %Project{is_template: true}), do: false
+  defp tellable?(user_uuid, project), do: may_view?(user_uuid, project)
+
   defp project_of(%Project{} = p), do: p
   defp project_of(%Assignment{project: %Project{} = p}), do: p
   defp project_of(%Assignment{project_uuid: uuid}), do: Projects.get_project(uuid)
@@ -220,12 +223,13 @@ defmodule PhoenixKitProjects.Notices do
       is_nil(subject) ->
         opts
 
-      # A task's line names the task, its project and a reopen's reason: only
-      # for someone who may open the project (a task can be handed to a
-      # person who is not a member). A membership line is about the reader's
-      # own access — a removed member is told although they are out.
-      action in @task_actions and not may_view?(target, project_of(subject)) ->
-        opts
+      # A task's notice goes only to someone who may open the project (a task
+      # can be handed to a person who is not a member), and never for a
+      # template's task: the row then names no recipient, so core's bridge
+      # sends nothing either. A membership line is about the reader's own
+      # access — a removed member is told although they are out.
+      action in @task_actions and not tellable?(target, project_of(subject)) ->
+        Keyword.delete(opts, :target_uuid)
 
       true ->
         recipient = Auth.get_user(target)
@@ -339,6 +343,26 @@ defmodule PhoenixKitProjects.Notices do
     error ->
       Logger.warning("[Projects] reassign notice failed: #{inspect(error.__struct__)}")
       true
+  end
+
+  @doc """
+  Runs `delete` (a task's deletion, which takes everything under it too)
+  and, when it answers `{:ok, _}`, tells the people of every task it
+  removed. The branch is read before the delete — afterwards it is gone.
+  Answers what `delete` answered.
+  """
+  @spec removing(Assignment.t(), binary() | nil, map(), (-> result)) :: result when result: term()
+  def removing(%Assignment{} = a, actor_uuid, extra \\ %{}, delete) when is_function(delete, 0) do
+    branch =
+      try do
+        [a | PhoenixKitProjects.Outline.rows_below(a)]
+      rescue
+        _ -> [a]
+      end
+
+    result = delete.()
+    if match?({:ok, _}, result), do: Enum.each(branch, &removed(&1, actor_uuid, extra))
+    result
   end
 
   @doc "Tells a deleted task's people that it is gone (call with the task as it was)."

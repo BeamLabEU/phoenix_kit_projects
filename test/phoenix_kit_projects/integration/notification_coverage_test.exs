@@ -254,6 +254,61 @@ defmodule PhoenixKitProjects.Integration.NotificationCoverageTest do
            ) == []
   end
 
+  test "a comment held for moderation tells nobody until it is approved, then tells its people",
+       ctx do
+    %{alice: alice, bob: bob} = ctx.people
+    a = task!(ctx.project, "Hinges", %{"assigned_person_uuid" => bob.person})
+
+    {:ok, comment} =
+      PhoenixKitComments.create_comment("assignment", a.uuid, alice.user, %{
+        content: "Blum or Hettich?",
+        status: "pending"
+      })
+
+    assert notices("projects.comment_added", bob.user) == []
+
+    # What the comments module calls when a moderator approves it.
+    approved = %{comment | status: "published"}
+    PhoenixKitProjects.CommentNotices.on_comment_published("assignment", a.uuid, approved)
+
+    assert [n] = notices("projects.comment_added", bob.user)
+    assert n.metadata["notification_text"] =~ "Blum or Hettich?"
+  end
+
+  test "a deleted note's words leave the notices that quoted it", ctx do
+    %{alice: alice, bob: bob} = ctx.people
+    a = task!(ctx.project, "Drawings", %{"assigned_person_uuid" => bob.person})
+    {:ok, fields} = TaskNotes.validate(%{"summary" => "Use the secret supplier"}, "redirect")
+    {:ok, %{note: note}} = TaskNotes.create(a, fields, user_uuid: alice.user, kind: "redirect")
+
+    {:ok, _} = PhoenixKitComments.delete_comment(note)
+
+    assert [n] = notices("projects.comment_added", bob.user)
+    refute n.metadata["notification_text"] =~ "secret supplier"
+    refute Map.has_key?(n.metadata, "excerpt")
+  end
+
+  test "removing a task tells the people of every task it takes with it", ctx do
+    %{alice: alice, bob: bob, carl: carl} = ctx.people
+    parent = task!(ctx.project, "Kitchen", %{"assigned_person_uuid" => bob.person})
+    child = task!(ctx.project, "Worktop", %{"assigned_person_uuid" => carl.person})
+    {:ok, _} = PhoenixKitProjects.Outline.move(child, parent.uuid, :last)
+
+    {:ok, _} =
+      Notices.removing(Projects.get_assignment(parent.uuid), alice.user, fn ->
+        Projects.delete_assignment(Projects.get_assignment(parent.uuid))
+      end)
+
+    assert [_] = notices("projects.assignment_removed", bob.user)
+    assert [n] = notices("projects.assignment_removed", carl.user)
+    assert n.metadata["notification_text"] =~ "Worktop"
+
+    # A refused delete tells nobody.
+    other = task!(ctx.project, "Plinth", %{"assigned_person_uuid" => bob.person})
+    {:error, :nope} = Notices.removing(other, alice.user, fn -> {:error, :nope} end)
+    assert [_only_the_first] = notices("projects.assignment_removed", bob.user)
+  end
+
   test "a template's tasks tell nobody", ctx do
     %{alice: alice, bob: bob} = ctx.people
     template = fixture_template()

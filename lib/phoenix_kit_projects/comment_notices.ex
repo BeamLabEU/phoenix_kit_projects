@@ -122,6 +122,18 @@ defmodule PhoenixKitProjects.CommentNotices do
 
   def on_comment_created(_type, _uuid, _comment), do: :ok
 
+  # The comments module tells a handler when a comment held for moderation
+  # is approved (a release that has the callback; an older one never calls
+  # it): its readers see it only now, so it tells them now, as a comment
+  # published on creation does.
+  @published_callback? {:on_comment_published, 3} in PhoenixKitComments.ResourceHandler.behaviour_info(
+                         :callbacks
+                       )
+
+  @impl @published_callback?
+  @doc "A comment approved after moderation tells its people, as `on_comment_created/3` does."
+  def on_comment_published(type, uuid, comment), do: on_comment_created(type, uuid, comment)
+
   @doc """
   A deleted comment's words leave the notices that quoted them: each notice
   row keeps that there was a comment (History and the bell still say who
@@ -131,7 +143,7 @@ defmodule PhoenixKitProjects.CommentNotices do
   """
   @impl true
   def on_comment_deleted(type, _uuid, %Comment{uuid: comment_uuid})
-      when type in ["assignment", "project"] do
+      when type in ["assignment", "project", "project_task_notes"] do
     Notices.scrub_comment(comment_uuid)
     :ok
   rescue

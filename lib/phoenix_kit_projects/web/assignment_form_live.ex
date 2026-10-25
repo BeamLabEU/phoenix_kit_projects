@@ -1104,7 +1104,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
          true <- can_delete?(socket, fresh) do
       socket = cancel_autosave(socket)
 
-      case Projects.delete_assignment(fresh) do
+      case PhoenixKitProjects.Notices.removing(fresh, Activity.actor_uuid(socket), fn ->
+             Projects.delete_assignment(fresh)
+           end) do
         {:ok, _} ->
           log_subtask_act(socket, "projects.assignment_removed", fresh.uuid, %{
             "task" => Assignment.label(fresh)
@@ -2641,10 +2643,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         true -> "projects.assignment_reopened"
       end
 
+    reassigned? = PhoenixKitProjects.Notices.reassigned(was, now, Activity.actor_uuid(socket))
+
+    # Handed on in the same save: the new people hear "gave you a task", not
+    # also that it started.
     if status_action do
       Activity.log(
         status_action,
-        base ++ [target_uuid: Activity.assignee_target_uuid(now), metadata: meta]
+        base ++
+          [
+            target_uuid: if(not reassigned?, do: Activity.assignee_target_uuid(now)),
+            tell: not reassigned?,
+            metadata: meta
+          ]
       )
     end
 
@@ -2654,8 +2665,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         base ++ [metadata: Map.put(meta, "waiting_on", blank_waiting(now.waiting_on))]
       )
     end
-
-    reassigned? = PhoenixKitProjects.Notices.reassigned(was, now, Activity.actor_uuid(socket))
 
     # Whether the people were told of this save already: the generic
     # "changed your task" row then tells nobody.
@@ -2675,7 +2684,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # One line in the project's activity per visit to the form, not one per
   # pause in typing.
-  defp log_edit_once(%{assigns: %{edit_logged?: true}} = socket, _updated, _told?), do: socket
+  # The task's people hear "changed your task" once per visit too — from the
+  # first save that was not already news to them (a status change or a hand
+  # over tells them in its own words).
+  defp log_edit_once(
+         %{assigns: %{edit_logged?: true, edit_told?: true}} = socket,
+         _updated,
+         _told?
+       ),
+       do: socket
+
+  defp log_edit_once(%{assigns: %{edit_logged?: true}} = socket, _updated, true), do: socket
 
   defp log_edit_once(socket, updated, told?) do
     Activity.log("projects.assignment_updated",
@@ -2687,7 +2706,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       metadata: %{"project" => socket.assigns.project.name}
     )
 
-    assign(socket, :edit_logged?, true)
+    assign(socket, edit_logged?: true, edit_told?: not told?)
   end
 
   defp save_edit(socket, attrs) do

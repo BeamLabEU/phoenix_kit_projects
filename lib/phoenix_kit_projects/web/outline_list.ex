@@ -270,7 +270,9 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   def handle_event("outline_purge", %{"uuid" => uuid}, socket, reload) do
     with true <- socket.assigns.outline_can.edit and socket.assigns.outline_can.delete,
          %Assignment{review_status: "removed"} = a <- own(socket, uuid) do
-      case Projects.delete_assignment(a) do
+      case PhoenixKitProjects.Notices.removing(a, Activity.actor_uuid(socket), fn ->
+             Projects.delete_assignment(a)
+           end) do
         {:ok, _} ->
           audit(socket, "projects.assignment_removed", a)
           {:noreply, reload.(socket)}

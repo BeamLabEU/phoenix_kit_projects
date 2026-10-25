@@ -65,7 +65,10 @@ defmodule PhoenixKitProjects.PubSub do
   for a change that never happened, nor before the change is visible.
   `fun` returns `{:ok, value}` or `{:error, reason}` (which rolls back);
   the answer is the transaction's. Inside another `after_commit/1` it
-  joins the outer one.
+  joins the outer one. It must be the outermost transaction otherwise:
+  inside a plain `Repo.transaction` (or `Outline.with_project_lock/2`) its
+  commit is only a savepoint's, and it would announce a change the outer
+  transaction can still roll back.
   """
   @spec after_commit((-> {:ok, term()} | {:error, term()})) :: {:ok, term()} | {:error, term()}
   def after_commit(fun) when is_function(fun, 0) do

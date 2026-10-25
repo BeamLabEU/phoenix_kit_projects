@@ -12,7 +12,7 @@ defmodule PhoenixKitProjects.Activity do
 
   An entry that names a recipient (`target_uuid`) gets its notification
   line, icon and link in the recipient's language on the way through
-  (`PhoenixKitProjects.Notices.decorate/2`). A task event that names none
+  (`PhoenixKitProjects.Notices.decorate/3`). A task event that names none
   tells the task's people itself (`Notices.tell_assignees/2`) unless the
   caller passes `tell: false`.
 

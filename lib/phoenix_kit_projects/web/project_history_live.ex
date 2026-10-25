@@ -83,11 +83,18 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLive do
      )}
   end
 
+  # Asked again on every load, not only at mount: a viewer taken off the
+  # project while the tab is open must not be shown what is said next.
   defp load(socket) do
-    %{entries: entries, total: total, truncated: truncated} =
-      History.list(socket.assigns.project, kinds: Map.fetch!(@filters, socket.assigns.filter))
+    with %Project{} = project <- Projects.get_project(socket.assigns.project.uuid),
+         true <- Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :view) do
+      %{entries: entries, total: total, truncated: truncated} =
+        History.list(project, kinds: Map.fetch!(@filters, socket.assigns.filter))
 
-    assign(socket, entries: entries, total: total, truncated: truncated)
+      assign(socket, project: project, entries: entries, total: total, truncated: truncated)
+    else
+      _ -> assign(socket, entries: [], total: 0, truncated: false)
+    end
   rescue
     e ->
       Logger.warning("[Projects] history load failed: #{inspect(e.__struct__)}")

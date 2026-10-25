@@ -90,7 +90,7 @@ Core's bell renders a module's notice exactly as the activity row carries it
 so each notice is its own row, written in the recipient's language
 (`RecipientLocale`), marked `"notice" => true`.
 
-- `Activity.log/2` passes every entry through `Notices.decorate/2`: an entry
+- `Activity.log/2` passes every entry through `Notices.decorate/3`: an entry
   with a `target_uuid` other than its actor gets its line. That covers the
   existing call sites (assigned, started, completed, reopened, membership).
   A task's line is written only for someone who may open the project; a
@@ -124,9 +124,9 @@ so each notice is its own row, written in the recipient's language
 |---|---|
 | a task given, changed, started, done, reopened by someone else | the task's people |
 | a task handed on (`projects.assignment_reassigned`, form and API) | the new people ("gave you a task") and the old ones ("handed … to …") |
-| a task removed (page, API) | its people |
+| a task removed (page, drawer, typed list's delete, API) | its people and the people of every task under it (`Notices.removing/4`); a line taken out of the typed list is held, not removed, and tells on its final delete |
 | your turn / on hold / go on | the people of the tasks it concerns |
-| a comment on a task | its people, earlier commenters, the mentioned |
+| a comment on a task (held for moderation: when approved) | its people, earlier commenters, the mentioned |
 | a comment on a project | its owners and managers, earlier commenters, the mentioned |
 | a person's note or a new direction on a task | its people, the mentioned (an agent's working notes tell nobody) |
 | added to a project, role changed, removed | that member |
@@ -140,9 +140,9 @@ so each notice is its own row, written in the recipient's language
 
 The task row's Reopen opens a dialog; the reason is posted to the task's
 thread (flagged `reopen_reason`) and stored on the reopen's row, so the
-notice quotes it. A team's or department's people are told by
-`Notices.tell_group/3` (the row's own notice names one person), so the
-reason comment tells none of the assignees again. The API's `transition`/`reopen` take an optional
+notice quotes it. A team's or department's people are told by the same
+row (`Notices.tell_assignees/2` fans it out), so the reason comment tells
+none of the assignees again. The API's `transition`/`reopen` take an optional
 `reason`. The typed list's tick and a board drag reopen without asking.
 
 ## Time zones

@@ -2303,7 +2303,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         {:noreply, socket}
 
       a ->
-        case Projects.delete_assignment(a) do
+        case PhoenixKitProjects.Notices.removing(a, Activity.actor_uuid(socket), fn ->
+               Projects.delete_assignment(a)
+             end) do
           {:ok, _} ->
             # The task is gone now: the row names its project itself, so the
             # project's History still finds it.
@@ -2314,7 +2316,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               metadata: %{"task" => Assignment.label(a), "project_uuid" => a.project_uuid}
             )
 
-            PhoenixKitProjects.Notices.removed(a, Activity.actor_uuid(socket))
             recompute_owning_subproject(socket, a)
 
             {:noreply,
