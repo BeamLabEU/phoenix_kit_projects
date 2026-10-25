@@ -32,8 +32,8 @@ raw audit log.
 
 **Cost.** One read per source, whatever the project's size — but core's
 `phoenix_kit_activities` has no index on `resource_uuid` (only module,
-action, actor, target, type, time), so the activity read filters the
-module's rows (`module` index) in memory of Postgres. The per-project
+action, actor, target, type, time), so the activity read finds the
+module's rows through the `module` index and filters them one by one. The per-project
 Activity page has the same shape. On a site with a very large activity
 table the fix is a core index on `(resource_uuid, inserted_at)`, a core
 migration — not something this module's chain may add to a core table.
