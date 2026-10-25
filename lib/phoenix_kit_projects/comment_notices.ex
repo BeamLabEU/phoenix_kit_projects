@@ -20,10 +20,12 @@ defmodule PhoenixKitProjects.CommentNotices do
   Only a published comment tells anyone, and only people who may open the
   project now (`Notices.may_view?/2`).
 
-  People @-mentioned in the text are left out: core's mention ping
-  (`PhoenixKit.Mentions.notify/2`) already told them. A comment written as
-  the reason of a reopen (`metadata["reopen_reason"]`) does not tell the
-  task's assignee again — the reopen notice quotes it.
+  People @-mentioned in the text are told too (core's own mention ping runs
+  only from the comments box, so a comment from the API or a reopen's reason
+  would otherwise reach nobody it names; from the box a mentioned person
+  hears it twice, once as a mention). A comment written as the reason of a
+  reopen (`metadata["reopen_reason"]`) does not tell the task's person
+  assignee again — the reopen's notice quotes it to them.
   """
 
   @behaviour PhoenixKitComments.ResourceHandler
@@ -80,22 +82,31 @@ defmodule PhoenixKitProjects.CommentNotices do
   defp subject("project", uuid), do: Projects.get_project(uuid)
 
   defp recipients(type, subject, comment) do
+    # The person a task reopened with this reason belongs to hears it from
+    # the reopen's notice, which quotes it — even when they commented
+    # before. A team or department assignee is not told by the reopen (its
+    # notice names one person), so they keep the comment's.
+    told_by_reopen =
+      case {type, subject} do
+        {"assignment", %Assignment{assigned_person_uuid: p} = a} when is_binary(p) ->
+          if reopen_reason?(comment), do: People.assignee_user_uuids(a), else: []
+
+        _ ->
+          []
+      end
+
+    # People @-mentioned are told like everyone else: core's mention ping
+    # runs only from the comments box, not for a comment written through the
+    # API or as a reopen's reason.
     mentioned =
       comment.content
       |> Token.parse()
       |> Enum.filter(&(&1.kind == :user))
       |> Enum.map(& &1.uuid)
 
-    # The assignee of a task reopened with this reason hears it from the
-    # reopen's notice, which quotes it — even when they commented before.
-    told_by_reopen =
-      if type == "assignment" and reopen_reason?(comment),
-        do: People.assignee_user_uuids(subject),
-        else: []
+    skip = [comment.user_uuid | told_by_reopen]
 
-    skip = [comment.user_uuid | mentioned ++ told_by_reopen]
-
-    (own_people(type, subject) ++ earlier_commenters(type, subject))
+    (own_people(type, subject) ++ earlier_commenters(type, subject) ++ mentioned)
     |> Enum.uniq()
     |> Enum.reject(&(&1 in skip))
   end

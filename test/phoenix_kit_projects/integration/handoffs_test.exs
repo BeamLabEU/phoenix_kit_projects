@@ -326,7 +326,7 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       end)
     end
 
-    test "a task comment tells the assignee and earlier commenters, never the author or the mentioned",
+    test "a task comment tells the assignee, earlier commenters and the mentioned, never the author",
          ctx do
       %{alice: alice, bob: bob, carl: carl, dave: dave} = ctx.people
       model = task!(ctx.project, "3D model", bob)
@@ -349,7 +349,9 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
 
       assert length(notices("projects.comment_added", bob.user)) == 2
       assert [_] = notices("projects.comment_added", alice.user)
-      assert notices("projects.comment_added", dave.user) == []
+      # Core's mention ping runs only from the comments box; this comment did
+      # not come through it, so the mention is told by the comment's notice.
+      assert [_] = notices("projects.comment_added", dave.user)
       assert notices("projects.comment_added", carl.user) == []
 
       # History hangs the people told on the comment's own line.
@@ -390,6 +392,40 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
         })
 
       assert notices("projects.comment_added", bob.user) == []
+    end
+
+    test "a team-assigned task's reopen reason still reaches the team", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+
+      {:ok, dept} =
+        Repo.insert(%PhoenixKitStaff.Schemas.Department{
+          name: "D #{System.unique_integer([:positive])}"
+        })
+
+      {:ok, team} =
+        Repo.insert(%PhoenixKitStaff.Schemas.Team{name: "Sales", department_uuid: dept.uuid})
+
+      Repo.insert!(%PhoenixKitStaff.Schemas.TeamMembership{
+        team_uuid: team.uuid,
+        staff_person_uuid: bob.person
+      })
+
+      {:ok, %{assignment: t}} =
+        Projects.create_task_with_assignment(
+          ctx.project.uuid,
+          %{"title" => "Quote", "ad_hoc" => true},
+          %{
+            "assigned_team_uuid" => team.uuid
+          }
+        )
+
+      {:ok, _} =
+        PhoenixKitComments.create_comment("assignment", t.uuid, alice.user, %{
+          content: "Measure wall A again.",
+          metadata: %{"reopen_reason" => true}
+        })
+
+      assert [_] = notices("projects.comment_added", bob.user)
     end
 
     test "a reopen's reason does not tell the assignee twice", ctx do

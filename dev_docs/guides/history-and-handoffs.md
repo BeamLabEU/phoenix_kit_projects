@@ -42,8 +42,8 @@ table the fix is a core index on `(resource_uuid, inserted_at)`, a core
 migration — not something this module's chain may add to a core table.
 
 History rows are written `permanent` (`Activity.history?/1`), so core's
-activity retention never prunes an order's story. Comment notices are not:
-the comments are the record.
+activity retention never prunes an order's story — comment notices too,
+since they are how a comment's line says who it told.
 
 ## Hand-offs (`PhoenixKitProjects.Handoffs`)
 
@@ -88,8 +88,11 @@ so each notice is its own row, written in the recipient's language
   `#` search handler — a second searchable type would list every task twice)
   and for `"project"` (through `ResourceLinks`). A task comment tells the
   assignee and earlier commenters; a project comment its owners and managers
-  and earlier commenters. @-mentioned people are left out (core's mention
-  ping told them); a reopen reason does not tell the assignee again.
+  and earlier commenters, and people @-mentioned in it (core's own mention
+  ping runs only from the comments box). A reopen reason does not tell the
+  task's person assignee again (the reopen's notice quotes it); a team or
+  department assignee keeps the comment's notice. Only published comments
+  tell anyone, and only people who may open the project.
 - Preference types: `handoffs` (ready, on hold) and `comments` under the
   projects type.
 

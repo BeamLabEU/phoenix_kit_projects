@@ -15,8 +15,8 @@ defmodule PhoenixKitProjects.Activity do
   A project's history is read from these rows (`PhoenixKitProjects.History`),
   and an order is looked back on long after core's activity retention would
   have pruned it, so the rows that make up that story are written
-  `permanent` (never pruned). Comment notices are not: the comments
-  themselves are the record.
+  `permanent` (never pruned) — comment notices included, since they are
+  how History says who a comment told.
   """
   @spec log(binary(), keyword()) :: {:ok, struct()} | {:error, term()}
   def log(action, opts) when is_binary(action) and is_list(opts) do
@@ -57,9 +57,12 @@ defmodule PhoenixKitProjects.Activity do
     _ -> nil
   end
 
+  # `projects.comment_added` too: the notice rows are how History says who
+  # a comment told, long after core would have pruned them.
   @history_prefixes ~w(projects.assignment_ projects.project_ projects.member_
                        projects.subproject_ projects.dependency_ projects.event_
-                       projects.task_list_edited projects.health_updated)
+                       projects.task_list_edited projects.health_updated
+                       projects.comment_added)
 
   @doc "Whether `action` is part of a project's lasting history."
   @spec history?(binary()) :: boolean()

@@ -671,7 +671,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
                 type="time"
                 name="start_time"
                 value=""
-                label={gettext("Start time (UTC)")}
+                label={gettext("Start time")}
                 class="input-sm"
                 wrapper_class="flex-1"
               />
@@ -680,7 +680,7 @@ defmodule PhoenixKitProjects.Web.ProjectEventsLive do
                 type="time"
                 name="end_time"
                 value=""
-                label={gettext("End time (UTC)")}
+                label={gettext("End time")}
                 class="input-sm"
                 wrapper_class="flex-1"
               />
