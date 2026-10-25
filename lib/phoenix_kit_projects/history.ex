@@ -62,6 +62,14 @@ defmodule PhoenixKitProjects.History do
     tasks = task_index(project.uuid)
     only = Keyword.get(opts, :task)
 
+    # A task of another project has no lines here: the uuid is a caller's
+    # word, and the reads below match it on its own.
+    if only && not Map.has_key?(tasks, only),
+      do: %{entries: [], total: 0, truncated: false},
+      else: list_from(project, tasks, only, opts)
+  end
+
+  defp list_from(project, tasks, only, opts) do
     # What the project has switched off is not shown here either: its
     # discussions (comments and notes) and its work ledger (time).
     hidden =

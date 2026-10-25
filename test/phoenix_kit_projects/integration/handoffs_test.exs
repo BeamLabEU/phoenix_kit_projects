@@ -496,6 +496,10 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       only_model = History.list(Projects.get_project(ctx.project.uuid), task: model.uuid).entries
       assert Enum.all?(only_model, &(&1.task == nil or &1.task.uuid == model.uuid))
 
+      # A task that is not this project's has no lines here, whatever its own rows say.
+      assert %{entries: [], total: 0} =
+               History.list(Projects.get_project(ctx.project.uuid), task: Ecto.UUID.generate())
+
       # A deleted task's rows stay, by the project they name, without a link.
       {:ok, _} = Projects.delete_assignment(Projects.get_assignment(measure.uuid))
       %{entries: after_delete} = History.list(Projects.get_project(ctx.project.uuid))
