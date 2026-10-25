@@ -385,9 +385,16 @@ defmodule PhoenixKitProjects.History do
   end
 
   defp same_change?(line, notice) do
-    line.kind == :activity and not line.notice and line.action == notice.action and
-      (line.task && line.task.uuid) == (notice.task && notice.task.uuid) and
-      abs(DateTime.diff(line.at, notice.at)) <= 2
+    if source = notice.meta["source_activity_uuid"] do
+      line.id == "a-" <> source
+    else
+      # Older rows have no source id. Keep their best-effort folding, but
+      # never attach another actor's notice to this person's change.
+      line.kind == :activity and not line.notice and line.action == notice.action and
+        line.actor_uuid == notice.actor_uuid and
+        (line.task && line.task.uuid) == (notice.task && notice.task.uuid) and
+        abs(DateTime.diff(line.at, notice.at)) <= 2
+    end
   end
 
   # Names for every actor and everyone told, in one read.

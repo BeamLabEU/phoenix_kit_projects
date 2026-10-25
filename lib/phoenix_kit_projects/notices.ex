@@ -262,7 +262,7 @@ defmodule PhoenixKitProjects.Notices do
                        projects.assignment_reopened)
 
   # What a notice row may carry over from the entry it follows.
-  @carried ~w(reason via api_key api_key_name)
+  @carried ~w(reason via api_key api_key_name source_activity_uuid)
 
   @doc """
   Called by `Activity.log/2` after every entry: a task event that names no
@@ -313,14 +313,21 @@ defmodule PhoenixKitProjects.Notices do
       to = PhoenixKitProjects.People.assignee_name(fresh) || ""
       from_name = PhoenixKitProjects.People.assignee_name(was) || ""
 
-      Activity.log("projects.assignment_reassigned",
-        actor_uuid: actor_uuid,
-        resource_type: "assignment",
-        resource_uuid: now.uuid,
-        tell: false,
-        metadata:
-          Map.merge(extra, %{"task" => primary_label(fresh), "from" => from_name, "to" => to})
-      )
+      result =
+        Activity.log("projects.assignment_reassigned",
+          actor_uuid: actor_uuid,
+          resource_type: "assignment",
+          resource_uuid: now.uuid,
+          tell: false,
+          metadata:
+            Map.merge(extra, %{"task" => primary_label(fresh), "from" => from_name, "to" => to})
+        )
+
+      extra =
+        case result do
+          {:ok, entry} -> Map.put(extra, "source_activity_uuid", entry.uuid)
+          _ -> extra
+        end
 
       new_people = PhoenixKitProjects.People.assignee_user_uuids(fresh)
       old_people = PhoenixKitProjects.People.assignee_user_uuids(was) -- new_people

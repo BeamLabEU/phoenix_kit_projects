@@ -297,3 +297,79 @@ The remaining findings are:
 - **BUG - MEDIUM** — comment_notices.ex:on_comment_created/3: Enable comment moderation and submit a task comment containing an @mention through the comments box. The pending callback claims nothing, so the box sends core’s mention ping immediately; later approval invokes no creation callback, leaving the task’s other people untold.
 
 - **IMPROVEMENT - MEDIUM** — `TasksController.do_batch/2` → `Notices.tell_assignees/2`: Submit 500 lines. Although these assignments are necessarily unassigned, every activity performs a full `Projects.get_assignment/1` with preloads before discovering that; passing `tell: false` for this batch avoids 500 unnecessary assignment loads.
+
+## Post-merge recheck — 2026-10-25
+
+Reviewed merge `a40f5fd` and Claude's follow-up `549c4e1` on `main`,
+including the fixes recorded in `FOLLOW_UP.md`. PR #57 is the only merge
+since the previous Codex post-merge pass on #56; #51–#56 already have
+their own Codex reviews. This pass concentrates on the merged History,
+notice, handoff and transaction paths rather than repeating the design
+review above.
+
+### BUG - MEDIUM — History attached recipients to the wrong edit (fixed)
+
+`History.attach_notices/1` found an event by action, task and a two-second
+window. Two quick updates to the same task attached both updates' notices
+to the newer event, leaving the older event with nobody told. The matcher
+also ignored the actor, so one person's notice could be attached to another
+person's edit. A notice delivered more than two seconds after its event
+remained a duplicate, independent History line. Repeated handovers had the
+same defect.
+
+New assignee and handover notices now carry `source_activity_uuid`, the
+UUID returned when their original activity row was written. History folds
+them by that reference, independent of timing. Older notices retain the
+time-based fallback with an additional actor check. If a referenced event
+is outside the read cap, its notice remains visible rather than joining an
+unrelated event. There is no migration or attempt to reconstruct ambiguous
+historical associations.
+
+Regression coverage exercises two rapid edits, delayed delivery, two
+handovers, and legacy notices from different actors. Before the fix, the
+rapid-edit test failed because the older edit's `told` list was empty.
+
+### IMPROVEMENT - MEDIUM — Claude's scope test did not exercise the leak (fixed)
+
+Claude's production guard correctly rejects a task outside the project.
+Its new test supplied a random UUID with no rows, which also returned an
+empty history before that guard existed. Added a real foreign task with
+activity, a ledger correction, a published comment, a published note and
+time. Each source must be present when queried through its own project and
+empty when queried through the other project. The original unknown-UUID
+check remains useful and is retained.
+
+### Other checks and limits
+
+- Rechecked the notice visibility gate, template suppression, actor
+  exclusion and the `notice`/`auto` recursion guards; no additional defect
+  established in these paths.
+- Rechecked `PubSub.after_commit/1` buffering and the API PATCH's enclosing
+  handoff batch and discard path. Its documented outermost-transaction
+  requirement remains; this pass does not add a general transaction hook.
+- Embeddable History continues to avoid `handle_params/3`, and rechecks
+  project access on reload. Viewer time-zone and actor state remain local
+  to each page/request process.
+- Previously documented per-recipient write reads, grouped handoff limits,
+  agent/staff attribution limits and the empty state on a failed History
+  read are outside these fixes.
+
+### Validation
+
+- Full PostgreSQL-backed suite: **2163 tests, 0 failures, 1 excluded**.
+  The existing builds-alone migration test requires core's
+  `TestSupport.ModuleChainCheck`, absent from the locked core version;
+  integration tests were enabled.
+- New regression tests with the current reader: **5 tests, 0 failures**.
+- Read-side negative control: loaded History from `549c4e1^` into a
+  separate test VM, without editing the checkout or writing old BEAMs.
+  All **5 new tests failed as expected**, reproducing the foreign-task
+  exposure and each notice-folding defect. The current reader then passed
+  the same five tests again.
+- `mix precommit`: **passed** (forced compilation with warnings as errors,
+  formatting, unused-lock check, Hex audit, strict Credo and Dialyzer).
+  The existing seven Dialyzer suppressions are unchanged.
+- Final formatting, warnings-as-errors compilation and `git diff --check`:
+  **passed**.
+
+No version bump or release is part of this pass.

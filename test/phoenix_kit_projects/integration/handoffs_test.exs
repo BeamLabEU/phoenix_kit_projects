@@ -454,6 +454,162 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
   end
 
   describe "History" do
+    test "a foreign task with activity, comments, notes and time has no history here", ctx do
+      %{alice: alice} = ctx.people
+      foreign = fixture_project(%{"start_mode" => "immediate"})
+      task = task!(foreign, "Private task", alice)
+
+      for project <- [ctx.project, foreign],
+          do: {:ok, _} = PhoenixKitProjects.Features.set_flags(project, %{"ledger" => true})
+
+      {:ok, _} =
+        PhoenixKitProjects.Activity.log("projects.assignment_updated",
+          resource_type: "assignment",
+          resource_uuid: task.uuid,
+          actor_uuid: alice.user,
+          tell: false
+        )
+
+      for type <- ["assignment", "project_task_notes"] do
+        {:ok, _} =
+          PhoenixKitComments.create_comment(type, task.uuid, alice.user, %{
+            content: "Private words"
+          })
+      end
+
+      {:ok, time} =
+        PhoenixKitProjects.Ledger.log_time(foreign.uuid, 60,
+          assignment_uuid: task.uuid,
+          actor_uuid: alice.user
+        )
+
+      {:ok, _} = PhoenixKitProjects.Ledger.update_time(time, 30, actor_uuid: alice.user)
+
+      for kind <- [:activity, :comment, :note, :time] do
+        assert %{entries: [_ | _]} =
+                 History.list(Projects.get_project(foreign.uuid), task: task.uuid, kinds: [kind])
+
+        assert %{entries: [], total: 0, truncated: false} =
+                 History.list(Projects.get_project(ctx.project.uuid),
+                   task: task.uuid,
+                   kinds: [kind]
+                 )
+      end
+    end
+
+    test "rapid edits keep each event's recipients on its own history line", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      task = task!(ctx.project, "Quote", bob)
+
+      entries =
+        for revision <- [1, 2] do
+          {:ok, entry} =
+            PhoenixKitProjects.Activity.log("projects.assignment_updated",
+              actor_uuid: alice.user,
+              resource_type: "assignment",
+              resource_uuid: task.uuid,
+              metadata: %{"revision" => revision}
+            )
+
+          entry
+        end
+
+      # Keep the two writes close even on a slow test runner.
+      at = DateTime.utc_now()
+
+      for {entry, offset} <- Enum.with_index(entries) do
+        Repo.update_all(from(e in Entry, where: e.uuid == ^entry.uuid),
+          set: [inserted_at: DateTime.add(at, offset, :millisecond)]
+        )
+      end
+
+      %{entries: history} = History.list(Projects.get_project(ctx.project.uuid))
+      edits = Enum.filter(history, &(&1.action == "projects.assignment_updated"))
+      assert length(edits) == 2
+
+      for edit <- edits do
+        assert [%{uuid: recipient}] = edit.told
+        assert recipient == bob.user
+      end
+    end
+
+    test "slow notice delivery still folds into the event it announces", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      task = task!(ctx.project, "Quote", bob)
+
+      {:ok, entry} =
+        PhoenixKitProjects.Activity.log("projects.assignment_updated",
+          actor_uuid: alice.user,
+          resource_type: "assignment",
+          resource_uuid: task.uuid
+        )
+
+      assert [notice] = notices("projects.assignment_updated", bob.user)
+
+      Repo.update_all(from(e in Entry, where: e.uuid == ^notice.uuid),
+        set: [inserted_at: DateTime.add(entry.inserted_at, 10, :second)]
+      )
+
+      %{entries: history} = History.list(Projects.get_project(ctx.project.uuid))
+      assert [edit] = Enum.filter(history, &(&1.action == "projects.assignment_updated"))
+      assert edit.id == "a-" <> entry.uuid
+      assert [%{uuid: recipient}] = edit.told
+      assert recipient == bob.user
+    end
+
+    test "rapid handovers keep both sets of notices on their own event", ctx do
+      %{alice: alice, bob: bob, carl: carl} = ctx.people
+      task = task!(ctx.project, "Quote", bob)
+
+      for person <- [carl, bob] do
+        was = Projects.get_assignment(task.uuid)
+
+        {:ok, now} =
+          Projects.update_assignment_form(was, %{"assigned_person_uuid" => person.person})
+
+        assert PhoenixKitProjects.Notices.reassigned(was, now, alice.user)
+      end
+
+      %{entries: history} = History.list(Projects.get_project(ctx.project.uuid))
+      handovers = Enum.filter(history, &(&1.action == "projects.assignment_reassigned"))
+      assert length(handovers) == 2
+
+      for handover <- handovers do
+        assert Enum.sort(Enum.map(handover.told, & &1.uuid)) == Enum.sort([bob.user, carl.user])
+      end
+    end
+
+    test "legacy notices are never folded into a different actor's event", ctx do
+      %{alice: alice, bob: bob, carl: carl} = ctx.people
+      task = task!(ctx.project, "Quote", bob)
+
+      for actor <- [alice, carl] do
+        {:ok, _} =
+          PhoenixKitProjects.Activity.log("projects.assignment_updated",
+            actor_uuid: actor.user,
+            resource_type: "assignment",
+            resource_uuid: task.uuid,
+            tell: false
+          )
+      end
+
+      # A pre-correlation notice: it has no source_activity_uuid.
+      :ok =
+        PhoenixKitProjects.Notices.notify(
+          "projects.assignment_updated",
+          Projects.get_assignment(task.uuid),
+          actor_uuid: alice.user,
+          recipients: [bob.user]
+        )
+
+      %{entries: history} = History.list(Projects.get_project(ctx.project.uuid))
+      edits = Enum.filter(history, &(&1.action == "projects.assignment_updated"))
+      assert length(edits) == 2
+      assert Enum.find(edits, &(&1.actor_uuid == carl.user)).told == []
+      assert [%{uuid: recipient}] = Enum.find(edits, &(&1.actor_uuid == alice.user)).told
+      assert recipient == bob.user
+    end
+
     test "reads the story back: changes, the reason, comments, who was told", ctx do
       %{alice: alice, bob: bob} = ctx.people
       measure = task!(ctx.project, "Measure", alice)

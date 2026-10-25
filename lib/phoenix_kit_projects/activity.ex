@@ -35,8 +35,18 @@ defmodule PhoenixKitProjects.Activity do
 
     result = PhoenixKit.Activity.log(@module, action, opts)
 
-    if tell? and match?({:ok, _}, result),
-      do: PhoenixKitProjects.Notices.tell_assignees(action, opts)
+    if tell? and match?({:ok, _}, result) do
+      {:ok, entry} = result
+
+      # History folds each recipient's notice into this exact change,
+      # even when another edit follows immediately or delivery is slow.
+      opts =
+        Keyword.update(opts, :metadata, %{"source_activity_uuid" => entry.uuid}, fn meta ->
+          Map.put(meta || %{}, "source_activity_uuid", entry.uuid)
+        end)
+
+      PhoenixKitProjects.Notices.tell_assignees(action, opts)
+    end
 
     result
   end

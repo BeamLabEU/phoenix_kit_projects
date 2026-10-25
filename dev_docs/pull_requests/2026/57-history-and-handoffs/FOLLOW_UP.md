@@ -130,3 +130,15 @@ Open (for the maintainer):
 - Timed events typed before this change were stored as if UTC and now show
   shifted by the viewer's offset.
 
+## Post-merge Codex recheck
+
+- **BUG - MEDIUM:** per-recipient assignee and handover notices now name
+  their source activity UUID. History no longer assigns both rapid edits'
+  recipients to the newer edit, confuses different actors, or duplicates a
+  slow notice as a separate event. Legacy rows retain a time-based fallback
+  constrained to the same actor.
+- **IMPROVEMENT - MEDIUM:** Claude's task-scope guard is retained and its
+  regression is strengthened with a foreign task containing actual activity,
+  comments, notes and ledger entries. An unknown UUID alone did not reproduce
+  the pre-fix exposure.
+
