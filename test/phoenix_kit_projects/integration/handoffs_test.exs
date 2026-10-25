@@ -203,6 +203,9 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
           "scheduled_start_date" => DateTime.add(DateTime.utc_now(), 7, :day)
         })
 
+      for p <- [alice, bob],
+          do: {:ok, _} = PhoenixKitProjects.Members.add_member(project, p.user, role: "member")
+
       task!(project, "One", bob)
       task!(project, "Two", bob)
       later = task!(project, "Later", alice)
@@ -240,6 +243,45 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
 
       ready = notices("projects.assignment_ready", bob.user)
       assert Enum.any?(ready, &(&1.metadata["resume"] == true))
+    end
+  end
+
+  describe "who may be told" do
+    test "a team member who cannot open the project is not told", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      outsider = person!(:olga)
+
+      {:ok, dept} =
+        Repo.insert(%PhoenixKitStaff.Schemas.Department{
+          name: "Dept #{System.unique_integer([:positive])}"
+        })
+
+      {:ok, team} =
+        Repo.insert(%PhoenixKitStaff.Schemas.Team{name: "Team", department_uuid: dept.uuid})
+
+      for p <- [bob, outsider],
+          do:
+            Repo.insert!(%PhoenixKitStaff.Schemas.TeamMembership{
+              team_uuid: team.uuid,
+              staff_person_uuid: p.person
+            })
+
+      first = task!(ctx.project, "First", alice)
+
+      {:ok, %{assignment: second}} =
+        Projects.create_task_with_assignment(
+          ctx.project.uuid,
+          %{"title" => "Second", "ad_hoc" => true},
+          %{
+            "assigned_team_uuid" => team.uuid
+          }
+        )
+
+      {:ok, _} = Projects.add_dependency(second.uuid, first.uuid)
+      set_status!(first, "done", alice.user)
+
+      assert [_] = notices("projects.assignment_ready", bob.user)
+      assert notices("projects.assignment_ready", outsider.user) == []
     end
   end
 
@@ -337,6 +379,19 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert [_ | _] = notices("projects.comment_added", bob.user)
     end
 
+    test "a comment waiting for moderation tells nobody", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      model = task!(ctx.project, "Model", bob)
+
+      {:ok, _} =
+        PhoenixKitComments.create_comment("assignment", model.uuid, alice.user, %{
+          content: "Not approved yet.",
+          status: "pending"
+        })
+
+      assert notices("projects.comment_added", bob.user) == []
+    end
+
     test "a reopen's reason does not tell the assignee twice", ctx do
       %{alice: alice, bob: bob} = ctx.people
       measure = task!(ctx.project, "Measure", bob)
@@ -398,6 +453,14 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       refute Enum.any?(entries, &(&1[:action] == "projects.comment_added"))
 
       only_model = History.list(Projects.get_project(ctx.project.uuid), task: model.uuid).entries
+      assert Enum.all?(only_model, &(&1.task == nil or &1.task.uuid == model.uuid))
+
+      # A deleted task's rows stay, by the project they name, without a link.
+      {:ok, _} = Projects.delete_assignment(Projects.get_assignment(measure.uuid))
+      %{entries: after_delete} = History.list(Projects.get_project(ctx.project.uuid))
+      gone = Enum.filter(after_delete, &(&1.task && &1.task.uuid == measure.uuid))
+      assert gone != []
+      assert Enum.all?(gone, &(&1.task[:gone] == true and &1.task.label == "Measure"))
       assert Enum.all?(only_model, &(&1.task == nil or &1.task.uuid == model.uuid))
     end
   end

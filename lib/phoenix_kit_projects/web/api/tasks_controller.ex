@@ -1101,12 +1101,14 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   defp reopen_reason(conn, "todo", a, key) do
     case conn.params["reason"] do
       reason when is_binary(reason) ->
-        case String.trim(reason) do
+        case reason |> String.trim() |> String.slice(0, 2_000) do
           "" ->
             nil
 
           reason ->
-            post_reason(a, key, reason)
+            # Only a key that may also comment posts it as a comment; the
+            # notice quotes it either way.
+            if ApiKey.scope?(key, "comments:write"), do: post_reason(a, key, reason)
             reason
         end
 
@@ -1124,7 +1126,6 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
          Code.ensure_loaded?(PhoenixKitComments) and PhoenixKitComments.enabled?() do
       PhoenixKitComments.create_comment("assignment", a.uuid, person, %{
         content: reason,
-        status: "published",
         metadata: %{"reopen_reason" => true},
         attribution: %{mode: "personal", label: key.name}
       })

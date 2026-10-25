@@ -13,10 +13,12 @@ defmodule PhoenixKitProjects.CommentNotices do
   Told, each once, never the author:
 
     * a task comment — the task's assignee (a team or department: its
-      people), and everyone who commented on that task before and may still
-      open the project;
+      people), and everyone who commented on that task before;
     * a project comment — the project's owners and managers, and everyone
-      who commented on the project before and may still open it.
+      who commented on the project before.
+
+  Only a published comment tells anyone, and only people who may open the
+  project now (`Notices.may_view?/2`).
 
   People @-mentioned in the text are left out: core's mention ping
   (`PhoenixKit.Mentions.notify/2`) already told them. A comment written as
@@ -32,17 +34,16 @@ defmodule PhoenixKitProjects.CommentNotices do
 
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.RepoHelper
-  alias PhoenixKit.Users.Auth
-  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKitComments.Comment
-  alias PhoenixKitProjects.{Authz, Members, Notices, People, Projects, ResourceLinks}
+  alias PhoenixKitProjects.{Members, Notices, People, Projects, ResourceLinks}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @impl true
   def resolve_comment_resources(uuids), do: ResourceLinks.resolve_comment_resources(uuids)
 
   @impl true
-  def on_comment_created(type, uuid, %Comment{} = comment)
+  # A comment still waiting for moderation tells nobody yet.
+  def on_comment_created(type, uuid, %Comment{status: "published"} = comment)
       when type in ["assignment", "project"] and is_binary(uuid) do
     case subject(type, uuid) do
       nil ->
@@ -83,21 +84,20 @@ defmodule PhoenixKitProjects.CommentNotices do
       comment.content
       |> Token.parse()
       |> Enum.filter(&(&1.kind == :user))
-      |> MapSet.new(& &1.uuid)
+      |> Enum.map(& &1.uuid)
 
     # The assignee of a task reopened with this reason hears it from the
     # reopen's notice, which quotes it — even when they commented before.
     told_by_reopen =
       if type == "assignment" and reopen_reason?(comment),
-        do: MapSet.new(People.assignee_user_uuids(subject)),
-        else: MapSet.new()
+        do: People.assignee_user_uuids(subject),
+        else: []
+
+    skip = [comment.user_uuid | mentioned ++ told_by_reopen]
 
     (own_people(type, subject) ++ earlier_commenters(type, subject))
     |> Enum.uniq()
-    |> Enum.reject(
-      &(&1 == comment.user_uuid or MapSet.member?(mentioned, &1) or
-          MapSet.member?(told_by_reopen, &1))
-    )
+    |> Enum.reject(&(&1 in skip))
   end
 
   defp own_people("assignment", %Assignment{} = a), do: People.assignee_user_uuids(a)
@@ -112,12 +112,9 @@ defmodule PhoenixKitProjects.CommentNotices do
   defp reopen_reason?(%Comment{metadata: %{"reopen_reason" => true}}), do: true
   defp reopen_reason?(_), do: false
 
-  # Everyone who commented on the thread before — and may still open the
-  # project: a member who was removed, or whose role lost the module, must
-  # not keep receiving the thread's words in their bell.
+  # Everyone who commented on the thread before. Whether each may still open
+  # the project is `Notices.notify/3`'s check, as for every notice.
   defp earlier_commenters(type, subject) do
-    project = project_of(subject)
-
     from(c in Comment,
       where:
         c.resource_type == ^type and c.resource_uuid == ^subject.uuid and c.status == "published",
@@ -126,20 +123,5 @@ defmodule PhoenixKitProjects.CommentNotices do
     )
     |> RepoHelper.repo().all()
     |> Enum.reject(&is_nil/1)
-    |> Enum.filter(&may_view?(&1, project))
-  end
-
-  defp project_of(%Project{} = p), do: p
-  defp project_of(%Assignment{project: %Project{} = p}), do: p
-  defp project_of(%Assignment{project_uuid: uuid}), do: Projects.get_project(uuid)
-
-  defp may_view?(_user_uuid, nil), do: false
-
-  defp may_view?(user_uuid, project) do
-    case Auth.get_user(user_uuid) do
-      %{is_active: false} -> false
-      %{} = user -> Authz.can?(Scope.for_user(user), project, :view)
-      _ -> false
-    end
   end
 end

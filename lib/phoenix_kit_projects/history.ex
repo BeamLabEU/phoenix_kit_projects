@@ -296,8 +296,13 @@ defmodule PhoenixKitProjects.History do
     }
   end
 
-  defp task_ref("assignment", uuid, meta, tasks) when is_binary(uuid),
-    do: %{uuid: uuid, label: Map.get(tasks, uuid) || meta["task"] || ""}
+  # A task deleted since keeps the name its rows recorded, and no link.
+  defp task_ref("assignment", uuid, meta, tasks) when is_binary(uuid) do
+    case Map.fetch(tasks, uuid) do
+      {:ok, label} -> %{uuid: uuid, label: label}
+      :error -> %{uuid: uuid, label: meta["task"] || "", gone: true}
+    end
+  end
 
   defp task_ref(_type, _uuid, _meta, _tasks), do: nil
 
@@ -309,7 +314,10 @@ defmodule PhoenixKitProjects.History do
 
     folded =
       notices
-      |> Enum.group_by(&{&1.action, &1.task && &1.task.uuid, DateTime.to_unix(&1.at)})
+      |> Enum.group_by(
+        &{&1.action, &1.task && &1.task.uuid, &1.actor_uuid, &1.meta["after"],
+         DateTime.to_unix(&1.at)}
+      )
       |> Enum.map(fn {_key, [first | _] = group} ->
         %{first | told: Enum.flat_map(group, & &1.told), target_uuid: nil}
       end)

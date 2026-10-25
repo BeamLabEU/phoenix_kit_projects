@@ -21,7 +21,10 @@ comment and the entry are the line), and a comment carrying
 and "on hold" rows of one change are folded into one line naming everyone
 told.
 
-A deleted task's rows lose their task link but keep `metadata.task`. Rows
+A deleted task's activity rows are still found (every task row names its
+project in `metadata.project_uuid`, stamped by `Activity.log/2`) and show its
+recorded name struck through, without a link; its comments and notes are
+not (they are found by the task's uuid). Rows
 written before history existed (and rows from paths that log no actor)
 read as "Someone".
 

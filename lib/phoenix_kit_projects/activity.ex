@@ -23,9 +23,38 @@ defmodule PhoenixKitProjects.Activity do
     opts =
       action
       |> PhoenixKitProjects.Notices.decorate(opts)
+      |> with_project_uuid()
       |> then(&if(history?(action), do: Keyword.put(&1, :permanent, true), else: &1))
 
     PhoenixKit.Activity.log(@module, action, opts)
+  end
+
+  # A task's row names its project too, so the project's History still finds
+  # it once the task is deleted (it is found by the task's uuid until then).
+  defp with_project_uuid(opts) do
+    meta = Keyword.get(opts, :metadata) || %{}
+
+    with "assignment" <- Keyword.get(opts, :resource_type),
+         uuid when is_binary(uuid) <- Keyword.get(opts, :resource_uuid),
+         false <- Map.has_key?(meta, "project_uuid"),
+         project_uuid when is_binary(project_uuid) <- project_of_assignment(uuid) do
+      Keyword.put(opts, :metadata, Map.put(meta, "project_uuid", project_uuid))
+    else
+      _ -> opts
+    end
+  end
+
+  defp project_of_assignment(uuid) do
+    import Ecto.Query, only: [from: 2]
+
+    PhoenixKit.RepoHelper.repo().one(
+      from(a in PhoenixKitProjects.Schemas.Assignment,
+        where: a.uuid == ^uuid,
+        select: a.project_uuid
+      )
+    )
+  rescue
+    _ -> nil
   end
 
   @history_prefixes ~w(projects.assignment_ projects.project_ projects.member_

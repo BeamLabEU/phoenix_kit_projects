@@ -31,9 +31,10 @@ defmodule PhoenixKitProjects.Notices do
 
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth
+  alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.RecipientLocale
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @task_actions ~w(projects.assignment_created projects.assignment_updated
@@ -91,10 +92,13 @@ defmodule PhoenixKitProjects.Notices do
         %Project{} = p -> {"project", p.uuid, p.uuid}
       end
 
+    project = project_of(subject)
+
     opts
     |> Keyword.get(:recipients, [])
     |> Enum.reject(&(is_nil(&1) or &1 == actor))
     |> Enum.uniq()
+    |> Enum.filter(&may_view?(&1, project))
     |> Enum.each(fn recipient ->
       Activity.log(action,
         actor_uuid: actor,
@@ -111,6 +115,28 @@ defmodule PhoenixKitProjects.Notices do
       )
     end)
   end
+
+  @doc """
+  Whether `user_uuid` may open `project` now — the gate every notice passes,
+  so a person removed from a project, a team member with no grant on it, or
+  a deactivated account never receives a line of its words.
+  """
+  @spec may_view?(binary(), Project.t() | nil) :: boolean()
+  def may_view?(_user_uuid, nil), do: false
+
+  def may_view?(user_uuid, %Project{} = project) do
+    case Auth.get_user(user_uuid) do
+      %User{is_active: false} -> false
+      %User{} = user -> Authz.can?(Scope.for_user(user), project, :view)
+      _ -> false
+    end
+  rescue
+    _ -> false
+  end
+
+  defp project_of(%Project{} = p), do: p
+  defp project_of(%Assignment{project: %Project{} = p}), do: p
+  defp project_of(%Assignment{project_uuid: uuid}), do: Projects.get_project(uuid)
 
   # ── The line ────────────────────────────────────────────────────────
 
@@ -137,8 +163,10 @@ defmodule PhoenixKitProjects.Notices do
         actor = actor_name(Keyword.get(opts, :actor_uuid))
         recipient = Auth.get_user(target)
 
+        # `for_rendering/1` never answers nil: no preference means the
+        # site's language, never whatever the sender is reading in.
         display =
-          RecipientLocale.in_locale(RecipientLocale.base(recipient), fn ->
+          RecipientLocale.in_locale(RecipientLocale.for_rendering(recipient), fn ->
             %{
               "notification_text" => line(action, subject, actor, meta),
               "notification_icon" => icon(action),

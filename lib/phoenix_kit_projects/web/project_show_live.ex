@@ -2139,8 +2139,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       nil ->
         {:noreply, socket}
 
+      # Already to do (a stale tab, a second click): nothing to reopen, and
+      # nobody to tell that it was.
+      %Assignment{status: "todo"} ->
+        {:noreply, assign(socket, reopen_uuid: nil)}
+
       a ->
-        reason = params |> Map.get("reason", "") |> to_string() |> String.trim()
+        reason = reopen_reason(params["reason"])
 
         attrs = %{
           status: "todo",
@@ -2154,12 +2159,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             do: %{"task" => Assignment.label(a)},
             else: %{"task" => Assignment.label(a), "reason" => reason}
 
+        # The reopen first, the reason's comment only once it happened: a
+        # refused reopen must not leave a reason under a task still done.
         socket
         |> assign(reopen_uuid: nil)
-        |> post_reopen_reason(a, reason)
         |> update_assignment_with_activity(a, attrs, "projects.assignment_reopened",
           metadata: meta
         )
+        |> then(fn
+          {:ok, socket} -> {:ok, post_reopen_reason(socket, a, reason)}
+          other -> other
+        end)
         |> maybe_sync_and_reload()
     end
   end
@@ -2856,14 +2866,30 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # hiding a control has never been the control. (A drop under a STATUS
   # lens is fine — `merge_visible_order/2` folds it into the whole plan.)
 
+  @reason_max 2_000
+
+  # What a reopen's reason may be: text, trimmed, at most @reason_max
+  # characters (anything else — a crafted map, a number — is no reason).
+  defp reopen_reason(reason) when is_binary(reason),
+    do: reason |> String.trim() |> String.slice(0, @reason_max)
+
+  defp reopen_reason(_), do: ""
+
   # The reason, as a comment on the task — only where the project has its
-  # discussions on; the reopen's own row carries it either way.
+  # discussions on and the person may comment there; the reopen's own row
+  # carries it either way, so the notice quotes it regardless.
   defp post_reopen_reason(socket, _a, ""), do: socket
 
   defp post_reopen_reason(socket, a, reason) do
     actor = Activity.actor_uuid(socket)
 
-    if socket.assigns.comments_enabled and is_binary(actor) do
+    if socket.assigns.comments_enabled and is_binary(actor) and
+         Authz.can?(
+           socket.assigns[:phoenix_kit_current_scope],
+           socket.assigns.project,
+           :comment,
+           a
+         ) do
       case PhoenixKitComments.create_comment("assignment", a.uuid, actor, %{
              content: reason,
              metadata: %{"reopen_reason" => true}

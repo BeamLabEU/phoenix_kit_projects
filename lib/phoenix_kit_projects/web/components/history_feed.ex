@@ -43,8 +43,9 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
                 <span class="text-sm">
                   <span :if={is_binary(e.actor) and e.auto != true and actor_first?(e)} class="font-medium">{e.actor}</span>
                   {if @compact, do: compact_sentence(e), else: sentence(e)}
+                  <span :if={e.task && not @compact && e.task[:gone]} class="font-medium line-through decoration-base-content/40">{e.task.label}</span>
                   <.link
-                    :if={e.task && not @compact}
+                    :if={e.task && not @compact && !e.task[:gone]}
                     navigate={Paths.task(@project, %{uuid: e.task.uuid})}
                     class="link link-hover font-medium"
                   >
