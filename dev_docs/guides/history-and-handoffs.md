@@ -30,6 +30,14 @@ project has tasks) and in the task drawer (`AssignmentFormLive`, the task's
 lines only), both through `Components.HistoryFeed`. ⋮ → Activity stays the
 raw audit log.
 
+**Cost.** One read per source, whatever the project's size — but core's
+`phoenix_kit_activities` has no index on `resource_uuid` (only module,
+action, actor, target, type, time), so the activity read filters the
+module's rows (`module` index) in memory of Postgres. The per-project
+Activity page has the same shape. On a site with a very large activity
+table the fix is a core index on `(resource_uuid, inserted_at)`, a core
+migration — not something this module's chain may add to a core table.
+
 History rows are written `permanent` (`Activity.history?/1`), so core's
 activity retention never prunes an order's story. Comment notices are not:
 the comments are the record.
