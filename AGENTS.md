@@ -12,8 +12,8 @@ per-project extension hub (files, whiteboards, events, discussions, a public
 portal), dashboard widgets and a public issue portal.
 
 - **Depends on:** `phoenix_kit` `>= 2.64.0 and < 3.0.0` (Hex — the release
-  that carries `Storage.direct_urls/1`, on top of `<.table_default fit>`'s
-  column fitting, `activity_list/1`, `Storage.ResourceFolders`,
+  that carries `Storage.direct_urls/1`, on top of `search_picker`'s `chosen`
+  state, `<.table_default fit>`'s column fitting, `activity_list/1`, `Storage.ResourceFolders`,
   `PhoenixKitWeb.Actor`, `Activity.log/3`, `TableColumns` and the
   `form_actions` / `bulk_actions_toolbar` / `form_section` attrs and slots
   the LiveViews use; the compound form keeps the ceiling open across later 2.x
@@ -1443,7 +1443,7 @@ working directory, not git, so gitignoring is not enough; `mix.exs` carries an
 
 ## Pull requests & commits
 
-- Commit messages start with an action verb (`Add`, `Update`, `Fix`, `Remove`, `Merge`). No AI attribution and no `Co-Authored-By` trailers.
+- Commit messages start with an action verb (`Add`, `Update`, `Fix`, `Remove`, `Merge`).
 - Version bumps and CHANGELOG entries land with the release commit on upstream, not in feature PRs.
 - Review files live in `dev_docs/pull_requests/{year}/{pr_number}-{slug}/{AGENT}_REVIEW.md`, one file per reviewing agent, never edited by another agent; `FOLLOW_UP.md` records how each finding was resolved. Severities: `BUG - CRITICAL/HIGH/MEDIUM`, `IMPROVEMENT - HIGH/MEDIUM`, `NITPICK`.
 

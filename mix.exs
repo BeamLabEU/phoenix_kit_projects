@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.30.0"
+  @version "0.31.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -151,7 +151,9 @@ defmodule PhoenixKitProjects.MixProject do
       # test/core_pin_conformance_test.exs).
       #
       # 2.64.0 for `Storage.direct_urls/1` (the Files page's links in a
-      # fixed number of reads); 2.54.0 before, for `<.table_default fit>`.
+      # fixed number of reads); 2.63.0 before, for `search_picker`'s `chosen`
+      # state on the Hours page; 2.54.0 before that, for `<.table_default
+      # fit>` with the header cells' `priority` / `lead`; 2.49.0 before that.
       pk_dep(:phoenix_kit, ">= 2.64.0 and < 3.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the

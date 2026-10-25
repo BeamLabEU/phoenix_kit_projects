@@ -14,8 +14,10 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
 
   The floor is `>= 2.64.0 and < 3.0.0`: the Files page's links come from
   `Storage.direct_urls/1`, first published in 2.64.0. Before that it was
-  2.54.0: the list pages use `<.table_default fit>` with the header cells'
-  `priority` and `lead`, the column fitting core first published there.
+  2.63.0: the Hours page's pickers use `search_picker`'s `chosen` state.
+  Before that it was 2.54.0: the list pages use `<.table_default fit>` with
+  the header cells' `priority` and `lead`, the column fitting core first
+  published there.
   Before that it was 2.49.0: the project Activity
   page is drawn by core's `activity_list/1`, first published there (see
   `core_ui_api_conformance_test.exs`). Before that it was 2.43.0: the LiveViews
@@ -40,6 +42,8 @@ defmodule PhoenixKitProjects.CorePinConformanceTest do
     "2.43.1",
     "2.48.0",
     "2.49.0",
+    "2.54.0",
+    "2.62.2",
     "2.53.9",
     "2.54.0",
     "2.63.9",
