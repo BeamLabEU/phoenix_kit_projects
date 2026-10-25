@@ -20,6 +20,8 @@ defmodule PhoenixKitProjects.NotificationWiringTest do
       assert "projects.member_added" in subs["membership"].actions
       assert "projects.assignment_completed" in subs["tasks"].actions
       assert "projects.health_updated" in subs["health"].actions
+      assert "projects.assignment_ready" in subs["handoffs"].actions
+      assert "projects.comment_added" in subs["comments"].actions
 
       # Sub keys are declared BARE (core's Types.normalize/1 composes the
       # dotted form) and contain no dots themselves.
@@ -38,7 +40,9 @@ defmodule PhoenixKitProjects.NotificationWiringTest do
           "lib/phoenix_kit_projects/health.ex",
           "lib/phoenix_kit_projects/web/project_show_live.ex",
           "lib/phoenix_kit_projects/web/assignment_form_live.ex",
-          "lib/phoenix_kit_projects/project_events.ex"
+          "lib/phoenix_kit_projects/project_events.ex",
+          "lib/phoenix_kit_projects/handoffs.ex",
+          "lib/phoenix_kit_projects/comment_notices.ex"
         ]
         |> Enum.map_join("\n", &File.read!/1)
 

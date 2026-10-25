@@ -143,6 +143,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        router_mounted?: false,
        gantt_mounted?: false,
        calendar_mounted?: false,
+       history_mounted?: false,
        # Strict `== true` so only a real boolean opt-in turns it on (a stray
        # string would otherwise read as truthy and re-enable URL rewriting).
        tab_url_sync?: Map.get(session, "tab_url_sync", false) == true
@@ -329,6 +330,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               active_tab: active_tab,
               gantt_mounted?: active_tab == :gantt,
               calendar_mounted?: active_tab == :calendar,
+              history_mounted?: active_tab == :history,
               editing_duration_uuid: nil,
               start_modal_open: false,
               start_form: to_form(%{"start_at" => default_start_at_local()}),
@@ -379,6 +381,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               ledger_tokens: %{},
               log_time_open: false,
               log_time_uuid: nil,
+              reopen_uuid: nil,
               assignment_labels: %{},
               invoice_ready?: false
             )
@@ -493,6 +496,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       active_tab: :list,
       gantt_mounted?: false,
       calendar_mounted?: false,
+      history_mounted?: false,
       assignments: [],
       deps_by_assignment: %{},
       total_tasks: 0,
@@ -521,6 +525,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       ledger_tokens: %{},
       log_time_open: false,
       log_time_uuid: nil,
+      reopen_uuid: nil,
       assignment_labels: %{},
       invoice_ready?: false
     ]
@@ -1406,9 +1411,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       type="button"
                       variant="ghost"
                       size="xs"
-                      phx-click="reopen"
+                      phx-click="ask_reopen"
                       phx-value-uuid={@a.uuid}
-                      phx-disable-with={gettext("Reopening…")}
                     >
                       {gettext("Reopen")}
                     </.button>
@@ -1650,12 +1654,33 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </span>
           </div>
 
-          <%!-- Dependencies --%>
+          <%!-- Dependencies. Work that started and then had something
+               before it reopened is ON HOLD — derived, never stored: it
+               clears itself when what it waits on is done again. --%>
           <% deps = Map.get(@deps_by_assignment, @a.uuid, []) %>
+          <% open_deps = Enum.reject(deps, &match?(%{depends_on: %{status: "done"}}, &1)) %>
+          <div
+            :if={@fx.dependencies and @a.status == "in_progress" and open_deps != []}
+            class="mt-1"
+          >
+            <span class="badge badge-warning badge-sm gap-1">
+              <.icon name="hero-pause-circle" class="w-3.5 h-3.5" />
+              {gettext("On hold — waiting for %{tasks}",
+                tasks:
+                  Enum.map_join(open_deps, ", ", &"“#{Assignment.label(&1.depends_on, L10n.current_content_lang())}”")
+              )}
+            </span>
+          </div>
           <div :if={@fx.dependencies and deps != []} class="flex flex-wrap gap-1 mt-1">
             <%= for dep <- deps do %>
-              <span class="badge badge-outline badge-xs gap-1">
-                <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
+              <span class={[
+                "badge badge-outline badge-xs gap-1",
+                match?(%{depends_on: %{status: "done"}}, dep) && "opacity-60"
+              ]}>
+                <.icon
+                  name={if(match?(%{depends_on: %{status: "done"}}, dep), do: "hero-check-circle", else: "hero-arrow-right-circle")}
+                  class="w-3 h-3"
+                />
                 {gettext("depends on:")} {Assignment.label(dep.depends_on, L10n.current_content_lang())}
                 <button phx-click="remove_dependency" phx-value-assignment={@a.uuid} phx-value-depends_on={dep.depends_on_uuid} phx-disable-with={gettext("Removing…")} class="hover:text-error">
                   <.icon name="hero-x-mark" class="w-3 h-3" />
@@ -2095,12 +2120,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  defp gated_handle_event("reopen", %{"uuid" => uuid}, socket) do
+  # Reopen asks why (the panel, 2026-10-25): the dialog's reason is posted
+  # to the task's thread and quoted by the reopen's notice and history line,
+  # so the person whose work came back reads ONE message that says what is
+  # wrong. The typed list's tick and a board drag reopen without asking.
+  defp gated_handle_event("ask_reopen", %{"uuid" => uuid}, socket) do
+    case scoped_assignment(socket, uuid) do
+      nil -> {:noreply, socket}
+      _a -> {:noreply, assign(socket, reopen_uuid: uuid)}
+    end
+  end
+
+  defp gated_handle_event("close_reopen", _params, socket),
+    do: {:noreply, assign(socket, reopen_uuid: nil)}
+
+  defp gated_handle_event("reopen", %{"uuid" => uuid} = params, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
 
       a ->
+        reason = params |> Map.get("reason", "") |> to_string() |> String.trim()
+
         attrs = %{
           status: "todo",
           progress_pct: 0,
@@ -2108,9 +2149,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           completed_at: nil
         }
 
+        meta =
+          if reason == "",
+            do: %{"task" => Assignment.label(a)},
+            else: %{"task" => Assignment.label(a), "reason" => reason}
+
         socket
+        |> assign(reopen_uuid: nil)
+        |> post_reopen_reason(a, reason)
         |> update_assignment_with_activity(a, attrs, "projects.assignment_reopened",
-          metadata: %{"task" => Assignment.label(a)}
+          metadata: meta
         )
         |> maybe_sync_and_reload()
     end
@@ -2738,17 +2786,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # ── Helpers ─────────────────────────────────────────────────────
 
   # `<input type="datetime-local">` posts `YYYY-MM-DDTHH:mm` (no
-  # seconds, no timezone). Treat as UTC — what the user typed is what
-  # gets stored. Pad seconds when missing so `NaiveDateTime` accepts it.
+  # seconds, no timezone): the wall clock where the viewer is, read in their
+  # zone (`L10n.from_wall/1`) — the page shows every time in that zone too.
+  # Pad seconds when missing so `NaiveDateTime` accepts it.
   defp parse_start_at(value) when is_binary(value) do
     with_seconds = if String.length(value) == 16, do: value <> ":00", else: value
 
-    case NaiveDateTime.from_iso8601(with_seconds) do
-      {:ok, ndt} ->
-        {:ok, DateTime.from_naive!(ndt, "Etc/UTC")}
-
-      {:error, _} ->
-        {:error, gettext("Invalid date — please pick a valid date and time.")}
+    with {:ok, ndt} <- NaiveDateTime.from_iso8601(with_seconds),
+         %DateTime{} = at <- L10n.from_wall(ndt) do
+      {:ok, at}
+    else
+      _ -> {:error, gettext("Invalid date — please pick a valid date and time.")}
     end
   end
 
@@ -2807,6 +2855,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # drop describes nothing. The drag handles are already hidden then, but
   # hiding a control has never been the control. (A drop under a STATUS
   # lens is fine — `merge_visible_order/2` folds it into the whole plan.)
+
+  # The reason, as a comment on the task — only where the project has its
+  # discussions on; the reopen's own row carries it either way.
+  defp post_reopen_reason(socket, _a, ""), do: socket
+
+  defp post_reopen_reason(socket, a, reason) do
+    actor = Activity.actor_uuid(socket)
+
+    if socket.assigns.comments_enabled and is_binary(actor) do
+      case PhoenixKitComments.create_comment("assignment", a.uuid, actor, %{
+             content: reason,
+             metadata: %{"reopen_reason" => true}
+           }) do
+        {:ok, _} -> load_comment_counts(socket)
+        _ -> socket
+      end
+    else
+      socket
+    end
+  end
 
   defp comments_available? do
     Code.ensure_loaded?(PhoenixKitComments) and PhoenixKitComments.enabled?()
@@ -2912,14 +2980,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # Default value for `<input type="datetime-local">`: today at the
-  # current hour:minute, formatted `YYYY-MM-DDTHH:mm` (the format the
-  # browser expects). Built from UTC so the prefilled value matches
-  # what'll be persisted when the user clicks Start without changing
-  # anything.
+  # Default value for `<input type="datetime-local">`: now on the viewer's
+  # wall clock, formatted `YYYY-MM-DDTHH:mm` (the format the browser
+  # expects) — `parse_start_at/1` reads it back in the same zone.
   defp default_start_at_local do
     DateTime.utc_now()
     |> DateTime.truncate(:second)
+    |> L10n.local()
     |> DateTime.to_naive()
     |> NaiveDateTime.to_iso8601()
     |> String.slice(0, 16)
@@ -2960,6 +3027,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gate_tab(:board, fx), do: if(fx.view_board, do: :board, else: :list)
   defp gate_tab(:gantt, fx), do: if(fx.view_timeline, do: :gantt, else: :list)
   defp gate_tab(:calendar, fx), do: if(fx.view_calendar, do: :calendar, else: :list)
+  # History tells the work: a project with no tasks (only a discussion, only
+  # whiteboards) keeps its one-tab page and its ⋮ → Activity log.
+  defp gate_tab(:history, fx), do: if(fx.tasks, do: :history, else: :list)
   defp gate_tab(tab, _fx), do: tab
 
   # A `/comments` deep link on a project whose Discussions extension is off
@@ -3072,6 +3142,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> remember_task_view(active)
     |> assign(gantt_mounted?: socket.assigns.gantt_mounted? or active == :gantt)
     |> assign(calendar_mounted?: socket.assigns.calendar_mounted? or active == :calendar)
+    |> assign(history_mounted?: socket.assigns.history_mounted? or active == :history)
   end
 
   defp resolve_switch_target(tab, socket) do
@@ -3084,6 +3155,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         "gantt" when :erlang.map_get(:view_timeline, fx) -> :gantt
         "calendar" when :erlang.map_get(:view_calendar, fx) -> :calendar
         "comments" when comments? -> :comments
+        "history" when not socket.assigns.is_template and :erlang.map_get(:tasks, fx) -> :history
         "ext:" <> _ -> if valid_ext_tab?(socket, tab), do: tab, else: :list
         _ -> :list
       end
@@ -3119,6 +3191,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       :gantt -> :gantt
       :calendar -> :calendar
       :comments -> :comments
+      :history -> :history
       # `/projects/:id/<tab>` — a contributed extension tab by its key;
       # an unknown segment lands on the first tab like the bare page.
       :ext_tab -> ext_tab_for_slug(ext_tabs, slug) || :list
@@ -3148,6 +3221,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   def tab_url(:gantt, project, _ext_tabs), do: Paths.project_gantt(project)
   def tab_url(:calendar, project, _ext_tabs), do: Paths.project_calendar(project)
   def tab_url(:comments, project, _ext_tabs), do: Paths.project_comments(project)
+  def tab_url(:history, project, _ext_tabs), do: Paths.project_history(project)
 
   def tab_url("ext:" <> _ = id, project, ext_tabs) do
     case Enum.find(ext_tabs, &(&1.id == id)) do
@@ -4042,6 +4116,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               }
             ],
             else: []
+          ) ++
+          if(@is_template or not @fx.tasks,
+            do: [],
+            else: [%{id: "history", label: gettext("History"), icon: "hero-clock"}]
           ) %>
       <div
         :if={@tab_url_sync? and not @is_template}
@@ -4985,7 +5063,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             <.icon name="hero-check" class="w-3.5 h-3.5" />
                           </button>
                         <% a.status == "done" -> %>
-                          <button phx-click="reopen" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-ghost btn-xs">
+                          <button phx-click="ask_reopen" phx-value-uuid={a.uuid} class="btn btn-ghost btn-xs">
                             {gettext("Reopen")}
                           </button>
                         <% true -> %>
@@ -5128,6 +5206,49 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           />
         <% end %>
       </div>
+
+      <%!-- ── The History tab ── the project told as it happened
+           (`ProjectHistoryLive`, lazily mounted and then kept, like the
+           Timeline). The raw audit log stays on ⋮ → Activity. --%>
+      <div :if={not @is_template and @fx.tasks} class={[top_tab != :history && "hidden"]}>
+        <%= if @history_mounted? do %>
+          {live_render(@socket, PhoenixKitProjects.Web.ProjectHistoryLive,
+            id: "project-history-live-#{@project.uuid}",
+            session: %{
+              "id" => @project.uuid,
+              "locale" => L10n.current_content_lang(),
+              "current_user_uuid" =>
+                assigns[:phoenix_kit_current_user] && assigns[:phoenix_kit_current_user].uuid
+            })}
+        <% end %>
+      </div>
+
+      <%!-- Reopen asks why. --%>
+      <% reopening = @reopen_uuid && Enum.find(@assignments, &(&1.uuid == @reopen_uuid)) %>
+      <.modal :if={reopening} show on_close="close_reopen" id={"project-reopen-#{@project.uuid}"} max_width="md" close_guard={:input}>
+        <:title>{gettext("Reopen “%{task}”", task: Assignment.label(reopening))}</:title>
+        <.form for={%{}} id={"reopen-form-#{@project.uuid}"} phx-submit="reopen" class="flex flex-col gap-3">
+          <input type="hidden" name="uuid" value={reopening.uuid} />
+          <p class="text-sm text-base-content/70">
+            {gettext("What is wrong or missing? Whoever works on it is told, with your words.")}
+          </p>
+          <textarea
+            name="reason"
+            rows="4"
+            required
+            class="textarea textarea-bordered w-full"
+            placeholder={gettext("e.g. Wall A says 3420 but the plan says 3240 — please measure it again.")}
+          ></textarea>
+          <div class="modal-action">
+            <button type="button" phx-click="close_reopen" class="btn btn-ghost btn-sm">
+              {gettext("Cancel")}
+            </button>
+            <button type="submit" phx-disable-with={gettext("Reopening…")} class="btn btn-warning btn-sm">
+              <.icon name="hero-arrow-uturn-left" class="w-4 h-4" /> {gettext("Reopen")}
+            </button>
+          </div>
+        </.form>
+      </.modal>
 
       <%!-- Start-project modal — date editable so the user can backdate
            an already-running project or queue a future start. The

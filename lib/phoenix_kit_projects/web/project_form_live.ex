@@ -2015,6 +2015,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       <div class="hidden group-has-[option[value=scheduled]:checked]/start:block">
         <.input
           field={@form[:scheduled_start_date]}
+          value={local_input_value(@form[:scheduled_start_date].value)}
           label={gettext("Start date and time")}
           type="datetime-local"
         />
@@ -3102,4 +3103,16 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp do_end_or_resume(project, :end), do: Projects.end_project(project)
   defp do_end_or_resume(project, :resume), do: Projects.resume_project(project)
+
+  # A stored start instant on the viewer's wall clock for the
+  # `datetime-local` input (what was typed comes back as typed).
+  defp local_input_value(%DateTime{} = dt) do
+    dt
+    |> PhoenixKitProjects.L10n.local()
+    |> DateTime.to_naive()
+    |> NaiveDateTime.to_iso8601()
+    |> String.slice(0, 16)
+  end
+
+  defp local_input_value(other), do: other
 end

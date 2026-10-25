@@ -48,13 +48,23 @@ defmodule PhoenixKitProjects.ResourceLinks do
     # (`TaskNotes`); it resolves exactly as the task does.
     # `project_notes` is the anchor of a project's own notes; it resolves
     # as the project does.
+    # `assignment` is the type task COMMENTS are written under; it has its
+    # own handler (links and comment notices, no `#` search — this module is
+    # the search handler, and a second searchable type would list every task
+    # twice).
     %{
       "project" => __MODULE__,
+      "assignment" => PhoenixKitProjects.CommentNotices,
       "project_task" => __MODULE__,
       "project_task_notes" => __MODULE__,
       "project_notes" => __MODULE__
     }
   end
+
+  @doc "A new comment on a project tells its people (`CommentNotices`)."
+  @spec on_comment_created(String.t(), String.t(), struct()) :: any()
+  def on_comment_created(type, uuid, comment),
+    do: PhoenixKitProjects.CommentNotices.on_comment_created(type, uuid, comment)
 
   # ── Resolve ─────────────────────────────────────────────────────────
 

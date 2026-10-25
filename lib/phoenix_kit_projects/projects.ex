@@ -2632,6 +2632,7 @@ defmodule PhoenixKitProjects.Projects do
     case txn do
       {:ok, updated} ->
         ProjectsPubSub.broadcast_project(:project_started, project_payload(updated))
+        PhoenixKitProjects.Handoffs.project_started(updated)
         {:ok, updated}
 
       {:error, _} = err ->
@@ -2762,7 +2763,7 @@ defmodule PhoenixKitProjects.Projects do
                   project_uuid: updated.project_uuid
                 })
 
-                broadcast_status_changed(updated, link.status)
+                broadcast_status_changed(updated, link.status, :auto)
                 recompute_project_completion(updated.project_uuid, depth + 1)
 
               {:error, _cs} ->
@@ -4170,16 +4171,18 @@ defmodule PhoenixKitProjects.Projects do
   # `{:projects, :assignment_status_changed, %{uuid, project_uuid, from, to}}`
   # — only when the status really moved. The rows `Outline.settle/3` changes
   # announce themselves from the outline (`Outline.with_project_lock/2`).
-  defp broadcast_status_changed(%Assignment{status: to} = updated, from) when from != to do
-    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, %{
-      uuid: updated.uuid,
-      project_uuid: updated.project_uuid,
-      from: from,
-      to: to
-    })
+  # `cause` is `:direct` when the caller logs the change itself, `:auto` for a
+  # rollup no caller sees; `Handoffs` writes the latter's history line and,
+  # for both, tells the people downstream.
+  defp broadcast_status_changed(updated, from, cause \\ :direct)
+
+  defp broadcast_status_changed(%Assignment{status: to} = updated, from, cause) when from != to do
+    change = %{uuid: updated.uuid, project_uuid: updated.project_uuid, from: from, to: to}
+    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, change)
+    PhoenixKitProjects.Handoffs.status_changed(change, cause)
   end
 
-  defp broadcast_status_changed(_updated, _from), do: :ok
+  defp broadcast_status_changed(_updated, _from, _cause), do: :ok
 
   # A status changed through the form: the completion stamps follow it as
   # they do on every other path (a reopen clears them, a tick sets them),

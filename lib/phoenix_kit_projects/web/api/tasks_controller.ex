@@ -1064,12 +1064,21 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
         case result do
           {:ok, _} ->
+            reason = reopen_reason(conn, to, a, key)
+
             Activity.log(action,
               actor_uuid: ApiKey.accountable_uuid(key),
               resource_type: "assignment",
               resource_uuid: a.uuid,
               target_uuid: Activity.assignee_target_uuid(a),
-              metadata: api_metadata(key, %{"task" => Assignment.label(a)})
+              metadata:
+                api_metadata(
+                  key,
+                  if(reason,
+                    do: %{"task" => Assignment.label(a), "reason" => reason},
+                    else: %{"task" => Assignment.label(a)}
+                  )
+                )
             )
 
             sync_project_completion(conn)
@@ -1084,6 +1093,44 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
             Json.changeset_error(cs)
         end
     end
+  end
+
+  # A reopen's `reason`, as on the project page: posted to the task's
+  # discussion (as the key's person, labelled with the key) when the project
+  # has discussions on, and quoted by the reopen's notice either way.
+  defp reopen_reason(conn, "todo", a, key) do
+    case conn.params["reason"] do
+      reason when is_binary(reason) ->
+        case String.trim(reason) do
+          "" ->
+            nil
+
+          reason ->
+            post_reason(a, key, reason)
+            reason
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp reopen_reason(_conn, _to, _a, _key), do: nil
+
+  defp post_reason(a, key, reason) do
+    person = ApiKey.accountable_uuid(key)
+
+    if is_binary(person) and PhoenixKitProjects.Extensions.enabled?(a.project_uuid, "discussions") and
+         Code.ensure_loaded?(PhoenixKitComments) and PhoenixKitComments.enabled?() do
+      PhoenixKitComments.create_comment("assignment", a.uuid, person, %{
+        content: reason,
+        status: "published",
+        metadata: %{"reopen_reason" => true},
+        attribution: %{mode: "personal", label: key.name}
+      })
+    end
+  rescue
+    _ -> :ok
   end
 
   # The same moves the project page makes, with the same side effects: a

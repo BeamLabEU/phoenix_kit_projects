@@ -7,10 +7,35 @@ defmodule PhoenixKitProjects.Activity do
   Logs a projects activity entry through `PhoenixKit.Activity.log/3`,
   which never raises — a failure is logged there and returned as
   `{:error, _}`.
+
+  An entry that names a recipient (`target_uuid`) gets its notification
+  line, icon and link in the recipient's language on the way through
+  (`PhoenixKitProjects.Notices.decorate/2`).
+
+  A project's history is read from these rows (`PhoenixKitProjects.History`),
+  and an order is looked back on long after core's activity retention would
+  have pruned it, so the rows that make up that story are written
+  `permanent` (never pruned). Comment notices are not: the comments
+  themselves are the record.
   """
   @spec log(binary(), keyword()) :: {:ok, struct()} | {:error, term()}
-  def log(action, opts) when is_binary(action) and is_list(opts),
-    do: PhoenixKit.Activity.log(@module, action, opts)
+  def log(action, opts) when is_binary(action) and is_list(opts) do
+    opts =
+      action
+      |> PhoenixKitProjects.Notices.decorate(opts)
+      |> then(&if(history?(action), do: Keyword.put(&1, :permanent, true), else: &1))
+
+    PhoenixKit.Activity.log(@module, action, opts)
+  end
+
+  @history_prefixes ~w(projects.assignment_ projects.project_ projects.member_
+                       projects.subproject_ projects.dependency_ projects.event_
+                       projects.task_list_edited projects.health_updated)
+
+  @doc "Whether `action` is part of a project's lasting history."
+  @spec history?(binary()) :: boolean()
+  def history?(action) when is_binary(action),
+    do: Enum.any?(@history_prefixes, &String.starts_with?(action, &1))
 
   @doc """
   Logs a user-driven mutation that did NOT land cleanly — the success

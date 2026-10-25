@@ -554,12 +554,10 @@ defmodule PhoenixKitProjects.Outline do
   end
 
   defp announce_status_change({uuid, project_uuid, from, to}) do
-    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, %{
-      uuid: uuid,
-      project_uuid: project_uuid,
-      from: from,
-      to: to
-    })
+    change = %{uuid: uuid, project_uuid: project_uuid, from: from, to: to}
+    ProjectsPubSub.broadcast_assignment(:assignment_status_changed, change)
+    # The tick rules moved this row; nobody else logs it.
+    PhoenixKitProjects.Handoffs.status_changed(change, :auto)
   end
 
   # Inside another lock's transaction (`outer` is its buffer) nothing has

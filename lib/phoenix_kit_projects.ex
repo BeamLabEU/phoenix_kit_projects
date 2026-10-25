@@ -102,6 +102,22 @@ defmodule PhoenixKitProjects do
             default: true
           },
           %{
+            key: "handoffs",
+            label: "Your turn",
+            description:
+              "A task of yours can start, or is on hold because work before it was reopened",
+            actions: ["projects.assignment_ready", "projects.assignment_on_hold"],
+            default: true
+          },
+          %{
+            key: "comments",
+            label: "Comments",
+            description:
+              "Comments on your tasks, on tasks you commented on, and on projects you manage",
+            actions: ["projects.comment_added"],
+            default: true
+          },
+          %{
             key: "health",
             label: "Project health",
             description: "Health judgments on your projects",
@@ -1160,6 +1176,18 @@ defmodule PhoenixKitProjects do
         live_view: {PhoenixKitProjects.Web.ProjectShowLive, :comments}
       },
       %Tab{
+        id: :admin_projects_project_history,
+        label: "History",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:id/history",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.ProjectShowLive, :history}
+      },
+      %Tab{
         id: :admin_projects_template_new,
         label: "New Template",
         gettext_backend: PhoenixKitProjects.Gettext,
@@ -1221,7 +1249,8 @@ defmodule PhoenixKitProjects do
       },
       # `/projects/:id/<extension tab>` — LAST on purpose: Phoenix matches in
       # declaration order, so every literal sibling above (edit, files,
-      # members, modules, api, activity, board, gantt, calendar, tasks, comments)
+      # members, modules, api, activity, board, gantt, calendar, tasks, comments,
+      # history)
       # AND `projects/templates/*` (whose first segment would otherwise read
       # as an id) win before this catch-all; an unknown segment lands on the
       # project's first tab. Extension tab keys must not reuse those literals.

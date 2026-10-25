@@ -125,6 +125,7 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/:id/tasks/timeline", ProjectShowLive, :gantt)
       live("/:id/tasks/calendar", ProjectShowLive, :calendar)
       live("/:id/comments", ProjectShowLive, :comments)
+      live("/:id/history", ProjectShowLive, :history)
 
       live("/templates/new", TemplateFormLive, :new)
       live("/templates/:id", ProjectShowLive, :show_template)

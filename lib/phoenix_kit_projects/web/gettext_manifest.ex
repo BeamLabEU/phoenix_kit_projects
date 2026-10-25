@@ -55,6 +55,7 @@ defmodule PhoenixKitProjects.Web.GettextManifest do
       gettext("Timeline"),
       gettext("Calendar"),
       gettext("Comments"),
+      gettext("History"),
       gettext("My Projects"),
       gettext("Project Files"),
       gettext("Project Activity"),

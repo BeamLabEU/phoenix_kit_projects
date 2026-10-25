@@ -162,6 +162,51 @@ defmodule PhoenixKitProjects.People do
     _ -> %{}
   end
 
+  @doc """
+  The user accounts an assignee stands for — the people a notice about the
+  task reaches: a person's own account; a team's members; a department's
+  people (by their primary department). Trashed people and people without an
+  account are left out. Anything else, or a failed read, is `[]`.
+  """
+  @spec assignee_user_uuids(map()) :: [binary()]
+  def assignee_user_uuids(%{assigned_person_uuid: uuid}) when is_binary(uuid) do
+    from(p in Person,
+      where: p.uuid == ^uuid and p.status != @trashed and not is_nil(p.user_uuid),
+      select: p.user_uuid
+    )
+    |> RepoHelper.repo().all()
+  rescue
+    _ -> []
+  end
+
+  def assignee_user_uuids(%{assigned_team_uuid: uuid}) when is_binary(uuid) do
+    from(m in TeamMembership,
+      join: p in Person,
+      on: p.uuid == m.staff_person_uuid,
+      where: m.team_uuid == ^uuid and p.status != @trashed and not is_nil(p.user_uuid),
+      select: p.user_uuid,
+      distinct: true
+    )
+    |> RepoHelper.repo().all()
+  rescue
+    _ -> []
+  end
+
+  def assignee_user_uuids(%{assigned_department_uuid: uuid}) when is_binary(uuid) do
+    from(p in Person,
+      where:
+        p.primary_department_uuid == ^uuid and p.status != @trashed and
+          not is_nil(p.user_uuid),
+      select: p.user_uuid,
+      distinct: true
+    )
+    |> RepoHelper.repo().all()
+  rescue
+    _ -> []
+  end
+
+  def assignee_user_uuids(_), do: []
+
   @doc "A person's team memberships with `team: [:department]` preloaded."
   @spec list_memberships_for_person(binary()) :: [TeamMembership.t()]
   def list_memberships_for_person(person_uuid) do

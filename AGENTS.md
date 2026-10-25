@@ -1358,6 +1358,7 @@ secret, retries with backoff, and a delivery log). Until then an agent polls
 | Multilang user-input content | Non-translatable fields must be siblings OUTSIDE `<.multilang_fields_wrapper>` — the wrapper keys its id on `@current_lang`, so morphdom re-mounts everything inside on a tab switch and their state is lost. An `:edit` form opens on the viewing language (`mount_multilang(open_on: :viewing_language)`); `:new` opens on the main language, which holds the required fields. | [`dev_docs/guides/multilang-content.md`](dev_docs/guides/multilang-content.md) |
 | Whiteboards | A board's shapes are core annotations anchored by `target_type: "projects_whiteboard"` + `target_uuid`; `file_uuid` stays nullable so file-backed boards keep rendering through the file viewer. | [`dev_docs/guides/whiteboards.md`](dev_docs/guides/whiteboards.md) |
 | Dashboard widgets | One-way contract: this module never depends on `phoenix_kit_dashboards`. Every widget guards its reads behind `Helpers.available?/0` and `Statuses.available?/0` and renders an empty state rather than crashing the host board; a stateful LiveComponent's `render/1` returns a single static root. | [`dev_docs/guides/dashboard-widgets.md`](dev_docs/guides/dashboard-widgets.md) |
+| History, hand-offs and notices | A project's story is READ, never copied: `History.list/2` merges the activity rows of the project and its tasks, the comments and the ledger at read time. Every status change passes `Handoffs.status_changed/2` from the two announce sites (`Projects.broadcast_status_changed/3`, `Outline.announce_status_change/1`) — a new status path must go through one of them. Notices are written per recipient in THEIR language (`Notices`); `Activity.log/2` decorates any entry with a `target_uuid` and writes history actions `permanent`. Times print in the viewer's zone (`L10n`, settled in `assign_embed_user/2`); a typed time is read with `L10n.from_wall/1`. | [`dev_docs/guides/history-and-handoffs.md`](dev_docs/guides/history-and-handoffs.md) |
 | Schedule math and completion | Durations normalize to hours through `Task.to_hours/3` only; per-task `counts_weekends` overrides the project setting. `recompute_project_completion/1` runs after every assignment status/progress/removal change. | [`dev_docs/guides/schedule-math.md`](dev_docs/guides/schedule-math.md) |
 
 ### Embedding host contract
@@ -1505,8 +1506,8 @@ size, pinned in `hours_test.exs` with `QueryCounter`), `timesheet/1`,
   `Ledger.totals_for_project/1` makes.
 - **Days are cut with ONE offset per read** (`Hours.Period.offset_seconds/2`),
   so a period across a daylight-saving switch has its days an hour off on one
-  side; totals are unaffected. Core's per-instant `TimeZone` helpers are newer
-  than this module's core floor.
+  side; totals are unaffected. Core's per-instant `TimeZone` helpers
+  (`date_start/2`, `local_date/2`) are within the core floor and would fix it.
 - **Ask `Authz.can?/5` with the project STRUCT.** With a bare uuid the resolver
   cannot read the project's own "who can do what" floors and judges by the
   defaults; `Hours.projects_by_uuid/1` is the batched read the page uses.

@@ -76,6 +76,15 @@ defmodule PhoenixKitProjects.PubSub do
     Manager.broadcast(topic_project(uuid), msg)
   end
 
+  @doc """
+  Broadcasts on ONE project's topic only — for news that concerns the pages
+  of that project (its History tab) and nobody listening to `projects:all`
+  (the dashboards reload on everything there).
+  """
+  @spec broadcast_to_project(binary(), atom(), map()) :: :ok | {:error, term()}
+  def broadcast_to_project(project_uuid, event, payload) when is_binary(project_uuid),
+    do: Manager.broadcast(topic_project(project_uuid), {:projects, event, payload})
+
   @doc "Broadcasts a task-library event to the all-projects and tasks topics."
   @spec broadcast_task(atom(), map()) :: :ok | {:error, term()}
   def broadcast_task(event, %{uuid: _uuid} = payload) do

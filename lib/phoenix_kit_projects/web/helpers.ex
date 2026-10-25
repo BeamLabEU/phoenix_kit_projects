@@ -279,13 +279,11 @@ defmodule PhoenixKitProjects.Web.Helpers do
   Normalises `<input type="datetime-local">` form values to ISO 8601
   strings Ecto's `:utc_datetime` cast accepts.
 
-  Browsers post `YYYY-MM-DDTHH:mm` (or `:ss`) with no timezone info.
-  Ecto's `:utc_datetime` cast rejects naive strings without an offset,
-  so we attach `Z` (UTC) before handing to the changeset. The user's
-  picked clock-time is treated as already-UTC — PhoenixKit doesn't
-  thread per-user timezone preferences yet, and the date/time pickers
-  in browsers are timezone-agnostic anyway, so what the user types is
-  what gets stored.
+  Browsers post `YYYY-MM-DDTHH:mm` (or `:ss`) with no timezone info: the
+  wall clock where the viewer is. It is read in the viewer's zone
+  (`L10n.from_wall/1`, settled per LiveView) and handed to the changeset
+  as a UTC ISO 8601 string — the pages print every instant back in the
+  same zone.
 
   `fields` is a list of string keys to normalise (typically
   `["scheduled_start_date"]` for the project form). Missing/empty
@@ -307,15 +305,17 @@ defmodule PhoenixKitProjects.Web.Helpers do
 
   defp normalize_local_to_utc(val) do
     # `datetime-local` posts `YYYY-MM-DDTHH:mm` (16 chars, no seconds)
-    # or `YYYY-MM-DDTHH:mm:ss`. Pad seconds when missing, then append
-    # `Z` so the result parses as UTC. Pass-through on parse failure —
+    # or `YYYY-MM-DDTHH:mm:ss`. Pad seconds when missing, then read it in
+    # the viewer's zone. Pass-through on parse failure —
     # let Ecto's cast surface the actual validation error rather than
     # eating it here.
     with_seconds = if String.length(val) == 16, do: val <> ":00", else: val
 
-    case NaiveDateTime.from_iso8601(with_seconds) do
-      {:ok, _ndt} -> with_seconds <> "Z"
-      {:error, _} -> val
+    with {:ok, ndt} <- NaiveDateTime.from_iso8601(with_seconds),
+         %DateTime{} = at <- PhoenixKitProjects.L10n.from_wall(ndt) do
+      DateTime.to_iso8601(at)
+    else
+      _ -> val
     end
   end
 
@@ -720,6 +720,7 @@ defmodule PhoenixKitProjects.Web.Helpers do
     scope = socket.assigns[:phoenix_kit_current_scope]
     PhoenixKitProjects.RefText.put_writer({:scope, scope})
     PhoenixKitProjects.L10n.put_viewer_zone(scope)
+    PhoenixKitProjects.Actor.put(PhoenixKitProjects.Activity.actor_uuid(socket))
     socket
   end
 
