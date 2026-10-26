@@ -20,10 +20,12 @@ portal), dashboard widgets and a public issue portal.
   minors and `core_pin_conformance_test.exs` guards it),
   `phoenix_kit_ai` `~> 0.18` (hard — the AI-translation pipeline),
   `phoenix_kit_comments` `~> 0.3` (hard — `ProjectShowLive` does
-  `use PhoenixKitComments.Embed`), `phoenix_kit_staff` `~> 0.8` (**optional** —
-  the People seam; all reads go through `PhoenixKitProjects.People`),
-  `phoenix_kit_entities` `~> 0.3` (**optional** — the workflow-status catalog;
-  `Statuses.available?/0` gates every call), plus `phoenix_live_gantt` `~> 0.4`
+  `use PhoenixKitComments.Embed`), `phoenix_kit_staff` `~> 0.8` (hard since the module-table-ownership
+  work — this chain's foreign keys point at staff's tables, so staff's chain
+  must run first; code still reads staff data only through
+  `PhoenixKitProjects.People`), `phoenix_kit_entities` `~> 0.3` (hard for the
+  same reason — the workflow-status catalog; `Statuses.available?/0` still
+  gates every call), plus `phoenix_live_gantt` `~> 0.4`
   (Timeline) and `phoenix_live_calendar` `~> 0.3` (Calendar).
 - **Consumed by:** `phoenix_kit_dashboards` discovers `phoenix_kit_widgets/0`
   duck-typed (one-way — projects has no dependency on it). `phoenix_kit_ai`
@@ -100,7 +102,7 @@ PHOENIX_LIVE_GANTT_PATH=../phoenix_live_gantt mix test
 PHOENIX_LIVE_CALENDAR_PATH=../phoenix_live_calendar mix test
 ```
 
-The staff-optional seam has its own compile gate, which must stay green:
+Staff is a hard dependency now, but the code keeps the People seam, and its compile gate must stay green:
 
 ```bash
 WITHOUT_STAFF=1 mix deps.get && WITHOUT_STAFF=1 mix compile --warnings-as-errors

@@ -35,8 +35,8 @@ defmodule PhoenixKitProjects.MixProject do
   end
 
   def application do
-    # `:phoenix_kit_staff` is deliberately absent: it is an optional dep, and
-    # naming it here makes the app fail to boot wherever it is not installed.
+    # `:phoenix_kit_staff` and `:phoenix_kit_entities` are hard deps, so Mix starts
+    # them without being named here.
     [extra_applications: [:logger, :phoenix_kit]]
   end
 
@@ -166,26 +166,23 @@ defmodule PhoenixKitProjects.MixProject do
       # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
       # The call is unguarded, so `~> 0.1` admitted releases where building an
       # assignee list raises `UndefinedFunctionError`.
-      # Optional (staff-optional seam): the staff DB tables are created by
-      # CORE (V100), so projects' shadow schemas and FKs work without this
-      # package — it is the people ADMIN surface, not the data's owner.
-      # `WITHOUT_STAFF=1 mix compile` drops it entirely, which is the seam's
-      # compile gate proving no stray hard reference sneaks back in.
+      # Hard dep: this package's own chain (`Migrations.Schema`) creates nine foreign
+      # keys into staff's tables, and core no longer creates them, so a host that
+      # has projects needs staff's chain run first. `Modules.order_by_dependencies/1`
+      # reads this edge to order the module migrations.
       #
-      # The 0.3 floor above still applies whenever staff IS present: making a
-      # dependency optional does not make an older release safe.
-      pk_dep(:phoenix_kit_staff, "~> 0.8", optional: true),
+      # The 0.3 floor above still applies: making a dependency hard does not make
+      # an older release safe.
+      pk_dep(:phoenix_kit_staff, "~> 0.8"),
       # 0.2.6 is the floor: `ProjectShowLive` does `use
       # PhoenixKitComments.Embed`, first published in that release. `~> 0.2`
       # admitted 0.2.0–0.2.5, where that `use` site fails to compile.
       pk_dep(:phoenix_kit_comments, "~> 0.3"),
 
-      # Optional: the entities module is the source/catalog for project
-      # workflow statuses. `optional: true` keeps it out of host closures
-      # (PhoenixKitProjects.Statuses degrades gracefully when it's absent —
-      # mirrors the AI-translation pattern) while making it loadable in this
-      # package's own compile + test build.
-      pk_dep(:phoenix_kit_entities, "~> 0.3", optional: true),
+      # Hard dep: `Migrations.Schema` references `phoenix_kit_entities` (workflow
+      # status FK), so entities' chain must run first. The module is also the
+      # source/catalog for project workflow statuses.
+      pk_dep(:phoenix_kit_entities, "~> 0.3"),
 
       # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
       # for polymorphic assignee FKs (team / department / person).

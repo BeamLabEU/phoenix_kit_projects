@@ -35,7 +35,7 @@ Add to your parent PhoenixKit app's `mix.exs`:
 
 (For local development inside the PhoenixKit workspace, use the path-dep form instead: `{:phoenix_kit_projects, path: "../phoenix_kit_projects"}`.)
 
-`phoenix_kit_staff` is **optional** — the staff tables are created by core's migrations, and this module maps its own read-only shadow schemas over them for the polymorphic assignee; install staff for the people admin UI.
+`phoenix_kit_staff` and `phoenix_kit_entities` are required: this module's migrations reference their tables, so their migrations run first. This module maps its own read-only shadow schemas over staff's tables for the polymorphic assignee.
 
 Also add the apps to `extra_applications` so `PhoenixKit.ModuleDiscovery` finds them (include `:phoenix_kit_staff` only if you installed it):
 

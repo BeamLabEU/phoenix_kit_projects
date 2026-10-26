@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **`phoenix_kit_staff` and `phoenix_kit_entities` are now required dependencies** (they were `optional: true`). The module's own chain carries foreign keys into their tables (nine into staff's, one into entities'), and core is about to stop creating those tables, so on a fresh install their chains must run first; `mix phoenix_kit.update` orders module migrations by these dependencies. A host that did not list them gets them from `mix deps.get`. No migration.
+
 ### Added
 
 - **The module supplies the manifest of its 24 tables** (`expected_schema/0`, `PhoenixKitProjects.ExpectedSchema`), so `mix phoenix_kit.repair` and `mix phoenix_kit.doctor` check and repair them again, now from the module's own chain instead of core's manifest. Generated from `PhoenixKitProjects.Migrations` by core's `dev_docs/squash/generate_module_manifest.exs`, never edited by hand. Core uses it from the first release after 2.64.1; before that nothing reads it. Repair is additive (it creates what is missing and reports the rest) and checks the tables only while the database is at the chain's current version. No migration.
