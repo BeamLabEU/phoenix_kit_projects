@@ -1806,6 +1806,23 @@ defmodule PhoenixKitProjects.Projects do
   end
 
   @doc """
+  The projects whose assignments use `task_uuid`, in one read — for a
+  one-off task, the project that minted it. A writer that acts on a one-off
+  through the library page asks each of these whether the viewer may.
+  """
+  @spec projects_using_task(binary()) :: [Project.t()]
+  def projects_using_task(task_uuid) when is_binary(task_uuid) do
+    repo().all(
+      from(p in Project,
+        join: a in Assignment,
+        on: a.project_uuid == p.uuid,
+        where: a.task_uuid == ^task_uuid,
+        distinct: true
+      )
+    )
+  end
+
+  @doc """
   Batched usage stats for library tasks — how many assignments
   reference each task and when the most recent one was created.
   Tasks never used are absent from the map.

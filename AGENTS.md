@@ -512,23 +512,32 @@ across, once, behind `projects_admin_all_backfilled`; a repeat on every boot
 would fight an Owner's revoke.
 
 Two more sub-keys narrow what the base key used to allow, both checked by
-`Authz` the same way as `admin_all` (sub-key and base held, no settings read)
-and both backfilled once to every role that held `projects`
-(`backfill_sub_key/3`, which sets its flag only when every grant succeeded):
+`Authz` from the scope (sub-key and base held). Every sub-key backfill
+(`admin_all`, the own-key API rights and these two) goes through
+`backfill_sub_keys/3`: it reads the holders with its own query (core's
+`get_permissions_for_role/1` rescues an error to `[]`, which would read as
+"nobody holds projects"), answers `{:error, :lookup_failed}` on a failed read,
+and sets its flag only when every grant succeeded:
 
-- **`projects.manage_library`** (`Authz.manage_library?/1`) — the shared task
-  library's writes: `TasksLive`'s delete / promote / reorder (read-only list
+- **`projects.manage_library`** (`Authz.manage_library?/1`, which also needs
+  the module switched on — these are writes) — the shared task library's
+  writes: `TasksLive`'s delete / promote / reorder (read-only list
   without it), `TaskFormLive` at mount and on save / add_dep / remove_dep,
-  renaming a LIBRARY task from a project (the assignment form's title, the
-  card title, the typed list — `Outline.sync/4` leaves library titles alone
+  renaming a LIBRARY task from a project, asked of the live scope at the write
+  (the assignment form's title, the card title, the typed list — `Outline.sync/4` leaves library titles alone
   unless `rename_library: true`), and the assignment form's "Add to the task
   library". A library task is used by every project that assigned it, so this
   is site-level, never a project role. The API already refuses library
   content edits. The One-off lens lists only one-off tasks of projects the
-  viewer can open (`list_tasks/1` / `count_tasks/1` `:project_uuids`).
+  viewer can open (`list_tasks/1` / `count_tasks/1` `:project_uuids`, asked on
+  every load). A one-off belongs to its project: deleting one from the library
+  page also needs `:delete_tasks` there, promoting one `:view`
+  (`Projects.projects_using_task/1`) — the library right alone does not reach
+  into a private project.
 - **`projects.settings`** (`Authz.settings?/1`) — `ProjectsSettingsLive` at
   mount (it is embeddable) and every event but the tab switch and the demo
-  toggle; the settings tab carries it.
+  toggle; the settings tab carries it. Not tied to the module being enabled:
+  an administrator prepares the module's settings before switching it on.
 
 These gates are checked against the embed's reconstructed scope too, so an
 embed of `TasksLive` (writes), `TaskFormLive` or `ProjectsSettingsLive` must
@@ -700,7 +709,7 @@ Support modules in `test/support/`:
 | `Test.Hooks` | `:assign_scope` `on_mount` reading `"phoenix_kit_test_scope"` from the session |
 | `Test.SchemaMigration` | wraps the module chain for `Ecto.Migrator` |
 | `DataCase` | `:integration` tag + SQL Sandbox; hosts `fixture_task/1`, `fixture_project/1`, `fixture_template/1`, `errors_on/1` |
-| `LiveCase` | `fake_scope/1` + `put_test_scope/2` for a real `%PhoenixKit.Users.Auth.Scope{}` — by default a site admin holding every sub-key (`admin_all`, the API key rights, `manage_library`, `settings`); pass `permissions: ["projects"]` for a plain module-reacher; reuses `DataCase` fixtures |
+| `LiveCase` | `fake_scope/1` + `put_test_scope/2` for a real `%PhoenixKit.Users.Auth.Scope{}` — by default a site admin holding every sub-key (`admin_all`, the API key rights, `manage_library`, `settings`); pass `permissions: ["projects"]` for a plain module-reacher. Its setup switches the module on (`projects_enabled`), which library writes require; reuses `DataCase` fixtures |
 | `ActivityLogAssertions` | `assert_activity_logged/2`, `refute_activity_logged/2` |
 | `QueryCounter` | statement counting for the batched-read tests |
 | `StatusFixtures` | workflow-status catalog fixtures |

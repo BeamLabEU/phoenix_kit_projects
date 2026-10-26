@@ -130,16 +130,10 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     socket = assign(socket, visible_columns: ListUi.load_columns(socket, columns_spec()))
 
     # Library writes (new, edit, delete, reorder, promote) are a site-level
-    # right; without it the list is read-only. `one_off_scope` is which
-    # projects' one-off tasks this viewer may see listed.
+    # right; without it the list is read-only.
     can_manage? = Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope])
 
-    socket =
-      assign(socket,
-        can_manage_library: can_manage?,
-        bulk_enabled?: can_manage?,
-        one_off_scope: one_off_scope(socket.assigns[:phoenix_kit_current_scope])
-      )
+    socket = assign(socket, can_manage_library: can_manage?, bulk_enabled?: can_manage?)
 
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
@@ -199,7 +193,9 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   defp load_list_tasks(socket) do
     search = socket.assigns.search
     ad_hoc = lens_filter(socket.assigns[:lens])
-    one_off_scope = socket.assigns[:one_off_scope] || []
+    # Asked on every load, never cached: a viewer who left a project must not
+    # see the one-offs it mints afterwards.
+    one_off_scope = one_off_scope(socket.assigns[:phoenix_kit_current_scope])
     # The library itself is shared by every project; only the one-off lens
     # is narrowed to the viewer's projects.
     projects = if ad_hoc == :only, do: one_off_scope, else: :all
@@ -416,33 +412,9 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   defp library_write("promote_task", %{"uuid" => uuid}, socket) do
     case Projects.get_task(uuid) do
       %TaskSchema{ad_hoc: true} = task ->
-        case Projects.update_task(task, %{"ad_hoc" => false}) do
-          {:ok, promoted} ->
-            Activity.log("projects.task_promoted",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "task",
-              resource_uuid: promoted.uuid,
-              metadata: %{"title" => promoted.title}
-            )
-
-            socket = put_flash(socket, :info, gettext("Task added to the library."))
-
-            # Promoting the last one-off would leave the lens on an empty
-            # set (and the empty state hides the strip) — fall back to the
-            # library, where the promoted row now is.
-            if socket.assigns.lens == :one_off and
-                 Projects.count_tasks(
-                   ad_hoc: :only,
-                   project_uuids: socket.assigns[:one_off_scope] || []
-                 ) == 0 do
-              {:noreply, push_url_state(socket, lens: :library)}
-            else
-              {:noreply, load_tasks(socket)}
-            end
-
-          {:error, _cs} ->
-            {:noreply, put_flash(socket, :error, gettext("Could not update the task."))}
-        end
+        if one_off_allowed?(socket, task, :view),
+          do: promote(socket, task),
+          else: {:noreply, put_flash(socket, :error, gettext("Task not found."))}
 
       _ ->
         {:noreply, put_flash(socket, :error, gettext("Task not found."))}
@@ -528,36 +500,84 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       nil ->
         {:noreply, put_flash(socket, :error, gettext("Task not found."))}
 
+      %TaskSchema{ad_hoc: true} = task ->
+        if one_off_allowed?(socket, task, :delete_tasks),
+          do: delete_task(socket, task),
+          else: {:noreply, put_flash(socket, :error, gettext("Task not found."))}
+
       task ->
-        case Projects.delete_task(task) do
-          {:ok, _} ->
-            Activity.log("projects.task_deleted",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "task",
-              resource_uuid: task.uuid,
-              metadata: %{"title" => task.title}
-            )
-
-            {:noreply,
-             socket
-             |> WebHelpers.notify_deleted(:task, task.uuid)
-             |> put_flash(:info, gettext("Task deleted."))
-             |> load_tasks()}
-
-          {:error, _} ->
-            Activity.log_failed("projects.task_deleted",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "task",
-              resource_uuid: task.uuid,
-              metadata: %{"title" => task.title}
-            )
-
-            {:noreply, put_flash(socket, :error, gettext("Could not delete task."))}
-        end
+        delete_task(socket, task)
     end
   end
 
   defp library_write(_event, _params, socket), do: {:noreply, socket}
+
+  defp delete_task(socket, task) do
+    case Projects.delete_task(task) do
+      {:ok, _} ->
+        Activity.log("projects.task_deleted",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          resource_uuid: task.uuid,
+          metadata: %{"title" => task.title}
+        )
+
+        {:noreply,
+         socket
+         |> WebHelpers.notify_deleted(:task, task.uuid)
+         |> put_flash(:info, gettext("Task deleted."))
+         |> load_tasks()}
+
+      {:error, _} ->
+        Activity.log_failed("projects.task_deleted",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          resource_uuid: task.uuid,
+          metadata: %{"title" => task.title}
+        )
+
+        {:noreply, put_flash(socket, :error, gettext("Could not delete task."))}
+    end
+  end
+
+  defp promote(socket, task) do
+    case Projects.update_task(task, %{"ad_hoc" => false}) do
+      {:ok, promoted} ->
+        Activity.log("projects.task_promoted",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "task",
+          resource_uuid: promoted.uuid,
+          metadata: %{"title" => promoted.title}
+        )
+
+        socket = put_flash(socket, :info, gettext("Task added to the library."))
+
+        # Promoting the last one-off would leave the lens on an empty
+        # set (and the empty state hides the strip) — fall back to the
+        # library, where the promoted row now is.
+        if socket.assigns.lens == :one_off and
+             Projects.count_tasks(
+               ad_hoc: :only,
+               project_uuids: one_off_scope(socket.assigns[:phoenix_kit_current_scope])
+             ) == 0 do
+          {:noreply, push_url_state(socket, lens: :library)}
+        else
+          {:noreply, load_tasks(socket)}
+        end
+
+      {:error, _cs} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not update the task."))}
+    end
+  end
+
+  # A one-off belongs to the project that minted it: acting on it from the
+  # library page also needs that project's own rule (`:view` to promote it,
+  # `:delete_tasks` to delete it) — the library right alone does not reach
+  # into a private project.
+  defp one_off_allowed?(socket, %TaskSchema{uuid: uuid}, action) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    Enum.all?(Projects.projects_using_task(uuid), &Authz.can?(scope, &1, action))
+  end
 
   # Sort change pushes the new sort into the URL; handle_url_state/2 resets
   # the load-more cap and reloads — see projects_live for the same pattern.

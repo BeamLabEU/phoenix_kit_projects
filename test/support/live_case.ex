@@ -60,6 +60,10 @@ defmodule PhoenixKitProjects.LiveCase do
     {:ok, _} = PhoenixKit.Settings.update_boolean_setting("languages_enabled", true)
     {:ok, _} = PhoenixKit.Settings.update_boolean_setting("default_language_no_prefix", false)
 
+    # A host's Projects module is switched on; library writes
+    # (`Authz.manage_library?/1`) refuse while it is off.
+    {:ok, _} = PhoenixKit.Settings.update_boolean_setting("projects_enabled", true)
+
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{})

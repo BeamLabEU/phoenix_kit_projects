@@ -10,6 +10,8 @@ defmodule PhoenixKitProjects do
   use PhoenixKit.Module
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import Ecto.Query, only: [from: 2]
+
   require Logger
 
   # Single source of truth: read the version from mix.exs at compile time so
@@ -18,8 +20,9 @@ defmodule PhoenixKitProjects do
   @version Mix.Project.config()[:version]
 
   alias PhoenixKit.Dashboard.Tab
+  alias PhoenixKit.RepoHelper
   alias PhoenixKit.Settings
-  alias PhoenixKit.Users.{Permissions, Roles}
+  alias PhoenixKit.Users.{Permissions, RolePermission}
   alias PhoenixKitProjects.Authz
 
   @impl PhoenixKit.Module
@@ -310,92 +313,97 @@ defmodule PhoenixKitProjects do
   re-disabling a feature they turned on.
   """
   def migrate_legacy do
-    alias PhoenixKit.Settings
-    alias PhoenixKit.Users.{Permissions, Roles}
+    # ONCE each, not on every boot. This runs from the host's start-up, and
+    # an unconditional version fights the Owner: revoke admin_all from the
+    # contractor role and the next restart hands it back. Each flag is set
+    # only once its grants all succeeded, so a failure is retried next boot.
+    results = [
+      backfill_sub_keys(@admin_all_backfill_key, [Authz.admin_all_key()]),
+      backfill_sub_keys(@api_keys_backfill_key, @own_key_rights),
+      backfill_sub_keys(@manage_library_backfill_key, [Authz.manage_library_key()]),
+      backfill_sub_keys(@settings_backfill_key, [Authz.settings_key()])
+    ]
 
-    # ONCE, not on every boot. This runs from the host's start-up, and an
-    # unconditional version fights the Owner: revoke admin_all from the
-    # contractor role and the next restart hands it back. The flag is the
-    # same guard core uses for its own auto-grants — the point is to carry
-    # an existing install across the split, not to keep re-deciding.
-    unless Settings.get_setting(@admin_all_backfill_key) == "true" do
-      Enum.each(Roles.list_roles(), fn role ->
-        granted = Permissions.get_permissions_for_role(role.uuid)
-
-        if "projects" in granted and "projects.admin_all" not in granted do
-          Permissions.grant_permission(role.uuid, "projects.admin_all", nil)
-        end
-      end)
-
-      Settings.update_setting_with_module(@admin_all_backfill_key, "true", module_key())
-    end
-
-    backfill_api_key_rights()
-    _ = backfill_sub_key(@manage_library_backfill_key, Authz.manage_library_key())
-    _ = backfill_sub_key(@settings_backfill_key, Authz.settings_key())
     backfill_checklist_flags()
+
+    case Enum.reject(results, &(&1 == :ok)) do
+      [] -> :ok
+      errors -> {:error, errors}
+    end
   rescue
     error ->
       {:error, Exception.message(error)}
   end
 
   @doc false
-  # Once per sub-key: every role that holds the base key keeps what the base
-  # key used to allow (the library writes, the settings page). The flag is set
-  # only when every grant succeeded, so a failed grant is retried on the next
-  # boot; a role granted `projects` later gets the narrow meaning. `grant` is
-  # a parameter only so a test can make a grant fail.
-  def backfill_sub_key(flag, key, grant \\ &Permissions.grant_permission/3) do
+  # Once per flag: every role that holds the base key gets `keys` — what the
+  # base key used to allow (admin_all, the own-key API rights, the library
+  # writes, the settings page). The grants are READ with this module's own
+  # query: core's `get_permissions_for_role/1` rescues an error to `[]`,
+  # which would read as "nobody holds projects" and set the flag for good. A
+  # failed read answers `{:error, :lookup_failed}`, a failed grant
+  # `{:error, {:backfill_incomplete, …}}`; either leaves the flag unset. A
+  # role granted `projects` later gets the narrow meaning. `:grant` and
+  # `:holders` are parameters only so a test can make either fail.
+  def backfill_sub_keys(flag, keys, opts \\ []) do
     if Settings.get_setting(flag) == "true" do
       :ok
     else
-      failures =
-        for role <- Roles.list_roles(),
-            granted = Permissions.get_permissions_for_role(role.uuid),
-            "projects" in granted,
-            key not in granted,
-            result = grant.(role.uuid, key, nil),
-            not match?({:ok, _}, result) do
-          {role.uuid, result}
-        end
+      grant = Keyword.get(opts, :grant, &Permissions.grant_permission/3)
+      holders = Keyword.get(opts, :holders, &role_uuids_holding/1)
 
-      if failures == [] do
-        Settings.update_setting_with_module(flag, "true", module_key())
-        :ok
-      else
-        Logger.warning(
-          "[PhoenixKitProjects] #{key} backfill incomplete, will retry next boot: " <>
-            inspect(failures)
-        )
-
-        {:error, {:backfill_incomplete, key, failures}}
+      with {:ok, base, held} <- read_holders(holders, keys) do
+        grant_missing(flag, keys, base, held, grant)
       end
     end
-  rescue
-    error ->
-      Logger.warning("[PhoenixKitProjects] #{key} backfill failed: #{Exception.message(error)}")
-      {:error, Exception.message(error)}
   end
 
-  # Once: every role that holds the base key keeps what it could already do
-  # with its own keys (make them, change them, rotate and revoke them).
-  # Managing everyone's keys is new and goes to Admin through core's
-  # auto-grant, Owner through "*". Revoke one later and it stays revoked.
-  defp backfill_api_key_rights do
-    alias PhoenixKit.Settings
-    alias PhoenixKit.Users.{Permissions, Roles}
+  defp read_holders(holders, keys) do
+    base = holders.(module_key())
+    held = Map.new(keys, &{&1, MapSet.new(holders.(&1))})
+    {:ok, base, held}
+  rescue
+    error ->
+      Logger.warning(
+        "[PhoenixKitProjects] permission backfill could not read the grants, will retry next boot: " <>
+          Exception.message(error)
+      )
 
-    unless Settings.get_setting(@api_keys_backfill_key) == "true" do
-      for role <- Roles.list_roles(),
-          granted = Permissions.get_permissions_for_role(role.uuid),
-          "projects" in granted,
-          key <- @own_key_rights,
-          key not in granted do
-        Permissions.grant_permission(role.uuid, key, nil)
+      {:error, :lookup_failed}
+  end
+
+  defp grant_missing(flag, keys, base, held, grant) do
+    failures =
+      for role_uuid <- base,
+          key <- keys,
+          not MapSet.member?(Map.fetch!(held, key), role_uuid),
+          result = grant.(role_uuid, key, nil),
+          not match?({:ok, _}, result) do
+        {role_uuid, key, result}
       end
 
-      Settings.update_setting_with_module(@api_keys_backfill_key, "true", module_key())
+    if failures == [] do
+      Settings.update_setting_with_module(flag, "true", module_key())
+      :ok
+    else
+      Logger.warning(
+        "[PhoenixKitProjects] #{flag} incomplete, will retry next boot: " <> inspect(failures)
+      )
+
+      {:error, {:backfill_incomplete, flag, failures}}
     end
+  end
+
+  # Every role holding `key`, straight from the role-permission table; raises
+  # on a failed read (see `backfill_sub_keys/3`).
+  defp role_uuids_holding(key) do
+    RepoHelper.repo().all(
+      from(rp in RolePermission,
+        where: rp.module_key == ^key,
+        select: rp.role_uuid,
+        distinct: true
+      )
+    )
   end
 
   # The "simple to-do list" preset shipped incomplete: it turned off the

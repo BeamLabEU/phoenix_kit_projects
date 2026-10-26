@@ -17,7 +17,17 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
 
   alias PhoenixKit.Settings
   alias PhoenixKit.Users.{Auth, RolePermission, Roles}
-  alias PhoenixKitProjects.{CommentModeration, Grants, Members, Outline, Projects, QueryCounter}
+
+  alias PhoenixKitProjects.{
+    Authz,
+    CommentModeration,
+    Grants,
+    Members,
+    Outline,
+    Projects,
+    QueryCounter
+  }
+
   alias PhoenixKitProjects.Test.Repo
 
   defp n, do: System.unique_integer([:positive])
@@ -205,6 +215,95 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
     end
   end
 
+  describe "one-off tasks of a project the library manager cannot open" do
+    # A library manager who administers no project and is not on this one.
+    defp librarian(user_uuid),
+      do: fake_scope(user_uuid: user_uuid, permissions: ["projects", "projects.manage_library"])
+
+    test "a crafted delete or promote of one is refused", %{conn: conn} do
+      private = fixture_project()
+      {:ok, %{task: adhoc}} = Projects.quick_add_assignment(private.uuid, "Private one-off")
+
+      {:ok, view, _html} =
+        live(put_test_scope(conn, librarian(embed_user_uuid!())), "/en/admin/projects/tasks")
+
+      render_click(view, "delete", %{"uuid" => adhoc.uuid})
+      assert Projects.get_task(adhoc.uuid)
+
+      render_click(view, "promote_task", %{"uuid" => adhoc.uuid})
+      assert Projects.get_task(adhoc.uuid).ad_hoc == true
+    end
+
+    test "the project's owner who manages the library may", %{conn: conn} do
+      user_uuid = embed_user_uuid!()
+      mine = fixture_project()
+      {:ok, _} = Members.add_member(mine, user_uuid, role: "owner")
+      {:ok, %{task: a}} = Projects.quick_add_assignment(mine.uuid, "Mine A")
+      {:ok, %{task: b}} = Projects.quick_add_assignment(mine.uuid, "Mine B")
+
+      {:ok, view, _html} =
+        live(put_test_scope(conn, librarian(user_uuid)), "/en/admin/projects/tasks")
+
+      render_click(view, "promote_task", %{"uuid" => a.uuid})
+      assert Projects.get_task(a.uuid).ad_hoc == false
+
+      render_click(view, "delete", %{"uuid" => b.uuid})
+      refute Projects.get_task(b.uuid)
+    end
+
+    test "the lens is re-scoped on every load, so a lost membership hides new one-offs",
+         %{conn: conn} do
+      user_uuid = embed_user_uuid!()
+      p = fixture_project()
+      {:ok, _} = Members.add_member(p, user_uuid, role: "member")
+      {:ok, _} = Projects.quick_add_assignment(p.uuid, "Before #{n()}")
+
+      {:ok, view, html} =
+        live(
+          put_test_scope(conn, base_scope(user_uuid: user_uuid)),
+          "/en/admin/projects/tasks?lens=one_off"
+        )
+
+      assert html =~ "Before"
+
+      # Control: a reload while still a member shows a new one-off.
+      {:ok, _} = Projects.quick_add_assignment(p.uuid, "While member")
+      send(view.pid, {:projects, :task_created, %{}})
+      assert render(view) =~ "While member"
+
+      {:ok, _} = Members.remove_member(p, user_uuid)
+      {:ok, _} = Projects.quick_add_assignment(p.uuid, "After leaving")
+      send(view.pid, {:projects, :task_created, %{}})
+      refute render(view) =~ "After leaving"
+    end
+  end
+
+  describe "renaming a library task on the project page" do
+    test "is re-checked against the live scope at the write", %{conn: conn} do
+      p = fixture_project()
+      lib = fixture_task(%{"title" => "Shared #{n()}"})
+      {:ok, a} = Projects.create_assignment(%{"project_uuid" => p.uuid, "task_uuid" => lib.uuid})
+
+      {:ok, view, _} =
+        live(
+          put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!())),
+          "/en/admin/projects/#{p.uuid}"
+        )
+
+      # Lost the library right (but still administers the project).
+      swap_scope(
+        view,
+        fake_scope(
+          user_uuid: embed_user_uuid!(),
+          permissions: ["projects", "projects.admin_all"]
+        )
+      )
+
+      render_hook(view, "outline_rename", %{"id" => a.uuid, "text" => "Hijacked"})
+      assert Projects.get_task(lib.uuid).title == lib.title
+    end
+  end
+
   describe "the backfill" do
     # `grant_permission/3` validates keys against the module registry, which
     # this environment does not start — the base row goes in directly and
@@ -227,7 +326,11 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
         {:ok, :granted}
       end
 
-      assert :ok = PhoenixKitProjects.backfill_sub_key(flag, "projects.manage_library", grant)
+      assert :ok =
+               PhoenixKitProjects.backfill_sub_keys(flag, ["projects.manage_library"],
+                 grant: grant
+               )
+
       role_uuid = role.uuid
       outsider_uuid = outsider.uuid
       assert_received {:granted, ^role_uuid, "projects.manage_library"}
@@ -236,7 +339,12 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
 
       # Once: a role granted `projects` afterwards gets the narrow meaning.
       later = role_with_projects!()
-      assert :ok = PhoenixKitProjects.backfill_sub_key(flag, "projects.manage_library", grant)
+
+      assert :ok =
+               PhoenixKitProjects.backfill_sub_keys(flag, ["projects.manage_library"],
+                 grant: grant
+               )
+
       later_uuid = later.uuid
       refute_received {:granted, ^later_uuid, _}
     end
@@ -246,12 +354,44 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
       Settings.update_setting(flag, "false")
       _role = role_with_projects!()
 
-      assert {:error, {:backfill_incomplete, "projects.settings", [_ | _]}} =
-               PhoenixKitProjects.backfill_sub_key(flag, "projects.settings", fn _, _, _ ->
-                 {:error, :boom}
-               end)
+      assert {:error, {:backfill_incomplete, ^flag, [_ | _]}} =
+               PhoenixKitProjects.backfill_sub_keys(flag, ["projects.settings"],
+                 grant: fn _, _, _ -> {:error, :boom} end
+               )
 
       refute Settings.get_setting(flag) == "true"
+    end
+
+    test "a failing lookup answers :lookup_failed and leaves the flag unset" do
+      flag = "projects_admin_all_backfilled"
+      Settings.update_setting(flag, "false")
+      _role = role_with_projects!()
+
+      assert {:error, :lookup_failed} =
+               PhoenixKitProjects.backfill_sub_keys(flag, ["projects.admin_all"],
+                 holders: fn _ -> raise "db down" end
+               )
+
+      refute Settings.get_setting(flag) == "true"
+    end
+
+    test "the older backfills (admin_all, own API key rights) set no flag after a failed grant" do
+      for {flag, keys} <- [
+            {"projects_admin_all_backfilled", ["projects.admin_all"]},
+            {"projects_api_keys_permissions_backfilled",
+             ~w(projects.api_keys_create projects.api_keys_edit projects.api_keys_rotate projects.api_keys_revoke)}
+          ] do
+        Settings.update_setting(flag, "false")
+        _role = role_with_projects!()
+
+        assert {:error, {:backfill_incomplete, ^flag, failures}} =
+                 PhoenixKitProjects.backfill_sub_keys(flag, keys,
+                   grant: fn _, _, _ -> {:error, :boom} end
+                 )
+
+        assert length(failures) >= length(keys)
+        refute Settings.get_setting(flag) == "true"
+      end
     end
 
     test "both sub-keys are declared" do
@@ -364,11 +504,34 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
     end
   end
 
-  test "the admin fixture holds both sub-keys" do
-    # Guard against a silent fixture drift: every other LiveView test relies
-    # on the default scope being a full administrator.
-    perms = fake_scope().cached_permissions
-    assert MapSet.member?(perms, "projects.manage_library")
-    assert MapSet.member?(perms, "projects.settings")
+  describe "Authz's sub-key answers" do
+    test "the library right needs the sub-key, its base and the module switched on" do
+      lib_only = fake_scope(permissions: ["projects", "projects.manage_library"])
+
+      assert Authz.manage_library?(lib_only)
+      refute Authz.manage_library?(base_scope())
+      refute Authz.manage_library?(fake_scope(permissions: ["projects.manage_library"]))
+
+      {:ok, _} = PhoenixKitProjects.disable_system()
+      refute Authz.manage_library?(lib_only)
+      refute Authz.manage_library?(fake_scope(permissions: ["*"]))
+    end
+
+    test "a crafted library write is refused while the module is off", %{conn: conn} do
+      lib = fixture_task(%{"title" => "Off #{n()}"})
+      {:ok, view, _html} = live(put_test_scope(conn, fake_scope()), "/en/admin/projects/tasks")
+      {:ok, _} = PhoenixKitProjects.disable_system()
+
+      render_click(view, "delete", %{"uuid" => lib.uuid})
+      assert Projects.get_task(lib.uuid)
+    end
+
+    test "the settings page stays reachable while the module is off", %{conn: conn} do
+      {:ok, _} = PhoenixKitProjects.disable_system()
+      assert Authz.settings?(fake_scope())
+
+      assert {:ok, _view, _html} =
+               live(put_test_scope(conn, fake_scope()), "/en/admin/settings/projects")
+    end
   end
 end

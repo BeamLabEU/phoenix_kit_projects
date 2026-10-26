@@ -236,10 +236,22 @@ defmodule PhoenixKitProjects.Authz do
   site-level right (`projects.manage_library`), not a project role. A
   project's own one-off tasks are its members' business (`can?/5`).
   """
+  #
+  # These are WRITES to shared data, so the module must also be switched on:
+  # a disabled Projects module changes nothing (`enabled?/0` never raises and
+  # answers false on a failed read — failing closed is right for a write).
   @spec manage_library?(term()) :: boolean()
-  def manage_library?(subject), do: sub_key?(subject, @manage_library_key)
+  def manage_library?(subject) do
+    sub_key?(subject, @manage_library_key) and PhoenixKitProjects.enabled?()
+  end
 
-  @doc "May this subject change the module's settings (`projects.settings`)?"
+  @doc """
+  May this subject open and change the module's settings
+  (`projects.settings`)? Deliberately NOT tied to the module being enabled,
+  unlike `manage_library?/1`: an administrator configures the module before
+  switching it on, and a settings page that locks itself while the module is
+  off can never be reached to prepare it.
+  """
   @spec settings?(term()) :: boolean()
   def settings?(subject), do: sub_key?(subject, @settings_key)
 
