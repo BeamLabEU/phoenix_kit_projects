@@ -28,6 +28,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   alias PhoenixKitProjects.{
     Activity,
+    Authz,
     Features,
     L10n,
     Labels,
@@ -385,9 +386,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
        ) do
     # Anyone who may edit the task may rename it; a library task's name is
     # shared, which the field says (`shared`).
+    # A library task's name is shared by every project that uses it, so
+    # only a `projects.manage_library` holder may rename it from here.
     assign(socket,
       edit_title: task.title,
-      title_editable?: true,
+      title_editable?:
+        task.ad_hoc == true or
+          Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]),
       title_shared?: task.ad_hoc != true
     )
   end
@@ -408,6 +413,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     with true <- socket.assigns[:title_editable?] == true,
          true <- is_binary(title) and String.trim(title) != "",
          %Task{} = task <- Projects.get_task(task_uuid),
+         true <-
+           task.ad_hoc == true or
+             Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]),
          true <- String.trim(title) != task.title do
       Projects.update_task(task, %{"title" => String.trim(title)})
     end
@@ -2068,7 +2076,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         "translations" => task_translations(title_translations, attrs["translations"]),
         "estimated_duration" => attrs["estimated_duration"],
         "estimated_duration_unit" => attrs["estimated_duration_unit"],
-        "ad_hoc" => not socket.assigns.add_to_library
+        # Feeding the shared library is `projects.manage_library`'s, whatever
+        # the (possibly forged) checkbox says.
+        "ad_hoc" =>
+          not (socket.assigns.add_to_library and
+                 Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]))
       }
       |> maybe_add_default_assignee(attrs)
 
@@ -3649,7 +3661,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </div>
             </div>
 
-            <%= if @live_action == :new and @task_mode == "new" and @fx.library do %>
+            <%= if @live_action == :new and @task_mode == "new" and @fx.library and
+                     Authz.manage_library?(@phoenix_kit_current_scope) do %>
               <div class="divider my-1"></div>
               <.checkbox
                 name="add_to_library"

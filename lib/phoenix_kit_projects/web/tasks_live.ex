@@ -35,7 +35,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       lens: [default: :library, cast: :atom, in: [:library, :one_off], url_key: "lens"]
     ]
 
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, Authz, Hours, L10n, Paths, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.Task, as: TaskSchema
   alias PhoenixKitProjects.Web.Components.ConfirmAction
@@ -46,6 +46,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   require Logger
 
   @valid_views ~w(list groups)
+
+  @library_writes ~w(promote_task open_reorder_modal apply_reorder reorder_tasks delete)
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
@@ -127,6 +129,18 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     # The viewer's columns, read once the embed user is known.
     socket = assign(socket, visible_columns: ListUi.load_columns(socket, columns_spec()))
 
+    # Library writes (new, edit, delete, reorder, promote) are a site-level
+    # right; without it the list is read-only. `one_off_scope` is which
+    # projects' one-off tasks this viewer may see listed.
+    can_manage? = Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope])
+
+    socket =
+      assign(socket,
+        can_manage_library: can_manage?,
+        bulk_enabled?: can_manage?,
+        one_off_scope: one_off_scope(socket.assigns[:phoenix_kit_current_scope])
+      )
+
     # Load on both disconnected + connected mount so the first paint has
     # real content. `handle_params/3` is intentionally absent — see
     # dev_docs/embedding_audit.md.
@@ -143,6 +157,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   def handle_url_state(_state, socket) do
     socket |> assign(loaded_count: @per_batch) |> load_tasks()
   end
+
+  # A one-off task belongs to the one project that minted it: an
+  # administrator of every project sees them all, anyone else only those of
+  # projects they can open (memberships, grants, open projects and what is
+  # nested under them — the Hours page's rule).
+  defp one_off_scope(scope), do: Hours.visible_project_uuids(scope)
 
   defp lens_filter(:one_off), do: :only
   defp lens_filter(_), do: :exclude
@@ -179,14 +199,19 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   defp load_list_tasks(socket) do
     search = socket.assigns.search
     ad_hoc = lens_filter(socket.assigns[:lens])
-    one_off_count = Projects.count_tasks(ad_hoc: :only)
-    total = Projects.count_tasks(ad_hoc: ad_hoc)
+    one_off_scope = socket.assigns[:one_off_scope] || []
+    # The library itself is shared by every project; only the one-off lens
+    # is narrowed to the viewer's projects.
+    projects = if ad_hoc == :only, do: one_off_scope, else: :all
+    one_off_count = Projects.count_tasks(ad_hoc: :only, project_uuids: one_off_scope)
+    total = Projects.count_tasks(ad_hoc: ad_hoc, project_uuids: projects)
     local_search? = total <= @local_search_threshold
 
     base_opts = [
       sort_by: socket.assigns.sort_by,
       sort_dir: socket.assigns.sort_dir,
-      ad_hoc: ad_hoc
+      ad_hoc: ad_hoc,
+      project_uuids: projects
     ]
 
     # Local mode: full set rendered, search narrowing is the client
@@ -218,7 +243,10 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       one_off_count: one_off_count,
       local_search?: local_search?,
       filtered_count:
-        if(local_search?, do: total, else: Projects.count_tasks(search: search, ad_hoc: ad_hoc)),
+        if(local_search?,
+          do: total,
+          else: Projects.count_tasks(search: search, ad_hoc: ad_hoc, project_uuids: projects)
+        ),
       usage:
         if("uses" in visible or "last_used" in visible,
           do: Projects.task_usage(uuids),
@@ -268,6 +296,28 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     end
   end
 
+  # Every library write re-checks the sub-key against the live scope — the
+  # controls are hidden without it, but an event needs no button.
+  def handle_event(event, params, socket) when event in @library_writes do
+    if Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]) do
+      library_write(event, params, socket)
+    else
+      socket =
+        put_flash(
+          socket,
+          :error,
+          gettext("You don't have permission to change the task library.")
+        )
+
+      socket =
+        if event == "reorder_tasks",
+          do: push_event(socket, "sortable:flash", %{uuid: params["moved_id"], status: "error"}),
+          else: socket
+
+      {:noreply, socket |> assign(show_reorder_modal: false) |> load_tasks()}
+    end
+  end
+
   def handle_event("set_view", %{"view" => view}, socket) when view in @valid_views do
     # Switching view re-renders the table; the BulkSelectScope hook
     # re-derives selection from the (fresh) DOM checkboxes — no
@@ -282,52 +332,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   end
 
   def handle_event("set_lens", _params, socket), do: {:noreply, socket}
-
-  # "Add to library": a one-off task becomes an ordinary reusable one. The
-  # assignments pointing at it are untouched — only the library's view of
-  # the row changes.
-  def handle_event("promote_task", %{"uuid" => uuid}, socket) do
-    case Projects.get_task(uuid) do
-      %TaskSchema{ad_hoc: true} = task ->
-        case Projects.update_task(task, %{"ad_hoc" => false}) do
-          {:ok, promoted} ->
-            Activity.log("projects.task_promoted",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "task",
-              resource_uuid: promoted.uuid,
-              metadata: %{"title" => promoted.title}
-            )
-
-            socket = put_flash(socket, :info, gettext("Task added to the library."))
-
-            # Promoting the last one-off would leave the lens on an empty
-            # set (and the empty state hides the strip) — fall back to the
-            # library, where the promoted row now is.
-            if socket.assigns.lens == :one_off and Projects.count_tasks(ad_hoc: :only) == 0 do
-              {:noreply, push_url_state(socket, lens: :library)}
-            else
-              {:noreply, load_tasks(socket)}
-            end
-
-          {:error, _cs} ->
-            {:noreply, put_flash(socket, :error, gettext("Could not update the task."))}
-        end
-
-      _ ->
-        {:noreply, put_flash(socket, :error, gettext("Task not found."))}
-    end
-  end
-
-  # See projects_live for the rationale on collapsing <2 uuids to :all.
-  def handle_event("open_reorder_modal", params, socket) do
-    uuids =
-      case sanitize_uuids(params) do
-        list when length(list) < 2 -> []
-        list -> list
-      end
-
-    {:noreply, assign(socket, show_reorder_modal: true, captured_uuids: uuids)}
-  end
 
   def handle_event("close_reorder_modal", _params, socket) do
     {:noreply, assign(socket, show_reorder_modal: false, captured_uuids: [])}
@@ -406,8 +410,58 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     "reverse" => :reverse
   }
 
-  def handle_event("apply_reorder", %{"strategy" => strategy_str}, socket)
-      when is_map_key(@reorder_strategies, strategy_str) do
+  # "Add to library": a one-off task becomes an ordinary reusable one. The
+  # assignments pointing at it are untouched — only the library's view of
+  # the row changes.
+  defp library_write("promote_task", %{"uuid" => uuid}, socket) do
+    case Projects.get_task(uuid) do
+      %TaskSchema{ad_hoc: true} = task ->
+        case Projects.update_task(task, %{"ad_hoc" => false}) do
+          {:ok, promoted} ->
+            Activity.log("projects.task_promoted",
+              actor_uuid: Activity.actor_uuid(socket),
+              resource_type: "task",
+              resource_uuid: promoted.uuid,
+              metadata: %{"title" => promoted.title}
+            )
+
+            socket = put_flash(socket, :info, gettext("Task added to the library."))
+
+            # Promoting the last one-off would leave the lens on an empty
+            # set (and the empty state hides the strip) — fall back to the
+            # library, where the promoted row now is.
+            if socket.assigns.lens == :one_off and
+                 Projects.count_tasks(
+                   ad_hoc: :only,
+                   project_uuids: socket.assigns[:one_off_scope] || []
+                 ) == 0 do
+              {:noreply, push_url_state(socket, lens: :library)}
+            else
+              {:noreply, load_tasks(socket)}
+            end
+
+          {:error, _cs} ->
+            {:noreply, put_flash(socket, :error, gettext("Could not update the task."))}
+        end
+
+      _ ->
+        {:noreply, put_flash(socket, :error, gettext("Task not found."))}
+    end
+  end
+
+  # See projects_live for the rationale on collapsing <2 uuids to :all.
+  defp library_write("open_reorder_modal", params, socket) do
+    uuids =
+      case sanitize_uuids(params) do
+        list when length(list) < 2 -> []
+        list -> list
+      end
+
+    {:noreply, assign(socket, show_reorder_modal: true, captured_uuids: uuids)}
+  end
+
+  defp library_write("apply_reorder", %{"strategy" => strategy_str}, socket)
+       when is_map_key(@reorder_strategies, strategy_str) do
     strategy = Map.fetch!(@reorder_strategies, strategy_str)
 
     scope =
@@ -437,12 +491,12 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     end
   end
 
-  def handle_event("apply_reorder", _params, socket) do
+  defp library_write("apply_reorder", _params, socket) do
     {:noreply, put_flash(socket, :error, gettext("Pick a strategy before applying."))}
   end
 
-  def handle_event("reorder_tasks", %{"ordered_ids" => ordered_ids} = params, socket)
-      when is_list(ordered_ids) do
+  defp library_write("reorder_tasks", %{"ordered_ids" => ordered_ids} = params, socket)
+       when is_list(ordered_ids) do
     moved_id = params["moved_id"]
     actor_uuid = Activity.actor_uuid(socket)
 
@@ -469,7 +523,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
     end
   end
 
-  def handle_event("delete", %{"uuid" => uuid}, socket) do
+  defp library_write("delete", %{"uuid" => uuid}, socket) do
     case Projects.get_task(uuid) do
       nil ->
         {:noreply, put_flash(socket, :error, gettext("Task not found."))}
@@ -502,6 +556,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         end
     end
   end
+
+  defp library_write(_event, _params, socket), do: {:noreply, socket}
 
   # Sort change pushes the new sort into the URL; handle_url_state/2 resets
   # the load-more cap and reloads — see projects_live for the same pattern.
@@ -564,7 +620,6 @@ defmodule PhoenixKitProjects.Web.TasksLive do
       <%= if @view == "groups" do %>
         <% lang = L10n.current_content_lang() %>
 
-
         <%!-- One header row: explainer left, view switcher right (the
              switcher must render in this view too or there's no way
              back to the list). --%>
@@ -577,14 +632,14 @@ defmodule PhoenixKitProjects.Web.TasksLive do
           </p>
           <div class="ml-auto shrink-0 flex items-center gap-2">
             {view_switcher(assigns)}
-            <.new_task_button embed_mode={@embed_mode} />
+            <.new_task_button can={@can_manage_library} embed_mode={@embed_mode} />
           </div>
         </div>
 
         <%= if @groups == [] and @standalone == [] do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
-              <.new_task_button embed_mode={@embed_mode} label={gettext("Create your first task")} />
+              <.new_task_button can={@can_manage_library} embed_mode={@embed_mode} label={gettext("Create your first task")} />
             </:cta>
           </.empty_state>
         <% else %>
@@ -690,7 +745,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
         <%= if @total_count == 0 do %>
           <.empty_state icon="hero-rectangle-stack" title={gettext("No tasks yet.")}>
             <:cta>
-              <.new_task_button embed_mode={@embed_mode} label={gettext("Create your first task")} />
+              <.new_task_button can={@can_manage_library} embed_mode={@embed_mode} label={gettext("Create your first task")} />
             </:cta>
           </.empty_state>
         <% else %>
@@ -756,7 +811,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
                   {view_switcher(assigns)}
                 </:trailing>
                 <:primary>
-                  <.new_task_button embed_mode={@embed_mode} />
+                  <.new_task_button can={@can_manage_library} embed_mode={@embed_mode} />
                 </:primary>
               </.bulk_actions_toolbar>
 
@@ -822,6 +877,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
 
   attr(:embed_mode, :atom, required: true)
   attr(:label, :string, default: nil)
+  attr(:can, :boolean, default: false)
 
   # The list's create button: the toolbar's last control, and the empty
   # state's call to action. `smart_link`, so an embedded list opens the
@@ -829,6 +885,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   defp new_task_button(assigns) do
     ~H"""
     <.smart_link
+      :if={@can}
       navigate={Paths.new_task()}
       emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "new"}}}
       embed_mode={@embed_mode}
@@ -896,7 +953,8 @@ defmodule PhoenixKitProjects.Web.TasksLive do
   # against the right edge, in the viewer's own order (`ListUi` moduledoc).
   defp render_tasks_table(assigns, lang) do
     draggable? =
-      assigns.sort_by == :position and String.trim(assigns.search) == "" and
+      assigns.can_manage_library and assigns.sort_by == :position and
+        String.trim(assigns.search) == "" and
         (assigns.local_search? or assigns.loaded_count >= assigns.total_count)
 
     assigns = assign(assigns, lang: lang, draggable?: draggable?)
@@ -966,7 +1024,7 @@ defmodule PhoenixKitProjects.Web.TasksLive do
             {column_cell(assigns, col, task)}
           <% end %>
           <.table_default_cell class="text-right whitespace-nowrap">
-            <.table_row_menu id={"task-menu-#{task.uuid}"}>
+            <.table_row_menu :if={@can_manage_library} id={"task-menu-#{task.uuid}"}>
               <.smart_menu_link
                 navigate={Paths.edit_task(task.uuid)}
                 emit={{PhoenixKitProjects.Web.TaskFormLive, %{"live_action" => "edit", "id" => task.uuid}}}

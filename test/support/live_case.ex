@@ -92,8 +92,9 @@ defmodule PhoenixKitProjects.LiveCase do
     # `projects.admin_all` sub-key, which is what "may administer projects
     # I'm not a member of" now requires. Pass `permissions: ["projects"]` to
     # build a plain module-reacher instead — the contractor shape.
-    # The API key rights are sub-keys too, granted to Admin by core like
-    # admin_all, so the admin fixture holds them.
+    # The API key rights, the task library and the settings page are
+    # sub-keys too, granted to Admin by core like admin_all, so the admin
+    # fixture holds them.
     permissions =
       Keyword.get(opts, :permissions, [
         "projects",
@@ -102,7 +103,9 @@ defmodule PhoenixKitProjects.LiveCase do
         "projects.api_keys_edit",
         "projects.api_keys_rotate",
         "projects.api_keys_revoke",
-        "projects.api_keys_manage"
+        "projects.api_keys_manage",
+        "projects.manage_library",
+        "projects.settings"
       ])
 
     authenticated? = Keyword.get(opts, :authenticated?, true)

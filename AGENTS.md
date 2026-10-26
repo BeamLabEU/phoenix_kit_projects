@@ -511,6 +511,38 @@ consulted. `migrate_legacy/0` carries every pre-split role holding the base key
 across, once, behind `projects_admin_all_backfilled`; a repeat on every boot
 would fight an Owner's revoke.
 
+Two more sub-keys narrow what the base key used to allow, both checked by
+`Authz` the same way as `admin_all` (sub-key and base held, no settings read)
+and both backfilled once to every role that held `projects`
+(`backfill_sub_key/3`, which sets its flag only when every grant succeeded):
+
+- **`projects.manage_library`** (`Authz.manage_library?/1`) — the shared task
+  library's writes: `TasksLive`'s delete / promote / reorder (read-only list
+  without it), `TaskFormLive` at mount and on save / add_dep / remove_dep,
+  renaming a LIBRARY task from a project (the assignment form's title, the
+  card title, the typed list — `Outline.sync/4` leaves library titles alone
+  unless `rename_library: true`), and the assignment form's "Add to the task
+  library". A library task is used by every project that assigned it, so this
+  is site-level, never a project role. The API already refuses library
+  content edits. The One-off lens lists only one-off tasks of projects the
+  viewer can open (`list_tasks/1` / `count_tasks/1` `:project_uuids`).
+- **`projects.settings`** (`Authz.settings?/1`) — `ProjectsSettingsLive` at
+  mount (it is embeddable) and every event but the tab switch and the demo
+  toggle; the settings tab carries it.
+
+These gates are checked against the embed's reconstructed scope too, so an
+embed of `TasksLive` (writes), `TaskFormLive` or `ProjectsSettingsLive` must
+pass a `current_user_uuid` holding the sub-key — an anonymous embed is
+read-only or refused, unlike the other embeddable pages.
+
+Comment moderation (`phoenix_kit_comments`' `moderatable_resources/2`, on
+`ResourceLinks` and `CommentNotices`, answered by `CommentModeration`):
+`admin_all` → `:all`; otherwise the projects the viewer holds `:owner` or
+`:manager` on, directly or by group grant (`Authz.managed_project_uuids/1`),
+and for `assignment` / `project_task_notes` those projects' assignment uuids.
+Manager, not an `Authz` action: the container actions floor at owner and the
+work actions at viewer. A fixed number of reads however many projects.
+
 `Authz.can?/5` resolves `site permission ∧ project role ∧ relationship grant`;
 extension/flag gating composes at the call site (`Extensions.enabled?/3` +
 `Features.on?/2` answer "is this capability present on this project", which is
@@ -551,8 +583,9 @@ browsing the public portal is a visitor.
   status titles (per-project tri-state override in the project's `settings`).
 - `projects_default_preset`, `projects_new_form_top_blocks` — new-project form
   defaults.
-- `projects_admin_all_backfilled`, `projects_checklist_flags_backfilled` —
-  one-time `migrate_legacy/0` flags. One-way and one-time on purpose:
+- `projects_admin_all_backfilled`, `projects_api_keys_permissions_backfilled`,
+  `projects_manage_library_backfilled`, `projects_settings_backfilled`,
+  `projects_checklist_flags_backfilled` — one-time `migrate_legacy/0` flags. One-way and one-time on purpose:
   re-deciding on every boot would hand back a revoked permission or re-disable
   a feature the Owner turned on.
 
@@ -667,7 +700,7 @@ Support modules in `test/support/`:
 | `Test.Hooks` | `:assign_scope` `on_mount` reading `"phoenix_kit_test_scope"` from the session |
 | `Test.SchemaMigration` | wraps the module chain for `Ecto.Migrator` |
 | `DataCase` | `:integration` tag + SQL Sandbox; hosts `fixture_task/1`, `fixture_project/1`, `fixture_template/1`, `errors_on/1` |
-| `LiveCase` | `fake_scope/1` + `put_test_scope/2` for a real `%PhoenixKit.Users.Auth.Scope{}`; reuses `DataCase` fixtures |
+| `LiveCase` | `fake_scope/1` + `put_test_scope/2` for a real `%PhoenixKit.Users.Auth.Scope{}` — by default a site admin holding every sub-key (`admin_all`, the API key rights, `manage_library`, `settings`); pass `permissions: ["projects"]` for a plain module-reacher; reuses `DataCase` fixtures |
 | `ActivityLogAssertions` | `assert_activity_logged/2`, `refute_activity_logged/2` |
 | `QueryCounter` | statement counting for the batched-read tests |
 | `StatusFixtures` | workflow-status catalog fixtures |

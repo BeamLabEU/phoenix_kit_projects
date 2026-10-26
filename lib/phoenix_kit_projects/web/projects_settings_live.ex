@@ -18,6 +18,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.Activity
+  alias PhoenixKitProjects.Authz
   alias PhoenixKitProjects.CalendarDisplay
   alias PhoenixKitProjects.GanttDisplay
   alias PhoenixKitProjects.ListControls
@@ -86,7 +87,21 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
      # status-default activity log records the real actor (not nil) when this
      # settings panel is embedded off-router. No-op on the router path, where
      # core's on_mount hook already set the scope. See `assign_embed_user/2`.
-     |> WebHelpers.assign_embed_user(session)}
+     |> WebHelpers.assign_embed_user(session)
+     |> gate_settings()}
+  end
+
+  # `projects.settings`, checked after the embed user is known. Refused: the
+  # page renders nothing and closes (emit) or navigates away.
+  defp gate_settings(socket) do
+    if Authz.settings?(socket.assigns[:phoenix_kit_current_scope]) do
+      assign(socket, settings_allowed: true)
+    else
+      socket
+      |> assign(settings_allowed: false)
+      |> put_flash(:error, no_permission())
+      |> WebHelpers.close_or_navigate(PhoenixKitProjects.Paths.projects())
+    end
   end
 
   @impl true
@@ -101,7 +116,25 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   # `@active_tab != <id>`, so an id matching none of them blanks the page.
   def handle_event("switch_settings_tab", %{"tab" => _tab}, socket), do: {:noreply, socket}
 
-  def handle_event("select_default_status_entity", %{"entity_uuid" => uuid}, socket) do
+  # Expand/collapse the demo sub-project (preview only — not a persisted setting).
+  def handle_event("toggle_demo_subproject", %{"event-id" => id}, socket) do
+    {:noreply, update(socket, :demo_expanded, &PhoenixLiveGantt.toggle_expanded(&1, id))}
+  end
+
+  # Every other event writes a setting: each re-checks `projects.settings`
+  # against the live scope (the page is embeddable, so the mount check is not
+  # the only door, and an event needs no button).
+  def handle_event(event, params, socket) do
+    if Authz.settings?(socket.assigns[:phoenix_kit_current_scope]) do
+      settings_write(event, params, socket)
+    else
+      {:noreply, put_flash(socket, :error, no_permission())}
+    end
+  end
+
+  defp no_permission, do: gettext("You don't have permission to change the projects settings.")
+
+  defp settings_write("select_default_status_entity", %{"entity_uuid" => uuid}, socket) do
     uuid = if uuid in [nil, ""], do: nil, else: uuid
     Statuses.set_default_status_entity(uuid)
 
@@ -117,7 +150,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
      |> put_flash(:info, gettext("Default status list updated."))}
   end
 
-  def handle_event("generate_default_status_list", _params, socket) do
+  defp settings_write("generate_default_status_list", _params, socket) do
     case Statuses.create_default_status_entity(actor_uuid: Activity.actor_uuid(socket)) do
       {:ok, entity} ->
         Statuses.set_default_status_entity(entity.uuid)
@@ -144,7 +177,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
   # New-project page customizer: which optional blocks render TOP-LEVEL
   # on the creation form instead of inside its Setup options accordion.
-  def handle_event("toggle_creation_block", %{"key" => key}, socket) do
+  defp settings_write("toggle_creation_block", %{"key" => key}, socket) do
     current = socket.assigns.creation_top_blocks
 
     updated =
@@ -162,7 +195,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     end
   end
 
-  def handle_event("toggle_status_translations", _params, socket) do
+  defp settings_write("toggle_status_translations", _params, socket) do
     new_value = not socket.assigns.use_status_translations
 
     PhoenixKit.Settings.update_boolean_setting_with_module(
@@ -186,11 +219,11 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   # The task list's controls (lens + sort): mode and the task threshold.
   # One form, `_target` names the field; re-read so the form shows the
   # validated (clamped) value.
-  def handle_event(
-        "set_list_controls",
-        %{"_target" => ["controls_mode"], "controls_mode" => mode},
-        socket
-      ) do
+  defp settings_write(
+         "set_list_controls",
+         %{"_target" => ["controls_mode"], "controls_mode" => mode},
+         socket
+       ) do
     ListControls.put_mode(mode)
 
     Activity.log("projects.list_controls_changed",
@@ -202,11 +235,11 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     {:noreply, assign(socket, list_controls: ListControls.read())}
   end
 
-  def handle_event(
-        "set_list_controls",
-        %{"_target" => ["controls_threshold"], "controls_threshold" => threshold},
-        socket
-      ) do
+  defp settings_write(
+         "set_list_controls",
+         %{"_target" => ["controls_threshold"], "controls_threshold" => threshold},
+         socket
+       ) do
     ListControls.put_threshold(threshold)
 
     socket =
@@ -219,9 +252,9 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     {:noreply, assign(socket, list_controls: ListControls.read())}
   end
 
-  def handle_event("set_list_controls", _params, socket), do: {:noreply, socket}
+  defp settings_write("set_list_controls", _params, socket), do: {:noreply, socket}
 
-  def handle_event("reset_list_controls", _params, socket) do
+  defp settings_write("reset_list_controls", _params, socket) do
     ListControls.reset()
 
     Activity.log("projects.list_controls_reset",
@@ -238,7 +271,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   # One change to a Gantt-label setting. `_target` names the field that fired, so
   # a slider drag only writes its own key. No flash — the live demo below is the
   # feedback. Re-read so the form + demo reflect the validated/clamped value.
-  def handle_event("set_gantt_label", %{"_target" => [field]} = params, socket) do
+  defp settings_write("set_gantt_label", %{"_target" => [field]} = params, socket) do
     GanttDisplay.put(field, params[field])
 
     socket =
@@ -251,10 +284,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     {:noreply, assign(socket, gantt_display: GanttDisplay.read())}
   end
 
-  def handle_event("set_gantt_label", _params, socket), do: {:noreply, socket}
+  defp settings_write("set_gantt_label", _params, socket), do: {:noreply, socket}
 
   # Flip one boolean display toggle (progress / arrows / today / tiny markers).
-  def handle_event("toggle_gantt_flag", %{"field" => field}, socket) do
+  defp settings_write("toggle_gantt_flag", %{"field" => field}, socket) do
     new_value = not current_flag(socket.assigns.gantt_display, field)
     GanttDisplay.put_flag(field, new_value)
 
@@ -268,7 +301,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   end
 
   # Restore every Timeline-chart setting to its default.
-  def handle_event("reset_gantt_display", _params, socket) do
+  defp settings_write("reset_gantt_display", _params, socket) do
     GanttDisplay.reset()
 
     Activity.log("projects.gantt_display_reset",
@@ -283,7 +316,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   end
 
   # One calendar boolean flag flipped (weekends / week numbers / fixed weeks).
-  def handle_event("toggle_calendar_flag", %{"field" => field}, socket) do
+  defp settings_write("toggle_calendar_flag", %{"field" => field}, socket) do
     new_value = not calendar_flag(socket.assigns.calendar_anim, field)
     CalendarDisplay.put_flag(field, new_value)
 
@@ -298,7 +331,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
 
   # One calendar-display control changed (marker / motion / caps sliders).
   # `_target` names the field, matching CalendarDisplay.put/2.
-  def handle_event("set_calendar_anim", %{"_target" => [field]} = params, socket) do
+  defp settings_write("set_calendar_anim", %{"_target" => [field]} = params, socket) do
     CalendarDisplay.put(field, params[field])
 
     socket =
@@ -311,10 +344,10 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
     {:noreply, assign(socket, calendar_anim: CalendarDisplay.read())}
   end
 
-  def handle_event("set_calendar_anim", _params, socket), do: {:noreply, socket}
+  defp settings_write("set_calendar_anim", _params, socket), do: {:noreply, socket}
 
   # Restore every overdue-animation setting to its default.
-  def handle_event("reset_calendar_anim", _params, socket) do
+  defp settings_write("reset_calendar_anim", _params, socket) do
     CalendarDisplay.reset()
 
     Activity.log("projects.calendar_display_reset",
@@ -328,10 +361,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
      |> assign(calendar_anim: CalendarDisplay.read())}
   end
 
-  # Expand/collapse the demo sub-project (preview only — not a persisted setting).
-  def handle_event("toggle_demo_subproject", %{"event-id" => id}, socket) do
-    {:noreply, update(socket, :demo_expanded, &PhoenixLiveGantt.toggle_expanded(&1, id))}
-  end
+  defp settings_write(_event, _params, socket), do: {:noreply, socket}
 
   # ── Coalesced slider audit logs ─────────────────────────────────
   # A drag = one audit row. Each tick replaces the pending entry and mints a
@@ -639,7 +669,7 @@ defmodule PhoenixKitProjects.Web.ProjectsSettingsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <div class={@wrapper_class}>
+    <div :if={@settings_allowed} class={@wrapper_class}>
       <.nav_tabs
         active_tab={@active_tab}
         on_change="switch_settings_tab"

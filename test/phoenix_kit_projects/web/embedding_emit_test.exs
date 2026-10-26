@@ -149,7 +149,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       assert html =~ "No tasks yet."
@@ -165,7 +170,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       view
@@ -186,7 +196,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       view
@@ -206,7 +221,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       # The pencil button is the first `open_embed` button in the row.
@@ -431,7 +451,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       assert html =~ "New task"
@@ -444,7 +469,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 5}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 5
+          }
         )
 
       view |> element("button.btn[phx-click=cancel]") |> render_click()
@@ -458,7 +488,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 8}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 8
+          }
         )
 
       view
@@ -765,6 +800,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       # the test's assert_receive can run — `live_isolated` raises.
       live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive,
         session: %{
+          "current_user_uuid" => embed_user_uuid!(),
           "mode" => "emit",
           "pubsub_topic" => topic,
           "live_action" => "edit",
@@ -882,6 +918,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive,
           session: %{
+            "current_user_uuid" => embed_user_uuid!(),
             "mode" => "emit",
             "pubsub_topic" => topic,
             "live_action" => "delete",
@@ -995,7 +1032,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       render_hook(view, "delete", %{"uuid" => task.uuid})
@@ -1129,7 +1171,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       _task = fixture_task(%{"title" => "Doomed task row"})
 
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.TasksLive, session: %{})
+        live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
+          session: %{"current_user_uuid" => embed_user_uuid!()}
+        )
 
       assert html =~ ~s(data-row-menu-trigger)
     end

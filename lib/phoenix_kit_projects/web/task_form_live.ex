@@ -11,7 +11,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   require Logger
 
   alias PhoenixKitAI.Components.AITranslate.FormGlue
-  alias PhoenixKitProjects.{Activity, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.Task
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
-      |> apply_action(live_action, resolved_params)
+      |> apply_action_if_allowed(live_action, resolved_params)
       |> assign_ai_translate()
       |> assign(dirty?: false)
       |> WebHelpers.keep_host_title()
@@ -61,6 +61,33 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       PhoenixKitProjects.AITranslateBinding
     )
   end
+
+  # The form edits the shared library (a library task is used by every
+  # project that assigned it), so it needs `projects.manage_library` — at
+  # mount here and again on every write below.
+  defp apply_action_if_allowed(socket, live_action, params) do
+    if can_manage?(socket) do
+      apply_action(socket, live_action, params)
+    else
+      socket
+      |> assign(
+        page_title: "",
+        task: %Task{},
+        live_action: live_action,
+        assign_type: "",
+        task_deps: [],
+        available_deps: []
+      )
+      |> assign_staff_options()
+      |> assign_form(Projects.change_task(%Task{}))
+      |> put_flash(:error, no_permission())
+      |> WebHelpers.close_or_navigate(Paths.tasks())
+    end
+  end
+
+  defp can_manage?(socket), do: Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope])
+
+  defp no_permission, do: gettext("You don't have permission to change the task library.")
 
   defp apply_action(socket, :new, _params) do
     task = %Task{}
@@ -207,7 +234,18 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
      socket |> assign(assign_type: assign_type) |> assign_form(cs) |> WebHelpers.mark_dirty()}
   end
 
-  def handle_event("save", %{"task" => attrs} = params, socket) do
+  def handle_event("cancel", _params, socket) do
+    {:noreply, WebHelpers.close_or_navigate(socket, Paths.tasks())}
+  end
+
+  # The library writes re-check the sub-key against the live scope.
+  def handle_event(event, params, socket) when event in ~w(save add_dep remove_dep) do
+    if can_manage?(socket),
+      do: library_write(event, params, socket),
+      else: {:noreply, put_flash(socket, :error, no_permission())}
+  end
+
+  defp library_write("save", %{"task" => attrs} = params, socket) do
     if socket.assigns.ai_in_flight == [] do
       assign_type = Map.get(params, "default_assign_type", "")
 
@@ -227,8 +265,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     end
   end
 
-  def handle_event("add_dep", %{"depends_on_task_uuid" => dep_uuid}, socket)
-      when dep_uuid != "" do
+  defp library_write("add_dep", %{"depends_on_task_uuid" => dep_uuid}, socket)
+       when dep_uuid != "" do
     case Projects.add_task_dependency(socket.assigns.task.uuid, dep_uuid) do
       {:ok, _} ->
         Activity.log("projects.task_dependency_added",
@@ -250,13 +288,9 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
     {:noreply, reload_task_deps(socket)}
   end
 
-  def handle_event("add_dep", _params, socket), do: {:noreply, socket}
+  defp library_write("add_dep", _params, socket), do: {:noreply, socket}
 
-  def handle_event("cancel", _params, socket) do
-    {:noreply, WebHelpers.close_or_navigate(socket, Paths.tasks())}
-  end
-
-  def handle_event("remove_dep", %{"uuid" => dep_task_uuid}, socket) do
+  defp library_write("remove_dep", %{"uuid" => dep_task_uuid}, socket) do
     case Projects.remove_task_dependency(socket.assigns.task.uuid, dep_task_uuid) do
       {:ok, _} ->
         Activity.log("projects.task_dependency_removed",
@@ -283,6 +317,8 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
     {:noreply, reload_task_deps(socket)}
   end
+
+  defp library_write(_event, _params, socket), do: {:noreply, socket}
 
   # {:ai_translation, ...} progress/result events are folded into the form
   # by `use PhoenixKitAI.Components.AITranslate.Embed`.

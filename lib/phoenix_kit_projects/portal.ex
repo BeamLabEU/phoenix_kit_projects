@@ -1516,7 +1516,13 @@ defmodule PhoenixKitProjects.Portal do
     result =
       RepoHelper.repo().transaction(fn ->
         with {:ok, task} <-
-               Projects.create_task(%{"title" => title, "description" => description}),
+               Projects.create_task(%{
+                 "title" => title,
+                 "description" => description,
+                 "ad_hoc" => true
+               }),
+             # A portal issue is this project's own task, never a library
+             # entry other projects would be offered.
              {:ok, assignment} <-
                Projects.create_assignment(
                  %{

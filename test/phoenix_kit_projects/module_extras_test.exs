@@ -20,11 +20,11 @@ defmodule PhoenixKitProjects.ModuleExtrasTest do
       assert is_binary(meta.description)
     end
 
-    test "declares the admin_all sub-permission and one per API key action" do
+    test "declares admin_all, one sub-permission per API key action, the library and settings" do
       meta = PhoenixKitProjects.permission_metadata()
 
       assert Enum.map(meta.sub_permissions, & &1.key) ==
-               ~w(admin_all api_keys_create api_keys_edit api_keys_rotate api_keys_revoke api_keys_manage)
+               ~w(admin_all api_keys_create api_keys_edit api_keys_rotate api_keys_revoke api_keys_manage manage_library settings)
 
       for sub <- meta.sub_permissions do
         assert is_binary(sub.label)

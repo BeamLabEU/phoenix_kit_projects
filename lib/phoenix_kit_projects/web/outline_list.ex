@@ -119,7 +119,9 @@ defmodule PhoenixKitProjects.Web.OutlineList do
           Authz.can?(scope, project, :edit_tasks) and Authz.can?(scope, project, :create_tasks),
       delete: Authz.can?(scope, project, :delete_tasks),
       tick: fx[:tasks] == true and Authz.can?(scope, project, :update_status),
-      nest: fx[:subtasks] != false
+      nest: fx[:subtasks] != false,
+      # A library task's title is shared by every project that uses it.
+      library: Authz.manage_library?(scope)
     }
 
     socket =
@@ -234,7 +236,8 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
       case Outline.sync(project.uuid, lines, known,
              actor_uuid: Activity.actor_uuid(socket),
-             allow_done: can.tick
+             allow_done: can.tick,
+             rename_library: can.library
            ) do
         {:ok, summary} ->
           log_sync(socket, summary)
@@ -294,6 +297,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     with true <- socket.assigns.outline_can.edit,
          true <- title != "",
          %Assignment{task: %Task{} = task} <- own(socket, uuid),
+         true <- task.ad_hoc == true or socket.assigns.outline_can[:library] == true,
          true <- task.title != title,
          {:ok, _} <- Projects.update_task(task, %{"title" => title}) do
       audit(socket, "projects.assignment_updated", uuid, %{"fields" => ["title"]})

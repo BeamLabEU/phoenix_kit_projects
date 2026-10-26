@@ -218,6 +218,84 @@ defmodule PhoenixKitProjects.Authz do
 
   def api_keys?(_subject, _action), do: false
 
+  @manage_library_key "projects.manage_library"
+  @settings_key "projects.settings"
+
+  @doc "The sub-key that grants the task library's writes."
+  @spec manage_library_key() :: String.t()
+  def manage_library_key, do: @manage_library_key
+
+  @doc "The sub-key that grants the module's settings page."
+  @spec settings_key() :: String.t()
+  def settings_key, do: @settings_key
+
+  @doc """
+  May this subject change the shared task LIBRARY — create, edit, delete,
+  reorder and promote library tasks, and rename one from inside a project?
+  A library task is used by every project that assigned it, so this is a
+  site-level right (`projects.manage_library`), not a project role. A
+  project's own one-off tasks are its members' business (`can?/5`).
+  """
+  @spec manage_library?(term()) :: boolean()
+  def manage_library?(subject), do: sub_key?(subject, @manage_library_key)
+
+  @doc "May this subject change the module's settings (`projects.settings`)?"
+  @spec settings?(term()) :: boolean()
+  def settings?(subject), do: sub_key?(subject, @settings_key)
+
+  # Same rule as `admin_override?/1` and `api_keys?/2`: the sub-key AND its
+  # base, read from the scope's permissions (which honour "*"), without
+  # `Scope.can?/2`'s settings-backed enablement read.
+  defp sub_key?(%Scope{} = scope, key) do
+    Scope.has_module_access?(scope, "projects") and Scope.has_module_access?(scope, key)
+  rescue
+    _ -> false
+  catch
+    :exit, _ -> false
+  end
+
+  defp sub_key?(_subject, _key), do: false
+
+  @doc """
+  The projects this subject MANAGES — holds `:owner` or `:manager` on, the
+  strongest of their direct membership and every group grant (the same two
+  sources `effective_role/2` reads). An "everyone" project's open viewer
+  seat never reaches manager, so it is not consulted.
+
+  Built from the subject's own rows, never from every project: one read of
+  their memberships plus `Grants.project_roles_for_user/1`'s fixed handful,
+  however many projects they hold. Returns `[]` for a subject with no user.
+  """
+  @spec managed_project_uuids(term()) :: [binary()]
+  def managed_project_uuids(subject) do
+    case subject_user_uuid(subject) do
+      nil ->
+        []
+
+      user_uuid ->
+        direct =
+          RepoHelper.repo().all(
+            from(m in PhoenixKitProjects.Schemas.ProjectMember,
+              where: m.user_uuid == ^user_uuid and m.role in ["owner", "manager"],
+              select: m.project_uuid
+            )
+          )
+
+        granted =
+          for {project_uuid, role} <- PhoenixKitProjects.Grants.project_roles_for_user(user_uuid),
+              role in ["owner", "manager"],
+              do: project_uuid
+
+        Enum.uniq(direct ++ granted)
+    end
+  rescue
+    e ->
+      Logger.warning("[Projects.Authz] managed_project_uuids failed: #{Exception.message(e)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
   @doc "The user uuid behind a scope, a user struct, or a bare uuid."
   @spec subject_user_uuid_of(term()) :: binary() | nil
   def subject_user_uuid_of(subject), do: subject_user_uuid(subject)

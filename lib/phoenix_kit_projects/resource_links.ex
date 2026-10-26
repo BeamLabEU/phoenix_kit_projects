@@ -40,6 +40,14 @@ defmodule PhoenixKitProjects.ResourceLinks do
   defp repo, do: RepoHelper.repo()
 
   @doc """
+  `phoenix_kit_comments`' moderation scope for `project`, `project_notes`
+  and `project_task_notes` — see `PhoenixKitProjects.CommentModeration`.
+  """
+  @spec moderatable_resources(String.t(), term()) :: :all | [String.t()]
+  def moderatable_resources(type, scope),
+    do: PhoenixKitProjects.CommentModeration.moderatable_resources(type, scope)
+
+  @doc """
   The types this module owns, for the `resource_links/0` callback.
   """
   @spec types() :: %{String.t() => module()}

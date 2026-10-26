@@ -19,6 +19,8 @@ defmodule PhoenixKitProjects do
 
   alias PhoenixKit.Dashboard.Tab
   alias PhoenixKit.Settings
+  alias PhoenixKit.Users.{Permissions, Roles}
+  alias PhoenixKitProjects.Authz
 
   @impl PhoenixKit.Module
   def module_key, do: "projects"
@@ -261,6 +263,21 @@ defmodule PhoenixKitProjects do
           label: "Manage everyone's API keys",
           description:
             "See every API key, make keys for anyone or for nobody (shared), and change, rotate or revoke any key"
+        },
+        # A library task is shared by every project that assigned it, so
+        # changing or deleting one reaches into projects the editor may not
+        # even see — a site-level right, not a project role.
+        %{
+          key: "manage_library",
+          label: "Manage the task library",
+          description:
+            "Create, edit, reorder and delete the shared library tasks, and add one-off tasks to the library"
+        },
+        %{
+          key: "settings",
+          label: "Change the projects settings",
+          description:
+            "Change the module's settings: status lists, the new-project form, list controls, timeline and calendar display"
         }
       ]
     }
@@ -270,6 +287,8 @@ defmodule PhoenixKitProjects do
   # again and an Owner's revoke sticks.
   @admin_all_backfill_key "projects_admin_all_backfilled"
   @api_keys_backfill_key "projects_api_keys_permissions_backfilled"
+  @manage_library_backfill_key "projects_manage_library_backfilled"
+  @settings_backfill_key "projects_settings_backfilled"
 
   # What a role holding the base key could do with its own keys before the
   # API key rights were split out (2026-10-19).
@@ -312,9 +331,49 @@ defmodule PhoenixKitProjects do
     end
 
     backfill_api_key_rights()
+    _ = backfill_sub_key(@manage_library_backfill_key, Authz.manage_library_key())
+    _ = backfill_sub_key(@settings_backfill_key, Authz.settings_key())
     backfill_checklist_flags()
   rescue
     error ->
+      {:error, Exception.message(error)}
+  end
+
+  @doc false
+  # Once per sub-key: every role that holds the base key keeps what the base
+  # key used to allow (the library writes, the settings page). The flag is set
+  # only when every grant succeeded, so a failed grant is retried on the next
+  # boot; a role granted `projects` later gets the narrow meaning. `grant` is
+  # a parameter only so a test can make a grant fail.
+  def backfill_sub_key(flag, key, grant \\ &Permissions.grant_permission/3) do
+    if Settings.get_setting(flag) == "true" do
+      :ok
+    else
+      failures =
+        for role <- Roles.list_roles(),
+            granted = Permissions.get_permissions_for_role(role.uuid),
+            "projects" in granted,
+            key not in granted,
+            result = grant.(role.uuid, key, nil),
+            not match?({:ok, _}, result) do
+          {role.uuid, result}
+        end
+
+      if failures == [] do
+        Settings.update_setting_with_module(flag, "true", module_key())
+        :ok
+      else
+        Logger.warning(
+          "[PhoenixKitProjects] #{key} backfill incomplete, will retry next boot: " <>
+            inspect(failures)
+        )
+
+        {:error, {:backfill_incomplete, key, failures}}
+      end
+    end
+  rescue
+    error ->
+      Logger.warning("[PhoenixKitProjects] #{key} backfill failed: #{Exception.message(error)}")
       {:error, Exception.message(error)}
   end
 
@@ -1034,7 +1093,7 @@ defmodule PhoenixKitProjects do
         gettext_domain: "default",
         path: "projects/tasks/new",
         level: :admin,
-        permission: module_key(),
+        permission: Authz.manage_library_key(),
         parent: :admin_projects,
         visible: false,
         live_view: {PhoenixKitProjects.Web.TaskFormLive, :new}
@@ -1046,7 +1105,7 @@ defmodule PhoenixKitProjects do
         gettext_domain: "default",
         path: "projects/tasks/:id/edit",
         level: :admin,
-        permission: module_key(),
+        permission: Authz.manage_library_key(),
         parent: :admin_projects,
         visible: false,
         live_view: {PhoenixKitProjects.Web.TaskFormLive, :edit}
@@ -1328,7 +1387,8 @@ defmodule PhoenixKitProjects do
         priority: 930,
         level: :admin,
         parent: :admin_settings,
-        permission: module_key(),
+        # The settings page is its own sub-key, not the everyday base key.
+        permission: Authz.settings_key(),
         live_view: {PhoenixKitProjects.Web.ProjectsSettingsLive, :settings}
       )
     ]

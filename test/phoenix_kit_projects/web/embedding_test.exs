@@ -528,14 +528,18 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   describe "TasksLive embed" do
     test "mounts via live_isolated", %{conn: conn} do
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.TasksLive, session: %{})
+        live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
+          session: %{"current_user_uuid" => embed_user_uuid!()}
+        )
 
       assert html =~ "No tasks yet."
     end
 
     test "wrapper_class defaults to full-width", %{conn: conn} do
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.TasksLive, session: %{})
+        live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
+          session: %{"current_user_uuid" => embed_user_uuid!()}
+        )
 
       assert html =~ "flex flex-col w-full px-4 pt-2 pb-4 gap-4"
     end
@@ -543,7 +547,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     test "wrapper_class override replaces the default", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
-          session: %{"wrapper_class" => "host-specific-class"}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "wrapper_class" => "host-specific-class"
+          }
         )
 
       assert html =~ "host-specific-class"
@@ -552,7 +559,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
 
     test "view preselect via session lands on the groups tab", %{conn: conn} do
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.TasksLive, session: %{"view" => "groups"})
+        live_isolated(conn, PhoenixKitProjects.Web.TasksLive,
+          session: %{"current_user_uuid" => embed_user_uuid!(), "view" => "groups"}
+        )
 
       # The "groups" button is active, the "list" button is not. Attribute
       # order in rendered HTML is not stable (`phx-click` / `phx-value-*`
@@ -683,7 +692,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   describe "TaskFormLive embed (:new)" do
     test "mounts via live_isolated and renders the form", %{conn: conn} do
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive, session: %{})
+        live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive,
+          session: %{"current_user_uuid" => embed_user_uuid!()}
+        )
 
       # The page name lives in the admin layout's `page_title`, which
       # `live_isolated` does not render. Assert the form this test is
@@ -694,7 +705,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     test "wrapper_class override replaces the default", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive,
-          session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"
+          }
         )
 
       assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
@@ -704,7 +718,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     test "redirect_to override fires push_navigate to the host path on save", %{conn: conn} do
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.TaskFormLive,
-          session: %{"redirect_to" => "/host/library"}
+          session: %{"current_user_uuid" => embed_user_uuid!(), "redirect_to" => "/host/library"}
         )
 
       result =
