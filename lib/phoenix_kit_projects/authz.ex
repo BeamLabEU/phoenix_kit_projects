@@ -247,10 +247,10 @@ defmodule PhoenixKitProjects.Authz do
 
   @doc """
   May this subject open and change the module's settings
-  (`projects.settings`)? Deliberately NOT tied to the module being enabled,
-  unlike `manage_library?/1`: an administrator configures the module before
-  switching it on, and a settings page that locks itself while the module is
-  off can never be reached to prepare it.
+  (`projects.settings`)? Unlike `manage_library?/1` this check adds no
+  "module enabled" condition of its own. Whether a disabled module's admin
+  pages are reachable at all is core's admin mount gate's call (it refuses
+  them in a host); re-enabling is core's Modules page, not this one.
   """
   @spec settings?(term()) :: boolean()
   def settings?(subject), do: sub_key?(subject, @settings_key)

@@ -87,6 +87,32 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
   defp can_manage?(socket), do: Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope])
 
+  # A one-off task belongs to the project that minted it: opening or saving
+  # it here (unticking "One-off" included, which promotes it into the shared
+  # library) also needs `:edit_tasks` — the right the project asks to edit a
+  # task in place — on every project that uses it. The library right alone
+  # does not reach into a private project. Answers nil (shown as "Task not
+  # found") for a one-off the viewer may not edit.
+  defp editable_task(socket, id) do
+    case Projects.get_task(id) do
+      %Task{ad_hoc: true} = task -> if one_off_editable?(socket, task), do: task
+      other -> other
+    end
+  end
+
+  defp one_off_editable?(socket, %Task{uuid: uuid}) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    Enum.all?(Projects.projects_using_task(uuid), &Authz.can?(scope, &1, :edit_tasks))
+  end
+
+  # The write-time twin of `editable_task/2`, asked of the task as stored now.
+  defp may_write?(socket) do
+    case socket.assigns[:task] do
+      %Task{uuid: uuid} when is_binary(uuid) -> editable_task(socket, uuid) != nil
+      _ -> true
+    end
+  end
+
   defp no_permission, do: gettext("You don't have permission to change the task library.")
 
   defp apply_action(socket, :new, _params) do
@@ -109,7 +135,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   end
 
   defp apply_action(socket, :edit, %{"id" => id}) do
-    case Projects.get_task(id) do
+    case editable_task(socket, id) do
       nil ->
         # In navigate mode, `close_or_navigate` push-navigates and the LV
         # is replaced before render. In emit mode it broadcasts `:closed`
@@ -240,7 +266,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
   # The library writes re-check the sub-key against the live scope.
   def handle_event(event, params, socket) when event in ~w(save add_dep remove_dep) do
-    if can_manage?(socket),
+    if can_manage?(socket) and may_write?(socket),
       do: library_write(event, params, socket),
       else: {:noreply, put_flash(socket, :error, no_permission())}
   end

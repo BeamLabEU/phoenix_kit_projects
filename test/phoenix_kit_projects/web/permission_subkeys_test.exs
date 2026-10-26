@@ -234,6 +234,30 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
       assert Projects.get_task(adhoc.uuid).ad_hoc == true
     end
 
+    test "the task form refuses to open or save it, so it cannot be promoted there",
+         %{conn: conn} do
+      private = fixture_project()
+      {:ok, %{task: adhoc}} = Projects.quick_add_assignment(private.uuid, "Private one-off")
+      librarian = librarian(embed_user_uuid!())
+
+      assert {:error, {:live_redirect, _}} =
+               live(
+                 put_test_scope(conn, librarian),
+                 "/en/admin/projects/tasks/#{adhoc.uuid}/edit"
+               )
+
+      # Opened by someone who may (an administrator), then the scope narrows.
+      {:ok, view, _html} =
+        live(put_test_scope(conn, fake_scope()), "/en/admin/projects/tasks/#{adhoc.uuid}/edit")
+
+      swap_scope(view, librarian)
+      render_submit(view, "save", %{"task" => %{"title" => "Leaked", "ad_hoc" => "false"}})
+
+      task = Projects.get_task(adhoc.uuid)
+      assert task.ad_hoc == true
+      assert task.title == "Private one-off"
+    end
+
     test "the project's owner who manages the library may", %{conn: conn} do
       user_uuid = embed_user_uuid!()
       mine = fixture_project()
@@ -526,7 +550,9 @@ defmodule PhoenixKitProjects.Web.PermissionSubkeysTest do
       assert Projects.get_task(lib.uuid)
     end
 
-    test "the settings page stays reachable while the module is off", %{conn: conn} do
+    # Only the module's own check: in a host, core's admin mount gate still
+    # refuses a disabled module's pages (re-enabling is core's Modules page).
+    test "the settings check does not itself depend on the module being on", %{conn: conn} do
       {:ok, _} = PhoenixKitProjects.disable_system()
       assert Authz.settings?(fake_scope())
 

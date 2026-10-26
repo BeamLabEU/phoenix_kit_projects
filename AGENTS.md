@@ -531,13 +531,15 @@ and sets its flag only when every grant succeeded:
   content edits. The One-off lens lists only one-off tasks of projects the
   viewer can open (`list_tasks/1` / `count_tasks/1` `:project_uuids`, asked on
   every load). A one-off belongs to its project: deleting one from the library
-  page also needs `:delete_tasks` there, promoting one `:view`
-  (`Projects.projects_using_task/1`) — the library right alone does not reach
+  page also needs `:delete_tasks` there, promoting one `:view`, and opening or
+  saving one in `TaskFormLive` (unticking "One-off" is a promote) `:edit_tasks`
+  — on every project using it (`Projects.projects_using_task/1`) — the library right alone does not reach
   into a private project.
 - **`projects.settings`** (`Authz.settings?/1`) — `ProjectsSettingsLive` at
   mount (it is embeddable) and every event but the tab switch and the demo
-  toggle; the settings tab carries it. Not tied to the module being enabled:
-  an administrator prepares the module's settings before switching it on.
+  toggle; the settings tab carries it. The check adds no "module enabled"
+  condition of its own; in a host, core's admin mount gate still refuses a
+  disabled module's pages, and re-enabling is core's Modules page.
 
 These gates are checked against the embed's reconstructed scope too, so an
 embed of `TasksLive` (writes), `TaskFormLive` or `ProjectsSettingsLive` must
