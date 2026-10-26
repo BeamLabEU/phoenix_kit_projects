@@ -14,6 +14,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   use PhoenixKitProjects.Web.Mentions
   # The task's discussion and notes are embedded in its form.
   use PhoenixKitComments.Embed
+  # Before the Embed: its hook enqueues translations without a permission
+  # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
+  on_mount(PhoenixKitProjects.Web.AITranslateGate)
   use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
@@ -1812,6 +1815,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         "Delete this task and its %{count} subtasks? This cannot be undone.",
         n
       )
+
+  @doc false
+  # The AI-translate modal's events need what opening this form needed: the
+  # project's `:create_tasks` for a new task, `:edit_tasks` to edit one, the
+  # projects module for a template (`permitted_project/3`), re-read from the
+  # live scope (`Web.AITranslateGate`).
+  def ai_translate_allowed?(socket) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    case socket.assigns[:project] do
+      %Project{is_template: true} ->
+        PhoenixKitProjects.Authz.can_use_templates?(scope)
+
+      %Project{uuid: uuid} = project when is_binary(uuid) ->
+        action = if socket.assigns[:live_action] == :new, do: :create_tasks, else: :edit_tasks
+        PhoenixKitProjects.Authz.can?(scope, project, action)
+
+      _ ->
+        false
+    end
+  end
 
   defp may?(socket, action) do
     PhoenixKitProjects.Authz.can?(

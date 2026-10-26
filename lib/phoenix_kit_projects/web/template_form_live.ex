@@ -2,6 +2,9 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   @moduledoc "Create or edit a project template."
 
   use PhoenixKitWeb, :live_view
+  # Before the Embed: its hook enqueues translations without a permission
+  # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
+  on_mount(PhoenixKitProjects.Web.AITranslateGate)
   use PhoenixKitAI.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
@@ -143,6 +146,13 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   end
 
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
+
+  @doc false
+  # Templates ride the projects module permission (`Authz.can_use_templates?/1`);
+  # the AI-translate modal's events re-read it from the live scope
+  # (`Web.AITranslateGate`).
+  def ai_translate_allowed?(socket),
+    do: PhoenixKitProjects.Authz.can_use_templates?(socket.assigns[:phoenix_kit_current_scope])
 
   @impl true
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do

@@ -4,6 +4,9 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   use PhoenixKitWeb, :live_view
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
+  # Before the Embed: its hook enqueues translations without a permission
+  # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
+  on_mount(PhoenixKitProjects.Web.AITranslateGate)
   use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.MultilangForm
@@ -86,6 +89,11 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   end
 
   defp can_manage?(socket), do: Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope])
+
+  @doc false
+  # The AI-translate modal's events need what a save needs
+  # (`Web.AITranslateGate`).
+  def ai_translate_allowed?(socket), do: can_manage?(socket) and may_write?(socket)
 
   # A one-off task belongs to the project that minted it: opening or saving
   # it here (unticking "One-off" included, which promotes it into the shared

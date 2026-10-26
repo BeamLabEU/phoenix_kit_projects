@@ -2,6 +2,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   @moduledoc "Create or edit a project."
 
   use PhoenixKitWeb, :live_view
+  # Before the Embed: its hook enqueues translations without a permission
+  # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
+  on_mount(PhoenixKitProjects.Web.AITranslateGate)
   use PhoenixKitAI.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
@@ -715,6 +718,29 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       end
 
     Map.put(attrs, "settings", settings)
+  end
+
+  @doc false
+  # The AI-translate modal's events need what opening this form needed: the
+  # projects module for a new project or a template, `:edit_settings` on a
+  # project (`apply_action/3`), re-read from the live scope
+  # (`Web.AITranslateGate`).
+  def ai_translate_allowed?(socket) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    case {socket.assigns[:live_action], socket.assigns[:project]} do
+      {:edit, %Project{is_template: false, uuid: uuid} = project} when is_binary(uuid) ->
+        Authz.can?(scope, project, :edit_settings)
+
+      {:edit, %Project{is_template: true}} ->
+        Authz.can_use_templates?(scope)
+
+      {:new, _} ->
+        Authz.can_use_templates?(scope)
+
+      _ ->
+        false
+    end
   end
 
   @impl true

@@ -541,6 +541,15 @@ and sets its flag only when every grant succeeded:
   condition of its own; in a host, core's admin mount gate still refuses a
   disabled module's pages, and re-enabling is core's Modules page.
 
+The AI-translate modal's events (`ai_translate_lang` enqueues jobs) are
+handled by `phoenix_kit_ai`'s `AITranslate.Embed` hook, which checks no
+permission. Every form using it declares
+`on_mount(PhoenixKitProjects.Web.AITranslateGate)` BEFORE `use
+...AITranslate.Embed` (hooks run in attach order) and exports
+`ai_translate_allowed?/1` — the right its own save or mount needs for the
+record it holds, read from the live scope; the gate refuses the events when
+it answers false, and fails closed when it is missing.
+
 These gates are checked against the embed's reconstructed scope too, so an
 embed of `TasksLive` (writes), `TaskFormLive` or `ProjectsSettingsLive` must
 pass a `current_user_uuid` holding the sub-key — an anonymous embed is
