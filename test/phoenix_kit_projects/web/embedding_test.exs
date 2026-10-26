@@ -581,7 +581,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   describe "ProjectFormLive embed (:new)" do
     test "mounts via live_isolated and renders the form", %{conn: conn} do
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive, session: %{})
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
+          session: %{"current_user_uuid" => embed_user_uuid!()}
+        )
 
       # The page name lives in the admin layout's `page_title`, which
       # `live_isolated` does not render. Assert the form this test is
@@ -591,7 +593,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
 
     test "wrapper_class defaults to max-w-xl", %{conn: conn} do
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive, session: %{})
+        live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
+          session: %{"current_user_uuid" => embed_user_uuid!()}
+        )
 
       assert html =~ "mx-auto max-w-xl"
     end
@@ -599,7 +603,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     test "wrapper_class override replaces the default", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-          session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"
+          }
         )
 
       assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
@@ -609,7 +616,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     test "redirect_to override fires push_navigate to the host path on save", %{conn: conn} do
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-          session: %{"redirect_to" => "/host/orders/123"}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "redirect_to" => "/host/orders/123"
+          }
         )
 
       result =
@@ -639,7 +649,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
           ] do
         {:ok, view, _html} =
           live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-            session: %{"redirect_to" => malicious}
+            session: %{"current_user_uuid" => embed_user_uuid!(), "redirect_to" => malicious}
           )
 
         result =
@@ -739,7 +749,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
   describe "TemplateFormLive embed (:new)" do
     test "mounts via live_isolated and renders the form", %{conn: conn} do
       {:ok, _view, html} =
-        live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive, session: %{})
+        live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
+          session: %{"current_user_uuid" => embed_user_uuid!()}
+        )
 
       # The page name lives in the admin layout's `page_title`, which
       # `live_isolated` does not render. Assert the form this test is
@@ -750,7 +762,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     test "wrapper_class override replaces the default", %{conn: conn} do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
-          session: %{"wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "wrapper_class" => "flex flex-col w-full px-4 py-6 gap-4"
+          }
         )
 
       assert html =~ "flex flex-col w-full px-4 py-6 gap-4"
@@ -760,7 +775,10 @@ defmodule PhoenixKitProjects.Web.EmbeddingTest do
     test "redirect_to override fires push_navigate to the host path on save", %{conn: conn} do
       {:ok, view, _html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
-          session: %{"redirect_to" => "/host/templates"}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "redirect_to" => "/host/templates"
+          }
         )
 
       result =

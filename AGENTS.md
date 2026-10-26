@@ -502,8 +502,17 @@ changes.
 
 ### Permissions
 
-`permission: "projects"` on every tab; mount guards, and events trust the mount
-check. The base key means **"may enter the module"**; the `projects.admin_all`
+`permission: "projects"` on every tab; mount guards. The assignment, project
+and template forms do not trust their mount check for writes:
+`on_mount(PhoenixKitProjects.Web.WriteGate)` re-asks each form's
+`write_allowed?/1` (the right its mount needed, against the live scope and the
+record as stored now) on every event in its `write_events/0`, and refuses with
+"You don't have permission to do that here." (the project form's
+`confirm_action_ok` replays an event past the hook, so it is in the list
+itself); a write that is not an event — the assignment form's autosave
+timer — asks `WriteGate.allowed?/1` itself. `TemplateFormLive` checks the module key at mount itself (an embed
+never passes the tab) and edits only a template — the module key alone must
+never reach a real project, which takes `:edit_settings`. The base key means **"may enter the module"**; the `projects.admin_all`
 sub-permission means **"administer projects you are not a member of"** — before
 the split, granting a role the module handed it every project on the site,
 because the resolver short-circuited on module access before membership was

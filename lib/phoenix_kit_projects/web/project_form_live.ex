@@ -5,6 +5,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # Before the Embed: its hook enqueues translations without a permission
   # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
   on_mount(PhoenixKitProjects.Web.AITranslateGate)
+  # Every write event re-checks `write_allowed?/1` against the live scope.
+  on_mount(PhoenixKitProjects.Web.WriteGate)
   use PhoenixKitAI.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
@@ -721,27 +723,37 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   end
 
   @doc false
-  # The AI-translate modal's events need what opening this form needed: the
-  # projects module for a new project or a template, `:edit_settings` on a
-  # project (`apply_action/3`), re-read from the live scope
-  # (`Web.AITranslateGate`).
-  def ai_translate_allowed?(socket) do
+  # The events that write. `confirm_action_ok` replays a confirmed event by
+  # calling `handle_event/3` directly, past the hook, so it is gated itself.
+  def write_events,
+    do: ~w(save generate_default_statuses end_project resume_project confirm_action_ok)
+
+  @doc false
+  # What opening this form needed (`apply_action/3`): the projects module
+  # for a new project or a template, `:edit_settings` on a project — asked of
+  # the live scope and of the project as stored NOW (`Web.WriteGate`).
+  def write_allowed?(socket) do
     scope = socket.assigns[:phoenix_kit_current_scope]
 
     case {socket.assigns[:live_action], socket.assigns[:project]} do
-      {:edit, %Project{is_template: false, uuid: uuid} = project} when is_binary(uuid) ->
-        Authz.can?(scope, project, :edit_settings)
-
-      {:edit, %Project{is_template: true}} ->
-        Authz.can_use_templates?(scope)
-
       {:new, _} ->
         Authz.can_use_templates?(scope)
+
+      {:edit, %Project{uuid: uuid}} when is_binary(uuid) ->
+        case Projects.get_project(uuid) do
+          %Project{is_template: true} -> Authz.can_use_templates?(scope)
+          %Project{} = project -> Authz.can?(scope, project, :edit_settings)
+          _ -> false
+        end
 
       _ ->
         false
     end
   end
+
+  @doc false
+  # The AI-translate modal's events need the same (`Web.AITranslateGate`).
+  def ai_translate_allowed?(socket), do: write_allowed?(socket)
 
   @impl true
   # ── Participants (pending access, applied after create) ──────────

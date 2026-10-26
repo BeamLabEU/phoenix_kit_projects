@@ -342,7 +342,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       assert html =~ "New template"
@@ -355,7 +360,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 9}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 9
+          }
         )
 
       view |> element("button.btn[phx-click=cancel]") |> render_click()
@@ -372,7 +382,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       refute html =~ ~s(phx-click="open_embed")
@@ -391,7 +406,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 11}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 11
+          }
         )
 
       view
@@ -418,6 +438,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       {:ok, view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
           session: %{
+            "current_user_uuid" => embed_user_uuid!(),
             "mode" => "emit",
             "pubsub_topic" => topic,
             "live_action" => "edit",
@@ -593,7 +614,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 0}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 0
+          }
         )
 
       assert html =~ "New project"
@@ -606,7 +632,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 31}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 31
+          }
         )
 
       view
@@ -629,7 +660,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       {:ok, view, _} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
-          session: %{"mode" => "emit", "pubsub_topic" => topic, "frame_ref" => 33}
+          session: %{
+            "current_user_uuid" => embed_user_uuid!(),
+            "mode" => "emit",
+            "pubsub_topic" => topic,
+            "frame_ref" => 33
+          }
         )
 
       view |> element("button.btn[phx-click=cancel]") |> render_click()
@@ -818,6 +854,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       live_isolated(conn, PhoenixKitProjects.Web.TemplateFormLive,
         session: %{
+          "current_user_uuid" => embed_user_uuid!(),
           "mode" => "emit",
           "pubsub_topic" => topic,
           "live_action" => "edit",
@@ -900,6 +937,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
       {:ok, _view, html} =
         live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
           session: %{
+            "current_user_uuid" => embed_user_uuid!(),
             "mode" => "emit",
             "pubsub_topic" => topic,
             "live_action" => "show",
@@ -968,6 +1006,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
 
       live_isolated(conn, PhoenixKitProjects.Web.ProjectFormLive,
         session: %{
+          "current_user_uuid" => embed_user_uuid!(),
           "mode" => "emit",
           "pubsub_topic" => topic,
           "live_action" => "edit",

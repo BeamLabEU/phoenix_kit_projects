@@ -17,6 +17,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # Before the Embed: its hook enqueues translations without a permission
   # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
   on_mount(PhoenixKitProjects.Web.AITranslateGate)
+  # Every write event re-checks `write_allowed?/1` against the live scope.
+  on_mount(PhoenixKitProjects.Web.WriteGate)
   use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
@@ -48,6 +50,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.WriteGate
   alias PhoenixKitWeb.Components.Core.FormFieldLabel
 
   # Default wrapper class for the standalone admin page. Embedders can
@@ -1817,25 +1820,40 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       )
 
   @doc false
-  # The AI-translate modal's events need what opening this form needed: the
-  # project's `:create_tasks` for a new task, `:edit_tasks` to edit one, the
-  # projects module for a template (`permitted_project/3`), re-read from the
-  # live scope (`Web.AITranslateGate`).
-  def ai_translate_allowed?(socket) do
+  # The events that write. `log_time` keeps its own `:log_time` check (it
+  # is reachable by a role that may log time on a task it may not edit).
+  def write_events do
+    ~w(save delete_task subtask_add subtask_toggle add_assignment_dep remove_assignment_dep
+       toggle_board_published toggle_portal_public generate_default_statuses save_subproject)
+  end
+
+  @doc false
+  # What opening this form needed (`permitted_project/3`): the project's
+  # `:create_tasks` for a new task, `:edit_tasks` to edit one, the projects
+  # module for a template — asked of the live scope and of the project as
+  # stored NOW, so a stale assign cannot widen it (`Web.WriteGate`, and the
+  # autosave timer below).
+  def write_allowed?(socket) do
     scope = socket.assigns[:phoenix_kit_current_scope]
 
-    case socket.assigns[:project] do
-      %Project{is_template: true} ->
+    with %Project{uuid: uuid} when is_binary(uuid) <- socket.assigns[:project],
+         %Project{} = project <- Projects.get_project(uuid) do
+      if project.is_template do
         PhoenixKitProjects.Authz.can_use_templates?(scope)
-
-      %Project{uuid: uuid} = project when is_binary(uuid) ->
+      else
         action = if socket.assigns[:live_action] == :new, do: :create_tasks, else: :edit_tasks
-        PhoenixKitProjects.Authz.can?(scope, project, action)
 
-      _ ->
-        false
+        PhoenixKitProjects.Authz.can?(scope, project, action) and
+          PhoenixKitProjects.Extensions.enabled?(project, "tasks")
+      end
+    else
+      _ -> false
     end
   end
+
+  @doc false
+  # The AI-translate modal's events need the same (`Web.AITranslateGate`).
+  def ai_translate_allowed?(socket), do: write_allowed?(socket)
 
   defp may?(socket, action) do
     PhoenixKitProjects.Authz.can?(
@@ -2547,8 +2565,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   @autosave_ms 700
 
   @impl true
-  def handle_info(:autosave, socket),
-    do: {:noreply, socket |> assign(:autosave_timer, nil) |> autosave_now()}
+  # A timer, not an event, so `Web.WriteGate` never sees it: a save queued
+  # before the right was revoked is dropped here.
+  def handle_info(:autosave, socket) do
+    socket = assign(socket, :autosave_timer, nil)
+
+    if WriteGate.allowed?(socket) do
+      {:noreply, autosave_now(socket)}
+    else
+      {:noreply,
+       socket
+       |> assign(pending_params: nil, save_state: :error)
+       |> WriteGate.refuse()}
+    end
+  end
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
