@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **Core pin widened to `>= 2.65.0 and < 4.0.0`:** works with core 3.x (core 3.0 stops creating the module tables; this module's own chain builds its tables). The floor is the first core with the `file_references/0` and `expected_schema/0` callbacks, which now carry `@impl PhoenixKit.Module`.
+
 - **`phoenix_kit_staff` and `phoenix_kit_entities` are now required dependencies** (they were `optional: true`). The module's own chain carries foreign keys into their tables (nine into staff's, one into entities'), and core is about to stop creating those tables, so on a fresh install their chains must run first; `mix phoenix_kit.update` orders module migrations by these dependencies. A host that did not list them gets them from `mix deps.get`. No migration.
 
 ### Added

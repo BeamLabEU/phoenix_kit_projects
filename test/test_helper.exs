@@ -86,6 +86,18 @@ repo_available =
       # staleness story.
       PhoenixKit.Migration.ensure_current(TestRepo, log: false)
 
+      # The tables other modules own (core 3.0 no longer creates them): their real
+      # chains, in dependency order.
+      for chain <- [
+            PhoenixKitAI.Migrations,
+            PhoenixKitComments.Migrations,
+            PhoenixKitEntities.Migrations,
+            PhoenixKitStaff.Migrations
+          ],
+          stmt <- chain.up_statements("public") do
+        TestRepo.query!(stmt)
+      end
+
       # Then entities' chain, because the Data project extension reads and
       # writes entity records through `PhoenixKitEntities`' own schemas. Its
       # V1 is adoptive, so this is a no-op today — it is here so it stays

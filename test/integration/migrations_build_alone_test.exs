@@ -23,7 +23,8 @@ defmodule PhoenixKitProjects.Integration.MigrationsBuildAloneTest do
     assert :ok =
              ModuleChainCheck.check(
                PhoenixKitProjects.Test.Repo,
-               PhoenixKitProjects.Migrations.Schema
+               PhoenixKitProjects.Migrations.Schema,
+               after: [PhoenixKitEntities.Migrations, PhoenixKitStaff.Migrations]
              )
   end
 end

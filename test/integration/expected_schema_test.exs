@@ -23,6 +23,8 @@ defmodule PhoenixKitProjects.Integration.ExpectedSchemaTest do
   @moduletag timeout: :timer.minutes(3)
 
   @app :phoenix_kit_projects
+  # The tables Projects' own tables reference, owned by the modules it depends on.
+  @prerequisites [PhoenixKitEntities.Migrations, PhoenixKitStaff.Migrations]
   @migrations PhoenixKitProjects.Migrations.Schema
   @modules %{@app => %{manifest: ExpectedSchema, migrations: @migrations}}
   # Projects' chain looks these two constraints up by name alone, not by schema
@@ -40,7 +42,7 @@ defmodule PhoenixKitProjects.Integration.ExpectedSchemaTest do
     Application.put_env(:phoenix_kit, :repo, Repo)
 
     schema = "pkes_" <> Integer.to_string(System.unique_integer([:positive]))
-    {:ok, tables} = ModuleChainCheck.build_alone(Repo, @migrations, schema)
+    {:ok, tables} = ModuleChainCheck.build_alone(Repo, @migrations, schema, after: @prerequisites)
 
     :ok = Sandbox.checkout(Repo)
 

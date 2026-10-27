@@ -122,7 +122,7 @@ defmodule PhoenixKitProjects.MixProject do
       # 1.7.189 for `PhoenixKit.SchemaPrefix`, which every table-backed schema
       # in this module applies.
       #
-      # Bounded with a TWO-segment `~>` on purpose: `>= 2.0.0 and < 3.0.0`.
+      # Bounded with a TWO-segment `~>` on purpose: `>= 2.0.0 and < 4.0.0`.
       # Core majors are not assumed compatible, but core MINORS must be — a
       # requirement that excludes one breaks `mix deps.get` outright for every
       # host running this module beside a newer core, and the breakage lands
@@ -154,7 +154,9 @@ defmodule PhoenixKitProjects.MixProject do
       # fixed number of reads); 2.63.0 before, for `search_picker`'s `chosen`
       # state on the Hours page; 2.54.0 before that, for `<.table_default
       # fit>` with the header cells' `priority` / `lead`; 2.49.0 before that.
-      pk_dep(:phoenix_kit, ">= 2.64.0 and < 3.0.0"),
+      # Floor 2.65.0: the first core with the `file_references/0` and `expected_schema/0`
+      # callbacks this module implements (`@impl`). The ceiling is open through core 3.x.
+      pk_dep(:phoenix_kit, ">= 2.65.0 and < 4.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move
