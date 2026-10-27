@@ -568,7 +568,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     {:ok, view, _html} =
       live_isolated(conn, ProjectCalendarLive, session: view_session(project.uuid, actor))
 
-    render(view)
+    # The calendar shows one month, and where a new task lands in it depends on
+    # today's date, so the reload is read off the Unassigned filter's count (a
+    # new assignment has nobody on it) instead of off the grid.
+    assert unassigned_count(render(view)) == 2
 
     t3 =
       fixture_task(%{
@@ -580,7 +583,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     {:ok, _} =
       Projects.create_assignment(%{"project_uuid" => project.uuid, "task_uuid" => t3.uuid})
 
-    assert render(view) =~ "Late-added chore"
+    assert unassigned_count(render(view)) == 3
   end
 
   test "a project_deleted broadcast flashes and leaves the page", %{conn: conn, actor_uuid: actor} do
@@ -611,5 +614,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     html = render_click(view, "assignee_pick", %{"uuid" => Ecto.UUID.generate()})
     refute html =~ "remove_assignee_person"
     assert Process.alive?(view.pid)
+  end
+
+  defp unassigned_count(html) do
+    [_, count] = Regex.run(~r/Unassigned\s*<span[^>]*>(\d+)<\/span>/, html)
+    String.to_integer(count)
   end
 end
