@@ -1136,7 +1136,12 @@ defmodule PhoenixKitProjects.Web.OverviewLive do
           value={Map.get(@status_counts, "in_progress", 0)}
           value_class="text-warning"
         />
-        <.stat_tile label={gettext("Tasks todo")} value={Map.get(@status_counts, "todo", 0)} />
+        <.stat_tile label={gettext("Tasks waiting")} value={Map.get(@status_counts, "waiting", 0)} />
+        <.stat_tile
+          label={gettext("Tasks that can be started")}
+          value={Map.get(@status_counts, "todo", 0)}
+          value_class="text-info"
+        />
         <.stat_tile
           label={gettext("Tasks done")}
           value={Map.get(@status_counts, "done", 0)}

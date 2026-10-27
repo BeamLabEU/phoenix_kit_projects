@@ -27,7 +27,7 @@ defmodule PhoenixKitProjects.Integration.QuickAddTest do
                Projects.quick_add_assignment(p.uuid, "  Call the client  ")
 
       assert %Task{ad_hoc: true, title: "Call the client"} = task
-      assert %Assignment{project_uuid: project_uuid, task_uuid: task_uuid, status: "todo"} = a
+      assert %Assignment{project_uuid: project_uuid, task_uuid: task_uuid, status: "waiting"} = a
       assert project_uuid == p.uuid
       assert task_uuid == task.uuid
       assert a.position == first.position + 1

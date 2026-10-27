@@ -272,7 +272,7 @@ defmodule PhoenixKitProjects.DashboardWidgets do
       %{
         key: "projects.tasks",
         name: "Ongoing tasks",
-        description: "The current todo + in-progress tasks of a project.",
+        description: "The open tasks of a project: waiting, can be started, in progress.",
         icon: "hero-list-bullet",
         module_key: "projects",
         component: OngoingTasksWidget,

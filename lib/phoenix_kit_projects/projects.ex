@@ -1941,7 +1941,7 @@ defmodule PhoenixKitProjects.Projects do
 
   @doc """
   Counts of assignments by status across active non-template projects.
-  Returns a map like %{"todo" => 5, "in_progress" => 2, "done" => 10}.
+  Returns a map like %{"waiting" => 3, "todo" => 5, "in_progress" => 2, "done" => 10}.
 
   Filters on `is_nil(p.archived_at)` to match the dashboard's intent —
   assignments inside archived projects shouldn't inflate the workload
@@ -2074,7 +2074,8 @@ defmodule PhoenixKitProjects.Projects do
       done = Map.get(c, "done", 0)
       in_progress = Map.get(c, "in_progress", 0)
       todo = Map.get(c, "todo", 0)
-      total = done + in_progress + todo
+      waiting = Map.get(c, "waiting", 0)
+      total = done + in_progress + todo + waiting
 
       progress_sum = progress_sum_by_project |> Map.get(p.uuid, 0) |> Kernel.||(0)
 
@@ -2161,7 +2162,7 @@ defmodule PhoenixKitProjects.Projects do
       %{
         project: %Project{},
         task_total: integer,            # direct tasks (assignments with a task)
-        task_done / task_in_progress / task_todo: integer,
+        task_done / task_in_progress / task_todo / task_waiting: integer,
         subproject_count: integer,      # direct sub-projects
         total: integer,                 # task_total + subproject_count
         progress_pct: integer,          # tasks (done=100) + non-empty children
@@ -2230,6 +2231,7 @@ defmodule PhoenixKitProjects.Projects do
       task_done: Enum.count(task_rows, &(&1.status == "done")),
       task_in_progress: Enum.count(task_rows, &(&1.status == "in_progress")),
       task_todo: Enum.count(task_rows, &(&1.status == "todo")),
+      task_waiting: Enum.count(task_rows, &(&1.status == "waiting")),
       subproject_count: length(link_rows),
       total: length(task_rows) + length(link_rows),
       progress_pct: node_progress(task_rows, children),
@@ -2478,7 +2480,7 @@ defmodule PhoenixKitProjects.Projects do
            %{
              "project_uuid" => project.uuid,
              "task_uuid" => a.task_uuid,
-             "status" => "todo",
+             "status" => "waiting",
              "position" => a.position,
              "description" => a.description,
              "estimated_duration" => a.estimated_duration,
@@ -3967,7 +3969,7 @@ defmodule PhoenixKitProjects.Projects do
           true ->
             case create_assignment_from_template(
                    task_uuid,
-                   %{"project_uuid" => project_uuid, "status" => "todo"},
+                   %{"project_uuid" => project_uuid, "status" => "waiting"},
                    broadcast: false
                  ) do
               {:ok, a} -> {root_acc, [a | extras_acc], Map.put(map, task_uuid, a.uuid)}

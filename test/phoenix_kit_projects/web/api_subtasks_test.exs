@@ -249,7 +249,7 @@ defmodule PhoenixKitProjects.Web.ApiSubtasksTest do
     %{"also_changed" => 0} =
       c |> post_json("#{@base}/tasks/#{a["uuid"]}/complete", %{}) |> json_response(200)
 
-    assert Repo.get!(Assignment, p["uuid"]).status == "todo"
+    assert Repo.get!(Assignment, p["uuid"]).status == "waiting"
   end
 
   test "deleting a task with subtasks needs cascade, and the policy covers every row", %{

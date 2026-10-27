@@ -2884,12 +2884,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     |> then(fn a -> if fx[:dates] != false, do: a, else: Map.drop(a, ~w(start_date end_date)) end)
   end
 
-  # To do / In progress / Done — the middle one only with the in-progress
-  # step on, or for a row already there (it must stay selectable).
+  # Waiting / Can be started / In progress / Done — "in progress" only with
+  # the in-progress step on, or for a row already there (it must stay
+  # selectable).
   defp status_options(fx, assignment) do
     middle? = fx.in_progress or match?(%{status: "in_progress"}, assignment)
 
-    [{gettext("To do"), "todo"}] ++
+    [{gettext("Waiting"), "waiting"}, {gettext("Can be started"), "todo"}] ++
       if(middle?, do: [{gettext("In progress"), "in_progress"}], else: []) ++
       [{gettext("Done"), "done"}]
   end
@@ -2952,7 +2953,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           "assigned_team_uuid" => task.default_assigned_team_uuid,
           "assigned_department_uuid" => task.default_assigned_department_uuid,
           "assigned_person_uuid" => task.default_assigned_person_uuid,
-          "status" => attrs["status"] || "todo"
+          "status" => attrs["status"] || "waiting"
         }
 
         assign_type =

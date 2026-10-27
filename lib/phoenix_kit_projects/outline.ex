@@ -885,7 +885,7 @@ defmodule PhoenixKitProjects.Outline do
           task =
             insert!(index, Task.changeset(%Task{}, %{"title" => line.text, "ad_hoc" => true}))
 
-          status = if line.done, do: "done", else: "todo"
+          status = if line.done, do: "done", else: "waiting"
 
           assignment =
             insert!(

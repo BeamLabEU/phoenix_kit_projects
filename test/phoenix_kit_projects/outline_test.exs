@@ -46,10 +46,10 @@ defmodule PhoenixKitProjects.OutlineTest do
       assert map_size(created) == 4
 
       assert listed(p) == [
-               {"Buy", 0, "todo"},
-               {"Milk", 1, "todo"},
-               {"Eggs", 1, "todo"},
-               {"Call", 0, "todo"}
+               {"Buy", 0, "waiting"},
+               {"Milk", 1, "waiting"},
+               {"Eggs", 1, "waiting"},
+               {"Call", 0, "waiting"}
              ]
 
       # Every task has a number from the moment it exists.
@@ -59,7 +59,7 @@ defmodule PhoenixKitProjects.OutlineTest do
     test "blank lines are not tasks, and a jump of two levels is one" do
       p = project()
       {:ok, _} = Outline.sync(p.uuid, [line("A"), line("   "), line("B", 3)], [])
-      assert listed(p) == [{"A", 0, "todo"}, {"B", 1, "todo"}]
+      assert listed(p) == [{"A", 0, "waiting"}, {"B", 1, "waiting"}]
     end
 
     test "a changed line renames its task; the order follows the lines" do
@@ -74,7 +74,7 @@ defmodule PhoenixKitProjects.OutlineTest do
         ])
 
       assert renamed == [a.uuid]
-      assert listed(p) == [{"Second", 0, "todo"}, {"First, renamed", 0, "todo"}]
+      assert listed(p) == [{"Second", 0, "waiting"}, {"First, renamed", 0, "waiting"}]
     end
 
     test "a plain task whose line is gone is deleted; one carrying work is held" do
@@ -92,7 +92,7 @@ defmodule PhoenixKitProjects.OutlineTest do
       assert summary.held == [logged.uuid]
       assert Projects.get_assignment(plain.uuid) == nil
       assert %Assignment{review_status: "removed"} = Projects.get_assignment(logged.uuid)
-      assert listed(p) == [{"Keep", 0, "todo"}]
+      assert listed(p) == [{"Keep", 0, "waiting"}]
       assert [%{uuid: uuid}] = Outline.held(p.uuid)
       assert uuid == logged.uuid
     end
@@ -110,7 +110,7 @@ defmodule PhoenixKitProjects.OutlineTest do
         Outline.sync(p.uuid, [line("Other", 0, b.uuid), line("Moved", 1, a.uuid)], [b.uuid])
 
       assert revived == a.uuid
-      assert listed(p) == [{"Other", 0, "todo"}, {"Moved", 1, "todo"}]
+      assert listed(p) == [{"Other", 0, "waiting"}, {"Moved", 1, "waiting"}]
       assert Projects.get_assignment(a.uuid).number == a.number
     end
 
@@ -123,7 +123,7 @@ defmodule PhoenixKitProjects.OutlineTest do
         Outline.sync(p.uuid, [line("Child", 0, child.uuid)], [parent.uuid, child.uuid])
 
       assert summary.removed == [parent.uuid]
-      assert listed(p) == [{"Child", 0, "todo"}]
+      assert listed(p) == [{"Child", 0, "waiting"}]
     end
 
     test "malformed lines are skipped, never a crash" do
@@ -147,10 +147,10 @@ defmodule PhoenixKitProjects.OutlineTest do
       # No `tmp` on these lines, so nothing to report back — but made.
       assert created == %{}
       [cafe, longest, under, nil_depth] = listed(p)
-      assert cafe == {"Café 🎨 — 日本", 0, "todo"}
+      assert cafe == {"Café 🎨 — 日本", 0, "waiting"}
       assert String.length(elem(longest, 0)) == 500
-      assert under == {"Under", 1, "todo"}
-      assert nil_depth == {"Nil depth", 0, "todo"}
+      assert under == {"Under", 1, "waiting"}
+      assert nil_depth == {"Nil depth", 0, "waiting"}
     end
 
     test "too many lines, or a project that is gone, is an error" do
@@ -164,7 +164,7 @@ defmodule PhoenixKitProjects.OutlineTest do
       p = project()
       ticked = %{"text" => "Done already", "done" => true}
       {:ok, _} = Outline.sync(p.uuid, [ticked], [], allow_done: false)
-      assert listed(p) == [{"Done already", 0, "todo"}]
+      assert listed(p) == [{"Done already", 0, "waiting"}]
     end
 
     test "a task the browser never knew of is kept, in its place" do
@@ -218,7 +218,7 @@ defmodule PhoenixKitProjects.OutlineTest do
 
     test "the last subtask ticked ticks its parent, level by level", %{p: p, t: t} do
       {:ok, _} = Projects.complete_assignment(t["One"], nil)
-      assert {"Parent", 0, "todo"} in listed(p)
+      assert {"Parent", 0, "waiting"} in listed(p)
 
       {:ok, _} = Projects.complete_assignment(t["Deep"], nil)
       assert {"Two", 1, "done"} in listed(p)
@@ -232,7 +232,7 @@ defmodule PhoenixKitProjects.OutlineTest do
         })
 
       for title <- ["One", "Deep"], do: {:ok, _} = Projects.complete_assignment(t[title], nil)
-      assert {"Parent", 0, "todo"} in listed(p)
+      assert {"Parent", 0, "waiting"} in listed(p)
     end
 
     test "reopening a subtask reopens what it sits under; unticking a parent touches nothing below",
@@ -289,7 +289,7 @@ defmodule PhoenixKitProjects.OutlineTest do
       t = Map.new(Projects.list_assignments(p.uuid), &{&1.task.title, &1})
 
       {:ok, _} = Outline.move(t["A"], t["B"].uuid, :last)
-      assert listed(p) == [{"B", 0, "todo"}, {"A", 1, "todo"}, {"A1", 2, "todo"}]
+      assert listed(p) == [{"B", 0, "waiting"}, {"A", 1, "waiting"}, {"A1", 2, "waiting"}]
 
       assert {:error, :cycle} =
                Outline.move(Projects.get_assignment(t["B"].uuid), t["A1"].uuid, :last)
@@ -348,7 +348,7 @@ defmodule PhoenixKitProjects.OutlineTest do
       top = Enum.find(Projects.list_assignments(p.uuid), &(&1.task.title == "Top"))
 
       {:ok, _} = Projects.delete_assignment(top)
-      assert listed(p) == [{"Next", 0, "todo"}]
+      assert listed(p) == [{"Next", 0, "waiting"}]
     end
 
     test "a held task can be restored, with what is held under it" do
@@ -367,7 +367,7 @@ defmodule PhoenixKitProjects.OutlineTest do
       assert Enum.sort(summary.held) == Enum.sort([rows["Held"].uuid, rows["Held child"].uuid])
 
       {:ok, _} = Outline.restore(Projects.get_assignment(rows["Held"].uuid))
-      assert {"Held child", 1, "todo"} in listed(p)
+      assert {"Held child", 1, "waiting"} in listed(p)
     end
   end
 end

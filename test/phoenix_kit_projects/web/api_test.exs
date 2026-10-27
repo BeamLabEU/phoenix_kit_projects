@@ -395,7 +395,7 @@ defmodule PhoenixKitProjects.Web.ApiTest do
     assert listed["uuid"] == a.uuid
     assert listed["title"] == "Wire the API"
     assert listed["status"] == "todo"
-    assert listed["allowed_transitions"] == ["in_progress", "done"]
+    assert listed["allowed_transitions"] == ["waiting", "in_progress", "done"]
     assert listed["library_task"] == true
 
     %{"task" => one} = c |> get("#{@base}/tasks/#{a.uuid}") |> json_response(200)
@@ -413,7 +413,7 @@ defmodule PhoenixKitProjects.Web.ApiTest do
       })
       |> json_response(201)
 
-    assert created["status"] == "todo"
+    assert created["status"] == "waiting"
     assert created["priority"] == "high"
     assert created["description"] == "cover every call"
     assert created["library_task"] == false

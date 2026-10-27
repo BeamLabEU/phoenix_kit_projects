@@ -47,7 +47,7 @@ defmodule PhoenixKitProjects.Integration.AssignmentStatusChangedTest do
 
       {:ok, _} = Projects.update_assignment_status(a, %{status: "in_progress"})
 
-      expected = %{uuid: a.uuid, project_uuid: p.uuid, from: "todo", to: "in_progress"}
+      expected = %{uuid: a.uuid, project_uuid: p.uuid, from: "waiting", to: "in_progress"}
       assert_receive {:projects, :assignment_status_changed, ^expected}, 500
       assert_receive {:projects, :assignment_status_changed, ^expected}, 500
       assert_receive {:projects, :assignment_updated, %{uuid: uuid}}, 500
@@ -76,7 +76,7 @@ defmodule PhoenixKitProjects.Integration.AssignmentStatusChangedTest do
 
       {:ok, _} = Projects.update_assignment_form(a, %{"status" => "in_progress"})
 
-      expected = %{uuid: a.uuid, project_uuid: p.uuid, from: "todo", to: "in_progress"}
+      expected = %{uuid: a.uuid, project_uuid: p.uuid, from: "waiting", to: "in_progress"}
       assert_receive {:projects, :assignment_status_changed, ^expected}, 500
     end
 
@@ -106,13 +106,13 @@ defmodule PhoenixKitProjects.Integration.AssignmentStatusChangedTest do
       parent_uuid = parent.uuid
 
       assert_receive {:projects, :assignment_status_changed,
-                      %{uuid: ^parent_uuid, from: "todo", to: "done"}},
+                      %{uuid: ^parent_uuid, from: "waiting", to: "done"}},
                      500
 
       got =
         for _ <- 1..2 do
           assert_receive {:projects, :assignment_status_changed,
-                          %{uuid: u, from: "todo", to: "done", project_uuid: pu}},
+                          %{uuid: u, from: "waiting", to: "done", project_uuid: pu}},
                          500
 
           assert pu == p.uuid
@@ -137,7 +137,7 @@ defmodule PhoenixKitProjects.Integration.AssignmentStatusChangedTest do
       parent_uuid = parent.uuid
 
       assert_receive {:projects, :assignment_status_changed,
-                      %{uuid: ^parent_uuid, from: "todo", to: "done"}},
+                      %{uuid: ^parent_uuid, from: "waiting", to: "done"}},
                      500
     end
 

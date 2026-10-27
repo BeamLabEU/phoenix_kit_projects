@@ -176,14 +176,14 @@ defmodule PhoenixKitProjects.Handoffs do
   # ── Your turn ───────────────────────────────────────────────────────
 
   @doc """
-  The tasks of `project_uuid` that completing `uuid` WOULD make ready —
-  read before the write, so the project page can ask first ("next up")
-  and nobody is told of a completion that was a slip. Completing a task
-  ticks its open subtasks, and closing a parent's last open subtask closes
-  the parent while the project lets it (`Outline.parent_auto?/1`), so both
-  are counted done here; the
-  rest is `ready?/2`, the rule `"your turn"` is told by. In the list's
-  order. Never raises: an empty list on a failure.
+  The not-started tasks of `project_uuid` (waiting, or already released)
+  that nothing would hold up once `uuid` is done — read before the write,
+  so the project page can ask first ("next up"): release each one or keep
+  it idle, and nobody is told of a completion that was a slip. Completing
+  a task ticks its open subtasks, and closing a parent's last open subtask
+  closes the parent while the project lets it (`Outline.parent_auto?/1`),
+  so both are counted done here. In the list's order. Never raises: an
+  empty list on a failure.
   """
   @spec would_ready(binary(), binary()) :: [map()]
   def would_ready(project_uuid, uuid) do
@@ -201,7 +201,7 @@ defmodule PhoenixKitProjects.Handoffs do
     closed
     |> Enum.flat_map(&waiting_on(&1, after_shape))
     |> Enum.reject(&(&1.uuid in closed))
-    |> Enum.filter(&ready?(&1, after_shape))
+    |> Enum.filter(&(&1.status in ["waiting", "todo"] and clear?(&1.uuid, after_shape, 0)))
     |> Enum.uniq_by(& &1.uuid)
     |> Enum.sort_by(& &1.position)
   rescue
@@ -261,8 +261,29 @@ defmodule PhoenixKitProjects.Handoffs do
         end
       end)
     end)
+    |> Kernel.++(released(changes, shape))
     |> Enum.uniq_by(fn {row, _} -> row.uuid end)
     |> tell("projects.assignment_ready", actor)
+  end
+
+  # A waiting task released ("can be started") whose way is clear tells its
+  # people it is their turn — named after what it waited on, the task done
+  # in the same write first (the "next up" confirm), else any done one.
+  # A task waiting stays silent: idle means nobody is asked yet.
+  defp released(changes, shape) do
+    done_now = for %{to: "done", uuid: uuid} <- changes, do: uuid
+
+    for %{from: "waiting", to: "todo", uuid: uuid} <- changes,
+        %{} = row <- [Map.get(shape.rows, uuid)],
+        ready?(row, shape) do
+      deps = Map.get(shape.deps, uuid, [])
+
+      case Enum.find(deps, &(&1 in done_now)) ||
+             Enum.find(deps, &(get_in(shape.rows, [&1, :status]) == "done")) do
+        nil -> {row, %{}}
+        dep -> {row, %{"after" => label(shape, dep), "after_uuid" => dep}}
+      end
+    end
   end
 
   # ── On hold ─────────────────────────────────────────────────────────

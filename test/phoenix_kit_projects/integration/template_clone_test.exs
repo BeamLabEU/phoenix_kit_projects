@@ -64,8 +64,8 @@ defmodule PhoenixKitProjects.Integration.TemplateCloneTest do
 
       new_assignments = Projects.list_assignments(project.uuid)
       assert length(new_assignments) == 2
-      # All cloned assignments start in "todo" regardless of source state.
-      assert Enum.all?(new_assignments, &(&1.status == "todo"))
+      # All cloned assignments start waiting regardless of source state.
+      assert Enum.all?(new_assignments, &(&1.status == "waiting"))
 
       new_deps = Projects.list_all_dependencies(project.uuid)
       assert length(new_deps) == 1

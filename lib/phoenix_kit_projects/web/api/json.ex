@@ -28,9 +28,11 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Api.{Assignee, Docs}
 
-  @lifecycle ~w(todo in_progress done)
+  # `waiting` (the default) is idle; `todo` ("can be started") is released.
+  @lifecycle ~w(waiting todo in_progress done)
   @transitions %{
-    "todo" => ~w(in_progress done),
+    "waiting" => ~w(todo in_progress done),
+    "todo" => ~w(waiting in_progress done),
     "in_progress" => ~w(done todo),
     "done" => ~w(todo)
   }

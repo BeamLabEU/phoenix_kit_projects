@@ -503,6 +503,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   # calendar lib infers a readable text color for daisyUI semantic classes.
   defp status_color("done"), do: "bg-success"
   defp status_color("in_progress"), do: "bg-warning"
+  defp status_color("waiting"), do: "bg-neutral"
   defp status_color(_), do: "bg-primary"
 
   defp click_target(%Assignment{} = a) do
@@ -660,8 +661,12 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                 </p>
                 <p class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span class="inline-flex items-center gap-1.5">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-neutral"></span>
+                    {gettext("waiting")}
+                  </span>
+                  <span class="inline-flex items-center gap-1.5">
                     <span class="inline-block w-2.5 h-2.5 rounded-full bg-primary"></span>
-                    {gettext("todo")}
+                    {gettext("can be started")}
                   </span>
                   <span class="inline-flex items-center gap-1.5">
                     <span class="inline-block w-2.5 h-2.5 rounded-full bg-warning"></span>

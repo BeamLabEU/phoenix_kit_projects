@@ -883,7 +883,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # are legacy or hand-edited rows — but filtering three known values meant
   # they appeared in NO column and vanished without a word.
   defp board_orphans(assignments),
-    do: Enum.count(assignments, &(&1.status not in ["todo", "in_progress", "done"]))
+    do: Enum.count(assignments, &(&1.status not in ["waiting", "todo", "in_progress", "done"]))
 
   # From the FIELDS, never from `assignee_type/1` — that returns a
   # translated label ("Person"/"Team"/"Dept"), so matching on it would pick
@@ -894,8 +894,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp board_columns(fx, assignments) do
     middle? = fx.in_progress or Enum.any?(assignments, &(&1.status == "in_progress"))
 
-    [{"todo", gettext("To do"), "border-t-warning"}] ++
-      if(middle?, do: [{"in_progress", gettext("In progress"), "border-t-info"}], else: []) ++
+    [
+      {"waiting", gettext("Waiting"), "border-t-base-300"},
+      {"todo", gettext("Can be started"), "border-t-info"}
+    ] ++
+      if(middle?, do: [{"in_progress", gettext("In progress"), "border-t-warning"}], else: []) ++
       [{"done", gettext("Done"), "border-t-success"}]
   end
 
@@ -1206,13 +1209,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # ── Next up ─────────────────────────────────────────────────────────
   #
   # Completing a task that other tasks wait on asks first: "next up" lists
-  # what the completion would make ready (`Handoffs.would_ready/2`) and
-  # writes nothing until it is confirmed — a slip of the finger must not
-  # tell ten people to start. There, a task the client no longer wants is
-  # marked "not needed" (removed on confirm, BEFORE the completion, so its
-  # people are never told to start it), and a comment for whoever does a
-  # task is posted to its thread after the completion (the thread tells its
-  # people). Cancel leaves everything as it was.
+  # the not-started tasks nothing would hold up once it is done
+  # (`Handoffs.would_ready/2`) and writes nothing until it is confirmed — a
+  # slip of the finger must not tell ten people to start. Each listed task
+  # is released ("can be started", its people told) unless it is set to
+  # "keep idle" (it stays waiting, nobody told), and a comment for whoever
+  # does it is posted to its thread. Cancel leaves everything as it was.
   defp next_up_for(socket, %Assignment{} = a, params) do
     scope = socket.assigns[:phoenix_kit_current_scope]
     project = socket.assigns.project
@@ -1235,49 +1237,102 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           Map.new(rows, fn row ->
             {row.uuid,
              %{
-               remove: may_remove_next_up?(socket, scope, project, row),
+               release: may_release_next_up?(scope, project, row),
                note: may_comment_next_up?(socket, scope, project, row)
              }}
           end),
-        drop: []
+        idle: []
       }
     end
   end
 
-  defp may_remove_next_up?(socket, scope, project, row),
-    do: socket.assigns.fx[:tasks] == true and Authz.can?(scope, project, :delete_tasks, row)
+  defp may_release_next_up?(scope, project, row),
+    do: is_nil(row.child_project_uuid) and Authz.can?(scope, project, :update_status, row)
 
   defp may_comment_next_up?(socket, scope, project, row),
     do: socket.assigns.comments_enabled and Authz.can?(scope, project, :comment, row)
 
-  # The offered rows still on the page, in their order.
+  # The offered rows still on the page and still not started, in order.
   defp next_up_rows(nil, _assignments), do: []
 
   defp next_up_rows(%{uuids: uuids}, assignments),
-    do: Enum.filter(assignments, &(&1.uuid in uuids and &1.status == "todo"))
+    do: Enum.filter(assignments, &(&1.uuid in uuids and &1.status in ["waiting", "todo"]))
 
-  # The tasks marked "not needed", each checked again now — a right seen
-  # when the dialog opened is not trusted at the write.
-  defp remove_next_up(socket, %{drop: drop}) do
+  # Whether the dialog will release `row` on confirm: not kept idle, and
+  # the viewer may change its status.
+  defp next_up_release?(%{idle: idle, can: can}, row),
+    do: row.uuid not in idle and get_in(can, [row.uuid, :release]) == true
+
+  # Confirm: the rows kept idle go back to waiting first (a released one
+  # is never told), then the completion, then the releases — one hand-off
+  # pass (`Handoffs.batch/1`), so each person is told once, naming the
+  # task just done. Every right is checked again now: one seen when the
+  # dialog opened is not trusted at the write.
+  defp confirm_next_up(socket, %Assignment{} = a, next_up) do
     scope = socket.assigns[:phoenix_kit_current_scope]
     project = socket.assigns.project
+    rows = next_up_rows_from(socket, next_up.uuids)
+    may? = &may_release_next_up?(scope, project, &1)
 
-    socket
-    |> next_up_rows_from(drop)
-    |> Enum.filter(&may_remove_next_up?(socket, scope, project, &1))
-    |> Enum.reduce({socket, 0}, fn row, {socket, n} ->
-      case remove_task(socket, row) do
-        {:ok, socket} -> {socket, n + 1}
-        {:error, socket} -> {socket, n}
+    Handoffs.batch(fn ->
+      for row <- rows,
+          row.uuid in next_up.idle,
+          row.status == "todo",
+          may?.(row),
+          do: set_readiness(socket, row, "waiting")
+
+      below = Outline.open_below(a, current_person_uuid(socket))
+
+      with {:ok, socket} <- complete_assignment(socket, a, below) do
+        released =
+          for row <- rows,
+              row.uuid not in next_up.idle,
+              row.status == "waiting",
+              may?.(row),
+              set_readiness(socket, row, "todo") == :ok,
+              do: row.uuid
+
+        {:ok, socket, length(released)}
       end
     end)
   end
 
-  defp post_next_up_comments(socket, %{uuids: uuids, drop: drop}, notes) when is_map(notes) do
+  # Releases a waiting task ("can be started" — `Handoffs` tells its people)
+  # or puts one back to idle (nobody told). The row is the history; the
+  # notice is the hand-off's, so this entry names no target.
+  defp set_readiness(socket, %Assignment{} = a, to) when to in ["waiting", "todo"] do
+    action =
+      if to == "todo", do: "projects.assignment_made_ready", else: "projects.assignment_made_idle"
+
+    case Projects.update_assignment_status(a, %{status: to}) do
+      {:ok, _} ->
+        Activity.log(action,
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: a.uuid,
+          metadata: %{"task" => Assignment.label(a), "from" => a.status, "to" => to},
+          tell: false
+        )
+
+        :ok
+
+      {:error, _} ->
+        Activity.log_failed(action,
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: a.uuid,
+          metadata: %{"task" => Assignment.label(a)}
+        )
+
+        :error
+    end
+  end
+
+  defp post_next_up_comments(socket, %{uuids: uuids}, notes) when is_map(notes) do
     actor = Activity.actor_uuid(socket)
     scope = socket.assigns[:phoenix_kit_current_scope]
     project = socket.assigns.project
-    rows = Map.new(next_up_rows_from(socket, uuids -- drop), &{&1.uuid, &1})
+    rows = Map.new(next_up_rows_from(socket, uuids), &{&1.uuid, &1})
 
     posted =
       for {uuid, text} <- notes,
@@ -1335,10 +1390,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp next_up_flash(socket, 0, 0), do: socket
 
-  defp next_up_flash(socket, removed, sent) do
+  defp next_up_flash(socket, released, sent) do
     message =
       [
-        removed > 0 && ngettext("1 task removed.", "%{count} tasks removed.", removed),
+        released > 0 &&
+          ngettext(
+            "1 task can be started now.",
+            "%{count} tasks can be started now.",
+            released
+          ),
         sent > 0 && ngettext("1 comment sent.", "%{count} comments sent.", sent)
       ]
       |> Enum.filter(& &1)
@@ -1508,11 +1568,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               >
                 <.icon name={if @ol.folded, do: "hero-chevron-right", else: "hero-chevron-down"} class="w-4 h-4" />
               </button>
-              <.assignment_status_badge
-                :if={not @is_template}
-                status={@a.status}
-                waiting={waiting?(@a, @held_by)}
-              />
+              <.assignment_status_badge :if={not @is_template} status={@a.status} />
               <.ref_chip :if={not @is_template} ref={Refs.task_ref(@project.key, @a.number)} />
               <%!-- The title is typed into where it stands (Enter adds the
                    next task, Tab makes it a subtask); the arrow opens the
@@ -1560,12 +1616,25 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             <div class="flex items-center gap-1 shrink-0">
               <%= if not @is_template do %>
+                <%!-- A waiting task is released first ("can be started",
+                     which tells its people); a released one is started
+                     or done. --%>
+                <button
+                  :if={@a.status == "waiting" and @a.child_project_uuid == nil}
+                  phx-click="make_ready"
+                  phx-value-uuid={@a.uuid}
+                  phx-disable-with={gettext("Saving…")}
+                  class="btn btn-info btn-xs"
+                  title={gettext("Release it: its people are told they can start")}
+                >
+                  {gettext("Can be started")}
+                </button>
                 <%= cond do %>
                   <% @a.status == "todo" and @fx.in_progress -> %>
                     <button phx-click="start_task" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Starting…")} class="btn btn-warning btn-xs">
                       {gettext("Start")}
                     </button>
-                  <% @a.status in ["todo", "in_progress"] -> %>
+                  <% @a.status in ["waiting", "todo", "in_progress"] -> %>
                     <.button
                       type="button"
                       variant="success"
@@ -1887,14 +1956,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end)
   end
 
-  # A to-do row is waiting while something it (or a task above it) waits
-  # on is open, and can be started once nothing is — `Handoffs.ready?/2`.
-  # Nil for every other status: the badge then shows the status as is.
-  defp waiting?(%{status: "todo", uuid: uuid}, held_by),
-    do: Map.get(held_by, uuid, []) != []
-
-  defp waiting?(_a, _held_by), do: nil
-
   defp open_deps_up(nil, _parents, _deps, _depth), do: []
   defp open_deps_up(_uuid, _parents, _deps, depth) when depth > 100, do: []
 
@@ -1952,6 +2013,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   @gated_events %{
     "complete" => :tasks,
     "next_up_confirm" => :tasks,
+    "make_ready" => :tasks,
+    "make_idle" => :tasks,
     # Owned by the in-progress flag (which itself needs the tasks
     # extension): with the step off, Start is neither shown nor accepted.
     "start_task" => :in_progress,
@@ -1997,6 +2060,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   @event_actions %{
     "complete" => :update_status,
     "next_up_confirm" => :update_status,
+    "make_ready" => :update_status,
+    "make_idle" => :update_status,
     "start_task" => :update_status,
     "reopen" => :update_status,
     "ask_reopen" => :update_status,
@@ -2037,7 +2102,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # their own task even when the floor is higher. Resolving the record
   # here (rather than passing nil) is what keeps "assignees can update
   # their own status" true through the interceptor.
-  @record_param_events ~w(complete next_up_confirm start_task reopen ask_reopen change_workflow_status
+  @record_param_events ~w(complete next_up_confirm make_ready make_idle start_task reopen ask_reopen change_workflow_status
                           update_progress toggle_tracking remove_assignment save_duration)
 
   @impl true
@@ -2180,8 +2245,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp reposition_from_drop(_socket, _uuid, _ordered_ids), do: :ok
 
-  defp delegate_board_move(socket, "todo", uuid),
-    do: gated_handle_event("reopen", %{"uuid" => uuid}, socket)
+  # Into "can be started": a waiting card is released, a started or done
+  # one reopened. Into "waiting": put back to idle (`make_idle`).
+  defp delegate_board_move(socket, "todo", uuid) do
+    case scoped_assignment(socket, uuid) do
+      %Assignment{status: "waiting"} ->
+        gated_handle_event("make_ready", %{"uuid" => uuid}, socket)
+
+      _ ->
+        gated_handle_event("reopen", %{"uuid" => uuid}, socket)
+    end
+  end
+
+  defp delegate_board_move(socket, "waiting", uuid),
+    do: gated_handle_event("make_idle", %{"uuid" => uuid}, socket)
 
   defp delegate_board_move(socket, "in_progress", uuid),
     do: gated_handle_event("start_task", %{"uuid" => uuid}, socket)
@@ -2211,7 +2288,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          %{"moved_id" => uuid, "status" => status} = params,
          socket
        )
-       when status in ["todo", "in_progress", "done"] do
+       when status in ["waiting", "todo", "in_progress", "done"] do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
@@ -2358,20 +2435,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gated_handle_event("next_up_close", _params, socket),
     do: {:noreply, assign(socket, next_up: nil)}
 
-  # "Not needed" only marks the task; it is removed when the dialog is
-  # confirmed, under the same right as the row's own remove.
-  defp gated_handle_event("next_up_toggle_drop", %{"uuid" => uuid}, socket) do
+  # "Keep idle" only marks the task in the dialog; nothing is written
+  # until it is confirmed.
+  defp gated_handle_event("next_up_toggle_idle", %{"uuid" => uuid}, socket) do
     case socket.assigns.next_up do
-      %{uuids: uuids, can: can, drop: drop} = next_up when is_binary(uuid) ->
+      %{uuids: uuids, idle: idle} = next_up when is_binary(uuid) ->
         cond do
-          uuid in drop ->
-            {:noreply, assign(socket, next_up: %{next_up | drop: drop -- [uuid]})}
-
-          uuid in uuids and get_in(can, [uuid, :remove]) ->
-            {:noreply, assign(socket, next_up: %{next_up | drop: [uuid | drop]})}
-
-          true ->
-            {:noreply, socket}
+          uuid in idle -> {:noreply, assign(socket, next_up: %{next_up | idle: idle -- [uuid]})}
+          uuid in uuids -> {:noreply, assign(socket, next_up: %{next_up | idle: [uuid | idle]})}
+          true -> {:noreply, socket}
         end
 
       _ ->
@@ -2379,19 +2451,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # Confirm: the removals first (their people are never told to start),
-  # then the completion (which tells the rest), then the comments.
   defp gated_handle_event("next_up_confirm", %{"uuid" => uuid} = params, socket) do
     with %{task_uuid: ^uuid} = next_up <- socket.assigns.next_up,
          %Assignment{status: status} = a when status != "done" <- scoped_assignment(socket, uuid) do
       socket = assign(socket, next_up: nil)
-      {socket, removed} = remove_next_up(socket, next_up)
-      below = Outline.open_below(a, current_person_uuid(socket))
 
-      case complete_assignment(socket, a, below) do
-        {:ok, socket} ->
+      case confirm_next_up(socket, a, next_up) do
+        {:ok, socket, released} ->
           {socket, sent} = post_next_up_comments(socket, next_up, params["notes"])
-          maybe_sync_and_reload({:ok, next_up_flash(socket, removed, sent)})
+          maybe_sync_and_reload({:ok, next_up_flash(socket, released, sent)})
 
         error ->
           maybe_sync_and_reload(error)
@@ -2401,14 +2469,49 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # A waiting task released by hand: "can be started", its people told.
+  defp gated_handle_event("make_ready", %{"uuid" => uuid}, socket) do
+    case scoped_assignment(socket, uuid) do
+      %Assignment{status: "waiting", child_project_uuid: nil} = a ->
+        _ = set_readiness(socket, a, "todo")
+        {:noreply, load_assignments(socket)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  # Back to idle — from "can be started", or (a board drag) from started or
+  # done work, which reopens it as waiting.
+  defp gated_handle_event("make_idle", %{"uuid" => uuid}, socket) do
+    case scoped_assignment(socket, uuid) do
+      %Assignment{status: "todo"} = a ->
+        _ = set_readiness(socket, a, "waiting")
+        {:noreply, load_assignments(socket)}
+
+      %Assignment{status: status, child_project_uuid: nil} = a
+      when status in ["in_progress", "done"] ->
+        attrs = %{status: "waiting", progress_pct: 0, completed_by_uuid: nil, completed_at: nil}
+
+        socket
+        |> update_assignment_with_activity(a, attrs, "projects.assignment_reopened",
+          metadata: %{"task" => Assignment.label(a)}
+        )
+        |> maybe_sync_and_reload()
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   defp gated_handle_event("reopen", %{"uuid" => uuid} = params, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
         {:noreply, socket}
 
-      # Already to do (a stale tab, a second click): nothing to reopen, and
+      # Not started (a stale tab, a second click): nothing to reopen, and
       # nobody to tell that it was.
-      %Assignment{status: "todo"} ->
+      %Assignment{status: status} when status in ["waiting", "todo"] ->
         {:noreply, assign(socket, reopen_uuid: nil)}
 
       a ->
@@ -3570,9 +3673,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp progress_action(100, prev_status) when prev_status != "done",
     do: "projects.assignment_completed"
 
-  defp progress_action(pct, "todo") when pct > 0, do: "projects.assignment_started"
+  defp progress_action(pct, prev_status) when pct > 0 and prev_status in ["waiting", "todo"],
+    do: "projects.assignment_started"
 
-  defp progress_action(0, prev_status) when prev_status != "todo",
+  defp progress_action(0, prev_status) when prev_status not in ["waiting", "todo"],
     do: "projects.assignment_reopened"
 
   defp progress_action(_pct, _prev_status), do: "projects.assignment_progress_updated"
@@ -5223,7 +5327,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <% board_columns = board_columns(@fx, @assignments) %>
         <div class={[
           "grid grid-cols-1 gap-4 items-start",
-          if(length(board_columns) == 3, do: "md:grid-cols-3", else: "md:grid-cols-2")
+          if(length(board_columns) == 4, do: "md:grid-cols-4", else: "md:grid-cols-3")
         ]}>
           <div
             :for={{status, title, tint} <- board_columns}
@@ -5288,12 +5392,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   </div>
 
                   <div class="flex flex-wrap items-center gap-1">
-                    <.assignment_status_badge
-                      :if={a.status == "todo"}
-                      status="todo"
-                      waiting={waiting?(a, @held_by)}
-                      size="xs"
-                    />
                     <.ref_chip ref={Assignment.ref(a)} />
                     <% sub = Map.get(@outline_counts, a.uuid) %>
                     <span :if={sub} class="badge badge-xs badge-outline gap-1" title={gettext("Subtasks done")}>
@@ -5343,11 +5441,21 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
                     <div class="ml-auto shrink-0">
                       <%= cond do %>
+                        <% a.status == "waiting" and a.child_project_uuid == nil -> %>
+                          <button
+                            phx-click="make_ready"
+                            phx-value-uuid={a.uuid}
+                            phx-disable-with="…"
+                            class="btn btn-info btn-xs"
+                            title={gettext("Release it: its people are told they can start")}
+                          >
+                            {gettext("Can be started")}
+                          </button>
                         <% a.status == "todo" and @fx.in_progress -> %>
                           <button phx-click="start_task" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-warning btn-xs">
                             {gettext("Start")}
                           </button>
-                        <% a.status in ["todo", "in_progress"] -> %>
+                        <% a.status in ["waiting", "todo", "in_progress"] -> %>
                           <button phx-click="complete" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-success btn-xs">
                             <.icon name="hero-check" class="w-3.5 h-3.5" />
                           </button>
@@ -5559,39 +5667,40 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <.form for={%{}} id={"next-up-form-#{@project.uuid}"} phx-submit="next_up_confirm" class="flex flex-col gap-3">
           <input type="hidden" name="uuid" value={@next_up.task_uuid} />
           <p class="text-sm text-base-content/70">
-            {gettext("These tasks can be started once it is done. Their people are told when you confirm — remove what is no longer needed, or leave a comment for whoever does it.")}
+            {gettext("Once it is done, these tasks can start. Choose for each: “can be started” tells its people when you confirm, “keep idle” leaves it waiting. You can leave a comment for whoever does it.")}
           </p>
           <div :for={a <- next_rows} class="rounded-box border border-base-200 p-3 flex flex-col gap-2">
-            <% can = Map.get(@next_up.can, a.uuid, %{remove: false, note: false}) %>
-            <% dropped? = a.uuid in @next_up.drop %>
+            <% can = Map.get(@next_up.can, a.uuid, %{release: false, note: false}) %>
+            <% release? = next_up_release?(@next_up, a) %>
             <div class="flex flex-wrap items-center gap-2">
-              <span :if={dropped?} class="badge badge-error badge-xs">{gettext("will be removed")}</span>
-              <.assignment_status_badge :if={not dropped?} status="todo" waiting={false} size="xs" />
-              <span class={["font-medium flex-1 min-w-0 truncate", dropped? && "line-through opacity-50"]}>
+              <.assignment_status_badge status={if(release?, do: "todo", else: "waiting")} size="xs" />
+              <span class="font-medium flex-1 min-w-0 truncate">
                 {Assignment.label(a, L10n.current_content_lang())}
               </span>
               <span class="text-xs text-base-content/60 truncate">{assignee_label(a)}</span>
-              <button
-                :if={can.remove and dropped?}
-                type="button"
-                phx-click="next_up_toggle_drop"
-                phx-value-uuid={a.uuid}
-                class="btn btn-ghost btn-xs gap-1"
-              >
-                <.icon name="hero-arrow-uturn-left" class="w-3.5 h-3.5" /> {gettext("Keep")}
-              </button>
-              <button
-                :if={can.remove and not dropped?}
-                type="button"
-                phx-click="next_up_toggle_drop"
-                phx-value-uuid={a.uuid}
-                class="btn btn-ghost btn-xs text-error gap-1"
-              >
-                <.icon name="hero-trash" class="w-3.5 h-3.5" /> {gettext("Not needed")}
-              </button>
+              <div :if={can.release} class="join" role="group" aria-label={gettext("What happens to it")}>
+                <button
+                  type="button"
+                  phx-click={if(release?, do: nil, else: "next_up_toggle_idle")}
+                  phx-value-uuid={a.uuid}
+                  aria-pressed={to_string(release?)}
+                  class={["btn btn-xs join-item", if(release?, do: "btn-info", else: "btn-ghost")]}
+                >
+                  {gettext("Can be started")}
+                </button>
+                <button
+                  type="button"
+                  phx-click={if(release?, do: "next_up_toggle_idle", else: nil)}
+                  phx-value-uuid={a.uuid}
+                  aria-pressed={to_string(not release?)}
+                  class={["btn btn-xs join-item", if(release?, do: "btn-ghost", else: "btn-neutral")]}
+                >
+                  {gettext("Keep idle")}
+                </button>
+              </div>
             </div>
             <textarea
-              :if={can.note and not dropped?}
+              :if={can.note}
               name={"notes[#{a.uuid}]"}
               rows="2"
               class="textarea textarea-bordered textarea-sm w-full"

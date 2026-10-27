@@ -326,7 +326,7 @@ defmodule PhoenixKitProjects.Features do
     [
       %{
         key: "simple",
-        name: "Simple to-do list",
+        name: "Simple task list",
         description: "Just a task list — no start or finish, no tracking, no scheduling.",
         flags: %{
           # A checklist is typed in place — no shared library to pick

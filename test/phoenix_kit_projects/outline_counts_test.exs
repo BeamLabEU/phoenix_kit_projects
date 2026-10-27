@@ -71,7 +71,7 @@ defmodule PhoenixKitProjects.OutlineCountsTest do
 
       assert node.task_total == 3
       assert node.task_done == 1
-      assert node.task_todo == 2
+      assert node.task_waiting == 2
       assert node.progress_pct == 33
     end
 
@@ -82,7 +82,7 @@ defmodule PhoenixKitProjects.OutlineCountsTest do
       assert Projects.assignment_counts_for_projects([project.uuid]) == %{project.uuid => 3}
 
       now = Projects.assignment_status_counts()
-      assert Map.get(now, "todo", 0) - Map.get(before, "todo", 0) == 2
+      assert Map.get(now, "waiting", 0) - Map.get(before, "waiting", 0) == 2
       assert Map.get(now, "done", 0) - Map.get(before, "done", 0) == 1
     end
 

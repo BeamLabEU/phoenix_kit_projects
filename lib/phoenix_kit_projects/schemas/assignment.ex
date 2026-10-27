@@ -22,7 +22,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   @primary_key {:uuid, UUIDv7, autogenerate: true}
   @foreign_key_type UUIDv7
 
-  @statuses ~w(todo in_progress done)
+  # `waiting` (the default): idle — nobody is asked to do it yet. `todo` is
+  # shown as "can be started": released, its people told (`Handoffs`).
+  @statuses ~w(waiting todo in_progress done)
   @duration_units ~w(minutes hours days weeks fortnights months years)
   @translatable_fields ~w(description)
 
@@ -65,7 +67,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
         }
 
   schema "phoenix_kit_project_assignments" do
-    field(:status, :string, default: "todo")
+    field(:status, :string, default: "waiting")
     field(:priority, :string, default: "normal")
     field(:position, :integer, default: 0)
     field(:description, :string)

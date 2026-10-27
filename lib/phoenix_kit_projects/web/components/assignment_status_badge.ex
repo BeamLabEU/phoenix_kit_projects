@@ -1,13 +1,13 @@
 defmodule PhoenixKitProjects.Web.Components.AssignmentStatusBadge do
   @moduledoc """
-  Status presentation for an `Assignment.status` value (`"todo"`,
-  `"in_progress"`, `"done"`). Mirrors `DerivedStatusBadge` but for the
+  Status presentation for an `Assignment.status` value (`"waiting"`,
+  `"todo"` — shown as "can be started" — `"in_progress"`, `"done"`). Mirrors `DerivedStatusBadge` but for the
   assignment lifecycle instead of the project lifecycle.
 
   ## Helpers
 
   All three helpers accept an arbitrary string and fall back to the
-  `"todo"` styling on unknown values so a half-broken DB row still
+  `"waiting"` styling on unknown values so a half-broken DB row still
   renders sensibly.
 
     * `color/1` — Tailwind `bg-*` class for filled circles/dots.
@@ -25,7 +25,8 @@ defmodule PhoenixKitProjects.Web.Components.AssignmentStatusBadge do
 
   @doc "Tailwind background-color class for an assignment status."
   @spec color(String.t() | nil) :: String.t()
-  def color("todo"), do: "bg-base-300"
+  def color("waiting"), do: "bg-base-300"
+  def color("todo"), do: "bg-info"
   def color("in_progress"), do: "bg-warning"
   def color("done"), do: "bg-success"
   def color(_), do: "bg-base-300"
@@ -36,6 +37,7 @@ defmodule PhoenixKitProjects.Web.Components.AssignmentStatusBadge do
   was invisible. Colored states use their daisyUI `*-content` foreground.
   """
   @spec text_color(String.t() | nil) :: String.t()
+  def text_color("todo"), do: "text-info-content"
   def text_color("in_progress"), do: "text-warning-content"
   def text_color("done"), do: "text-success-content"
   def text_color(_), do: "text-base-content"
@@ -46,54 +48,36 @@ defmodule PhoenixKitProjects.Web.Components.AssignmentStatusBadge do
   solid colored states stand on their own.
   """
   @spec ring(String.t() | nil) :: String.t()
+  def ring("todo"), do: ""
   def ring("in_progress"), do: ""
   def ring("done"), do: ""
   def ring(_), do: "border border-base-content/25"
 
   @doc "daisyUI badge variant class for an assignment status."
   @spec badge_class(String.t() | nil) :: String.t()
-  def badge_class("todo"), do: "badge-ghost"
+  def badge_class("waiting"), do: "badge-ghost"
+  def badge_class("todo"), do: "badge-info"
   def badge_class("in_progress"), do: "badge-warning"
   def badge_class("done"), do: "badge-success"
   def badge_class(_), do: "badge-ghost"
 
   @doc "Localized human label for an assignment status."
   @spec label(String.t() | nil) :: String.t()
-  def label("todo"), do: gettext("todo")
+  def label("waiting"), do: gettext("waiting")
+  def label("todo"), do: gettext("can be started")
   def label("in_progress"), do: gettext("in progress")
   def label("done"), do: gettext("done")
   def label(other) when is_binary(other), do: other
-  def label(_), do: gettext("todo")
-
-  @doc """
-  A `"todo"` task read against what it depends on (`Handoffs.ready?/2`'s
-  rule): `true` while something it waits on is still open ("waiting"),
-  `false` once nothing is ("can be started"). Derived, never stored — the
-  stored status stays `"todo"`. `nil` (not known here) and every other
-  status fall back to `badge_class/1` / `label/1`.
-  """
-  @spec badge_class(String.t() | nil, boolean() | nil) :: String.t()
-  def badge_class("todo", true), do: "badge-ghost"
-  def badge_class("todo", false), do: "badge-info"
-  def badge_class(status, _waiting), do: badge_class(status)
-
-  @doc "Localized label for a status read with `waiting` (see `badge_class/2`)."
-  @spec label(String.t() | nil, boolean() | nil) :: String.t()
-  def label("todo", true), do: gettext("waiting")
-  def label("todo", false), do: gettext("can be started")
-  def label(status, _waiting), do: label(status)
+  def label(_), do: gettext("waiting")
 
   attr(:status, :string, required: true)
-  # A "todo" task split by what it depends on: true = waiting, false = can
-  # be started, nil = not known where this is drawn (plain "todo").
-  attr(:waiting, :boolean, default: nil)
   attr(:size, :string, default: "sm", values: ~w(xs sm md lg))
   attr(:class, :string, default: nil)
 
   def assignment_status_badge(assigns) do
     ~H"""
-    <span class={["badge", size_class(@size), badge_class(@status, @waiting), @class]}>
-      {label(@status, @waiting)}
+    <span class={["badge", size_class(@size), badge_class(@status), @class]}>
+      {label(@status)}
     </span>
     """
   end

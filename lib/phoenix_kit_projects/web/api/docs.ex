@@ -255,7 +255,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             in: :query,
             type: "string",
             required: false,
-            doc: "todo | in_progress | done | open (= not done)"
+            doc: "waiting | todo | in_progress | done | open (= not done)"
           },
           %{
             name: "parent",
@@ -273,7 +273,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/tasks",
         summary:
-          "Create a task at the bottom of the plan, or last under `parent`. It starts as todo and is NOT started — call /tasks/{id}/start to begin it. It is unassigned unless you pass `assignee`. For several tasks at once (a list relayed from a client) use POST /tasks/batch.",
+          "Create a task at the bottom of the plan, or last under `parent`. It starts as waiting (idle — nobody is asked yet) and is NOT started: transition it to todo (“can be started”, which tells its people) or call /tasks/{id}/start to begin it. It is unassigned unless you pass `assignee`. For several tasks at once (a list relayed from a client) use POST /tasks/batch.",
         auth: true,
         scope: "tasks:write",
         action: "create_tasks",
@@ -512,7 +512,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/tasks/{id}/transition",
         summary:
-          "Move a task through its lifecycle: todo → in_progress or done; in_progress → done or todo; done → todo. Any other move answers 409 invalid_transition with `allowed_transitions` — reload the task and pick one of those. Completing a task completes every open task under it; when the last task under a parent is done, the parent completes too (unless the project turned that off); reopening a task reopens the done tasks above it; reopening a parent leaves the tasks under it as they are. `also_changed` says how many other tasks moved. Completing a task may complete the project; reopening one may reopen it.",
+          "Move a task through its lifecycle: waiting → todo, in_progress or done; todo → waiting, in_progress or done; in_progress → done or todo; done → todo. `waiting` is idle (the default for a new task); `todo` is released — shown as \"can be started\" — and moving a waiting task there tells its people it is their turn. Any other move answers 409 invalid_transition with `allowed_transitions` — reload the task and pick one of those. Completing a task completes every open task under it; when the last task under a parent is done, the parent completes too (unless the project turned that off); reopening a task reopens the done tasks above it; reopening a parent leaves the tasks under it as they are. `also_changed` says how many other tasks moved. Completing a task may complete the project; reopening one may reopen it.",
         auth: true,
         scope: "status:write",
         action: "update_status",
@@ -525,7 +525,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             in: :body,
             type: "string",
             required: true,
-            doc: "todo | in_progress | done"
+            doc: "waiting | todo | in_progress | done"
           },
           %{
             name: "reason",
@@ -1602,7 +1602,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     ## On a task: waiting, origin, labels
 
     - `waiting_on` - whom the task waits on ("the client", "the boss"). A badge beside the status,
-      not a status: a waiting task is still todo or in_progress. Clear it when the wait is over.
+      not a status: a task waiting on someone is still in whatever status it has. Clear it when the wait is over.
     - `origin` - where a relayed item came from ("client", "boss"); 40 characters.
     - `assignee` - who the task is FOR, apart from who made it (`created_by`) and who started it
       (`started_by`). On every row: `{kind, uuid, name}` (kind is person, team or department) or
@@ -1691,7 +1691,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       `usage`) when the figures are your estimate rather than a count; every entry answers with
       `estimated`, `model`, who recorded it and the note it came with.
     - **Workflow statuses belong to the project**, not to tasks: `POST /project/status`, with a slug
-      from `available_workflow_statuses`. Tasks have only todo / in_progress / done.
+      from `available_workflow_statuses`. Tasks have only waiting / todo / in_progress / done.
     - **Who did it:** your time and usage are recorded as this key (AI time, apart from people's;
       never billable). Task changes are logged under the person this key acts for (`acting_for`
       in /me; for a shared agent, the person who minted it), with the key named — you are their
@@ -1819,10 +1819,10 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
               kind: %{type: "string", enum: ["task", "subproject"]},
               title: %{type: "string"},
               description: %{type: ["string", "null"]},
-              status: %{type: "string", enum: ["todo", "in_progress", "done"]},
+              status: %{type: "string", enum: ["waiting", "todo", "in_progress", "done"]},
               allowed_transitions: %{
                 type: "array",
-                items: %{type: "string", enum: ["todo", "in_progress", "done"]}
+                items: %{type: "string", enum: ["waiting", "todo", "in_progress", "done"]}
               },
               priority: %{type: "string", enum: ["urgent", "high", "normal", "low"]},
               progress_pct: %{type: "integer", minimum: 0, maximum: 100},
