@@ -9,8 +9,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import Ecto.Query, only: [from: 2]
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitStaff.Schemas.{Department, Person}
 
   setup %{conn: conn} do
     {:ok, user} =
@@ -158,6 +162,128 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
 
     assert status(ctx.render) == "waiting"
     assert status(ctx.consult) == "waiting"
+  end
+
+  test "Ready to start opens the dialog for that task; nothing is written until confirm", ctx do
+    {:ok, view, _html} = show(ctx)
+
+    render_click(view, "ask_ready", %{"uuid" => ctx.consult.uuid})
+    assert has_element?(view, next_up(ctx.project), "ready to start?")
+    refute has_element?(view, next_up(ctx.project), "Keep idle")
+    assert status(ctx.consult) == "waiting"
+
+    render_click(view, "next_up_close", %{})
+    assert status(ctx.consult) == "waiting"
+
+    render_click(view, "ask_ready", %{"uuid" => ctx.consult.uuid})
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.consult.uuid})
+    assert status(ctx.consult) == "todo"
+    assert_activity_logged("projects.assignment_made_ready", resource_uuid: ctx.consult.uuid)
+  end
+
+  describe "who is told" do
+    setup ctx do
+      dept = Repo.insert!(%Department{name: "Measurers #{System.unique_integer([:positive])}"})
+      alice = person!(ctx.project, "Alice", dept)
+      bob = person!(ctx.project, "Bob", dept)
+
+      {:ok, measure} =
+        Projects.update_assignment_form(ctx.measure, %{"assigned_department_uuid" => dept.uuid})
+
+      %{alice: alice, bob: bob, dept: dept, measure: measure}
+    end
+
+    defp person!(project, name, dept) do
+      {:ok, user} =
+        Auth.register_user(%{
+          "email" => "#{String.downcase(name)}-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ValidPassword123!",
+          "first_name" => name
+        })
+
+      Repo.insert!(%Person{
+        user_uuid: user.uuid,
+        status: "active",
+        name: name,
+        primary_department_uuid: dept.uuid
+      })
+
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, user.uuid, role: "member")
+      user.uuid
+    end
+
+    defp notices(action, user_uuid) do
+      Repo.all(
+        from(e in PhoenixKit.Activity.Entry,
+          where: e.action == ^action and e.target_uuid == ^user_uuid
+        )
+      )
+    end
+
+    test "the dialog names the assignee and everyone the notice would reach", ctx do
+      {:ok, view, _html} = show(ctx)
+
+      html = render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
+
+      assert html =~ ctx.dept.name
+      assert html =~ "Send a notification to"
+      assert has_element?(view, next_up(ctx.project), "Alice")
+      assert has_element?(view, next_up(ctx.project), "Bob")
+    end
+
+    test "an unticked person is not told; the comment goes along with the notice", ctx do
+      {:ok, view, _html} = show(ctx)
+
+      render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
+
+      render_click(view, "next_up_toggle_person", %{
+        "uuid" => ctx.measure.uuid,
+        "user" => ctx.bob
+      })
+
+      render_submit(view, "next_up_confirm", %{
+        "uuid" => ctx.measure.uuid,
+        "notes" => %{ctx.measure.uuid => "Client is home after 17:00."}
+      })
+
+      assert status(ctx.measure) == "todo"
+      assert [notice] = notices("projects.assignment_ready", ctx.alice)
+      assert notice.metadata["notification_text"] =~ "Client is home after 17:00."
+      assert notices("projects.assignment_ready", ctx.bob) == []
+    end
+
+    test "only the task's own people can be unticked", ctx do
+      {:ok, view, _html} = show(ctx)
+
+      render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
+
+      render_click(view, "next_up_toggle_person", %{
+        "uuid" => ctx.measure.uuid,
+        "user" => ctx.actor_uuid
+      })
+
+      render_submit(view, "next_up_confirm", %{"uuid" => ctx.measure.uuid})
+
+      assert [_] = notices("projects.assignment_ready", ctx.alice)
+      assert [_] = notices("projects.assignment_ready", ctx.bob)
+    end
+
+    test "with comments on, the comment is kept on the task without a second notice", ctx do
+      :ok = PhoenixKitProjects.DataCase.with_comments_module()
+      {:ok, view, _html} = show(ctx)
+
+      render_click(view, "ask_ready", %{"uuid" => ctx.measure.uuid})
+
+      render_submit(view, "next_up_confirm", %{
+        "uuid" => ctx.measure.uuid,
+        "notes" => %{ctx.measure.uuid => "Bring the long tape."}
+      })
+
+      assert [comment] = PhoenixKitComments.list_comments("assignment", ctx.measure.uuid)
+      assert comment.content == "Bring the long tape."
+      assert [_] = notices("projects.assignment_ready", ctx.alice)
+      assert notices("projects.comment_added", ctx.alice) == []
+    end
   end
 
   describe "with comments" do

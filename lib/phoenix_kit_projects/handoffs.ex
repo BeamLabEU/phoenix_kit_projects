@@ -43,6 +43,7 @@ defmodule PhoenixKitProjects.Handoffs do
   @type change :: %{uuid: binary(), project_uuid: binary(), from: term(), to: term()}
 
   @batch :projects_handoff_batch
+  @overrides :projects_handoff_overrides
 
   # Deeper than any real outline; a guard against a cycle the database
   # trigger should already make impossible.
@@ -103,6 +104,25 @@ defmodule PhoenixKitProjects.Handoffs do
 
       run(Process.delete(@batch) || [])
       result
+    end
+  end
+
+  @doc """
+  Runs `fun` with per-task choices for the notices it causes, keyed by the
+  task's uuid: `:only` — the people (user uuids) who may be told about that
+  task, the rest left out (nil: everyone it would tell); `:note` — words
+  that ride along in the notice ("the client is home after 17:00"). What
+  the project page's "next up" dialog sets: who to tell, and what.
+  """
+  @spec with_overrides(%{binary() => map()}, (-> result)) :: result when result: term()
+  def with_overrides(overrides, fun) when is_map(overrides) and is_function(fun, 0) do
+    previous = Process.get(@overrides)
+    Process.put(@overrides, overrides)
+
+    try do
+      fun.()
+    after
+      if previous, do: Process.put(@overrides, previous), else: Process.delete(@overrides)
     end
   end
 
@@ -266,16 +286,16 @@ defmodule PhoenixKitProjects.Handoffs do
     |> tell("projects.assignment_ready", actor)
   end
 
-  # A waiting task released ("can be started") whose way is clear tells its
-  # people it is their turn — named after what it waited on, the task done
-  # in the same write first (the "next up" confirm), else any done one.
-  # A task waiting stays silent: idle means nobody is asked yet.
+  # A waiting task released ("ready to start") tells its people it is their
+  # turn — someone decided it can go, whatever is still open before it —
+  # named after what it waited on: the task done in the same write first
+  # (the "next up" confirm), else any done one. A task waiting stays
+  # silent: idle means nobody is asked yet.
   defp released(changes, shape) do
     done_now = for %{to: "done", uuid: uuid} <- changes, do: uuid
 
     for %{from: "waiting", to: "todo", uuid: uuid} <- changes,
-        %{} = row <- [Map.get(shape.rows, uuid)],
-        ready?(row, shape) do
+        %{} = row <- [Map.get(shape.rows, uuid)] do
       deps = Map.get(shape.deps, uuid, [])
 
       case Enum.find(deps, &(&1 in done_now)) ||
@@ -310,9 +330,12 @@ defmodule PhoenixKitProjects.Handoffs do
   # counted. The assignee lists are read per row — a person is a key, a team
   # or department one read each.
   defp tell(rows, action, actor) do
+    overrides = Process.get(@overrides) || %{}
+
     rows
     |> Enum.flat_map(fn {row, meta} ->
-      Enum.map(People.assignee_user_uuids(row), &{&1, row, meta})
+      {people, meta} = overridden(People.assignee_user_uuids(row), meta, overrides[row.uuid])
+      Enum.map(people, &{&1, row, meta})
     end)
     |> Enum.reject(fn {user_uuid, _, _} -> user_uuid == actor end)
     |> Enum.group_by(&{elem(&1, 0), elem(&1, 2)["resume"] == true}, &{elem(&1, 1), elem(&1, 2)})
@@ -328,6 +351,22 @@ defmodule PhoenixKitProjects.Handoffs do
           :ok
       end
     end)
+  end
+
+  # The page's choices for one task (`with_overrides/2`): only the people
+  # it ticked, and its note in the notice.
+  defp overridden(people, meta, nil), do: {people, meta}
+
+  defp overridden(people, meta, %{} = o) do
+    people = if is_list(o[:only]), do: Enum.filter(people, &(&1 in o[:only])), else: people
+
+    meta =
+      case o[:note] do
+        note when is_binary(note) and note != "" -> Map.put(meta, "note", note)
+        _ -> meta
+      end
+
+    {people, meta}
   end
 
   # ── Rows nobody logged ──────────────────────────────────────────────
