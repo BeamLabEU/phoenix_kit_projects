@@ -58,6 +58,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     Authz,
     Extensions,
     Features,
+    Handoffs,
     Health,
     Invoicing,
     L10n,
@@ -384,6 +385,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               log_time_uuid: nil,
               reopen_uuid: nil,
               reopen_task: nil,
+              next_up: nil,
               assignment_labels: %{},
               invoice_ready?: false
             )
@@ -530,6 +532,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       log_time_uuid: nil,
       reopen_uuid: nil,
       reopen_task: nil,
+      next_up: nil,
       assignment_labels: %{},
       invoice_ready?: false
     ]
@@ -1174,23 +1177,174 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
          ["complete"]
        )}
     else
-      attrs = %{
-        status: "done",
-        progress_pct: 100,
-        completed_by_uuid: Activity.actor_uuid(socket),
-        completed_at: DateTime.utc_now()
-      }
-
-      socket
-      |> update_assignment_with_activity(a, attrs, "projects.assignment_completed",
-        metadata: %{
-          "task" => Assignment.label(a),
-          "project" => socket.assigns.project.name,
-          "subtasks_ticked" => below.count
-        }
-      )
-      |> maybe_sync_and_reload()
+      # Asked first when the completion would hand work on: nothing is
+      # written — and nobody told — until "next up" is confirmed.
+      case a.status != "done" and next_up_for(socket, a, params) do
+        %{} = next_up -> {:noreply, assign(socket, next_up: next_up)}
+        _ -> socket |> complete_assignment(a, below) |> maybe_sync_and_reload()
+      end
     end
+  end
+
+  defp complete_assignment(socket, a, below) do
+    attrs = %{
+      status: "done",
+      progress_pct: 100,
+      completed_by_uuid: Activity.actor_uuid(socket),
+      completed_at: DateTime.utc_now()
+    }
+
+    update_assignment_with_activity(socket, a, attrs, "projects.assignment_completed",
+      metadata: %{
+        "task" => Assignment.label(a),
+        "project" => socket.assigns.project.name,
+        "subtasks_ticked" => below.count
+      }
+    )
+  end
+
+  # ── Next up ─────────────────────────────────────────────────────────
+  #
+  # Completing a task that other tasks wait on asks first: "next up" lists
+  # what the completion would make ready (`Handoffs.would_ready/2`) and
+  # writes nothing until it is confirmed — a slip of the finger must not
+  # tell ten people to start. There, a task the client no longer wants is
+  # marked "not needed" (removed on confirm, BEFORE the completion, so its
+  # people are never told to start it), and a comment for whoever does a
+  # task is posted to its thread after the completion (the thread tells its
+  # people). Cancel leaves everything as it was.
+  defp next_up_for(socket, %Assignment{} = a, params) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    project = socket.assigns.project
+    shown = Map.new(socket.assigns[:assignments] || [], &{&1.uuid, &1})
+
+    # Only what this page draws: a task inside an expanded sub-project is
+    # its own project's business.
+    rows =
+      a.project_uuid
+      |> Handoffs.would_ready(a.uuid)
+      |> Enum.flat_map(&List.wrap(Map.get(shown, &1.uuid)))
+
+    if rows != [] do
+      %{
+        task_uuid: a.uuid,
+        force: params["force"] == "1",
+        after: Assignment.label(a, L10n.current_content_lang()),
+        uuids: Enum.map(rows, & &1.uuid),
+        can:
+          Map.new(rows, fn row ->
+            {row.uuid,
+             %{
+               remove: may_remove_next_up?(socket, scope, project, row),
+               note: may_comment_next_up?(socket, scope, project, row)
+             }}
+          end),
+        drop: []
+      }
+    end
+  end
+
+  defp may_remove_next_up?(socket, scope, project, row),
+    do: socket.assigns.fx[:tasks] == true and Authz.can?(scope, project, :delete_tasks, row)
+
+  defp may_comment_next_up?(socket, scope, project, row),
+    do: socket.assigns.comments_enabled and Authz.can?(scope, project, :comment, row)
+
+  # The offered rows still on the page, in their order.
+  defp next_up_rows(nil, _assignments), do: []
+
+  defp next_up_rows(%{uuids: uuids}, assignments),
+    do: Enum.filter(assignments, &(&1.uuid in uuids and &1.status == "todo"))
+
+  # The tasks marked "not needed", each checked again now — a right seen
+  # when the dialog opened is not trusted at the write.
+  defp remove_next_up(socket, %{drop: drop}) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    project = socket.assigns.project
+
+    socket
+    |> next_up_rows_from(drop)
+    |> Enum.filter(&may_remove_next_up?(socket, scope, project, &1))
+    |> Enum.reduce({socket, 0}, fn row, {socket, n} ->
+      case remove_task(socket, row) do
+        {:ok, socket} -> {socket, n + 1}
+        {:error, socket} -> {socket, n}
+      end
+    end)
+  end
+
+  defp post_next_up_comments(socket, %{uuids: uuids, drop: drop}, notes) when is_map(notes) do
+    actor = Activity.actor_uuid(socket)
+    scope = socket.assigns[:phoenix_kit_current_scope]
+    project = socket.assigns.project
+    rows = Map.new(next_up_rows_from(socket, uuids -- drop), &{&1.uuid, &1})
+
+    posted =
+      for {uuid, text} <- notes,
+          %Assignment{} = row <- [Map.get(rows, uuid)],
+          is_binary(text),
+          text = String.trim(text),
+          text != "",
+          is_binary(actor),
+          may_comment_next_up?(socket, scope, project, row),
+          match?(
+            {:ok, _},
+            PhoenixKitComments.create_comment("assignment", uuid, actor, %{content: text})
+          ),
+          do: uuid
+
+    socket = if posted == [], do: socket, else: load_comment_counts(socket)
+    {socket, length(posted)}
+  end
+
+  defp post_next_up_comments(socket, _next_up, _notes), do: {socket, 0}
+
+  # Removes one task with its notices and history line; the caller
+  # reloads.
+  defp remove_task(socket, %Assignment{uuid: uuid} = a) do
+    case PhoenixKitProjects.Notices.removing(a, Activity.actor_uuid(socket), fn ->
+           Projects.delete_assignment(a)
+         end) do
+      {:ok, _} ->
+        # The task is gone now: the row names its project itself, so the
+        # project's History still finds it.
+        Activity.log("projects.assignment_removed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: uuid,
+          metadata: %{"task" => Assignment.label(a), "project_uuid" => a.project_uuid}
+        )
+
+        recompute_owning_subproject(socket, a)
+        {:ok, WebHelpers.notify_deleted(socket, :assignment, uuid)}
+
+      {:error, _} ->
+        Activity.log_failed("projects.assignment_removed",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          resource_uuid: uuid,
+          metadata: %{"task" => Assignment.label(a)}
+        )
+
+        {:error, socket}
+    end
+  end
+
+  defp next_up_rows_from(socket, uuids),
+    do: Enum.filter(socket.assigns[:assignments] || [], &(&1.uuid in uuids))
+
+  defp next_up_flash(socket, 0, 0), do: socket
+
+  defp next_up_flash(socket, removed, sent) do
+    message =
+      [
+        removed > 0 && ngettext("1 task removed.", "%{count} tasks removed.", removed),
+        sent > 0 && ngettext("1 comment sent.", "%{count} comments sent.", sent)
+      ]
+      |> Enum.filter(& &1)
+      |> Enum.join(" ")
+
+    put_flash(socket, :info, message)
   end
 
   defp current_person_uuid(socket) do
@@ -1354,7 +1508,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               >
                 <.icon name={if @ol.folded, do: "hero-chevron-right", else: "hero-chevron-down"} class="w-4 h-4" />
               </button>
-              <.assignment_status_badge :if={not @is_template} status={@a.status} />
+              <.assignment_status_badge
+                :if={not @is_template}
+                status={@a.status}
+                waiting={waiting?(@a, @held_by)}
+              />
               <.ref_chip :if={not @is_template} ref={Refs.task_ref(@project.key, @a.number)} />
               <%!-- The title is typed into where it stands (Enter adds the
                    next task, Tab makes it a subtask); the arrow opens the
@@ -1729,6 +1887,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end)
   end
 
+  # A to-do row is waiting while something it (or a task above it) waits
+  # on is open, and can be started once nothing is — `Handoffs.ready?/2`.
+  # Nil for every other status: the badge then shows the status as is.
+  defp waiting?(%{status: "todo", uuid: uuid}, held_by),
+    do: Map.get(held_by, uuid, []) != []
+
+  defp waiting?(_a, _held_by), do: nil
+
   defp open_deps_up(nil, _parents, _deps, _depth), do: []
   defp open_deps_up(_uuid, _parents, _deps, depth) when depth > 100, do: []
 
@@ -1785,6 +1951,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # otherwise refuse every Cancel, Escape and backdrop click.
   @gated_events %{
     "complete" => :tasks,
+    "next_up_confirm" => :tasks,
     # Owned by the in-progress flag (which itself needs the tasks
     # extension): with the step off, Start is neither shown nor accepted.
     "start_task" => :in_progress,
@@ -1829,6 +1996,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # or already guard themselves with a record — see :log_time below.
   @event_actions %{
     "complete" => :update_status,
+    "next_up_confirm" => :update_status,
     "start_task" => :update_status,
     "reopen" => :update_status,
     "ask_reopen" => :update_status,
@@ -1869,7 +2037,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # their own task even when the floor is higher. Resolving the record
   # here (rather than passing nil) is what keeps "assignees can update
   # their own status" true through the interceptor.
-  @record_param_events ~w(complete start_task reopen ask_reopen change_workflow_status
+  @record_param_events ~w(complete next_up_confirm start_task reopen ask_reopen change_workflow_status
                           update_progress toggle_tracking remove_assignment save_duration)
 
   @impl true
@@ -1912,7 +2080,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     # A question left open by an earlier tick is not this one's.
     {:noreply, socket} = handle_event(event, params, ConfirmAction.clear(socket))
-    {:reply, %{asked: socket.assigns[:confirm_action] != nil}, socket}
+    asked = socket.assigns[:confirm_action] != nil or socket.assigns[:next_up] != nil
+    {:reply, %{asked: asked}, socket}
   end
 
   def handle_event("outline_" <> _ = event, params, socket) do
@@ -2185,6 +2354,53 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gated_handle_event("close_reopen", _params, socket),
     do: {:noreply, assign(socket, reopen_uuid: nil)}
 
+  # Cancel: nothing was written, so there is nothing to undo.
+  defp gated_handle_event("next_up_close", _params, socket),
+    do: {:noreply, assign(socket, next_up: nil)}
+
+  # "Not needed" only marks the task; it is removed when the dialog is
+  # confirmed, under the same right as the row's own remove.
+  defp gated_handle_event("next_up_toggle_drop", %{"uuid" => uuid}, socket) do
+    case socket.assigns.next_up do
+      %{uuids: uuids, can: can, drop: drop} = next_up when is_binary(uuid) ->
+        cond do
+          uuid in drop ->
+            {:noreply, assign(socket, next_up: %{next_up | drop: drop -- [uuid]})}
+
+          uuid in uuids and get_in(can, [uuid, :remove]) ->
+            {:noreply, assign(socket, next_up: %{next_up | drop: [uuid | drop]})}
+
+          true ->
+            {:noreply, socket}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  # Confirm: the removals first (their people are never told to start),
+  # then the completion (which tells the rest), then the comments.
+  defp gated_handle_event("next_up_confirm", %{"uuid" => uuid} = params, socket) do
+    with %{task_uuid: ^uuid} = next_up <- socket.assigns.next_up,
+         %Assignment{status: status} = a when status != "done" <- scoped_assignment(socket, uuid) do
+      socket = assign(socket, next_up: nil)
+      {socket, removed} = remove_next_up(socket, next_up)
+      below = Outline.open_below(a, current_person_uuid(socket))
+
+      case complete_assignment(socket, a, below) do
+        {:ok, socket} ->
+          {socket, sent} = post_next_up_comments(socket, next_up, params["notes"])
+          maybe_sync_and_reload({:ok, next_up_flash(socket, removed, sent)})
+
+        error ->
+          maybe_sync_and_reload(error)
+      end
+    else
+      _ -> {:noreply, socket |> assign(next_up: nil) |> load_assignments()}
+    end
+  end
+
   defp gated_handle_event("reopen", %{"uuid" => uuid} = params, socket) do
     case scoped_assignment(socket, uuid) do
       nil ->
@@ -2303,36 +2519,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         {:noreply, socket}
 
       a ->
-        case PhoenixKitProjects.Notices.removing(a, Activity.actor_uuid(socket), fn ->
-               Projects.delete_assignment(a)
-             end) do
-          {:ok, _} ->
-            # The task is gone now: the row names its project itself, so the
-            # project's History still finds it.
-            Activity.log("projects.assignment_removed",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "assignment",
-              resource_uuid: uuid,
-              metadata: %{"task" => Assignment.label(a), "project_uuid" => a.project_uuid}
-            )
-
-            recompute_owning_subproject(socket, a)
-
+        case remove_task(socket, a) do
+          {:ok, socket} ->
             {:noreply,
              socket
-             |> WebHelpers.notify_deleted(:assignment, uuid)
              |> put_flash(:info, gettext("Task removed."))
              |> sync_project_completion()
              |> load_assignments()}
 
-          {:error, _} ->
-            Activity.log_failed("projects.assignment_removed",
-              actor_uuid: Activity.actor_uuid(socket),
-              resource_type: "assignment",
-              resource_uuid: uuid,
-              metadata: %{"task" => Assignment.label(a)}
-            )
-
+          {:error, socket} ->
             {:noreply, put_flash(socket, :error, gettext("Could not remove task."))}
         end
     end
@@ -5093,6 +5288,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   </div>
 
                   <div class="flex flex-wrap items-center gap-1">
+                    <.assignment_status_badge
+                      :if={a.status == "todo"}
+                      status="todo"
+                      waiting={waiting?(a, @held_by)}
+                      size="xs"
+                    />
                     <.ref_chip ref={Assignment.ref(a)} />
                     <% sub = Map.get(@outline_counts, a.uuid) %>
                     <span :if={sub} class="badge badge-xs badge-outline gap-1" title={gettext("Subtasks done")}>
@@ -5338,6 +5539,74 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </button>
             <button type="submit" phx-disable-with={gettext("Reopening…")} class="btn btn-warning btn-sm">
               <.icon name="hero-arrow-uturn-left" class="w-4 h-4" /> {gettext("Reopen")}
+            </button>
+          </div>
+        </.form>
+      </.modal>
+
+      <%!-- Next up: asked before a completion that hands work on
+           (`next_up_for/3`). Nothing is written until Confirm. --%>
+      <.modal
+        :if={@next_up}
+        show
+        on_close="next_up_close"
+        id={"project-next-up-#{@project.uuid}"}
+        max_width="lg"
+        close_guard={:input}
+      >
+        <:title>{gettext("Mark “%{task}” done?", task: @next_up.after)}</:title>
+        <% next_rows = next_up_rows(@next_up, @assignments) %>
+        <.form for={%{}} id={"next-up-form-#{@project.uuid}"} phx-submit="next_up_confirm" class="flex flex-col gap-3">
+          <input type="hidden" name="uuid" value={@next_up.task_uuid} />
+          <p class="text-sm text-base-content/70">
+            {gettext("These tasks can be started once it is done. Their people are told when you confirm — remove what is no longer needed, or leave a comment for whoever does it.")}
+          </p>
+          <div :for={a <- next_rows} class="rounded-box border border-base-200 p-3 flex flex-col gap-2">
+            <% can = Map.get(@next_up.can, a.uuid, %{remove: false, note: false}) %>
+            <% dropped? = a.uuid in @next_up.drop %>
+            <div class="flex flex-wrap items-center gap-2">
+              <span :if={dropped?} class="badge badge-error badge-xs">{gettext("will be removed")}</span>
+              <.assignment_status_badge :if={not dropped?} status="todo" waiting={false} size="xs" />
+              <span class={["font-medium flex-1 min-w-0 truncate", dropped? && "line-through opacity-50"]}>
+                {Assignment.label(a, L10n.current_content_lang())}
+              </span>
+              <span class="text-xs text-base-content/60 truncate">{assignee_label(a)}</span>
+              <button
+                :if={can.remove and dropped?}
+                type="button"
+                phx-click="next_up_toggle_drop"
+                phx-value-uuid={a.uuid}
+                class="btn btn-ghost btn-xs gap-1"
+              >
+                <.icon name="hero-arrow-uturn-left" class="w-3.5 h-3.5" /> {gettext("Keep")}
+              </button>
+              <button
+                :if={can.remove and not dropped?}
+                type="button"
+                phx-click="next_up_toggle_drop"
+                phx-value-uuid={a.uuid}
+                class="btn btn-ghost btn-xs text-error gap-1"
+              >
+                <.icon name="hero-trash" class="w-3.5 h-3.5" /> {gettext("Not needed")}
+              </button>
+            </div>
+            <textarea
+              :if={can.note and not dropped?}
+              name={"notes[#{a.uuid}]"}
+              rows="2"
+              class="textarea textarea-bordered textarea-sm w-full"
+              placeholder={gettext("Comment for whoever does it (optional)")}
+            ></textarea>
+          </div>
+          <p :if={next_rows != [] and not @comments_enabled} class="text-xs text-base-content/60">
+            {gettext("Comments are off for this project — switch on Discussions to leave one here.")}
+          </p>
+          <div class="modal-action">
+            <button type="button" phx-click="next_up_close" class="btn btn-ghost btn-sm">
+              {gettext("Cancel")}
+            </button>
+            <button type="submit" phx-disable-with={gettext("Saving…")} class="btn btn-success btn-sm">
+              <.icon name="hero-check" class="w-4 h-4" /> {gettext("Confirm — mark done")}
             </button>
           </div>
         </.form>

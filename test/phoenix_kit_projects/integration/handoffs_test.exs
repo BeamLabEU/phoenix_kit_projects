@@ -11,7 +11,7 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
   alias PhoenixKit.Activity.Entry
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Actor, History, Outline, Projects}
+  alias PhoenixKitProjects.{Actor, Handoffs, History, Outline, Projects}
   alias PhoenixKitProjects.Web.Components.HistoryFeed
   alias PhoenixKitStaff.Schemas.Person
 
@@ -224,6 +224,49 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
       assert n.metadata["notification_text"] =~ "1 more"
       assert [a] = notices("projects.assignment_ready", alice.user)
       assert a.resource_uuid == first.uuid
+    end
+  end
+
+  describe "next up (would_ready/2)" do
+    test "names what completing a task would make ready, before anything is written", ctx do
+      %{alice: alice, bob: bob, carl: carl} = ctx.people
+      consult = task!(ctx.project, "Consultation", alice)
+      measure = task!(ctx.project, "Measurement", bob)
+      render = task!(ctx.project, "3D render", carl)
+      other = task!(ctx.project, "Other prerequisite", carl)
+      install = task!(ctx.project, "Installation", bob)
+      {:ok, _} = Projects.add_dependency(measure.uuid, consult.uuid)
+      {:ok, _} = Projects.add_dependency(render.uuid, consult.uuid)
+      {:ok, _} = Projects.add_dependency(install.uuid, consult.uuid)
+      {:ok, _} = Projects.add_dependency(install.uuid, other.uuid)
+
+      assert ctx.project.uuid
+             |> Handoffs.would_ready(consult.uuid)
+             |> Enum.map(& &1.uuid) == [measure.uuid, render.uuid]
+
+      # A preview: nothing changed, nobody told.
+      assert Projects.get_assignment(consult.uuid).status == "todo"
+      assert notices("projects.assignment_ready", bob.user) == []
+    end
+
+    test "a task already under way is not offered", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      consult = task!(ctx.project, "Consultation", alice)
+      measure = task!(ctx.project, "Measurement", bob, status: "in_progress")
+      {:ok, _} = Projects.add_dependency(measure.uuid, consult.uuid)
+
+      assert Handoffs.would_ready(ctx.project.uuid, consult.uuid) == []
+    end
+
+    test "closing a parent's last subtask counts the parent done", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      prep = task!(ctx.project, "Preparation", alice)
+      sub = task!(ctx.project, "Last step", alice, under: prep)
+      next = task!(ctx.project, "After preparation", bob)
+      {:ok, _} = Projects.add_dependency(next.uuid, prep.uuid)
+
+      assert [%{uuid: uuid}] = Handoffs.would_ready(ctx.project.uuid, sub.uuid)
+      assert uuid == next.uuid
     end
   end
 

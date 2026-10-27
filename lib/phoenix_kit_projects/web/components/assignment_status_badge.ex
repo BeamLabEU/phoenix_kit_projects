@@ -65,14 +65,35 @@ defmodule PhoenixKitProjects.Web.Components.AssignmentStatusBadge do
   def label(other) when is_binary(other), do: other
   def label(_), do: gettext("todo")
 
+  @doc """
+  A `"todo"` task read against what it depends on (`Handoffs.ready?/2`'s
+  rule): `true` while something it waits on is still open ("waiting"),
+  `false` once nothing is ("can be started"). Derived, never stored — the
+  stored status stays `"todo"`. `nil` (not known here) and every other
+  status fall back to `badge_class/1` / `label/1`.
+  """
+  @spec badge_class(String.t() | nil, boolean() | nil) :: String.t()
+  def badge_class("todo", true), do: "badge-ghost"
+  def badge_class("todo", false), do: "badge-info"
+  def badge_class(status, _waiting), do: badge_class(status)
+
+  @doc "Localized label for a status read with `waiting` (see `badge_class/2`)."
+  @spec label(String.t() | nil, boolean() | nil) :: String.t()
+  def label("todo", true), do: gettext("waiting")
+  def label("todo", false), do: gettext("can be started")
+  def label(status, _waiting), do: label(status)
+
   attr(:status, :string, required: true)
+  # A "todo" task split by what it depends on: true = waiting, false = can
+  # be started, nil = not known where this is drawn (plain "todo").
+  attr(:waiting, :boolean, default: nil)
   attr(:size, :string, default: "sm", values: ~w(xs sm md lg))
   attr(:class, :string, default: nil)
 
   def assignment_status_badge(assigns) do
     ~H"""
-    <span class={["badge", size_class(@size), badge_class(@status), @class]}>
-      {label(@status)}
+    <span class={["badge", size_class(@size), badge_class(@status, @waiting), @class]}>
+      {label(@status, @waiting)}
     </span>
     """
   end
