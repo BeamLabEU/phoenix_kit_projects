@@ -39,6 +39,14 @@ defmodule PhoenixKitProjects.Web.GettextManifest do
       gettext(
         "See and manage every project on the site, including ones this user is not a member of"
       ),
+      gettext("Manage the task library"),
+      gettext(
+        "Create, edit, reorder and delete the shared library tasks, and add one-off tasks to the library"
+      ),
+      gettext("Change the projects settings"),
+      gettext(
+        "Change the module's settings: status lists, the new-project form, list controls, timeline and calendar display"
+      ),
 
       # Top-level + visible subtab labels (`admin_tabs/0`).
       gettext("Overview"),

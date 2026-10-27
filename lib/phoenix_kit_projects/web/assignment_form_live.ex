@@ -14,6 +14,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   use PhoenixKitProjects.Web.Mentions
   # The task's discussion and notes are embedded in its form.
   use PhoenixKitComments.Embed
+  # Before the Embed: its hook enqueues translations without a permission
+  # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
+  on_mount(PhoenixKitProjects.Web.AITranslateGate)
+  # Every write event re-checks `write_allowed?/1` against the live scope.
+  on_mount(PhoenixKitProjects.Web.WriteGate)
   use PhoenixKitAI.Components.AITranslate.Embed
 
   import PhoenixKitWeb.Components.Core.SearchPicker, only: [search_picker: 1]
@@ -28,6 +33,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   alias PhoenixKitProjects.{
     Activity,
+    Authz,
     Features,
     L10n,
     Labels,
@@ -44,6 +50,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.WriteGate
   alias PhoenixKitWeb.Components.Core.FormFieldLabel
 
   # Default wrapper class for the standalone admin page. Embedders can
@@ -385,9 +392,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
        ) do
     # Anyone who may edit the task may rename it; a library task's name is
     # shared, which the field says (`shared`).
+    # A library task's name is shared by every project that uses it, so
+    # only a `projects.manage_library` holder may rename it from here.
     assign(socket,
       edit_title: task.title,
-      title_editable?: true,
+      title_editable?:
+        task.ad_hoc == true or
+          Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]),
       title_shared?: task.ad_hoc != true
     )
   end
@@ -408,6 +419,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     with true <- socket.assigns[:title_editable?] == true,
          true <- is_binary(title) and String.trim(title) != "",
          %Task{} = task <- Projects.get_task(task_uuid),
+         true <-
+           task.ad_hoc == true or
+             Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]),
          true <- String.trim(title) != task.title do
       Projects.update_task(task, %{"title" => String.trim(title)})
     end
@@ -1805,6 +1819,42 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         n
       )
 
+  @doc false
+  # The events that write. `log_time` keeps its own `:log_time` check (it
+  # is reachable by a role that may log time on a task it may not edit).
+  def write_events do
+    ~w(save delete_task subtask_add subtask_toggle add_assignment_dep remove_assignment_dep
+       toggle_board_published toggle_portal_public generate_default_statuses save_subproject)
+  end
+
+  @doc false
+  # What opening this form needed (`permitted_project/3`): the project's
+  # `:create_tasks` for a new task, `:edit_tasks` to edit one, the projects
+  # module for a template — asked of the live scope and of the project as
+  # stored NOW, so a stale assign cannot widen it (`Web.WriteGate`, and the
+  # autosave timer below).
+  def write_allowed?(socket) do
+    scope = socket.assigns[:phoenix_kit_current_scope]
+
+    with %Project{uuid: uuid} when is_binary(uuid) <- socket.assigns[:project],
+         %Project{} = project <- Projects.get_project(uuid) do
+      if project.is_template do
+        PhoenixKitProjects.Authz.can_use_templates?(scope)
+      else
+        action = if socket.assigns[:live_action] == :new, do: :create_tasks, else: :edit_tasks
+
+        PhoenixKitProjects.Authz.can?(scope, project, action) and
+          PhoenixKitProjects.Extensions.enabled?(project, "tasks")
+      end
+    else
+      _ -> false
+    end
+  end
+
+  @doc false
+  # The AI-translate modal's events need the same (`Web.AITranslateGate`).
+  def ai_translate_allowed?(socket), do: write_allowed?(socket)
+
   defp may?(socket, action) do
     PhoenixKitProjects.Authz.can?(
       socket.assigns[:phoenix_kit_current_scope],
@@ -2068,7 +2118,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         "translations" => task_translations(title_translations, attrs["translations"]),
         "estimated_duration" => attrs["estimated_duration"],
         "estimated_duration_unit" => attrs["estimated_duration_unit"],
-        "ad_hoc" => not socket.assigns.add_to_library
+        # Feeding the shared library is `projects.manage_library`'s, whatever
+        # the (possibly forged) checkbox says.
+        "ad_hoc" =>
+          not (socket.assigns.add_to_library and
+                 Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]))
       }
       |> maybe_add_default_assignee(attrs)
 
@@ -2511,8 +2565,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   @autosave_ms 700
 
   @impl true
-  def handle_info(:autosave, socket),
-    do: {:noreply, socket |> assign(:autosave_timer, nil) |> autosave_now()}
+  # A timer, not an event, so `Web.WriteGate` never sees it: a save queued
+  # before the right was revoked is dropped here.
+  def handle_info(:autosave, socket) do
+    socket = assign(socket, :autosave_timer, nil)
+
+    if WriteGate.allowed?(socket) do
+      {:noreply, autosave_now(socket)}
+    else
+      {:noreply,
+       socket
+       |> assign(pending_params: nil, save_state: :error)
+       |> WriteGate.refuse()}
+    end
+  end
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -3649,7 +3715,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </div>
             </div>
 
-            <%= if @live_action == :new and @task_mode == "new" and @fx.library do %>
+            <%= if @live_action == :new and @task_mode == "new" and @fx.library and
+                     Authz.manage_library?(@phoenix_kit_current_scope) do %>
               <div class="divider my-1"></div>
               <.checkbox
                 name="add_to_library"

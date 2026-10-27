@@ -718,7 +718,10 @@ defmodule PhoenixKitProjects.Outline do
   Sub-project rows are never removed here, whatever the lines say.
 
   Options: `:actor_uuid` (stamped as creator), `:key_uuid` (an API key as
-  the writer), `:rename` (false: titles of existing tasks are left alone).
+  the writer), `:rename` (false: titles of existing tasks are left alone),
+  `:rename_library` (default false: a LIBRARY task's title is left alone —
+  it is shared by every project that assigned it, and renaming it is
+  `projects.manage_library`'s; pass the caller's `Authz.manage_library?/1`).
 
   Returns `{:ok, %{created: %{tmp => %{uuid, number}}, created_count: n, removed: [uuid],
   held: [uuid], revived: [uuid], renamed: [uuid]}}`, or `{:error, reason}`
@@ -928,8 +931,11 @@ defmodule PhoenixKitProjects.Outline do
   defp rename_lines(lines, by_uuid, opts) do
     key_uuid = Keyword.get(opts, :key_uuid)
 
+    library? = Keyword.get(opts, :rename_library, false)
+
     for %{id: id, text: text} <- lines,
         %Assignment{task: %Task{} = task} = row <- [by_uuid[id]],
+        task.ad_hoc == true or library?,
         task.title != text do
       case task |> Task.changeset(%{"title" => text}) |> repo().update() do
         {:ok, updated} ->

@@ -504,14 +504,75 @@ changes.
 
 ### Permissions
 
-`permission: "projects"` on every tab; mount guards, and events trust the mount
-check. The base key means **"may enter the module"**; the `projects.admin_all`
+`permission: "projects"` on every tab; mount guards. The assignment, project
+and template forms do not trust their mount check for writes:
+`on_mount(PhoenixKitProjects.Web.WriteGate)` re-asks each form's
+`write_allowed?/1` (the right its mount needed, against the live scope and the
+record as stored now) on every event in its `write_events/0`, and refuses with
+"You don't have permission to do that here." (the project form's
+`confirm_action_ok` replays an event past the hook, so it is in the list
+itself); a write that is not an event — the assignment form's autosave
+timer — asks `WriteGate.allowed?/1` itself. `TemplateFormLive` checks the module key at mount itself (an embed
+never passes the tab) and edits only a template — the module key alone must
+never reach a real project, which takes `:edit_settings`. The base key means **"may enter the module"**; the `projects.admin_all`
 sub-permission means **"administer projects you are not a member of"** — before
 the split, granting a role the module handed it every project on the site,
 because the resolver short-circuited on module access before membership was
 consulted. `migrate_legacy/0` carries every pre-split role holding the base key
 across, once, behind `projects_admin_all_backfilled`; a repeat on every boot
 would fight an Owner's revoke.
+
+Two more sub-keys narrow what the base key used to allow, both checked by
+`Authz` from the scope (sub-key and base held). Every sub-key backfill
+(`admin_all`, the own-key API rights and these two) goes through
+`backfill_sub_keys/3`: it reads the holders with its own query (core's
+`get_permissions_for_role/1` rescues an error to `[]`, which would read as
+"nobody holds projects"), answers `{:error, :lookup_failed}` on a failed read,
+and sets its flag only when every grant succeeded:
+
+- **`projects.manage_library`** (`Authz.manage_library?/1`, which also needs
+  the module switched on — these are writes) — the shared task library's
+  writes: `TasksLive`'s delete / promote / reorder (read-only list
+  without it), `TaskFormLive` at mount and on save / add_dep / remove_dep,
+  renaming a LIBRARY task from a project, asked of the live scope at the write
+  (the assignment form's title, the card title, the typed list — `Outline.sync/4` leaves library titles alone
+  unless `rename_library: true`), and the assignment form's "Add to the task
+  library". A library task is used by every project that assigned it, so this
+  is site-level, never a project role. The API already refuses library
+  content edits. The One-off lens lists only one-off tasks of projects the
+  viewer can open (`list_tasks/1` / `count_tasks/1` `:project_uuids`, asked on
+  every load). A one-off belongs to its project: deleting one from the library
+  page also needs `:delete_tasks` there, promoting one `:view`, and opening or
+  saving one in `TaskFormLive` (unticking "One-off" is a promote) `:edit_tasks`
+  — on every project using it (`Projects.projects_using_task/1`) — the library right alone does not reach
+  into a private project.
+- **`projects.settings`** (`Authz.settings?/1`) — `ProjectsSettingsLive` at
+  mount (it is embeddable) and every event but the tab switch and the demo
+  toggle; the settings tab carries it. The check adds no "module enabled"
+  condition of its own; in a host, core's admin mount gate still refuses a
+  disabled module's pages, and re-enabling is core's Modules page.
+
+The AI-translate modal's events (`ai_translate_lang` enqueues jobs) are
+handled by `phoenix_kit_ai`'s `AITranslate.Embed` hook, which checks no
+permission. Every form using it declares
+`on_mount(PhoenixKitProjects.Web.AITranslateGate)` BEFORE `use
+...AITranslate.Embed` (hooks run in attach order) and exports
+`ai_translate_allowed?/1` — the right its own save or mount needs for the
+record it holds, read from the live scope; the gate refuses the events when
+it answers false, and fails closed when it is missing.
+
+These gates are checked against the embed's reconstructed scope too, so an
+embed of `TasksLive` (writes), `TaskFormLive` or `ProjectsSettingsLive` must
+pass a `current_user_uuid` holding the sub-key — an anonymous embed is
+read-only or refused, unlike the other embeddable pages.
+
+Comment moderation (`phoenix_kit_comments`' `moderatable_resources/2`, on
+`ResourceLinks` and `CommentNotices`, answered by `CommentModeration`):
+`admin_all` → `:all`; otherwise the projects the viewer holds `:owner` or
+`:manager` on, directly or by group grant (`Authz.managed_project_uuids/1`),
+and for `assignment` / `project_task_notes` those projects' assignment uuids.
+Manager, not an `Authz` action: the container actions floor at owner and the
+work actions at viewer. A fixed number of reads however many projects.
 
 `Authz.can?/5` resolves `site permission ∧ project role ∧ relationship grant`;
 extension/flag gating composes at the call site (`Extensions.enabled?/3` +
@@ -553,8 +614,9 @@ browsing the public portal is a visitor.
   status titles (per-project tri-state override in the project's `settings`).
 - `projects_default_preset`, `projects_new_form_top_blocks` — new-project form
   defaults.
-- `projects_admin_all_backfilled`, `projects_checklist_flags_backfilled` —
-  one-time `migrate_legacy/0` flags. One-way and one-time on purpose:
+- `projects_admin_all_backfilled`, `projects_api_keys_permissions_backfilled`,
+  `projects_manage_library_backfilled`, `projects_settings_backfilled`,
+  `projects_checklist_flags_backfilled` — one-time `migrate_legacy/0` flags. One-way and one-time on purpose:
   re-deciding on every boot would hand back a revoked permission or re-disable
   a feature the Owner turned on.
 
@@ -669,7 +731,7 @@ Support modules in `test/support/`:
 | `Test.Hooks` | `:assign_scope` `on_mount` reading `"phoenix_kit_test_scope"` from the session |
 | `Test.SchemaMigration` | wraps the module chain for `Ecto.Migrator` |
 | `DataCase` | `:integration` tag + SQL Sandbox; hosts `fixture_task/1`, `fixture_project/1`, `fixture_template/1`, `errors_on/1` |
-| `LiveCase` | `fake_scope/1` + `put_test_scope/2` for a real `%PhoenixKit.Users.Auth.Scope{}`; reuses `DataCase` fixtures |
+| `LiveCase` | `fake_scope/1` + `put_test_scope/2` for a real `%PhoenixKit.Users.Auth.Scope{}` — by default a site admin holding every sub-key (`admin_all`, the API key rights, `manage_library`, `settings`); pass `permissions: ["projects"]` for a plain module-reacher. Its setup switches the module on (`projects_enabled`), which library writes require; reuses `DataCase` fixtures |
 | `ActivityLogAssertions` | `assert_activity_logged/2`, `refute_activity_logged/2` |
 | `QueryCounter` | statement counting for the batched-read tests |
 | `StatusFixtures` | workflow-status catalog fixtures |

@@ -60,6 +60,10 @@ defmodule PhoenixKitProjects.LiveCase do
     {:ok, _} = PhoenixKit.Settings.update_boolean_setting("languages_enabled", true)
     {:ok, _} = PhoenixKit.Settings.update_boolean_setting("default_language_no_prefix", false)
 
+    # A host's Projects module is switched on; library writes
+    # (`Authz.manage_library?/1`) refuse while it is off.
+    {:ok, _} = PhoenixKit.Settings.update_boolean_setting("projects_enabled", true)
+
     conn =
       Phoenix.ConnTest.build_conn()
       |> Plug.Test.init_test_session(%{})
@@ -92,8 +96,9 @@ defmodule PhoenixKitProjects.LiveCase do
     # `projects.admin_all` sub-key, which is what "may administer projects
     # I'm not a member of" now requires. Pass `permissions: ["projects"]` to
     # build a plain module-reacher instead — the contractor shape.
-    # The API key rights are sub-keys too, granted to Admin by core like
-    # admin_all, so the admin fixture holds them.
+    # The API key rights, the task library and the settings page are
+    # sub-keys too, granted to Admin by core like admin_all, so the admin
+    # fixture holds them.
     permissions =
       Keyword.get(opts, :permissions, [
         "projects",
@@ -102,7 +107,9 @@ defmodule PhoenixKitProjects.LiveCase do
         "projects.api_keys_edit",
         "projects.api_keys_rotate",
         "projects.api_keys_revoke",
-        "projects.api_keys_manage"
+        "projects.api_keys_manage",
+        "projects.manage_library",
+        "projects.settings"
       ])
 
     authenticated? = Keyword.get(opts, :authenticated?, true)
