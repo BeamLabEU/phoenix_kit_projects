@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.31.0"
+  @version "0.32.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -162,7 +162,7 @@ defmodule PhoenixKitProjects.MixProject do
       # floor — that's the release that actually ships the AI-translation move
       # (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`);
       # 0.3.0 predates it and won't compile against this module.
-      pk_dep(:phoenix_kit_ai, "~> 0.18"),
+      pk_dep(:phoenix_kit_ai, "~> 0.27"),
       # 0.3 is the floor: `Assignees` calls
       # `PhoenixKitStaff.Schemas.Person.display_name/1`, which staff first
       # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
@@ -175,16 +175,16 @@ defmodule PhoenixKitProjects.MixProject do
       #
       # The 0.3 floor above still applies: making a dependency hard does not make
       # an older release safe.
-      pk_dep(:phoenix_kit_staff, "~> 0.8"),
+      pk_dep(:phoenix_kit_staff, "~> 0.11"),
       # 0.2.6 is the floor: `ProjectShowLive` does `use
       # PhoenixKitComments.Embed`, first published in that release. `~> 0.2`
       # admitted 0.2.0–0.2.5, where that `use` site fails to compile.
-      pk_dep(:phoenix_kit_comments, "~> 0.3"),
+      pk_dep(:phoenix_kit_comments, "~> 0.5"),
 
       # Hard dep: `Migrations.Schema` references `phoenix_kit_entities` (workflow
       # status FK), so entities' chain must run first. The module is also the
       # source/catalog for project workflow statuses.
-      pk_dep(:phoenix_kit_entities, "~> 0.3"),
+      pk_dep(:phoenix_kit_entities, "~> 0.7"),
 
       # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
       # for polymorphic assignee FKs (team / department / person).
