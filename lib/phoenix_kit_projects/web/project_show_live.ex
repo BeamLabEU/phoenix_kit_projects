@@ -1729,7 +1729,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <button phx-click="start_task" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Starting…")} class="btn btn-warning btn-xs">
                       {gettext("Start")}
                     </button>
-                  <% @a.status in ["waiting", "todo", "in_progress"] -> %>
+                  <% @a.status in ["todo", "in_progress"] or (@a.status == "waiting" and @a.child_project_uuid != nil) -> %>
                     <.button
                       type="button"
                       variant="success"
@@ -5577,7 +5577,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           <button phx-click="start_task" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-warning btn-xs">
                             {gettext("Start")}
                           </button>
-                        <% a.status in ["waiting", "todo", "in_progress"] -> %>
+                        <% a.status in ["todo", "in_progress"] or (a.status == "waiting" and a.child_project_uuid != nil) -> %>
                           <button phx-click="complete" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-success btn-xs">
                             <.icon name="hero-check" class="w-3.5 h-3.5" />
                           </button>

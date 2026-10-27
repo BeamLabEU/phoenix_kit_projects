@@ -164,6 +164,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
     assert status(ctx.consult) == "waiting"
   end
 
+  test "a waiting task offers only Ready to start; a released one Start", ctx do
+    {:ok, view, _html} = show(ctx)
+    button = &"button[phx-click='#{&1}'][phx-value-uuid='#{ctx.consult.uuid}']"
+
+    assert has_element?(view, button.("ask_ready"))
+    refute has_element?(view, button.("complete"))
+    refute has_element?(view, button.("start_task"))
+
+    render_click(view, "make_ready", %{"uuid" => ctx.consult.uuid})
+
+    refute has_element?(view, button.("ask_ready"))
+    assert has_element?(view, button.("start_task"))
+  end
+
   test "Ready to start opens the dialog for that task; nothing is written until confirm", ctx do
     {:ok, view, _html} = show(ctx)
 
