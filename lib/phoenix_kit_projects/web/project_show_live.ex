@@ -1707,7 +1707,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name={if @ol.folded, do: "hero-chevron-right", else: "hero-chevron-down"} class="w-4 h-4" />
               </button>
               <.assignment_status_badge :if={not @is_template} status={@a.status} />
-              <.ref_chip :if={not @is_template} ref={Refs.task_ref(@project.key, @a.number)} />
+              <%!-- The ID opens the task's view, like its title. --%>
+              <.smart_link
+                :if={not @is_template and Refs.task_ref(@project.key, @a.number)}
+                navigate={Paths.view_assignment(@a.project_uuid, @a.uuid)}
+                emit={{PhoenixKitProjects.Web.AssignmentViewLive, %{"project_id" => @a.project_uuid, "id" => @a.uuid}}}
+                embed_mode={@embed_mode}
+                class="shrink-0 hover:underline"
+                title={gettext("View the task")}
+              >
+                <.ref_chip ref={Refs.task_ref(@project.key, @a.number)} />
+              </.smart_link>
               <%!-- Filled by `PkpLinks` while a connected task is hovered
                    or traced: "Waits on", "Unlocks", "Earlier", "Later". --%>
               <span data-pkp-rel={@a.uuid} class="order-last shrink-0"></span>
@@ -1731,9 +1741,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   }
                   embed_mode={@embed_mode}
                   class="btn btn-ghost btn-xs btn-circle shrink-0"
-                  title={gettext("Open the task")}
+                  title={gettext("View the task")}
                 >
-                  <.icon name="hero-arrow-top-right-on-square" class="w-3.5 h-3.5" />
+                  <.icon name="hero-eye" class="w-3.5 h-3.5" />
                 </.smart_link>
               <% else %>
               <span :if={@ol && @ol.count} class="badge badge-sm badge-outline shrink-0">
@@ -2075,6 +2085,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <.icon name="hero-pause-circle" class="w-3.5 h-3.5" />
               {gettext("On hold")}
             </span>
+          </div>
+          <%!-- What it depends on, one chip each (× removes the link);
+               hovering / tracing shows the rest of the chain (`PkpLinks`). --%>
+          <% deps = Map.get(@deps_by_assignment, @a.uuid, []) %>
+          <div :if={@fx.dependencies and deps != []} class="flex flex-wrap gap-1 mt-1">
+            <%= for dep <- deps do %>
+              <span class={[
+                "badge badge-outline badge-xs gap-1",
+                match?(%{depends_on: %{status: "done"}}, dep) && "opacity-60"
+              ]}>
+                <.icon
+                  name={if(match?(%{depends_on: %{status: "done"}}, dep), do: "hero-check-circle", else: "hero-arrow-right-circle")}
+                  class="w-3 h-3"
+                />
+                {gettext("depends on:")} {Assignment.label(dep.depends_on, L10n.current_content_lang())}
+                <button phx-click="remove_dependency" phx-value-assignment={@a.uuid} phx-value-depends_on={dep.depends_on_uuid} phx-disable-with={gettext("Removing…")} class="hover:text-error">
+                  <.icon name="hero-x-mark" class="w-3 h-3" />
+                </button>
+              </span>
+            <% end %>
           </div>
         </div>
     """
@@ -5246,7 +5276,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             popup={false}
                             class="btn btn-ghost btn-xs gap-1"
                           >
-                            <.icon name="hero-arrow-top-right-on-square" class="w-3.5 h-3.5" /> {gettext("Open")}
+                            <.icon name="hero-arrow-right-circle" class="w-3.5 h-3.5" /> {gettext("Open")}
                           </.smart_link>
                           <.table_row_menu id={"assignment-menu-#{a.uuid}"}>
                             <.smart_menu_link
@@ -5254,7 +5284,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                               emit={{PhoenixKitProjects.Web.ProjectShowLive, %{"id" => child.uuid}}}
                               embed_mode={@embed_mode}
                               popup={false}
-                              icon="hero-arrow-top-right-on-square"
+                              icon="hero-arrow-right-circle"
                               label={gettext("Open sub-project")}
                             />
                             <%!-- Edit name/assignee/dependencies on the same form
@@ -5585,7 +5615,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   </div>
 
                   <div class="flex flex-wrap items-center gap-1">
-                    <.ref_chip ref={Assignment.ref(a)} />
+                    <.smart_link
+                      :if={Assignment.ref(a)}
+                      navigate={Paths.view_assignment(a.project_uuid, a.uuid)}
+                      emit={{PhoenixKitProjects.Web.AssignmentViewLive, %{"project_id" => a.project_uuid, "id" => a.uuid}}}
+                      embed_mode={@embed_mode}
+                      class="shrink-0 hover:underline"
+                      title={gettext("View the task")}
+                    >
+                      <.ref_chip ref={Assignment.ref(a)} />
+                    </.smart_link>
                     <% sub = Map.get(@outline_counts, a.uuid) %>
                     <span :if={sub} class="badge badge-xs badge-outline gap-1" title={gettext("Subtasks done")}>
                       <.icon name="hero-list-bullet" class="w-3 h-3" /> {sub.done}/{sub.total}
