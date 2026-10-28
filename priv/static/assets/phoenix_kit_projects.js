@@ -1168,5 +1168,214 @@
     }
   };
 
-  window.PhoenixKitProjectsHooks = { PkpOutline: Outline, PkpTitle: Title };
+  /*
+   * PkpLinks: a task list's connections, shown without writing them on the
+   * cards. Hovering a connected task (a fine pointer only) lightly marks the
+   * tasks it waits on and the ones it unlocks; its trace button marks the
+   * whole chain, before and after, and gently fades the rest, until the
+   * button is pressed again, Escape, or a click outside the list. All here
+   * in the browser from `data-links` ([[before, after], …]); the server is
+   * never asked.
+   *
+   * Nothing on a card is touched: the marks are this hook's own <style>
+   * rules, keyed by task uuid (the labels are their `content`), so a
+   * LiveView patch of a card — a status changing while it is traced —
+   * cannot strip them. Only the button's aria-pressed is set on the DOM,
+   * and `updated` sets it again.
+   */
+  var LINKS_STYLE_ID = "pkp-links-style";
+  var LINKS_CSS = [
+    "[data-pkp-card]{transition:opacity .12s,background-color .12s}",
+    "[data-pkp-rel]{display:inline-flex;align-items:center;gap:.3rem;font-size:.75rem;font-weight:500;white-space:nowrap}",
+    "@media (prefers-reduced-motion:reduce){[data-pkp-card]{transition:none}}"
+  ].join("\n");
+  var LK_BEFORE = "#7c5cd6", LK_AFTER = "#e0682b", LK_AFTER_TEXT = "#d0571d";
+  var LK_PRIMARY = "var(--color-primary,#4f46e5)";
+
+  function cssString(text) {
+    return '"' + String(text || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ") + '"';
+  }
+
+  var Links = {
+    mounted: function () {
+      if (!document.getElementById(LINKS_STYLE_ID)) {
+        var style = document.createElement("style");
+        style.id = LINKS_STYLE_ID;
+        style.textContent = LINKS_CSS;
+        document.head.appendChild(style);
+      }
+      var self = this;
+      this.marks = document.createElement("style");
+      this.marks.setAttribute("data-pkp-links-for", this.el.id);
+      document.head.appendChild(this.marks);
+      this.pin = null;
+      this.hover = null;
+      this.fine = window.matchMedia("(hover: hover) and (pointer: fine)");
+      this.read();
+
+      // Hover after a short pause; between two cards the highlight moves
+      // straight over, and leaving clears after a grace period — moving
+      // down the list does not flicker.
+      this.onOver = function (e) {
+        if (!self.fine.matches) return;
+        var card = e.target.closest("[data-pkp-card]");
+        if (!card || !self.el.contains(card)) return;
+        var id = card.getAttribute("data-pkp-card");
+        clearTimeout(self.leaveT);
+        clearTimeout(self.enterT);
+        if (!self.linked(id)) { self.leaveT = setTimeout(function () { self.setHover(null); }, 90); return; }
+        if (self.hover === id) return;
+        self.enterT = setTimeout(function () { self.setHover(id); }, self.hover === null ? 140 : 60);
+      };
+      this.onOut = function (e) {
+        if (!self.fine.matches) return;
+        var card = e.target.closest("[data-pkp-card]");
+        if (!card || card.contains(e.relatedTarget)) return;
+        clearTimeout(self.enterT);
+        clearTimeout(self.leaveT);
+        self.leaveT = setTimeout(function () { self.setHover(null); }, 120);
+      };
+      this.onClick = function (e) {
+        var button = e.target.closest("[data-pkp-trace]");
+        if (!button || !self.el.contains(button)) return;
+        e.preventDefault();
+        var id = button.getAttribute("data-pkp-trace");
+        self.pin = self.pin === id ? null : id;
+        self.hover = null;
+        self.apply();
+      };
+      this.onFocus = function (e) {
+        var button = e.target.closest && e.target.closest("[data-pkp-trace]");
+        if (button && self.pin === null) self.setHover(button.getAttribute("data-pkp-trace"));
+      };
+      this.onBlur = function (e) {
+        if (e.target.closest && e.target.closest("[data-pkp-trace]") && self.pin === null) self.setHover(null);
+      };
+      this.onKey = function (e) {
+        if (e.key === "Escape" && (self.pin !== null || self.hover !== null)) {
+          self.pin = null;
+          self.hover = null;
+          self.apply();
+        }
+      };
+      this.onDoc = function (e) {
+        if (self.pin !== null && !self.el.contains(e.target)) {
+          self.pin = null;
+          self.apply();
+        }
+      };
+      // Dragging a card: no highlight while it moves.
+      this.onDrag = function () {
+        self.hover = null;
+        self.pin = null;
+        self.apply();
+      };
+
+      this.el.addEventListener("pointerover", this.onOver);
+      this.el.addEventListener("pointerout", this.onOut);
+      this.el.addEventListener("click", this.onClick);
+      this.el.addEventListener("focusin", this.onFocus);
+      this.el.addEventListener("focusout", this.onBlur);
+      this.el.addEventListener("dragstart", this.onDrag);
+      document.addEventListener("keydown", this.onKey);
+      document.addEventListener("click", this.onDoc, true);
+      this.apply();
+    },
+    updated: function () {
+      this.read();
+      if (this.pin !== null && !this.card(this.pin)) this.pin = null;
+      if (this.hover !== null && !this.card(this.hover)) this.hover = null;
+      this.apply();
+    },
+    destroyed: function () {
+      clearTimeout(this.enterT);
+      clearTimeout(this.leaveT);
+      document.removeEventListener("keydown", this.onKey);
+      document.removeEventListener("click", this.onDoc, true);
+      if (this.marks) this.marks.remove();
+    },
+    read: function () {
+      var pairs = [];
+      try { pairs = JSON.parse(this.el.dataset.links || "[]"); } catch (_) { pairs = []; }
+      try { this.labels = JSON.parse(this.el.dataset.labels || "{}"); } catch (_) { this.labels = {}; }
+      var up = {}, down = {};
+      // The ids end up in CSS selectors: only uuids pass.
+      var uuid = /^[0-9a-f-]{36}$/i;
+      pairs.filter(function (p) {
+        return Array.isArray(p) && uuid.test(p[0]) && uuid.test(p[1]);
+      }).forEach(function (p) {
+        (up[p[1]] = up[p[1]] || []).push(p[0]);
+        (down[p[0]] = down[p[0]] || []).push(p[1]);
+      });
+      this.up = up;
+      this.down = down;
+    },
+    linked: function (id) { return !!(this.up[id] || this.down[id]); },
+    card: function (id) {
+      return this.el.querySelector('[data-pkp-card="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+    },
+    // Everything reachable from `id` one way, guarded against a cycle.
+    reach: function (id, map) {
+      var seen = {}, stack = (map[id] || []).slice();
+      while (stack.length) {
+        var x = stack.pop();
+        if (seen[x] || x === id) continue;
+        seen[x] = true;
+        (map[x] || []).forEach(function (y) { stack.push(y); });
+      }
+      return seen;
+    },
+    setHover: function (id) {
+      if (this.hover === id) return;
+      this.hover = id;
+      if (this.pin === null) this.apply();
+    },
+    apply: function () {
+      var self = this;
+      var labels = this.labels || {};
+      var src = this.pin !== null ? this.pin : this.hover;
+      var traced = this.pin !== null;
+
+      this.el.querySelectorAll("[data-pkp-trace]").forEach(function (b) {
+        var on = b.getAttribute("data-pkp-trace") === self.pin;
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+        if (labels.trace) b.title = on ? labels.stop : labels.trace;
+      });
+      if (src === null) { this.marks.textContent = ""; return; }
+
+      // Hover: direct neighbours only, nothing fades. Trace: the whole
+      // chain, and what is not part of it fades a little.
+      var b1 = {}, a1 = {};
+      (this.up[src] || []).forEach(function (x) { b1[x] = true; });
+      (this.down[src] || []).forEach(function (x) { a1[x] = true; });
+      var bAll = traced ? this.reach(src, this.up) : b1;
+      var aAll = traced ? this.reach(src, this.down) : a1;
+
+      var scope = "#" + (window.CSS && CSS.escape ? CSS.escape(this.el.id) : this.el.id) + " ";
+      var card = function (id) { return scope + '[data-pkp-card="' + id + '"]'; };
+      var rel = function (id) { return scope + '[data-pkp-rel="' + id + '"]'; };
+      var rules = [];
+      var mark = function (id, colour, direct, label, textColour) {
+        rules.push(card(id) + (direct
+          ? "{opacity:1;background-color:color-mix(in oklab," + colour + " 6%,transparent);box-shadow:inset 3px 0 0 " + colour + "}"
+          : "{opacity:1;background-image:repeating-linear-gradient(to bottom," + colour + " 0 3px,transparent 3px 6px);background-size:2px 100%;background-repeat:no-repeat;background-position:left top}"));
+        rules.push(rel(id) + "{color:" + textColour + (direct ? "" : ";opacity:.8") + "}");
+        rules.push(rel(id) + "::before{content:'';width:.4rem;height:.4rem;border-radius:50%;" +
+          (direct ? "background:currentColor" : "box-shadow:inset 0 0 0 1.5px currentColor") + "}");
+        rules.push(rel(id) + "::after{content:" + cssString(label) + "}");
+      };
+
+      if (traced) rules.push(scope + "[data-pkp-card]{opacity:.6}");
+      rules.push(card(src) + "{opacity:1;box-shadow:inset 0 0 0 1px color-mix(in oklab,currentColor 28%,transparent)}");
+      Object.keys(b1).forEach(function (id) { mark(id, LK_BEFORE, true, labels.before, LK_BEFORE); });
+      Object.keys(a1).forEach(function (id) { if (!b1[id]) mark(id, LK_AFTER, true, labels.after, LK_AFTER_TEXT); });
+      Object.keys(bAll).forEach(function (id) { if (!b1[id] && !a1[id] && id !== src) mark(id, LK_BEFORE, false, labels.earlier, LK_BEFORE); });
+      Object.keys(aAll).forEach(function (id) { if (!b1[id] && !a1[id] && !bAll[id] && id !== src) mark(id, LK_AFTER, false, labels.later, LK_AFTER_TEXT); });
+      if (traced) rules.push(scope + '[data-pkp-trace="' + src + '"]{color:' + LK_PRIMARY + ";background-color:color-mix(in oklab," + LK_PRIMARY + " 12%,transparent)}");
+
+      this.marks.textContent = rules.join("\n");
+    }
+  };
+
+  window.PhoenixKitProjectsHooks = { PkpOutline: Outline, PkpTitle: Title, PkpLinks: Links };
 })();

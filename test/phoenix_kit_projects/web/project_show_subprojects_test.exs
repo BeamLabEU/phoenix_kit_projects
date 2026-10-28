@@ -116,10 +116,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowSubprojectsTest do
       |> render_click()
 
     # The dependency lives on the CHILD project, so its deps must be loaded into
-    # `deps_by_assignment` (was parent-only) for the inset badge to render.
+    # `deps_by_assignment` (was parent-only) for the list's connections
+    # (`PkpLinks`) to reach the inset tasks.
     assert html =~ "Frame walls"
-    assert html =~ "depends on:"
     assert html =~ "Pour foundation"
+    assert has_element?(view, ~s([data-pkp-trace="#{a.uuid}"]))
+    assert has_element?(view, ~s([data-pkp-trace="#{b.uuid}"]))
+    assert html =~ ~s([&quot;#{a.uuid}&quot;,&quot;#{b.uuid}&quot;])
   end
 
   test "removing a sub-project row deletes the child and drops the row", %{conn: conn} do

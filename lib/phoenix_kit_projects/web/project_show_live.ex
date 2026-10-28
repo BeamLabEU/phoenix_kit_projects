@@ -355,6 +355,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # they keep the assigns coherent if either helper short-circuits.
               assignments: [],
               deps_by_assignment: %{},
+              link_pairs: [],
+              linked_uuids: MapSet.new(),
               held_by: %{},
               total_tasks: 0,
               done_tasks: 0,
@@ -506,6 +508,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       history_mounted?: false,
       assignments: [],
       deps_by_assignment: %{},
+      link_pairs: [],
+      linked_uuids: MapSet.new(),
       held_by: %{},
       total_tasks: 0,
       done_tasks: 0,
@@ -751,6 +755,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     |> assign(
       assignments: assignments,
       deps_by_assignment: deps_by_assignment,
+      # The connections the list's hover / trace hook draws (`PkpLinks`):
+      # every [before, after] pair on the page, and the tasks that have one.
+      link_pairs: link_pairs(deps_by_assignment),
+      linked_uuids: linked_uuids(deps_by_assignment),
       held_by:
         held_by(
           assignments ++ Enum.flat_map(Map.values(subproject_child_tasks), & &1),
@@ -1631,6 +1639,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:assignment_comment_counts, :map, default: %{})
   attr(:deps_by_assignment, :map, default: %{})
   attr(:held_by, :map, default: %{})
+  # Tasks with a connection: only they get the trace button (`PkpLinks`).
+  attr(:linked, :any, default: MapSet.new())
   attr(:ledger_minutes, :map, default: %{})
   attr(:ledger_ai_minutes, :map, default: %{})
   attr(:ledger_tokens, :map, default: %{})
@@ -1643,7 +1653,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp task_body(assigns) do
     ~H"""
-    <div class="card-body py-3 px-4 gap-2">
+    <div class="card-body py-3 px-4 gap-2 rounded-[inherit]" data-pkp-card={@a.uuid}>
       <%!-- Title row --%>
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-2 min-w-0 flex-1">
@@ -1666,6 +1676,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               </button>
               <.assignment_status_badge :if={not @is_template} status={@a.status} />
               <.ref_chip :if={not @is_template} ref={Refs.task_ref(@project.key, @a.number)} />
+              <%!-- Filled by `PkpLinks` while a connected task is hovered
+                   or traced: "Waits on", "Unlocks", "Earlier", "Later". --%>
+              <span data-pkp-rel={@a.uuid} class="order-last shrink-0"></span>
               <%!-- The title is typed into where it stands (Enter adds the
                    next task, Tab makes it a subtask); the arrow opens the
                    form. Read-only rows keep the title as the link. --%>
@@ -1712,6 +1725,20 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             <div class="flex items-center gap-1 shrink-0">
               <%= if not @is_template do %>
+                <%!-- Connections are never written on the card: hovering
+                     hints at the direct ones, this traces the whole chain
+                     (`PkpLinks`, in the browser — no round-trip). --%>
+                <button
+                  :if={@fx.dependencies and MapSet.member?(@linked, @a.uuid)}
+                  type="button"
+                  data-pkp-trace={@a.uuid}
+                  aria-pressed="false"
+                  class="btn btn-ghost btn-xs btn-square text-base-content/50"
+                  aria-label={gettext("Trace the chain of “%{task}”", task: Assignment.label(@a, L10n.current_content_lang()))}
+                  title={gettext("Trace everything before and after it")}
+                >
+                  <.icon name="hero-share" class="w-4 h-4" />
+                </button>
                 <%!-- A waiting task is released first — "Ready to start"
                      asks who to tell and takes a comment; a released one is
                      started or done. --%>
@@ -1988,47 +2015,34 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </span>
           </div>
 
-          <%!-- Dependencies. Work that started and then had something
-               before it reopened is ON HOLD — derived, never stored: it
-               clears itself when what it waits on is done again. --%>
-          <%!-- What it waits on that is still open — its own dependencies and
-               every task's above it, as the hand-offs count them. --%>
-          <% deps = Map.get(@deps_by_assignment, @a.uuid, []) %>
+          <%!-- Work that started and then had something before it reopened
+               is ON HOLD — derived, never stored: it clears itself when what
+               it waits on is done again. The tasks it waits for are named in
+               the tooltip; connections are never written out on the card
+               (hover / trace shows them, `PkpLinks`). --%>
           <% open_deps = Map.get(@held_by, @a.uuid, []) %>
           <div
             :if={@fx.dependencies and @a.status == "in_progress" and open_deps != []}
             class="mt-1"
           >
-            <span class="badge badge-warning badge-sm gap-1">
-              <.icon name="hero-pause-circle" class="w-3.5 h-3.5" />
-              {gettext("On hold — waiting for %{tasks}",
-                tasks:
-                  Enum.map_join(
-                    open_deps,
-                    ", ",
-                    &gettext("“%{task}”",
-                      task: Assignment.label(&1.depends_on, L10n.current_content_lang())
+            <span
+              class="badge badge-warning badge-sm gap-1"
+              title={
+                gettext("On hold — waiting for %{tasks}",
+                  tasks:
+                    Enum.map_join(
+                      open_deps,
+                      ", ",
+                      &gettext("“%{task}”",
+                        task: Assignment.label(&1.depends_on, L10n.current_content_lang())
+                      )
                     )
-                  )
-              )}
+                )
+              }
+            >
+              <.icon name="hero-pause-circle" class="w-3.5 h-3.5" />
+              {gettext("On hold")}
             </span>
-          </div>
-          <div :if={@fx.dependencies and deps != []} class="flex flex-wrap gap-1 mt-1">
-            <%= for dep <- deps do %>
-              <span class={[
-                "badge badge-outline badge-xs gap-1",
-                match?(%{depends_on: %{status: "done"}}, dep) && "opacity-60"
-              ]}>
-                <.icon
-                  name={if(match?(%{depends_on: %{status: "done"}}, dep), do: "hero-check-circle", else: "hero-arrow-right-circle")}
-                  class="w-3 h-3"
-                />
-                {gettext("depends on:")} {Assignment.label(dep.depends_on, L10n.current_content_lang())}
-                <button phx-click="remove_dependency" phx-value-assignment={@a.uuid} phx-value-depends_on={dep.depends_on_uuid} phx-disable-with={gettext("Removing…")} class="hover:text-error">
-                  <.icon name="hero-x-mark" class="w-3 h-3" />
-                </button>
-              </span>
-            <% end %>
           </div>
         </div>
     """
@@ -2049,6 +2063,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        |> open_deps_up(parents, deps_by_assignment, 0)
        |> Enum.uniq_by(& &1.depends_on_uuid)}
     end)
+  end
+
+  defp link_pairs(deps_by_assignment) do
+    for {uuid, deps} <- deps_by_assignment, dep <- deps, do: [dep.depends_on_uuid, uuid]
+  end
+
+  defp linked_uuids(deps_by_assignment) do
+    deps_by_assignment
+    |> link_pairs()
+    |> List.flatten()
+    |> MapSet.new()
   end
 
   defp open_deps_up(nil, _parents, _deps, _depth), do: []
@@ -2776,6 +2801,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           child_deps =
             child_uuid |> Projects.list_all_dependencies() |> Enum.group_by(& &1.assignment_uuid)
 
+          deps_by_assignment = Map.merge(socket.assigns.deps_by_assignment, child_deps)
+
           # load_ledger last: the newly revealed child tasks' logged-time
           # chips read `@ledger_minutes`, which keys off the displayed set.
           {:noreply,
@@ -2784,7 +2811,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              expanded_subprojects: MapSet.put(expanded, uuid),
              subproject_child_tasks:
                Map.put(socket.assigns.subproject_child_tasks, uuid, child_tasks),
-             deps_by_assignment: Map.merge(socket.assigns.deps_by_assignment, child_deps),
+             deps_by_assignment: deps_by_assignment,
+             link_pairs: link_pairs(deps_by_assignment),
+             linked_uuids: linked_uuids(deps_by_assignment),
              held_by:
                Map.merge(
                  socket.assigns[:held_by] || %{},
@@ -5060,23 +5089,30 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           </:cta>
         </.empty_state>
       <% else %>
-        <div :if={@visible_assignments != []} class="relative">
-          <%!-- The connector rail claims "these run one after another" —
-               the schedule is a sequential walk in drag order, and the line
-               is that walk drawn down the list. Two ways for the claim to
-               be false: under a lens the rows are a slice, not the plan;
-               and with scheduling OFF (a checklist) there is no walk at all,
-               only a list whose order is yours to arrange. So it renders
-               only when both hold. Dragging shares the first condition,
-               not the second — a checklist is still reorderable. And a
-               single row has nothing to run after: the line through a
-               lone sub-project read as "this depends on something". --%>
-          <div
-            :if={@list_manual? and @list_whole? and @fx.scheduling and length(@visible_assignments) > 1}
-            class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300"
-          >
-          </div>
-
+        <%!-- `PkpLinks`: hover a connected task for a light hint of what
+             it waits on and unlocks; its trace button marks the whole chain
+             and stays while scrolling (the button again, Escape or a click
+             outside the list ends it). All in the browser, from the pairs
+             below. No rail down the side: a line through every row claimed
+             "these run one after another", which a project's dependencies
+             rarely are. --%>
+        <div
+          :if={@visible_assignments != []}
+          id={"project-task-links-#{@project.uuid}"}
+          class="relative"
+          phx-hook={if @fx.dependencies, do: "PkpLinks"}
+          data-links={Jason.encode!(@link_pairs)}
+          data-labels={
+            Jason.encode!(%{
+              before: gettext("Waits on"),
+              after: gettext("Unlocks"),
+              earlier: gettext("Earlier"),
+              later: gettext("Later"),
+              trace: gettext("Trace everything before and after it"),
+              stop: gettext("Stop tracing")
+            })
+          }
+        >
           <%!-- SortableGrid hook lives on the inner flex container —
                the absolute-positioned vertical line is a sibling
                outside it so it doesn't get included in the sortable
@@ -5352,6 +5388,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       assignment_labels={@assignment_labels}
                                       deps_by_assignment={@deps_by_assignment}
                                       held_by={@held_by}
+                                      linked={@linked_uuids}
                                     />
                                   </div>
                                 </div>
@@ -5389,6 +5426,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       assignment_labels={@assignment_labels}
                       deps_by_assignment={@deps_by_assignment}
                       held_by={@held_by}
+                      linked={@linked_uuids}
                     />
                   <% end %>
                 </div>
