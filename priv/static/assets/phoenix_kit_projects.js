@@ -1186,7 +1186,9 @@
   var LINKS_STYLE_ID = "pkp-links-style";
   var LINKS_CSS = [
     "[data-pkp-card]{transition:opacity .12s,background-color .12s}",
-    "[data-pkp-rel]{display:inline-flex;align-items:center;gap:.3rem;font-size:.75rem;font-weight:500;white-space:nowrap}",
+    // The label is a tab on the card's top-left edge, out of the row's flow:
+    // it comes and goes without moving anything (the view icon stays put).
+    "[data-pkp-rel]{position:absolute;left:.75rem;top:-.6rem;z-index:1;pointer-events:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.7rem;font-weight:600;line-height:1.15rem;white-space:nowrap;border-radius:999px}",
     "@media (prefers-reduced-motion:reduce){[data-pkp-card]{transition:none}}"
   ].join("\n");
   var LK_BEFORE = "#7c5cd6", LK_AFTER = "#e0682b", LK_AFTER_TEXT = "#d0571d";
@@ -1359,7 +1361,8 @@
         rules.push(card(id) + (direct
           ? "{opacity:1;background-color:color-mix(in oklab," + colour + " 6%,transparent);box-shadow:inset 3px 0 0 " + colour + "}"
           : "{opacity:1;background-image:repeating-linear-gradient(to bottom," + colour + " 0 3px,transparent 3px 6px);background-size:2px 100%;background-repeat:no-repeat;background-position:left top}"));
-        rules.push(rel(id) + "{color:" + textColour + (direct ? "" : ";opacity:.8") + "}");
+        rules.push(rel(id) + "{color:" + textColour + ";background-color:var(--color-base-100,#fff);padding:0 .45rem;box-shadow:0 0 0 1px " +
+          (direct ? "currentColor" : "color-mix(in oklab,currentColor 45%,transparent)") + "}");
         rules.push(rel(id) + "::before{content:'';width:.4rem;height:.4rem;border-radius:50%;" +
           (direct ? "background:currentColor" : "box-shadow:inset 0 0 0 1.5px currentColor") + "}");
         rules.push(rel(id) + "::after{content:" + cssString(label) + "}");

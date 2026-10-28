@@ -1685,7 +1685,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp task_body(assigns) do
     ~H"""
-    <div class="card-body py-3 px-4 gap-2 rounded-[inherit]" data-pkp-card={@a.uuid}>
+    <div class="card-body relative py-3 px-4 gap-2 rounded-[inherit]" data-pkp-card={@a.uuid}>
+      <%!-- Filled by `PkpLinks` while a connected task is hovered or traced
+           ("Waits on", "Unlocks", "Earlier", "Later"): a tab on the card's
+           top-left edge, out of the row's flow, so nothing in the row moves
+           when it comes and goes. --%>
+      <span data-pkp-rel={@a.uuid}></span>
       <%!-- Title row --%>
           <div class="flex items-center justify-between gap-2">
             <div class="flex items-center gap-2 min-w-0 flex-1">
@@ -1718,9 +1723,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               >
                 <.ref_chip ref={Refs.task_ref(@project.key, @a.number)} />
               </.smart_link>
-              <%!-- Filled by `PkpLinks` while a connected task is hovered
-                   or traced: "Waits on", "Unlocks", "Earlier", "Later". --%>
-              <span data-pkp-rel={@a.uuid} class="order-last shrink-0"></span>
               <%!-- The title is typed into where it stands (Enter adds the
                    next task, Tab makes it a subtask); the arrow opens the
                    form. Read-only rows keep the title as the link. --%>
@@ -5907,7 +5909,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <%= if @next_up.mode == :release do %>
               {gettext("The people ticked below are told it is their turn when you confirm — untick anyone who should not be notified. A comment goes along with the notification.")}
             <% else %>
-              {gettext("Once it is done, these tasks can start. Choose for each: “can be started” tells the people ticked below when you confirm, “keep idle” leaves it waiting. A comment goes along with the notification.")}
+              {gettext("Once it is done, these tasks can start: the people ticked below are told when you confirm, with your comment. Press “Keep idle” on a task that should wait.")}
             <% end %>
           </p>
           <div :for={a <- next_rows} class="rounded-box border border-base-200 p-3 flex flex-col gap-2">
@@ -5915,39 +5917,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             <% release? = next_up_release?(@next_up, a) %>
             <% people = Map.get(@next_up.recipients, a.uuid, []) %>
             <div class="flex flex-wrap items-center gap-2">
-              <.assignment_status_badge status={if(release?, do: "todo", else: "waiting")} size="xs" />
-              <span class="font-medium flex-1 min-w-0 truncate">
+              <span class={["font-medium flex-1 min-w-0 truncate", not release? && "line-through opacity-50"]}>
                 {Assignment.label(a, L10n.current_content_lang())}
               </span>
-              <div
+              <%!-- One button: pressed, the task stays waiting and the row
+                   greys out; pressed again, it is released with the rest. --%>
+              <button
                 :if={@next_up.mode == :complete and can.release}
-                class="join"
-                role="group"
-                aria-label={gettext("What happens to it")}
+                type="button"
+                phx-click="next_up_toggle_idle"
+                phx-value-uuid={a.uuid}
+                aria-pressed={to_string(not release?)}
+                class={["btn btn-xs gap-1", if(release?, do: "btn-ghost", else: "btn-neutral")]}
               >
-                <button
-                  type="button"
-                  phx-click={if(release?, do: nil, else: "next_up_toggle_idle")}
-                  phx-value-uuid={a.uuid}
-                  aria-pressed={to_string(release?)}
-                  class={["btn btn-xs join-item", if(release?, do: "btn-info", else: "btn-ghost")]}
-                >
-                  {gettext("Can be started")}
-                </button>
-                <button
-                  type="button"
-                  phx-click={if(release?, do: "next_up_toggle_idle", else: nil)}
-                  phx-value-uuid={a.uuid}
-                  aria-pressed={to_string(not release?)}
-                  class={["btn btn-xs join-item", if(release?, do: "btn-ghost", else: "btn-neutral")]}
-                >
-                  {gettext("Keep idle")}
-                </button>
-              </div>
+                <.icon name={if(release?, do: "hero-pause", else: "hero-arrow-uturn-left")} class="w-3.5 h-3.5" />
+                {if release?, do: gettext("Keep idle"), else: gettext("Undo")}
+              </button>
             </div>
 
             <%!-- Who it is assigned to, and who the notice reaches. --%>
-            <div class="flex items-center gap-1.5 text-xs text-base-content/70">
+            <div class={["flex items-center gap-1.5 text-xs text-base-content/70", not release? && "opacity-50"]}>
               <.icon name={assignee_icon(a)} class="w-3.5 h-3.5 shrink-0" />
               <%= if assignee_type(a) do %>
                 <span>{assignee_type(a)}:</span>
@@ -5959,7 +5948,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             <%= cond do %>
               <% not release? -> %>
-                <p class="text-xs text-base-content/60 flex items-center gap-1">
+                <p class="text-xs text-base-content/50 flex items-center gap-1">
                   <.icon name="hero-bell-slash" class="w-3.5 h-3.5" />
                   {gettext("Kept idle — nobody is notified.")}
                 </p>
