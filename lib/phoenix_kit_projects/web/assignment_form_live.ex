@@ -994,6 +994,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # ── Validate ────────────────────────────────────────────────────
 
   @impl true
+  # Opening a cued section (History, Discussion, AI notes are
+  # `<.accordion cue>`) reports it as seen. This form never cues anything,
+  # so there is nothing to clear — but without a clause the event raised
+  # FunctionClauseError and took the whole form down (tim-dev, 2026-10-27).
+  def handle_event("pk_cue_seen", _params, socket), do: {:noreply, socket}
+
   # "Done" on a task being edited: what is still waiting is saved first;
   # if that fails the form stays open on the error.
   def handle_event("close_form", _params, socket) do
