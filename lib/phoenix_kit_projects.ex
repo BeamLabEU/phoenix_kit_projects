@@ -1269,6 +1269,18 @@ defmodule PhoenixKitProjects do
         visible: false,
         live_view: {PhoenixKitProjects.Web.AssignmentFormLive, :edit}
       },
+      %Tab{
+        id: :admin_projects_assignment_view,
+        label: "Task",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:project_id/assignments/:id",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.AssignmentViewLive, :show}
+      },
       # `/projects/:id/<extension tab>` — LAST on purpose: Phoenix matches in
       # declaration order, so every literal sibling above (edit, files,
       # members, modules, api, activity, board, gantt, calendar, tasks, comments,

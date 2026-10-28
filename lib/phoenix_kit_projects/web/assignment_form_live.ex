@@ -74,6 +74,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
+      |> assign_from_view(session)
       # `form_seq` re-keys the title's wrapper after "Add & next" so a fresh
       # element mounts and `phx-mounted` refocuses it; `add_next?` is the
       # submit's intent (the "then=next" submitter), read at save time.
@@ -104,6 +105,32 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # same `<.translatable_field>` as every other translatable column —
   # `task[title]` on the primary tab, `task[translations][<lang>][title]`
   # on the others. Nothing is inserted until Save.
+  # Opened from the task's view in the same drawer (its "Edit"): leaving
+  # the form goes back to that view instead of closing the drawer.
+  defp assign_from_view(socket, session) do
+    assign(socket,
+      from_view?:
+        socket.assigns.embed_mode == :emit and Map.get(session, "from_view") in ["1", true]
+    )
+  end
+
+  # Leaves the form: back to the task's view when the form was opened from
+  # it, otherwise closed (a drawer) or navigated away (a page).
+  defp leave_form(socket, fallback) do
+    case {socket.assigns[:from_view?], socket.assigns[:assignment]} do
+      {true, %Assignment{uuid: uuid, project_uuid: project_uuid}} when is_binary(uuid) ->
+        WebHelpers.emit_swap(socket, PhoenixKitProjects.Web.AssignmentViewLive, %{
+          "project_id" => project_uuid,
+          "id" => uuid
+        })
+
+        socket
+
+      _ ->
+        WebHelpers.close_or_navigate(socket, fallback)
+    end
+  end
+
   defp new_task_form(attrs), do: to_form(Projects.change_task(%Task{}, attrs), as: :task)
 
   defp prefill_title(params) do
@@ -981,7 +1008,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           _ -> Paths.projects()
         end
 
-      {:noreply, WebHelpers.close_or_navigate(socket, fallback)}
+      {:noreply, leave_form(socket, fallback)}
     end
   end
 
@@ -992,7 +1019,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         _ -> Paths.projects()
       end
 
-    {:noreply, WebHelpers.close_or_navigate(socket, fallback)}
+    {:noreply, leave_form(socket, fallback)}
   end
 
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do
@@ -3029,7 +3056,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             data-confirm={@dirty? && gettext("Discard your changes?")}
             class="link link-hover text-sm"
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {@project.name}
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" />
+            {if @from_view?, do: gettext("Back to task"), else: @project.name}
           </button>
         </:back_link>
         <:actions :if={assigns[:task_ref]}>
@@ -3903,7 +3931,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Delete")}
             </button>
             <button type="button" phx-click="close_form" class="btn btn-sm">
-              {gettext("Done")}
+              {if @from_view?, do: gettext("Back to task"), else: gettext("Done")}
             </button>
           </div>
         </div>

@@ -420,6 +420,30 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     {:noreply, pop_if_top_matches(socket, ref)}
   end
 
+  # `:swap` — the top frame becomes another view in the same drawer: a
+  # task's view ⇄ its edit form, a view following a connection to the
+  # next task. Pop and push in one step, under the same guards as
+  # `:saved`'s `next`: only the top frame may swap itself, and only into
+  # an embeddable LV, with the session sanitized like an `:opened`.
+  def handle_info({:projects, :swap, %{frame_ref: ref, lv: lv, session: child_session}}, socket)
+      when is_atom(lv) and is_map(child_session) do
+    cond do
+      current_top_ref(socket) != ref ->
+        Logger.debug("[PopupHostLive] dropping stale :swap from frame_ref=#{inspect(ref)}")
+        {:noreply, socket}
+
+      not WebHelpers.embeddable_lv?(lv) ->
+        Logger.warning("[PopupHostLive] refused :swap into non-embeddable LV #{inspect(lv)}")
+        {:noreply, socket}
+
+      true ->
+        {:noreply,
+         socket
+         |> pop_top()
+         |> push_frame(lv, WebHelpers.sanitize_session_overrides(child_session))}
+    end
+  end
+
   def handle_info({:projects, :saved, _payload}, socket) do
     {:noreply, socket}
   end

@@ -187,9 +187,9 @@ defmodule PhoenixKitProjects.Web.OutlineList do
         %{href: Paths.project(a.child_project_uuid)}
 
       socket.assigns[:embed_mode] in [:emit, :popup] ->
-        lv = PhoenixKitProjects.Web.AssignmentFormLive
+        lv = PhoenixKitProjects.Web.AssignmentViewLive
 
-        session = %{"live_action" => "edit", "project_id" => project.uuid, "id" => a.uuid}
+        session = %{"project_id" => project.uuid, "id" => a.uuid}
 
         %{
           open:
@@ -200,7 +200,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
         }
 
       true ->
-        %{href: Paths.edit_assignment(project.uuid, a.uuid)}
+        %{href: Paths.view_assignment(project.uuid, a.uuid)}
     end
   end
 
@@ -479,7 +479,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       %Assignment{} ->
         {:noreply,
          Phoenix.LiveView.push_navigate(socket,
-           to: Paths.edit_assignment(socket.assigns.project.uuid, uuid)
+           to: Paths.view_assignment(socket.assigns.project.uuid, uuid)
          )}
 
       _ ->

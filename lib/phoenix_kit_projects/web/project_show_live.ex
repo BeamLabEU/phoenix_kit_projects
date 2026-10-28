@@ -121,6 +121,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp assign_popup_mode(socket), do: socket
 
+  # The task view in this page's drawer (`AssignmentViewLive`) asks the page
+  # for the steps the page owns — the "Ready to start" and "Done" dialogs,
+  # a reopen's "why" — on the drawer's topic (`WebHelpers.emit_intent/3`).
+  # The router page's topic is its own; an embed's is the host's.
+  # An embed mounts through the router clause first, so this runs twice
+  # with the same topic: subscribe once, or every step would run twice.
+  defp subscribe_intents(socket) do
+    case socket.assigns[:embed_pubsub_topic] do
+      topic when is_binary(topic) and topic != "" ->
+        if connected?(socket) and socket.assigns[:intent_topic] != topic do
+          ProjectsPubSub.subscribe(topic)
+        end
+
+        assign(socket, :intent_topic, topic)
+
+      _ ->
+        socket
+    end
+  end
+
   # Embedded entry: when nested via `live_render`, params arrives as
   # `:not_mounted_at_router` and `session` carries the project id (plus
   # any `wrapper_class` override). Delegate to the router clause so the
@@ -143,6 +163,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
      # The router clause switched to `:popup` mode (its own drawer); an
      # embed follows its session instead — `navigate` or the host's `emit`.
      |> WebHelpers.assign_embed_state(session)
+     |> subscribe_intents()
      |> assign(
        router_mounted?: false,
        gantt_mounted?: false,
@@ -200,6 +221,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       socket
       |> WebHelpers.assign_embed_state(session)
       |> assign_popup_mode()
+      |> subscribe_intents()
       |> WebHelpers.assign_embed_user(session)
 
     # `get_project/1` stays in mount/3 because the not-found path
@@ -449,12 +471,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # The form the drawer opens with when the page was reached through a
-  # link to a task: the same edit form the row's title opens.
+  # What the drawer opens with when the page was reached through a link to
+  # a task: the task's view, as the row's title opens it.
   defp popup_open(%{focus_task: uuid, project: project}) when is_binary(uuid) do
     %{
-      "lv" => Atom.to_string(PhoenixKitProjects.Web.AssignmentFormLive),
-      "session" => %{"live_action" => "edit", "project_id" => project.uuid, "id" => uuid}
+      "lv" => Atom.to_string(PhoenixKitProjects.Web.AssignmentViewLive),
+      "session" => %{"project_id" => project.uuid, "id" => uuid}
     }
   end
 
@@ -677,6 +699,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # `:assignment_updated` / `:assignment_reordered`.
   def handle_info({:projects, :assignment_status_changed, _payload}, socket),
     do: {:noreply, socket}
+
+  # A step asked for by the task view in the drawer: run as this page's own
+  # event, through the same feature gate and permission check as a click.
+  def handle_info({:projects, :intent, %{event: event, uuid: uuid}}, socket)
+      when event in ~w(ask_ready complete start_task ask_reopen) and is_binary(uuid) do
+    case handle_event(event, %{"uuid" => uuid}, socket) do
+      {:noreply, socket} -> {:noreply, socket}
+      {:reply, _reply, socket} -> {:noreply, socket}
+    end
+  end
 
   def handle_info(msg, socket) do
     Logger.debug("[ProjectShowLive] unexpected handle_info: #{inspect(msg)}")
@@ -1692,10 +1724,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   {@ol.count.done}/{@ol.count.total}
                 </span>
                 <.smart_link
-                  navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid)}
+                  navigate={Paths.view_assignment(@a.project_uuid, @a.uuid)}
                   emit={
-                    {PhoenixKitProjects.Web.AssignmentFormLive,
-                     %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid}}
+                    {PhoenixKitProjects.Web.AssignmentViewLive,
+                     %{"project_id" => @a.project_uuid, "id" => @a.uuid}}
                   }
                   embed_mode={@embed_mode}
                   class="btn btn-ghost btn-xs btn-circle shrink-0"
@@ -1707,13 +1739,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <span :if={@ol && @ol.count} class="badge badge-sm badge-outline shrink-0">
                 {@ol.count.done}/{@ol.count.total}
               </span>
-              <%!-- Title links to the same edit form as the row menu's
-                   Edit — clicking a name anywhere should go somewhere. --%>
+              <%!-- The title opens the task's view (reading, the next step,
+                   the conversation); the row menu's Edit opens the form. --%>
               <.smart_link
-                navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid)}
+                navigate={Paths.view_assignment(@a.project_uuid, @a.uuid)}
                 emit={
-                  {PhoenixKitProjects.Web.AssignmentFormLive,
-                   %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid}}
+                  {PhoenixKitProjects.Web.AssignmentViewLive,
+                   %{"project_id" => @a.project_uuid, "id" => @a.uuid}}
                 }
                 embed_mode={@embed_mode}
                 class="font-medium truncate min-w-0 link link-hover"
@@ -5540,10 +5572,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       <.icon name="hero-bars-2" class="w-3.5 h-3.5" />
                     </span>
                     <.smart_link
-                      navigate={Paths.edit_assignment(a.project_uuid, a.uuid)}
+                      navigate={Paths.view_assignment(a.project_uuid, a.uuid)}
                       emit={
-                        {PhoenixKitProjects.Web.AssignmentFormLive,
-                         %{"live_action" => "edit", "project_id" => a.project_uuid, "id" => a.uuid}}
+                        {PhoenixKitProjects.Web.AssignmentViewLive,
+                         %{"project_id" => a.project_uuid, "id" => a.uuid}}
                       }
                       embed_mode={@embed_mode}
                       class="text-sm font-medium link link-hover leading-snug min-w-0"

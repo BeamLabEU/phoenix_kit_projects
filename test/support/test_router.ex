@@ -133,6 +133,7 @@ defmodule PhoenixKitProjects.Test.Router do
 
       live("/:project_id/assignments/new", AssignmentFormLive, :new)
       live("/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)
+      live("/:project_id/assignments/:id", AssignmentViewLive, :show)
 
       # Last: the extension-tab catch-all (mirrors the module's route order).
       live("/:id/:tab", ProjectShowLive, :ext_tab)

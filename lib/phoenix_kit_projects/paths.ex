@@ -138,6 +138,11 @@ defmodule PhoenixKitProjects.Paths do
   @spec new_assignment(String.t()) :: String.t()
   def new_assignment(project_id), do: Routes.path("#{@base}/#{project_id}/assignments/new")
 
+  @doc "A task's view (read, comment, the next step) nested under a project."
+  @spec view_assignment(String.t(), String.t()) :: String.t()
+  def view_assignment(project_id, id),
+    do: Routes.path("#{@base}/#{project_id}/assignments/#{id}")
+
   @doc "Edit form for an assignment nested under a project."
   @spec edit_assignment(String.t(), String.t()) :: String.t()
   def edit_assignment(project_id, id),

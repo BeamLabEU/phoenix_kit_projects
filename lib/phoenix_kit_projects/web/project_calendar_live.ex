@@ -271,14 +271,10 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
 
       {:task, project_uuid} ->
         WebHelpers.navigate_or_open(socket,
-          to: Paths.edit_assignment(project_uuid, assignment_uuid),
+          to: Paths.view_assignment(project_uuid, assignment_uuid),
           open:
-            {PhoenixKitProjects.Web.AssignmentFormLive,
-             %{
-               "live_action" => "edit",
-               "project_id" => project_uuid,
-               "id" => assignment_uuid
-             }}
+            {PhoenixKitProjects.Web.AssignmentViewLive,
+             %{"project_id" => project_uuid, "id" => assignment_uuid}}
         )
 
       nil ->
