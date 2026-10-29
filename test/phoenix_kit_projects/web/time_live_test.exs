@@ -8,7 +8,8 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Extensions, Projects}
+  alias PhoenixKitProjects.{Extensions, Ledger, Members, Projects, TimeBoard}
+  alias PhoenixKitProjects.Test.Repo
   alias PhoenixKitStaff.{Departments, Staff}
 
   @path "/en/admin/projects/time"
@@ -117,6 +118,118 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
 
     render_submit(view, "save_deadline", %{"uuid" => a.uuid, "deadline" => "2030-01-01T10:00"})
     assert %{deadline: nil} = Projects.get_assignment(a.uuid)
+  end
+
+  test "with the project's dates off there is no Set deadline, and a forged save is refused",
+       %{conn: conn, project: project} do
+    ann = person("Ann Nodates #{uniq()}")
+
+    a =
+      task(project, "No dates here", %{
+        "assigned_person_uuid" => ann.uuid,
+        "start_date" => Date.utc_today(),
+        "end_date" => Date.utc_today()
+      })
+
+    {:ok, _} =
+      Projects.update_project(project, %{"settings" => %{"features" => %{"dates" => false}}})
+
+    {:ok, view, _html} = live(conn, @path)
+    dom = "person-#{ann.uuid}-#{a.uuid}"
+
+    assert has_element?(view, "#time-line-#{dom}")
+    refute has_element?(view, "#time-line-#{dom} button[phx-click=edit_deadline]")
+
+    render_submit(view, "save_deadline", %{"uuid" => a.uuid, "deadline" => "2030-01-01T10:00"})
+    assert %{deadline: nil} = Projects.get_assignment(a.uuid)
+  end
+
+  test "Set deadline saved unchanged writes nothing (the stored seconds stay)", %{
+    project: project
+  } do
+    ann = person("Ann Same #{uniq()}")
+    a = task(project, "Keep it", %{"assigned_person_uuid" => ann.uuid})
+
+    a
+    |> Ecto.Changeset.change(deadline: ~U[2030-01-01 10:00:30Z])
+    |> Repo.update!()
+
+    assert {:ok, _} = TimeBoard.set_deadline(fake_scope(), a.uuid, "2030-01-01T10:00")
+    assert %{deadline: ~U[2030-01-01 10:00:30Z]} = Projects.get_assignment(a.uuid)
+
+    # A changed value is still written.
+    assert {:ok, _} = TimeBoard.set_deadline(fake_scope(), a.uuid, "2030-01-01T11:00")
+    assert %{deadline: ~U[2030-01-01 11:00:00Z]} = Projects.get_assignment(a.uuid)
+  end
+
+  describe "load/4 — whose time" do
+    @day ~D[2026-10-20]
+
+    test "time logged for a staff person (by the person, not an account) is on their row",
+         %{project: project} do
+      sam = person("Sam Staff #{uniq()}")
+      a = task(project, "Sam's job", %{})
+
+      {:ok, _} =
+        Ledger.log_time(project.uuid, 45,
+          assignment_uuid: a.uuid,
+          actor_kind: "staff_person",
+          actor_uuid: sam.uuid,
+          started_at: ~U[2026-10-20 09:00:00Z],
+          ended_at: ~U[2026-10-20 09:45:00Z]
+        )
+
+      board = TimeBoard.load(fake_scope(), @day, @day, now: ~U[2026-10-29 12:00:00Z])
+      row = Enum.find(board.people, &(&1.key == {:person, sam.uuid}))
+
+      assert %{lines: [%{logged: [%{minutes: 45.0}]}]} = row
+    end
+
+    test "time reported for a day after it ended is on that day", %{project: project} do
+      ann = person("Ann Backdated #{uniq()}")
+      a = task(project, "Reported late", %{"assigned_person_uuid" => ann.uuid})
+
+      # Reported today for the 20th: no start, the day it was done as its end.
+      {:ok, _} =
+        Ledger.log_time(project.uuid, 60,
+          assignment_uuid: a.uuid,
+          actor_uuid: ann.user_uuid,
+          ended_at: ~U[2026-10-20 15:00:00Z]
+        )
+
+      board = TimeBoard.load(fake_scope(), @day, @day, now: ~U[2026-10-29 12:00:00Z])
+      row = Enum.find(board.people, &(&1.key == {:person, ann.uuid}))
+
+      assert %{lines: [%{logged: [%{minutes: 60.0}]}]} = row
+    end
+
+    test "a trashed person who did work has no row for a member either", %{project: project} do
+      ann = person("Ann Active #{uniq()}")
+      gone = person("Gone Trashed #{uniq()}")
+      a = task(project, "Shared job", %{})
+
+      for who <- [ann, gone] do
+        {:ok, _} =
+          Ledger.log_time(project.uuid, 30,
+            assignment_uuid: a.uuid,
+            actor_uuid: who.user_uuid,
+            started_at: ~U[2026-10-20 09:00:00Z],
+            ended_at: ~U[2026-10-20 09:30:00Z]
+          )
+      end
+
+      {:ok, _} = Staff.trash_person(gone)
+
+      member = embed_user_uuid!()
+      {:ok, _} = Members.add_member(project, member, role: "member")
+      scope = fake_scope(user_uuid: member, permissions: ["projects"])
+
+      board = TimeBoard.load(scope, @day, @day, now: ~U[2026-10-29 12:00:00Z])
+      keys = Enum.map(board.people, & &1.key)
+
+      assert {:person, ann.uuid} in keys
+      refute {:person, gone.uuid} in keys
+    end
   end
 
   test "a viewer without the module is refused", %{conn: conn} do

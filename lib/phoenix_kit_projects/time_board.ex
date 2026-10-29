@@ -30,6 +30,7 @@ defmodule PhoenixKitProjects.TimeBoard do
   import Ecto.Query
 
   require Logger
+  require PhoenixKitProjects.Hours
 
   alias PhoenixKit.RepoHelper
 
@@ -37,6 +38,7 @@ defmodule PhoenixKitProjects.TimeBoard do
     Activity,
     Authz,
     Extensions,
+    Features,
     Hours,
     L10n,
     People,
@@ -57,6 +59,9 @@ defmodule PhoenixKitProjects.TimeBoard do
   # walked-back plan reach into it.
   @deadline_horizon_days 90
   @unscheduled_cap 500
+  # Whose time the board shows: people's, with or without an account — an
+  # agent's work is not anyone's day.
+  @human_actor_kinds ~w(user staff_person)
 
   @type segment :: {NaiveDateTime.t(), NaiveDateTime.t()}
   @type row_key :: {:person | :team | :department, binary()}
@@ -195,21 +200,28 @@ defmodule PhoenixKitProjects.TimeBoard do
     range =
       {NaiveDateTime.new!(from, ~T[00:00:00]), NaiveDateTime.new!(Date.add(to, 1), ~T[00:00:00])}
 
+    unscheduled_in = Keyword.get(opts, :unscheduled, [])
+
+    # A trashed person has no row: not listed, not as an assignee, not as
+    # whoever did the work.
+    people = Enum.reject(people, &trashed?/1)
+
+    # The assignees of the unscheduled tasks too: the strip counts their
+    # tasks on their row, so the row must be there.
     known_people =
-      (people ++ Enum.flat_map(assignments, &List.wrap(loaded(&1.assigned_person))))
+      (people ++
+         Enum.flat_map(assignments ++ unscheduled_in, &List.wrap(loaded(&1.assigned_person))))
+      |> Enum.reject(&trashed?/1)
       |> Enum.uniq_by(& &1.uuid)
 
-    by_user =
-      known_people
-      |> Enum.filter(&is_binary(&1.user_uuid))
-      |> Map.new(&{&1.user_uuid, &1})
+    by_actor = actor_index(known_people)
 
     entries_by_a = Enum.group_by(entries, & &1.assignment_uuid)
 
     keyed_lines =
       assignments
       |> Enum.flat_map(fn a ->
-        place(a, Map.get(entries_by_a, a.uuid, []), by_user, now, now_local, lang)
+        place(a, Map.get(entries_by_a, a.uuid, []), by_actor, now, lang)
       end)
       |> Enum.filter(fn {_key, line} -> relevant?(line, range, today) end)
       |> Enum.map(fn {key, line} -> {key, Map.put(line, :rank, rank(line, range))} end)
@@ -220,8 +232,7 @@ defmodule PhoenixKitProjects.TimeBoard do
       |> Map.new(fn {k, lines} -> {k, Enum.sort_by(lines, &line_sort_key/1)} end)
 
     unscheduled =
-      opts
-      |> Keyword.get(:unscheduled, [])
+      unscheduled_in
       |> Enum.flat_map(fn a ->
         case assignee_key(a) do
           nil -> []
@@ -259,7 +270,7 @@ defmodule PhoenixKitProjects.TimeBoard do
       end)
       |> Enum.sort_by(&{&1.lines == [], String.downcase(&1.name)})
 
-    group_names = group_names(assignments ++ Keyword.get(opts, :unscheduled, []))
+    group_names = group_names(assignments ++ unscheduled_in)
 
     group_rows =
       (Enum.reject(Map.keys(by_key), &match?({:person, _}, &1)) ++
@@ -283,9 +294,30 @@ defmodule PhoenixKitProjects.TimeBoard do
   @spec empty() :: map()
   def empty, do: %{people: [], groups: [], unscheduled: %{}}
 
+  defp trashed?(%{status: "trashed"}), do: true
+  defp trashed?(_person), do: false
+
+  # Who an entry or a start names, to their person: a `"user"` actor by the
+  # account, a `"staff_person"` one (time logged for a person picked from
+  # the project's people) by the person.
+  defp actor_index(people) do
+    Enum.reduce(people, %{}, fn p, acc ->
+      acc = Map.put(acc, {"staff_person", p.uuid}, p)
+      if is_binary(p.user_uuid), do: Map.put(acc, {"user", p.user_uuid}, p), else: acc
+    end)
+  end
+
+  defp actor_person(%WorkEntry{actor_kind: kind, actor_uuid: uuid}, by_actor),
+    do: Map.get(by_actor, {kind, uuid})
+
+  defp starter_person(%{started_by_uuid: uuid}, by_actor) when is_binary(uuid),
+    do: Map.get(by_actor, {"user", uuid})
+
+  defp starter_person(_a, _by_actor), do: nil
+
   # Which rows an assignment's lines go to.
-  defp place(a, entries, by_user, now, now_local, lang) do
-    base = base_line(a, now, now_local, lang)
+  defp place(a, entries, by_actor, now, lang) do
+    base = base_line(a, now, lang)
 
     case assignee_key(a) do
       {:person, _} = key ->
@@ -294,16 +326,17 @@ defmodule PhoenixKitProjects.TimeBoard do
       nil ->
         # Unassigned: only what someone actually did on it is anyone's time.
         a
-        |> workers(entries, by_user)
+        |> workers(entries, by_actor)
         |> Enum.map(fn {person, mine} -> worker_line(base, person, mine, a, nil) end)
 
       group_key ->
-        workers = workers(a, entries, by_user)
-        worker_uuids = Enum.map(workers, fn {p, _} -> p.user_uuid end)
-        starter_placed? = is_binary(a.started_by_uuid) and a.started_by_uuid in worker_uuids
+        workers = workers(a, entries, by_actor)
+        worker_uuids = Enum.map(workers, fn {p, _} -> p.uuid end)
+        placed? = &(match?(%{}, &1) and &1.uuid in worker_uuids)
+        starter_placed? = placed?.(starter_person(a, by_actor))
 
         # Logged by someone the board can't put on a row stays on the plan line.
-        stray = Enum.reject(entries, &(&1.actor_uuid in worker_uuids))
+        stray = Enum.reject(entries, &placed?.(actor_person(&1, by_actor)))
 
         plan_line = %{
           base
@@ -326,19 +359,15 @@ defmodule PhoenixKitProjects.TimeBoard do
 
   # The people who did work on `a`: whoever started it, and whoever logged
   # time on it — each with their own entries.
-  defp workers(a, entries, by_user) do
-    starter = a.started_by_uuid && Map.get(by_user, a.started_by_uuid)
+  defp workers(a, entries, by_actor) do
+    loggers = Enum.map(entries, &actor_person(&1, by_actor))
 
-    loggers =
-      entries
-      |> Enum.map(& &1.actor_uuid)
-      |> Enum.uniq()
-      |> Enum.flat_map(&List.wrap(Map.get(by_user, &1)))
-
-    [starter | loggers]
+    [starter_person(a, by_actor) | loggers]
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq_by(& &1.uuid)
-    |> Enum.map(fn p -> {p, Enum.filter(entries, &(&1.actor_uuid == p.user_uuid))} end)
+    |> Enum.map(fn %{uuid: uuid} = p ->
+      {p, Enum.filter(entries, &match?(%{uuid: ^uuid}, actor_person(&1, by_actor)))}
+    end)
   end
 
   defp worker_line(base, person, mine, a, via) do
@@ -361,14 +390,14 @@ defmodule PhoenixKitProjects.TimeBoard do
      }}
   end
 
-  defp base_line(%Assignment{} = a, now, now_local, lang) do
+  defp base_line(%Assignment{} = a, now, lang) do
     project = loaded(a.project)
     weekends? = if project, do: ScheduleLayout.task_counts_weekends?(a, project), else: false
     hours = if project, do: ScheduleLayout.assignment_hours(a, project), else: 0
     deadline = a.deadline && local_naive(a.deadline)
     {planned, source} = planned_window(a, deadline, hours, weekends?)
     completed = a.completed_at && local_naive(a.completed_at)
-    {actual, live?} = actual_of(a, completed, now_local)
+    {actual, live?} = actual_of(a, now)
     late = late_of(actual, deadline)
 
     %{
@@ -396,21 +425,27 @@ defmodule PhoenixKitProjects.TimeBoard do
   end
 
   # started → finished, or → now while in progress (live).
-  defp actual_of(
-         %Assignment{started_at: %DateTime{} = s, status: "in_progress"},
-         _done,
-         now_local
-       ) do
-    started = local_naive(s)
-    {{started, max_naive(started, now_local)}, true}
-  end
+  defp actual_of(%Assignment{started_at: %DateTime{} = s, status: "in_progress"}, now),
+    do: {local_span(s, now), true}
 
-  defp actual_of(%Assignment{started_at: %DateTime{} = s}, %NaiveDateTime{} = done, _now) do
-    started = local_naive(s)
-    {{started, max_naive(started, done)}, false}
-  end
+  defp actual_of(%Assignment{started_at: %DateTime{} = s, completed_at: %DateTime{} = c}, _now),
+    do: {local_span(s, c), false}
 
-  defp actual_of(_a, _done, _now), do: {nil, false}
+  defp actual_of(_a, _now), do: {nil, false}
+
+  # An instant span on the wall clock. Across the autumn fold the wall end
+  # can sit before the wall start (03:45 summer time → 03:15 winter time is
+  # 30 minutes), and the axis has only one 03:00–04:00: the span keeps its
+  # real length from its wall start instead of collapsing to nothing. An end
+  # before the start (bad data) is a point, as before.
+  defp local_span(%DateTime{} = s, %DateTime{} = e) do
+    from = local_naive(s)
+    to = local_naive(e)
+
+    if NaiveDateTime.compare(to, from) == :lt,
+      do: {from, NaiveDateTime.add(from, max(DateTime.diff(e, s), 0))},
+      else: {from, to}
+  end
 
   # The part of the actual after the deadline.
   defp late_of({f, t}, %NaiveDateTime{} = d) do
@@ -424,7 +459,7 @@ defmodule PhoenixKitProjects.TimeBoard do
 
     span =
       if e.started_at && e.ended_at && DateTime.compare(e.ended_at, e.started_at) == :gt,
-        do: {local_naive(e.started_at), local_naive(e.ended_at)}
+        do: local_span(e.started_at, e.ended_at)
 
     %{
       uuid: e.uuid,
@@ -557,7 +592,7 @@ defmodule PhoenixKitProjects.TimeBoard do
         people =
           if admin?,
             do: People.list_people(preload: [:user]),
-            else: people_by_users(worker_user_uuids(assignments, entries))
+            else: workers_people(assignments, entries)
 
         build(assignments, people, entries,
           from: from,
@@ -574,17 +609,27 @@ defmodule PhoenixKitProjects.TimeBoard do
       empty()
   end
 
-  defp worker_user_uuids(assignments, entries) do
-    (Enum.map(assignments, & &1.started_by_uuid) ++ Enum.map(entries, & &1.actor_uuid))
-    |> Enum.filter(&is_binary/1)
-    |> Enum.uniq()
-  end
+  # The people behind the starts and the entries: an account for a start
+  # or a `"user"` entry, the person itself for a `"staff_person"` one.
+  # Trashed people are left out, as the admin's list leaves them out.
+  defp workers_people(assignments, entries) do
+    user_uuids =
+      Enum.map(assignments, & &1.started_by_uuid) ++
+        for(%{actor_kind: "user", actor_uuid: u} <- entries, do: u)
 
-  defp people_by_users([]), do: []
+    person_uuids = for %{actor_kind: "staff_person", actor_uuid: u} <- entries, do: u
+    user_uuids = user_uuids |> Enum.filter(&is_binary/1) |> Enum.uniq()
+    person_uuids = person_uuids |> Enum.filter(&is_binary/1) |> Enum.uniq()
 
-  defp people_by_users(user_uuids) do
-    from(p in Person, where: p.user_uuid in ^user_uuids, preload: [:user])
-    |> RepoHelper.repo().all()
+    if user_uuids == [] and person_uuids == [] do
+      []
+    else
+      from(p in Person,
+        where: p.status != "trashed" and (p.user_uuid in ^user_uuids or p.uuid in ^person_uuids),
+        preload: [:user]
+      )
+      |> RepoHelper.repo().all()
+    end
   end
 
   defp visible(scope, project_uuid) do
@@ -654,10 +699,8 @@ defmodule PhoenixKitProjects.TimeBoard do
   defp worked_condition(start_utc, end_utc) do
     entries_in_range =
       from(e in WorkEntry,
-        where:
-          e.kind == "time" and e.actor_kind == "user" and not is_nil(e.assignment_uuid) and
-            coalesce(e.ended_at, e.inserted_at) >= ^start_utc and
-            coalesce(e.started_at, e.inserted_at) < ^end_utc,
+        where: not is_nil(e.assignment_uuid),
+        where: ^entry_in_range(start_utc, end_utc),
         select: e.assignment_uuid
       )
 
@@ -679,11 +722,25 @@ defmodule PhoenixKitProjects.TimeBoard do
 
     RepoHelper.repo().all(
       from(e in WorkEntry,
-        where:
-          e.assignment_uuid in ^uuids and e.kind == "time" and e.actor_kind == "user" and
-            coalesce(e.ended_at, e.inserted_at) >= ^start_utc and
-            coalesce(e.started_at, e.inserted_at) < ^end_utc
+        where: e.assignment_uuid in ^uuids,
+        where: ^entry_in_range(start_utc, end_utc)
       )
+    )
+  end
+
+  # A person's time entry that belongs to the range: one with a clock span
+  # when the span overlaps it, any other on its work moment
+  # (`Hours.work_at/1` — when the work was done, else when it was recorded,
+  # as the Hours page counts it). Reading a start-less entry by when it was
+  # recorded put time reported for the 28th on the 29th into no day at all.
+  defp entry_in_range(start_utc, end_utc) do
+    dynamic(
+      [e],
+      e.kind == "time" and e.actor_kind in ^@human_actor_kinds and
+        ((not is_nil(e.started_at) and not is_nil(e.ended_at) and e.started_at < ^end_utc and
+            e.ended_at >= ^start_utc) or
+           ((is_nil(e.started_at) or is_nil(e.ended_at)) and
+              Hours.work_at(e) >= ^start_utc and Hours.work_at(e) < ^end_utc))
     )
   end
 
@@ -722,7 +779,7 @@ defmodule PhoenixKitProjects.TimeBoard do
   @doc """
   The projects (`%{uuid => true}`) in which the viewer may change a task's
   deadline — the task form's own check: `:edit_tasks` on the project, with
-  its task list on.
+  its task list and its dates on.
   """
   @spec editable_projects(term(), [Project.t()]) :: %{binary() => boolean()}
   def editable_projects(scope, projects) do
@@ -731,8 +788,12 @@ defmodule PhoenixKitProjects.TimeBoard do
     |> Map.new(&{&1.uuid, may_edit?(scope, &1)})
   end
 
+  # The dates flag too: with it off the task form shows no deadline and
+  # strips one from a save, so this page must not set one either.
   defp may_edit?(scope, %Project{is_template: false} = project),
-    do: Authz.can?(scope, project, :edit_tasks) and Extensions.enabled?(project, "tasks")
+    do:
+      Authz.can?(scope, project, :edit_tasks) and Extensions.enabled?(project, "tasks") and
+        Features.on?(project, "dates")
 
   defp may_edit?(_scope, _project), do: false
 
@@ -741,8 +802,9 @@ defmodule PhoenixKitProjects.TimeBoard do
   @doc """
   Sets (or, with `""`, clears) a task's deadline from a `datetime-local`
   value read on the viewer's wall clock — under the task form's permission
-  (`:edit_tasks` on the project, task list on). Logs the change like the
-  form does.
+  (`:edit_tasks` on the project, task list and dates on). Logs the change
+  like the form does. A value posted back exactly as the box showed it
+  writes nothing.
   """
   @spec set_deadline(term(), binary(), String.t() | nil, keyword()) ::
           {:ok, Assignment.t()} | {:error, :forbidden | :not_found | Ecto.Changeset.t()}
@@ -750,31 +812,50 @@ defmodule PhoenixKitProjects.TimeBoard do
     with %Assignment{} = a <- Projects.get_assignment(assignment_uuid) || {:error, :not_found},
          %Project{} = project <- Projects.get_project(a.project_uuid) || {:error, :not_found},
          true <- may_edit?(scope, project) || {:error, :forbidden} do
-      attrs =
-        %{"deadline" => value || ""}
-        |> WebHelpers.normalize_datetime_local_attrs(["deadline"])
-        |> Map.update!("deadline", &if(&1 == "", do: nil, else: &1))
+      if unchanged_wall?(value, a.deadline),
+        do: {:ok, a},
+        else: write_deadline(a, project, value, opts)
+    end
+  end
 
-      log_opts = [
-        actor_uuid: Keyword.get(opts, :actor_uuid),
-        resource_type: "assignment",
-        resource_uuid: a.uuid,
-        metadata: %{"project" => project.name, "field" => "deadline"}
-      ]
+  # The box shows the stored deadline to the minute on the viewer's wall
+  # clock (the task form's `drop_unchanged_wall`): read back, the same value
+  # would lose the stored seconds and, in the autumn fold's repeated hour,
+  # could land on the other of the two instants it names.
+  defp unchanged_wall?(value, %DateTime{} = deadline) when is_binary(value) do
+    shown =
+      deadline |> local_naive() |> NaiveDateTime.to_iso8601() |> String.slice(0, 16)
 
-      case Projects.update_assignment_form(a, attrs) do
-        {:ok, updated} ->
-          Activity.log(
-            "projects.assignment_updated",
-            Keyword.put(log_opts, :target_uuid, Activity.assignee_target_uuid(updated))
-          )
+    value == shown
+  end
 
-          {:ok, updated}
+  defp unchanged_wall?(_value, _deadline), do: false
 
-        {:error, cs} ->
-          Activity.log_failed("projects.assignment_updated", log_opts)
-          {:error, cs}
-      end
+  defp write_deadline(a, project, value, opts) do
+    attrs =
+      %{"deadline" => value || ""}
+      |> WebHelpers.normalize_datetime_local_attrs(["deadline"])
+      |> Map.update!("deadline", &if(&1 == "", do: nil, else: &1))
+
+    log_opts = [
+      actor_uuid: Keyword.get(opts, :actor_uuid),
+      resource_type: "assignment",
+      resource_uuid: a.uuid,
+      metadata: %{"project" => project.name, "field" => "deadline"}
+    ]
+
+    case Projects.update_assignment_form(a, attrs) do
+      {:ok, updated} ->
+        Activity.log(
+          "projects.assignment_updated",
+          Keyword.put(log_opts, :target_uuid, Activity.assignee_target_uuid(updated))
+        )
+
+        {:ok, updated}
+
+      {:error, cs} ->
+        Activity.log_failed("projects.assignment_updated", log_opts)
+        {:error, cs}
     end
   end
 end

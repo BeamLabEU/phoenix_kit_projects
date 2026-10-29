@@ -270,4 +270,53 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       refute html =~ ~s(id="assignment-ai-notes")
     end
   end
+
+  describe "a refused rename" do
+    test "autosave: the bar says Not saved, the typed title stays, the Task tab is marked",
+         ctx do
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+      long = String.duplicate("x", 501)
+
+      view |> form("#assignment-form", task: %{title: long}) |> render_change()
+      autosave(view)
+
+      assert Projects.get_task(ctx.a.task_uuid).title == "Measure the kitchen"
+      assert view |> element("#assignment-save-state") |> render() =~ "Not saved"
+      refute view |> element("#assignment-save-state") |> render() =~ "Saved<"
+      assert has_element?(view, "input[name='task[title]'][value='#{long}']")
+      assert has_element?(view, "[data-pane-error='task']")
+    end
+
+    test "submit: the form stays open on the error", ctx do
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+      long = String.duplicate("y", 501)
+
+      html = view |> form("#assignment-form", task: %{title: long}) |> render_submit()
+
+      assert is_binary(html)
+      assert Projects.get_task(ctx.a.task_uuid).title == "Measure the kitchen"
+      assert has_element?(view, "input[name='task[title]'][value='#{long}']")
+      assert has_element?(view, "[data-pane-error='task']")
+    end
+  end
+
+  describe "the right to assign" do
+    test "is asked again at save: a manager made a member since the form opened", ctx do
+      {:ok, _} =
+        PhoenixKitProjects.Authz.set_overrides(ctx.project, %{"assign_tasks" => "managers"})
+
+      bob = person!("Bob")
+      user = embed_user_uuid!()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(ctx.project, user, role: "manager")
+      conn = put_test_scope(ctx.conn, fake_scope(user_uuid: user, permissions: ["projects"]))
+
+      {:ok, view, _} = edit(conn, ctx.project, ctx.a)
+      {:ok, _} = PhoenixKitProjects.Members.change_role(ctx.project, user, "member")
+
+      render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => bob.uuid})
+      autosave(view)
+
+      assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == nil
+    end
+  end
 end

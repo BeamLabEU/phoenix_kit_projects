@@ -308,6 +308,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # A task renamed in its form: written to the task after the assignment's
   # own save, and only when the name (or a translation of it) really changed.
+  # A rename the task refuses (too long, say) comes back as `{:error, cs}`,
+  # so the form keeps what was typed and says why instead of "Saved".
   defp save_edit_title(socket, %Assignment{task_uuid: task_uuid}) do
     with {:changed, title, titles} <- title_change(socket),
          %Task{} = task <- Projects.get_task(task_uuid) do
@@ -320,10 +322,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         |> Enum.reject(fn {_lang, fields} -> fields == %{} end)
         |> Map.new()
 
-      Projects.update_task(task, %{"title" => title, "translations" => translations})
+      case Projects.update_task(task, %{"title" => title, "translations" => translations}) do
+        {:error, %Ecto.Changeset{} = cs} -> {:error, cs}
+        _ -> :ok
+      end
+    else
+      _ -> :ok
     end
-
-    :ok
   rescue
     _ -> :ok
   end
@@ -1527,9 +1532,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     # "Add & next" (Shift+Enter, or the button — the submitter carries
     # `then=next`): after a successful create the form resets for the next
     # task instead of closing. Only a create can chain.
+    # `:assign_tasks` is re-read with the gates: `strip_unassignable/2`
+    # must judge the save by the right as it is now, not at mount.
     socket =
       assign(socket,
         fx: fx,
+        can_assign?: can_assign?(socket),
         add_next?: socket.assigns.live_action == :new and Map.get(params, "then") == "next"
       )
 
@@ -2817,7 +2825,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
     fx = Features.gates(socket.assigns.project)
 
-    socket = assign(socket, fx: fx, pending_labels: pending_labels(fx, params))
+    # The right to hand the task out is asked again too, like the gates: a
+    # manager made a member since the form opened no longer reassigns.
+    socket =
+      assign(socket,
+        fx: fx,
+        pending_labels: pending_labels(fx, params),
+        can_assign?: can_assign?(socket)
+      )
 
     attrs =
       attrs
@@ -2832,7 +2847,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
-        save_edit_title(socket, updated)
+        title_saved = save_edit_title(socket, updated)
 
         # The words become the person's only when the person changed them:
         # a form that saves on every change must not take a task's text
@@ -2854,17 +2869,18 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         socket
         |> log_edit_once(updated, told?)
         |> hold_saved(updated)
-        |> hold_saved_title()
+        |> hold_saved_title(title_saved)
         |> hold_saved_times(times)
         |> assign(
           pending_params: nil,
           save_state: if(words_saved == :ok, do: :saved, else: :error),
           save_error:
             if(words_saved == :ok, do: nil, else: gettext("The description could not be saved.")),
-          dirty?: false
+          dirty?: title_saved != :ok
         )
-        |> times_error(times)
-        |> WebHelpers.notify_dirty(false)
+        |> part_error(title_saved)
+        |> part_error(times)
+        |> WebHelpers.notify_dirty(title_saved != :ok)
 
       {:error, %Ecto.Changeset{} = cs} ->
         socket
@@ -2900,7 +2916,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     )
   end
 
-  # The title as now saved: what the next change is compared with.
+  # The title as now saved: what the next change is compared with. A
+  # refused rename keeps the box as typed, with the task's error on it.
+  defp hold_saved_title(socket, {:error, %Ecto.Changeset{} = cs}),
+    do: assign(socket, :task_form, to_form(Map.put(cs, :action, :validate), as: :task))
+
+  defp hold_saved_title(socket, _result), do: hold_saved_title(socket)
+
   defp hold_saved_title(%{assigns: %{title_editable?: true}} = socket) do
     case socket.assigns.assignment do
       %Assignment{task: %Task{} = task} ->
@@ -2924,13 +2946,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp hold_saved_times(socket, _result), do: assign_times_form(socket)
 
-  defp times_error(socket, {:error, %Ecto.Changeset{} = cs}) do
+  # A part saved after the row's own save (the title, the corrected times)
+  # that failed: the bar says so and the tab holding it opens.
+  defp part_error(socket, {:error, %Ecto.Changeset{} = cs}) do
     socket
     |> assign(save_state: :error, save_error: first_error_message(cs))
     |> show_error_pane()
   end
 
-  defp times_error(socket, _result), do: socket
+  defp part_error(socket, _result), do: socket
 
   # A status or a waiting-on changed through the form is its own line in the
   # project's history (the page's buttons log theirs the same way); the
@@ -3025,7 +3049,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
-        save_edit_title(socket, updated)
+        title_saved = save_edit_title(socket, updated)
         # A person saved the form: the title and description are theirs
         # now, whatever key wrote them before.
         _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
@@ -3048,14 +3072,26 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           metadata: %{"project" => socket.assigns.project.name}
         )
 
-        {:noreply,
-         socket
-         |> put_save_flash(words_saved)
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
-           kind: :assignment,
-           record: updated,
-           action: :update
-         )}
+        case title_saved do
+          # The rest is saved; the form stays open on the refused title.
+          {:error, %Ecto.Changeset{} = cs} ->
+            {:noreply,
+             socket
+             |> hold_saved(updated)
+             |> hold_saved_title(title_saved)
+             |> part_error(title_saved)
+             |> put_flash(:error, first_error_message(cs))}
+
+          :ok ->
+            {:noreply,
+             socket
+             |> put_save_flash(words_saved)
+             |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+               kind: :assignment,
+               record: updated,
+               action: :update
+             )}
+        end
 
       {:error, cs} ->
         Activity.log_failed("projects.assignment_updated",
@@ -3266,6 +3302,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           []
       end
 
+    # A refused rename: its box is on the Task tab.
+    title_panes =
+      case assigns[:task_form] do
+        %Phoenix.HTML.Form{source: %Ecto.Changeset{action: action, errors: [_ | _]}}
+        when not is_nil(action) ->
+          ["task"]
+
+        _ ->
+          []
+      end
+
     times_panes =
       case assigns[:times_form] do
         %Phoenix.HTML.Form{source: %Ecto.Changeset{action: action, errors: [_ | _]}}
@@ -3276,7 +3323,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           []
       end
 
-    MapSet.new(form_panes ++ times_panes)
+    MapSet.new(form_panes ++ title_panes ++ times_panes)
   end
 
   # After a failed save: the open tab when the error is there, else the

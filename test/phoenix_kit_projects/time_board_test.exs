@@ -335,4 +335,78 @@ defmodule PhoenixKitProjects.TimeBoardTest do
       assert %{{:person, "person-Ann"} => [^a]} = board.unscheduled
     end
   end
+
+  describe "build/4 — review fixes" do
+    test "an unscheduled task's assignee has a row, though no one listed them" do
+      ann = person("Ann", "u-ann")
+      a = task(assigned_person_uuid: ann.uuid, assigned_person: ann)
+
+      board = build([], [], [], unscheduled: [a], include_idle?: false)
+
+      assert [%{key: {:person, uuid}, lines: []}] = board.people
+      assert uuid == ann.uuid
+      assert %{{:person, ^uuid} => [^a]} = board.unscheduled
+    end
+
+    test "time logged for a staff person (by the person) is on their row" do
+      ann = person("Ann", "u-ann")
+      sam = person("Sam", nil)
+
+      a =
+        task(
+          title: "Team job",
+          assigned_team_uuid: "t1",
+          assigned_team: %Team{uuid: "t1", name: "Crew"},
+          deadline: ~U[2026-10-28 17:00:00Z]
+        )
+
+      entry = %WorkEntry{
+        uuid: "e-sam",
+        assignment_uuid: a.uuid,
+        actor_kind: "staff_person",
+        actor_uuid: sam.uuid,
+        amount: Decimal.new(45),
+        started_at: ~U[2026-10-28 09:00:00Z],
+        ended_at: ~U[2026-10-28 09:45:00Z],
+        inserted_at: ~U[2026-10-28 10:00:00Z]
+      }
+
+      board = build([a], [ann, sam], [entry])
+
+      assert [%{role: :worker, logged: [%{uuid: "e-sam", minutes: 45.0}]}] =
+               lines(board, {:person, sam.uuid})
+
+      assert [%{role: :plan, logged: [], worked_by: ["Sam"]}] = lines(board, {:team, "t1"})
+    end
+
+    test "a trashed person has no row, as an assignee or listed" do
+      gone = %{person("Gone", "u-gone") | status: "trashed"}
+      a = task(assigned_person_uuid: gone.uuid, assigned_person: gone, start_date: @day)
+
+      board = build([a], [gone], [], unscheduled: [task(assigned_person: gone)])
+
+      assert board.people == []
+    end
+
+    test "work across the autumn fold keeps its length on the wall clock" do
+      PhoenixKitProjects.L10n.put_viewer_zone(%{user_timezone: "Europe/Tallinn"})
+      on_exit(fn -> PhoenixKitProjects.L10n.reset_viewer_zone() end)
+
+      ann = person("Ann", "u-ann")
+
+      # 00:45Z is 03:45 summer time, 01:15Z is 03:15 winter time: 30 minutes.
+      a =
+        task(
+          assigned_person_uuid: ann.uuid,
+          status: "done",
+          started_at: ~U[2026-10-25 00:45:00Z],
+          completed_at: ~U[2026-10-25 01:15:00Z]
+        )
+
+      day = ~D[2026-10-25]
+      [line] = build([a], [ann], [], from: day, to: day) |> lines({:person, ann.uuid})
+
+      assert line.actual == {~N[2026-10-25 03:45:00], ~N[2026-10-25 04:15:00]}
+    end
+  end
 end

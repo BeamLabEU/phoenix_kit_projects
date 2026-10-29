@@ -47,8 +47,18 @@ defmodule PhoenixKitProjects.BatchedListMetricsTest do
 
     done = task!(project)
     {:ok, _} = Projects.complete_assignment(done, nil)
-    _late = task!(project, %{"deadline" => DateTime.add(DateTime.utc_now(), -3 * 86_400, :second) |> DateTime.truncate(:second)})
-    _ahead = task!(project, %{"deadline" => DateTime.add(DateTime.utc_now(), 5 * 86_400, :second) |> DateTime.truncate(:second)})
+
+    _late =
+      task!(project, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), -3 * 86_400, :second) |> DateTime.truncate(:second)
+      })
+
+    _ahead =
+      task!(project, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), 5 * 86_400, :second) |> DateTime.truncate(:second)
+      })
 
     {:ok, _} = Members.add_member(project, user.uuid, role: "owner")
     {:ok, _} = Ledger.log_time(project.uuid, 90, billable: true)
@@ -97,7 +107,12 @@ defmodule PhoenixKitProjects.BatchedListMetricsTest do
 
   test "a submission nobody accepted is not an overdue task" do
     project = fixture_project()
-    late = task!(project, %{"deadline" => DateTime.add(DateTime.utc_now(), -2 * 86_400, :second) |> DateTime.truncate(:second)})
+
+    late =
+      task!(project, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), -2 * 86_400, :second) |> DateTime.truncate(:second)
+      })
 
     Repo.update_all(
       from(a in Assignment, where: a.uuid == ^late.uuid),

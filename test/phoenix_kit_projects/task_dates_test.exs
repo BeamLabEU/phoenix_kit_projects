@@ -9,7 +9,7 @@ defmodule PhoenixKitProjects.TaskDatesTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, CalendarDisplay, Projects, ScheduleLayout}
-  alias PhoenixKitProjects.Schemas.Assignment
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @base "/api/projects/v1"
 
@@ -98,13 +98,13 @@ defmodule PhoenixKitProjects.TaskDatesTest do
     end
 
     test "clearing a project's link leaves it empty, without a crash" do
-      project = %PhoenixKitProjects.Schemas.Project{
+      project = %Project{
         name: "P",
         start_mode: "immediate",
         external_url: "/admin/x"
       }
 
-      cs = PhoenixKitProjects.Schemas.Project.changeset(project, %{"external_url" => ""})
+      cs = Project.changeset(project, %{"external_url" => ""})
       assert cs.valid?
       assert Ecto.Changeset.get_change(cs, :external_url) == nil
     end

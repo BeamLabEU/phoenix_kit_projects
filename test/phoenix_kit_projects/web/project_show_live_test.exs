@@ -1501,6 +1501,55 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert Projects.get_assignment(a.uuid).status == "done"
     end
 
+    test "who may move a card but not edit the plan moves it without reordering", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      {:ok, t} =
+        Projects.create_task(%{"title" => "Second #{System.unique_integer([:positive])}"})
+
+      {:ok, b} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => t.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, _} =
+        PhoenixKitProjects.Authz.set_overrides(project, %{
+          "edit_tasks" => "managers",
+          "update_status" => "anyone"
+        })
+
+      viewer = embed_user_uuid!()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, viewer, role: "viewer")
+      conn = put_test_scope(conn, fake_scope(user_uuid: viewer, permissions: ["projects"]))
+      before = Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid)
+      assert before == [a.uuid, b.uuid]
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      # Same column, new order: a reorder and nothing else.
+      render_hook(view, "board_move", %{
+        "moved_id" => b.uuid,
+        "status" => "todo",
+        "ordered_ids" => [b.uuid, a.uuid]
+      })
+
+      assert Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid) == before
+
+      # A real move still changes the status; the drop position is ignored.
+      render_hook(view, "board_move", %{
+        "moved_id" => b.uuid,
+        "status" => "in_progress",
+        "ordered_ids" => [b.uuid, a.uuid]
+      })
+
+      assert Projects.get_assignment(b.uuid).status == "in_progress"
+      assert Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid) == before
+    end
+
     test "a forged destination status is refused", %{conn: conn, project: project, a: a} do
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 

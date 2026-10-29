@@ -2510,8 +2510,16 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           :ok ->
             # Then WHERE it was dropped. The card landing somewhere other
             # than where it was let go reads as a bug, whatever the data
-            # model says.
-            reposition_from_drop(socket, uuid, params["ordered_ids"])
+            # model says. The order is the plan, though, and this event's
+            # gate is only `:update_status`: who may move a card but not
+            # edit the plan (reorder_assignments' `:edit_tasks`) changes
+            # its status and nothing else.
+            if Authz.can?(
+                 socket.assigns[:phoenix_kit_current_scope],
+                 socket.assigns.project,
+                 :edit_tasks
+               ),
+               do: reposition_from_drop(socket, uuid, params["ordered_ids"])
 
             {:noreply,
              socket
