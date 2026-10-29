@@ -76,7 +76,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/me",
         summary:
-          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent; its `person_uuid` is what `assignee: me` resolves to), its home project (`home_project`; `project` is the same, kept for older agents) with the role, scopes, features and allowed actions there, and EVERY project it reaches (`projects`: key, uuid, name, role, `access` per area, `source`). Read this first; pass `project=<key>` to work anywhere but home.",
+          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent; its `person_uuid` is what `assignee: me` resolves to, null until the user has a staff record - `assignee: me` creates it), its home project (`home_project`; `project` is the same, kept for older agents) with the role, scopes, features and allowed actions there, and EVERY project it reaches (`projects`: key, uuid, name, role, `access` per area, `source`). Read this first; pass `project=<key>` to work anywhere but home.",
         auth: true,
         scope: nil,
         action: nil,
@@ -308,7 +308,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "who the task is for: `me` (the person this key acts for), a person's uuid from GET /people, or `{\"team\": uuid}` / `{\"department\": uuid}`; one assignee at a time. Needs the assignees feature and the assign_tasks action"
+              "who the task is for: `me` (the person this key acts for; their staff record is created if they have none), a person's uuid from GET /people, or `{\"team\": uuid}` / `{\"department\": uuid}`; one assignee at a time. Needs the assignees feature and the assign_tasks action"
           },
           %{
             name: "start_date",
@@ -1615,7 +1615,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     - `assignee` - who the task is FOR, apart from who made it (`created_by`) and who started it
       (`started_by`). On every row: `{kind, uuid, name}` (kind is person, team or department) or
       null. To set it on create or PATCH: `"me"` (the person this key acts for - `/me` gives their
-      `acting_for.person_uuid`), a person's uuid from `GET /people`, `{"team": uuid}` or
+      `acting_for.person_uuid`; when that is null because their account has no staff record yet,
+      `"me"` creates a bare one with their name, without asking, and assigns it), a person's uuid from `GET /people`, `{"team": uuid}` or
       `{"department": uuid}`; null clears it; leaving the field out changes nothing. A task has one
       assignee. A task you create is unassigned unless you say so: when the work is the person's
       you act for, pass `assignee: "me"`; when they relay a task for a colleague, look the

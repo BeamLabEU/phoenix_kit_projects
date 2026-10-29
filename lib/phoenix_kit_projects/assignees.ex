@@ -29,6 +29,7 @@ defmodule PhoenixKitProjects.Assignees do
 
   import Ecto.Query
 
+  alias PhoenixKit.Users.Auth.User
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   # SHADOW schemas + the People doorway (staff-optional seam) — the
   # direct Ecto queries below run over projects' own read-only mappings
@@ -324,14 +325,17 @@ defmodule PhoenixKitProjects.Assignees do
   @doc """
   Searches people, teams and departments together for the task form's
   assignee picker (core `<.search_picker>` rows, `%{kind:, uuid:, label:,
-  sublabel:, icon:}`, `kind` being `"person"`, `"team"` or `"department"`):
+  sublabel:, icon:}`, `kind` being `"person"`, `"team"`, `"department"` or `"user"`):
   a task goes to any one of the three, so the person typing should not have
   to say which kind first (the boss, 2026-10-29: switching the kind swapped
   the fields below without a word).
 
   Unlike `search_people/3` this offers everyone who is not trashed — the
   picker is where a person gets their first task. People come first, then
-  teams, then departments, each name-sorted; an empty query is browse mode.
+  teams, then departments, then — as `kind: "user"` — active accounts with
+  no staff person at all (any user can be given a task; picking one makes
+  their person, `People.ensure_person_for_user/2`), each name-sorted; an
+  empty query is browse mode.
   Returns `{rows, has_more}`, `{[], false}` on a failed staff read.
   """
   @spec search_assignees(String.t() | nil, pos_integer(), String.t() | nil) ::
@@ -368,7 +372,38 @@ defmodule PhoenixKitProjects.Assignees do
       |> repo().all()
       |> Enum.map(&department_row(&1, lang))
 
-    {page, rest} = Enum.split(people ++ teams ++ departments, limit)
+    users =
+      from(u in User,
+        as: :user,
+        where: u.is_active == true and not coalesce(u.api_only, false),
+        where: not exists(from(p in Person, where: p.user_uuid == parent_as(:user).uuid)),
+        order_by: [
+          asc:
+            fragment(
+              "lower(coalesce(nullif(trim(concat_ws(' ', ?, ?)), ''), ?))",
+              u.first_name,
+              u.last_name,
+              u.email
+            ),
+          asc: u.uuid
+        ],
+        limit: ^(limit + 1)
+      )
+      |> then(fn q ->
+        if pattern,
+          do:
+            where(
+              q,
+              [u],
+              ilike(u.email, ^pattern) or ilike(u.first_name, ^pattern) or
+                ilike(u.last_name, ^pattern)
+            ),
+          else: q
+      end)
+      |> repo().all()
+      |> Enum.map(&user_row/1)
+
+    {page, rest} = Enum.split(people ++ teams ++ departments ++ users, limit)
     {page, rest != []}
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
@@ -493,6 +528,41 @@ defmodule PhoenixKitProjects.Assignees do
       icon: "hero-user"
     }
   end
+
+  # A user with no staff person yet: picking one makes the person
+  # (`People.ensure_person_for_user/2`, after the form asks).
+  defp user_row(%User{} = u) do
+    %{
+      kind: "user",
+      uuid: u.uuid,
+      label: People.new_person_name(u),
+      sublabel: u.email,
+      icon: "hero-user"
+    }
+  end
+
+  @doc """
+  A user the picker may offer as `kind: "user"` — active, not a service
+  account, with no staff person (trashed or not) — as its picker row, or
+  nil. The form re-looks a pick up through this.
+  """
+  @spec describe_user(String.t() | nil) :: map() | nil
+  def describe_user(uuid) when is_binary(uuid) do
+    with {:ok, uuid} <- Ecto.UUID.cast(uuid),
+         %User{} = user <- repo().get(User, uuid),
+         true <- People.assignable_user?(user),
+         false <- repo().exists?(from(p in Person, where: p.user_uuid == ^uuid)) do
+      user_row(user)
+    else
+      _ -> nil
+    end
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] user lookup failed: #{Exception.message(e)}")
+      nil
+  end
+
+  def describe_user(_uuid), do: nil
 
   defp team_row(t, lang) do
     dept = if match?(%Department{}, t.department), do: People.localized_name(t.department, lang)

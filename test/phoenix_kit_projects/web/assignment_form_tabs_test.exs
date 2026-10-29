@@ -10,6 +10,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
+  import Ecto.Query, only: [from: 2]
+
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.Projects
   alias PhoenixKitProjects.Test.Repo
@@ -48,6 +50,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
     Repo.insert!(%Person{user_uuid: user_uuid, status: "active", name: name})
   end
+
+  defp staff_person_of(user_uuid),
+    do: Repo.one(from(p in Person, where: p.user_uuid == ^user_uuid))
 
   # The edit form saves on a timer; this runs it now.
   defp autosave(view) do
@@ -252,11 +257,161 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == carl.uuid
     end
 
-    test "with no staff person of their own, Assign to me shows greyed out and says why", ctx do
+    test "with no staff person of their own, Assign to me asks, then creates one and assigns it",
+         ctx do
       {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
 
-      assert has_element?(view, "#assignment-assign-me[disabled]")
-      assert render(view) =~ "Your account is not linked to a staff person"
+      refute has_element?(view, "#assignment-assign-me[disabled]")
+      refute render(view) =~ "not linked to a staff person"
+
+      view |> element("#assignment-assign-me") |> render_click()
+      assert render(view) =~ "Create a staff record?"
+      # Nothing made, nothing assigned until confirmed.
+      assert staff_person_of(ctx.me) == nil
+
+      render_click(view, "staff_create_confirm", %{})
+      refute render(view) =~ "Create a staff record?"
+      autosave(view)
+
+      person = staff_person_of(ctx.me)
+      assert %Person{status: "active"} = person
+      # The email's local part, never the whole address.
+      refute person.name =~ "@"
+      assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == person.uuid
+      refute has_element?(view, "#assignment-assign-me")
+
+      row =
+        assert_activity_logged("projects.staff_person_created",
+          resource_uuid: person.uuid,
+          actor_uuid: ctx.me
+        )
+
+      refute inspect(row.metadata) =~ "@"
+
+      # Another task: no question, the same person.
+      {:ok, %{assignment: b}} =
+        Projects.create_task_with_assignment(
+          ctx.project.uuid,
+          %{"title" => "Fit the doors", "ad_hoc" => true},
+          %{}
+        )
+
+      {:ok, view2, _} = edit(ctx.conn, ctx.project, b)
+      view2 |> element("#assignment-assign-me") |> render_click()
+      refute render(view2) =~ "Create a staff record?"
+      autosave(view2)
+
+      assert Projects.get_assignment(b.uuid).assigned_person_uuid == person.uuid
+      assert Repo.aggregate(from(p in Person, where: p.user_uuid == ^ctx.me), :count) == 1
+    end
+
+    test "Cancel on the question creates nothing and leaves the form as it was", ctx do
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+
+      view |> element("#assignment-assign-me") |> render_click()
+      assert render(view) =~ "Create a staff record?"
+
+      render_click(view, "staff_create_cancel", %{})
+      refute render(view) =~ "Create a staff record?"
+      autosave(view)
+
+      assert staff_person_of(ctx.me) == nil
+      assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == nil
+      refute_activity_logged("projects.staff_person_created")
+    end
+
+    test "an existing staff person is assigned with no question", ctx do
+      me = person!("Me", ctx.me)
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+
+      view |> element("#assignment-assign-me") |> render_click()
+      refute render(view) =~ "Create a staff record?"
+      autosave(view)
+
+      assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == me.uuid
+    end
+
+    test "a trashed staff person is refused with where to restore it, and nothing is created",
+         ctx do
+      trashed = Repo.insert!(%Person{user_uuid: ctx.me, status: "trashed", name: "Old me"})
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+
+      view |> element("#assignment-assign-me") |> render_click()
+      refute render(view) =~ "Create a staff record?"
+
+      assert has_element?(
+               view,
+               "#assignment-assignee-notice",
+               "Your staff record is in the trash"
+             )
+
+      autosave(view)
+      assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == nil
+      assert [%{uuid: uuid}] = Repo.all(from(p in Person, where: p.user_uuid == ^ctx.me))
+      assert uuid == trashed.uuid
+      refute_activity_logged("projects.staff_person_created")
+    end
+
+    test "the search offers a user with no staff person; picking them asks, then assigns", ctx do
+      n = System.unique_integer([:positive])
+
+      {:ok, zoe} =
+        Auth.register_user(%{
+          "email" => "zoe-#{n}@example.com",
+          "password" => "ValidPassword123!",
+          "first_name" => "Zoe",
+          "last_name" => "Quill#{n}"
+        })
+
+      staffed = person!("Quill#{n}staffed")
+
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+      render_hook(view, "assignee_search", %{"q" => "Quill#{n}"})
+      assert_push_event(view, "assignee_results", %{results: rows})
+
+      assert %{kind: "user", label: label, sublabel: sublabel, icon: "hero-user"} =
+               Enum.find(rows, &(&1.uuid == zoe.uuid))
+
+      assert label == "Zoe Quill#{n}"
+      assert sublabel == zoe.email
+      # A user who already has a person shows as that person, not twice.
+      refute Enum.any?(rows, &(&1.kind == "user" and &1.uuid == staffed.user_uuid))
+      assert List.last(rows).kind == "user"
+
+      render_click(view, "assignee_pick", %{"kind" => "user", "uuid" => zoe.uuid})
+      assert render(view) =~ "Zoe Quill#{n} has no staff record yet."
+      assert staff_person_of(zoe.uuid) == nil
+
+      render_click(view, "staff_create_confirm", %{})
+      autosave(view)
+
+      person = staff_person_of(zoe.uuid)
+      assert person.name == "Zoe Quill#{n}"
+      assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == person.uuid
+      assert_activity_logged("projects.staff_person_created", actor_uuid: ctx.me)
+    end
+
+    test "the search leaves out disabled users, and a forged user pick assigns nobody", ctx do
+      n = System.unique_integer([:positive])
+
+      {:ok, off} =
+        Auth.register_user(%{
+          "email" => "off-#{n}@example.com",
+          "password" => "ValidPassword123!",
+          "first_name" => "Offline#{n}"
+        })
+
+      off |> Ecto.Changeset.change(is_active: false) |> Repo.update!()
+
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+      render_hook(view, "assignee_search", %{"q" => "Offline#{n}"})
+      assert_push_event(view, "assignee_results", %{results: rows})
+      refute Enum.any?(rows, &(&1.uuid == off.uuid))
+
+      render_click(view, "assignee_pick", %{"kind" => "user", "uuid" => off.uuid})
+      render_click(view, "assignee_pick", %{"kind" => "user", "uuid" => "not-a-uuid"})
+      refute render(view) =~ "Create a staff record?"
+      assert staff_person_of(off.uuid) == nil
     end
 
     test "a project with nothing assigned yet suggests whom tasks went to elsewhere", ctx do

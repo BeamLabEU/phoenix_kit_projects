@@ -7,7 +7,8 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   A task has ONE assignee, a staff person, a team or a department (the
   schema's single-assignee rule), so a request names one and the other
   two columns are cleared with it. `"me"` is the staff person of the user
-  a personal key acts for; a shared agent has none.
+  a personal key acts for — made for them when they have none — and a
+  shared agent has none.
   """
 
   alias PhoenixKitProjects.{Authz, People}
@@ -50,6 +51,22 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   end
 
   def person_uuid(_key), do: nil
+
+  @doc """
+  The staff person a key acts for, created when the key's user has none
+  (`People.ensure_person_for_user/2`; an API call has no one to ask, so it
+  does not). `{:error, :trashed_person}` when theirs is in the trash,
+  `{:error, :no_user}` for a shared agent.
+  """
+  @spec ensure_person_uuid(ApiKey.t()) :: {:ok, String.t()} | {:error, term()}
+  def ensure_person_uuid(%ApiKey{user_uuid: uuid}) when is_binary(uuid) do
+    case People.ensure_person_for_user(uuid, actor_uuid: uuid, source: "api") do
+      {:ok, %{uuid: person_uuid}} -> {:ok, person_uuid}
+      {:error, _} = error -> error
+    end
+  end
+
+  def ensure_person_uuid(_key), do: {:error, :no_user}
 
   @doc """
   The assignment attrs a request's `assignee` asks for: `{:ok, %{}}` when
@@ -95,14 +112,19 @@ defmodule PhoenixKitProjects.Web.Api.Assignee do
   defp resolve(_key, value) when value in [nil, "", "none"], do: {:ok, columns(nil, nil)}
 
   defp resolve(key, "me") do
-    case person_uuid(key) do
-      nil ->
+    case ensure_person_uuid(key) do
+      {:ok, uuid} ->
+        {:ok, columns("person", uuid)}
+
+      {:error, :trashed_person} ->
         invalid(
-          "This key acts for nobody with a staff record, so `me` names no one. Pass a person's uuid from GET /people."
+          "The staff record of the person this key acts for is in the trash, so `me` names no one. Restore it under Staff -> People, or pass a person's uuid from GET /people."
         )
 
-      uuid ->
-        {:ok, columns("person", uuid)}
+      {:error, _} ->
+        invalid(
+          "This key acts for nobody who can be assigned, so `me` names no one. Pass a person's uuid from GET /people."
+        )
     end
   end
 

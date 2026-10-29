@@ -18,6 +18,9 @@ defmodule PhoenixKitProjects.People do
   ## Rules
 
     * Read-only: no changesets, no writes — people are managed in staff.
+      The one exception is `ensure_person_for_user/2`, which creates a
+      bare person for a user being assigned a task, through staff's own
+      `PhoenixKitStaff.Staff.create_person/1` (never an insert of ours).
     * Filter semantics COPIED from staff, not imported: soft-deleted rows
       are `status == "trashed"` and excluded from listings by default.
     * Label semantics mirrored from staff: `display_name/1` resolves
@@ -33,6 +36,7 @@ defmodule PhoenixKitProjects.People do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   alias PhoenixKit.RepoHelper
+  alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.People.Department
   alias PhoenixKitProjects.People.Person
   alias PhoenixKitProjects.People.Team
@@ -91,6 +95,122 @@ defmodule PhoenixKitProjects.People do
     |> RepoHelper.repo().one()
   rescue
     _ -> nil
+  end
+
+  @doc """
+  The staff person a user is assigned through, created when there is none —
+  so anyone with an account can be given a task, staff record or not
+  (Max, 2026-10-29: "Assign to me" and the picker refused a user with no
+  staff person, and the person had to be made in Staff first).
+
+  An existing person is returned as it is. Otherwise a bare one is created
+  through `PhoenixKitStaff.Staff.create_person/1` with the user's uuid and a
+  name (the user's first and last name, else the part of the email before
+  the `@`), and the creation goes to the activity feed as
+  `projects.staff_person_created` under `opts[:actor_uuid]`.
+
+  A trashed person is `{:error, :trashed_person}`: it is neither restored
+  nor duplicated — restoring is for Staff → People. A user that is not
+  there, disabled, or a service account is `{:error, :not_assignable}`;
+  a build without the staff package is `{:error, :staff_unavailable}`.
+  """
+  @spec ensure_person_for_user(binary(), keyword()) ::
+          {:ok, Person.t()}
+          | {:error, :trashed_person | :not_assignable | :staff_unavailable | term()}
+  def ensure_person_for_user(user_uuid, opts \\ [])
+
+  def ensure_person_for_user(user_uuid, opts) when is_binary(user_uuid) do
+    case get_person_by_user_uuid(user_uuid) do
+      %Person{status: @trashed} -> {:error, :trashed_person}
+      %Person{} = person -> {:ok, person}
+      nil -> create_person_for_user(user_uuid, opts)
+    end
+  end
+
+  def ensure_person_for_user(_user_uuid, _opts), do: {:error, :not_assignable}
+
+  @doc """
+  Whether a user account may stand behind an assignee: it exists, is
+  active, and is not a service account (`api_only`).
+  """
+  @spec assignable_user?(map() | nil) :: boolean()
+  def assignable_user?(%{is_active: true} = user), do: Map.get(user, :api_only) != true
+  def assignable_user?(_), do: false
+
+  defp create_person_for_user(user_uuid, opts) do
+    with {:ok, user} <- fetch_assignable_user(user_uuid),
+         {:ok, create} <- staff_create_person() do
+      attrs = %{"user_uuid" => user.uuid, "name" => new_person_name(user), "status" => "active"}
+
+      case create.(attrs) do
+        {:ok, %{uuid: uuid}} ->
+          log_person_created(uuid, user.uuid, opts)
+          {:ok, get_person(uuid, preload: [])}
+
+        {:error, {:trashed_person_exists, _}} ->
+          {:error, :trashed_person}
+
+        # Two presses at once: the other one made the person (the 1:1
+        # unique index on `user_uuid` refused this one), so it is theirs.
+        {:error, reason} ->
+          case get_person_by_user_uuid(user.uuid) do
+            %Person{status: @trashed} -> {:error, :trashed_person}
+            %Person{} = person -> {:ok, person}
+            nil -> {:error, reason}
+          end
+      end
+    end
+  end
+
+  defp fetch_assignable_user(user_uuid) do
+    user = Auth.get_user(user_uuid)
+    if assignable_user?(user), do: {:ok, user}, else: {:error, :not_assignable}
+  rescue
+    _ -> {:error, :not_assignable}
+  end
+
+  # `apply/3` for the reason `staff_enabled?/0` gives: the build may
+  # leave the staff package out (WITHOUT_STAFF).
+  defp staff_create_person do
+    if Code.ensure_loaded?(PhoenixKitStaff.Staff) and
+         function_exported?(PhoenixKitStaff.Staff, :create_person, 1) do
+      # credo:disable-for-next-line Credo.Check.Refactor.Apply
+      {:ok, &apply(PhoenixKitStaff.Staff, :create_person, [&1])}
+    else
+      {:error, :staff_unavailable}
+    end
+  end
+
+  @doc """
+  The name a person made for `user` gets (and the picker shows for a user
+  with no person yet): first and last name, else the email's local part —
+  never the whole address, since the name is shown wherever the person is.
+  """
+  @spec new_person_name(map()) :: String.t()
+  def new_person_name(user) do
+    [Map.get(user, :first_name), Map.get(user, :last_name)]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(" ")
+    |> String.trim()
+    |> case do
+      "" -> user |> Map.get(:email, "") |> to_string() |> String.split("@") |> hd()
+      full -> full
+    end
+  end
+
+  # No email (nor the name made from it) in the metadata.
+  defp log_person_created(person_uuid, user_uuid, opts) do
+    PhoenixKitProjects.Activity.log("projects.staff_person_created",
+      actor_uuid: Keyword.get(opts, :actor_uuid),
+      resource_type: "staff_person",
+      resource_uuid: person_uuid,
+      tell: false,
+      metadata:
+        %{"user_uuid" => user_uuid, "source" => Keyword.get(opts, :source)}
+        |> Map.reject(fn {_k, v} -> is_nil(v) end)
+    )
+  rescue
+    _ -> :ok
   end
 
   @doc """

@@ -26,6 +26,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   alias Phoenix.LiveView.JS
   alias PhoenixKit.Mentions
+  alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKitAI.Components.AITranslate.FormGlue
 
@@ -451,17 +452,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           {nil, []}
       end
 
-    assign(socket,
+    socket
+    |> assign(
       my_person_uuid: my_person,
       recent_assignees: recent,
       can_assign?: can_assign?(socket)
     )
+    |> assign_new(:staff_confirm, fn -> nil end)
+    |> assign_new(:assignee_notice, fn -> nil end)
   end
 
-  # The viewer's own staff person — what "Assign to me" assigns — or nil.
+  # The viewer's own staff person — what "Assign to me" assigns — or nil
+  # (nil also when it is trashed: then there is no one to assign as them).
   defp my_person_uuid(socket) do
     with uuid when is_binary(uuid) <- Activity.actor_uuid(socket),
-         %{uuid: person_uuid} <- PhoenixKitProjects.People.get_person_by_user_uuid(uuid) do
+         %{uuid: person_uuid, status: status} when status != "trashed" <-
+           PhoenixKitProjects.People.get_person_by_user_uuid(uuid) do
       person_uuid
     else
       _ -> nil
@@ -518,12 +524,79 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp choose_assignee(socket, kind, uuid) do
-    if socket.assigns.fx.assignees and socket.assigns[:can_assign?] do
+    if may_assign?(socket) do
       socket
+      |> assign(:assignee_notice, nil)
       |> put_form_attrs(assignee_attrs(kind, uuid), %{"assign_type" => kind || ""})
       |> assign(:assign_type, kind || "")
     else
       socket
+    end
+  end
+
+  defp may_assign?(socket),
+    do: socket.assigns.fx.assignees and socket.assigns[:can_assign?] == true
+
+  # Assigns a user through their staff person: straight away when they
+  # have one; asking first when assigning would create it (Max: nothing is
+  # made until the person confirms); refused, with a line saying where to
+  # restore it, when it is trashed. `who` is `:self` (Assign to me) or
+  # `:other` (a picked user, re-looked up so a forged uuid assigns nobody).
+  defp assign_user(socket, user_uuid, who) do
+    if may_assign?(socket) do
+      case PhoenixKitProjects.People.get_person_by_user_uuid(user_uuid) do
+        %{status: "trashed"} ->
+          assign(socket, :assignee_notice, {:trashed, who})
+
+        %{uuid: person_uuid} ->
+          choose_assignee(socket, "person", person_uuid)
+
+        nil ->
+          ask_staff_create(socket, user_uuid, who)
+      end
+    else
+      socket
+    end
+  end
+
+  defp ask_staff_create(socket, user_uuid, who) do
+    name =
+      case who do
+        :self -> self_name(socket, user_uuid)
+        :other -> with %{label: label} <- Assignees.describe_user(user_uuid), do: label
+      end
+
+    if is_binary(name),
+      do: assign(socket, :staff_confirm, %{user_uuid: user_uuid, who: who, name: name}),
+      else: socket
+  end
+
+  defp self_name(socket, user_uuid) do
+    case Activity.actor_uuid(socket) == user_uuid && Auth.get_user(user_uuid) do
+      %User{} = user ->
+        if PhoenixKitProjects.People.assignable_user?(user),
+          do: PhoenixKitProjects.People.new_person_name(user)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp create_and_assign(socket, user_uuid, who) do
+    case PhoenixKitProjects.People.ensure_person_for_user(user_uuid,
+           actor_uuid: Activity.actor_uuid(socket),
+           source: "task_form"
+         ) do
+      {:ok, %{uuid: person_uuid}} ->
+        socket
+        |> then(&if(who == :self, do: assign(&1, :my_person_uuid, person_uuid), else: &1))
+        |> choose_assignee("person", person_uuid)
+
+      {:error, :trashed_person} ->
+        assign(socket, :assignee_notice, {:trashed, who})
+
+      {:error, _} ->
+        put_flash(socket, :error, gettext("Could not create the staff record."))
     end
   end
 
@@ -1425,7 +1498,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   def handle_event("assignee_search", _params, socket), do: {:noreply, socket}
 
   # A pick names a row the search offered; it is looked up again, so a
-  # forged kind or uuid assigns nobody.
+  # forged kind or uuid assigns nobody. A user with no staff person yet
+  # (`kind: "user"`): assigning them makes one, so the form asks first
+  # (`staff_confirm`).
+  def handle_event("assignee_pick", %{"kind" => "user", "uuid" => uuid}, socket) do
+    {:noreply, socket |> assign_user(uuid, :other) |> push_event("assignee_staged", %{})}
+  end
+
   def handle_event("assignee_pick", %{"kind" => kind, "uuid" => uuid}, socket) do
     socket =
       case Assignees.describe(kind, uuid) do
@@ -1443,12 +1522,34 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     {:noreply, if(offered?, do: choose_assignee(socket, kind, uuid), else: socket)}
   end
 
+  # The viewer themself — their staff person, made (after asking) when
+  # their account has none.
   def handle_event("assign_to_me", _params, socket) do
-    case socket.assigns[:my_person_uuid] do
-      uuid when is_binary(uuid) -> {:noreply, choose_assignee(socket, "person", uuid)}
+    case Activity.actor_uuid(socket) do
+      uuid when is_binary(uuid) -> {:noreply, assign_user(socket, uuid, :self)}
       _ -> {:noreply, socket}
     end
   end
+
+  # "Create and assign": the question holds the user, re-checked here.
+  def handle_event("staff_create_confirm", _params, socket) do
+    case socket.assigns[:staff_confirm] do
+      %{user_uuid: user_uuid, who: who} ->
+        socket = assign(socket, :staff_confirm, nil)
+
+        if may_assign?(socket) do
+          {:noreply, create_and_assign(socket, user_uuid, who)}
+        else
+          {:noreply, socket}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("staff_create_cancel", _params, socket),
+    do: {:noreply, assign(socket, :staff_confirm, nil)}
 
   # The assignee search box's own form: Enter there must submit nothing.
   def handle_event("assignee_noop", _params, socket), do: {:noreply, socket}
@@ -4103,26 +4204,28 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <input type="hidden" name={@form[:assigned_department_uuid].name} value={@form[:assigned_department_uuid].value} />
             <div class="flex items-center justify-between gap-2">
               <label for="assignment-assignee-search" class="text-sm font-semibold">{gettext("Assignee")}</label>
-              <%!-- Shown even when the viewer's account is not a staff
-                   person (no "me" to assign): greyed out, saying why, so
-                   the button reads as missing a link, not as missing. --%>
+              <%!-- Works for any account: one with no staff person gets
+                   one made, after the form asks (`staff_confirm`). --%>
               <button
                 :if={@can_assign? and @assignee_chip.key != {"person", @my_person_uuid}}
                 type="button"
                 id="assignment-assign-me"
                 phx-click="assign_to_me"
-                disabled={not is_binary(@my_person_uuid)}
-                title={
-                  if not is_binary(@my_person_uuid),
-                    do: gettext("Your account is not linked to a staff person, so there is no one to assign as you.")
-                }
                 class="btn btn-xs btn-outline gap-1"
               >
                 <.icon name="hero-user-plus" class="w-3.5 h-3.5" /> {gettext("Assign to me")}
               </button>
             </div>
-            <p :if={@can_assign? and not is_binary(@my_person_uuid)} class="text-xs text-base-content/60">
-              {gettext("Your account is not linked to a staff person, so there is no one to assign as you.")}
+            <p
+              :if={@can_assign? and match?({:trashed, _}, @assignee_notice)}
+              id="assignment-assignee-notice"
+              class="text-xs text-warning"
+            >
+              <%= if @assignee_notice == {:trashed, :self} do %>
+                {gettext("Your staff record is in the trash; restore it under Staff → People to be assigned.")}
+              <% else %>
+                {gettext("Their staff record is in the trash; restore it under Staff → People to assign them.")}
+              <% end %>
             </p>
 
             <div
@@ -4835,6 +4938,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       <form id="assignment-subtask-form" phx-submit="subtask_add" class="hidden"></form>
       <%!-- Owns the assignee search box: Enter there submits nothing. --%>
       <form id="assignment-assignee-form" phx-submit="assignee_noop" class="hidden"></form>
+      <%!-- Asks before an assignment makes a staff record. --%>
+      <.confirm_modal
+        :if={@staff_confirm}
+        show={true}
+        on_confirm="staff_create_confirm"
+        on_cancel="staff_create_cancel"
+        title={gettext("Create a staff record?")}
+        title_icon="hero-user-plus"
+        messages={[
+          {:info,
+           gettext(
+             "%{name} has no staff record yet. Assigning creates one (Staff → People) with their name and account; you can fill it in or remove it there later.",
+             name: @staff_confirm.name
+           )}
+        ]}
+        prompt=""
+        cancel_text={gettext("Cancel")}
+        confirm_text={gettext("Create and assign")}
+      />
     </div>
     """
   end
