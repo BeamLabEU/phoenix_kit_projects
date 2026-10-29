@@ -4163,6 +4163,25 @@ defmodule PhoenixKitProjects.Projects do
     PhoenixKitProjects.Handoffs.batch(fn -> do_update_assignment_form(a, attrs, opts) end)
   end
 
+  @doc """
+  Corrects when a task's work really began and ended (`started_at`,
+  `completed_at`) — a late "Done" moved back to when it happened. Only the
+  two times are written (`Assignment.times_changeset/2`: neither in the
+  future, the end not before the start); the status and who did it stay.
+  """
+  @spec correct_assignment_times(Assignment.t(), map()) ::
+          {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
+  def correct_assignment_times(%Assignment{} = a, attrs) do
+    with {:ok, updated} <- a |> Assignment.times_changeset(attrs) |> repo().update() do
+      ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
+        uuid: updated.uuid,
+        project_uuid: updated.project_uuid
+      })
+
+      {:ok, updated}
+    end
+  end
+
   defp do_update_assignment_form(a, attrs, opts) do
     with {:ok, {updated, was}} <- a |> Assignment.changeset(attrs) |> update_tracking_status(a) do
       updated =
