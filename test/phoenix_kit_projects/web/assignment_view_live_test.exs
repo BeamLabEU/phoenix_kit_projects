@@ -123,13 +123,51 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
 
     test "the next step is asked of the page, and the view steps aside", ctx do
       {:ok, view, _html} =
-        live_isolated(ctx.conn, AssignmentViewLive, session: emit_session(ctx, ctx.measure))
+        live_isolated(ctx.conn, AssignmentViewLive,
+          session: emit_session(ctx, ctx.measure, %{"step_intents" => "1"})
+        )
+
+      assert has_element?(view, ~s(button[phx-click="step"][phx-value-step="ask_ready"]))
 
       render_click(view, "step", %{"step" => "ask_ready"})
 
       uuid = ctx.measure.uuid
       assert_receive {:projects, :intent, %{event: "ask_ready", uuid: ^uuid}}
       assert_receive {:projects, :closed, %{frame_ref: 7}}
+    end
+
+    test "in a host that does not run the step, it is a link to the task on its project page",
+         ctx do
+      {:ok, view, _html} =
+        live_isolated(ctx.conn, AssignmentViewLive, session: emit_session(ctx, ctx.measure))
+
+      refute has_element?(view, ~s(button[phx-click="step"]))
+
+      href = PhoenixKitProjects.Paths.task(ctx.project, ctx.measure)
+      assert has_element?(view, ~s(a[href="#{href}"]), "Ready to start")
+
+      # A forged click asks nobody: no intent nobody would answer, and the
+      # view stays open.
+      render_click(view, "step", %{"step" => "ask_ready"})
+      refute_receive {:projects, :intent, _}, 100
+      refute_receive {:projects, :closed, _}, 50
+    end
+
+    test "the flag rides along when the drawer swaps to another task and to the form", ctx do
+      {:ok, view, _html} =
+        live_isolated(ctx.conn, AssignmentViewLive,
+          session: emit_session(ctx, ctx.measure, %{"step_intents" => "1"})
+        )
+
+      render_click(view, "open_task", %{"uuid" => ctx.model.uuid})
+
+      assert_receive {:projects, :swap,
+                      %{lv: AssignmentViewLive, session: %{"step_intents" => "1"}}}
+
+      render_click(view, "edit", %{})
+
+      assert_receive {:projects, :swap,
+                      %{lv: AssignmentFormLive, session: %{"step_intents" => "1"}}}
     end
 
     test "someone who may read but not edit gets the view without Edit or the step", ctx do
@@ -179,6 +217,21 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
 
       assert_receive {:projects, :swap, %{frame_ref: 7, lv: AssignmentViewLive, session: s}}
       assert s["id"] == ctx.measure.uuid
+    end
+
+    test "swapping back keeps the host's word that it runs the view's step", ctx do
+      session =
+        emit_session(ctx, ctx.measure, %{
+          "live_action" => "edit",
+          "from_view" => "1",
+          "step_intents" => "1"
+        })
+
+      {:ok, view, _html} = live_isolated(ctx.conn, AssignmentFormLive, session: session)
+      render_click(view, "close_form", %{})
+
+      assert_receive {:projects, :swap,
+                      %{lv: AssignmentViewLive, session: %{"step_intents" => "1"}}}
     end
 
     test "opened on its own it still closes", ctx do
@@ -241,6 +294,8 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       {:ok, view, html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}")
 
       assert html =~ "AssignmentViewLive"
+      # It opens the view saying this page runs the view's next step.
+      assert html =~ "step_intents"
 
       send(view.pid, {:projects, :intent, %{event: "ask_ready", uuid: ctx.measure.uuid}})
       assert render(view) =~ "ready to start?"

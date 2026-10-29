@@ -12,6 +12,11 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   the project page under the drawer — its dialogs ask who to notify and
   what to hand on — so the view asks the page for it
   (`WebHelpers.emit_intent/3`) and the page runs it as its own event.
+  Only a host that said it runs them (session `"step_intents" => "1"`,
+  which `ProjectShowLive` passes when it opens the view) gets the intent;
+  anywhere else — the Time page, a host's own drawer, the routed page —
+  nobody would answer it, so the button is a link to the task on its
+  project page, where the step and its dialogs are.
 
   Mount only, no `handle_params/3`: it is embedded as a drawer frame.
   """
@@ -66,6 +71,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
       )
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
+      |> then(&assign(&1, step_intents?: step_intents?(&1, session)))
       |> load(resolved["project_id"], resolved["id"])
 
     {:ok, socket}
@@ -103,6 +109,18 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   end
 
   defp load(socket, _project_id, _id), do: not_found(socket)
+
+  # Whether the page under the drawer runs the next step for the view. Only
+  # in a drawer: the routed page has no page under it.
+  defp step_intents?(socket, session) do
+    socket.assigns[:embed_mode] == :emit and Map.get(session, "step_intents") in ["1", true]
+  end
+
+  # Carried along when the drawer swaps to another frame of the same host.
+  defp with_step_intents(session, %{assigns: %{step_intents?: true}}),
+    do: Map.put(session, "step_intents", "1")
+
+  defp with_step_intents(session, _socket), do: session
 
   # Routed, the page has the admin header's trail and its own title. In a
   # drawer the host page keeps both: a frame never renames the browser tab.
@@ -230,12 +248,19 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     %{project: project, assignment: a} = socket.assigns
 
     if socket.assigns.embed_mode == :emit do
-      WebHelpers.emit_swap(socket, PhoenixKitProjects.Web.AssignmentFormLive, %{
-        "live_action" => "edit",
-        "project_id" => project.uuid,
-        "id" => a.uuid,
-        "from_view" => "1"
-      })
+      WebHelpers.emit_swap(
+        socket,
+        PhoenixKitProjects.Web.AssignmentFormLive,
+        with_step_intents(
+          %{
+            "live_action" => "edit",
+            "project_id" => project.uuid,
+            "id" => a.uuid,
+            "from_view" => "1"
+          },
+          socket
+        )
+      )
 
       {:noreply, socket}
     else
@@ -251,11 +276,14 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     case Projects.get_assignment(uuid) do
       %Assignment{project_uuid: p} when p == project.uuid ->
         if socket.assigns.embed_mode == :emit do
-          WebHelpers.emit_swap(socket, __MODULE__, %{
-            "project_id" => project.uuid,
-            "id" => uuid,
-            "back_to" => a.uuid
-          })
+          WebHelpers.emit_swap(
+            socket,
+            __MODULE__,
+            with_step_intents(
+              %{"project_id" => project.uuid, "id" => uuid, "back_to" => a.uuid},
+              socket
+            )
+          )
 
           {:noreply, socket}
         else
@@ -269,8 +297,13 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
 
   # The next step, run by the page under the drawer. Its dialogs take over,
   # so the view steps aside — except for Start, which has no dialog: the
-  # view stays and shows the new status.
-  def handle_event("step", %{"step" => step}, %{assigns: %{can_step?: true}} = socket)
+  # view stays and shows the new status. Only where a page runs it: anywhere
+  # else the button is a link and this event is never sent.
+  def handle_event(
+        "step",
+        %{"step" => step},
+        %{assigns: %{can_step?: true, step_intents?: true}} = socket
+      )
       when step in @steps do
     WebHelpers.emit_intent(socket, step, socket.assigns.assignment.uuid)
 
@@ -403,7 +436,13 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
           >
             <.icon name="hero-pause-circle" class="w-3.5 h-3.5" /> {gettext("On hold")}
           </span>
-          <.next_step :if={@can_step?} assignment={@assignment} fx={@fx} embed_mode={@embed_mode} project={@project} />
+          <.next_step
+            :if={@can_step?}
+            assignment={@assignment}
+            fx={@fx}
+            step_intents?={@step_intents?}
+            project={@project}
+          />
         </div>
       </header>
 
@@ -595,7 +634,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   # The one next step for the task's status, as the list's row offers it.
   attr(:assignment, :map, required: true)
   attr(:fx, :map, required: true)
-  attr(:embed_mode, :atom, required: true)
+  attr(:step_intents?, :boolean, required: true)
   attr(:project, :map, required: true)
 
   defp next_step(assigns) do
@@ -604,17 +643,18 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     ~H"""
     <%= if @step do %>
       <% {event, label, class, icon} = @step %>
-      <%!-- On its own page there is no project page under it to run the
-           step's dialog: the button takes you there, to this task. --%>
+      <%!-- Without a project page under it to run the step's dialog (its
+           own page, the Time page, a host's drawer) the button takes you
+           there, to this task. --%>
       <.link
-        :if={@embed_mode == :navigate}
+        :if={not @step_intents?}
         navigate={Paths.task(@project, @assignment)}
         class={["btn btn-sm gap-1 ml-auto", class]}
       >
         <.icon name={icon} class="w-4 h-4" /> {label}
       </.link>
       <button
-        :if={@embed_mode != :navigate}
+        :if={@step_intents?}
         type="button"
         phx-click="step"
         phx-value-step={event}

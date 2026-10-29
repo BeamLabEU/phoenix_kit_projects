@@ -121,7 +121,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp assign_from_view(socket, session) do
     assign(socket,
       from_view?:
-        socket.assigns.embed_mode == :emit and Map.get(session, "from_view") in ["1", true]
+        socket.assigns.embed_mode == :emit and Map.get(session, "from_view") in ["1", true],
+      # The view's host runs its next step (`AssignmentViewLive`): handed
+      # back with it, or the view it swaps back to offers a link instead.
+      view_step_intents?: Map.get(session, "step_intents") in ["1", true]
     )
   end
 
@@ -130,10 +133,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp leave_form(socket, fallback) do
     case {socket.assigns[:from_view?], socket.assigns[:assignment]} do
       {true, %Assignment{uuid: uuid, project_uuid: project_uuid}} when is_binary(uuid) ->
-        WebHelpers.emit_swap(socket, PhoenixKitProjects.Web.AssignmentViewLive, %{
-          "project_id" => project_uuid,
-          "id" => uuid
-        })
+        session = %{"project_id" => project_uuid, "id" => uuid}
+
+        session =
+          if socket.assigns[:view_step_intents?],
+            do: Map.put(session, "step_intents", "1"),
+            else: session
+
+        WebHelpers.emit_swap(socket, PhoenixKitProjects.Web.AssignmentViewLive, session)
 
         socket
 

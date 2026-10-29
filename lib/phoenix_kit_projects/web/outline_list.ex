@@ -27,6 +27,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   alias PhoenixKitProjects.{Activity, Authz, Outline, Paths, Projects, Refs}
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.ProjectShowLive
 
   # The features that put something on a task's row. With all of them off a
   # row is a tick and a title, and a text field shows that as well as
@@ -189,7 +190,11 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       socket.assigns[:embed_mode] in [:emit, :popup] ->
         lv = PhoenixKitProjects.Web.AssignmentViewLive
 
-        session = %{"project_id" => project.uuid, "id" => a.uuid}
+        # The project page runs the view's next step; other hosts do not.
+        session =
+          if socket.view == ProjectShowLive,
+            do: ProjectShowLive.view_session(%{project_uuid: project.uuid, uuid: a.uuid}),
+            else: %{"project_id" => project.uuid, "id" => a.uuid}
 
         %{
           open:

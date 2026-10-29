@@ -479,11 +479,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp popup_open(%{focus_task: uuid, project: project}) when is_binary(uuid) do
     %{
       "lv" => Atom.to_string(PhoenixKitProjects.Web.AssignmentViewLive),
-      "session" => %{"project_id" => project.uuid, "id" => uuid}
+      "session" => view_session(%{project_uuid: project.uuid, uuid: uuid})
     }
   end
 
   defp popup_open(_assigns), do: nil
+
+  # The session the task view opens with from this page: it says this page
+  # runs the view's next step (its `:intent`s, `subscribe_intents/1`), so
+  # the view sends them here instead of linking to the project page.
+  @doc false
+  def view_session(%{project_uuid: project_uuid, uuid: uuid}),
+    do: %{"project_id" => project_uuid, "id" => uuid, "step_intents" => "1"}
 
   # The assigns a mount needs to render nothing and redirect. Shared by the
   # missing-project branch and the refused-:view branch so the two stay
@@ -1740,7 +1747,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <.smart_link
                 :if={not @is_template and Refs.task_ref(@project.key, @a.number)}
                 navigate={Paths.view_assignment(@a.project_uuid, @a.uuid)}
-                emit={{PhoenixKitProjects.Web.AssignmentViewLive, %{"project_id" => @a.project_uuid, "id" => @a.uuid}}}
+                emit={{PhoenixKitProjects.Web.AssignmentViewLive, view_session(@a)}}
                 embed_mode={@embed_mode}
                 class="shrink-0 hover:underline"
                 title={gettext("View the task")}
@@ -1762,8 +1769,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.smart_link
                   navigate={Paths.view_assignment(@a.project_uuid, @a.uuid)}
                   emit={
-                    {PhoenixKitProjects.Web.AssignmentViewLive,
-                     %{"project_id" => @a.project_uuid, "id" => @a.uuid}}
+                    {PhoenixKitProjects.Web.AssignmentViewLive, view_session(@a)}
                   }
                   embed_mode={@embed_mode}
                   class="btn btn-ghost btn-xs btn-circle shrink-0"
@@ -1780,8 +1786,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <.smart_link
                 navigate={Paths.view_assignment(@a.project_uuid, @a.uuid)}
                 emit={
-                  {PhoenixKitProjects.Web.AssignmentViewLive,
-                   %{"project_id" => @a.project_uuid, "id" => @a.uuid}}
+                  {PhoenixKitProjects.Web.AssignmentViewLive, view_session(@a)}
                 }
                 embed_mode={@embed_mode}
                 class="font-medium truncate min-w-0 link link-hover"
@@ -5737,8 +5742,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <.smart_link
                       navigate={Paths.view_assignment(a.project_uuid, a.uuid)}
                       emit={
-                        {PhoenixKitProjects.Web.AssignmentViewLive,
-                         %{"project_id" => a.project_uuid, "id" => a.uuid}}
+                        {PhoenixKitProjects.Web.AssignmentViewLive, view_session(a)}
                       }
                       embed_mode={@embed_mode}
                       class="text-sm font-medium link link-hover leading-snug min-w-0 text-left"
@@ -5751,7 +5755,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     <.smart_link
                       :if={Assignment.ref(a)}
                       navigate={Paths.view_assignment(a.project_uuid, a.uuid)}
-                      emit={{PhoenixKitProjects.Web.AssignmentViewLive, %{"project_id" => a.project_uuid, "id" => a.uuid}}}
+                      emit={{PhoenixKitProjects.Web.AssignmentViewLive, view_session(a)}}
                       embed_mode={@embed_mode}
                       class="shrink-0 hover:underline"
                       title={gettext("View the task")}
@@ -5925,7 +5929,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               # Forward the emit contract too (see the gantt tab above).
               "mode" => @embed_mode,
               "pubsub_topic" => @embed_pubsub_topic,
-              "frame_ref" => @embed_frame_ref
+              "frame_ref" => @embed_frame_ref,
+              # Its task views open in this page's drawer, where this page
+              # runs their next step.
+              "step_intents" => "1"
             })}
         <% end %>
       </div>

@@ -145,6 +145,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       # Headless = nested as a tab inside ProjectShowLive: drop the "Back to
       # project" link (the tabs replace it). Standalone/emit renders keep it.
       headless: Map.get(session, "headless", false),
+      # Nested in the project page, whose drawer runs a task view's next
+      # step (`AssignmentViewLive`); on its own, the view links there.
+      step_intents?: Map.get(session, "step_intents") in ["1", true],
       wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
       # The raw walk ({items, layout}) — the filtered events derive from it
       # in memory, so filter flips never re-query.
@@ -274,12 +277,20 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
           to: Paths.view_assignment(project_uuid, assignment_uuid),
           open:
             {PhoenixKitProjects.Web.AssignmentViewLive,
-             %{"project_id" => project_uuid, "id" => assignment_uuid}}
+             view_session(socket, project_uuid, assignment_uuid)}
         )
 
       nil ->
         socket
     end
+  end
+
+  defp view_session(socket, project_uuid, assignment_uuid) do
+    session = %{"project_id" => project_uuid, "id" => assignment_uuid}
+
+    if socket.assigns[:step_intents?],
+      do: Map.put(session, "step_intents", "1"),
+      else: session
   end
 
   # The popup's rows for `date`: every event whose [start, end) span covers
