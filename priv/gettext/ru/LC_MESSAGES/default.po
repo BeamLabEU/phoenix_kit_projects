@@ -168,8 +168,8 @@ msgstr "(эта задача)"
 msgid "+%{count} more"
 msgid_plural "+%{count} more"
 msgstr[0] "+ещё %{count}"
-msgstr[1] ""
-msgstr[2] ""
+msgstr[1] "+ещё %{count}"
+msgstr[2] "+ещё %{count}"
 
 #: lib/phoenix_kit_projects/web/project_show_live.ex:4196
 #, elixir-autogen, elixir-format
