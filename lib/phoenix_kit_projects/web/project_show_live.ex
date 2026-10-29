@@ -2359,12 +2359,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         gated_handle_event(event, params, socket)
 
       action ->
-        if Authz.can?(
-             socket.assigns[:phoenix_kit_current_scope],
-             socket.assigns.project,
-             action,
-             authz_record(event, params, socket)
-           ) do
+        scope = socket.assigns[:phoenix_kit_current_scope]
+
+        if Authz.can?(scope, socket.assigns.project, action, authz_record(event, params, socket)) and
+             child_task_allowed?(scope, action, event, params, socket) do
           gated_handle_event(event, params, socket)
         else
           {:noreply,
@@ -2384,6 +2382,34 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   defp authz_record(_event, _params, _socket), do: nil
+
+  # A task of an expanded sub-project is drawn on this page and
+  # `scoped_assignment/2` accepts it, but the check above judged it under
+  # THIS project's floors (and with no record). Ask its own project too, so
+  # a right held here never writes to a sub-project the viewer has none in.
+  defp child_task_allowed?(scope, action, event, params, socket) do
+    uuid = record_param(event, params)
+
+    cond do
+      not is_binary(uuid) -> true
+      Enum.any?(socket.assigns[:assignments] || [], &(&1.uuid == uuid)) -> true
+      not displayed_child_task?(socket, uuid) -> true
+      true -> child_project_allows?(scope, action, uuid)
+    end
+  end
+
+  defp child_project_allows?(scope, action, uuid) do
+    with %Assignment{} = a <- Projects.get_assignment(uuid),
+         %Project{} = child <- Projects.get_project(a.project_uuid) do
+      Authz.can?(scope, child, action, a)
+    else
+      _ -> false
+    end
+  end
+
+  defp record_param("board_move", %{"moved_id" => uuid}), do: uuid
+  defp record_param(event, %{"uuid" => uuid}) when event in @record_param_events, do: uuid
+  defp record_param(_event, _params), do: nil
 
   # Honour the drop position without ever renumbering from what the client
   # could see.
