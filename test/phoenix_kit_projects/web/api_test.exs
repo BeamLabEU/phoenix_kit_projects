@@ -960,4 +960,123 @@ defmodule PhoenixKitProjects.Web.ApiTest do
     assert %{"error" => %{"code" => "feature_disabled", "details" => %{"feature" => "tasks"}}} =
              conn |> api(token) |> get("#{@base}/tasks") |> json_response(403)
   end
+
+  # ── Deadlines and the waiting / can-be-started moves (V26) ──────
+
+  describe "a task's deadline" do
+    test "an ISO moment with its offset is stored as that instant", %{
+      conn: conn,
+      token: token,
+      assignment: a
+    } do
+      %{"task" => task} =
+        conn
+        |> api(token)
+        |> patch_json("#{@base}/tasks/#{a.uuid}", %{deadline: "2030-03-04T15:00:00+02:00"})
+        |> json_response(200)
+
+      assert task["deadline"] == "2030-03-04T13:00:00Z"
+      assert Projects.get_assignment(a.uuid).deadline == ~U[2030-03-04 13:00:00Z]
+    end
+
+    test "null clears it", %{conn: conn, token: token, assignment: a} do
+      {:ok, _} = Projects.update_assignment_form(a, %{"deadline" => "2030-03-04T13:00:00Z"})
+
+      %{"task" => %{"deadline" => nil}} =
+        conn
+        |> api(token)
+        |> patch_json("#{@base}/tasks/#{a.uuid}", %{deadline: nil})
+        |> json_response(200)
+
+      assert Projects.get_assignment(a.uuid).deadline == nil
+    end
+
+    test "a bare day, a time without an offset or a number is a 422", %{
+      conn: conn,
+      token: token,
+      assignment: a
+    } do
+      for bad <- ["2030-03-04", "2030-03-04T15:00:00", "soon", 1_700_000_000] do
+        assert %{
+                 "error" => %{
+                   "code" => "validation_failed",
+                   "details" => %{"deadline" => [_ | _]}
+                 }
+               } =
+                 conn
+                 |> api(token)
+                 |> patch_json("#{@base}/tasks/#{a.uuid}", %{deadline: bad})
+                 |> json_response(422),
+               "accepted #{inspect(bad)}"
+      end
+
+      assert Projects.get_assignment(a.uuid).deadline == nil
+    end
+
+    test "with the project's dates off it is refused, as the form leaves it out", %{
+      conn: conn,
+      token: token,
+      project: project,
+      assignment: a
+    } do
+      {:ok, _} =
+        Projects.update_project(project, %{"settings" => %{"features" => %{"dates" => false}}})
+
+      assert %{"error" => %{"code" => "feature_disabled", "details" => %{"feature" => "dates"}}} =
+               conn
+               |> api(token)
+               |> patch_json("#{@base}/tasks/#{a.uuid}", %{deadline: "2030-03-04T15:00:00Z"})
+               |> json_response(403)
+
+      assert %{"error" => %{"code" => "feature_disabled"}} =
+               conn
+               |> api(token)
+               |> post_json("#{@base}/tasks", %{title: "Dated", deadline: "2030-03-04T15:00:00Z"})
+               |> json_response(403)
+
+      assert Projects.get_assignment(a.uuid).deadline == nil
+    end
+  end
+
+  describe "waiting and can be started" do
+    test "todo goes back to waiting, and waiting is released to todo", %{
+      conn: conn,
+      token: token,
+      assignment: a
+    } do
+      c = api(conn, token)
+
+      %{"task" => %{"status" => "waiting", "allowed_transitions" => from_waiting}} =
+        c
+        |> post_json("#{@base}/tasks/#{a.uuid}/transition", %{status: "waiting"})
+        |> json_response(200)
+
+      assert "todo" in from_waiting
+      assert_activity_logged("projects.assignment_made_idle", resource_uuid: a.uuid)
+
+      %{"task" => %{"status" => "todo"}} =
+        c
+        |> post_json("#{@base}/tasks/#{a.uuid}/transition", %{status: "todo"})
+        |> json_response(200)
+
+      assert_activity_logged("projects.assignment_made_ready", resource_uuid: a.uuid)
+      refute_activity_logged("projects.assignment_reopened", resource_uuid: a.uuid)
+    end
+
+    test "a started task cannot be put straight back to waiting", %{
+      conn: conn,
+      token: token,
+      assignment: a
+    } do
+      c = api(conn, token)
+      c |> post_json("#{@base}/tasks/#{a.uuid}/start", %{}) |> json_response(200)
+
+      assert %{"error" => %{"code" => "invalid_transition"}} =
+               c
+               |> post_json("#{@base}/tasks/#{a.uuid}/transition", %{status: "waiting"})
+               |> json_response(409)
+
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
+    end
+  end
 end

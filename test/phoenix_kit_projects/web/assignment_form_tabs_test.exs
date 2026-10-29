@@ -276,6 +276,59 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert Projects.get_assignment(a.uuid).deadline == ~U[2027-07-01 07:00:00Z]
     end
 
+    test "a deadline preset sets the viewer's wall clock, and No deadline clears it", ctx do
+      conn =
+        put_test_scope(ctx.conn, fake_scope(user_uuid: ctx.me, user_timezone: "Europe/Tallinn"))
+
+      # Read back on the same clock the form uses.
+      PhoenixKitProjects.L10n.put_viewer_zone(%{user_timezone: "Europe/Tallinn"})
+      on_exit(fn -> PhoenixKitProjects.L10n.reset_viewer_zone() end)
+      today = PhoenixKitProjects.L10n.local_date(DateTime.utc_now())
+
+      {:ok, view, _} = edit(conn, ctx.project, ctx.a)
+
+      render_click(view, "deadline_preset", %{"preset" => "tomorrow"})
+      autosave(view)
+
+      deadline = Projects.get_assignment(ctx.a.uuid).deadline
+      assert PhoenixKitProjects.L10n.local_date(deadline) == Date.add(today, 1)
+      assert PhoenixKitProjects.L10n.local_time(deadline) == "09:00"
+
+      render_click(view, "deadline_preset", %{"preset" => "today"})
+      autosave(view)
+
+      deadline = Projects.get_assignment(ctx.a.uuid).deadline
+      assert PhoenixKitProjects.L10n.local_date(deadline) == today
+      assert PhoenixKitProjects.L10n.local_time(deadline) == "17:00"
+
+      # An unknown preset changes nothing.
+      render_click(view, "deadline_preset", %{"preset" => "someday"})
+      autosave(view)
+      assert Projects.get_assignment(ctx.a.uuid).deadline == deadline
+
+      assert has_element?(view, ~s(button[phx-click="deadline_clear"]))
+      render_click(view, "deadline_clear", %{})
+      autosave(view)
+
+      assert Projects.get_assignment(ctx.a.uuid).deadline == nil
+      refute has_element?(view, ~s(button[phx-click="deadline_clear"]))
+    end
+
+    test "with the project's dates off a forged preset sets no deadline", ctx do
+      {:ok, _} =
+        Projects.update_project(ctx.project, %{
+          "settings" => %{"features" => %{"dates" => false}}
+        })
+
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+      refute has_element?(view, "#assignment-deadline")
+
+      render_click(view, "deadline_preset", %{"preset" => "tomorrow"})
+      autosave(view)
+
+      assert Projects.get_assignment(ctx.a.uuid).deadline == nil
+    end
+
     test "a finished time is corrected, and one in the future is refused", ctx do
       {:ok, done} = Projects.complete_assignment(ctx.a, ctx.me)
       assert %DateTime{} = done.completed_at

@@ -289,7 +289,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
   defp do_create_checked(conn, key, project, params) do
     with {:ok, title} <- required_string(params, "title"),
-         {:ok, assignment_attrs} <- assignment_attrs(params),
+         {:ok, assignment_attrs} <- assignment_attrs(conn, params),
          {:ok, assignee} <- Assignee.attrs(conn, params) do
       assignment_attrs = Map.merge(assignment_attrs, assignee)
 
@@ -362,7 +362,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
     with :ok <- not_subproject_row(a),
          :ok <- content_editable(a, content),
          :ok <- text_policy(key, a, project, content),
-         {:ok, assignment_attrs} <- assignment_attrs(params),
+         {:ok, assignment_attrs} <- assignment_attrs(conn, params),
          {:ok, assignee} <- Assignee.attrs(conn, params),
          assignment_attrs = Map.merge(assignment_attrs, assignee),
          :ok <- check_interaction(conn, params["interaction"]),
@@ -1338,7 +1338,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   # The assignment-level fields an agent may set, validated to the same
   # closed sets the schema enforces, so a bad value is a 422 with the list
   # rather than a changeset error worded for a form.
-  defp assignment_attrs(params) do
+  defp assignment_attrs(conn, params) do
     attrs =
       %{}
       |> maybe_put("priority", params["priority"])
@@ -1351,7 +1351,7 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
 
     with {:ok, attrs} <- put_date(attrs, "start_date", params),
          {:ok, attrs} <- put_date(attrs, "end_date", params),
-         {:ok, attrs} <- put_deadline(attrs, params) do
+         {:ok, attrs} <- put_deadline(attrs, params, conn.assigns.pk_fx) do
       checked_attrs(attrs)
     end
   end
@@ -1359,10 +1359,21 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
   # By when it has to be done (V26): an ISO 8601 moment with its offset
   # (`2026-10-29T15:00:00+02:00`), or null to clear. A bare day or a time
   # without an offset is refused: an agent's clock is not the reader's.
-  defp put_deadline(attrs, params) do
+  # Part of the project's dates, as on the form: with that feature off the
+  # project has no deadlines to set (403 `feature_disabled`).
+  defp put_deadline(attrs, params, fx) do
     case Map.fetch(params, "deadline") do
       :error ->
         {:ok, attrs}
+
+      {:ok, _} when is_map_key(fx, :dates) and :erlang.map_get(:dates, fx) == false ->
+        {:error,
+         Json.error_body(
+           403,
+           "feature_disabled",
+           "The dates feature is turned off for this project.",
+           %{feature: :dates}
+         )}
 
       {:ok, nil} ->
         {:ok, Map.put(attrs, "deadline", nil)}

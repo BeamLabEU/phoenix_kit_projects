@@ -8,7 +8,7 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Extensions, Ledger, Members, Projects, TimeBoard}
+  alias PhoenixKitProjects.{Extensions, L10n, Ledger, Members, Projects, TimeBoard}
   alias PhoenixKitProjects.Test.Repo
   alias PhoenixKitStaff.{Departments, Staff}
 
@@ -91,14 +91,21 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
     view |> element("#time-line-#{dom} button[phx-click=edit_deadline]") |> render_click()
     assert has_element?(view, "#time-deadline-#{dom}")
 
-    value = Date.utc_today() |> Date.add(2) |> Date.to_iso8601()
+    day = Date.add(Date.utc_today(), 2)
 
     view
-    |> form("#time-deadline-#{dom}", %{"deadline" => value <> "T16:30"})
+    |> form("#time-deadline-#{dom}", %{"deadline" => Date.to_iso8601(day) <> "T16:30"})
     |> render_submit()
 
+    # The typed wall clock is the viewer's (the site's zone here, whatever
+    # it is set to): read the stored instant back on the same clock, not
+    # as a UTC date — east of UTC 16:30 can be the day before there.
+    L10n.put_viewer_zone(nil)
+    on_exit(fn -> L10n.reset_viewer_zone() end)
+
     assert %{deadline: deadline} = Projects.get_assignment(a.uuid)
-    assert DateTime.to_date(deadline) == Date.add(Date.utc_today(), 2)
+    assert L10n.local_date(deadline) == day
+    assert L10n.local_time(deadline) == "16:30"
     refute has_element?(view, "#time-deadline-#{dom}")
 
     assert_activity_logged("projects.assignment_updated",

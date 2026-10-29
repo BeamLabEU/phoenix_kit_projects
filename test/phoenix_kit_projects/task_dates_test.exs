@@ -122,6 +122,49 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       assert Assignment.times_changeset(reopened, %{started_at: nil, completed_at: nil}).valid?
     end
 
+    test "a project's link out: a web address or a path here, nothing that runs or leaves" do
+      project = %Project{name: "P", start_mode: "immediate"}
+      link = &Project.changeset(project, %{"external_url" => &1})
+
+      for ok <- [
+            "https://shop.example.com/orders/1042",
+            "http://intranet.example/x?y=1#z",
+            "/admin/andi/sub-orders/42",
+            "  https://padded.example.com  "
+          ] do
+        assert link.(ok).valid?, "refused #{inspect(ok)}"
+      end
+
+      assert Ecto.Changeset.get_change(link.("  https://padded.example.com  "), :external_url) ==
+               "https://padded.example.com"
+
+      for bad <- [
+            "//evil.example.com/x",
+            "/\\evil.example.com",
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "ftp://files.example.com/a",
+            "https://",
+            "shop.example.com/orders",
+            "/admin/\tx"
+          ] do
+        cs = link.(bad)
+        refute cs.valid?, "accepted #{inspect(bad)}"
+        assert cs.errors[:external_url]
+      end
+
+      too_long = "https://example.com/" <> String.duplicate("a", 2000)
+      refute link.(too_long).valid?
+
+      assert {_, [count: 2000, validation: :length, kind: :max, type: :string]} =
+               link.(too_long).errors[:external_url]
+
+      label = Project.changeset(project, %{"external_label" => String.duplicate("x", 121)})
+      refute label.valid?
+      assert label.errors[:external_label]
+    end
+
     test "clearing a project's link leaves it empty, without a crash" do
       project = %Project{
         name: "P",

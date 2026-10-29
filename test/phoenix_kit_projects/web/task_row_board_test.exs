@@ -81,7 +81,9 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
     end
 
     test "the planned days are neutral and say their times" do
-      year = Date.utc_today().year
+      # This year as the label reads it (the viewer's clock, not UTC's):
+      # around New Year the two differ and the label would add the year.
+      year = L10n.local_date(DateTime.utc_now()).year
 
       a = %Assignment{
         start_date: Date.new!(year, 10, 12),
@@ -315,6 +317,33 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
       # changed, so no patch would move it back: the hook is told to.
       uuid = row.uuid
       assert_push_event(view, "pkp-board:revert", %{uuid: ^uuid})
+    end
+
+    test "a drop into Waiting puts a released task back to idle, a started one too",
+         %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      ready = task(project, "Released", %{"status" => "todo"})
+      started = task(project, "Started", %{"status" => "in_progress"})
+
+      {:ok, view, _html} = show(conn, project)
+
+      for a <- [ready, started] do
+        render_hook(view, "board_move", %{
+          "moved_id" => a.uuid,
+          "status" => "waiting",
+          "ordered_ids" => [a.uuid]
+        })
+
+        uuid = a.uuid
+        assert_push_event(view, "sortable:flash", %{uuid: ^uuid, status: "ok"})
+        assert Projects.get_assignment(a.uuid).status == "waiting"
+      end
+
+      assert_activity_logged("projects.assignment_made_idle", resource_uuid: ready.uuid)
+      # Started work dropped there is reopened as waiting, its progress cleared.
+      assert_activity_logged("projects.assignment_reopened", resource_uuid: started.uuid)
+      assert Projects.get_assignment(started.uuid).progress_pct == 0
+      assert has_element?(view, "#board-column-waiting > #board-card-#{started.uuid}")
     end
 
     test "a drop a dialog asks about first goes back to its column until answered",

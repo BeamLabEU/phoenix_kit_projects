@@ -456,7 +456,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "by when it has to be done, ISO 8601 with an offset (`2026-10-29T15:00:00+02:00`); null clears it"
+              "by when it has to be done, ISO 8601 with an offset (`2026-10-29T15:00:00+02:00`); null clears it; needs the dates feature"
           },
           %{
             name: "waiting_on",
@@ -1628,7 +1628,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       placed by its duration and its place in the order. `GET /tasks?due_before=<day>&status=open`
       is what is planned to end by then.
     - `deadline` - by when it has to be done: an ISO 8601 date and time with its offset
-      (`2026-10-29T15:00:00+02:00`), or null to clear. Independent of the planned days; `overdue`
+      (`2026-10-29T15:00:00+02:00`), or null to clear (needs the dates feature, else 403
+      `feature_disabled`). Independent of the planned days; `overdue`
       is true once the deadline has passed and the task is not done. Read-only beside it:
       `started_at` (when work really began, set on the way into in progress) and `completed_at`.
     - `labels` - the project's labels by name (needs the labels feature); on create or update, the

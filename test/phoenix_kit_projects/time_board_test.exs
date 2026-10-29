@@ -84,6 +84,56 @@ defmodule PhoenixKitProjects.TimeBoardTest do
       assert TimeBoard.walk_back(~N[2026-10-28 20:00:00], 1, false) ==
                [{~N[2026-10-28 16:00:00], ~N[2026-10-28 17:00:00]}]
     end
+
+    test "a deadline before 08:00, or at it, counts back from the previous working day's end" do
+      for at <- [~N[2026-10-28 07:00:00], ~N[2026-10-28 08:00:00]] do
+        assert TimeBoard.walk_back(at, 1, false) ==
+                 [{~N[2026-10-27 16:00:00], ~N[2026-10-27 17:00:00]}],
+               "from #{at}"
+      end
+
+      # Monday before work: back past the weekend to Friday.
+      assert TimeBoard.walk_back(~N[2026-10-26 06:30:00], 2, false) ==
+               [{~N[2026-10-23 15:00:00], ~N[2026-10-23 17:00:00]}]
+    end
+
+    test "a deadline on a weekend: Friday's end, or the day itself when weekends count" do
+      saturday = ~N[2026-10-31 12:00:00]
+
+      assert TimeBoard.walk_back(saturday, 2, false) ==
+               [{~N[2026-10-30 15:00:00], ~N[2026-10-30 17:00:00]}]
+
+      assert TimeBoard.walk_back(saturday, 2, true) ==
+               [{~N[2026-10-31 10:00:00], ~N[2026-10-31 12:00:00]}]
+    end
+
+    test "an estimate longer than a work day fills whole days back, in time order" do
+      # 12 h from Wednesday 17:00: all of Wednesday (9 h), then 3 h of Tuesday.
+      assert TimeBoard.walk_back(~N[2026-10-28 17:00:00], 12, false) == [
+               {~N[2026-10-27 14:00:00], ~N[2026-10-27 17:00:00]},
+               {~N[2026-10-28 08:00:00], ~N[2026-10-28 17:00:00]}
+             ]
+
+      # 22.5 h from Monday noon, across the weekend: Monday's 4 h, all of
+      # Friday and Thursday (18 h), the last half hour on Wednesday.
+      segs = TimeBoard.walk_back(~N[2026-10-26 12:00:00], 22.5, false)
+
+      assert segs == [
+               {~N[2026-10-21 16:30:00], ~N[2026-10-21 17:00:00]},
+               {~N[2026-10-22 08:00:00], ~N[2026-10-22 17:00:00]},
+               {~N[2026-10-23 08:00:00], ~N[2026-10-23 17:00:00]},
+               {~N[2026-10-26 08:00:00], ~N[2026-10-26 12:00:00]}
+             ]
+
+      minutes = Enum.sum(for {f, t} <- segs, do: NaiveDateTime.diff(t, f, :minute))
+      assert minutes == 22 * 60 + 30
+    end
+
+    test "a huge estimate stops at the walk's cap instead of running on" do
+      segs = TimeBoard.walk_back(~N[2026-10-28 17:00:00], 100_000, false)
+      assert length(segs) <= 60
+      assert List.last(segs) == {~N[2026-10-28 08:00:00], ~N[2026-10-28 17:00:00]}
+    end
   end
 
   describe "planned window" do
@@ -99,6 +149,12 @@ defmodule PhoenixKitProjects.TimeBoardTest do
 
       assert {[{~N[2026-10-28 08:00:00], ~N[2026-10-28 17:00:00]}], :explicit} =
                TimeBoard.planned_window(a, nil, 0, false)
+    end
+
+    test "a deadline with an estimate longer than a day is walked back over several days" do
+      assert {[{~N[2026-10-27 14:00:00], ~N[2026-10-27 17:00:00]}, {~N[2026-10-28 08:00:00], _}],
+              :deadline} =
+               TimeBoard.planned_window(task([]), ~N[2026-10-28 17:00:00], 12, false)
     end
 
     test "deadline with an estimate is walked back; deadline alone is no plan" do
