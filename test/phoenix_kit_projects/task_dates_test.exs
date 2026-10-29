@@ -97,6 +97,31 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       assert Assignment.times_changeset(waiting, %{started_at: nil}).valid?
     end
 
+    test "a real time is only set where the status has that moment" do
+      at = ~U[2026-10-05 09:00:00Z]
+
+      for status <- ~w(waiting todo in_progress) do
+        cs = Assignment.times_changeset(%Assignment{status: status}, %{completed_at: at})
+        refute cs.valid?, "a finish on a #{status} task"
+        assert {"the task is not done", _} = cs.errors[:completed_at]
+      end
+
+      for status <- ~w(waiting todo) do
+        cs = Assignment.times_changeset(%Assignment{status: status}, %{started_at: at})
+        refute cs.valid?, "a start on a #{status} task"
+        assert {"the task has not started", _} = cs.errors[:started_at]
+      end
+
+      assert Assignment.times_changeset(%Assignment{status: "in_progress"}, %{started_at: at}).valid?
+
+      assert Assignment.times_changeset(%Assignment{status: "done"}, %{started_at: at}).valid?
+      assert Assignment.times_changeset(%Assignment{status: "done"}, %{completed_at: at}).valid?
+
+      # Clearing stays the keep-rule's: a reopened task's old times may go.
+      reopened = %Assignment{status: "todo", started_at: at, completed_at: at}
+      assert Assignment.times_changeset(reopened, %{started_at: nil, completed_at: nil}).valid?
+    end
+
     test "clearing a project's link leaves it empty, without a crash" do
       project = %Project{
         name: "P",

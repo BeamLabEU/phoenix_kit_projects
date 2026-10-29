@@ -1146,11 +1146,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # Corrected times are written after the row's own save, to the row as it
   # now is. `:none` when nothing was changed.
   defp save_times(%{assigns: %{times_form: %Phoenix.HTML.Form{source: cs}}}, updated) do
-    cond do
-      cs.changes == %{} -> :none
-      not cs.valid? -> {:error, cs}
-      true -> Projects.correct_assignment_times(updated, cs.changes)
-    end
+    # Checked again against the row as saved, not the one the boxes were
+    # filled against: a status changed to done in the same save may take a
+    # finish time.
+    if cs.changes == %{},
+      do: :none,
+      else: Projects.correct_assignment_times(updated, cs.changes)
   end
 
   defp save_times(_socket, _updated), do: :none

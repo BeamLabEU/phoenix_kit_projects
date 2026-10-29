@@ -283,7 +283,9 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   Corrects when the work really began and ended (`started_at`,
   `completed_at`): a late "Done" moved back to when it happened. Only the
   two times; who did it and the status are untouched. Neither may lie in
-  the future, and the end is not before the start.
+  the future, and the end is not before the start. A time is only set
+  where the status has that moment: a finish on a done task, a start on
+  one under way or done (a waiting task never began).
   """
   @spec times_changeset(t(), map()) :: Ecto.Changeset.t()
   def times_changeset(assignment, attrs) do
@@ -294,6 +296,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> validate_change(:started_at, &not_future(&1, &2, now))
     |> validate_change(:completed_at, &not_future(&1, &2, now))
     |> keep_when_it_happened(assignment)
+    |> only_when_it_happened(assignment)
     |> then(fn cs ->
       with %DateTime{} = from <- get_field(cs, :started_at),
            %DateTime{} = to <- get_field(cs, :completed_at),
@@ -322,6 +325,22 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   end
 
   defp refuse_clearing(changeset, _field, false), do: changeset
+
+  # The other way round: a NEW time where the status has no such moment —
+  # a finish on a task not done, a start on one that never began — would
+  # put on the record something that did not happen. Clearing one stays
+  # the keep-rule's business above.
+  defp only_when_it_happened(changeset, %{status: status}) do
+    changeset
+    |> validate_change(:completed_at, fn field, _at ->
+      if status == "done", do: [], else: [{field, gettext("the task is not done")}]
+    end)
+    |> validate_change(:started_at, fn field, _at ->
+      if status in ["in_progress", "done"],
+        do: [],
+        else: [{field, gettext("the task has not started")}]
+    end)
+  end
 
   defp not_future(field, %DateTime{} = at, now) do
     if DateTime.compare(at, now) == :gt,
