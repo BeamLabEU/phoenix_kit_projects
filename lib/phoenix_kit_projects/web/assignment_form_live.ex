@@ -4103,16 +4103,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             <input type="hidden" name={@form[:assigned_department_uuid].name} value={@form[:assigned_department_uuid].value} />
             <div class="flex items-center justify-between gap-2">
               <label for="assignment-assignee-search" class="text-sm font-semibold">{gettext("Assignee")}</label>
+              <%!-- Shown even when the viewer's account is not a staff
+                   person (no "me" to assign): greyed out, saying why, so
+                   the button reads as missing a link, not as missing. --%>
               <button
-                :if={@can_assign? and is_binary(@my_person_uuid) and @assignee_chip.key != {"person", @my_person_uuid}}
+                :if={@can_assign? and @assignee_chip.key != {"person", @my_person_uuid}}
                 type="button"
                 id="assignment-assign-me"
                 phx-click="assign_to_me"
+                disabled={not is_binary(@my_person_uuid)}
+                title={
+                  if not is_binary(@my_person_uuid),
+                    do: gettext("Your account is not linked to a staff person, so there is no one to assign as you.")
+                }
                 class="btn btn-xs btn-outline gap-1"
               >
                 <.icon name="hero-user-plus" class="w-3.5 h-3.5" /> {gettext("Assign to me")}
               </button>
             </div>
+            <p :if={@can_assign? and not is_binary(@my_person_uuid)} class="text-xs text-base-content/60">
+              {gettext("Your account is not linked to a staff person, so there is no one to assign as you.")}
+            </p>
 
             <div
               :if={@assignee_chip.key}

@@ -252,6 +252,28 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert Projects.get_assignment(ctx.a.uuid).assigned_person_uuid == carl.uuid
     end
 
+    test "with no staff person of their own, Assign to me shows greyed out and says why", ctx do
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+
+      assert has_element?(view, "#assignment-assign-me[disabled]")
+      assert render(view) =~ "Your account is not linked to a staff person"
+    end
+
+    test "a project with nothing assigned yet suggests whom tasks went to elsewhere", ctx do
+      dana = person!("Dana")
+      other = fixture_project()
+
+      {:ok, %{assignment: _}} =
+        Projects.create_task_with_assignment(
+          other.uuid,
+          %{"title" => "Somewhere else", "ad_hoc" => true},
+          %{"assigned_person_uuid" => dana.uuid}
+        )
+
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+      assert has_element?(view, "#assignment-assignee-recent", "Dana")
+    end
+
     test "the old kind-first selects are gone", ctx do
       {:ok, _view, html} = edit(ctx.conn, ctx.project, ctx.a)
       refute html =~ ~s(<select name="assign_type")

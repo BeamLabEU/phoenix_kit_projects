@@ -406,14 +406,28 @@ defmodule PhoenixKitProjects.Assignees do
   @doc """
   Whom a project's tasks went to lately — people, teams and departments,
   newest first, at most `limit` — as picker rows: the one-click "Recent"
-  chips under the task form's assignee picker. `[]` on a failed read.
+  chips under the task form's assignee picker. A project with no assigned
+  task yet gets whom tasks went to lately in any project, so the first
+  task of a new project has suggestions too. `[]` on a failed read.
   """
   @spec recent_for_project(String.t() | nil, pos_integer(), String.t() | nil) :: [map()]
   def recent_for_project(project_uuid, limit \\ 6, lang \\ nil)
 
   def recent_for_project(project_uuid, limit, lang) when is_binary(project_uuid) do
+    case recent_assignees(project_uuid, limit, lang) do
+      [] -> recent_assignees(nil, limit, lang)
+      rows -> rows
+    end
+  end
+
+  def recent_for_project(_project_uuid, _limit, _lang), do: []
+
+  defp in_project(nil), do: dynamic(true)
+  defp in_project(uuid), do: dynamic([a], a.project_uuid == ^uuid)
+
+  defp recent_assignees(project_uuid, limit, lang) do
     from(a in Assignment,
-      where: a.project_uuid == ^project_uuid,
+      where: ^in_project(project_uuid),
       where:
         not is_nil(a.assigned_person_uuid) or not is_nil(a.assigned_team_uuid) or
           not is_nil(a.assigned_department_uuid),
@@ -436,8 +450,6 @@ defmodule PhoenixKitProjects.Assignees do
       Logger.warning("[Assignees] recent assignees failed: #{Exception.message(e)}")
       []
   end
-
-  def recent_for_project(_project_uuid, _limit, _lang), do: []
 
   @doc "The assignment field that holds an assignee of `kind`."
   @spec assignee_field(String.t()) :: atom()
