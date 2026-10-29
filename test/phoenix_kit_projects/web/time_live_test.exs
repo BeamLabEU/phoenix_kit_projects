@@ -100,6 +100,42 @@ defmodule PhoenixKitProjects.Web.TimeLiveTest do
     assert %{deadline: deadline} = Projects.get_assignment(a.uuid)
     assert DateTime.to_date(deadline) == Date.add(Date.utc_today(), 2)
     refute has_element?(view, "#time-deadline-#{dom}")
+
+    assert_activity_logged("projects.assignment_updated",
+      resource_uuid: a.uuid,
+      metadata_has: %{"field" => "deadline"}
+    )
+  end
+
+  test "the deadline form's Save is disabled while it saves", %{conn: conn, project: project} do
+    ann = person("Ann Disable #{uniq()}")
+
+    a =
+      task(project, "Paint the door", %{
+        "assigned_person_uuid" => ann.uuid,
+        "start_date" => Date.utc_today(),
+        "end_date" => Date.utc_today()
+      })
+
+    {:ok, view, _html} = live(conn, @path)
+    dom = "person-#{ann.uuid}-#{a.uuid}"
+    view |> element("#time-line-#{dom} button[phx-click=edit_deadline]") |> render_click()
+
+    assert has_element?(view, "#time-deadline-#{dom} button[type=submit][phx-disable-with]")
+  end
+
+  test "forged or unknown events leave the page standing", %{conn: conn} do
+    {:ok, view, _html} = live(conn, @path)
+
+    render_hook(view, "pick_date", %{"date" => %{"year" => "2026"}})
+    render_hook(view, "expand_row", %{"row" => %{"x" => "y"}})
+    render_hook(view, "set_view", %{"view" => "month"})
+    render_hook(view, "filter_project", %{})
+    render_hook(view, "no_such_event", %{})
+    send(view.pid, :unexpected_message)
+
+    assert Process.alive?(view.pid)
+    assert render(view) =~ "time-date-form"
   end
 
   test "Set deadline is refused without :edit_tasks", %{conn: conn, project: project} do

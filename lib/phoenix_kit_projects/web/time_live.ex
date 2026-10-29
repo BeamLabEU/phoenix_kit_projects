@@ -21,6 +21,8 @@ defmodule PhoenixKitProjects.Web.TimeLive do
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
 
+  require Logger
+
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.{L10n, Paths, TimeBoard}
@@ -218,8 +220,8 @@ defmodule PhoenixKitProjects.Web.TimeLive do
      |> load()}
   end
 
-  def handle_event("pick_date", %{"date" => value}, socket) do
-    case Date.from_iso8601(value || "") do
+  def handle_event("pick_date", %{"date" => value}, socket) when is_binary(value) do
+    case Date.from_iso8601(value) do
       {:ok, date} -> {:noreply, socket |> assign(date: date) |> reset_ui() |> load()}
       _ -> {:noreply, socket}
     end
@@ -236,7 +238,7 @@ defmodule PhoenixKitProjects.Web.TimeLive do
     {:noreply, socket |> assign(project_filter: filter) |> reset_ui() |> load()}
   end
 
-  def handle_event("expand_row", %{"row" => row}, socket) do
+  def handle_event("expand_row", %{"row" => row}, socket) when is_binary(row) do
     {:noreply, assign(socket, expanded: MapSet.put(socket.assigns.expanded, row))}
   end
 
@@ -274,6 +276,14 @@ defmodule PhoenixKitProjects.Web.TimeLive do
     end
   end
 
+  # An event this page does not know, or one whose params it does not
+  # expect (a forged or stale client), is ignored rather than crashing the
+  # page.
+  def handle_event(event, _params, socket) do
+    Logger.debug("[TimeLive] unexpected handle_event: #{inspect(event)}")
+    {:noreply, socket}
+  end
+
   defp reset_ui(socket), do: assign(socket, expanded: MapSet.new(), deadline_edit: nil)
 
   # ── PubSub / clock ──────────────────────────────────────────────
@@ -291,7 +301,11 @@ defmodule PhoenixKitProjects.Web.TimeLive do
     do: {:noreply, socket}
 
   def handle_info({:projects, _event, _payload}, socket), do: {:noreply, load(socket)}
-  def handle_info(_msg, socket), do: {:noreply, socket}
+
+  def handle_info(msg, socket) do
+    Logger.debug("[TimeLive] unexpected handle_info: #{inspect(msg)}")
+    {:noreply, socket}
+  end
 
   # ── Render ──────────────────────────────────────────────────────
 
@@ -696,7 +710,13 @@ defmodule PhoenixKitProjects.Web.TimeLive do
             class="input input-xs"
             aria-label={gettext("Deadline")}
           />
-          <button type="submit" class="btn btn-primary btn-xs">{gettext("Save")}</button>
+          <button
+            type="submit"
+            class="btn btn-primary btn-xs"
+            phx-disable-with={gettext("Saving…")}
+          >
+            {gettext("Save")}
+          </button>
           <button type="button" class="btn btn-ghost btn-xs" phx-click="cancel_deadline">
             {gettext("Cancel")}
           </button>

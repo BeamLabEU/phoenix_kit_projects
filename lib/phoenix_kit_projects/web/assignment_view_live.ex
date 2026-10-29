@@ -38,6 +38,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   alias PhoenixKitProjects.Hours.Format
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
+  alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   import PhoenixKitProjects.Web.Helpers, only: [assignee_label: 1]
@@ -88,18 +89,30 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     if ok? do
       if connected?(socket) and is_nil(socket.assigns[:subscribed]) do
         ProjectsPubSub.subscribe(ProjectsPubSub.topic_project(project.uuid))
+        # A library task's rename goes to the task topics only.
+        ProjectsPubSub.subscribe(ProjectsPubSub.topic_tasks())
       end
 
       socket
       |> assign(subscribed: true, project: project, assignment: assignment, not_found?: false)
       |> assign_view(scope)
-      |> assign(page_title: Assignment.label(assignment, L10n.current_content_lang()))
+      |> assign_title(project, assignment, scope)
     else
       not_found(socket)
     end
   end
 
   defp load(socket, _project_id, _id), do: not_found(socket)
+
+  # Routed, the page has the admin header's trail and its own title. In a
+  # drawer the host page keeps both: a frame never renames the browser tab.
+  defp assign_title(socket, project, assignment, scope) do
+    socket = assign(socket, page_title: Assignment.label(assignment, L10n.current_content_lang()))
+
+    if socket.assigns[:embed_mode] == :navigate,
+      do: assign(socket, Crumbs.under_project(project, scope)),
+      else: WebHelpers.keep_host_title(socket)
+  end
 
   defp not_found(socket) do
     socket
@@ -285,16 +298,27 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
       else: {:noreply, reload(socket)}
   end
 
+  # Announced beside `:assignment_updated` (and, for the rows a completion
+  # rule ticks, beside `:assignment_reordered`), which reload already —
+  # reloading on it too ran every read twice per change.
+  def handle_info({:projects, :assignment_status_changed, _payload}, socket),
+    do: {:noreply, socket}
+
+  # The library task this one is made from was renamed or edited.
+  def handle_info({:projects, :task_updated, %{uuid: uuid}}, socket) do
+    if match?(%Assignment{task_uuid: ^uuid}, socket.assigns[:assignment]),
+      do: {:noreply, reload(socket)},
+      else: {:noreply, socket}
+  end
+
   def handle_info({:projects, event, _payload}, socket)
       when event in [
              :assignment_created,
              :assignment_updated,
              :assignment_deleted,
-             :assignment_status_changed,
              :assignment_reordered,
              :dependency_added,
              :dependency_removed,
-             :task_updated,
              :project_updated,
              :project_labels_changed,
              :work_logged
@@ -302,7 +326,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
     {:noreply, reload(socket)}
   end
 
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  def handle_info(msg, socket) do
+    Logger.debug("[AssignmentViewLive] unexpected handle_info: #{inspect(msg)}")
+    {:noreply, socket}
+  end
 
   defp project_path(%{assigns: %{project: %Project{uuid: uuid}}}), do: Paths.project(uuid)
   defp project_path(_socket), do: Paths.projects()
