@@ -1497,8 +1497,10 @@
   //
   // Sends what SortableGrid sends — `{ordered_ids, moved_id, status,
   // fromStatus}` under the column's `data-board-event` — and answers the
-  // page's `sortable:flash`. SortableJS is the host's vendored copy, loaded
-  // through core's loader (`PhoenixKitLibraries`, in core since 2.60).
+  // page's `sortable:flash` and `pkp-board:revert` (a refused drop: the
+  // card goes back to where it was picked up). SortableJS is the host's
+  // vendored copy, loaded through core's loader (`PhoenixKitLibraries`, in
+  // core since 2.60).
   var BOARD_STYLE_ID = "pkp-board-style";
   var BOARD_CSS = [
     ".pkp-board-card{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}",
@@ -1552,6 +1554,25 @@
         card.classList.add(cls);
         setTimeout(function () { card.classList.remove(cls); }, 1200);
       });
+      // A drop the page refused (or a dialog now asks about): the card goes
+      // back where it was picked up. The server's columns did not change,
+      // so no patch would ever move it back. The column it came from
+      // remembers the move and answers; the others ignore it.
+      this.handleEvent("pkp-board:revert", function (payload) {
+        var last = self.lastMove;
+        if (!payload || !last || last.id !== payload.uuid) return;
+        self.lastMove = null;
+        var from = last.from;
+        var item = last.item;
+        if (!from || !from.isConnected || !item) return;
+        var siblings = Array.prototype.filter.call(
+          from.querySelectorAll(".sortable-item"),
+          function (n) { return n !== item && n.parentNode === from; }
+        );
+        var ref = siblings[last.index] || null;
+        if (ref) from.insertBefore(item, ref);
+        else from.appendChild(item);
+      });
       loadSortable().then(function () {
         if (!self.gone) self.init();
       }, function () {
@@ -1590,6 +1611,13 @@
           var b = board();
           if (b) b.classList.remove("pkp-board-dragging");
           if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
+          // Kept by the column the card left, for `pkp-board:revert`.
+          self.lastMove = {
+            id: evt.item.dataset.id,
+            item: evt.item,
+            from: evt.from,
+            index: evt.oldDraggableIndex
+          };
           try {
             var to = evt.to;
             var ids = Array.prototype.map.call(

@@ -311,6 +311,56 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
       assert_push_event(view, "sortable:flash", %{status: "error"})
       assert html =~ "This task cannot move there."
       assert Projects.get_assignment(row.uuid).status == "waiting"
+      # The client moved the card already and nothing on the server
+      # changed, so no patch would move it back: the hook is told to.
+      uuid = row.uuid
+      assert_push_event(view, "pkp-board:revert", %{uuid: ^uuid})
+    end
+
+    test "a drop a dialog asks about first goes back to its column until answered",
+         %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      a = task(project, "Held", %{"status" => "waiting"})
+
+      {:ok, view, _html} = show(conn, project)
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "todo",
+        "ordered_ids" => [a.uuid]
+      })
+
+      uuid = a.uuid
+      assert_push_event(view, "pkp-board:revert", %{uuid: ^uuid})
+    end
+
+    test "a drop that lands is not sent back", %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      a = task(project, "Finish", %{"status" => "todo"})
+
+      {:ok, view, _html} = show(conn, project)
+
+      render_hook(view, "board_move", %{
+        "moved_id" => a.uuid,
+        "status" => "done",
+        "ordered_ids" => [a.uuid]
+      })
+
+      assert_push_event(view, "sortable:flash", %{status: "ok"})
+      refute_push_event(view, "pkp-board:revert", %{})
+    end
+
+    test "a drop into a column that does not exist goes back", %{conn: conn} do
+      project = fixture_project(%{"start_mode" => "immediate"})
+      a = task(project, "Forged", %{"status" => "todo"})
+
+      {:ok, view, _html} = show(conn, project)
+
+      render_hook(view, "board_move", %{"moved_id" => a.uuid, "status" => "archived"})
+
+      uuid = a.uuid
+      assert_push_event(view, "pkp-board:revert", %{uuid: ^uuid})
+      assert Projects.get_assignment(a.uuid).status == "todo"
     end
   end
 

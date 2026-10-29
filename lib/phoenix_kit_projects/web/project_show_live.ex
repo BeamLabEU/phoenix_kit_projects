@@ -2603,6 +2603,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # A drop that did not land: the card goes back where it was picked up.
+  # The client moved it already, and the reload alone cannot undo that —
+  # the server's columns did not change, so there is no diff to patch the
+  # DOM with. `PkpBoard` puts the card back on this event.
+  defp revert_board_card(socket, uuid),
+    do: push_event(socket, "pkp-board:revert", %{uuid: uuid})
+
   # The task a dialog of this page is asking about, if any: its card on
   # the board is marked as waiting for the answer.
   defp board_pending_uuid(assigns) do
@@ -2639,7 +2646,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        when status in ["waiting", "todo", "in_progress", "done"] do
     case scoped_assignment(socket, uuid) do
       nil ->
-        {:noreply, load_assignments(socket)}
+        {:noreply, socket |> revert_board_card(uuid) |> load_assignments()}
 
       assignment ->
         # Status first, through the very handlers the buttons use rather
@@ -2672,7 +2679,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
           # A dialog asks first; the card waits in its old column, marked.
           :pending ->
-            {:noreply, load_assignments(socket)}
+            {:noreply, socket |> revert_board_card(uuid) |> load_assignments()}
 
           # Said, not flashed green: nothing was written. A gate's own
           # refusal (feature off, no permission) is the better message.
@@ -2684,6 +2691,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
             {:noreply,
              socket
+             |> revert_board_card(uuid)
              |> push_event("sortable:flash", %{uuid: uuid, status: "error"})
              |> load_assignments()}
         end
@@ -2693,7 +2701,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # An out-of-vocabulary destination, or a payload missing its pieces. The
   # columns can only emit the three, so this is a forged event: reload so
   # the optimistic DOM move is undone.
-  defp gated_handle_event("board_move", _params, socket) do
+  defp gated_handle_event("board_move", params, socket) do
+    socket =
+      case params do
+        %{"moved_id" => uuid} when is_binary(uuid) -> revert_board_card(socket, uuid)
+        _ -> socket
+      end
+
     {:noreply, load_assignments(socket)}
   end
 
