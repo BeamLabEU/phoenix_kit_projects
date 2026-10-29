@@ -1189,8 +1189,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # through the server-trusted `update_assignment_status/2` because their
   # attrs include `completed_by_uuid` / `completed_at`, which the
   # form-safe `update_assignment_form/2` intentionally drops.
+  #
+  # The status `a` carries is the one the step was chosen for: if the row
+  # moved on meanwhile (somebody started it) nothing is written —
+  # `{:error, socket, :stale}`, said and reloaded by `maybe_sync_and_reload/1`.
   defp update_assignment_with_activity(socket, a, attrs, action_name, opts) do
-    case Projects.update_assignment_status(a, attrs) do
+    case Projects.update_assignment_status(a, attrs, expect: a.status) do
       {:ok, _} ->
         Activity.log(action_name,
           actor_uuid: Activity.actor_uuid(socket),
@@ -1204,6 +1208,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
         recompute_owning_subproject(socket, a)
         {:ok, socket}
+
+      {:error, :stale} ->
+        {:error, socket, :stale}
 
       {:error, cs} ->
         Activity.log_failed(action_name,
@@ -1454,7 +1461,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     action =
       if to == "todo", do: "projects.assignment_made_ready", else: "projects.assignment_made_idle"
 
-    case Projects.update_assignment_status(a, %{status: to}) do
+    case Projects.update_assignment_status(a, %{status: to}, expect: a.status) do
       {:ok, _} ->
         Activity.log(action,
           actor_uuid: Activity.actor_uuid(socket),
@@ -1465,6 +1472,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         )
 
         :ok
+
+      # Moved on since `a` was read (started meanwhile): left as it is.
+      {:error, :stale} ->
+        :stale
 
       {:error, _} ->
         Activity.log_failed(action,
@@ -1477,6 +1488,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         :error
     end
   end
+
+  defp readiness_reload(socket, :stale), do: socket |> put_stale_flash() |> load_assignments()
+  defp readiness_reload(socket, _result), do: load_assignments(socket)
 
   # Each comment is kept on its task's thread too, when the project has
   # discussions — flagged as a hand-off note, so the thread does not tell
@@ -1582,9 +1596,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     {:noreply, socket |> sync_project_completion() |> load_assignments()}
   end
 
+  defp maybe_sync_and_reload({:error, socket, :stale}) do
+    {:noreply, socket |> put_stale_flash() |> load_assignments()}
+  end
+
   defp maybe_sync_and_reload({:error, socket, msg}) do
     {:noreply, put_flash(socket, :error, msg)}
   end
+
+  # A step refused because the task's status changed after the page read
+  # it (another tab, a colleague, the API): said, and the page reloaded so
+  # the next click is made on what is really there.
+  defp put_stale_flash(socket),
+    do:
+      put_flash(
+        socket,
+        :error,
+        gettext("This task changed meanwhile. Have a look and try again.")
+      )
 
   # Translates Ecto validator messages through the gettext "errors"
   # domain — Ecto emits English literals like `"is invalid"` /
@@ -2761,8 +2790,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gated_handle_event("make_ready", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       %Assignment{status: "waiting", child_project_uuid: nil} = a ->
-        _ = set_readiness(socket, a, "todo")
-        {:noreply, load_assignments(socket)}
+        {:noreply, readiness_reload(socket, set_readiness(socket, a, "todo"))}
 
       _ ->
         {:noreply, socket}
@@ -2774,8 +2802,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp gated_handle_event("make_idle", %{"uuid" => uuid}, socket) do
     case scoped_assignment(socket, uuid) do
       %Assignment{status: "todo"} = a ->
-        _ = set_readiness(socket, a, "waiting")
-        {:noreply, load_assignments(socket)}
+        {:noreply, readiness_reload(socket, set_readiness(socket, a, "waiting"))}
 
       %Assignment{status: status, child_project_uuid: nil} = a
       when status in ["in_progress", "done"] ->

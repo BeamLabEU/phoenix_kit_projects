@@ -145,6 +145,29 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
     assert status(ctx.render) == "waiting"
   end
 
+  test "a task started after the dialog opened is not put back by the confirm", ctx do
+    {:ok, _} = Projects.update_assignment_status(ctx.render, %{status: "todo"})
+    {:ok, view, _html} = show(ctx)
+
+    render_click(view, "complete", %{"uuid" => ctx.consult.uuid})
+    render_click(view, "next_up_toggle_idle", %{"uuid" => ctx.render.uuid})
+
+    # Meanwhile, behind the page's back (no broadcast reaches it): one
+    # offered task is started, the one to keep idle too.
+    {2, _} =
+      Repo.update_all(
+        from(a in PhoenixKitProjects.Schemas.Assignment,
+          where: a.uuid in ^[ctx.measure.uuid, ctx.render.uuid]
+        ),
+        set: [status: "in_progress"]
+      )
+
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.consult.uuid})
+
+    assert status(ctx.measure) == "in_progress"
+    assert status(ctx.render) == "in_progress"
+  end
+
   test "a completion that holds nothing up completes at once", ctx do
     {:ok, view, _html} = show(ctx)
 

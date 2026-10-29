@@ -288,6 +288,47 @@ defmodule PhoenixKitProjects.ProjectsContextTest do
     end
   end
 
+  describe "update_assignment_status/3 with :expect" do
+    setup do
+      project = fixture_project()
+      task = fixture_task()
+
+      {:ok, a} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "waiting"
+        })
+
+      {:ok, a: a}
+    end
+
+    test "writes when the row still has the status the caller saw", %{a: a} do
+      assert {:ok, %{status: "todo"}} =
+               Projects.update_assignment_status(a, %{status: "todo"}, expect: "waiting")
+    end
+
+    test "a status changed meanwhile is not overwritten", %{a: a} do
+      # Somebody started it after the caller read it as waiting.
+      {:ok, _} = Projects.update_assignment_status(a, %{status: "in_progress"})
+
+      assert {:error, :stale} =
+               Projects.update_assignment_status(a, %{status: "todo"}, expect: "waiting")
+
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
+    end
+
+    test "the same target is refused too when the row moved on", %{a: a} do
+      {:ok, _} = Projects.update_assignment_status(a, %{status: "done"})
+      stale = %{a | status: "todo"}
+
+      assert {:error, :stale} =
+               Projects.update_assignment_status(stale, %{status: "todo"}, expect: "todo")
+
+      assert Projects.get_assignment(a.uuid).status == "done"
+    end
+  end
+
   describe "assignment_status_counts/0" do
     test "returns a map keyed by status string" do
       project = fixture_project(%{"status" => "active"})
