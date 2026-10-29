@@ -42,14 +42,17 @@ Also since resolved:
 ## Still live (re-verified 2026-10-29)
 
 - **BUG-MEDIUM — the permission interceptor can't see sub-project tasks.**
-  Still live at `HEAD` (`04fb964`). `authz_record/3` looks only in
-  `socket.assigns[:assignments]`, and `Authz.can?` is asked with the page's
-  project. Meanwhile `scoped_assignment/2` (`web/project_show_live.ex:2148-2159`)
-  also accepts a displayed sub-project's tasks. An **uncommitted** change in the
-  working tree adds `child_task_allowed?/5` (`web/project_show_live.ex:2386-2408`
-  in the working tree). It asks the task's own project with the record, but the
-  parent-project check still runs first with a `nil` record. Re-check this item
-  once that change lands.
+  The write hole is closed in `6ef11b2` (the tasks-deadlines branch, whose
+  make_idle / make_ready / next-up / board_move went through it too):
+  `child_task_allowed?/5` (`web/project_show_live.ex`) asks a displayed
+  sub-project task's OWN project, with the task as the record, so a right
+  held in the parent no longer writes there
+  (`hub_permission_enforcement_test.exs`, "a sub-project's task shown on the
+  parent's page"). Residual, still live: the parent check still runs first
+  with a `nil` record, so a child-only rule that would let someone act (e.g.
+  the assignee of the child task, refused by the parent's floor) is refused
+  — fail-closed, not a leak. Fix if wanted: skip the parent check for a
+  displayed child task and ask only its own project.
 - **NITPICK — per-IP portal rate buckets are keyed per project.**
   `portal.ex:1453-1454` (`"pkp_portal:m:#{project_uuid}:#{bucket}"`), while the
   doc at `:70` says "per peer".
