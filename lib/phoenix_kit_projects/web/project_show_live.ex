@@ -54,6 +54,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   use PhoenixKitComments.Embed
 
   alias PhoenixKit.Users.Auth.User, as: AuthUser
+  alias PhoenixKit.Utils.Routes
 
   alias PhoenixKitProjects.{
     Activity,
@@ -3975,7 +3976,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     assigns =
       assign(assigns,
         url: url,
-        local?: PhoenixKit.Utils.Routes.local_path?(url),
+        local?: Routes.local_path?(url),
         web?:
           match?(
             %URI{scheme: s, host: h} when s in ["http", "https"] and h not in [nil, ""],

@@ -20,6 +20,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
 
   import Ecto.Changeset
 
+  alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.{L10n, Schemas.Assignment}
   # SHADOW schemas (staff-optional seam): projects' own read-only
   # mappings over the core-owned staff tables — see PhoenixKitProjects.People.
@@ -144,7 +145,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
   # in the viewer's page, nor `//host`, which leaves the site.
   defp http_url(field, url) do
     cond do
-      PhoenixKit.Utils.Routes.local_path?(url) ->
+      Routes.local_path?(url) ->
         []
 
       match?(
