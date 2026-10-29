@@ -5652,13 +5652,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              the columns sit side by side and snap, one screen each,
              rather than one long stack. --%>
         <div class={[
-          "flex gap-4 overflow-x-auto snap-x snap-mandatory pb-2 md:grid md:overflow-visible md:pb-0",
-          if(length(board_columns) == 4, do: "md:grid-cols-4", else: "md:grid-cols-3")
+          "flex gap-4 overflow-x-auto snap-x snap-mandatory pb-2 xl:grid xl:overflow-visible xl:pb-0",
+          if(length(board_columns) == 4, do: "xl:grid-cols-4", else: "xl:grid-cols-3")
         ]}>
           <div
             :for={{status, title, tint} <- board_columns}
             class={[
-              "bg-base-200/50 rounded-lg border-t-4 flex flex-col min-w-[80vw] snap-start md:min-w-0",
+              "bg-base-200/50 rounded-lg border-t-4 flex flex-col min-w-[80vw] sm:min-w-64 snap-start xl:min-w-0",
               tint
             ]}
           >
@@ -5715,7 +5715,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                          %{"project_id" => a.project_uuid, "id" => a.uuid}}
                       }
                       embed_mode={@embed_mode}
-                      class="text-sm font-medium link link-hover leading-snug min-w-0"
+                      class="text-sm font-medium link link-hover leading-snug min-w-0 text-left"
                     >
                       {Assignment.label(a, L10n.current_content_lang())}
                     </.smart_link>
@@ -5763,7 +5763,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                        look — the faces first. "Unassigned" is shown, not
                        hidden — on a board that is the most actionable thing
                        a card can say. --%>
-                  <div class="flex items-center justify-between gap-2">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
                     <% b_atype = assignee_type(a) %>
                     <span
                       :if={@fx.assignees and b_atype}

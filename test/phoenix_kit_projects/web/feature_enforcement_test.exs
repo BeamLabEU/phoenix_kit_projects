@@ -133,7 +133,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       html = render_click(view, "switch_tab", %{"tab" => "board"})
       assert html =~ "In progress"
-      assert html =~ "md:grid-cols-4"
+      assert html =~ "xl:grid-cols-4"
     end
 
     test "the board drops the middle column when nothing is in progress",
@@ -142,7 +142,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       html = render_click(view, "switch_tab", %{"tab" => "board"})
 
       refute html =~ "In progress"
-      assert html =~ "md:grid-cols-3"
+      assert html =~ "xl:grid-cols-3"
     end
 
     test "the add-task form offers Waiting / Can be started / Done only",

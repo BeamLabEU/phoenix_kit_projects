@@ -185,6 +185,11 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLiveTest do
       session = emit_session(ctx, ctx.measure, %{"live_action" => "edit"})
       {:ok, view, _html} = live_isolated(ctx.conn, AssignmentFormLive, session: session)
 
+      # The drawer has its own ✕; the form draws none of its own there, and
+      # its button at the bottom says Close (not "Done", the status's name).
+      refute has_element?(view, ~s(button[aria-label="Close"]))
+      assert has_element?(view, ~s(button[phx-click="close_form"]), "Close")
+
       render_click(view, "close_form", %{})
       assert_receive {:projects, :closed, %{frame_ref: 7}}
     end

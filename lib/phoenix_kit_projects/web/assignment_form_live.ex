@@ -3750,7 +3750,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <.icon name="hero-arrow-left" class="w-4 h-4" /> {gettext("Back to task")}
             </button>
             <button
-              :if={@embed_mode != :navigate and not @from_view?}
+              :if={@embed_mode not in [:navigate, :emit] and not @from_view?}
               type="button"
               phx-click={if @live_action == :edit, do: "close_form", else: "cancel"}
               data-confirm={@live_action != :edit && @dirty? && gettext("Discard your changes?")}
@@ -4655,7 +4655,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Delete")}
             </button>
             <button type="button" phx-click="close_form" class="btn btn-sm">
-              {if @from_view?, do: gettext("Back to task"), else: gettext("Done")}
+              {if @from_view?, do: gettext("Back to task"), else: gettext("Close")}
             </button>
           </div>
         </div>
