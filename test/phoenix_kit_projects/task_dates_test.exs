@@ -83,6 +83,32 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       refute Ecto.Changeset.get_change(cs, :started_at)
     end
 
+    test "a real time the status depends on can be moved, not removed" do
+      done = %Assignment{
+        status: "done",
+        started_at: ~U[2026-10-05 08:00:00Z],
+        completed_at: ~U[2026-10-05 09:00:00Z]
+      }
+
+      refute Assignment.times_changeset(done, %{completed_at: nil}).valid?
+      refute Assignment.times_changeset(done, %{started_at: nil}).valid?
+
+      waiting = %Assignment{status: "todo", started_at: ~U[2026-10-05 08:00:00Z]}
+      assert Assignment.times_changeset(waiting, %{started_at: nil}).valid?
+    end
+
+    test "clearing a project's link leaves it empty, without a crash" do
+      project = %PhoenixKitProjects.Schemas.Project{
+        name: "P",
+        start_mode: "immediate",
+        external_url: "/admin/x"
+      }
+
+      cs = PhoenixKitProjects.Schemas.Project.changeset(project, %{"external_url" => ""})
+      assert cs.valid?
+      assert Ecto.Changeset.get_change(cs, :external_url) == nil
+    end
+
     test "the real times can be corrected, not into the future nor reversed" do
       a = %Assignment{status: "done"}
       later = DateTime.utc_now() |> DateTime.add(3600) |> DateTime.truncate(:second)

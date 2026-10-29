@@ -289,6 +289,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     |> cast(attrs, [:started_at, :completed_at])
     |> validate_change(:started_at, &not_future(&1, &2, now))
     |> validate_change(:completed_at, &not_future(&1, &2, now))
+    |> keep_when_it_happened(assignment)
     |> then(fn cs ->
       with %DateTime{} = from <- get_field(cs, :started_at),
            %DateTime{} = to <- get_field(cs, :completed_at),
@@ -299,6 +300,24 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
       end
     end)
   end
+
+  # A correction moves a time; it never erases one the status still
+  # depends on: a done task keeps when it was finished, a started one when
+  # it was started (`validate_change` is not called for a nil change).
+  defp keep_when_it_happened(changeset, %{status: status}) do
+    changeset
+    |> refuse_clearing(:completed_at, status == "done")
+    |> refuse_clearing(:started_at, status in ["in_progress", "done"])
+  end
+
+  defp refuse_clearing(changeset, field, true) do
+    if Map.has_key?(changeset.changes, field) and is_nil(get_change(changeset, field)) and
+         not is_nil(Map.get(changeset.data, field)),
+       do: add_error(changeset, field, gettext("can be moved, not removed")),
+       else: changeset
+  end
+
+  defp refuse_clearing(changeset, _field, false), do: changeset
 
   defp not_future(field, %DateTime{} = at, now) do
     if DateTime.compare(at, now) == :gt,

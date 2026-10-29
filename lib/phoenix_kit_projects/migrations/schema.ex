@@ -1121,6 +1121,9 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # wall-clock time on the planned days (zone-free like the dates). A
   # project gets a link out (`external_url`, `external_label`): the record
   # it belongs to elsewhere, e.g. the order a host app made it for.
+  # Tasks already in progress or done before V26 keep `started_at` NULL:
+  # when they really began was never recorded, and a guess (their last
+  # update) would draw work that did not happen on the Time page.
   defp v26_deadlines_and_times(p) do
     execute("""
     ALTER TABLE #{p}phoenix_kit_project_assignments

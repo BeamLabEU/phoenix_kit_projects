@@ -139,6 +139,10 @@ defmodule PhoenixKitProjects.Schemas.Project do
   @required ~w(name start_mode)a
   @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id external_url external_label key assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
+  # Clearing the address arrives as nil (Ecto's empty value), which stays nil.
+  defp trim_link(url) when is_binary(url), do: String.trim(url)
+  defp trim_link(nil), do: nil
+
   # A link out is a web address, or a path on this site ("/admin/…": a host
   # app's own page, which stays right when the database moves between dev
   # and production). Never a `javascript:` or `data:` one, which would run
@@ -171,7 +175,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_required([:counts_weekends])
     |> validate_length(:name, min: 1, max: 255)
     |> validate_length(:external_id, max: 255)
-    |> update_change(:external_url, &String.trim/1)
+    |> update_change(:external_url, &trim_link/1)
     |> validate_length(:external_url, max: 2000)
     |> validate_length(:external_label, max: 120)
     |> validate_change(:external_url, &http_url/2)
