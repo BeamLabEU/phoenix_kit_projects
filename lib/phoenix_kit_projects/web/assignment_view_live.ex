@@ -23,13 +23,25 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
 
   require Logger
 
-  alias PhoenixKitProjects.{Authz, Extensions, Features, L10n, Labels, Paths, Projects, Refs}
+  alias PhoenixKitProjects.{
+    Assignees,
+    Authz,
+    Extensions,
+    Features,
+    L10n,
+    Labels,
+    Paths,
+    Projects,
+    Refs
+  }
+
   alias PhoenixKitProjects.Hours.Format
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
 
   import PhoenixKitProjects.Web.Helpers, only: [assignee_label: 1]
+  import PhoenixKitProjects.Web.Components.TaskTimes, only: [deadline_chip: 1, planned_label: 1]
 
   @default_wrapper_class "@container flex flex-col w-full mx-auto max-w-5xl px-4 py-6 gap-5"
 
@@ -120,6 +132,7 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
       unlocks: unlocks,
       subtasks: rows |> Enum.filter(&(&1.parent_uuid == a.uuid)) |> Enum.sort_by(& &1.position),
       labels: labels(fx, a),
+      faces: if(fx.assignees, do: Assignees.faces([a])[a.uuid]),
       logged: if(fx.ledger, do: logged(project, a)),
       threads: threads,
       history: history(project, a),
@@ -337,8 +350,10 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
             <button :if={@can_edit?} type="button" phx-click="edit" class="btn btn-ghost btn-sm gap-1">
               <.icon name="hero-pencil-square" class="w-4 h-4" /> {gettext("Edit")}
             </button>
+            <%!-- In a drawer the drawer has its ✕; one more here made two.
+                 On its own page this is the way back to the project. --%>
             <button
-              :if={@embed_mode != :navigate}
+              :if={@embed_mode != :emit}
               type="button"
               phx-click="close"
               class="btn btn-ghost btn-sm btn-square"
@@ -374,8 +389,11 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
             <dt :if={@fx.assignees} class="text-base-content/60">{gettext("Assignee")}</dt>
             <dd :if={@fx.assignees} class="min-w-0 truncate">
               <%= if assignee_kind(@assignment) do %>
-                <.icon name={assignee_icon(@assignment)} class="w-3.5 h-3.5 inline -mt-0.5 opacity-60" />
-                {assignee_label(@assignment)}
+                <span class="inline-flex items-center gap-1.5 max-w-full">
+                  <.assignee_faces faces={@faces} size="xs" />
+                  <.icon :if={is_nil(@faces)} name={assignee_icon(@assignment)} class="w-3.5 h-3.5 shrink-0 opacity-60" />
+                  <span class="truncate">{assignee_label(@assignment)}</span>
+                </span>
               <% else %>
                 <span class="text-base-content/60">{gettext("Unassigned")}</span>
               <% end %>
@@ -384,23 +402,23 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
             <dt :if={@fx.priorities} class="text-base-content/60">{gettext("Priority")}</dt>
             <dd :if={@fx.priorities}>{priority_label(@assignment.priority)}</dd>
 
-            <dt :if={@fx[:waiting] != false and present?(@assignment.waiting_on)} class="text-base-content/60">
-              {gettext("Waiting for")}
-            </dt>
-            <dd :if={@fx[:waiting] != false and present?(@assignment.waiting_on)} class="text-warning">
-              {@assignment.waiting_on}
-            </dd>
+            <%!-- The deadline is the promise (red once missed); the
+                 planned days are a plan, never red; then when the work
+                 really began and ended. --%>
+            <%= if @fx[:dates] != false do %>
+              <dt :if={@assignment.deadline} class="text-base-content/60">{gettext("Deadline")}</dt>
+              <dd :if={@assignment.deadline}><.deadline_chip a={@assignment} /></dd>
 
-            <dt :if={@fx[:waiting] != false and present?(@assignment.origin)} class="text-base-content/60">
-              {gettext("Requested by")}
-            </dt>
-            <dd :if={@fx[:waiting] != false and present?(@assignment.origin)}>{@assignment.origin}</dd>
+              <% planned = planned_label(@assignment) %>
+              <dt :if={planned} class="text-base-content/60">{gettext("Planned")}</dt>
+              <dd :if={planned}>{planned}</dd>
+            <% end %>
 
-            <% dates = dates_label(@assignment) %>
-            <dt :if={@fx[:dates] != false and dates} class="text-base-content/60">{gettext("Dates")}</dt>
-            <dd :if={@fx[:dates] != false and dates} class={[Assignment.overdue?(@assignment) && "text-error"]}>
-              {dates}
-            </dd>
+            <dt :if={@assignment.started_at} class="text-base-content/60">{gettext("Started")}</dt>
+            <dd :if={@assignment.started_at}>{L10n.format_datetime(@assignment.started_at)}</dd>
+
+            <dt :if={@assignment.completed_at} class="text-base-content/60">{gettext("Finished")}</dt>
+            <dd :if={@assignment.completed_at}>{L10n.format_datetime(@assignment.completed_at)}</dd>
 
             <% estimate = estimate_label(@assignment) %>
             <dt :if={@fx.estimates and estimate} class="text-base-content/60">{gettext("Estimate")}</dt>
@@ -659,17 +677,6 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
   defp priority_label("high"), do: gettext("High")
   defp priority_label("low"), do: gettext("Low")
   defp priority_label(_), do: gettext("Normal")
-
-  defp dates_label(%Assignment{start_date: nil, end_date: nil}), do: nil
-
-  defp dates_label(%Assignment{start_date: s, end_date: nil}),
-    do: gettext("from %{date}", date: L10n.format_date(s))
-
-  defp dates_label(%Assignment{start_date: nil, end_date: e}),
-    do: gettext("due %{date}", date: L10n.format_date(e))
-
-  defp dates_label(%Assignment{start_date: s, end_date: e}),
-    do: "#{L10n.format_date(s)} – #{L10n.format_date(e)}"
 
   defp estimate_label(%Assignment{estimated_duration: n, estimated_duration_unit: unit})
        when is_integer(n) and n > 0,

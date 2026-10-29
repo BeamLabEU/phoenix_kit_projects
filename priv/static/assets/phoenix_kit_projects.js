@@ -16,6 +16,8 @@
  * than left to the browser, so an id can only ever move with its line.
  *
  * PkpTitle: one task title edited in place on a card row.
+ *
+ * PkpBoard: one column of the board, its cards dragged between columns.
  */
 (function () {
   "use strict";
@@ -1467,5 +1469,143 @@
     }
   };
 
-  window.PhoenixKitProjectsHooks = { PkpOutline: Outline, PkpTitle: Title, PkpLinks: Links };
+  // ── PkpBoard: one column of the board ────────────────────────────────
+  //
+  // Core's SortableGrid serves sortable lists; the board needs three things
+  // it does not take as options (the boss, 2026-10-29: a card dropped only
+  // when let go over one particular spot):
+  //   * the whole card picks up, not a small handle — its links and buttons
+  //     still click (a press that does not move is a click; a drag that
+  //     started on a link swallows the click after it, SortableJS's own);
+  //   * on a touch screen only after a short hold, so a swipe still scrolls
+  //     the board instead of grabbing whatever card is under the finger;
+  //   * while a card is held, every column shows it takes drops and the one
+  //     under the card lights up, with a dashed gap where it will land.
+  // The column's whole body is the list (the template makes it fill the
+  // column, empty or not), so anywhere in a column is a drop.
+  //
+  // Sends what SortableGrid sends — `{ordered_ids, moved_id, status,
+  // fromStatus}` under the column's `data-board-event` — and answers the
+  // page's `sortable:flash`. SortableJS is the host's vendored copy, loaded
+  // through core's loader (`PhoenixKitLibraries`, in core since 2.60).
+  var BOARD_STYLE_ID = "pkp-board-style";
+  var BOARD_CSS = [
+    ".pkp-board-card{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}",
+    ".pkp-board-list{transition:background-color .12s,box-shadow .12s}",
+    // Held: every column is a place to drop; the one holding the gap lights up.
+    ".pkp-board-dragging .pkp-board-list{box-shadow:inset 0 0 0 2px color-mix(in oklab,currentColor 10%,transparent)}",
+    ".pkp-board-dragging .pkp-board-list:has(.pkp-board-ghost){background-color:color-mix(in oklab,var(--color-primary,#4f46e5) 10%,transparent);box-shadow:inset 0 0 0 2px var(--color-primary,#4f46e5)}",
+    // The gap: where the card lands, as a dashed outline of its size.
+    ".pkp-board-ghost{opacity:1!important;background:transparent!important;border:2px dashed var(--color-primary,#4f46e5)!important;box-shadow:none!important}",
+    ".pkp-board-ghost>*{visibility:hidden}",
+    ".pkp-board-drag{cursor:grabbing!important;transform:rotate(1.5deg);box-shadow:0 10px 15px -3px rgba(0,0,0,.15)}",
+    ".pkp-board-list:has(.sortable-item) .pkp-board-empty{display:none}",
+    ".pkp-board-ok,.pkp-board-err{position:relative}",
+    ".pkp-board-ok::after,.pkp-board-err::after{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;animation:pkp-board-flash 1.1s ease-out}",
+    ".pkp-board-ok::after{--pkp-flash:rgba(34,197,94,.35)}",
+    ".pkp-board-err::after{--pkp-flash:rgba(239,68,68,.35)}",
+    "@keyframes pkp-board-flash{15%{background-color:var(--pkp-flash)}100%{background-color:transparent}}",
+    "@media (prefers-reduced-motion:reduce){.pkp-board-drag{transform:none}.pkp-board-ok::after,.pkp-board-err::after{animation:none}}"
+  ].join("\n");
+
+  function loadSortable() {
+    if (typeof window.Sortable === "function") return Promise.resolve();
+    var libs = window.PhoenixKitLibraries;
+    if (!libs || typeof libs.loadVendored !== "function") {
+      return Promise.reject(new Error("SortableJS is not available"));
+    }
+    return libs.loadVendored("SortableJS", "sortable", {
+      check: function () { return typeof window.Sortable === "function"; }
+    });
+  }
+
+  var Board = {
+    mounted: function () {
+      var self = this;
+      this.gone = false;
+      if (!document.getElementById(BOARD_STYLE_ID)) {
+        var style = document.createElement("style");
+        style.id = BOARD_STYLE_ID;
+        style.textContent = BOARD_CSS;
+        document.head.appendChild(style);
+      }
+      // Every column hears it; one card answers, so it flashes once.
+      this.handleEvent("sortable:flash", function (payload) {
+        if (!payload || !payload.uuid || !self.el.isConnected) return;
+        var cls = payload.status === "ok" ? "pkp-board-ok" : payload.status === "error" ? "pkp-board-err" : null;
+        if (!cls) return;
+        var card = self.el.querySelector('.sortable-item[data-id="' + CSS.escape(payload.uuid) + '"]');
+        if (!card) return;
+        card.classList.remove("pkp-board-ok", "pkp-board-err");
+        void card.offsetWidth;
+        card.classList.add(cls);
+        setTimeout(function () { card.classList.remove(cls); }, 1200);
+      });
+      loadSortable().then(function () {
+        if (!self.gone) self.init();
+      }, function () {
+        // Reported by core's loader; the step buttons still move cards.
+      });
+    },
+
+    init: function () {
+      var self = this;
+      var el = this.el;
+      var board = function () { return el.parentElement && el.parentElement.parentElement; };
+      this.sortable = window.Sortable.create(el, {
+        group: el.dataset.boardGroup,
+        draggable: ".sortable-item",
+        // Form controls never start a drag; links and buttons may (a press
+        // that does not move is still their click), and nothing filtered is
+        // prevented, so no click is lost to the filter.
+        filter: "input, textarea, select, .sortable-ignore",
+        preventOnFilter: false,
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackTolerance: 4,
+        delay: 180,
+        delayOnTouchOnly: true,
+        touchStartThreshold: 6,
+        animation: 150,
+        emptyInsertThreshold: 24,
+        ghostClass: "pkp-board-ghost",
+        chosenClass: "pkp-board-chosen",
+        dragClass: "pkp-board-drag",
+        onStart: function () {
+          var b = board();
+          if (b) b.classList.add("pkp-board-dragging");
+        },
+        onEnd: function (evt) {
+          var b = board();
+          if (b) b.classList.remove("pkp-board-dragging");
+          if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
+          try {
+            var to = evt.to;
+            var ids = Array.prototype.map.call(
+              to.querySelectorAll(".sortable-item[data-id]"),
+              function (n) { return n.dataset.id; }
+            );
+            self.pushEvent(to.dataset.boardEvent || el.dataset.boardEvent, {
+              ordered_ids: ids,
+              moved_id: evt.item.dataset.id,
+              status: to.dataset.boardStatus,
+              fromStatus: evt.from.dataset.boardStatus
+            });
+          } catch (err) {
+            console.error("PkpBoard.onEnd failed:", err);
+          }
+        }
+      });
+    },
+
+    destroyed: function () {
+      this.gone = true;
+      if (this.sortable) {
+        this.sortable.destroy();
+        this.sortable = null;
+      }
+    }
+  };
+
+  window.PhoenixKitProjectsHooks = { PkpOutline: Outline, PkpTitle: Title, PkpLinks: Links, PkpBoard: Board };
 })();

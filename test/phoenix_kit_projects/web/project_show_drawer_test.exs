@@ -174,7 +174,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     {host, form, _} =
       open_drawer(view, p, "button[phx-value-lv$='AssignmentFormLive']", "Add task")
 
-    form |> element("button.btn[phx-click=cancel]") |> render_click()
+    form |> element("#assignment-close") |> render_click()
     assert gone(host)
     assert Projects.list_assignments(p.uuid) == []
   end

@@ -2796,6 +2796,31 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               ]}
             />
 
+            <%!-- A link out (V26): where this project belongs elsewhere — the
+                 order a host app made it for, a client folder. It shows as
+                 a button in the project's header on every tab. A path on
+                 this site ("/admin/…") stays right when the database moves
+                 between servers; hence a text field, not type="url". --%>
+            <fieldset id="project-link-settings" class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+              <legend class="px-1 text-sm font-medium">{gettext("Link")}</legend>
+              <.input
+                field={@form[:external_url]}
+                type="text"
+                inputmode="url"
+                label={gettext("Address")}
+                placeholder="https://…"
+              />
+              <.input
+                field={@form[:external_label]}
+                type="text"
+                label={gettext("Button text")}
+                placeholder={gettext("Open link")}
+              />
+              <p class="text-xs opacity-60">
+                {gettext("A web address opens in a new tab; a path on this site (/…) opens in the same one.")}
+              </p>
+            </fieldset>
+
             <%!-- How the task list looks (`Web.OutlineList`): typed like a
                  text, or rows that carry what the features add — and which
                  of those stay in the task's form (Max, 2026-10-14: "the more

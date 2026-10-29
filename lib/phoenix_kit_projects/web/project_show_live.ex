@@ -57,6 +57,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   alias PhoenixKitProjects.{
     Activity,
+    Assignees,
     Authz,
     Extensions,
     Features,
@@ -94,6 +95,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     only: [assignee_label: 1, task_counts_weekends?: 2, assignment_hours: 2]
 
   import PhoenixKitWeb.Components.Core.TimeDisplay, only: [time_ago: 1]
+  import PhoenixKitProjects.Web.Components.TaskTimes, only: [deadline_chip: 1, planned_chip: 1]
   import Ecto.Query, only: [from: 2]
 
   require Logger
@@ -802,6 +804,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       schedule: schedule,
       subproject_summaries: subproject_summaries,
       subproject_child_tasks: subproject_child_tasks,
+      # Who has each task, as faces (the boss, 2026-10-29) — one batched
+      # read for the rows and the expanded children's, refreshed with them.
+      assignee_faces:
+        Assignees.faces(assignments ++ Enum.flat_map(Map.values(subproject_child_tasks), & &1)),
       move_locks: load_move_locks(socket.assigns.project, assignments)
     )
     |> assign_pending_reviews(project_uuid)
@@ -959,6 +965,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <%!-- The project's key, beside its name (the breadcrumb on the
              standalone page, the h1 in an embed). --%>
         <.ref_chip :if={not @is_template} ref={@project.key} size="md" />
+        <%!-- Where the project belongs elsewhere (V26): the order a host
+             app made it for, a client folder. A path is the host's own
+             page — same tab, written as stored, since it is not one of the
+             kit's routes; a web address is someone else's site — a new
+             tab, with no way back into this one. --%>
+        <.project_link project={@project} />
         <%!-- Inline workflow-status picker (the current value). The
              status-list *source* is chosen on the new/edit form (and the
              global default in Settings), not here. Hidden when no
@@ -1687,6 +1699,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   attr(:ledger_tokens, :map, default: %{})
   attr(:assignment_note_counts, :map, default: %{})
   attr(:assignment_labels, :map, default: %{})
+  # Who has each task, as faces (`Assignees.faces/2`), keyed by uuid.
+  attr(:faces, :map, default: %{})
   # The outline bits of a row (`OutlineList`): permissions, the "3 of 7" of
   # a task with subtasks, folded or not, and whether its title takes the
   # cursor (a row just added). Nil on rows drawn outside the list.
@@ -1841,7 +1855,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                         phx-value-uuid={@a.uuid}
                         phx-disable-with={gettext("Saving…")}
                         icon="hero-check"
-                        label={gettext("Done")}
+                        label={gettext("Mark done")}
                       />
                     <% @a.status in ["todo", "in_progress"] or (@a.status == "waiting" and @a.child_project_uuid != nil) -> %>
                       <.table_row_menu_button
@@ -1849,7 +1863,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                         phx-value-uuid={@a.uuid}
                         phx-disable-with={gettext("Saving…")}
                         icon="hero-check"
-                        label={gettext("Done")}
+                        label={gettext("Mark done")}
                       />
                     <% @a.status == "done" -> %>
                       <.table_row_menu_button
@@ -1868,14 +1882,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   embed_mode={@embed_mode}
                   icon="hero-pencil"
                   label={gettext("Edit")}
-                />
-                <.smart_menu_link
-                  :if={not @is_template}
-                  navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid) <> "?focus=waiting_on"}
-                  emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid, "focus" => "waiting_on"}}}
-                  embed_mode={@embed_mode}
-                  icon="hero-pause-circle"
-                  label={if(@a.waiting_on, do: gettext("Waiting on…"), else: gettext("Mark as waiting on…"))}
                 />
                 <.table_row_menu_button
                   :if={@fx.ledger and not @is_template}
@@ -1912,24 +1918,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </div>
           </div>
 
-          <%!-- What the task waits on: a line of its own under the title,
-               not one more chip among the others (Max, 2026-10-14). It
-               opens the task's form on the field that says it. --%>
-          <.smart_link
-            :if={@a.waiting_on != nil and @fx[:waiting] != false}
-            navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid) <> "?focus=waiting_on"}
-            emit={
-              {PhoenixKitProjects.Web.AssignmentFormLive,
-               %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid, "focus" => "waiting_on"}}
-            }
-            embed_mode={@embed_mode}
-            class="flex items-start gap-1.5 text-sm text-left text-warning hover:underline"
-            title={gettext("Waiting on someone else — click to change")}
-          >
-            <.icon name="hero-pause-circle" class="w-4 h-4 mt-0.5 shrink-0" />
-            <span>{gettext("Waiting on %{who}", who: @a.waiting_on)}</span>
-          </.smart_link>
-
           <%!-- Description --%>
           <% lang = L10n.current_content_lang() %>
           <% shown_desc = Assignment.localized_description(@a, lang) || TaskSchema.localized_description(@a.task, lang) %>
@@ -1940,20 +1928,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
           <%!-- Meta row: duration, assignee, completed by. Each chip is
                feature-gated via @fx (Step 4 enforcement threading). --%>
           <div class="flex flex-wrap items-center gap-2 text-xs">
-            <%!-- What an agent (or a person) set on the task: whom it waits
-                 on, where it came from, how far its checklist is. --%>
-            <span :if={@a.origin} class="badge badge-sm badge-ghost" title={gettext("Where this came from")}>
-              {gettext("from %{origin}", origin: @a.origin)}
-            </span>
-            <% dates = task_dates_label(@a) %>
-            <% overdue = Assignment.overdue?(@a) %>
-            <span
-              :if={dates != nil and @fx[:dates] != false}
-              class={["badge badge-sm gap-1", if(overdue, do: "badge-error", else: "badge-outline")]}
-              title={if(overdue, do: gettext("Past its end date"), else: gettext("The task's dates"))}
-            >
-              <.icon name="hero-calendar-days" class="w-3 h-3" /> {dates}
-            </span>
+            <%!-- The deadline is the promise and the one thing that turns a
+                 row red; the planned days are a plan and stay neutral
+                 (the boss, 2026-10-29). "Waiting on" and "from …" are no
+                 longer said on the row: the status says where it is. --%>
+            <%= if @fx[:dates] != false do %>
+              <.deadline_chip a={@a} />
+              <.planned_chip a={@a} />
+            <% end %>
             <%= if @fx.estimates and @editing_duration_uuid == @a.uuid do %>
               <% prefill_dur = @a.estimated_duration || @a.task.estimated_duration %>
               <% prefill_unit = @a.estimated_duration_unit || @a.task.estimated_duration_unit || "hours" %>
@@ -2013,8 +1995,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             </button>
 
             <% atype = assignee_type(@a) %>
-            <span :if={@fx.assignees and atype} class="badge badge-outline badge-sm gap-1">
-              <.icon name="hero-user" class="w-3 h-3" /> {atype}: {assignee_label(@a)}
+            <span :if={@fx.assignees and atype} class="inline-flex items-center gap-1">
+              <.assignee_faces faces={@faces[@a.uuid]} size="xs" />
+              <span class="badge badge-outline badge-sm gap-1">
+                <.icon name="hero-user" class="w-3 h-3" /> {atype}: {assignee_label(@a)}
+              </span>
             </span>
 
             <%!-- Priority: only non-normal wears a badge (calm cards). --%>
@@ -2438,26 +2423,51 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp reposition_from_drop(_socket, _uuid, _ordered_ids), do: :ok
 
-  # Into "can be started": a waiting card is released, a started or done
-  # one reopened. Into "waiting": put back to idle (`make_idle`).
-  defp delegate_board_move(socket, "todo", uuid) do
-    case scoped_assignment(socket, uuid) do
-      %Assignment{status: "waiting"} ->
-        gated_handle_event("ask_ready", %{"uuid" => uuid}, socket)
+  # Which step a drop into a column is. Into "can be started": a waiting
+  # card is released, a started or done one reopened. Into "waiting": put
+  # back to idle. A waiting card dropped into "in progress" is released
+  # too, not started — "Ready to start" is where its people are told, and
+  # a drag must not be the way round that.
+  defp board_step(%Assignment{status: "waiting"}, to) when to in ["todo", "in_progress"],
+    do: "ask_ready"
 
-      _ ->
-        gated_handle_event("reopen", %{"uuid" => uuid}, socket)
+  defp board_step(_assignment, "todo"), do: "reopen"
+  defp board_step(_assignment, "waiting"), do: "make_idle"
+  defp board_step(_assignment, "in_progress"), do: "start_task"
+  defp board_step(_assignment, "done"), do: "complete"
+
+  # Through `handle_event/3`, not straight to the handler: the step's own
+  # feature gate and permission apply to a drag as to its button — with
+  # the in-progress step off, a drop into that column starts nothing.
+  defp delegate_board_move(socket, assignment, to) do
+    case handle_event(board_step(assignment, to), %{"uuid" => assignment.uuid}, socket) do
+      {:noreply, socket} -> socket
+      {:reply, _reply, socket} -> socket
     end
   end
 
-  defp delegate_board_move(socket, "waiting", uuid),
-    do: gated_handle_event("make_idle", %{"uuid" => uuid}, socket)
+  # How a drop ended, read back rather than assumed: the card is where it
+  # was dropped, or a dialog asks about it first (the release, next up, the
+  # subtasks question), or the step refused or did nothing — a waiting
+  # sub-project row has no "reopen" — and the card goes back.
+  defp board_outcome(socket, uuid, to) do
+    cond do
+      board_pending_uuid(socket.assigns) == uuid -> :pending
+      match?(%Assignment{status: ^to}, scoped_assignment(socket, uuid)) -> :ok
+      true -> :error
+    end
+  end
 
-  defp delegate_board_move(socket, "in_progress", uuid),
-    do: gated_handle_event("start_task", %{"uuid" => uuid}, socket)
-
-  defp delegate_board_move(socket, "done", uuid),
-    do: gated_handle_event("complete", %{"uuid" => uuid}, socket)
+  # The task a dialog of this page is asking about, if any: its card on
+  # the board is marked as waiting for the answer.
+  defp board_pending_uuid(assigns) do
+    case assigns do
+      %{next_up: %{task_uuid: uuid}} -> uuid
+      %{confirm_action: %{params: %{"uuid" => uuid}}} -> uuid
+      %{reopen_uuid: uuid} when is_binary(uuid) -> uuid
+      _ -> nil
+    end
+  end
 
   # Lens changes are READS — they narrow what is drawn and write nothing —
   # so they are deliberately absent from @gated_events and @event_actions.
@@ -2484,27 +2494,46 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
        when status in ["waiting", "todo", "in_progress", "done"] do
     case scoped_assignment(socket, uuid) do
       nil ->
-        {:noreply, socket}
+        {:noreply, load_assignments(socket)}
 
       assignment ->
         # Status first, through the very handlers the buttons use rather
         # than a naked `status` write: completing also sets progress to
         # 100, the actor and the timestamp; reopening clears all three.
-        {:noreply, socket} =
-          if assignment.status == status do
-            {:noreply, socket}
-          else
-            delegate_board_move(socket, status, uuid)
-          end
+        socket =
+          if assignment.status == status,
+            do: socket,
+            else: delegate_board_move(socket, assignment, status)
 
-        # Then WHERE it was dropped. The card landing somewhere other than
-        # where it was let go reads as a bug, whatever the data model says.
-        reposition_from_drop(socket, uuid, params["ordered_ids"])
+        case board_outcome(socket, uuid, status) do
+          :ok ->
+            # Then WHERE it was dropped. The card landing somewhere other
+            # than where it was let go reads as a bug, whatever the data
+            # model says.
+            reposition_from_drop(socket, uuid, params["ordered_ids"])
 
-        {:noreply,
-         socket
-         |> push_event("sortable:flash", %{uuid: uuid, status: "ok"})
-         |> load_assignments()}
+            {:noreply,
+             socket
+             |> push_event("sortable:flash", %{uuid: uuid, status: "ok"})
+             |> load_assignments()}
+
+          # A dialog asks first; the card waits in its old column, marked.
+          :pending ->
+            {:noreply, load_assignments(socket)}
+
+          # Said, not flashed green: nothing was written. A gate's own
+          # refusal (feature off, no permission) is the better message.
+          :error ->
+            socket =
+              if Phoenix.Flash.get(socket.assigns.flash, :error),
+                do: socket,
+                else: put_flash(socket, :error, gettext("This task cannot move there."))
+
+            {:noreply,
+             socket
+             |> push_event("sortable:flash", %{uuid: uuid, status: "error"})
+             |> load_assignments()}
+        end
     end
   end
 
@@ -3611,23 +3640,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp health_label("concerned"), do: gettext("Concerned")
   defp health_label(other), do: other
 
-  # A task's own dates as its row says them: the range, or the one it has.
-  defp task_dates_label(%Assignment{start_date: nil, end_date: nil}), do: nil
-
-  defp task_dates_label(%Assignment{start_date: %Date{} = from, end_date: %Date{} = to}) do
-    if Date.compare(from, to) == :eq,
-      do: L10n.format_date(from),
-      else: "#{L10n.format_date(from)} – #{L10n.format_date(to)}"
-  end
-
-  defp task_dates_label(%Assignment{start_date: %Date{} = from}),
-    do: gettext("from %{date}", date: L10n.format_date(from))
-
-  defp task_dates_label(%Assignment{end_date: %Date{} = to}),
-    do: gettext("due %{date}", date: L10n.format_date(to))
-
-  defp task_dates_label(_), do: nil
-
   # A tab whose view flag is off resolves to :list — applied to the mount's
   # route-derived tab (a bookmarked /gantt URL on a timeline-off project) and
   # on live gate changes.
@@ -3951,6 +3963,56 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # conditions; the header badge yields to it (one status, not two).
   defp workflow_select?(assigns) do
     assigns.fx.statuses and assigns.statuses_available and assigns.status_options != []
+  end
+
+  attr(:project, :map, required: true)
+
+  defp project_link(%{project: %{external_url: url}} = assigns)
+       when is_binary(url) and url != "" do
+    # Read again, not trusted from the row: only a path on this site or a
+    # web address is ever an href (a row written before the changeset
+    # checked, or by hand, renders no button).
+    assigns =
+      assign(assigns,
+        url: url,
+        local?: PhoenixKit.Utils.Routes.local_path?(url),
+        web?:
+          match?(
+            %URI{scheme: s, host: h} when s in ["http", "https"] and h not in [nil, ""],
+            URI.parse(url)
+          ),
+        label: present_or(assigns.project.external_label, gettext("Open link"))
+      )
+
+    ~H"""
+    <a
+      :if={@local?}
+      href={@url}
+      class="btn btn-sm btn-ghost gap-1"
+      data-project-link
+    >
+      <.icon name="hero-link" class="w-4 h-4" /> {@label}
+    </a>
+    <a
+      :if={@web? and not @local?}
+      href={@url}
+      target="_blank"
+      rel="noopener noreferrer"
+      class="btn btn-sm btn-ghost gap-1"
+      data-project-link
+    >
+      {@label} <.icon name="hero-arrow-top-right-on-square" class="w-4 h-4" />
+    </a>
+    """
+  end
+
+  defp project_link(assigns), do: ~H""
+
+  defp present_or(text, fallback) do
+    case is_binary(text) && String.trim(text) do
+      t when is_binary(t) and t != "" -> t
+      _ -> fallback
+    end
   end
 
   # Does the standalone page's header have anything to show? Badges
@@ -5468,6 +5530,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                                       ledger_tokens={@ledger_tokens}
                                       assignment_note_counts={@assignment_note_counts}
                                       assignment_labels={@assignment_labels}
+                                      faces={assigns[:assignee_faces] || %{}}
                                       deps_by_assignment={@deps_by_assignment}
                                       held_by={@held_by}
                                       linked={@linked_uuids}
@@ -5506,6 +5569,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                       ledger_tokens={@ledger_tokens}
                       assignment_note_counts={@assignment_note_counts}
                       assignment_labels={@assignment_labels}
+                      faces={assigns[:assignee_faces] || %{}}
                       deps_by_assignment={@deps_by_assignment}
                       held_by={@held_by}
                       linked={@linked_uuids}
@@ -5551,10 +5615,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
       <%!-- Gantt tab — rendered in every context (templates excepted),
       <%!-- Board tab — the kanban-lite view (Step 9): the SAME assignments
-           grouped by task status. v1 moves cards with the existing
-           server-trusted status buttons (drag lands with a dedicated hook
-           later); every action goes through the same gated dispatcher as
-           the list view. --%>
+           grouped by task status. A card moves by dragging it or by its
+           step button; every move goes through the same gated dispatcher
+           as the list view. --%>
       <div :if={not @is_template and @fx.view_board} class={if(@active_tab != :board, do: "hidden")}>
         <%!-- A card whose status is outside the vocabulary belongs in no
              column, so the board simply dropped it — silently, which is the
@@ -5562,65 +5625,80 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              which renders it properly; dragging one in would coerce a value
              we never wrote and cannot get back. --%>
         <p :if={board_orphans(@assignments) > 0} class="text-xs opacity-60 mb-2">
-          {gettext("%{count} task(s) have a status this board does not show — open the List tab.",
+          {gettext("%{count} task(s) have a status this board does not show.",
             count: board_orphans(@assignments)
           )}
+          <button type="button" phx-click="switch_tab" phx-value-tab="list" class="link link-hover">
+            {gettext("Open the list")}
+          </button>
         </p>
 
         <% board_columns = board_columns(@fx, @assignments) %>
+        <% pending_uuid = board_pending_uuid(assigns) %>
+        <% faces = assigns[:assignee_faces] || %{} %>
+        <%!-- Columns stretch to the tallest (no `items-start`), and each
+             one's card list fills it: the whole column is where a card
+             drops, not the strip its cards happen to cover — the boss had
+             to find the one spot that took it (2026-10-29). On a phone
+             the columns sit side by side and snap, one screen each,
+             rather than one long stack. --%>
         <div class={[
-          "grid grid-cols-1 gap-4 items-start",
+          "flex gap-4 overflow-x-auto snap-x snap-mandatory pb-2 md:grid md:overflow-visible md:pb-0",
           if(length(board_columns) == 4, do: "md:grid-cols-4", else: "md:grid-cols-3")
         ]}>
           <div
             :for={{status, title, tint} <- board_columns}
-            class={["bg-base-200/50 rounded-lg border-t-4 p-3 flex flex-col gap-2 min-h-24", tint]}
+            class={[
+              "bg-base-200/50 rounded-lg border-t-4 flex flex-col min-w-[80vw] snap-start md:min-w-0",
+              tint
+            ]}
           >
             <%!-- Top-level tasks are the cards; a task's subtasks show as
                  its "2/5" and are worked in the task (grok's rule, the
                  panel of 2026-10-14). --%>
             <% column = @assignments |> Outline.roots() |> Enum.filter(&(&1.status == status)) %>
-            <div class="flex items-center justify-between px-1">
+            <div class="sticky top-0 z-10 flex items-center justify-between px-4 pt-3 pb-2 rounded-t-lg bg-base-200/90 backdrop-blur-sm">
               <span class="text-sm font-semibold">{title}</span>
               <span class="badge badge-ghost badge-sm">{length(column)}</span>
             </div>
-            <p :if={column == []} class="text-xs opacity-40 px-1 py-2">{gettext("Nothing here.")}</p>
 
-            <%!-- One group across all three columns, so a card can be
-                 dragged between them. The DESTINATION's event and scope are
-                 what the hook sends, so every column names the same event
-                 and its own status, and the handler reads the status it
-                 landed in.
+            <%!-- One group across the columns, so a card can be dragged
+                 between them (`PkpBoard`, in phoenix_kit_projects.js: the
+                 whole card picks up, after a short hold on a touch screen
+                 so the board still scrolls; the column under the card
+                 lights up and a dashed gap shows where it lands). The
+                 DESTINATION's status is what the hook sends, and the
+                 handler reads the status it landed in.
 
-                 `ordered_ids` arrives and is deliberately ignored: a
-                 column is a PARTIAL view of the project, and writing its
-                 order to `position` would renumber the whole plan from the
-                 few cards one column happened to hold. The board reads
-                 `position`; the list owns it. --%>
+                 `ordered_ids` arrives too and only says which card the
+                 moved one now sits before: a column is a PARTIAL view of
+                 the project, and writing its order to `position` would
+                 renumber the whole plan from the few cards one column
+                 happened to hold. --%>
             <div
               id={"board-column-#{status}"}
-              class="flex flex-col gap-2"
-              phx-hook="SortableGrid"
-              data-sortable="true"
-              data-sortable-group={"board-#{@project.uuid}"}
-              data-sortable-event="board_move"
-              data-sortable-items=".sortable-item"
-              data-sortable-handle=".pk-drag-handle"
-              data-sortable-scope-status={status}
+              class="pkp-board-list flex-1 flex flex-col gap-2 px-3 pb-3 min-h-32 rounded-b-lg"
+              phx-hook="PkpBoard"
+              data-board-group={"board-#{@project.uuid}"}
+              data-board-event="board_move"
+              data-board-status={status}
             >
+              <p :if={column == []} class="pkp-board-empty text-xs opacity-40 px-1 py-2">
+                {gettext("Nothing here.")}
+              </p>
               <div
                 :for={a <- column}
-                class="card bg-base-100 border border-base-200 shadow-sm overflow-hidden sortable-item"
+                id={"board-card-#{a.uuid}"}
+                class={[
+                  "card bg-base-100 border border-base-200 shadow-sm overflow-hidden sortable-item pkp-board-card cursor-grab",
+                  pending_uuid == a.uuid && "ring-2 ring-info opacity-60"
+                ]}
                 data-id={a.uuid}
+                title={pending_uuid == a.uuid && gettext("Waiting for your answer")}
               >
                 <div class="card-body p-3 gap-2">
                   <div class="flex items-start gap-2">
-                    <span
-                      class="pk-drag-handle cursor-grab text-base-content/30 hover:text-base-content shrink-0 mt-0.5"
-                      title={gettext("Drag to another column")}
-                    >
-                      <.icon name="hero-bars-2" class="w-3.5 h-3.5" />
-                    </span>
+                    <.icon name="hero-bars-2" class="w-3.5 h-3.5 shrink-0 mt-0.5 text-base-content/30" />
                     <.smart_link
                       navigate={Paths.view_assignment(a.project_uuid, a.uuid)}
                       emit={
@@ -5645,6 +5723,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     >
                       <.ref_chip ref={Assignment.ref(a)} />
                     </.smart_link>
+                    <.deadline_chip :if={@fx[:dates] != false} a={a} size="xs" tone="outline" />
                     <% sub = Map.get(@outline_counts, a.uuid) %>
                     <span :if={sub} class="badge badge-xs badge-outline gap-1" title={gettext("Subtasks done")}>
                       <.icon name="hero-list-bullet" class="w-3 h-3" /> {sub.done}/{sub.total}
@@ -5672,15 +5751,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
                   <%!-- Ownership gets its own anchored row rather than a
                        fifth badge in the pile: the eye learns one place to
-                       look. "Unassigned" is shown, not hidden — on a board
-                       that is the most actionable thing a card can say. --%>
+                       look — the faces first. "Unassigned" is shown, not
+                       hidden — on a board that is the most actionable thing
+                       a card can say. --%>
                   <div class="flex items-center justify-between gap-2">
                     <% b_atype = assignee_type(a) %>
                     <span
                       :if={@fx.assignees and b_atype}
-                      class="inline-flex items-center gap-1 text-xs min-w-0 opacity-80"
+                      class="inline-flex items-center gap-1.5 text-xs min-w-0 opacity-80"
                     >
-                      <.icon name={assignee_icon(a)} class="w-3.5 h-3.5 shrink-0" />
+                      <.assignee_faces faces={faces[a.uuid]} size="xs" />
+                      <.icon :if={faces[a.uuid] == nil} name={assignee_icon(a)} class="w-3.5 h-3.5 shrink-0" />
                       <span class="truncate">{assignee_label(a)}</span>
                     </span>
                     <span
@@ -5707,7 +5788,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                             {gettext("Start")}
                           </button>
                         <% a.status in ["todo", "in_progress"] or (a.status == "waiting" and a.child_project_uuid != nil) -> %>
-                          <button phx-click="complete" phx-value-uuid={a.uuid} phx-disable-with="…" class="btn btn-success btn-xs">
+                          <button
+                            phx-click="complete"
+                            phx-value-uuid={a.uuid}
+                            phx-disable-with="…"
+                            class="btn btn-success btn-xs"
+                            title={gettext("Mark done")}
+                            aria-label={gettext("Mark done")}
+                          >
                             <.icon name="hero-check" class="w-3.5 h-3.5" />
                           </button>
                         <% a.status == "done" -> %>
