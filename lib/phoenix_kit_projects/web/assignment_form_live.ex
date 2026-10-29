@@ -4939,6 +4939,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       <%!-- Owns the assignee search box: Enter there submits nothing. --%>
       <form id="assignment-assignee-form" phx-submit="assignee_noop" class="hidden"></form>
       <%!-- Asks before an assignment makes a staff record. --%>
+      <%!-- In the drawer this dialog sits inside the drawer's own dialog,
+           and daisyUI's `modal-end` makes every modal box under it full
+           height (a descendant rule); a confirm keeps its own height. --%>
+      <style :if={@staff_confirm}>
+        #pk-modal-staff_create_cancel > .modal-box { height: auto; }
+      </style>
       <.confirm_modal
         :if={@staff_confirm}
         show={true}
