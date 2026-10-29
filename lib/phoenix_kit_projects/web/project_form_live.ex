@@ -1765,6 +1765,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   defp first_error_message(_), do: gettext("Could not save the project.")
 
+  # The V26 link fields are named as their boxes are, in the viewer's
+  # language; older fields keep the generic spelling.
+  defp humanize(:external_url), do: gettext("Address")
+  defp humanize(:external_label), do: gettext("Button text")
+
   defp humanize(field) do
     field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
   end

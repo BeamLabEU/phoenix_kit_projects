@@ -386,13 +386,14 @@ defmodule PhoenixKitProjects.Assignees do
 
   def describe(kind, uuid, lang)
       when kind in ~w(person team department) and is_binary(uuid) and uuid != "" do
-    case row_for(kind, uuid, lang) do
-      nil ->
-        nil
-
-      row ->
-        probe = struct(Assignment, [{:uuid, "chosen"}, {assignee_field(kind), uuid}])
-        Map.put(row, :faces, Map.get(faces([probe], 5), "chosen"))
+    # A uuid from the client is cast first: a malformed one would raise in
+    # the query (`Ecto.Query.CastError`) and take the form down with it.
+    with {:ok, uuid} <- Ecto.UUID.cast(uuid),
+         row when is_map(row) <- row_for(kind, uuid, lang) do
+      probe = struct(Assignment, [{:uuid, "chosen"}, {assignee_field(kind), uuid}])
+      Map.put(row, :faces, Map.get(faces([probe], 5), "chosen"))
+    else
+      _ -> nil
     end
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->

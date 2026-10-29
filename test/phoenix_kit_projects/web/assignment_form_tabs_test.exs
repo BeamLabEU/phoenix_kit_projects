@@ -126,6 +126,35 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
 
       assert Projects.get_assignment(ctx.a.uuid).status == "done"
     end
+
+    # Waiting <-> can be started is readiness: logged as the page's and the
+    # API's buttons log it, never as a reopen that tells the assignee.
+    test "waiting -> can be started logs made_ready, not reopened; and back made_idle", ctx do
+      assert Projects.get_assignment(ctx.a.uuid).status == "waiting"
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+
+      view |> form("#assignment-form", assignment: %{status: "todo"}) |> render_submit()
+      assert Projects.get_assignment(ctx.a.uuid).status == "todo"
+
+      assert_activity_logged("projects.assignment_made_ready",
+        resource_uuid: ctx.a.uuid,
+        actor_uuid: ctx.me,
+        metadata_has: %{"from" => "waiting", "to" => "todo"}
+      )
+
+      refute_activity_logged("projects.assignment_reopened", resource_uuid: ctx.a.uuid)
+
+      {:ok, view, _} = edit(ctx.conn, ctx.project, Projects.get_assignment(ctx.a.uuid))
+      view |> form("#assignment-form", assignment: %{status: "waiting"}) |> render_submit()
+
+      assert_activity_logged("projects.assignment_made_idle",
+        resource_uuid: ctx.a.uuid,
+        actor_uuid: ctx.me,
+        metadata_has: %{"from" => "todo", "to" => "waiting"}
+      )
+
+      refute_activity_logged("projects.assignment_reopened", resource_uuid: ctx.a.uuid)
+    end
   end
 
   describe "assignee" do
@@ -172,6 +201,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       render_click(view, "assignee_pick", %{"kind" => "team", "uuid" => Ecto.UUID.generate()})
       autosave(view)
 
+      assert Projects.get_assignment(ctx.a.uuid).assigned_team_uuid == nil
+    end
+
+    test "a forged pick or search with malformed values leaves the form standing", ctx do
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+
+      for kind <- ~w(person team department) do
+        render_click(view, "assignee_pick", %{"kind" => kind, "uuid" => "not-a-uuid"})
+      end
+
+      render_hook(view, "assignee_search", %{"q" => %{"nested" => "x"}})
+      autosave(view)
+
+      assert Process.alive?(view.pid)
+      assert render(view) =~ "Measure the kitchen"
       assert Projects.get_assignment(ctx.a.uuid).assigned_team_uuid == nil
     end
 
@@ -251,6 +295,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
         |> render_submit()
 
       assert html =~ "cannot be in the future"
+      # The save bar names the field as its box does, not "Completed at".
+      assert html =~ "Finished at: cannot be in the future"
       assert Projects.get_assignment(ctx.a.uuid).completed_at == ~U[2026-10-01 15:30:00Z]
       # The error is on the More tab, which is opened.
       refute has_element?(view, "#assignment-pane-more.hidden")

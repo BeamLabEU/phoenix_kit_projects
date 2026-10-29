@@ -1401,7 +1401,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   # The assignee picker (core `<.search_picker>`): people, teams and
   # departments in one search, a page at a time.
-  def handle_event("assignee_search", %{"q" => q} = params, socket) do
+  def handle_event("assignee_search", %{"q" => q} = params, socket) when is_binary(q) do
     limit =
       case Integer.parse(to_string(params["limit"] || "")) do
         {n, _} when n > 0 -> n
@@ -1412,6 +1412,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     {:noreply, push_event(socket, "assignee_results", %{q: q, results: rows, has_more: more?})}
   end
+
+  # A query that is not text (a forged event) finds nobody.
+  def handle_event("assignee_search", _params, socket), do: {:noreply, socket}
 
   # A pick names a row the search offered; it is looked up again, so a
   # forged kind or uuid assigns nobody.
@@ -2868,7 +2871,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  def handle_info(_message, socket), do: {:noreply, socket}
+  def handle_info(message, socket) do
+    Logger.debug("[AssignmentFormLive] unexpected handle_info: #{inspect(message)}")
+    {:noreply, socket}
+  end
 
   defp schedule_autosave(%{assigns: %{live_action: :edit, kind: "task"}} = socket, params) do
     socket = cancel_autosave(socket)
@@ -3050,16 +3056,33 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     # Handed on in the same save: the new people hear "gave you a task", not
     # also that it started.
-    if status_action do
-      Activity.log(
-        status_action,
-        base ++
-          [
-            target_uuid: if(not reassigned?, do: Activity.assignee_target_uuid(now)),
-            tell: not reassigned?,
-            metadata: meta
-          ]
-      )
+    cond do
+      # Waiting <-> can be started is readiness, not a reopen: logged as the
+      # page's and the API's buttons log it, naming nobody (`Handoffs` tells
+      # the people a released task is theirs).
+      readiness_action(was.status, now.status) ->
+        Activity.log(
+          readiness_action(was.status, now.status),
+          base ++
+            [
+              tell: false,
+              metadata: Map.merge(meta, %{"from" => was.status, "to" => now.status})
+            ]
+        )
+
+      status_action ->
+        Activity.log(
+          status_action,
+          base ++
+            [
+              target_uuid: if(not reassigned?, do: Activity.assignee_target_uuid(now)),
+              tell: not reassigned?,
+              metadata: meta
+            ]
+        )
+
+      true ->
+        :ok
     end
 
     if blank_waiting(was.waiting_on) != blank_waiting(now.waiting_on) do
@@ -3075,6 +3098,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp log_typed_changes(_socket, _was, _now), do: false
+
+  defp readiness_action("waiting", "todo"), do: "projects.assignment_made_ready"
+  defp readiness_action("todo", "waiting"), do: "projects.assignment_made_idle"
+  defp readiness_action(_was, _now), do: nil
 
   defp blank_waiting(v) when is_binary(v) do
     case String.trim(v) do
@@ -3191,6 +3218,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp first_error_message(_), do: gettext("Could not save the assignment.")
+
+  # The fields this form added with V26 are named as their boxes are, in
+  # the viewer's language; older fields keep the generic spelling.
+  defp humanize(:deadline), do: gettext("Deadline")
+  defp humanize(:started_at), do: gettext("Started at")
+  defp humanize(:completed_at), do: gettext("Finished at")
+  defp humanize(:start_time), do: gettext("Start time")
+  defp humanize(:end_time), do: gettext("End time")
 
   defp humanize(field) do
     field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
