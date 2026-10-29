@@ -121,7 +121,8 @@ defmodule PhoenixKitProjects.Projects do
 
   Options: `:search`, `:sort_by`/`:sort_dir`, `:limit`, and `:ad_hoc` —
   `:exclude` (default: the reusable library only), `:only` (one-off tasks
-  minted by a project's quick-add) or `:all`.
+  minted by a project's quick-add) or `:all`; and `:project_uuids` — only
+  tasks assigned in one of those projects (default `:all`, no filter).
   """
   @spec list_tasks(keyword()) :: [Task.t()]
   def list_tasks(opts \\ []) do
@@ -131,6 +132,7 @@ defmodule PhoenixKitProjects.Projects do
 
     Task
     |> filter_ad_hoc(Keyword.get(opts, :ad_hoc, :exclude))
+    |> filter_task_projects(Keyword.get(opts, :project_uuids, :all))
     |> maybe_search_task(Keyword.get(opts, :search))
     |> task_order_by(sort_by, sort_dir)
     |> maybe_limit(limit_n)
@@ -298,6 +300,7 @@ defmodule PhoenixKitProjects.Projects do
   def count_tasks(opts \\ []) do
     Task
     |> filter_ad_hoc(Keyword.get(opts, :ad_hoc, :exclude))
+    |> filter_task_projects(Keyword.get(opts, :project_uuids, :all))
     |> maybe_search_task(Keyword.get(opts, :search))
     |> repo().aggregate(:count, :uuid)
   end
@@ -309,6 +312,23 @@ defmodule PhoenixKitProjects.Projects do
   defp filter_ad_hoc(query, :exclude), do: where(query, [t], t.ad_hoc == false)
   defp filter_ad_hoc(query, :only), do: where(query, [t], t.ad_hoc == true)
   defp filter_ad_hoc(query, :all), do: query
+
+  # `:project_uuids` — only tasks assigned in one of these projects (`:all`,
+  # the default, applies no filter). The library page's One-off lens passes
+  # the viewer's visible projects: a one-off belongs to its project, and its
+  # title must not reach someone who cannot open that project.
+  defp filter_task_projects(query, :all), do: query
+  defp filter_task_projects(query, []), do: where(query, false)
+
+  defp filter_task_projects(query, project_uuids) when is_list(project_uuids) do
+    assigned_here =
+      from(a in Assignment,
+        where: a.project_uuid in ^project_uuids and not is_nil(a.task_uuid),
+        select: a.task_uuid
+      )
+
+    where(query, [t], t.uuid in subquery(assigned_here))
+  end
 
   @doc """
   Returns `%{assignment_uuid => published_comment_count}` for the
@@ -1783,6 +1803,23 @@ defmodule PhoenixKitProjects.Projects do
         into: %{} do
       {resource_uuid, name}
     end
+  end
+
+  @doc """
+  The projects whose assignments use `task_uuid`, in one read — for a
+  one-off task, the project that minted it. A writer that acts on a one-off
+  through the library page asks each of these whether the viewer may.
+  """
+  @spec projects_using_task(binary()) :: [Project.t()]
+  def projects_using_task(task_uuid) when is_binary(task_uuid) do
+    repo().all(
+      from(p in Project,
+        join: a in Assignment,
+        on: a.project_uuid == p.uuid,
+        where: a.task_uuid == ^task_uuid,
+        distinct: true
+      )
+    )
   end
 
   @doc """

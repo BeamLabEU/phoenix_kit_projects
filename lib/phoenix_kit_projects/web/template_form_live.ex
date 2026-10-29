@@ -2,6 +2,11 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   @moduledoc "Create or edit a project template."
 
   use PhoenixKitWeb, :live_view
+  # Before the Embed: its hook enqueues translations without a permission
+  # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
+  on_mount(PhoenixKitProjects.Web.AITranslateGate)
+  # Every write event re-checks `write_allowed?/1` against the live scope.
+  on_mount(PhoenixKitProjects.Web.WriteGate)
   use PhoenixKitAI.Components.AITranslate.Embed
   use Gettext, backend: PhoenixKitProjects.Gettext
   use PhoenixKitProjects.Web.Components
@@ -13,6 +18,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
+  alias PhoenixKitProjects.Web.WriteGate
 
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
@@ -41,7 +47,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
-      |> apply_action(live_action, resolved_params)
+      |> authorized_action(live_action, resolved_params)
       |> assign_status_init()
       |> assign_ai_translate()
       |> assign(dirty?: false)
@@ -84,6 +90,20 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
 
   defp refresh_status_preview(socket), do: socket
 
+  # The module key at mount, before anything is loaded — the tab alone
+  # never gates an embed.
+  defp authorized_action(socket, live_action, params) do
+    if PhoenixKitProjects.Authz.can_use_templates?(socket.assigns[:phoenix_kit_current_scope]) do
+      apply_action(socket, live_action, params)
+    else
+      socket
+      |> assign(page_title: "", project: %Project{is_template: true}, live_action: live_action)
+      |> assign_form(Projects.change_project(%Project{is_template: true}))
+      |> WriteGate.refuse()
+      |> WebHelpers.close_or_navigate(Paths.templates())
+    end
+  end
+
   defp apply_action(socket, :new, _params) do
     project = %Project{is_template: true}
 
@@ -94,7 +114,9 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   end
 
   defp apply_action(socket, :edit, %{"id" => id}) do
-    case Projects.get_project(id) do
+    # Only a template: this form saves on the module key alone, which must
+    # never reach a real project (that takes `:edit_settings`).
+    case id |> Projects.get_project() |> only_template() do
       nil ->
         # Render-safe placeholders for emit mode (see ProjectFormLive
         # for the rationale — in emit mode `close_or_navigate` doesn't
@@ -143,6 +165,38 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   end
 
   defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
+
+  @doc false
+  def write_events, do: ~w(save generate_default_statuses)
+
+  @doc false
+  # Templates ride the projects module permission (`Authz.can_use_templates?/1`),
+  # checked here at mount and on every write (`Web.WriteGate`) rather than
+  # left to the tab, which an embed never passes. On `:edit` the record is
+  # re-read: only a template is edited here.
+  def write_allowed?(socket) do
+    PhoenixKitProjects.Authz.can_use_templates?(socket.assigns[:phoenix_kit_current_scope]) and
+      case {socket.assigns[:live_action], socket.assigns[:project]} do
+        {:new, _} ->
+          true
+
+        {:edit, %Project{uuid: uuid}} when is_binary(uuid) ->
+          template?(Projects.get_project(uuid))
+
+        _ ->
+          false
+      end
+  end
+
+  defp template?(%Project{is_template: true}), do: true
+  defp template?(_), do: false
+
+  defp only_template(%Project{is_template: true} = project), do: project
+  defp only_template(_), do: nil
+
+  @doc false
+  # The AI-translate modal's events need the same (`Web.AITranslateGate`).
+  def ai_translate_allowed?(socket), do: write_allowed?(socket)
 
   @impl true
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do

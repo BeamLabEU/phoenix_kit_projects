@@ -137,6 +137,18 @@ defmodule PhoenixKitProjects.CommentNotices do
   @doc "A comment approved after moderation tells its people, as `on_comment_created/3` does."
   def on_comment_published(type, uuid, comment), do: on_comment_created(type, uuid, comment)
 
+  # The comments module's moderation page asks which records a viewer may
+  # moderate (a release that declares the callback; an older one never
+  # asks). Declared `@impl` only where the behaviour has it, as above.
+  @moderatable_callback? {:moderatable_resources, 2} in PhoenixKitComments.ResourceHandler.behaviour_info(
+                           :callbacks
+                         )
+
+  @impl @moderatable_callback?
+  @doc "Which task discussions the viewer may moderate — see `PhoenixKitProjects.CommentModeration`."
+  def moderatable_resources(type, scope),
+    do: PhoenixKitProjects.CommentModeration.moderatable_resources(type, scope)
+
   @doc """
   A deleted comment's words leave the notices that quoted them: each notice
   row keeps that there was a comment (History and the bell still say who

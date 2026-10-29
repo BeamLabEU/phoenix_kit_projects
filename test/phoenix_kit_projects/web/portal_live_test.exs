@@ -700,6 +700,8 @@ defmodule PhoenixKitProjects.Web.PortalLiveTest do
 
   describe "the discussion composer" do
     setup %{conn: conn} do
+      # The comments component renders nothing while the Comments module is off.
+      {:ok, _} = PhoenixKitComments.enable_system()
       Extensions.Registry.refresh()
       n = System.unique_integer([:positive])
 

@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.MixProject do
   use Mix.Project
 
-  @version "0.31.0"
+  @version "0.32.0"
   @source_url "https://github.com/BeamLabEU/phoenix_kit_projects"
 
   def project do
@@ -35,8 +35,8 @@ defmodule PhoenixKitProjects.MixProject do
   end
 
   def application do
-    # `:phoenix_kit_staff` is deliberately absent: it is an optional dep, and
-    # naming it here makes the app fail to boot wherever it is not installed.
+    # `:phoenix_kit_staff` and `:phoenix_kit_entities` are hard deps, so Mix starts
+    # them without being named here.
     [extra_applications: [:logger, :phoenix_kit]]
   end
 
@@ -122,7 +122,7 @@ defmodule PhoenixKitProjects.MixProject do
       # 1.7.189 for `PhoenixKit.SchemaPrefix`, which every table-backed schema
       # in this module applies.
       #
-      # Bounded with a TWO-segment `~>` on purpose: `>= 2.0.0 and < 3.0.0`.
+      # Bounded with a TWO-segment `~>` on purpose: `>= 2.0.0 and < 4.0.0`.
       # Core majors are not assumed compatible, but core MINORS must be — a
       # requirement that excludes one breaks `mix deps.get` outright for every
       # host running this module beside a newer core, and the breakage lands
@@ -154,38 +154,37 @@ defmodule PhoenixKitProjects.MixProject do
       # fixed number of reads); 2.63.0 before, for `search_picker`'s `chosen`
       # state on the Hours page; 2.54.0 before that, for `<.table_default
       # fit>` with the header cells' `priority` / `lead`; 2.49.0 before that.
-      pk_dep(:phoenix_kit, ">= 2.64.0 and < 3.0.0"),
+      # Floor 2.65.0: the first core with the `file_references/0` and `expected_schema/0`
+      # callbacks this module implements (`@impl`). The ceiling is open through core 3.x.
+      pk_dep(:phoenix_kit, ">= 2.65.0 and < 4.0.0"),
       # PhoenixKitAI owns the generic AI-translation pipeline this module's
       # `AITranslatable` / `AITranslateBinding` code plugs into. 0.4 is the
       # floor — that's the release that actually ships the AI-translation move
       # (`PhoenixKitAI.{Translatable,Translations,Components.AITranslate.*}`);
       # 0.3.0 predates it and won't compile against this module.
-      pk_dep(:phoenix_kit_ai, "~> 0.18"),
+      pk_dep(:phoenix_kit_ai, "~> 0.27"),
       # 0.3 is the floor: `Assignees` calls
       # `PhoenixKitStaff.Schemas.Person.display_name/1`, which staff first
       # shipped in 0.3.0 (`Team`/`Department.localized_name/2` need 0.2.1).
       # The call is unguarded, so `~> 0.1` admitted releases where building an
       # assignee list raises `UndefinedFunctionError`.
-      # Optional (staff-optional seam): the staff DB tables are created by
-      # CORE (V100), so projects' shadow schemas and FKs work without this
-      # package — it is the people ADMIN surface, not the data's owner.
-      # `WITHOUT_STAFF=1 mix compile` drops it entirely, which is the seam's
-      # compile gate proving no stray hard reference sneaks back in.
+      # Hard dep: this package's own chain (`Migrations.Schema`) creates nine foreign
+      # keys into staff's tables, and core no longer creates them, so a host that
+      # has projects needs staff's chain run first. `Modules.order_by_dependencies/1`
+      # reads this edge to order the module migrations.
       #
-      # The 0.3 floor above still applies whenever staff IS present: making a
-      # dependency optional does not make an older release safe.
-      pk_dep(:phoenix_kit_staff, "~> 0.8", optional: true),
+      # The 0.3 floor above still applies: making a dependency hard does not make
+      # an older release safe.
+      pk_dep(:phoenix_kit_staff, "~> 0.11"),
       # 0.2.6 is the floor: `ProjectShowLive` does `use
       # PhoenixKitComments.Embed`, first published in that release. `~> 0.2`
       # admitted 0.2.0–0.2.5, where that `use` site fails to compile.
-      pk_dep(:phoenix_kit_comments, "~> 0.3"),
+      pk_dep(:phoenix_kit_comments, "~> 0.5"),
 
-      # Optional: the entities module is the source/catalog for project
-      # workflow statuses. `optional: true` keeps it out of host closures
-      # (PhoenixKitProjects.Statuses degrades gracefully when it's absent —
-      # mirrors the AI-translation pattern) while making it loadable in this
-      # package's own compile + test build.
-      pk_dep(:phoenix_kit_entities, "~> 0.3", optional: true),
+      # Hard dep: `Migrations.Schema` references `phoenix_kit_entities` (workflow
+      # status FK), so entities' chain must run first. The module is also the
+      # source/catalog for project workflow statuses.
+      pk_dep(:phoenix_kit_entities, "~> 0.7"),
 
       # Hard dep: assignment/task schemas reference PhoenixKitStaff.Schemas.*
       # for polymorphic assignee FKs (team / department / person).

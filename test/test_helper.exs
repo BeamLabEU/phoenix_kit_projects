@@ -86,6 +86,18 @@ repo_available =
       # staleness story.
       PhoenixKit.Migration.ensure_current(TestRepo, log: false)
 
+      # The tables other modules own (core 3.0 no longer creates them): their real
+      # chains, in dependency order.
+      for chain <- [
+            PhoenixKitAI.Migrations,
+            PhoenixKitComments.Migrations,
+            PhoenixKitEntities.Migrations,
+            PhoenixKitStaff.Migrations
+          ],
+          stmt <- chain.up_statements("public") do
+        TestRepo.query!(stmt)
+      end
+
       # Then entities' chain, because the Data project extension reads and
       # writes entity records through `PhoenixKitEntities`' own schemas. Its
       # V1 is adoptive, so this is a no-op today — it is here so it stays
@@ -186,3 +198,11 @@ file_refs_exclude =
      else: [:requires_core_file_references]
 
 ExUnit.start(exclude: chain_check_exclude ++ file_refs_exclude ++ exclude)
+
+# The manifest test builds the module's tables with `ModuleChainCheck.build_alone/4`
+# and hands the manifest to repair (`PhoenixKit.Module.expected_schema/0`); both
+# arrive in the first core release after 2.64.1.
+unless Code.ensure_loaded?(PhoenixKit.TestSupport.ModuleChainCheck) and
+         function_exported?(PhoenixKit.TestSupport.ModuleChainCheck, :build_alone, 4) do
+  ExUnit.configure(exclude: [:requires_core_expected_schema | ExUnit.configuration()[:exclude]])
+end

@@ -234,7 +234,8 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
       case Outline.sync(project.uuid, lines, known,
              actor_uuid: Activity.actor_uuid(socket),
-             allow_done: can.tick
+             allow_done: can.tick,
+             rename_library: library_right?(socket)
            ) do
         {:ok, summary} ->
           log_sync(socket, summary)
@@ -294,6 +295,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
     with true <- socket.assigns.outline_can.edit,
          true <- title != "",
          %Assignment{task: %Task{} = task} <- own(socket, uuid),
+         true <- task.ad_hoc == true or library_right?(socket),
          true <- task.title != title,
          {:ok, _} <- Projects.update_task(task, %{"title" => title}) do
       audit(socket, "projects.assignment_updated", uuid, %{"fields" => ["title"]})
@@ -526,6 +528,12 @@ defmodule PhoenixKitProjects.Web.OutlineList do
 
   defp to_depth(n) when is_integer(n) and n >= 0, do: n
   defp to_depth(_), do: 0
+
+  # A library task's title is shared by every project that uses it: renaming
+  # one is `projects.manage_library`'s, asked of the LIVE scope at the write
+  # (never cached in `outline_can`, which is computed once per reload).
+  defp library_right?(socket),
+    do: Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope])
 
   defp own(socket, uuid) when is_binary(uuid) do
     case Projects.get_assignment(uuid) do

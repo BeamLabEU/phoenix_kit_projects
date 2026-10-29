@@ -82,7 +82,18 @@ defmodule PhoenixKitProjects.ModuleCallbacksTest do
     test "admin_tabs/0 returns a list of tabs all permissioned on \"projects\"" do
       tabs = PhoenixKitProjects.admin_tabs()
       refute Enum.empty?(tabs)
-      assert Enum.all?(tabs, &(&1.permission == "projects"))
+
+      # The task form edits the shared library: its two tabs carry the
+      # library sub-key; every other tab the base key.
+      {library, rest} =
+        Enum.split_with(tabs, &(&1.id in [:admin_projects_task_new, :admin_projects_task_edit]))
+
+      assert Enum.map(library, & &1.permission) == [
+               "projects.manage_library",
+               "projects.manage_library"
+             ]
+
+      assert Enum.all?(rest, &(&1.permission == "projects"))
     end
   end
 end

@@ -10,6 +10,8 @@ defmodule PhoenixKitProjects do
   use PhoenixKit.Module
   use Gettext, backend: PhoenixKitProjects.Gettext
 
+  import Ecto.Query, only: [from: 2]
+
   require Logger
 
   # Single source of truth: read the version from mix.exs at compile time so
@@ -18,7 +20,10 @@ defmodule PhoenixKitProjects do
   @version Mix.Project.config()[:version]
 
   alias PhoenixKit.Dashboard.Tab
+  alias PhoenixKit.RepoHelper
   alias PhoenixKit.Settings
+  alias PhoenixKit.Users.{Permissions, RolePermission}
+  alias PhoenixKitProjects.Authz
 
   @impl PhoenixKit.Module
   def module_key, do: "projects"
@@ -161,12 +166,17 @@ defmodule PhoenixKitProjects do
   def migration_module, do: PhoenixKitProjects.Migrations.Schema
 
   @doc """
+  The manifest of this module's tables, for `mix phoenix_kit.repair` and
+  `mix phoenix_kit.doctor`; see `PhoenixKitProjects.ExpectedSchema`.
+  """
+  @impl PhoenixKit.Module
+  def expected_schema, do: PhoenixKitProjects.ExpectedSchema
+
+  @doc """
   The places in this module's tables that point at a stored file; see
   `PhoenixKitProjects.FileReferences`.
   """
-  # No `@impl`: the callback exists from the first core release after 2.64.1.
-  # Without it this module still compiles against an older core, where core's
-  # own list for these tables stays in force.
+  @impl PhoenixKit.Module
   def file_references, do: PhoenixKitProjects.FileReferences.pairs()
 
   # AI usage sink (the attribution wave, Phase G): phoenix_kit_ai's
@@ -261,6 +271,21 @@ defmodule PhoenixKitProjects do
           label: "Manage everyone's API keys",
           description:
             "See every API key, make keys for anyone or for nobody (shared), and change, rotate or revoke any key"
+        },
+        # A library task is shared by every project that assigned it, so
+        # changing or deleting one reaches into projects the editor may not
+        # even see — a site-level right, not a project role.
+        %{
+          key: "manage_library",
+          label: "Manage the task library",
+          description:
+            "Create, edit, reorder and delete the shared library tasks, and add one-off tasks to the library"
+        },
+        %{
+          key: "settings",
+          label: "Change the projects settings",
+          description:
+            "Change the module's settings: status lists, the new-project form, list controls, timeline and calendar display"
         }
       ]
     }
@@ -270,6 +295,8 @@ defmodule PhoenixKitProjects do
   # again and an Owner's revoke sticks.
   @admin_all_backfill_key "projects_admin_all_backfilled"
   @api_keys_backfill_key "projects_api_keys_permissions_backfilled"
+  @manage_library_backfill_key "projects_manage_library_backfilled"
+  @settings_backfill_key "projects_settings_backfilled"
 
   # What a role holding the base key could do with its own keys before the
   # API key rights were split out (2026-10-19).
@@ -291,52 +318,97 @@ defmodule PhoenixKitProjects do
   re-disabling a feature they turned on.
   """
   def migrate_legacy do
-    alias PhoenixKit.Settings
-    alias PhoenixKit.Users.{Permissions, Roles}
+    # ONCE each, not on every boot. This runs from the host's start-up, and
+    # an unconditional version fights the Owner: revoke admin_all from the
+    # contractor role and the next restart hands it back. Each flag is set
+    # only once its grants all succeeded, so a failure is retried next boot.
+    results = [
+      backfill_sub_keys(@admin_all_backfill_key, [Authz.admin_all_key()]),
+      backfill_sub_keys(@api_keys_backfill_key, @own_key_rights),
+      backfill_sub_keys(@manage_library_backfill_key, [Authz.manage_library_key()]),
+      backfill_sub_keys(@settings_backfill_key, [Authz.settings_key()])
+    ]
 
-    # ONCE, not on every boot. This runs from the host's start-up, and an
-    # unconditional version fights the Owner: revoke admin_all from the
-    # contractor role and the next restart hands it back. The flag is the
-    # same guard core uses for its own auto-grants — the point is to carry
-    # an existing install across the split, not to keep re-deciding.
-    unless Settings.get_setting(@admin_all_backfill_key) == "true" do
-      Enum.each(Roles.list_roles(), fn role ->
-        granted = Permissions.get_permissions_for_role(role.uuid)
-
-        if "projects" in granted and "projects.admin_all" not in granted do
-          Permissions.grant_permission(role.uuid, "projects.admin_all", nil)
-        end
-      end)
-
-      Settings.update_setting_with_module(@admin_all_backfill_key, "true", module_key())
-    end
-
-    backfill_api_key_rights()
     backfill_checklist_flags()
+
+    case Enum.reject(results, &(&1 == :ok)) do
+      [] -> :ok
+      errors -> {:error, errors}
+    end
   rescue
     error ->
       {:error, Exception.message(error)}
   end
 
-  # Once: every role that holds the base key keeps what it could already do
-  # with its own keys (make them, change them, rotate and revoke them).
-  # Managing everyone's keys is new and goes to Admin through core's
-  # auto-grant, Owner through "*". Revoke one later and it stays revoked.
-  defp backfill_api_key_rights do
-    alias PhoenixKit.Settings
-    alias PhoenixKit.Users.{Permissions, Roles}
+  @doc false
+  # Once per flag: every role that holds the base key gets `keys` — what the
+  # base key used to allow (admin_all, the own-key API rights, the library
+  # writes, the settings page). The grants are READ with this module's own
+  # query: core's `get_permissions_for_role/1` rescues an error to `[]`,
+  # which would read as "nobody holds projects" and set the flag for good. A
+  # failed read answers `{:error, :lookup_failed}`, a failed grant
+  # `{:error, {:backfill_incomplete, …}}`; either leaves the flag unset. A
+  # role granted `projects` later gets the narrow meaning. `:grant` and
+  # `:holders` are parameters only so a test can make either fail.
+  def backfill_sub_keys(flag, keys, opts \\ []) do
+    if Settings.get_setting(flag) == "true" do
+      :ok
+    else
+      grant = Keyword.get(opts, :grant, &Permissions.grant_permission/3)
+      holders = Keyword.get(opts, :holders, &role_uuids_holding/1)
 
-    unless Settings.get_setting(@api_keys_backfill_key) == "true" do
-      for role <- Roles.list_roles(),
-          granted = Permissions.get_permissions_for_role(role.uuid),
-          "projects" in granted,
-          key <- @own_key_rights,
-          key not in granted do
-        Permissions.grant_permission(role.uuid, key, nil)
+      with {:ok, base, held} <- read_holders(holders, keys) do
+        grant_missing(flag, keys, base, held, grant)
+      end
+    end
+  end
+
+  defp read_holders(holders, keys) do
+    base = holders.(module_key())
+    held = Map.new(keys, &{&1, MapSet.new(holders.(&1))})
+    {:ok, base, held}
+  rescue
+    error ->
+      Logger.warning(
+        "[PhoenixKitProjects] permission backfill could not read the grants, will retry next boot: " <>
+          Exception.message(error)
+      )
+
+      {:error, :lookup_failed}
+  end
+
+  defp grant_missing(flag, keys, base, held, grant) do
+    failures =
+      for role_uuid <- base,
+          key <- keys,
+          not MapSet.member?(Map.fetch!(held, key), role_uuid),
+          result = grant.(role_uuid, key, nil),
+          not match?({:ok, _}, result) do
+        {role_uuid, key, result}
       end
 
-      Settings.update_setting_with_module(@api_keys_backfill_key, "true", module_key())
+    if failures == [] do
+      Settings.update_setting_with_module(flag, "true", module_key())
+      :ok
+    else
+      Logger.warning(
+        "[PhoenixKitProjects] #{flag} incomplete, will retry next boot: " <> inspect(failures)
+      )
+
+      {:error, {:backfill_incomplete, flag, failures}}
     end
+  end
+
+  # Every role holding `key`, straight from the role-permission table; raises
+  # on a failed read (see `backfill_sub_keys/3`).
+  defp role_uuids_holding(key) do
+    RepoHelper.repo().all(
+      from(rp in RolePermission,
+        where: rp.module_key == ^key,
+        select: rp.role_uuid,
+        distinct: true
+      )
+    )
   end
 
   # The "simple to-do list" preset shipped incomplete: it turned off the
@@ -1054,7 +1126,7 @@ defmodule PhoenixKitProjects do
         gettext_domain: "default",
         path: "projects/tasks/new",
         level: :admin,
-        permission: module_key(),
+        permission: Authz.manage_library_key(),
         parent: :admin_projects,
         visible: false,
         live_view: {PhoenixKitProjects.Web.TaskFormLive, :new}
@@ -1066,7 +1138,7 @@ defmodule PhoenixKitProjects do
         gettext_domain: "default",
         path: "projects/tasks/:id/edit",
         level: :admin,
-        permission: module_key(),
+        permission: Authz.manage_library_key(),
         parent: :admin_projects,
         visible: false,
         live_view: {PhoenixKitProjects.Web.TaskFormLive, :edit}
@@ -1360,7 +1432,8 @@ defmodule PhoenixKitProjects do
         priority: 930,
         level: :admin,
         parent: :admin_settings,
-        permission: module_key(),
+        # The settings page is its own sub-key, not the everyday base key.
+        permission: Authz.settings_key(),
         live_view: {PhoenixKitProjects.Web.ProjectsSettingsLive, :settings}
       )
     ]
