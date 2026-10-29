@@ -24,6 +24,13 @@ defmodule PhoenixKitProjects.Paths do
   @spec overview() :: String.t()
   def overview, do: Routes.path("#{@base}/overview")
 
+  @doc """
+  The Time page — each person's day (or week) across every project the viewer
+  may see: what was planned and what was actually done, hour by hour.
+  """
+  @spec time() :: String.t()
+  def time, do: Routes.path("#{@base}/time")
+
   @doc "Projects → API keys: every key a person has, and what each may do per project."
   def api_keys, do: Routes.path("#{@base}/api-keys")
 
