@@ -1415,16 +1415,20 @@
       while (svg.firstChild) svg.removeChild(svg.firstChild);
       if (!edges.length) return;
       var self = this, base = this.el.getBoundingClientRect();
+      var HEAD = 9;
       var mid = this.el.id.replace(/[^\w-]/g, "");
       var defs = document.createElementNS(NS, "defs");
       [["b", LK_BEFORE], ["a", LK_AFTER]].forEach(function (m) {
         var marker = document.createElementNS(NS, "marker");
         marker.setAttribute("id", mid + "-head-" + m[0]);
         marker.setAttribute("viewBox", "0 0 10 10");
-        marker.setAttribute("refX", "9");
+        // A fixed size in the layer's own pixels (not scaled by the stroke),
+        // its tip on the path's end.
+        marker.setAttribute("markerUnits", "userSpaceOnUse");
+        marker.setAttribute("refX", "10");
         marker.setAttribute("refY", "5");
-        marker.setAttribute("markerWidth", "7");
-        marker.setAttribute("markerHeight", "7");
+        marker.setAttribute("markerWidth", "9");
+        marker.setAttribute("markerHeight", "9");
         marker.setAttribute("orient", "auto-start-reverse");
         var head = document.createElementNS(NS, "path");
         head.setAttribute("d", "M0,0 L10,5 L0,10 z");
@@ -1448,10 +1452,17 @@
         var p0 = point(e.from, true), p1 = point(e.to, false);
         if (!p0 || !p1) return;
         // Farther apart, wider out — stacked arrows do not sit on each other.
-        var bow = Math.max(12, Math.min(28, 12 + Math.abs(p1.y - p0.y) / 25));
-        var bx = Math.min(p0.x, p1.x) - bow;
+        var bow = Math.max(8, Math.min(18, 8 + Math.abs(p1.y - p0.y) / 30));
+        var bx = Math.min(p0.x, p1.x) - bow - HEAD;
         var path = document.createElementNS(NS, "path");
-        path.setAttribute("d", "M" + (p0.x - 1) + "," + p0.y + " C" + bx + "," + p0.y + " " + bx + "," + p1.y + " " + (p1.x - 1) + "," + p1.y);
+        // The curve comes back level and ends in a straight run as long as
+        // the head, so the head sits on a straight line, not on the bend.
+        var runIn = p1.x - 1 - HEAD;
+        path.setAttribute(
+          "d",
+          "M" + (p0.x - 1) + "," + p0.y + " C" + bx + "," + p0.y + " " + bx + "," + p1.y + " " +
+            runIn + "," + p1.y + " L" + (p1.x - 1) + "," + p1.y
+        );
         path.setAttribute("fill", "none");
         path.setAttribute("stroke", e.after ? LK_AFTER : LK_BEFORE);
         path.setAttribute("stroke-width", e.direct ? "2" : "1.5");
