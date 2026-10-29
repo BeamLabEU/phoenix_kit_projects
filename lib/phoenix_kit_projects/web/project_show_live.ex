@@ -1646,6 +1646,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
+  # "AI notes", with how many and the tokens reported when there are any.
+  defp ai_notes_label(0, 0), do: gettext("AI notes")
+
+  defp ai_notes_label(count, tokens) do
+    [gettext("AI notes"), count > 0 && to_string(count), tokens > 0 && format_tokens(tokens)]
+    |> Enum.filter(& &1)
+    |> Enum.join(" · ")
+  end
+
   # Looks up an assignment and verifies it belongs to the project the
   # user is currently viewing. Prevents an admin on project A from
   # mutating assignments in project B by crafting event params.
@@ -1783,54 +1792,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 >
                   <.icon name="hero-share" class="w-4 h-4" />
                 </button>
-                <%!-- A waiting task is released first — "Ready to start"
-                     asks who to tell and takes a comment; a released one is
-                     started or done. --%>
-                <button
-                  :if={@a.status == "waiting" and @a.child_project_uuid == nil}
-                  phx-click="ask_ready"
-                  phx-value-uuid={@a.uuid}
-                  class="btn btn-info btn-xs"
-                  title={gettext("Release it: its people are told they can start")}
-                >
-                  {gettext("Ready to start")}
-                </button>
-                <%= cond do %>
-                  <% @a.status == "todo" and @fx.in_progress -> %>
-                    <button phx-click="start_task" phx-value-uuid={@a.uuid} phx-disable-with={gettext("Starting…")} class="btn btn-warning btn-xs">
-                      {gettext("Start")}
-                    </button>
-                  <% @a.status in ["todo", "in_progress"] or (@a.status == "waiting" and @a.child_project_uuid != nil) -> %>
-                    <.button
-                      type="button"
-                      variant="success"
-                      size="xs"
-                      phx-click="complete"
-                      phx-value-uuid={@a.uuid}
-                      phx-disable-with={gettext("Saving…")}
-                    >
-                      <.icon name="hero-check" class="w-3.5 h-3.5" /> {gettext("Done")}
-                    </.button>
-                  <% @a.status == "done" -> %>
-                    <.button
-                      type="button"
-                      variant="ghost"
-                      size="xs"
-                      phx-click="ask_reopen"
-                      phx-value-uuid={@a.uuid}
-                    >
-                      {gettext("Reopen")}
-                    </.button>
-                  <% true -> %>
-                    <%!-- A status outside the vocabulary. The changeset
-                         refuses to write one, so this is legacy or
-                         hand-edited data — and until now it raised
-                         CondClauseError and took the whole project page
-                         down rather than the one row. The status badge
-                         already has a fallback; the actions need one too,
-                         and there is no honest action to offer for a state
-                         we do not model. --%>
-                <% end %>
               <% end %>
 
               <% a_comment_count = Map.get(@assignment_comment_counts, @a.uuid, 0) %>
@@ -1847,26 +1808,60 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <.icon name="hero-chat-bubble-left" class="w-3.5 h-3.5" />
                 <span :if={a_comment_count > 0} class="badge badge-xs badge-primary">{a_comment_count}</span>
               </button>
-              <%!-- The notes thread (`TaskNotes`): what an agent wrote while
-                   working — apart from the discussion, folded away, with
-                   the tokens it reported. Same drawer, its own anchor. --%>
               <% a_note_count = Map.get(@assignment_note_counts, @a.uuid, 0) %>
               <% a_tokens = Map.get(@ledger_tokens, @a.uuid, 0) %>
-              <button
-                :if={@comments_enabled and not @is_template}
-                type="button"
-                phx-click="open_comments"
-                phx-value-type="notes"
-                phx-value-uuid={@a.uuid}
-                phx-value-title={TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
-                class="btn btn-ghost btn-xs gap-1"
-                title={gettext("Open agent notes")}
-              >
-                <.icon name="hero-cpu-chip" class="w-3.5 h-3.5" />
-                <span :if={a_note_count > 0} class="badge badge-xs badge-primary">{a_note_count}</span>
-                <span :if={a_tokens > 0} class="text-base-content/60">{format_tokens(a_tokens)}</span>
-              </button>
+              <%!-- The row stays simple (the boss, 2026-10-29): the next step
+                   and the agent's notes are in the ⋮ menu; the status badge
+                   on the left says where the task is. A waiting task is
+                   released first — "Ready to start" asks who to tell and
+                   takes a comment; a released one is started or done. A
+                   status outside the vocabulary (legacy or hand-edited data)
+                   gets no step. --%>
               <.table_row_menu id={"assignment-menu-#{@a.uuid}"}>
+                <%= if not @is_template do %>
+                  <%= cond do %>
+                    <% @a.status == "waiting" and @a.child_project_uuid == nil -> %>
+                      <.table_row_menu_button
+                        phx-click="ask_ready"
+                        phx-value-uuid={@a.uuid}
+                        icon="hero-play-circle"
+                        label={gettext("Ready to start")}
+                        title={gettext("Release it: its people are told they can start")}
+                      />
+                    <% @a.status == "todo" and @fx.in_progress -> %>
+                      <.table_row_menu_button
+                        phx-click="start_task"
+                        phx-value-uuid={@a.uuid}
+                        phx-disable-with={gettext("Starting…")}
+                        icon="hero-play"
+                        label={gettext("Start")}
+                      />
+                      <.table_row_menu_button
+                        phx-click="complete"
+                        phx-value-uuid={@a.uuid}
+                        phx-disable-with={gettext("Saving…")}
+                        icon="hero-check"
+                        label={gettext("Done")}
+                      />
+                    <% @a.status in ["todo", "in_progress"] or (@a.status == "waiting" and @a.child_project_uuid != nil) -> %>
+                      <.table_row_menu_button
+                        phx-click="complete"
+                        phx-value-uuid={@a.uuid}
+                        phx-disable-with={gettext("Saving…")}
+                        icon="hero-check"
+                        label={gettext("Done")}
+                      />
+                    <% @a.status == "done" -> %>
+                      <.table_row_menu_button
+                        phx-click="ask_reopen"
+                        phx-value-uuid={@a.uuid}
+                        icon="hero-arrow-uturn-left"
+                        label={gettext("Reopen")}
+                      />
+                    <% true -> %>
+                  <% end %>
+                  <.table_row_menu_divider :if={@a.status in ~w(waiting todo in_progress done)} />
+                <% end %>
                 <.smart_menu_link
                   navigate={Paths.edit_assignment(@a.project_uuid, @a.uuid)}
                   emit={{PhoenixKitProjects.Web.AssignmentFormLive, %{"live_action" => "edit", "project_id" => @a.project_uuid, "id" => @a.uuid}}}
@@ -1888,6 +1883,18 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                   phx-value-uuid={@a.uuid}
                   icon="hero-play-circle"
                   label={gettext("Log time")}
+                />
+                <%!-- The notes thread (`TaskNotes`): what an agent wrote while
+                     working, apart from the discussion, with the tokens it
+                     reported. Same drawer as the comments, its own anchor. --%>
+                <.table_row_menu_button
+                  :if={@comments_enabled and not @is_template}
+                  phx-click="open_comments"
+                  phx-value-type="notes"
+                  phx-value-uuid={@a.uuid}
+                  phx-value-title={TaskSchema.localized_title(@a.task, L10n.current_content_lang())}
+                  icon="hero-cpu-chip"
+                  label={ai_notes_label(a_note_count, a_tokens)}
                 />
                 <.table_row_menu_divider />
                 <.table_row_menu_button
@@ -5159,11 +5166,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              outside the list ends it). All in the browser, from the pairs
              below. No rail down the side: a line through every row claimed
              "these run one after another", which a project's dependencies
-             rarely are. --%>
+             rarely are. The arrows come only with the hover / trace, in the
+             left gutter (kept only when there are connections), and the
+             tasks outside it fade. --%>
         <div
           :if={@visible_assignments != []}
           id={"project-task-links-#{@project.uuid}"}
-          class="relative"
+          class={["relative", @fx.dependencies and @link_pairs != [] && "pl-8"]}
           phx-hook={if @fx.dependencies, do: "PkpLinks"}
           data-links={Jason.encode!(@link_pairs)}
           data-labels={
@@ -5177,6 +5186,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             })
           }
         >
+          <svg
+            :if={@fx.dependencies}
+            id={"project-task-arrows-#{@project.uuid}"}
+            data-pkp-arrows
+            phx-update="ignore"
+            class="absolute inset-0 w-full h-full pointer-events-none z-[2] overflow-visible"
+            aria-hidden="true"
+          >
+          </svg>
           <%!-- SortableGrid hook lives on the inner flex container —
                the absolute-positioned vertical line is a sibling
                outside it so it doesn't get included in the sortable

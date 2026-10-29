@@ -1170,9 +1170,11 @@
 
   /*
    * PkpLinks: a task list's connections, shown without writing them on the
-   * cards. Hovering a connected task (a fine pointer only) lightly marks the
-   * tasks it waits on and the ones it unlocks; its trace button marks the
-   * whole chain, before and after, and gently fades the rest, until the
+   * cards. Hovering a connected task (a fine pointer only) marks the tasks
+   * it waits on and the ones it unlocks, draws arrows between them in the
+   * list's left gutter (into the hovered task from what it waits on, out of
+   * it to what it unlocks) and fades every other task to half; its trace
+   * button does the same for the whole chain, before and after, until the
    * button is pressed again, Escape, or a click outside the list. All here
    * in the browser from `data-links` ([[before, after], …]); the server is
    * never asked.
@@ -1181,7 +1183,8 @@
    * rules, keyed by task uuid (the labels are their `content`), so a
    * LiveView patch of a card — a status changing while it is traced —
    * cannot strip them. Only the button's aria-pressed is set on the DOM,
-   * and `updated` sets it again.
+   * and `updated` sets it again. The arrows live in the list's own
+   * `<svg data-pkp-arrows phx-update="ignore">`, which a patch leaves alone.
    */
   var LINKS_STYLE_ID = "pkp-links-style";
   var LINKS_CSS = [
@@ -1212,6 +1215,9 @@
       document.head.appendChild(this.marks);
       this.pin = null;
       this.hover = null;
+      this.arrows = this.el.querySelector("[data-pkp-arrows]");
+      this.onResize = function () { if (self.pin !== null || self.hover !== null) self.apply(); };
+      window.addEventListener("resize", this.onResize);
       this.fine = window.matchMedia("(hover: hover) and (pointer: fine)");
       this.read();
 
@@ -1294,18 +1300,22 @@
       clearTimeout(this.leaveT);
       document.removeEventListener("keydown", this.onKey);
       document.removeEventListener("click", this.onDoc, true);
+      window.removeEventListener("resize", this.onResize);
       if (this.marks) this.marks.remove();
     },
     read: function () {
       var pairs = [];
+      this.arrows = this.el.querySelector("[data-pkp-arrows]");
       try { pairs = JSON.parse(this.el.dataset.links || "[]"); } catch (_) { pairs = []; }
       try { this.labels = JSON.parse(this.el.dataset.labels || "{}"); } catch (_) { this.labels = {}; }
       var up = {}, down = {};
       // The ids end up in CSS selectors: only uuids pass.
       var uuid = /^[0-9a-f-]{36}$/i;
-      pairs.filter(function (p) {
+      pairs = pairs.filter(function (p) {
         return Array.isArray(p) && uuid.test(p[0]) && uuid.test(p[1]);
-      }).forEach(function (p) {
+      });
+      this.pairs = pairs;
+      pairs.forEach(function (p) {
         (up[p[1]] = up[p[1]] || []).push(p[0]);
         (down[p[0]] = down[p[0]] || []).push(p[1]);
       });
@@ -1343,7 +1353,7 @@
         b.setAttribute("aria-pressed", on ? "true" : "false");
         if (labels.trace) b.title = on ? labels.stop : labels.trace;
       });
-      if (src === null) { this.marks.textContent = ""; return; }
+      if (src === null) { this.marks.textContent = ""; this.draw([]); return; }
 
       // Hover: direct neighbours only, nothing fades. Trace: the whole
       // chain, and what is not part of it fades a little.
@@ -1368,7 +1378,8 @@
         rules.push(rel(id) + "::after{content:" + cssString(label) + "}");
       };
 
-      if (traced) rules.push(scope + "[data-pkp-card]{opacity:.6}");
+      // Everything outside what is shown fades to half, hover and trace.
+      rules.push(scope + "[data-pkp-card]{opacity:.4}");
       rules.push(card(src) + "{opacity:1;box-shadow:inset 0 0 0 1px color-mix(in oklab,currentColor 28%,transparent)}");
       Object.keys(b1).forEach(function (id) { mark(id, LK_BEFORE, true, labels.before, LK_BEFORE); });
       Object.keys(a1).forEach(function (id) { if (!b1[id]) mark(id, LK_AFTER, true, labels.after, LK_AFTER_TEXT); });
@@ -1377,6 +1388,82 @@
       if (traced) rules.push(scope + '[data-pkp-trace="' + src + '"]{color:' + LK_PRIMARY + ";background-color:color-mix(in oklab," + LK_PRIMARY + " 12%,transparent)}");
 
       this.marks.textContent = rules.join("\n");
+
+      // Arrows run in the flow's direction, from what comes first to what
+      // it frees. Hover: the hovered task's own. Trace: every connection
+      // inside the chain, the ones not touching it dashed.
+      var inChain = {};
+      inChain[src] = true;
+      Object.keys(bAll).forEach(function (id) { inChain[id] = true; });
+      Object.keys(aAll).forEach(function (id) { inChain[id] = true; });
+      var edges = (this.pairs || []).filter(function (p) {
+        return traced ? inChain[p[0]] && inChain[p[1]] : p[0] === src || p[1] === src;
+      }).map(function (p) {
+        return { from: p[0], to: p[1], after: !!aAll[p[1]] && !bAll[p[1]], direct: p[0] === src || p[1] === src };
+      });
+      this.draw(edges);
+    },
+    // Draws `edges` into the list's arrow layer: a curve from the left edge
+    // of the earlier task, out into the gutter and back into the later
+    // one, with a head. Cards out of view (folded) are skipped.
+    draw: function (edges) {
+      var svg = this.arrows;
+      if (!svg) return;
+      var NS = "http://www.w3.org/2000/svg";
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      if (!edges.length) return;
+      var self = this, base = this.el.getBoundingClientRect();
+      var mid = this.el.id.replace(/[^\w-]/g, "");
+      var defs = document.createElementNS(NS, "defs");
+      [["b", LK_BEFORE], ["a", LK_AFTER]].forEach(function (m) {
+        var marker = document.createElementNS(NS, "marker");
+        marker.setAttribute("id", mid + "-head-" + m[0]);
+        marker.setAttribute("viewBox", "0 0 10 10");
+        marker.setAttribute("refX", "9");
+        marker.setAttribute("refY", "5");
+        marker.setAttribute("markerWidth", "7");
+        marker.setAttribute("markerHeight", "7");
+        marker.setAttribute("orient", "auto-start-reverse");
+        var head = document.createElementNS(NS, "path");
+        head.setAttribute("d", "M0,0 L10,5 L0,10 z");
+        head.setAttribute("fill", m[1]);
+        marker.appendChild(head);
+        defs.appendChild(marker);
+      });
+      svg.appendChild(defs);
+      // An arrow leaves a task low on its edge and arrives high on the
+      // next one's, so on the hovered task what comes in and what goes out
+      // do not meet at one point.
+      var point = function (id, leaving) {
+        var c = self.card(id);
+        if (!c) return null;
+        var r = c.getBoundingClientRect();
+        if (!r.height) return null;
+        var inset = Math.min(14, r.height / 4);
+        return { x: r.left - base.left, y: (leaving ? r.bottom - inset : r.top + inset) - base.top };
+      };
+      edges.forEach(function (e) {
+        var p0 = point(e.from, true), p1 = point(e.to, false);
+        if (!p0 || !p1) return;
+        // Farther apart, wider out — stacked arrows do not sit on each other.
+        var bow = Math.max(12, Math.min(28, 12 + Math.abs(p1.y - p0.y) / 25));
+        var bx = Math.min(p0.x, p1.x) - bow;
+        var path = document.createElementNS(NS, "path");
+        path.setAttribute("d", "M" + (p0.x - 1) + "," + p0.y + " C" + bx + "," + p0.y + " " + bx + "," + p1.y + " " + (p1.x - 1) + "," + p1.y);
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", e.after ? LK_AFTER : LK_BEFORE);
+        path.setAttribute("stroke-width", e.direct ? "2" : "1.5");
+        path.setAttribute("stroke-linecap", "round");
+        if (!e.direct) path.setAttribute("stroke-dasharray", "4 3");
+        path.setAttribute("marker-end", "url(#" + mid + "-head-" + (e.after ? "a" : "b") + ")");
+        svg.appendChild(path);
+        var dot = document.createElementNS(NS, "circle");
+        dot.setAttribute("cx", p0.x);
+        dot.setAttribute("cy", p0.y);
+        dot.setAttribute("r", "2.5");
+        dot.setAttribute("fill", e.after ? LK_AFTER : LK_BEFORE);
+        svg.appendChild(dot);
+      });
     }
   };
 

@@ -3946,13 +3946,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             type="button"
             phx-click="cancel"
             data-confirm={@dirty? && gettext("Discard your changes?")}
-            class="btn btn-ghost btn-sm order-1"
+            class="btn btn-ghost btn-sm order-1 mr-auto"
           >
-            {gettext("Cancel")}
+            {gettext("Close")}
           </button>
           <%!-- The browser's implicit submission (Enter in a field) presses
                the FIRST submit button: Enter adds and starts the next task,
-               like Enter in the typed list. "Add and close" is the click. --%>
+               like Enter in the typed list. "Add and close" is the click most
+               people make, so it is the highlighted one, last in the row. --%>
           <button
             :if={@live_action == :new}
             type="submit"
@@ -3961,14 +3962,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             value="next"
             phx-disable-with={gettext("Saving…")}
             title={gettext("Enter")}
-            class="btn btn-primary btn-sm order-3"
+            class="btn btn-outline btn-sm order-2"
           >
             {gettext("Add")}
           </button>
           <button
             type="submit"
             phx-disable-with={gettext("Saving…")}
-            class={["btn btn-sm order-2", if(@live_action == :new, do: "btn-outline", else: "btn-primary")]}
+            class="btn btn-primary btn-sm order-3"
           >
             <%= if @live_action == :new, do: gettext("Add and close"), else: gettext("Save") %>
           </button>
