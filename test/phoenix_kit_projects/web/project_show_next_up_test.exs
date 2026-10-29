@@ -168,6 +168,43 @@ defmodule PhoenixKitProjects.Web.ProjectShowNextUpTest do
     assert status(ctx.render) == "in_progress"
   end
 
+  # The database refuses to mark `a` done, as a check constraint would: the
+  # write comes back as a changeset error (the trigger and its function go
+  # with the test's sandbox transaction).
+  defp refuse_done!(a) do
+    Repo.query!("""
+    CREATE FUNCTION pkp_test_refuse_done() RETURNS trigger AS $$
+    BEGIN
+      RAISE EXCEPTION 'refused by the test' USING ERRCODE = 'check_violation',
+        CONSTRAINT = 'phoenix_kit_project_assignments_dates_check';
+    END $$ LANGUAGE plpgsql
+    """)
+
+    Repo.query!("""
+    CREATE TRIGGER pkp_test_refuse_done BEFORE UPDATE ON phoenix_kit_project_assignments
+    FOR EACH ROW WHEN (NEW.status = 'done' AND NEW.uuid = '#{a.uuid}'::uuid)
+    EXECUTE FUNCTION pkp_test_refuse_done()
+    """)
+  end
+
+  test "a completion that fails puts nothing back: the kept-idle task stays released", ctx do
+    {:ok, _} = Projects.update_assignment_status(ctx.render, %{status: "todo"})
+    {:ok, view, _html} = show(ctx)
+
+    render_click(view, "complete", %{"uuid" => ctx.consult.uuid})
+    render_click(view, "next_up_toggle_idle", %{"uuid" => ctx.render.uuid})
+    refuse_done!(ctx.consult)
+
+    render_submit(view, "next_up_confirm", %{"uuid" => ctx.consult.uuid})
+
+    assert status(ctx.consult) == "waiting"
+    # Without one transaction around the confirm it was already back to
+    # waiting when the completion failed.
+    assert status(ctx.render) == "todo"
+    assert status(ctx.measure) == "waiting"
+    refute_activity_logged("projects.assignment_made_idle", resource_uuid: ctx.render.uuid)
+  end
+
   test "a completion that holds nothing up completes at once", ctx do
     {:ok, view, _html} = show(ctx)
 

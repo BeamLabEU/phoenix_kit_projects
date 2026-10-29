@@ -1196,15 +1196,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp update_assignment_with_activity(socket, a, attrs, action_name, opts) do
     case Projects.update_assignment_status(a, attrs, expect: a.status) do
       {:ok, _} ->
-        Activity.log(action_name,
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: a.uuid,
-          # The assignee is the affected user — with it, core's bridge
-          # delivers "your task was completed/reopened/…" (Step 7).
-          target_uuid: Activity.assignee_target_uuid(a),
-          metadata: Keyword.get(opts, :metadata, %{})
-        )
+        log_activity(:ok, fn ->
+          Activity.log(action_name,
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "assignment",
+            resource_uuid: a.uuid,
+            # The assignee is the affected user — with it, core's bridge
+            # delivers "your task was completed/reopened/…" (Step 7).
+            target_uuid: Activity.assignee_target_uuid(a),
+            metadata: Keyword.get(opts, :metadata, %{})
+          )
+        end)
 
         recompute_owning_subproject(socket, a)
         {:ok, socket}
@@ -1213,12 +1215,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         {:error, socket, :stale}
 
       {:error, cs} ->
-        Activity.log_failed(action_name,
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: a.uuid,
-          metadata: Keyword.get(opts, :metadata, %{})
-        )
+        log_activity(:failed, fn ->
+          Activity.log_failed(action_name,
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "assignment",
+            resource_uuid: a.uuid,
+            metadata: Keyword.get(opts, :metadata, %{})
+          )
+        end)
 
         {:error, socket, error_summary(cs, gettext("Could not update task."))}
     end
@@ -1415,6 +1419,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # each person is told once, naming the task just done; only the ticked
   # people, with the comment (`Handoffs.with_overrides/2`). Every right is
   # checked again now: one seen when the dialog opened is not trusted.
+  #
+  # All of it is ONE transaction (`in_one_write/1`): a completion that fails
+  # after the kept-idle rows were put back must not leave them demoted, so
+  # either everything is written or nothing is. A row that moved on since
+  # the dialog opened (`:stale`) is left as it is and is no failure.
   defp confirm_next_up(socket, %Assignment{} = a, next_up, notes) do
     scope = socket.assigns[:phoenix_kit_current_scope]
     project = socket.assigns.project
@@ -1423,35 +1432,106 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     Handoffs.with_overrides(next_up_overrides(next_up, notes), fn ->
       Handoffs.batch(fn ->
-        case next_up.mode do
-          :release ->
-            {:ok, socket, release_next_up(socket, rows, next_up, may?)}
-
-          :complete ->
-            complete_and_release(socket, a, rows, next_up, may?)
-        end
+        in_one_write(socket, fn -> run_next_up(socket, a, rows, next_up, may?) end)
       end)
     end)
   end
 
+  defp run_next_up(socket, _a, rows, %{mode: :release} = next_up, may?) do
+    with {:ok, released} <- release_next_up(socket, rows, next_up, may?),
+         do: {:ok, socket, released}
+  end
+
+  defp run_next_up(socket, a, rows, %{mode: :complete} = next_up, may?),
+    do: complete_and_release(socket, a, rows, next_up, may?)
+
   defp complete_and_release(socket, a, rows, next_up, may?) do
-    for row <- rows,
-        row.uuid in next_up.idle,
-        row.status == "todo",
-        may?.(row),
-        do: set_readiness(socket, row, "waiting")
+    idle = Enum.filter(rows, &(&1.uuid in next_up.idle and &1.status == "todo" and may?.(&1)))
 
-    below = Outline.open_below(a, current_person_uuid(socket))
-
-    with {:ok, socket} <- complete_assignment(socket, a, below) do
-      {:ok, socket, release_next_up(socket, rows, next_up, may?)}
+    with :ok <- set_each_readiness(socket, idle, "waiting"),
+         below = Outline.open_below(a, current_person_uuid(socket)),
+         {:ok, socket} <- complete_assignment(socket, a, below),
+         {:ok, released} <- release_next_up(socket, rows, next_up, may?) do
+      {:ok, socket, released}
+    else
+      {:error, %Phoenix.LiveView.Socket{} = socket, msg} -> {:error, socket, msg}
+      :error -> {:error, socket, gettext("Could not update task.")}
     end
   end
 
   defp release_next_up(socket, rows, next_up, may?) do
     rows
     |> Enum.filter(&(&1.uuid not in next_up.idle and &1.status == "waiting" and may?.(&1)))
-    |> Enum.count(&(set_readiness(socket, &1, "todo") == :ok))
+    |> Enum.reduce_while({:ok, 0}, fn row, {:ok, n} ->
+      case set_readiness(socket, row, "todo") do
+        :ok -> {:cont, {:ok, n + 1}}
+        :stale -> {:cont, {:ok, n}}
+        :error -> {:halt, :error}
+      end
+    end)
+  end
+
+  # The first failure stops the rest: the transaction around it is lost.
+  defp set_each_readiness(socket, rows, to) do
+    Enum.reduce_while(rows, :ok, fn row, :ok ->
+      if set_readiness(socket, row, to) == :error, do: {:halt, :error}, else: {:cont, :ok}
+    end)
+  end
+
+  # Runs a step of several writes as one transaction. The broadcasts wait
+  # for the commit (`ProjectsPubSub.after_commit/1`), and so do the
+  # activity entries — through them core's notices and the task's people
+  # are told — written only once the change is real; a failure's own
+  # entry is written either way. On a rollback the hand-offs collected so
+  # far are dropped (`Handoffs.discard/0`): nobody hears of what did not
+  # happen. `fun` answers `{:ok, socket, value}` or `{:error, socket, msg}`.
+  @held_logs :pkp_show_held_activity
+
+  defp in_one_write(socket, fun) do
+    Process.put(@held_logs, [])
+
+    result =
+      try do
+        ProjectsPubSub.after_commit(fn ->
+          case fun.() do
+            {:ok, socket, value} -> {:ok, {socket, value}}
+            {:error, socket, msg} -> {:error, {socket, msg}}
+          end
+        end)
+      catch
+        kind, reason ->
+          Process.delete(@held_logs)
+          :erlang.raise(kind, reason, __STACKTRACE__)
+      end
+
+    committed? = match?({:ok, _}, result)
+
+    for {kind, log} <- Enum.reverse(Process.delete(@held_logs) || []),
+        committed? or kind == :failed,
+        do: log.()
+
+    case result do
+      {:ok, {socket, value}} ->
+        {:ok, socket, value}
+
+      {:error, {%Phoenix.LiveView.Socket{} = socket, msg}} ->
+        Handoffs.discard()
+        {:error, socket, msg}
+
+      {:error, _reason} ->
+        Handoffs.discard()
+        {:error, socket, gettext("Could not update task.")}
+    end
+  end
+
+  # An activity entry, held while `in_one_write/1` runs (see there).
+  defp log_activity(kind, fun) when kind in [:ok, :failed] do
+    case Process.get(@held_logs) do
+      held when is_list(held) -> Process.put(@held_logs, [{kind, fun} | held])
+      _ -> fun.()
+    end
+
+    :ok
   end
 
   # Releases a waiting task ("can be started" — `Handoffs` tells its people)
@@ -1463,13 +1543,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     case Projects.update_assignment_status(a, %{status: to}, expect: a.status) do
       {:ok, _} ->
-        Activity.log(action,
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: a.uuid,
-          metadata: %{"task" => Assignment.label(a), "from" => a.status, "to" => to},
-          tell: false
-        )
+        log_activity(:ok, fn ->
+          Activity.log(action,
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "assignment",
+            resource_uuid: a.uuid,
+            metadata: %{"task" => Assignment.label(a), "from" => a.status, "to" => to},
+            tell: false
+          )
+        end)
 
         :ok
 
@@ -1478,12 +1560,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         :stale
 
       {:error, _} ->
-        Activity.log_failed(action,
-          actor_uuid: Activity.actor_uuid(socket),
-          resource_type: "assignment",
-          resource_uuid: a.uuid,
-          metadata: %{"task" => Assignment.label(a)}
-        )
+        log_activity(:failed, fn ->
+          Activity.log_failed(action,
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "assignment",
+            resource_uuid: a.uuid,
+            metadata: %{"task" => Assignment.label(a)}
+          )
+        end)
 
         :error
     end
