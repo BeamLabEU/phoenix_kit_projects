@@ -121,6 +121,15 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
     field(:number, :integer, read_after_writes: true)
     field(:start_date, :date)
     field(:end_date, :date)
+    # V26 — an optional wall-clock time on each planned day (zone-free,
+    # like the dates); by when it has to be done (a moment, and the only
+    # thing that makes a task overdue); when work really began (Start —
+    # `completed_at` is when it really ended). The real times can be
+    # corrected afterwards (`times_changeset/2`).
+    field(:start_time, :time)
+    field(:end_time, :time)
+    field(:deadline, :utc_datetime)
+    field(:started_at, :utc_datetime)
 
     belongs_to(:project, Project, foreign_key: :project_uuid, references: :uuid)
     belongs_to(:task, Task, foreign_key: :task_uuid, references: :uuid)
@@ -166,12 +175,12 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   @optional ~w(task_uuid child_project_uuid position description estimated_duration
                estimated_duration_unit counts_weekends progress_pct track_progress priority
                translations assigned_team_uuid assigned_department_uuid assigned_person_uuid
-               waiting_on origin start_date end_date)a
+               waiting_on origin start_date end_date start_time end_time deadline)a
 
   # Server-only fields: set by trusted server code (completion tracking,
   # provenance), never cast from untrusted form params. Use `status_changeset/2`.
   @server_only ~w(completed_by_uuid completed_at created_by_uuid created_by_key_uuid
-                  started_by_uuid started_by_key_uuid words_by_key_uuid)a
+                  started_by_uuid started_by_key_uuid words_by_key_uuid started_at)a
 
   @doc """
   Form-facing changeset. Does NOT allow setting `completed_by_uuid` or
@@ -198,6 +207,7 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
 
   defp validate(changeset) do
     changeset
+    |> stamp_started()
     |> validate_required(@required)
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
     |> validate_inclusion(:priority, ~w(urgent high normal low))
@@ -237,26 +247,100 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
   defp validate_dates(changeset) do
     with %Date{} = from <- get_field(changeset, :start_date),
          %Date{} = to <- get_field(changeset, :end_date),
-         :lt <- Date.compare(to, from) do
+         order when order in [:lt, :eq] <- Date.compare(to, from),
+         true <- order == :lt or times_reversed?(changeset) do
       add_error(changeset, :end_date, dates_message())
     else
       _ -> changeset
     end
   end
 
+  # Work really began when the task first went in progress, by whatever
+  # path (Start, the board, the form, the API); a reopened task keeps the
+  # first start. Set here so no path can forget it.
+  defp stamp_started(changeset) do
+    if get_change(changeset, :status) == "in_progress" and
+         is_nil(get_field(changeset, :started_at)) do
+      put_change(changeset, :started_at, DateTime.utc_now() |> DateTime.truncate(:second))
+    else
+      changeset
+    end
+  end
+
+  # Same planned day, the end's time before the start's.
+  defp times_reversed?(changeset) do
+    case {get_field(changeset, :start_time), get_field(changeset, :end_time)} do
+      {%Time{} = from, %Time{} = to} -> Time.compare(to, from) == :lt
+      _ -> false
+    end
+  end
+
+  @doc """
+  Corrects when the work really began and ended (`started_at`,
+  `completed_at`): a late "Done" moved back to when it happened. Only the
+  two times; who did it and the status are untouched. Neither may lie in
+  the future, and the end is not before the start.
+  """
+  @spec times_changeset(t(), map()) :: Ecto.Changeset.t()
+  def times_changeset(assignment, attrs) do
+    now = DateTime.utc_now() |> DateTime.add(60, :second)
+
+    assignment
+    |> cast(attrs, [:started_at, :completed_at])
+    |> validate_change(:started_at, &not_future(&1, &2, now))
+    |> validate_change(:completed_at, &not_future(&1, &2, now))
+    |> then(fn cs ->
+      with %DateTime{} = from <- get_field(cs, :started_at),
+           %DateTime{} = to <- get_field(cs, :completed_at),
+           :lt <- DateTime.compare(to, from) do
+        add_error(cs, :completed_at, gettext("must not be before it was started"))
+      else
+        _ -> cs
+      end
+    end)
+  end
+
+  defp not_future(field, %DateTime{} = at, now) do
+    if DateTime.compare(at, now) == :gt,
+      do: [{field, gettext("cannot be in the future")}],
+      else: []
+  end
+
+  defp not_future(_field, _at, _now), do: []
+
   defp dates_message, do: gettext("must not be before the start date")
 
   @doc """
-  True when the task has an end date that has passed and it is not done.
-  `today` is the reader's day (defaults to the UTC day).
+  True when the task's deadline has passed and it is not done (V26). The
+  planned days never make a task overdue: they are a plan, the deadline is
+  the promise. `now` defaults to the current moment.
   """
-  @spec overdue?(t(), Date.t()) :: boolean()
-  def overdue?(assignment, today \\ Date.utc_today())
+  @spec overdue?(t(), DateTime.t()) :: boolean()
+  def overdue?(assignment, now \\ DateTime.utc_now())
 
-  def overdue?(%__MODULE__{end_date: %Date{} = d, status: status}, %Date{} = today),
-    do: status != "done" and Date.compare(d, today) == :lt
+  def overdue?(%__MODULE__{deadline: %DateTime{} = d, status: status}, %DateTime{} = now),
+    do: status != "done" and DateTime.compare(d, now) == :lt
 
   def overdue?(_, _), do: false
+
+  @doc """
+  Where a task stands against its deadline: `:overdue` (passed, not done),
+  `:soon` (due within the next two hours), `:set` (further off, or done)
+  or `nil` (no deadline).
+  """
+  @spec deadline_state(t(), DateTime.t()) :: :overdue | :soon | :set | nil
+  def deadline_state(assignment, now \\ DateTime.utc_now())
+
+  def deadline_state(%__MODULE__{deadline: %DateTime{} = d, status: status} = a, now) do
+    cond do
+      status == "done" -> :set
+      overdue?(a, now) -> :overdue
+      DateTime.diff(d, now) <= 2 * 3600 -> :soon
+      true -> :set
+    end
+  end
+
+  def deadline_state(_, _), do: nil
 
   @doc """
   What this row is called: a task's ref (`ACME-42` — its project's key and

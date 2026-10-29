@@ -1350,9 +1350,42 @@ defmodule PhoenixKitProjects.Web.Api.TasksController do
       |> maybe_put("position", params["position"] |> then(&if(is_integer(&1), do: &1)))
 
     with {:ok, attrs} <- put_date(attrs, "start_date", params),
-         {:ok, attrs} <- put_date(attrs, "end_date", params) do
+         {:ok, attrs} <- put_date(attrs, "end_date", params),
+         {:ok, attrs} <- put_deadline(attrs, params) do
       checked_attrs(attrs)
     end
+  end
+
+  # By when it has to be done (V26): an ISO 8601 moment with its offset
+  # (`2026-10-29T15:00:00+02:00`), or null to clear. A bare day or a time
+  # without an offset is refused: an agent's clock is not the reader's.
+  defp put_deadline(attrs, params) do
+    case Map.fetch(params, "deadline") do
+      :error ->
+        {:ok, attrs}
+
+      {:ok, nil} ->
+        {:ok, Map.put(attrs, "deadline", nil)}
+
+      {:ok, value} when is_binary(value) ->
+        case DateTime.from_iso8601(value) do
+          {:ok, at, _offset} -> {:ok, Map.put(attrs, "deadline", DateTime.truncate(at, :second))}
+          _ -> deadline_error()
+        end
+
+      {:ok, _} ->
+        deadline_error()
+    end
+  end
+
+  defp deadline_error do
+    {:error,
+     Json.error_body(
+       422,
+       "validation_failed",
+       "deadline must be an ISO 8601 date and time with an offset, e.g. 2026-10-29T15:00:00+02:00.",
+       %{deadline: ["must be a date and time with an offset"]}
+     )}
   end
 
   # A date an agent may set or clear; anything that is not a day is a 422.

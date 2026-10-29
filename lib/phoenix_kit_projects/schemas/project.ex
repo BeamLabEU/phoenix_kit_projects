@@ -57,6 +57,8 @@ defmodule PhoenixKitProjects.Schemas.Project do
           current_status_slug: String.t() | nil,
           settings: map(),
           external_id: String.t() | nil,
+          external_url: String.t() | nil,
+          external_label: String.t() | nil,
           assigned_team_uuid: UUIDv7.t() | nil,
           assigned_team: Team.t() | Ecto.Association.NotLoaded.t() | nil,
           assigned_department_uuid: UUIDv7.t() | nil,
@@ -105,6 +107,11 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # external system; holds an id, UUID, or slug. No UI — set programmatically
     # by host apps/integrations. Indexed for lookup; not unique.
     field(:external_id, :string)
+    # A link out (V26): where this project belongs elsewhere — the order a
+    # host app made it for, a client folder — shown as a button in the
+    # project's header on every tab. http(s) only.
+    field(:external_url, :string)
+    field(:external_label, :string)
     # The short name people use instead of the uuid (`ACME`, chain V22;
     # `PhoenixKitProjects.Refs`). Unique across every key any project has
     # had; the database fills a placeholder when none is given, hence
@@ -129,7 +136,20 @@ defmodule PhoenixKitProjects.Schemas.Project do
   end
 
   @required ~w(name start_mode)a
-  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id key assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
+  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id external_url external_label key assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
+
+  # Only a web address may be a link out: a `javascript:` or `data:` one
+  # would run in the viewer's page when clicked.
+  defp http_url(field, url) do
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host}
+      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        []
+
+      _ ->
+        [{field, gettext("must be a web address starting with http:// or https://")}]
+    end
+  end
 
   @spec changeset(t(), map(), keyword()) :: Ecto.Changeset.t()
   def changeset(project, attrs, opts \\ []) do
@@ -143,6 +163,10 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_required([:counts_weekends])
     |> validate_length(:name, min: 1, max: 255)
     |> validate_length(:external_id, max: 255)
+    |> update_change(:external_url, &String.trim/1)
+    |> validate_length(:external_url, max: 2000)
+    |> validate_length(:external_label, max: 120)
+    |> validate_change(:external_url, &http_url/2)
     |> validate_key()
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
     |> validate_inclusion(:start_mode, @start_modes)

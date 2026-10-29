@@ -418,6 +418,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       origin: a.origin,
       start_date: a.start_date,
       end_date: a.end_date,
+      start_time: a.start_time,
+      end_time: a.end_time,
+      deadline: a.deadline,
       overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
       # who it is FOR (a person, a team or a department), apart from who
@@ -429,6 +432,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       interactions:
         if(may_read_interactions?(), do: interactions || interaction_uuids(a), else: []),
       library_task: library_task?(a),
+      started_at: a.started_at,
       completed_at: a.completed_at,
       inserted_at: a.inserted_at,
       updated_at: a.updated_at

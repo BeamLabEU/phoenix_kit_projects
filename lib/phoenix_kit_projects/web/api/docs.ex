@@ -451,6 +451,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             doc: "`YYYY-MM-DD`, never before `start_date`; empty or null clears it"
           },
           %{
+            name: "deadline",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "by when it has to be done, ISO 8601 with an offset (`2026-10-29T15:00:00+02:00`); null clears it"
+          },
+          %{
             name: "waiting_on",
             in: :body,
             type: "string",
@@ -1617,8 +1625,12 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     - `start_date`, `end_date` - the task's own days, `YYYY-MM-DD`, both optional and either may
       stand alone; the end is never before the start. A day, not a moment: no time and no zone.
       A dated task sits on those days in the calendar and the timeline; an undated one is still
-      placed by its duration and its place in the order. `overdue` is true once the end date has
-      passed and the task is not done. `GET /tasks?due_before=<day>&status=open` is what is owed.
+      placed by its duration and its place in the order. `GET /tasks?due_before=<day>&status=open`
+      is what is planned to end by then.
+    - `deadline` - by when it has to be done: an ISO 8601 date and time with its offset
+      (`2026-10-29T15:00:00+02:00`), or null to clear. Independent of the planned days; `overdue`
+      is true once the deadline has passed and the task is not done. Read-only beside it:
+      `started_at` (when work really began, set on the way into in progress) and `completed_at`.
     - `labels` - the project's labels by name (needs the labels feature); on create or update, the
       full list to set. New names are created for you.
     - `position: "top"` on create puts the task above every row.

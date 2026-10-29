@@ -120,6 +120,114 @@ defmodule PhoenixKitProjects.Assignees do
     end
   end
 
+  @typedoc "Who an assignee is, as faces: up to `max` people and how many more."
+  @type faces :: %{faces: [%{name: String.t(), user: struct() | nil}], extra: non_neg_integer()}
+
+  @doc """
+  The faces behind each assignment's assignee, for showing who has what at
+  a glance (the boss, 2026-10-29): a person is themselves; a team is its
+  members; a department is the people whose primary department it is and
+  the members of its teams. One query per kind for the whole list.
+
+  Returns `%{assignment_uuid => faces}` for the assigned rows only, each
+  holding up to `max` people (named, with their user for the picture when
+  they have one) and the count left over. A failed staff read gives `%{}`:
+  faces are decoration and must never take a page down.
+  """
+  @spec faces([Assignment.t()], pos_integer()) :: %{optional(String.t()) => faces()}
+  def faces(assignments, max \\ 4) do
+    persons = assignments |> Enum.map(& &1.assigned_person_uuid) |> Enum.reject(&is_nil/1)
+    teams = assignments |> Enum.map(& &1.assigned_team_uuid) |> Enum.reject(&is_nil/1)
+    depts = assignments |> Enum.map(& &1.assigned_department_uuid) |> Enum.reject(&is_nil/1)
+
+    by_person = people_by(:person, persons)
+    by_team = people_by(:team, teams)
+    by_dept = people_by(:department, depts)
+
+    Enum.reduce(assignments, %{}, fn a, acc ->
+      case assignee_people(a, by_person, by_team, by_dept) do
+        [] ->
+          acc
+
+        people ->
+          {shown, rest} = Enum.split(people, max)
+          Map.put(acc, a.uuid, %{faces: shown, extra: length(rest)})
+      end
+    end)
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] faces failed: #{Exception.message(e)}")
+      %{}
+  end
+
+  defp assignee_people(%{assigned_person_uuid: u}, by_person, _, _) when is_binary(u),
+    do: Map.get(by_person, u, [])
+
+  defp assignee_people(%{assigned_team_uuid: u}, _, by_team, _) when is_binary(u),
+    do: Map.get(by_team, u, [])
+
+  defp assignee_people(%{assigned_department_uuid: u}, _, _, by_dept) when is_binary(u),
+    do: Map.get(by_dept, u, [])
+
+  defp assignee_people(_, _, _, _), do: []
+
+  defp people_by(_kind, []), do: %{}
+
+  defp people_by(:person, uuids) do
+    from(p in Person,
+      left_join: u in assoc(p, :user),
+      where: p.uuid in ^uuids,
+      select: {p.uuid, p, u}
+    )
+    |> repo().all()
+    |> Map.new(fn {uuid, p, u} -> {uuid, [face(p, u)]} end)
+  end
+
+  defp people_by(:team, uuids) do
+    from(m in TeamMembership,
+      join: p in assoc(m, :person),
+      left_join: u in assoc(p, :user),
+      where: m.team_uuid in ^uuids and p.status != "trashed",
+      order_by: [asc: p.name],
+      select: {m.team_uuid, p, u}
+    )
+    |> repo().all()
+    |> group_faces()
+  end
+
+  defp people_by(:department, uuids) do
+    primary =
+      from(p in Person,
+        left_join: u in assoc(p, :user),
+        where: p.primary_department_uuid in ^uuids and p.status != "trashed",
+        select: {p.primary_department_uuid, p, u}
+      )
+
+    via_teams =
+      from(m in TeamMembership,
+        join: t in Team,
+        on: t.uuid == m.team_uuid,
+        join: p in assoc(m, :person),
+        left_join: u in assoc(p, :user),
+        where: t.department_uuid in ^uuids and p.status != "trashed",
+        select: {t.department_uuid, p, u}
+      )
+
+    (repo().all(primary) ++ repo().all(via_teams))
+    |> Enum.uniq_by(fn {dept, p, _u} -> {dept, p.uuid} end)
+    |> Enum.sort_by(fn {_dept, p, _u} -> p.name || "" end)
+    |> group_faces()
+  end
+
+  defp group_faces(rows) do
+    Enum.group_by(rows, &elem(&1, 0), fn {_key, p, u} -> face(p, u) end)
+  end
+
+  defp face(%Person{name: name}, user),
+    do: %{name: name || (user && user.email) || "?", user: user}
+
+  defp repo, do: PhoenixKit.RepoHelper.repo()
+
   @doc "Whether the assignment has no assignee at all (person/team/department)."
   @spec unassigned?(Assignment.t()) :: boolean()
   def unassigned?(%Assignment{} = a) do

@@ -42,12 +42,58 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       assert same_day.end_date == ~D[2026-10-12]
     end
 
-    test "overdue: the end date has passed and the task is not done" do
-      a = %Assignment{end_date: ~D[2026-10-05], status: "todo"}
-      assert Assignment.overdue?(a, ~D[2026-10-06])
-      refute Assignment.overdue?(a, ~D[2026-10-05])
-      refute Assignment.overdue?(%{a | status: "done"}, ~D[2026-10-06])
-      refute Assignment.overdue?(%Assignment{status: "todo"}, ~D[2026-10-06])
+    test "overdue: the deadline has passed and the task is not done; planned days never" do
+      a = %Assignment{deadline: ~U[2026-10-05 15:00:00Z], status: "todo"}
+      assert Assignment.overdue?(a, ~U[2026-10-05 15:01:00Z])
+      refute Assignment.overdue?(a, ~U[2026-10-05 14:59:00Z])
+      refute Assignment.overdue?(%{a | status: "done"}, ~U[2026-10-06 00:00:00Z])
+      refute Assignment.overdue?(%Assignment{status: "todo"}, ~U[2026-10-06 00:00:00Z])
+
+      planned_only = %Assignment{end_date: ~D[2026-10-01], status: "todo"}
+      refute Assignment.overdue?(planned_only, ~U[2026-10-06 00:00:00Z])
+
+      assert Assignment.deadline_state(a, ~U[2026-10-05 13:30:00Z]) == :soon
+      assert Assignment.deadline_state(a, ~U[2026-10-05 10:00:00Z]) == :set
+      assert Assignment.deadline_state(a, ~U[2026-10-05 16:00:00Z]) == :overdue
+    end
+
+    test "a planned day may carry a time; the same day's end is not before its start" do
+      cs =
+        Assignment.changeset(%Assignment{project_uuid: Ecto.UUID.generate(), status: "todo"}, %{
+          "start_date" => "2026-10-12",
+          "end_date" => "2026-10-12",
+          "start_time" => "14:00",
+          "end_time" => "09:00"
+        })
+
+      assert {_, _} = cs.errors[:end_date]
+    end
+
+    test "the real start is stamped on the way into in progress, and kept" do
+      cs = Assignment.changeset(%Assignment{status: "todo"}, %{"status" => "in_progress"})
+      assert %DateTime{} = Ecto.Changeset.get_change(cs, :started_at)
+
+      earlier = ~U[2026-10-01 08:00:00Z]
+
+      cs =
+        Assignment.changeset(%Assignment{status: "todo", started_at: earlier}, %{
+          "status" => "in_progress"
+        })
+
+      refute Ecto.Changeset.get_change(cs, :started_at)
+    end
+
+    test "the real times can be corrected, not into the future nor reversed" do
+      a = %Assignment{status: "done"}
+      later = DateTime.utc_now() |> DateTime.add(3600) |> DateTime.truncate(:second)
+
+      assert Assignment.times_changeset(a, %{completed_at: ~U[2026-10-05 09:00:00Z]}).valid?
+      refute Assignment.times_changeset(a, %{completed_at: later}).valid?
+
+      refute Assignment.times_changeset(a, %{
+               started_at: ~U[2026-10-05 10:00:00Z],
+               completed_at: ~U[2026-10-05 09:00:00Z]
+             }).valid?
     end
   end
 
@@ -162,13 +208,15 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       assert is_nil(Projects.get_assignment(a.uuid).end_date)
     end
 
-    test "a task past its end date reads as overdue on its row", %{conn: conn} do
+    test "a task past its deadline reads as overdue on its row; a past planned day does not",
+         %{conn: conn} do
       project = fixture_project()
-      _ = task(project, "Late", %{"end_date" => "2020-01-01"})
+      _ = task(project, "Late", %{"deadline" => "2020-01-01T10:00:00Z"})
+      _ = task(project, "Planned", %{"end_date" => "2020-01-01"})
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert html =~ "Past its end date"
-      assert html =~ "badge-error"
+      assert html =~ "Past its deadline"
+      assert length(Regex.scan(~r/badge-error/, html)) == 1
     end
   end
 
@@ -247,7 +295,9 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       conn: conn,
       project: project
     } do
-      late = task(project, "Late", %{"end_date" => "2020-01-01"})
+      late =
+        task(project, "Late", %{"end_date" => "2020-01-01", "deadline" => "2020-01-01T10:00:00Z"})
+
       _soon = task(project, "Soon", %{"end_date" => "2099-01-01"})
       _none = task(project, "No date")
 
