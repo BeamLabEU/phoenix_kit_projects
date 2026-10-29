@@ -494,8 +494,9 @@ defmodule PhoenixKitProjects do
         global: "PhoenixLiveCalendarHooks"
       },
       # This module's own hooks: the typed task list (`PkpOutline`), the task
-      # list's hover / trace of connections (`PkpLinks`) and a
-      # title edited in place on a card row (`PkpTitle`). Plain JS, no build.
+      # list's hover / trace of connections (`PkpLinks`), a
+      # title edited in place on a card row (`PkpTitle`) and the board's
+      # drag between columns (`PkpBoard`). Plain JS, no build.
       %{
         app: :phoenix_kit_projects,
         file: "static/assets/phoenix_kit_projects.js",
