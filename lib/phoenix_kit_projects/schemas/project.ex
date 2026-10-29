@@ -138,16 +138,23 @@ defmodule PhoenixKitProjects.Schemas.Project do
   @required ~w(name start_mode)a
   @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id external_url external_label key assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
 
-  # Only a web address may be a link out: a `javascript:` or `data:` one
-  # would run in the viewer's page when clicked.
+  # A link out is a web address, or a path on this site ("/admin/…": a host
+  # app's own page, which stays right when the database moves between dev
+  # and production). Never a `javascript:` or `data:` one, which would run
+  # in the viewer's page, nor `//host`, which leaves the site.
   defp http_url(field, url) do
-    case URI.parse(url) do
-      %URI{scheme: scheme, host: host}
-      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+    cond do
+      PhoenixKit.Utils.Routes.local_path?(url) ->
         []
 
-      _ ->
-        [{field, gettext("must be a web address starting with http:// or https://")}]
+      match?(
+        %URI{scheme: s, host: h} when s in ["http", "https"] and is_binary(h) and h != "",
+        URI.parse(url)
+      ) ->
+        []
+
+      true ->
+        [{field, gettext("must be a web address (https://…) or a path on this site (/…)")}]
     end
   end
 
