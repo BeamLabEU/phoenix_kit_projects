@@ -335,7 +335,11 @@ defmodule PhoenixKitProjects.Assignees do
   teams, then departments, then — as `kind: "user"` — active accounts with
   no staff person at all (any user can be given a task; picking one makes
   their person, `People.ensure_person_for_user/2`), each name-sorted; an
-  empty query is browse mode.
+  empty query is browse mode. A team or department the text matches brings
+  its people right under it (Max, 2026-10-30: typing "finance" should find
+  the Finance department and the people in it), each labelled with where
+  they come from and listed once: a department's are those whose primary
+  department it is and the members of its teams, as `faces/2` counts them.
   Returns `{rows, has_more}`, `{[], false}` on a failed staff read.
   """
   @spec search_assignees(String.t() | nil, pos_integer(), String.t() | nil) ::
@@ -403,7 +407,12 @@ defmodule PhoenixKitProjects.Assignees do
       |> repo().all()
       |> Enum.map(&user_row/1)
 
-    {page, rest} = Enum.split(people ++ teams ++ departments ++ users, limit)
+    groups =
+      if pattern,
+        do: with_members(teams, departments, people, lang),
+        else: teams ++ departments
+
+    {page, rest} = Enum.split(people ++ groups ++ users, limit)
     {page, rest != []}
   rescue
     e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
@@ -527,6 +536,93 @@ defmodule PhoenixKitProjects.Assignees do
       sublabel: if(r.name && r.email, do: r.email),
       icon: "hero-user"
     }
+  end
+
+  # How many of a matched team's or department's people the picker lists
+  # under it.
+  @members_per_group 10
+
+  # Each matched team and department followed by its people, labelled with
+  # where they come from ("Finance", "Finance › Payroll"); a person already
+  # listed (a direct match or an earlier group) is not listed again.
+  defp with_members(teams, departments, people, lang) do
+    team_uuids = Enum.map(teams, & &1.uuid)
+    dept_uuids = Enum.map(departments, & &1.uuid)
+    by_team = members_by(:team, team_uuids, lang)
+    by_dept = members_by(:department, dept_uuids, lang)
+    seen = MapSet.new(people, & &1.uuid)
+
+    {rows, _seen} =
+      Enum.flat_map_reduce(teams ++ departments, seen, fn group, seen ->
+        members =
+          case group.kind do
+            "team" -> Map.get(by_team, group.uuid, [])
+            "department" -> Map.get(by_dept, group.uuid, [])
+          end
+          |> Enum.reject(&MapSet.member?(seen, &1.uuid))
+          |> Enum.take(@members_per_group)
+
+        {[group | members], Enum.reduce(members, seen, &MapSet.put(&2, &1.uuid))}
+      end)
+
+    rows
+  end
+
+  defp members_by(_kind, [], _lang), do: %{}
+
+  defp members_by(:team, uuids, lang) do
+    from(m in TeamMembership,
+      join: p in assoc(m, :person),
+      left_join: u in assoc(p, :user),
+      join: t in Team,
+      on: t.uuid == m.team_uuid,
+      left_join: d in Department,
+      on: d.uuid == t.department_uuid,
+      where: m.team_uuid in ^uuids and p.status != "trashed",
+      order_by: [asc: fragment("coalesce(?, ?)", p.name, u.email)],
+      select: {m.team_uuid, %{uuid: p.uuid, name: p.name, email: u.email}, t, d}
+    )
+    |> repo().all()
+    |> Enum.group_by(&elem(&1, 0), fn {_, r, t, d} -> member_row(r, [d, t], lang) end)
+  end
+
+  defp members_by(:department, uuids, lang) do
+    primary =
+      from(p in Person,
+        left_join: u in assoc(p, :user),
+        join: d in Department,
+        on: d.uuid == p.primary_department_uuid,
+        where: p.primary_department_uuid in ^uuids and p.status != "trashed",
+        select: {d.uuid, %{uuid: p.uuid, name: p.name, email: u.email}, d, nil}
+      )
+
+    via_teams =
+      from(m in TeamMembership,
+        join: t in Team,
+        on: t.uuid == m.team_uuid,
+        join: d in Department,
+        on: d.uuid == t.department_uuid,
+        join: p in assoc(m, :person),
+        left_join: u in assoc(p, :user),
+        where: t.department_uuid in ^uuids and p.status != "trashed",
+        select: {d.uuid, %{uuid: p.uuid, name: p.name, email: u.email}, d, t}
+      )
+
+    (repo().all(primary) ++ repo().all(via_teams))
+    |> Enum.uniq_by(fn {dept, r, _, _} -> {dept, r.uuid} end)
+    |> Enum.sort_by(fn {_, r, _, _} -> String.downcase(r.name || r.email || "") end)
+    |> Enum.group_by(&elem(&1, 0), fn {_, r, d, t} -> member_row(r, [d, t], lang) end)
+  end
+
+  # A person row whose sublabel says where they were found:
+  # "Finance › Payroll" (department, then team), or just one of the two.
+  defp member_row(r, path, lang) do
+    where =
+      path
+      |> Enum.reject(&is_nil/1)
+      |> Enum.map_join(" › ", &(People.localized_name(&1, lang) || "?"))
+
+    %{person_row(r) | sublabel: where}
   end
 
   # A user with no staff person yet: picking one makes the person
