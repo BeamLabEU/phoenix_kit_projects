@@ -145,6 +145,9 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
       # Headless = nested as a tab inside ProjectShowLive: drop the "Back to
       # project" link (the tabs replace it). Standalone/emit renders keep it.
       headless: Map.get(session, "headless", false),
+      # Nested in the project page, whose drawer runs a task view's next
+      # step (`AssignmentViewLive`); on its own, the view links there.
+      step_intents?: Map.get(session, "step_intents") in ["1", true],
       wrapper_class: Map.get(session, "wrapper_class", @default_wrapper_class),
       # The raw walk ({items, layout}) — the filtered events derive from it
       # in memory, so filter flips never re-query.
@@ -271,19 +274,23 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
 
       {:task, project_uuid} ->
         WebHelpers.navigate_or_open(socket,
-          to: Paths.edit_assignment(project_uuid, assignment_uuid),
+          to: Paths.view_assignment(project_uuid, assignment_uuid),
           open:
-            {PhoenixKitProjects.Web.AssignmentFormLive,
-             %{
-               "live_action" => "edit",
-               "project_id" => project_uuid,
-               "id" => assignment_uuid
-             }}
+            {PhoenixKitProjects.Web.AssignmentViewLive,
+             view_session(socket, project_uuid, assignment_uuid)}
         )
 
       nil ->
         socket
     end
+  end
+
+  defp view_session(socket, project_uuid, assignment_uuid) do
+    session = %{"project_id" => project_uuid, "id" => assignment_uuid}
+
+    if socket.assigns[:step_intents?],
+      do: Map.put(session, "step_intents", "1"),
+      else: session
   end
 
   # The popup's rows for `date`: every event whose [start, end) span covers
@@ -503,6 +510,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
   # calendar lib infers a readable text color for daisyUI semantic classes.
   defp status_color("done"), do: "bg-success"
   defp status_color("in_progress"), do: "bg-warning"
+  defp status_color("waiting"), do: "bg-neutral"
   defp status_color(_), do: "bg-primary"
 
   defp click_target(%Assignment{} = a) do
@@ -660,8 +668,12 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLive do
                 </p>
                 <p class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
                   <span class="inline-flex items-center gap-1.5">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full bg-neutral"></span>
+                    {gettext("waiting")}
+                  </span>
+                  <span class="inline-flex items-center gap-1.5">
                     <span class="inline-block w-2.5 h-2.5 rounded-full bg-primary"></span>
-                    {gettext("todo")}
+                    {gettext("can be started")}
                   </span>
                   <span class="inline-flex items-center gap-1.5">
                     <span class="inline-block w-2.5 h-2.5 rounded-full bg-warning"></span>

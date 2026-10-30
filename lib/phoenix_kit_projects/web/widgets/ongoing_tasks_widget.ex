@@ -1,6 +1,7 @@
 defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   @moduledoc """
-  Dashboard widget: the current ongoing (todo + in-progress) tasks of a project.
+  Dashboard widget: the current open (waiting, can be started, in progress)
+  tasks of a project.
   Views: `detailed` (task, assignee, status, progress) / `compact` (task + status
   dot). Settings: `"project"` (name / id / substring) and `"limit"`.
   """
@@ -60,7 +61,8 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
     # the task it sits under).
     rows
     |> Enum.filter(
-      &(&1.status in ["todo", "in_progress"] and (is_nil(&1.parent_uuid) or own_line?(&1)))
+      &(&1.status in ["waiting", "todo", "in_progress"] and
+          (is_nil(&1.parent_uuid) or own_line?(&1)))
     )
     |> Enum.take(limit)
     |> Enum.map(&%{&1 | parent: &1.parent_uuid && Map.get(by_uuid, &1.parent_uuid)})

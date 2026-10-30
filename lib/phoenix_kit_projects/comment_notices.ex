@@ -24,8 +24,11 @@ defmodule PhoenixKitProjects.CommentNotices do
   recorded and their delivery claimed here, so the comments box's own ping
   (which a comment from the API or a reopen's reason never gets) finds them
   delivered. A comment written as the reason of a
-  reopen (`metadata["reopen_reason"]`) does not tell the task's assignees
-  again — the reopen's notice quotes it to them.
+  reopen (`metadata["reopen_reason"]`) or as the note of a hand-off
+  (`metadata["handoff_note"]`, the "next up" dialog) does not tell the
+  task's assignees again — the reopen's or the "your turn" notice quotes it
+  to the people it was meant for, and the dialog's unticked people are
+  told nothing.
   """
 
   @behaviour PhoenixKitComments.ResourceHandler
@@ -236,6 +239,7 @@ defmodule PhoenixKitProjects.CommentNotices do
   end
 
   defp reopen_reason?(%Comment{metadata: %{"reopen_reason" => true}}), do: true
+  defp reopen_reason?(%Comment{metadata: %{"handoff_note" => true}}), do: true
   defp reopen_reason?(_), do: false
 
   # Everyone who commented on the thread before. Whether each may still open

@@ -76,7 +76,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "GET",
         path: "/me",
         summary:
-          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent; its `person_uuid` is what `assignee: me` resolves to), its home project (`home_project`; `project` is the same, kept for older agents) with the role, scopes, features and allowed actions there, and EVERY project it reaches (`projects`: key, uuid, name, role, `access` per area, `source`). Read this first; pass `project=<key>` to work anywhere but home.",
+          "Who this key is: its name, the person it acts for (`acting_for`, null for a shared agent; its `person_uuid` is what `assignee: me` resolves to, null until the user has a staff record - `assignee: me` creates it), its home project (`home_project`; `project` is the same, kept for older agents) with the role, scopes, features and allowed actions there, and EVERY project it reaches (`projects`: key, uuid, name, role, `access` per area, `source`). Read this first; pass `project=<key>` to work anywhere but home.",
         auth: true,
         scope: nil,
         action: nil,
@@ -255,7 +255,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             in: :query,
             type: "string",
             required: false,
-            doc: "todo | in_progress | done | open (= not done)"
+            doc: "waiting | todo | in_progress | done | open (= not done)"
           },
           %{
             name: "parent",
@@ -273,7 +273,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/tasks",
         summary:
-          "Create a task at the bottom of the plan, or last under `parent`. It starts as todo and is NOT started — call /tasks/{id}/start to begin it. It is unassigned unless you pass `assignee`. For several tasks at once (a list relayed from a client) use POST /tasks/batch.",
+          "Create a task at the bottom of the plan, or last under `parent`. It starts as waiting (idle — nobody is asked yet) and is NOT started: transition it to todo (“can be started”, which tells its people) or call /tasks/{id}/start to begin it. It is unassigned unless you pass `assignee`. For several tasks at once (a list relayed from a client) use POST /tasks/batch.",
         auth: true,
         scope: "tasks:write",
         action: "create_tasks",
@@ -308,7 +308,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "who the task is for: `me` (the person this key acts for), a person's uuid from GET /people, or `{\"team\": uuid}` / `{\"department\": uuid}`; one assignee at a time. Needs the assignees feature and the assign_tasks action"
+              "who the task is for: `me` (the person this key acts for; their staff record is created if they have none), a person's uuid from GET /people, or `{\"team\": uuid}` / `{\"department\": uuid}`; one assignee at a time. Needs the assignees feature and the assign_tasks action"
           },
           %{
             name: "start_date",
@@ -451,6 +451,14 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             doc: "`YYYY-MM-DD`, never before `start_date`; empty or null clears it"
           },
           %{
+            name: "deadline",
+            in: :body,
+            type: "string",
+            required: false,
+            doc:
+              "by when it has to be done, ISO 8601 with an offset (`2026-10-29T15:00:00+02:00`); null clears it; needs the dates feature"
+          },
+          %{
             name: "waiting_on",
             in: :body,
             type: "string",
@@ -512,7 +520,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/tasks/{id}/transition",
         summary:
-          "Move a task through its lifecycle: todo → in_progress or done; in_progress → done or todo; done → todo. Any other move answers 409 invalid_transition with `allowed_transitions` — reload the task and pick one of those. Completing a task completes every open task under it; when the last task under a parent is done, the parent completes too (unless the project turned that off); reopening a task reopens the done tasks above it; reopening a parent leaves the tasks under it as they are. `also_changed` says how many other tasks moved. Completing a task may complete the project; reopening one may reopen it.",
+          "Move a task through its lifecycle: waiting → todo, in_progress or done; todo → waiting, in_progress or done; in_progress → done or todo; done → todo. `waiting` is idle (the default for a new task); `todo` is released — shown as \"can be started\" — and moving a waiting task there tells its people it is their turn. Any other move answers 409 invalid_transition with `allowed_transitions` — reload the task and pick one of those. Completing a task completes every open task under it; when the last task under a parent is done, the parent completes too (unless the project turned that off); reopening a task reopens the done tasks above it; reopening a parent leaves the tasks under it as they are. `also_changed` says how many other tasks moved. Completing a task may complete the project; reopening one may reopen it.",
         auth: true,
         scope: "status:write",
         action: "update_status",
@@ -525,7 +533,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             in: :body,
             type: "string",
             required: true,
-            doc: "todo | in_progress | done"
+            doc: "waiting | todo | in_progress | done"
           },
           %{
             name: "reason",
@@ -1602,12 +1610,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     ## On a task: waiting, origin, labels
 
     - `waiting_on` - whom the task waits on ("the client", "the boss"). A badge beside the status,
-      not a status: a waiting task is still todo or in_progress. Clear it when the wait is over.
+      not a status: a task waiting on someone is still in whatever status it has. Clear it when the wait is over.
     - `origin` - where a relayed item came from ("client", "boss"); 40 characters.
     - `assignee` - who the task is FOR, apart from who made it (`created_by`) and who started it
       (`started_by`). On every row: `{kind, uuid, name}` (kind is person, team or department) or
       null. To set it on create or PATCH: `"me"` (the person this key acts for - `/me` gives their
-      `acting_for.person_uuid`), a person's uuid from `GET /people`, `{"team": uuid}` or
+      `acting_for.person_uuid`; when that is null because their account has no staff record yet,
+      `"me"` creates a bare one with their name, without asking, and assigns it), a person's uuid from `GET /people`, `{"team": uuid}` or
       `{"department": uuid}`; null clears it; leaving the field out changes nothing. A task has one
       assignee. A task you create is unassigned unless you say so: when the work is the person's
       you act for, pass `assignee: "me"`; when they relay a task for a colleague, look the
@@ -1617,8 +1626,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     - `start_date`, `end_date` - the task's own days, `YYYY-MM-DD`, both optional and either may
       stand alone; the end is never before the start. A day, not a moment: no time and no zone.
       A dated task sits on those days in the calendar and the timeline; an undated one is still
-      placed by its duration and its place in the order. `overdue` is true once the end date has
-      passed and the task is not done. `GET /tasks?due_before=<day>&status=open` is what is owed.
+      placed by its duration and its place in the order. `GET /tasks?due_before=<day>&status=open`
+      is what is planned to end by then.
+    - `deadline` - by when it has to be done: an ISO 8601 date and time with its offset
+      (`2026-10-29T15:00:00+02:00`), or null to clear (needs the dates feature, else 403
+      `feature_disabled`). Independent of the planned days; `overdue`
+      is true once the deadline has passed and the task is not done. Read-only beside it:
+      `started_at` (when work really began, set on the way into in progress) and `completed_at`.
     - `labels` - the project's labels by name (needs the labels feature); on create or update, the
       full list to set. New names are created for you.
     - `position: "top"` on create puts the task above every row.
@@ -1691,7 +1705,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
       `usage`) when the figures are your estimate rather than a count; every entry answers with
       `estimated`, `model`, who recorded it and the note it came with.
     - **Workflow statuses belong to the project**, not to tasks: `POST /project/status`, with a slug
-      from `available_workflow_statuses`. Tasks have only todo / in_progress / done.
+      from `available_workflow_statuses`. Tasks have only waiting / todo / in_progress / done.
     - **Who did it:** your time and usage are recorded as this key (AI time, apart from people's;
       never billable). Task changes are logged under the person this key acts for (`acting_for`
       in /me; for a shared agent, the person who minted it), with the key named — you are their
@@ -1819,10 +1833,10 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
               kind: %{type: "string", enum: ["task", "subproject"]},
               title: %{type: "string"},
               description: %{type: ["string", "null"]},
-              status: %{type: "string", enum: ["todo", "in_progress", "done"]},
+              status: %{type: "string", enum: ["waiting", "todo", "in_progress", "done"]},
               allowed_transitions: %{
                 type: "array",
-                items: %{type: "string", enum: ["todo", "in_progress", "done"]}
+                items: %{type: "string", enum: ["waiting", "todo", "in_progress", "done"]}
               },
               priority: %{type: "string", enum: ["urgent", "high", "normal", "low"]},
               progress_pct: %{type: "integer", minimum: 0, maximum: 100},

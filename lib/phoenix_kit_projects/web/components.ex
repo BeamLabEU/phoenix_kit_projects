@@ -31,6 +31,8 @@ defmodule PhoenixKitProjects.Web.Components do
       import PhoenixKitProjects.Web.Components.QuickAddComposer
       import PhoenixKitProjects.Web.Components.ApiTokenModal
       import PhoenixKitProjects.Web.Components.RefChip
+      # Who has a task, as profile pictures (a stack for a team).
+      import PhoenixKitProjects.Web.Components.AssigneeFaces
       # A destructive action that asks through core's confirm modal.
       import PhoenixKitProjects.Web.Components.ConfirmAction, only: [confirm_action_modal: 1]
       # The "Move…" dialog (a project to another place in the tree).

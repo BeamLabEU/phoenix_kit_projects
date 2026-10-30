@@ -634,6 +634,9 @@ browsing the public portal is a visitor.
   key's minter as `actor_uuid`.
 - `projects.task_dependency_added/removed`, `projects.dependency_added/removed`
 - `projects.assignment_created/updated/started/completed/reopened/removed`
+- `projects.assignment_made_ready` / `projects.assignment_made_idle` (a person moved a
+  task between `waiting` and `todo`), `projects.assignment_ready` (the
+  notice that a task can start, written by `Handoffs`)
 - `projects.assignment_progress_updated`, `projects.assignment_duration_changed`,
   `projects.assignment_tracking_toggled`
 - `projects.subproject_created/linked/detached`
@@ -652,7 +655,7 @@ browsing the public portal is a visitor.
 
 Owns a versioned chain: `PhoenixKitProjects.Migrations.Schema` via
 `migration_module/0`, marker `pkp_schema:<N>` as a `COMMENT ON TABLE` on
-`phoenix_kit_projects`, currently **V25**. `mix phoenix_kit.update` applies it
+`phoenix_kit_projects`, currently **V26**. `mix phoenix_kit.update` applies it
 in hosts by comparing `current_version/0` against
 `migrated_version_runtime/1`; tests run it through
 `PhoenixKitProjects.Test.SchemaMigration`, keyed on
@@ -1284,6 +1287,47 @@ modules and its agent's key behind.
   `link_subproject/2` stay policy-free: the lock is a rule of the screens and of
   `ProjectMove`, not of the context.
 
+### Waiting / ready, deadlines, real times and the Time page (V26, 2026-10-29)
+
+- **Four statuses**: `waiting` (idle — nobody is asked to do it yet; the
+  default for a new task), `todo` (shown as "can be started"), `in_progress`,
+  `done`. Moving a task between `waiting` and `todo` logs
+  `projects.assignment_made_ready` / `_made_idle`; `Handoffs` tells the people
+  a task becomes ready for (`projects.assignment_ready`). Completing a task in
+  `ProjectShowLive` opens the **next-up** dialog: which tasks it unlocks, who to
+  tell, which to keep idle (`Handoffs.would_ready/2`, `with_overrides/2`).
+- **V26 columns** — on the assignment: `deadline` (`TIMESTAMPTZ`, "by when";
+  the only thing that makes a task overdue, `Assignment.overdue?/2` /
+  `deadline_state/2`, indexed `(project_uuid, deadline)`), `started_at` (when
+  work really began, beside `completed_at`; NULL for tasks started before
+  V26 — never guessed), `start_time` / `end_time` (an optional wall-clock time
+  on the planned days, zone-free like the dates). On the project:
+  `external_url` / `external_label` — a link out (http(s), or a local path
+  checked with `Routes.local_path?/1`). The real times are corrected through
+  `Projects.correct_assignment_times/2` (`Assignment.times_changeset/2`).
+- **Task view** (`Web.AssignmentViewLive`, `Paths.view_assignment/2`, hidden
+  admin tab `…/:project_id/assignments/:id`): read-only view of a task that the
+  drawer opens from the list, board and calendar; "Edit" swaps the drawer frame
+  to `AssignmentFormLive` (`PopupHostLive` `:swap`). Its next-step buttons are
+  sent to the page under the drawer with `WebHelpers.emit_intent/3` — only
+  `ProjectShowLive` listens for them.
+- **Task form**: tabs, a live header, an assignee search
+  (`Assignees.search_assignees/3`, `recent_for_project/3`); faces of the
+  assignees come from `Assignees.faces/2` (batched, through the `People`
+  shadows) and render with core's `user_avatar`.
+- **Board**: columns are SortableJS lists driven by the `PkpBoard` hook
+  (shipped in `js_sources/0`, Sortable loaded through core's
+  `PhoenixKitLibraries.loadVendored`); a drop sends `board_move`, which
+  re-checks the rights on the server. Task connections are drawn on hover by
+  the `PkpLinks` hook.
+- **Time page** (`Web.TimeLive`, admin subtab `projects/time`, `Paths.time/0`):
+  per person, for a day or a week, each task's planned span against what
+  really happened (`started_at` → `completed_at`), the late part past the
+  deadline and the logged time. `TimeBoard.build/4` is pure (tests feed it
+  structs), `load/4` reads the projects `Hours.visible_project_uuids/1` lets
+  the viewer see. Work hours for walking a deadline back by its estimate are
+  08:00–17:00.
+
 ### A task's own dates (V21, 2026-10-06)
 
 Max: *"build a start date and an end date."* Until V21 a task's days were
@@ -1297,8 +1341,8 @@ to walk from, so nothing there could carry a date.
   `Assignment.validate_dates/1` keep the end from preceding the start.
   They are ordinary form fields (cast in `changeset/2`), ungated like
   `waiting_on`: blank costs nothing on the row.
-- **`Assignment.overdue?/2`**: the end date has passed and the task is not
-  done. The row's date badge turns red on it; the API answers it as
+- **`Assignment.overdue?/2`**: since V26 the task's `deadline` has passed
+  and the task is not done (the end date alone no longer makes it late). The row's date badge turns red on it; the API answers it as
   `overdue` and counts it in the briefing.
 - **The schedule honours them** (`ScheduleLayout.pin_dates/2`): a dated
   task sits on its days instead of where the walk put it — both dates:

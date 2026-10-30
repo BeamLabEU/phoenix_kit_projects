@@ -37,12 +37,17 @@ defmodule PhoenixKitProjects.Handoffs do
   require Logger
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.{Activity, Actor, Notices, People, Projects}
+  alias PhoenixKitProjects.{Activity, Actor, Notices, Outline, People, Projects}
   alias PhoenixKitProjects.Schemas.{Assignment, Dependency, Project}
 
   @type change :: %{uuid: binary(), project_uuid: binary(), from: term(), to: term()}
 
   @batch :projects_handoff_batch
+  @overrides :projects_handoff_overrides
+
+  # Deeper than any real outline; a guard against a cycle the database
+  # trigger should already make impossible.
+  @max_depth 100
 
   @doc """
   Reacts to one task's status change. `cause` is `:direct` (the caller logs
@@ -99,6 +104,25 @@ defmodule PhoenixKitProjects.Handoffs do
 
       run(Process.delete(@batch) || [])
       result
+    end
+  end
+
+  @doc """
+  Runs `fun` with per-task choices for the notices it causes, keyed by the
+  task's uuid: `:only` — the people (user uuids) who may be told about that
+  task, the rest left out (nil: everyone it would tell); `:note` — words
+  that ride along in the notice ("the client is home after 17:00"). What
+  the project page's "next up" dialog sets: who to tell, and what.
+  """
+  @spec with_overrides(%{binary() => map()}, (-> result)) :: result when result: term()
+  def with_overrides(overrides, fun) when is_map(overrides) and is_function(fun, 0) do
+    previous = Process.get(@overrides)
+    Process.put(@overrides, overrides)
+
+    try do
+      fun.()
+    after
+      if previous, do: Process.put(@overrides, previous), else: Process.delete(@overrides)
     end
   end
 
@@ -171,37 +195,115 @@ defmodule PhoenixKitProjects.Handoffs do
 
   # ── Your turn ───────────────────────────────────────────────────────
 
+  @doc """
+  The not-started tasks of `project_uuid` (waiting, or already released)
+  that nothing would hold up once `uuid` is done — read before the write,
+  so the project page can ask first ("next up"): release each one or keep
+  it idle, and nobody is told of a completion that was a slip. Completing
+  a task ticks its open subtasks, and closing a parent's last open subtask
+  closes the parent while the project lets it (`Outline.parent_auto?/1`),
+  so both are counted done here. In the list's order. Never raises: an
+  empty list on a failure.
+  """
+  @spec would_ready(binary(), binary()) :: [map()]
+  def would_ready(project_uuid, uuid) do
+    shape = load(project_uuid)
+    below = [uuid | descendants(uuid, shape)]
+
+    above =
+      if Outline.parent_auto?(project_uuid),
+        do: closed_above(uuid, shape, below, 0),
+        else: []
+
+    closed = below ++ above
+    after_shape = Enum.reduce(closed, shape, &put_in(&2, [:rows, &1, :status], "done"))
+
+    closed
+    |> Enum.flat_map(&waiting_on(&1, after_shape))
+    |> Enum.reject(&(&1.uuid in closed))
+    |> Enum.filter(&(&1.status in ["waiting", "todo"] and clear?(&1.uuid, after_shape, 0)))
+    |> Enum.uniq_by(& &1.uuid)
+    |> Enum.sort_by(& &1.position)
+  rescue
+    error ->
+      Logger.warning("[Projects] next-up read failed: #{inspect(error.__struct__)}")
+      []
+  catch
+    :exit, _ -> []
+  end
+
+  # The parents that close with `uuid`: each whose every other subtask is
+  # already done (or closing), climbing while that holds.
+  defp closed_above(_uuid, _shape, _closing, depth) when depth > @max_depth, do: []
+
+  defp closed_above(uuid, shape, closing, depth) do
+    with parent when is_binary(parent) <- get_in(shape.rows, [uuid, :parent_uuid]),
+         %{status: status} when status != "done" <- Map.get(shape.rows, parent),
+         true <-
+           shape.children
+           |> Map.get(parent, [])
+           |> Enum.all?(&(&1 in closing or get_in(shape.rows, [&1, :status]) == "done")) do
+      [parent | closed_above(parent, shape, [parent | closing], depth + 1)]
+    else
+      _ -> []
+    end
+  end
+
+  # The rows that wait on `uuid`, and the subtasks under them.
+  defp waiting_on(uuid, shape) do
+    shape.dependents
+    |> Map.get(uuid, [])
+    |> Enum.flat_map(&[&1 | descendants(&1, shape)])
+    |> Enum.map(&Map.get(shape.rows, &1))
+    |> Enum.reject(&is_nil/1)
+  end
+
   defp wake(changes, shape, actor) do
     changes
     |> Enum.filter(&(&1.to == "done"))
     |> Enum.flat_map(fn %{uuid: uuid} ->
       after_label = label(shape, uuid)
 
-      shape.dependents
-      |> Map.get(uuid, [])
-      |> Enum.flat_map(&[&1 | descendants(&1, shape)])
-      |> Enum.map(&Map.get(shape.rows, &1))
-      |> Enum.flat_map(fn
-        nil ->
-          []
+      uuid
+      |> waiting_on(shape)
+      |> Enum.flat_map(fn row ->
+        cond do
+          ready?(row, shape) ->
+            [{row, %{"after" => after_label, "after_uuid" => uuid}}]
 
-        row ->
-          cond do
-            ready?(row, shape) ->
-              [{row, %{"after" => after_label, "after_uuid" => uuid}}]
+          # Work already under way that was waiting on this — on hold since
+          # it was reopened, or started early: it can go on now.
+          row.status == "in_progress" and clear?(row.uuid, shape, 0) ->
+            [{row, %{"after" => after_label, "after_uuid" => uuid, "resume" => true}}]
 
-            # Work already under way that was waiting on this — on hold since
-            # it was reopened, or started early: it can go on now.
-            row.status == "in_progress" and clear?(row.uuid, shape, 0) ->
-              [{row, %{"after" => after_label, "after_uuid" => uuid, "resume" => true}}]
-
-            true ->
-              []
-          end
+          true ->
+            []
+        end
       end)
     end)
+    |> Kernel.++(released(changes, shape))
     |> Enum.uniq_by(fn {row, _} -> row.uuid end)
     |> tell("projects.assignment_ready", actor)
+  end
+
+  # A waiting task released ("ready to start") tells its people it is their
+  # turn — someone decided it can go, whatever is still open before it —
+  # named after what it waited on: the task done in the same write first
+  # (the "next up" confirm), else any done one. A task waiting stays
+  # silent: idle means nobody is asked yet.
+  defp released(changes, shape) do
+    done_now = for %{to: "done", uuid: uuid} <- changes, do: uuid
+
+    for %{from: "waiting", to: "todo", uuid: uuid} <- changes,
+        %{} = row <- [Map.get(shape.rows, uuid)] do
+      deps = Map.get(shape.deps, uuid, [])
+
+      case Enum.find(deps, &(&1 in done_now)) ||
+             Enum.find(deps, &(get_in(shape.rows, [&1, :status]) == "done")) do
+        nil -> {row, %{}}
+        dep -> {row, %{"after" => label(shape, dep), "after_uuid" => dep}}
+      end
+    end
   end
 
   # ── On hold ─────────────────────────────────────────────────────────
@@ -228,9 +330,12 @@ defmodule PhoenixKitProjects.Handoffs do
   # counted. The assignee lists are read per row — a person is a key, a team
   # or department one read each.
   defp tell(rows, action, actor) do
+    overrides = Process.get(@overrides) || %{}
+
     rows
     |> Enum.flat_map(fn {row, meta} ->
-      Enum.map(People.assignee_user_uuids(row), &{&1, row, meta})
+      {people, meta} = overridden(People.assignee_user_uuids(row), meta, overrides[row.uuid])
+      Enum.map(people, &{&1, row, meta})
     end)
     |> Enum.reject(fn {user_uuid, _, _} -> user_uuid == actor end)
     |> Enum.group_by(&{elem(&1, 0), elem(&1, 2)["resume"] == true}, &{elem(&1, 1), elem(&1, 2)})
@@ -246,6 +351,22 @@ defmodule PhoenixKitProjects.Handoffs do
           :ok
       end
     end)
+  end
+
+  # The page's choices for one task (`with_overrides/2`): only the people
+  # it ticked, and its note in the notice.
+  defp overridden(people, meta, nil), do: {people, meta}
+
+  defp overridden(people, meta, %{} = o) do
+    people = if is_list(o[:only]), do: Enum.filter(people, &(&1 in o[:only])), else: people
+
+    meta =
+      case o[:note] do
+        note when is_binary(note) and note != "" -> Map.put(meta, "note", note)
+        _ -> meta
+      end
+
+    {people, meta}
   end
 
   # ── Rows nobody logged ──────────────────────────────────────────────
@@ -279,10 +400,6 @@ defmodule PhoenixKitProjects.Handoffs do
           dependents: %{binary() => [binary()]},
           children: %{binary() => [binary()]}
         }
-
-  # Deeper than any real outline; a guard against a cycle the database
-  # trigger should already make impossible.
-  @max_depth 100
 
   @doc false
   # Every accepted row of the project and its dependencies, in two reads:

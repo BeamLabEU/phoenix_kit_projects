@@ -402,10 +402,17 @@ defmodule PhoenixKitProjects.Notices do
     }
 
     case subject do
-      %Assignment{} -> text(action, ctx) <> " · " <> ctx.project
+      %Assignment{} -> with_note(text(action, ctx), action, meta) <> " · " <> ctx.project
       %Project{} -> text(action, ctx)
     end
   end
+
+  # A hand-off's note (the "next up" dialog) rides along in its notice.
+  defp with_note(line, "projects.assignment_ready", %{"note" => note})
+       when is_binary(note) and note != "",
+       do: gettext("%{line} — “%{note}”", line: line, note: excerpt(note))
+
+  defp with_note(line, _action, _meta), do: line
 
   defp text("projects.assignment_created", c),
     do: gettext("%{actor} gave you a task: “%{task}”", actor: c.actor, task: c.task)

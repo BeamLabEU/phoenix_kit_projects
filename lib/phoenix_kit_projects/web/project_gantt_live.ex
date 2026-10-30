@@ -461,6 +461,7 @@ defmodule PhoenixKitProjects.Web.ProjectGanttLive do
 
   defp gantt_color("done"), do: "bg-success"
   defp gantt_color("in_progress"), do: "bg-warning"
+  defp gantt_color("waiting"), do: "bg-neutral"
   defp gantt_color(_), do: "bg-primary"
 
   # The chart's CHROME strings (toolbar, zoom labels, Today, prev/next, popover +

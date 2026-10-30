@@ -9,7 +9,7 @@ defmodule PhoenixKitProjects.TaskDatesTest do
 
   alias PhoenixKit.Users.Auth
   alias PhoenixKitProjects.{ApiKeys, CalendarDisplay, Projects, ScheduleLayout}
-  alias PhoenixKitProjects.Schemas.Assignment
+  alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @base "/api/projects/v1"
 
@@ -42,12 +42,152 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       assert same_day.end_date == ~D[2026-10-12]
     end
 
-    test "overdue: the end date has passed and the task is not done" do
-      a = %Assignment{end_date: ~D[2026-10-05], status: "todo"}
-      assert Assignment.overdue?(a, ~D[2026-10-06])
-      refute Assignment.overdue?(a, ~D[2026-10-05])
-      refute Assignment.overdue?(%{a | status: "done"}, ~D[2026-10-06])
-      refute Assignment.overdue?(%Assignment{status: "todo"}, ~D[2026-10-06])
+    test "overdue: the deadline has passed and the task is not done; planned days never" do
+      a = %Assignment{deadline: ~U[2026-10-05 15:00:00Z], status: "todo"}
+      assert Assignment.overdue?(a, ~U[2026-10-05 15:01:00Z])
+      refute Assignment.overdue?(a, ~U[2026-10-05 14:59:00Z])
+      refute Assignment.overdue?(%{a | status: "done"}, ~U[2026-10-06 00:00:00Z])
+      refute Assignment.overdue?(%Assignment{status: "todo"}, ~U[2026-10-06 00:00:00Z])
+
+      planned_only = %Assignment{end_date: ~D[2026-10-01], status: "todo"}
+      refute Assignment.overdue?(planned_only, ~U[2026-10-06 00:00:00Z])
+
+      assert Assignment.deadline_state(a, ~U[2026-10-05 13:30:00Z]) == :soon
+      assert Assignment.deadline_state(a, ~U[2026-10-05 10:00:00Z]) == :set
+      assert Assignment.deadline_state(a, ~U[2026-10-05 16:00:00Z]) == :overdue
+    end
+
+    test "a planned day may carry a time; the same day's end is not before its start" do
+      cs =
+        Assignment.changeset(%Assignment{project_uuid: Ecto.UUID.generate(), status: "todo"}, %{
+          "start_date" => "2026-10-12",
+          "end_date" => "2026-10-12",
+          "start_time" => "14:00",
+          "end_time" => "09:00"
+        })
+
+      assert {_, _} = cs.errors[:end_date]
+    end
+
+    test "the real start is stamped on the way into in progress, and kept" do
+      cs = Assignment.changeset(%Assignment{status: "todo"}, %{"status" => "in_progress"})
+      assert %DateTime{} = Ecto.Changeset.get_change(cs, :started_at)
+
+      earlier = ~U[2026-10-01 08:00:00Z]
+
+      cs =
+        Assignment.changeset(%Assignment{status: "todo", started_at: earlier}, %{
+          "status" => "in_progress"
+        })
+
+      refute Ecto.Changeset.get_change(cs, :started_at)
+    end
+
+    test "a real time the status depends on can be moved, not removed" do
+      done = %Assignment{
+        status: "done",
+        started_at: ~U[2026-10-05 08:00:00Z],
+        completed_at: ~U[2026-10-05 09:00:00Z]
+      }
+
+      refute Assignment.times_changeset(done, %{completed_at: nil}).valid?
+      refute Assignment.times_changeset(done, %{started_at: nil}).valid?
+
+      waiting = %Assignment{status: "todo", started_at: ~U[2026-10-05 08:00:00Z]}
+      assert Assignment.times_changeset(waiting, %{started_at: nil}).valid?
+    end
+
+    test "a real time is only set where the status has that moment" do
+      at = ~U[2026-10-05 09:00:00Z]
+
+      for status <- ~w(waiting todo in_progress) do
+        cs = Assignment.times_changeset(%Assignment{status: status}, %{completed_at: at})
+        refute cs.valid?, "a finish on a #{status} task"
+        assert {"the task is not done", _} = cs.errors[:completed_at]
+      end
+
+      for status <- ~w(waiting todo) do
+        cs = Assignment.times_changeset(%Assignment{status: status}, %{started_at: at})
+        refute cs.valid?, "a start on a #{status} task"
+        assert {"the task has not started", _} = cs.errors[:started_at]
+      end
+
+      assert Assignment.times_changeset(%Assignment{status: "in_progress"}, %{started_at: at}).valid?
+
+      assert Assignment.times_changeset(%Assignment{status: "done"}, %{started_at: at}).valid?
+      assert Assignment.times_changeset(%Assignment{status: "done"}, %{completed_at: at}).valid?
+
+      # Clearing stays the keep-rule's: a reopened task's old times may go.
+      reopened = %Assignment{status: "todo", started_at: at, completed_at: at}
+      assert Assignment.times_changeset(reopened, %{started_at: nil, completed_at: nil}).valid?
+    end
+
+    test "a project's link out: a web address or a path here, nothing that runs or leaves" do
+      project = %Project{name: "P", start_mode: "immediate"}
+      link = &Project.changeset(project, %{"external_url" => &1})
+
+      for ok <- [
+            "https://shop.example.com/orders/1042",
+            "http://intranet.example/x?y=1#z",
+            "/admin/andi/sub-orders/42",
+            "  https://padded.example.com  "
+          ] do
+        assert link.(ok).valid?, "refused #{inspect(ok)}"
+      end
+
+      assert Ecto.Changeset.get_change(link.("  https://padded.example.com  "), :external_url) ==
+               "https://padded.example.com"
+
+      for bad <- [
+            "//evil.example.com/x",
+            "/\\evil.example.com",
+            "javascript:alert(1)",
+            "JavaScript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "ftp://files.example.com/a",
+            "https://",
+            "shop.example.com/orders",
+            "/admin/\tx"
+          ] do
+        cs = link.(bad)
+        refute cs.valid?, "accepted #{inspect(bad)}"
+        assert cs.errors[:external_url]
+      end
+
+      too_long = "https://example.com/" <> String.duplicate("a", 2000)
+      refute link.(too_long).valid?
+
+      assert {_, [count: 2000, validation: :length, kind: :max, type: :string]} =
+               link.(too_long).errors[:external_url]
+
+      label = Project.changeset(project, %{"external_label" => String.duplicate("x", 121)})
+      refute label.valid?
+      assert label.errors[:external_label]
+    end
+
+    test "clearing a project's link leaves it empty, without a crash" do
+      project = %Project{
+        name: "P",
+        start_mode: "immediate",
+        external_url: "/admin/x"
+      }
+
+      cs = Project.changeset(project, %{"external_url" => ""})
+      assert cs.valid?
+      assert Ecto.Changeset.get_change(cs, :external_url) == nil
+    end
+
+    test "the real times can be corrected, not into the future nor reversed" do
+      a = %Assignment{status: "done"}
+      later = DateTime.utc_now() |> DateTime.add(3600) |> DateTime.truncate(:second)
+
+      assert Assignment.times_changeset(a, %{completed_at: ~U[2026-10-05 09:00:00Z]}).valid?
+      refute Assignment.times_changeset(a, %{completed_at: later}).valid?
+
+      refute Assignment.times_changeset(a, %{
+               started_at: ~U[2026-10-05 10:00:00Z],
+               completed_at: ~U[2026-10-05 09:00:00Z]
+             }).valid?
     end
   end
 
@@ -162,13 +302,15 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       assert is_nil(Projects.get_assignment(a.uuid).end_date)
     end
 
-    test "a task past its end date reads as overdue on its row", %{conn: conn} do
+    test "a task past its deadline reads as overdue on its row; a past planned day does not",
+         %{conn: conn} do
       project = fixture_project()
-      _ = task(project, "Late", %{"end_date" => "2020-01-01"})
+      _ = task(project, "Late", %{"deadline" => "2020-01-01T10:00:00Z"})
+      _ = task(project, "Planned", %{"end_date" => "2020-01-01"})
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert html =~ "Past its end date"
-      assert html =~ "badge-error"
+      assert html =~ "Past its deadline"
+      assert length(Regex.scan(~r/badge-error/, html)) == 1
     end
   end
 
@@ -247,7 +389,9 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       conn: conn,
       project: project
     } do
-      late = task(project, "Late", %{"end_date" => "2020-01-01"})
+      late =
+        task(project, "Late", %{"end_date" => "2020-01-01", "deadline" => "2020-01-01T10:00:00Z"})
+
       _soon = task(project, "Soon", %{"end_date" => "2099-01-01"})
       _none = task(project, "No date")
 

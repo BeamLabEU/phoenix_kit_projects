@@ -1,7 +1,7 @@
 defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
   @moduledoc """
   Coverage extension for `AssignmentFormLive`. Targets the validate
-  branches (prefill_from_template, task_mode + assign_type toggling,
+  branches (prefill_from_template, task_mode toggling, the assignee picker,
   selected_task_uuid replacement) and the dep handlers
   (add_assignment_dep / remove_assignment_dep).
   """
@@ -9,11 +9,35 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
   use PhoenixKitProjects.LiveCase, async: false
 
   alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitStaff.Schemas.{Department, Person, Team}
 
   setup %{conn: conn} do
     scope = fake_scope()
     conn = put_test_scope(conn, scope)
     {:ok, conn: conn, actor_uuid: scope.user.uuid}
+  end
+
+  # A staff person, team or department to assign, by kind.
+  defp assignee!("person") do
+    Repo.insert!(%Person{
+      user_uuid: embed_user_uuid!(),
+      status: "active",
+      name: "Pat #{System.unique_integer([:positive])}"
+    }).uuid
+  end
+
+  defp assignee!("department") do
+    Repo.insert!(%Department{
+      name: "Dept #{System.unique_integer([:positive])}"
+    }).uuid
+  end
+
+  defp assignee!("team") do
+    Repo.insert!(%Team{
+      name: "Team #{System.unique_integer([:positive])}",
+      department_uuid: assignee!("department")
+    }).uuid
   end
 
   describe "prefill_from_template / validate task switching" do
@@ -63,9 +87,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       assert Process.alive?(view.pid)
     end
 
-    test "validate with assign_type=team triggers the team branch", %{conn: conn} do
+    test "picking a team in the assignee picker sets only the team", %{conn: conn} do
       project = fixture_project()
       _ = fixture_task()
+      uuid = assignee!("team")
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
@@ -74,21 +99,26 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
+      render_click(view, "assignee_pick", %{"kind" => "team", "uuid" => uuid, "label" => "x"})
+
       _ =
         view
-        |> form("#assignment-form",
-          assignment: %{status: "todo"},
-          assign_type: "team",
-          task_mode: "existing"
-        )
+        |> form("#assignment-form", assignment: %{status: "todo"}, task_mode: "existing")
         |> render_change()
 
-      assert Process.alive?(view.pid)
+      form = :sys.get_state(view.pid).socket.assigns.form
+
+      # The other two post back empty from their hidden inputs.
+      for field <- ~w(assigned_person_uuid assigned_team_uuid assigned_department_uuid)a do
+        expected = if field == PhoenixKitProjects.Assignees.assignee_field("team"), do: uuid
+        assert (form[field].value || "") == (expected || "")
+      end
     end
 
-    test "validate with assign_type=department triggers the dept branch", %{conn: conn} do
+    test "picking a department in the assignee picker sets only the department", %{conn: conn} do
       project = fixture_project()
       _ = fixture_task()
+      uuid = assignee!("department")
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
@@ -97,21 +127,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
+      render_click(view, "assignee_pick", %{
+        "kind" => "department",
+        "uuid" => uuid,
+        "label" => "x"
+      })
+
       _ =
         view
-        |> form("#assignment-form",
-          assignment: %{status: "todo"},
-          assign_type: "department",
-          task_mode: "existing"
-        )
+        |> form("#assignment-form", assignment: %{status: "todo"}, task_mode: "existing")
         |> render_change()
 
-      assert Process.alive?(view.pid)
+      form = :sys.get_state(view.pid).socket.assigns.form
+
+      # The other two post back empty from their hidden inputs.
+      for field <- ~w(assigned_person_uuid assigned_team_uuid assigned_department_uuid)a do
+        expected = if field == PhoenixKitProjects.Assignees.assignee_field("department"), do: uuid
+        assert (form[field].value || "") == (expected || "")
+      end
     end
 
-    test "validate with assign_type=person triggers the person branch", %{conn: conn} do
+    test "picking a person in the assignee picker sets only the person", %{conn: conn} do
       project = fixture_project()
       _ = fixture_task()
+      uuid = assignee!("person")
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
@@ -120,16 +159,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
+      render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => uuid, "label" => "x"})
+
       _ =
         view
-        |> form("#assignment-form",
-          assignment: %{status: "todo"},
-          assign_type: "person",
-          task_mode: "existing"
-        )
+        |> form("#assignment-form", assignment: %{status: "todo"}, task_mode: "existing")
         |> render_change()
 
-      assert Process.alive?(view.pid)
+      form = :sys.get_state(view.pid).socket.assigns.form
+
+      # The other two post back empty from their hidden inputs.
+      for field <- ~w(assigned_person_uuid assigned_team_uuid assigned_department_uuid)a do
+        expected = if field == PhoenixKitProjects.Assignees.assignee_field("person"), do: uuid
+        assert (form[field].value || "") == (expected || "")
+      end
     end
   end
 

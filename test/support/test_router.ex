@@ -99,6 +99,7 @@ defmodule PhoenixKitProjects.Test.Router do
       live("/hours", ProjectHoursLive, :index)
       live("/api-keys", ApiKeysLive, :index)
       live("/api-keys/usage", ApiKeysLive, :usage)
+      live("/time", TimeLive, :index)
       live("/overview", OverviewLive, :index)
 
       # Legacy `list/…` addresses redirect to the same path without the segment.
@@ -133,6 +134,7 @@ defmodule PhoenixKitProjects.Test.Router do
 
       live("/:project_id/assignments/new", AssignmentFormLive, :new)
       live("/:project_id/assignments/:id/edit", AssignmentFormLive, :edit)
+      live("/:project_id/assignments/:id", AssignmentViewLive, :show)
 
       # Last: the extension-tab catch-all (mirrors the module's route order).
       live("/:id/:tab", ProjectShowLive, :ext_tab)

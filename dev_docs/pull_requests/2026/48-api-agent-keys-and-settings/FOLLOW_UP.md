@@ -78,6 +78,52 @@ Codex (the repo review) and grok/zai (the surface), taken in the
 
 `mix precommit` 0 (format, compile --warnings-as-errors, deps.unlock --check-unused, hex.audit, credo --strict, dialyzer); `mix test` 1695 tests, 0 failures. CRM: `mix precommit` 0, 832 tests, 0 failures.
 
+## Fixed (pre-existing) — SONNET review (triaged 2026-10-29)
+
+`SONNET_REVIEW.md` was written after the batches above (post-merge, in
+`ca85176`, the commit — not the release-audit folder) and extended in
+`bbfd330`. Each finding re-checked against current code; paths under
+`lib/phoenix_kit_projects/`.
+
+- ~~BUG - HIGH: the Templates list deletes any project~~ — `web/templates_live.ex:407` matches `%Project{is_template: true}` only. `ca85176`.
+- ~~BUG - MEDIUM: `save_redirect` / `adopt_summary` had no authorization row~~ — both `:edit_tasks` in `@event_actions` (`web/project_show_live.ex:2275-2276`); the redirect takes only `summary`/`content` (`:3277`). `ca85176`.
+- ~~BUG - MEDIUM: `open_comments` named any record~~ — `comments_target?/3` gate, `web/project_show_live.ex:3255-3268`. `ca85176`.
+- ~~BUG - MEDIUM: a crafted `project[settings]` bypassed the manage-modules rule~~ — `web/project_form_live.ex:903-915` drops `settings`; `apply_project_type/4` folds from the project as stored (`:1320-1335`). `ca85176`.
+- ~~BUG - MEDIUM: an amendment erased `occurred_at`~~ — `maybe_put_ended_at/3` moves `ended_at` only when the entry has a start (`ledger.ex:299-331`). `ca85176`.
+- ~~BUG - MEDIUM: figures past the column were a 500~~ — `WorkEntry` `@max_amount`/`@max_minutes` and the changeset bound (`schemas/work_entry.ex:50-70`); `@max_int`, `@max_task_minutes` 422s (`web/api/tasks_controller.ex:53-55`, `:1470`). `ca85176`, `3621023`.
+- ~~BUG - MEDIUM: a note's `refs` of the wrong JSON type crashed~~ — `type_error/1` / `id_error/1` catch-alls, integer id read as text (`task_notes.ex:301-317`). `ca85176`.
+- ~~BUG - MEDIUM: sub-project rows could be moved and edited like tasks~~ — `not_subproject_row/1` and the transition guard (`web/api/tasks_controller.ex:362`, `:726-733`, `:1076`). `ca85176`.
+- ~~BUG - MEDIUM: `PATCH description` silently lost on a form-made one-off~~ — `description_for_assignment/2` (`web/api/tasks_controller.ex:754-770`). `ca85176`.
+- ~~BUG - MEDIUM: `PATCH /tasks/:id` could half-apply~~ — `precheck/3` builds both changesets before any write (`web/api/tasks_controller.ex:371`, `:753`); writes since in one transaction. `ca85176`, `3621023`.
+- ~~IMPROVEMENT - MEDIUM: a pending portal submission was reachable by uuid~~ — `fetch/2` 404s a row not `accepted` (`web/api/tasks_controller.ex:1279`). `ca85176`.
+- ~~IMPROVEMENT - MEDIUM: ledger corrections ignored the row's scope~~ — `entry_scope/1` (`web/api/ledger_controller.ex:220-239`). `ca85176`.
+- ~~IMPROVEMENT - MEDIUM: the `/ext` provider's exception text went to the caller~~ — logged, fixed answer (`web/api/ext_controller.ex:142-150`). `ca85176`.
+- ~~BUG - MEDIUM: an abandoned idempotency reservation answered 409 for ever~~ — the age-based takeover the review first added was retracted (`3621023`); closed properly by the session advisory lock (`api_keys.ex:729-761`). `bbfd330`.
+- ~~BUG - MEDIUM: a personal key outlived its person's account~~ — `account_live/1` in `resolve/2` (`api_keys.ex:394-420`); `Members.handle_user_deletion/1` revokes (`members.ex:445-448`). `ca85176`.
+- ~~NITPICK: `AGENTS.md` said V16, omitted `task_interactions` and the reservation semantics~~ — `AGENTS.md:445-451`, `:655` (now V25). `ca85176`.
+- ~~IMPROVEMENT - MEDIUM: the `#` typeahead dropped a root member's sub-projects~~ — `narrow_to_context/2` (`resource_links.ex:367-385`). `ca85176`.
+- ~~The four codex-audit findings ("After the codex audit")~~ — takeover removed, PATCH prechecked, rollup clamped, docs name both scopes; triaged in `../ca85176-release-audit/FOLLOW_UP.md`. `3621023`, `bbfd330`.
+- ~~NITPICK: client-chosen checklist item ids and `done_at` trusted~~ — N/A: the API's checklists were replaced by subtasks (`e9c85cc`).
+- ~~NITPICK: `TasksLive.reorder_tasks` rewrites the global position for a module-only user~~ — now a library write gated on `Authz.manage_library?/1` (`web/tasks_live.ex:297-312`). `13b6a01`. (The `ProjectsLive` half is still live, below.)
+- ~~NITPICK: the `Ledger` / `WorkEntry` moduledocs say "append-only"~~ — `WorkEntry` no longer says it; `ledger.ex:284` says "append-only in spirit, so an amendment leaves its trace", which matches the code.
+- Partially fixed — **IMPROVEMENT - MEDIUM: every human form save clears `words_by_key_uuid`**: the autosave path clears it only when the words changed (`web/assignment_form_live.ex:2918-2925`, `words_changed?`, `7398e67`); `save_edit/2` still clears it unconditionally — see Open.
+- Partially fixed — **NITPICK: a personal key can be minted for any member by a `manage_modules` holder**: since `5ce8e98` only whoever manages every key may pick another person (`web/api_keys_live.ex:696-700`); for that admin the attribution question remains — see Open.
+- N/A — the review's three "Not taken" points (stale claim blocking `start`, amending an invoiced billable row, labels over 60 characters) are the reviewer's own rejections; unchanged and consistent with the code.
+
 ## Open
 
-None.
+Still live — awaiting Max's decision (from `SONNET_REVIEW.md` "Open", re-verified 2026-10-29):
+
+- **IMPROVEMENT - MEDIUM — an `Idempotency-Key` carries no request fingerprint.** `web/api/json.ex:297-301` reads the header; `api_keys.ex:731` stores and replays by (key, header) only — the same header on another path or body replays the first answer, a stored 4xx replays for ever, `phoenix_kit_project_api_idempotency` has no retention, and a header over 128 bytes is silently treated as absent (`json.ex:299`). Fix: store method + path + body hash, 422 `idempotency_key_reused` on mismatch; prune by `inserted_at`; 422 an over-long header.
+- **IMPROVEMENT - MEDIUM — the API claim check is read-then-write.** `web/api/tasks_controller.ex:1079` asks `Json.may_take?/3` on the row read before the write at `:1202-1211`; two keys starting one `todo` task both pass. Fix: a conditional update (`WHERE status = 'todo'` or `started_by_key_uuid` unchanged) or re-check under the `FOR NO KEY UPDATE` that `update_tracking_status/2` already takes (`projects.ex:4244-4260`).
+- **IMPROVEMENT - MEDIUM — link/unlink bypass `edit_foreign_text`.** `web/api/tasks_controller.ex:560-590` checks scope, feature and `:edit_tasks` but not `Json.may_edit_text?/3` (used at `:479`) nor the words stamp. Fix: gate it, or document that appending a link is allowed.
+- **IMPROVEMENT - MEDIUM — N+1 on API read endpoints.** `subproject_state/1` per nested row (`web/api/json.ex:614-626`), `Projects.caught_up?/1` per project/child (`json.ex:554`, `:608`, `web/api/briefing_controller.ex:100`), `Projects.interactions_of/1` per task in the briefing (`briefing_controller.ex:298`) and in `tasks_controller.ex:532`. Fix: batch via `Projects.interactions_for_assignments/1` / `project_summaries/1`.
+- **IMPROVEMENT - MEDIUM — the sub-project "Ends" select and its fold have no `manage_modules` gate.** `web/assignment_form_live.ex:3655-3660` renders it for anyone on the form; `fold_completion/3` (`:1821-1826`, `:2157-2162`) folds it, from the mount-time `sp_source/1` (`:2166`). Fix: render and fold only for `can_manage_modules`, folding from the child as stored.
+- **IMPROVEMENT - MEDIUM — the explicit Save still clears `words_by_key_uuid`.** `web/assignment_form_live.ex:3124` (`save_edit/2`) stamps `nil` even when only the priority changed. Fix: reuse `words_changed?/3` as the autosave path does.
+- **IMPROVEMENT - MEDIUM — `ProjectShowLive` re-queries task notes on every render of an open notes drawer.** `web/project_show_live.ex:6215` (`<% notes? = … %>`) and `:6270` (`TaskNotes.decorations(TaskNotes.list(...))` in the template). Fix: compute into an assign in `open_comments` / `comments_updated`.
+- **NITPICK — `ApiTokenModal` static DOM ids.** `web/components/api_token_modal.ex:54`, `:62`, `:80`, `:88`. Fix: derive from an `id` attr.
+- **NITPICK — `ApiKeyPanel` calls `Auth.get_user/1` per personal key whose person is not in `people`.** `web/api_key_panel.ex:44`, `:69`, `:92`. Fix: one batched user read.
+- **NITPICK — `ProjectsLive.reorder_projects` rewrites the global `position`** for any module user (`web/projects_live.ex:747`). Fix: gate like `TasksLive`, or scope the order per viewer.
+- **NITPICK — `Ledger.list_entries/2` rescues to `[]`**, so a DB error is an empty 200 on `GET /entries` (`ledger.ex:466-469`). Fix: let it raise to a 500, or return `{:error, _}`.
+- **NITPICK — an admin can mint a personal key for another person** (`web/api_keys_live.ex:696-700`), attributing the agent's activity to them without their say; the creator is recorded in the key's metadata. Decide whether that needs the person's consent or a visible notice.
+- **Known — `TaskNotes` ledger broadcasts inside the note transaction.** `task_notes.ex:426` is a plain `repo.transaction`, not `PubSub.after_commit/1` (`pub_sub.ex:74`), so a rollback after `record_usage` is outlived by the ledger broadcast (also listed under "Skipped" above). Fix: wrap in `PubSub.after_commit/1`.

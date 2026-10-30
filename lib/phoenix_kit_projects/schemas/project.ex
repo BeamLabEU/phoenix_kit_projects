@@ -20,6 +20,7 @@ defmodule PhoenixKitProjects.Schemas.Project do
 
   import Ecto.Changeset
 
+  alias PhoenixKit.Utils.Routes
   alias PhoenixKitProjects.{L10n, Schemas.Assignment}
   # SHADOW schemas (staff-optional seam): projects' own read-only
   # mappings over the core-owned staff tables — see PhoenixKitProjects.People.
@@ -57,6 +58,8 @@ defmodule PhoenixKitProjects.Schemas.Project do
           current_status_slug: String.t() | nil,
           settings: map(),
           external_id: String.t() | nil,
+          external_url: String.t() | nil,
+          external_label: String.t() | nil,
           assigned_team_uuid: UUIDv7.t() | nil,
           assigned_team: Team.t() | Ecto.Association.NotLoaded.t() | nil,
           assigned_department_uuid: UUIDv7.t() | nil,
@@ -105,6 +108,11 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # external system; holds an id, UUID, or slug. No UI — set programmatically
     # by host apps/integrations. Indexed for lookup; not unique.
     field(:external_id, :string)
+    # A link out (V26): where this project belongs elsewhere — the order a
+    # host app made it for, a client folder — shown as a button in the
+    # project's header on every tab. http(s) only.
+    field(:external_url, :string)
+    field(:external_label, :string)
     # The short name people use instead of the uuid (`ACME`, chain V22;
     # `PhoenixKitProjects.Refs`). Unique across every key any project has
     # had; the database fills a placeholder when none is given, hence
@@ -129,7 +137,31 @@ defmodule PhoenixKitProjects.Schemas.Project do
   end
 
   @required ~w(name start_mode)a
-  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id key assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
+  @optional ~w(description is_template counts_weekends scheduled_start_date started_at completed_at archived_at position translations status_entity_uuid settings external_id external_url external_label key assigned_team_uuid assigned_department_uuid assigned_person_uuid)a
+
+  # Clearing the address arrives as nil (Ecto's empty value), which stays nil.
+  defp trim_link(url) when is_binary(url), do: String.trim(url)
+  defp trim_link(nil), do: nil
+
+  # A link out is a web address, or a path on this site ("/admin/…": a host
+  # app's own page, which stays right when the database moves between dev
+  # and production). Never a `javascript:` or `data:` one, which would run
+  # in the viewer's page, nor `//host`, which leaves the site.
+  defp http_url(field, url) do
+    cond do
+      Routes.local_path?(url) ->
+        []
+
+      match?(
+        %URI{scheme: s, host: h} when s in ["http", "https"] and is_binary(h) and h != "",
+        URI.parse(url)
+      ) ->
+        []
+
+      true ->
+        [{field, gettext("must be a web address (https://…) or a path on this site (/…)")}]
+    end
+  end
 
   @spec changeset(t(), map(), keyword()) :: Ecto.Changeset.t()
   def changeset(project, attrs, opts \\ []) do
@@ -143,6 +175,10 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_required([:counts_weekends])
     |> validate_length(:name, min: 1, max: 255)
     |> validate_length(:external_id, max: 255)
+    |> update_change(:external_url, &trim_link/1)
+    |> validate_length(:external_url, max: 2000)
+    |> validate_length(:external_label, max: 120)
+    |> validate_change(:external_url, &http_url/2)
     |> validate_key()
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
     |> validate_inclusion(:start_mode, @start_modes)

@@ -493,8 +493,10 @@ defmodule PhoenixKitProjects do
         file: "static/assets/phoenix_live_calendar.js",
         global: "PhoenixLiveCalendarHooks"
       },
-      # This module's own hooks: the typed task list (`PkpOutline`) and a
-      # title edited in place on a card row (`PkpTitle`). Plain JS, no build.
+      # This module's own hooks: the typed task list (`PkpOutline`), the task
+      # list's hover / trace of connections (`PkpLinks`), a
+      # title edited in place on a card row (`PkpTitle`) and the board's
+      # drag between columns (`PkpBoard`). Plain JS, no build.
       %{
         app: :phoenix_kit_projects,
         file: "static/assets/phoenix_kit_projects.js",
@@ -839,12 +841,14 @@ defmodule PhoenixKitProjects do
   # Paths reach the matcher normalised (URL prefix + locale stripped, no
   # trailing slash): the landing itself and every project page under it —
   # i.e. anything under `projects` that is not one of the sibling subtabs
-  # (`tasks`, `templates`, `hours`, `overview`). Legacy `list/…` addresses redirect
+  # (`tasks`, `templates`, `hours`, `time`, `overview`). Legacy `list/…` addresses redirect
   # before they render, so they need no match. A function, not a module
   # attribute — a compiled Regex holds a reference and cannot be injected
   # into a function body.
   defp projects_list_match,
-    do: {:regex, ~r{^/admin/projects(?!/(tasks|templates|hours|overview|api-keys)(/|$))(/.*)?$}}
+    do:
+      {:regex,
+       ~r{^/admin/projects(?!/(tasks|templates|hours|time|overview|api-keys)(/|$))(/.*)?$}}
 
   @impl PhoenixKit.Module
   def admin_tabs do
@@ -984,6 +988,23 @@ defmodule PhoenixKitProjects do
         parent: :admin_projects_api_keys,
         live_view: {PhoenixKitProjects.Web.ApiKeysLive, :usage}
       },
+      # Time: each person's day across every project — planned against
+      # actually done (boss, 2026-10-29). Next to the Overview, its
+      # managerial sibling.
+      %Tab{
+        id: :admin_projects_time,
+        label: "Time",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        icon: "hero-calendar-days",
+        path: "projects/time",
+        priority: 666,
+        level: :admin,
+        permission: module_key(),
+        match: :prefix,
+        parent: :admin_projects,
+        live_view: {PhoenixKitProjects.Web.TimeLive, :index}
+      },
       # Last on purpose: the list is where the work is, the Overview is
       # the read-only picture of it. Its pieces are also dashboards-module
       # widgets (`DashboardWidgets`) for anyone who wants them on a board.
@@ -994,7 +1015,7 @@ defmodule PhoenixKitProjects do
         gettext_domain: "default",
         icon: "hero-home",
         path: "projects/overview",
-        priority: 666,
+        priority: 667,
         level: :admin,
         permission: module_key(),
         match: :prefix,
@@ -1339,6 +1360,18 @@ defmodule PhoenixKitProjects do
         parent: :admin_projects,
         visible: false,
         live_view: {PhoenixKitProjects.Web.AssignmentFormLive, :edit}
+      },
+      %Tab{
+        id: :admin_projects_assignment_view,
+        label: "Task",
+        gettext_backend: PhoenixKitProjects.Gettext,
+        gettext_domain: "default",
+        path: "projects/:project_id/assignments/:id",
+        level: :admin,
+        permission: module_key(),
+        parent: :admin_projects,
+        visible: false,
+        live_view: {PhoenixKitProjects.Web.AssignmentViewLive, :show}
       },
       # `/projects/:id/<extension tab>` — LAST on purpose: Phoenix matches in
       # declaration order, so every literal sibling above (edit, files,

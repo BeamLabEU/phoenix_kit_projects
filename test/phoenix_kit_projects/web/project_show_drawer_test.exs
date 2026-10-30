@@ -174,7 +174,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     {host, form, _} =
       open_drawer(view, p, "button[phx-value-lv$='AssignmentFormLive']", "Add task")
 
-    form |> element("button.btn[phx-click=cancel]") |> render_click()
+    form |> element("#assignment-close") |> render_click()
     assert gone(host)
     assert Projects.list_assignments(p.uuid) == []
   end
@@ -196,6 +196,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowDrawerTest do
     assert html =~ ~s(id="assignment-add-next")
     assert html =~ "Enter adds it and starts the next"
     refute html =~ "PkShiftEnter"
+    # The highlighted button is "Add and close", the click most people
+    # make; "Add" is plain, and the way out says Close, not Cancel.
+    assert has_element?(form, "button.btn-primary", "Add and close")
+    refute has_element?(form, "#assignment-add-next.btn-primary")
+    assert has_element?(form, ~s(button[phx-click="cancel"]), "Close")
+    refute html =~ "Cancel"
   end
 
   test "Add & next adds the task, keeps the sheet open on a fresh clean form",

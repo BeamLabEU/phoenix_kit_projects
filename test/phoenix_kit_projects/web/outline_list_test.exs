@@ -100,7 +100,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
 
       render_hook(view, "outline_tick", %{"id" => parent.uuid, "done" => true})
       assert_reply(view, %{asked: true})
-      assert Projects.get_assignment(parent.uuid).status == "todo"
+      assert Projects.get_assignment(parent.uuid).status == "waiting"
 
       render_hook(view, "outline_tick", %{"id" => parent.uuid, "done" => true, "force" => true})
       assert_reply(view, %{asked: false})
@@ -224,7 +224,7 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}")
 
-      [board] = Regex.run(~r/id="board-column-todo".*?id="board-column-in_progress"/s, html)
+      [board] = Regex.run(~r/id="board-column-waiting".*?id="board-column-todo"/s, html)
       assert board =~ "Card"
       refute board =~ "Inside"
     end
@@ -317,7 +317,8 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       {:ok, _} = Outline.sync(p.uuid, [%{"text" => "Full"}], [])
       [a] = Projects.list_assignments(p.uuid)
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{p.uuid}/assignments/#{a.uuid}/edit")
-      assert html =~ ~s(name="assignment[waiting_on]")
+      # "Waiting on" left the form (the boss, 2026-10-29); the dates stay.
+      refute html =~ ~s(name="assignment[waiting_on]")
       assert html =~ ~s(name="assignment[start_date]")
     end
 

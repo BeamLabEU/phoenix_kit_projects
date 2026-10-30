@@ -135,8 +135,17 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       project = fixture_project(%{"external_id" => "EXT-77"})
       owner = user!()
       {:ok, _} = Members.add_member(project, owner.uuid, role: "owner")
-      task!(project, %{"end_date" => Date.add(Date.utc_today(), -2)})
-      task!(project, %{"end_date" => Date.add(Date.utc_today(), 9)})
+
+      task!(project, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), -2 * 86_400, :second) |> DateTime.truncate(:second)
+      })
+
+      task!(project, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), 9 * 86_400, :second) |> DateTime.truncate(:second)
+      })
+
       {:ok, _} = Ledger.log_time(project.uuid, 60, billable: true)
       {:ok, _} = Ledger.record_ai(project.uuid, %{tokens: 2500, cost_cents: 12})
       {:ok, _} = Projects.create_subproject(project.uuid, %{"name" => "Inner part"})
@@ -197,9 +206,21 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
 
     test "sorting by a column that is not on screen still reads it", %{conn: conn} do
       [a, b, c] = projects = three("Hidden")
-      task!(a, %{"end_date" => Date.add(Date.utc_today(), -1)})
-      task!(c, %{"end_date" => Date.add(Date.utc_today(), -1)})
-      task!(c, %{"end_date" => Date.add(Date.utc_today(), -4)})
+
+      task!(a, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), -1 * 86_400, :second) |> DateTime.truncate(:second)
+      })
+
+      task!(c, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), -1 * 86_400, :second) |> DateTime.truncate(:second)
+      })
+
+      task!(c, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), -4 * 86_400, :second) |> DateTime.truncate(:second)
+      })
 
       {:ok, _view, html} = live(conn, @path <> "?sort=overdue&dir=desc")
       assert order(html, projects) == [c.name, a.name, b.name]
@@ -292,7 +313,12 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       [a, b, c] = projects = three("Flt")
       {:ok, _} = Projects.start_project(a)
       {:ok, _} = Projects.update_project(b, %{"settings" => %{"completion" => "manual"}})
-      task!(c, %{"end_date" => Date.add(Date.utc_today(), -1)})
+
+      task!(c, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), -1 * 86_400, :second) |> DateTime.truncate(:second)
+      })
+
       client!(a, "ACME")
       client!(c, "Other")
 
@@ -344,7 +370,12 @@ defmodule PhoenixKitProjects.Web.ProjectsListColumnsLiveTest do
       [a, b, c] = projects = three("Url")
       {:ok, _} = Projects.start_project(a)
       {:ok, _} = Projects.start_project(b)
-      task!(a, %{"end_date" => Date.add(Date.utc_today(), -1)})
+
+      task!(a, %{
+        "deadline" =>
+          DateTime.add(DateTime.utc_now(), -1 * 86_400, :second) |> DateTime.truncate(:second)
+      })
+
       client!(a, "ACME")
       client!(b, "ACME")
       client!(c, "ACME")

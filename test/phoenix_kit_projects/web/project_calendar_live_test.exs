@@ -104,7 +104,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     assert html =~ Date.to_iso8601(NaiveDateTime.to_date(s))
   end
 
-  test "clicking a task bar navigates to its assignment edit form", %{
+  test "clicking a task bar navigates to its task view", %{
     conn: conn,
     actor_uuid: actor
   } do
@@ -117,7 +117,7 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     # the handler directly (the chip→callback wiring is the library's own).
     render(view)
     send(view.pid, {:calendar_event_click, a1.uuid})
-    assert_redirect(view, Paths.edit_assignment(project.uuid, a1.uuid))
+    assert_redirect(view, Paths.view_assignment(project.uuid, a1.uuid))
   end
 
   test "clicking a sub-project bar drills into the child project", %{
@@ -265,11 +265,11 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
     html = render_click(view, "close_day_popup", %{})
     refute html =~ "day_popup_item_click"
 
-    # A row click routes like a chip click — to the assignment edit form.
+    # A row click routes like a chip click — to the task's view.
     send(view.pid, {:calendar_date_click, day})
     render(view)
     render_click(view, "day_popup_item_click", %{"uuid" => a1.uuid})
-    assert_redirect(view, Paths.edit_assignment(project.uuid, a1.uuid))
+    assert_redirect(view, Paths.view_assignment(project.uuid, a1.uuid))
   end
 
   test "an empty day's popup says nothing is scheduled", %{conn: conn, actor_uuid: actor} do

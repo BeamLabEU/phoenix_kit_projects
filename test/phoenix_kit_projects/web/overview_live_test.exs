@@ -61,7 +61,9 @@ defmodule PhoenixKitProjects.Web.OverviewLiveTest do
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/overview")
 
-      assert html =~ "Tasks todo"
+      assert html =~ "Tasks waiting"
+      assert html =~ "Tasks that can be started"
+      refute html =~ "todo"
       assert html =~ "Tasks in progress"
       assert html =~ "Tasks done"
     end

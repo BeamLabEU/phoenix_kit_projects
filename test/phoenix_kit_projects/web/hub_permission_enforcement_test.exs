@@ -135,6 +135,59 @@ defmodule PhoenixKitProjects.Web.HubPermissionEnforcementTest do
     end
   end
 
+  describe "a sub-project's task shown on the parent's page" do
+    # Expanding a sub-project row draws its tasks on the parent's page, and
+    # the page's buttons (and a board drag) act on them. The right is the
+    # sub-project's own: one held in the parent never writes there.
+    setup ctx do
+      {:ok, %{child_project: child, assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Buildout"})
+
+      task = fixture_task(%{"title" => "Pour the child foundation"})
+
+      {:ok, child_task} =
+        Projects.create_assignment(%{
+          "project_uuid" => child.uuid,
+          "task_uuid" => task.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, child} = Authz.set_overrides(child, %{"update_status" => "managers"})
+      {:ok, child: child, link: link, child_task: child_task}
+    end
+
+    defp expanded(ctx, scope) do
+      {:ok, lv, _} = ctx.conn |> put_test_scope(scope) |> live(show_path(ctx.project))
+      html = render_click(lv, "toggle_subproject", %{"uuid" => ctx.link.uuid})
+      assert html =~ "Pour the child foundation"
+      lv
+    end
+
+    test "the parent's right does not complete, idle or move the child's task", ctx do
+      lv = expanded(ctx, ctx.viewer)
+
+      render_click(lv, "complete", %{"uuid" => ctx.child_task.uuid})
+      render_click(lv, "make_idle", %{"uuid" => ctx.child_task.uuid})
+
+      render_click(lv, "board_move", %{
+        "moved_id" => ctx.child_task.uuid,
+        "status" => "waiting",
+        "ordered_ids" => [ctx.child_task.uuid]
+      })
+
+      assert Projects.get_assignment(ctx.child_task.uuid).status == "todo",
+             "a right held in the parent changed a sub-project's task"
+    end
+
+    test "the owner, who holds the child's right, still acts on it", ctx do
+      lv = expanded(ctx, ctx.owner)
+
+      render_click(lv, "make_idle", %{"uuid" => ctx.child_task.uuid})
+
+      assert Projects.get_assignment(ctx.child_task.uuid).status == "waiting"
+    end
+  end
+
   describe "the add/edit task form answers the same question the hub does" do
     # The form is its own ROUTE. The hub refusing to show the "Add task"
     # link is not a control — `/list/<uuid>/assignments/new` is one URL

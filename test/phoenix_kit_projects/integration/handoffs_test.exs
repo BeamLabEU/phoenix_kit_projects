@@ -11,7 +11,7 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
   alias PhoenixKit.Activity.Entry
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Users.Auth
-  alias PhoenixKitProjects.{Actor, History, Outline, Projects}
+  alias PhoenixKitProjects.{Actor, Handoffs, History, Outline, Projects}
   alias PhoenixKitProjects.Web.Components.HistoryFeed
   alias PhoenixKitStaff.Schemas.Person
 
@@ -227,6 +227,94 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
     end
   end
 
+  describe "next up (would_ready/2)" do
+    test "names what completing a task would make ready, before anything is written", ctx do
+      %{alice: alice, bob: bob, carl: carl} = ctx.people
+      consult = task!(ctx.project, "Consultation", alice)
+      measure = task!(ctx.project, "Measurement", bob)
+      render = task!(ctx.project, "3D render", carl)
+      other = task!(ctx.project, "Other prerequisite", carl)
+      install = task!(ctx.project, "Installation", bob)
+      {:ok, _} = Projects.add_dependency(measure.uuid, consult.uuid)
+      {:ok, _} = Projects.add_dependency(render.uuid, consult.uuid)
+      {:ok, _} = Projects.add_dependency(install.uuid, consult.uuid)
+      {:ok, _} = Projects.add_dependency(install.uuid, other.uuid)
+
+      assert ctx.project.uuid
+             |> Handoffs.would_ready(consult.uuid)
+             |> Enum.map(& &1.uuid) == [measure.uuid, render.uuid]
+
+      # A preview: nothing changed, nobody told.
+      assert Projects.get_assignment(consult.uuid).status == "todo"
+      assert notices("projects.assignment_ready", bob.user) == []
+    end
+
+    test "a task already under way is not offered", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      consult = task!(ctx.project, "Consultation", alice)
+      measure = task!(ctx.project, "Measurement", bob, status: "in_progress")
+      {:ok, _} = Projects.add_dependency(measure.uuid, consult.uuid)
+
+      assert Handoffs.would_ready(ctx.project.uuid, consult.uuid) == []
+    end
+
+    test "a waiting task is offered too, and stays silent until released", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      consult = task!(ctx.project, "Consultation", alice)
+      measure = task!(ctx.project, "Measurement", bob, status: "waiting")
+      {:ok, _} = Projects.add_dependency(measure.uuid, consult.uuid)
+
+      assert [%{uuid: uuid}] = Handoffs.would_ready(ctx.project.uuid, consult.uuid)
+      assert uuid == measure.uuid
+
+      # Done: the waiting task is idle, so nobody is told yet.
+      set_status!(consult, "done", alice.user)
+      assert notices("projects.assignment_ready", bob.user) == []
+
+      # Released: now it is their turn, named after what it waited on.
+      Actor.put(alice.user)
+
+      {:ok, _} =
+        Projects.update_assignment_status(Projects.get_assignment(measure.uuid), %{status: "todo"})
+
+      assert [notice] = notices("projects.assignment_ready", bob.user)
+      assert notice.resource_uuid == measure.uuid
+      assert notice.metadata["after"] == "Consultation"
+    end
+
+    test "a task released with nothing before it can start at once", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      first = task!(ctx.project, "Talk to the client", bob, status: "waiting")
+      Actor.put(alice.user)
+
+      {:ok, _} = Projects.update_assignment_status(first, %{status: "todo"})
+
+      assert [notice] = notices("projects.assignment_ready", bob.user)
+      assert notice.metadata["notification_text"] =~ "can start"
+    end
+
+    test "putting a released task back to idle tells nobody", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      a = task!(ctx.project, "Measurement", bob)
+      Actor.put(alice.user)
+
+      {:ok, _} = Projects.update_assignment_status(a, %{status: "waiting"})
+
+      assert notices("projects.assignment_ready", bob.user) == []
+    end
+
+    test "closing a parent's last subtask counts the parent done", ctx do
+      %{alice: alice, bob: bob} = ctx.people
+      prep = task!(ctx.project, "Preparation", alice)
+      sub = task!(ctx.project, "Last step", alice, under: prep)
+      next = task!(ctx.project, "After preparation", bob)
+      {:ok, _} = Projects.add_dependency(next.uuid, prep.uuid)
+
+      assert [%{uuid: uuid}] = Handoffs.would_ready(ctx.project.uuid, sub.uuid)
+      assert uuid == next.uuid
+    end
+  end
+
   describe "on hold, and going on again" do
     test "reopening finished work puts the started work after it on hold, finishing it lets it go on",
          ctx do
@@ -277,7 +365,8 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
           ctx.project.uuid,
           %{"title" => "Second", "ad_hoc" => true},
           %{
-            "assigned_team_uuid" => team.uuid
+            "assigned_team_uuid" => team.uuid,
+            "status" => "todo"
           }
         )
 
@@ -420,7 +509,8 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
           ctx.project.uuid,
           %{"title" => "Quote", "ad_hoc" => true},
           %{
-            "assigned_team_uuid" => team.uuid
+            "assigned_team_uuid" => team.uuid,
+            "status" => "todo"
           }
         )
 
@@ -741,7 +831,8 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
           ctx.project.uuid,
           %{"title" => "Second", "ad_hoc" => true},
           %{
-            "assigned_department_uuid" => dept.uuid
+            "assigned_department_uuid" => dept.uuid,
+            "status" => "todo"
           }
         )
 
@@ -883,7 +974,9 @@ defmodule PhoenixKitProjects.Integration.HandoffsTest do
         Projects.create_task_with_assignment(
           project.uuid,
           %{"title" => title, "ad_hoc" => true},
-          %{field => uuid}
+          # Released ("can be started"): a waiting task is idle and is
+          # told nothing when what it waits on is done.
+          %{field => uuid, "status" => "todo"}
         )
 
       a

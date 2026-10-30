@@ -43,11 +43,6 @@ All awaiting Max's decision.
   embed path filters with `Auth.ensure_active_user/1`
   (`web/helpers.ex:710-713`) and the dashboards host does the same, so the
   exposure needs a caller that builds a scope some other way.
-- **IMPROVEMENT - LOW — `notification_types/0` labels reach no catalogue.**
-  `lib/phoenix_kit_projects.ex:71-` — labels and descriptions such as
-  "Membership, health, and task updates in your projects" are plain strings,
-  absent from `default.pot`. Core renders them raw with no backend hook, so a
-  fix needs a core change as well.
 - **IMPROVEMENT - LOW — Preset names are untranslated.**
   `features.ex:322` (`presets/0`) — e.g. "Simple to-do list" is not in
   `default.pot`, and `web/project_modules_live.ex:511-516` renders
@@ -60,3 +55,21 @@ All awaiting Max's decision.
   `String.capitalize` on `Atom.to_string(field)` at
   `web/project_form_live.ex:1552`, `web/task_form_live.ex:413`,
   `web/assignment_form_live.ex:1631` and `web/project_show_live.ex:1034`.
+
+## Fixed since (re-verified 2026-10-29)
+
+- ~~**IMPROVEMENT - LOW — `notification_types/0` labels reach no catalogue.**~~
+  `lib/phoenix_kit_projects.ex:76-84` passes `gettext_backend:
+  PhoenixKitProjects.Gettext` with `gettext_noop` labels (core gained the hook,
+  V224 PR). "Membership, health, and task updates in your projects" is in
+  `default.pot` and in all seven locales. `1eed9d7`.
+
+Re-verified 2026-10-29, still live with current lines: `Authz`'s
+deactivated-user check (`authz.ex:545`). Preset names (`features.ex:329-330`,
+now "Simple task list") are rendered raw at
+`web/project_modules_live.ex:534-539`. Creation-block labels
+(`features.ex:395-400`, rendered at `web/projects_settings_live.ex:704`): three
+of the four ("From template", "Start timing", "People") are missing from
+`default.pot`. Humanized field names: `web/project_form_live.ex:1769`,
+`web/task_form_live.ex:483`, `web/assignment_form_live.ex:3196`,
+`web/project_show_live.ex:1611-1615`.

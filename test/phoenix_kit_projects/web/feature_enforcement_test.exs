@@ -133,7 +133,7 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       html = render_click(view, "switch_tab", %{"tab" => "board"})
       assert html =~ "In progress"
-      assert html =~ "md:grid-cols-3"
+      assert html =~ "xl:grid-cols-4"
     end
 
     test "the board drops the middle column when nothing is in progress",
@@ -142,13 +142,17 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       html = render_click(view, "switch_tab", %{"tab" => "board"})
 
       refute html =~ "In progress"
-      assert html =~ "md:grid-cols-2"
+      assert html =~ "xl:grid-cols-3"
     end
 
-    test "the add-task form offers To do / Done only", %{conn: conn, project: project} do
+    test "the add-task form offers Waiting / Can be started / Done only",
+         %{conn: conn, project: project} do
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
 
+      assert html =~ ~s(value="waiting")
       assert html =~ ~s(value="todo")
+      assert html =~ "Can be started"
+      refute html =~ "To do"
       assert html =~ ~s(value="done")
       refute html =~ ~s(value="in_progress")
     end
@@ -214,7 +218,9 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       assert html =~ ~s(phx-value-tab="board")
 
       html = render_click(view, "switch_tab", %{"tab" => "board"})
-      assert html =~ "To do"
+      assert html =~ "Waiting"
+      assert html =~ "Can be started"
+      refute html =~ "To do"
       assert html =~ "In progress"
 
       # The card's Start button routes through the same gated dispatcher.

@@ -1057,6 +1057,22 @@ defmodule PhoenixKitProjects.ExpectedSchema do
         backfill: nil
       },
       %{
+        id: "column:phoenix_kit_project_assignments.deadline",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignments", column: "deadline", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignments ADD COLUMN IF NOT EXISTS \"deadline\" timestamp with time zone",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: nil, type: "timestamp with time zone", pos: 38, not_null: false}}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
         id: "column:phoenix_kit_project_assignments.description",
         owner: :phoenix_kit_projects,
         check:
@@ -1081,6 +1097,22 @@ defmodule PhoenixKitProjects.ExpectedSchema do
         since: 1,
         class: :column,
         revisions: [{1, %{default: nil, type: "date", pos: 35, not_null: false}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignments.end_time",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignments", column: "end_time", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignments ADD COLUMN IF NOT EXISTS \"end_time\" time without time zone",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: nil, type: "time without time zone", pos: 41, not_null: false}}
+        ],
         presence: :required,
         backfill: nil
       },
@@ -1307,6 +1339,38 @@ defmodule PhoenixKitProjects.ExpectedSchema do
         since: 1,
         class: :column,
         revisions: [{1, %{default: nil, type: "date", pos: 34, not_null: false}}],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignments.start_time",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignments", column: "start_time", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignments ADD COLUMN IF NOT EXISTS \"start_time\" time without time zone",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: nil, type: "time without time zone", pos: 40, not_null: false}}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_project_assignments.started_at",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{table: "phoenix_kit_project_assignments", column: "started_at", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_project_assignments ADD COLUMN IF NOT EXISTS \"started_at\" timestamp with time zone",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: nil, type: "timestamp with time zone", pos: 39, not_null: false}}
+        ],
         presence: :required,
         backfill: nil
       },
@@ -3545,6 +3609,36 @@ defmodule PhoenixKitProjects.ExpectedSchema do
         backfill: nil
       },
       %{
+        id: "column:phoenix_kit_projects.external_label",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog, %{table: "phoenix_kit_projects", column: "external_label", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_projects ADD COLUMN IF NOT EXISTS \"external_label\" character varying(120)",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: nil, type: "character varying(120)", pos: 25, not_null: false}}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "column:phoenix_kit_projects.external_url",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog, %{table: "phoenix_kit_projects", column: "external_url", kind: :column}},
+        create:
+          "ALTER TABLE __SCHEMA__.phoenix_kit_projects ADD COLUMN IF NOT EXISTS \"external_url\" character varying(2000)",
+        since: 1,
+        class: :column,
+        revisions: [
+          {1, %{default: nil, type: "character varying(2000)", pos: 24, not_null: false}}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
         id: "column:phoenix_kit_projects.inserted_at",
         owner: :phoenix_kit_projects,
         check: {:catalog, %{table: "phoenix_kit_projects", column: "inserted_at", kind: :column}},
@@ -4047,6 +4141,37 @@ defmodule PhoenixKitProjects.ExpectedSchema do
                "CREATE INDEX phoenix_kit_project_assignments_completed_by_index ON __SCHEMA__.phoenix_kit_project_assignments USING btree (completed_by_uuid) WHERE (completed_by_uuid IS NOT NULL)",
              predicate: "(completed_by_uuid IS NOT NULL)",
              opclasses: ["uuid_ops"],
+             name_template: nil
+           }}
+        ],
+        presence: :required,
+        backfill: nil
+      },
+      %{
+        id: "index:phoenix_kit_project_assignments_deadline_index",
+        owner: :phoenix_kit_projects,
+        check:
+          {:catalog,
+           %{
+             name: "phoenix_kit_project_assignments_deadline_index",
+             table: "phoenix_kit_project_assignments",
+             kind: :index
+           }},
+        create:
+          "CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_deadline_index ON __SCHEMA__.phoenix_kit_project_assignments USING btree (project_uuid, deadline) WHERE (deadline IS NOT NULL)",
+        since: 1,
+        class: :index,
+        revisions: [
+          {1,
+           %{
+             table: "phoenix_kit_project_assignments",
+             keys: ["project_uuid", "deadline"],
+             unique: false,
+             method: "btree",
+             definition:
+               "CREATE INDEX phoenix_kit_project_assignments_deadline_index ON __SCHEMA__.phoenix_kit_project_assignments USING btree (project_uuid, deadline) WHERE (deadline IS NOT NULL)",
+             predicate: "(deadline IS NOT NULL)",
+             opclasses: ["uuid_ops", "timestamptz_ops"],
              name_template: nil
            }}
         ],

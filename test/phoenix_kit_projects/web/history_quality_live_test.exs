@@ -83,9 +83,11 @@ defmodule PhoenixKitProjects.Web.HistoryQualityLiveTest do
 
     {:ok, view, _} = live(conn, "/en/admin/projects/#{project.uuid}/assignments/#{a.uuid}/edit")
 
+    # The form has no "Waiting on" field any more; the value still arrives
+    # from the API and the same save path logs it.
     view
-    |> form("#assignment-form", %{"assignment" => %{"waiting_on" => "The client's transfer"}})
-    |> render_submit()
+    |> element("#assignment-form")
+    |> render_submit(%{"assignment" => %{"waiting_on" => "The client's transfer"}})
 
     assert [row] =
              Repo.all(

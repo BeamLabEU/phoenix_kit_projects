@@ -156,6 +156,11 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
 
   defp compact_activity("projects.assignment_reopened", _), do: gettext("reopened")
 
+  defp compact_activity("projects.assignment_made_ready", _),
+    do: gettext("marked it as can be started")
+
+  defp compact_activity("projects.assignment_made_idle", _), do: gettext("kept it idle")
+
   defp compact_activity("projects.assignment_ready", %{meta: %{"resume" => true}}),
     do: gettext("It can go on again")
 
@@ -279,6 +284,11 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
       :error -> gettext("edited")
     end
   end
+
+  defp activity_sentence("projects.assignment_made_ready", _),
+    do: gettext("marked as can be started:")
+
+  defp activity_sentence("projects.assignment_made_idle", _), do: gettext("kept idle:")
 
   defp activity_sentence("projects.assignment_ready", %{meta: %{"resume" => true}}),
     do: gettext("Can go on again:")
@@ -408,6 +418,8 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
   defp icon_for(%{action: "projects.assignment_reopened"}), do: "hero-arrow-uturn-left"
   defp icon_for(%{action: "projects.assignment_started"}), do: "hero-play"
   defp icon_for(%{action: "projects.assignment_ready"}), do: "hero-arrow-right"
+  defp icon_for(%{action: "projects.assignment_made_ready"}), do: "hero-arrow-right-circle"
+  defp icon_for(%{action: "projects.assignment_made_idle"}), do: "hero-pause-circle"
   defp icon_for(%{action: "projects.assignment_on_hold"}), do: "hero-pause"
   defp icon_for(%{action: "projects.assignment_waiting"}), do: "hero-hand-raised"
   defp icon_for(%{action: "projects.assignment_reassigned"}), do: "hero-arrows-right-left"
@@ -431,5 +443,6 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
 
   defp tone(%{action: "projects.assignment_on_hold"}), do: "bg-warning/20 text-warning"
   defp tone(%{action: "projects.assignment_ready"}), do: "bg-primary/15 text-primary"
+  defp tone(%{action: "projects.assignment_made_ready"}), do: "bg-info/15 text-info"
   defp tone(_), do: "bg-base-200 text-base-content/70"
 end

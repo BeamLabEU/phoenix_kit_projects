@@ -43,7 +43,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
 
   alias PhoenixKit.Migrations.Postgres.Helpers
 
-  @current_version 25
+  @current_version 26
   @marker_prefix "pkp_schema:"
 
   @doc "Target schema version of the projects module chain."
@@ -122,6 +122,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     v23_subtasks(p, prefix)
     v24_key_grants(p, prefix)
     v25_key_usage(p)
+    v26_deadlines_and_times(p)
 
     execute("COMMENT ON TABLE #{p}phoenix_kit_projects IS '#{@marker_prefix}#{@current_version}'")
   end
@@ -1044,6 +1045,7 @@ defmodule PhoenixKitProjects.Migrations.Schema do
   # V19–V21 each added columns to the assignments table (and V20 the link
   # table); newest first.
   defp down_task_columns(p, target) do
+    if target < 26, do: down_v26(p)
     if target < 25, do: down_v25(p)
     if target < 24, do: down_v24(p)
     if target < 23, do: down_v23(p)
@@ -1106,6 +1108,53 @@ defmodule PhoenixKitProjects.Migrations.Schema do
     for col <-
           ~w(created_by_uuid created_by_key_uuid started_by_uuid started_by_key_uuid waiting_on origin checklist) do
       execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
+    end
+  end
+
+  # V26 — when a task is due, and when it really happened (the boss, via
+  # Max, 2026-10-29). `deadline` is "by when it has to be done", a moment
+  # (date and time: the client sets same-day ones, "call them back by
+  # 15:00"), independent of the planned days; it alone makes a task
+  # overdue. `started_at` is when work really began (Start), next to the
+  # existing `completed_at` (Done); both can be corrected afterwards, so a
+  # late tick can be moved back. `start_time` / `end_time` put an optional
+  # wall-clock time on the planned days (zone-free like the dates). A
+  # project gets a link out (`external_url`, `external_label`): the record
+  # it belongs to elsewhere, e.g. the order a host app made it for.
+  # Tasks already in progress or done before V26 keep `started_at` NULL:
+  # when they really began was never recorded, and a guess (their last
+  # update) would draw work that did not happen on the Time page.
+  defp v26_deadlines_and_times(p) do
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_project_assignments
+      ADD COLUMN IF NOT EXISTS deadline TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS start_time TIME,
+      ADD COLUMN IF NOT EXISTS end_time TIME
+    """)
+
+    execute("""
+    CREATE INDEX IF NOT EXISTS phoenix_kit_project_assignments_deadline_index
+    ON #{p}phoenix_kit_project_assignments (project_uuid, deadline)
+    WHERE deadline IS NOT NULL
+    """)
+
+    execute("""
+    ALTER TABLE #{p}phoenix_kit_projects
+      ADD COLUMN IF NOT EXISTS external_url VARCHAR(2000),
+      ADD COLUMN IF NOT EXISTS external_label VARCHAR(120)
+    """)
+  end
+
+  defp down_v26(p) do
+    execute("DROP INDEX IF EXISTS #{p}phoenix_kit_project_assignments_deadline_index")
+
+    for col <- ~w(deadline started_at start_time end_time) do
+      execute("ALTER TABLE #{p}phoenix_kit_project_assignments DROP COLUMN IF EXISTS #{col}")
+    end
+
+    for col <- ~w(external_url external_label) do
+      execute("ALTER TABLE #{p}phoenix_kit_projects DROP COLUMN IF EXISTS #{col}")
     end
   end
 

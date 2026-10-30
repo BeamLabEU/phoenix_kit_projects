@@ -11,7 +11,7 @@ defmodule PhoenixKitProjects.ListMetrics do
 
     * `:tasks`    — `%{total, done, open, has_work, progress_pct, planned_end,
       subprojects}` — its own tasks; progress rolls sub-projects in
-    * `:due`      — `%{overdue, next_due}` (a task's own end date)
+    * `:due`      — `%{overdue, next_due}` (a task's deadline)
     * `:events`   — the next event's start, where the project has one
     * `:members`  — `%{count, people: [%{uuid, name, role}]}`, oldest first
     * `:assignee` — the project's own assignee, `%{label, kind}`
@@ -111,20 +111,21 @@ defmodule PhoenixKitProjects.ListMetrics do
     end)
   end
 
-  # A task's own end date (chain V21): how many are past it and not done,
-  # and the nearest one still ahead. A submission nobody accepted yet is
-  # not work, as everywhere the plan is measured.
+  # A task's deadline (chain V26): how many are past it and not done, and
+  # the nearest one still ahead. The planned days never make a task late.
+  # A submission nobody accepted yet is not work, as everywhere the plan is
+  # measured.
   defp read(:due, _projects, uuids, opts) do
-    today = Keyword.get(opts, :today, Date.utc_today())
+    now = Keyword.get(opts, :now, DateTime.utc_now())
 
     from(a in Assignment,
       where:
-        a.project_uuid in ^uuids and a.status != "done" and not is_nil(a.end_date) and
+        a.project_uuid in ^uuids and a.status != "done" and not is_nil(a.deadline) and
           a.review_status == "accepted",
       group_by: a.project_uuid,
       select:
-        {a.project_uuid, filter(count(a.uuid), a.end_date < ^today),
-         filter(min(a.end_date), a.end_date >= ^today)}
+        {a.project_uuid, filter(count(a.uuid), a.deadline < ^now),
+         filter(min(a.deadline), a.deadline >= ^now)}
     )
     |> repo().all()
     |> Map.new(fn {uuid, overdue, next_due} ->

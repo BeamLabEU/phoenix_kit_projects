@@ -12,8 +12,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # rather than hand-written so this form can't drift from every other
   # surface that offers mentions.
   use PhoenixKitProjects.Web.Mentions
-  # The task's discussion and notes are embedded in its form.
-  use PhoenixKitComments.Embed
   # Before the Embed: its hook enqueues translations without a permission
   # check, so the gate (and `ai_translate_allowed?/1` below) sees them first.
   on_mount(PhoenixKitProjects.Web.AITranslateGate)
@@ -28,11 +26,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   alias Phoenix.LiveView.JS
   alias PhoenixKit.Mentions
+  alias PhoenixKit.Users.Auth
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKitAI.Components.AITranslate.FormGlue
 
   alias PhoenixKitProjects.{
     Activity,
+    Assignees,
     Authz,
     Features,
     L10n,
@@ -47,6 +47,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   alias PhoenixKitProjects.Hours.Format
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task}
+  alias PhoenixKitProjects.Web.Components.AssignmentStatusBadge
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
@@ -56,6 +57,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # Default wrapper class for the standalone admin page. Embedders can
   # override via `live_render(... session: %{"wrapper_class" => "..."})`.
   @default_wrapper_class "flex flex-col mx-auto max-w-xl px-4 py-6 gap-4"
+
+  # The form's tabs (`@form_pane`).
+  @panes ~w(task planning connections more)
 
   @impl true
   def mount(params, session, socket) do
@@ -81,22 +85,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> WebHelpers.assign_embed_state(session)
       |> WebHelpers.assign_embed_user(session)
       |> WebHelpers.attach_open_embed_hook()
+      |> assign_from_view(session)
       # `form_seq` re-keys the title's wrapper after "Add & next" so a fresh
       # element mounts and `phx-mounted` refocuses it; `add_next?` is the
       # submit's intent (the "then=next" submitter), read at save time.
       |> assign(form_seq: 0, add_next?: false)
-      # A link may name the field it is about (`?focus=waiting_on`): the
-      # form opens with the cursor there.
-      |> assign(focus_field: Map.get(resolved_params, "focus"))
+      # Which of the form's tabs shows (Task · Planning · Connections ·
+      # More). Every tab's fields stay in the one form, only hidden, so a
+      # switch loses nothing typed.
+      |> assign(form_pane: "task")
       |> assign(save_state: :idle, save_error: nil, pending_params: nil, autosave_timer: nil)
       |> apply_action(live_action, resolved_params)
       |> assign_fx()
       |> assign_logged_minutes()
       |> assign_log_people()
       |> assign_edit_title()
+      |> assign_times_form()
+      |> assign_assignee_picker()
       |> assign_outline(resolved_params)
-      |> assign_threads()
-      |> assign_task_history()
       |> assign_ai_translate()
       # Unsaved edits? Flipped by the first change event; the host's
       # dialog (emit mode) stops closing on Esc/backdrop while true and
@@ -111,6 +117,39 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # same `<.translatable_field>` as every other translatable column —
   # `task[title]` on the primary tab, `task[translations][<lang>][title]`
   # on the others. Nothing is inserted until Save.
+  # Opened from the task's view in the same drawer (its "Edit"): leaving
+  # the form goes back to that view instead of closing the drawer.
+  defp assign_from_view(socket, session) do
+    assign(socket,
+      from_view?:
+        socket.assigns.embed_mode == :emit and Map.get(session, "from_view") in ["1", true],
+      # The view's host runs its next step (`AssignmentViewLive`): handed
+      # back with it, or the view it swaps back to offers a link instead.
+      view_step_intents?: Map.get(session, "step_intents") in ["1", true]
+    )
+  end
+
+  # Leaves the form: back to the task's view when the form was opened from
+  # it, otherwise closed (a drawer) or navigated away (a page).
+  defp leave_form(socket, fallback) do
+    case {socket.assigns[:from_view?], socket.assigns[:assignment]} do
+      {true, %Assignment{uuid: uuid, project_uuid: project_uuid}} when is_binary(uuid) ->
+        session = %{"project_id" => project_uuid, "id" => uuid}
+
+        session =
+          if socket.assigns[:view_step_intents?],
+            do: Map.put(session, "step_intents", "1"),
+            else: session
+
+        WebHelpers.emit_swap(socket, PhoenixKitProjects.Web.AssignmentViewLive, session)
+
+        socket
+
+      _ ->
+        WebHelpers.close_or_navigate(socket, fallback)
+    end
+  end
+
   defp new_task_form(attrs), do: to_form(Projects.change_task(%Task{}, attrs), as: :task)
 
   defp prefill_title(params) do
@@ -125,100 +164,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       text when is_binary(text) -> text |> String.trim() |> String.slice(0, 2000)
       _ -> nil
     end
-  end
-
-  # The hub gate map for this form's project. Placeholder projects (the
-  # not-found render window) fall back to catalog defaults.
-  attr(:editable, :boolean, required: true)
-  attr(:title, :string, default: nil)
-  attr(:shared, :boolean, default: false)
-
-  # The task's name at the top of its form. A one-off task's is changed
-  # here; a library task's belongs to the library (every project that uses
-  # the task shows it), so here it is only read.
-  defp task_title_field(%{editable: true} = assigns) do
-    ~H"""
-    <div>
-      <.input id="assignment-task-title" name="task_title" value={@title} label={gettext("Title")} maxlength="255" />
-      <p :if={@shared} class="mt-1 text-xs text-base-content/60">
-        {gettext("This task is in the task library: renaming it here renames it in every project that uses it.")}
-      </p>
-    </div>
-    """
-  end
-
-  defp task_title_field(assigns) do
-    ~H"""
-    <div :if={@title} id="assignment-task-title">
-      <FormFieldLabel.label>{gettext("Title")}</FormFieldLabel.label>
-      <p class="font-medium break-words">{@title}</p>
-      <p class="text-xs text-base-content/60">
-        {gettext("From the task library: its name is changed there, for every project that uses it.")}
-      </p>
-    </div>
-    """
-  end
-
-  # Where the task stands: its status and priority, whose it is, and what
-  # it waits on. First in the form when editing, after the name and the
-  # description when adding.
-  defp state_fields(assigns) do
-    ~H"""
-            <div class="flex gap-2">
-              <div class="flex-1">
-                <.select
-                  field={@form[:status]}
-                  label={gettext("Status")}
-                  options={status_options(@fx, @assignment)}
-                />
-              </div>
-              <div :if={@fx.priorities} class="w-40">
-                <.select
-                  field={@form[:priority]}
-                  label={gettext("Priority")}
-                  options={priority_options()}
-                />
-              </div>
-            </div>
-
-            <%= if @fx.assignees do %>
-              <.select
-                name="assign_type"
-                label={gettext("Assigned to")}
-                value={@assign_type}
-                options={[{gettext("Nobody"), ""}, {gettext("Department"), "department"}, {gettext("Team"), "team"}, {gettext("Person"), "person"}]}
-              />
-
-              <%= if @assign_type == "department" do %>
-                <.select field={@form[:assigned_department_uuid]} label={gettext("Department")} options={@department_options} prompt={gettext("Select department")} />
-              <% end %>
-              <%= if @assign_type == "team" do %>
-                <.select field={@form[:assigned_team_uuid]} label={gettext("Team")} options={@team_options} prompt={gettext("Select team")} />
-              <% end %>
-              <%= if @assign_type == "person" do %>
-                <.select field={@form[:assigned_person_uuid]} label={gettext("Person")} options={@person_options} prompt={gettext("Select person")} />
-              <% end %>
-            <% end %>
-
-            <%!-- Whom the task waits on and where it came from: straight
-                 under the description, where the task's state is read.
-                 People's business — off with the "waiting" feature (and so
-                 with Assignees), so a plain to-do's form is a title and a
-                 status. --%>
-            <div :if={@fx[:waiting] != false} class="flex gap-2">
-              <div
-                class="flex-1"
-                id="assignment-waiting-on"
-                phx-mounted={@focus_field == "waiting_on" && JS.focus(to: "#assignment-waiting-on input")}
-              >
-                <.input field={@form[:waiting_on]} label={gettext("Waiting on")} placeholder={gettext("e.g. the client")} maxlength="200" />
-              </div>
-              <div class="w-48">
-                <.input field={@form[:origin]} label={gettext("Requested by")} placeholder={gettext("e.g. client, boss")} maxlength="40" />
-              </div>
-            </div>
-
-    """
   end
 
   # Whose time the log line records: the viewer's unless a person was
@@ -332,70 +277,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     _ -> nil
   end
 
-  # Whether the task's discussion and the agent's notes show in the form,
-  # and how many of each there are: `%{comments, notes}` or nil. Both need
-  # the comments module and the project's Discussions switched on.
-  defp assign_threads(
-         %{
-           assigns: %{
-             live_action: :edit,
-             project: %Project{} = project,
-             assignment: %Assignment{uuid: uuid}
-           }
-         } = socket
-       )
-       when is_binary(uuid) do
-    threads =
-      if not project.is_template and Code.ensure_loaded?(PhoenixKitComments) and
-           PhoenixKitComments.enabled?() and
-           PhoenixKitProjects.Extensions.enabled?(project, "discussions") do
-        %{
-          comments: PhoenixKitComments.count_comments("assignment", uuid, status: "published"),
-          notes:
-            PhoenixKitComments.count_comments(PhoenixKitProjects.TaskNotes.resource_type(), uuid,
-              status: "published"
-            )
-        }
-      end
-
-    assign(socket, :threads, threads)
-  rescue
-    _ -> assign(socket, :threads, nil)
-  end
-
-  defp assign_threads(socket), do: assign(socket, :threads, nil)
-
-  # The task's own lines of the project's history (`History`): who started,
-  # finished, reopened it and why, who was told, its comments and time.
-  defp assign_task_history(
-         %{
-           assigns: %{
-             live_action: :edit,
-             project: %Project{is_template: false} = project,
-             assignment: %Assignment{uuid: uuid}
-           }
-         } = socket
-       )
-       when is_binary(uuid) do
-    assign(socket, :task_history, PhoenixKitProjects.History.list(project, task: uuid).entries)
-  rescue
-    e ->
-      Logger.warning("[Projects] task history load failed: #{inspect(e.__struct__)}")
-      assign(socket, :task_history, [])
-  end
-
-  defp assign_task_history(socket), do: assign(socket, :task_history, [])
-
-  # The task's own name, for the top of the edit form (`task_title_field/1`).
+  # The task's own name, edited at the top of its form like the new task's:
+  # a `Task` changeset under the language tabs (`task[title]` on the primary
+  # tab, `task[translations][<lang>][title]` on the others). Anyone who may
+  # edit the task may rename a one-off task; a library task's name is shared,
+  # which the field says (`title_shared?`). Without the right to rename, the
+  # field is not drawn (`title_field?`) and the header shows the saved name.
   defp assign_edit_title(
          %{assigns: %{live_action: :edit, assignment: %Assignment{task: %Task{} = task}}} = socket
        ) do
-    # Anyone who may edit the task may rename it; a library task's name is
-    # shared, which the field says (`shared`).
     # A library task's name is shared by every project that uses it, so
     # only a `projects.manage_library` holder may rename it from here.
     assign(socket,
       edit_title: task.title,
+      title_task: task,
+      task_form: to_form(Projects.change_task(task, %{}), as: :task),
       title_editable?:
         task.ad_hoc == true or
           Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]),
@@ -404,32 +300,126 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp assign_edit_title(socket),
-    do: assign(socket, edit_title: nil, title_editable?: false, title_shared?: false)
+    do:
+      assign(socket,
+        edit_title: nil,
+        title_task: nil,
+        title_editable?: false,
+        title_shared?: false
+      )
 
-  defp keep_edit_title(socket, %{"task_title" => title}) when is_binary(title),
-    do: assign(socket, :edit_title, title)
+  # The title (and its translations) the form posted, kept in `@task_form`
+  # — the header above the tabs reads it, so it follows what is typed.
+  defp take_task_params(socket, %{"task" => %{} = task_params}) do
+    form = task_form_for(socket, merge_task_attrs(task_params, socket))
+    title = Ecto.Changeset.get_field(form.source, :title) || ""
 
-  defp keep_edit_title(socket, _params), do: socket
+    socket
+    |> assign(task_form: form, new_task_title: title)
+    |> then(fn s ->
+      if s.assigns.live_action == :edit, do: assign(s, :edit_title, title), else: s
+    end)
+  end
 
-  # A one-off task renamed in its form: written to the task after the
-  # assignment's own save, and only when the name really changed.
+  defp take_task_params(socket, _params), do: socket
+
+  defp task_form_for(socket, attrs),
+    do: to_form(Projects.change_task(socket.assigns[:title_task] || %Task{}, attrs), as: :task)
+
+  # A task renamed in its form: written to the task after the assignment's
+  # own save, and only when the name (or a translation of it) really changed.
+  # A rename the task refuses (too long, say) comes back as `{:error, cs}`,
+  # so the form keeps what was typed and says why instead of "Saved".
   defp save_edit_title(socket, %Assignment{task_uuid: task_uuid}) do
-    title = socket.assigns[:edit_title]
-
-    with true <- socket.assigns[:title_editable?] == true,
-         true <- is_binary(title) and String.trim(title) != "",
+    with {:changed, title, titles} <- title_change(socket),
          %Task{} = task <- Projects.get_task(task_uuid),
+         # Asked again at the write, of the live scope: a library task's
+         # rename is `projects.manage_library`'s.
          true <-
            task.ad_hoc == true or
-             Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]),
-         true <- String.trim(title) != task.title do
-      Projects.update_task(task, %{"title" => String.trim(title)})
-    end
+             Authz.manage_library?(socket.assigns[:phoenix_kit_current_scope]) do
+      # Only the title keys are replaced: a one-off task's description
+      # translations live in the same map and are written on their own.
+      translations =
+        task.translations
+        |> Map.new(fn {lang, fields} -> {lang, Map.delete(fields || %{}, "title")} end)
+        |> Map.merge(titles, fn _lang, old, new -> Map.merge(old, new) end)
+        |> Enum.reject(fn {_lang, fields} -> fields == %{} end)
+        |> Map.new()
 
-    :ok
+      case Projects.update_task(task, %{"title" => title, "translations" => translations}) do
+        {:error, %Ecto.Changeset{} = cs} -> {:error, cs}
+        _ -> :ok
+      end
+    else
+      _ -> :ok
+    end
   rescue
     _ -> :ok
   end
+
+  # `{:changed, title, %{lang => %{"title" => …}}}` when the form's title
+  # differs from the task's, else `:same`.
+  defp title_change(socket) do
+    with true <- socket.assigns[:title_editable?] == true,
+         %Task{} = shown <- socket.assigns[:title_task],
+         %Phoenix.HTML.Form{source: %Ecto.Changeset{} = cs} <- socket.assigns[:task_form],
+         edited = Ecto.Changeset.apply_changes(cs),
+         title when title != "" <- String.trim(edited.title || ""),
+         titles = title_translations(edited.translations),
+         true <- title != shown.title or titles != title_translations(shown.translations) do
+      {:changed, title, titles}
+    else
+      _ -> :same
+    end
+  end
+
+  defp title_translations(translations) when is_map(translations) do
+    for {lang, %{"title" => text}} <- translations, text not in [nil, ""], into: %{} do
+      {lang, %{"title" => text}}
+    end
+  end
+
+  defp title_translations(_), do: %{}
+
+  # The name at the top of the form, as typed: the new task's title, the
+  # library task picked, or the task being edited — in the language whose
+  # tab is open, the primary's where that one has none.
+  defp header_title(assigns) do
+    case typed_title(assigns) do
+      title when is_binary(title) and title != "" ->
+        title
+
+      _ ->
+        # Emptied while typing: the name it is saved under, if it has one.
+        case assigns[:title_task] do
+          %Task{title: saved} when is_binary(saved) and saved != "" -> saved
+          _ -> gettext("New task")
+        end
+    end
+  end
+
+  defp typed_title(%{live_action: :new, task_mode: "existing"} = assigns) do
+    Enum.find_value(assigns.task_options, fn {label, uuid} ->
+      uuid == assigns.selected_task_uuid && label
+    end)
+  end
+
+  defp typed_title(%{live_action: action} = assigns)
+       when action == :new or :erlang.map_get(:title_editable?, assigns) == true do
+    assigns.task_form.source
+    |> Ecto.Changeset.apply_changes()
+    |> Task.localized_title(assigns[:current_lang])
+    |> trimmed()
+  end
+
+  defp typed_title(%{assignment: %Assignment{task: %Task{} = task}} = assigns),
+    do: task |> Task.localized_title(assigns[:current_lang]) |> trimmed()
+
+  defp typed_title(_assigns), do: nil
+
+  defp trimmed(text) when is_binary(text), do: String.trim(text)
+  defp trimmed(_), do: nil
 
   defp assign_fx(socket) do
     case socket.assigns[:project] do
@@ -439,6 +429,223 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       _ ->
         assign(socket, fx: Features.default_gates())
     end
+  end
+
+  # ── Whose the task is ─────────────────────────────────────────────
+  #
+  # One picker for people, teams and departments together, as the CRM's
+  # "Involved parties" (the boss, 2026-10-29: picking the kind first and then
+  # a second select swapped fields below without a word). What it holds is
+  # the form's own three assignee fields — posted as hidden inputs, so a
+  # pick saves like any other field — and `@assignee_chip` shows it.
+
+  defp assign_assignee_picker(socket) do
+    project = socket.assigns[:project]
+    lang = L10n.current_content_lang()
+
+    {my_person, recent} =
+      case project do
+        %Project{uuid: uuid} when is_binary(uuid) ->
+          {my_person_uuid(socket), Assignees.recent_for_project(uuid, 6, lang)}
+
+        _ ->
+          {nil, []}
+      end
+
+    socket
+    |> assign(
+      my_person_uuid: my_person,
+      recent_assignees: recent,
+      can_assign?: can_assign?(socket)
+    )
+    |> assign_new(:staff_confirm, fn -> nil end)
+    |> assign_new(:assignee_notice, fn -> nil end)
+  end
+
+  # The viewer's own staff person — what "Assign to me" assigns — or nil
+  # (nil also when it is trashed: then there is no one to assign as them).
+  defp my_person_uuid(socket) do
+    with uuid when is_binary(uuid) <- Activity.actor_uuid(socket),
+         %{uuid: person_uuid, status: status} when status != "trashed" <-
+           PhoenixKitProjects.People.get_person_by_user_uuid(uuid) do
+      person_uuid
+    else
+      _ -> nil
+    end
+  end
+
+  defp can_assign?(%{assigns: %{project: %Project{uuid: uuid} = project}} = socket)
+       when is_binary(uuid),
+       do:
+         PhoenixKitProjects.Authz.can?(
+           socket.assigns[:phoenix_kit_current_scope],
+           project,
+           :assign_tasks
+         )
+
+  defp can_assign?(_socket), do: false
+
+  # `{kind, uuid}` of the assignee the form holds now, or nil.
+  defp form_assignee(form) do
+    Enum.find_value(~w(person team department), fn kind ->
+      case form[Assignees.assignee_field(kind)].value do
+        uuid when is_binary(uuid) and uuid != "" -> {kind, uuid}
+        _ -> nil
+      end
+    end)
+  end
+
+  # The chip of the chosen assignee (label and faces), looked up only when
+  # the choice changed.
+  defp refresh_assignee_chip(socket) do
+    key = form_assignee(socket.assigns.form)
+
+    case socket.assigns[:assignee_chip] do
+      %{key: ^key} ->
+        socket
+
+      _ ->
+        chip =
+          case key do
+            {kind, uuid} -> Assignees.describe(kind, uuid, L10n.current_content_lang())
+            nil -> nil
+          end
+
+        assign(socket, :assignee_chip, %{key: key, row: chip})
+    end
+  end
+
+  # The three assignee fields for one choice: exactly one set, the other
+  # two cleared (the changeset refuses two at once).
+  defp assignee_attrs(kind, uuid) do
+    Map.new(~w(person team department), fn k ->
+      {Atom.to_string(Assignees.assignee_field(k)), if(k == kind, do: uuid)}
+    end)
+  end
+
+  defp choose_assignee(socket, kind, uuid) do
+    if may_assign?(socket) do
+      socket
+      |> assign(:assignee_notice, nil)
+      |> put_form_attrs(assignee_attrs(kind, uuid), %{"assign_type" => kind || ""})
+      |> assign(:assign_type, kind || "")
+    else
+      socket
+    end
+  end
+
+  defp may_assign?(socket),
+    do: socket.assigns.fx.assignees and socket.assigns[:can_assign?] == true
+
+  # Assigns a user through their staff person: straight away when they
+  # have one; asking first when assigning would create it (Max: nothing is
+  # made until the person confirms); refused, with a line saying where to
+  # restore it, when it is trashed. `who` is `:self` (Assign to me) or
+  # `:other` (a picked user, re-looked up so a forged uuid assigns nobody).
+  defp assign_user(socket, user_uuid, who) do
+    if may_assign?(socket) do
+      case PhoenixKitProjects.People.get_person_by_user_uuid(user_uuid) do
+        %{status: "trashed"} ->
+          assign(socket, :assignee_notice, {:trashed, who})
+
+        %{uuid: person_uuid} ->
+          choose_assignee(socket, "person", person_uuid)
+
+        nil ->
+          ask_staff_create(socket, user_uuid, who)
+      end
+    else
+      socket
+    end
+  end
+
+  defp ask_staff_create(socket, user_uuid, who) do
+    name =
+      case who do
+        :self -> self_name(socket, user_uuid)
+        :other -> with %{label: label} <- Assignees.describe_user(user_uuid), do: label
+      end
+
+    if is_binary(name),
+      do: assign(socket, :staff_confirm, %{user_uuid: user_uuid, who: who, name: name}),
+      else: socket
+  end
+
+  defp self_name(socket, user_uuid) do
+    case Activity.actor_uuid(socket) == user_uuid && Auth.get_user(user_uuid) do
+      %User{} = user ->
+        if PhoenixKitProjects.People.assignable_user?(user),
+          do: PhoenixKitProjects.People.new_person_name(user)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp create_and_assign(socket, user_uuid, who) do
+    case PhoenixKitProjects.People.ensure_person_for_user(user_uuid,
+           actor_uuid: Activity.actor_uuid(socket),
+           source: "task_form"
+         ) do
+      {:ok, %{uuid: person_uuid}} ->
+        socket
+        |> then(&if(who == :self, do: assign(&1, :my_person_uuid, person_uuid), else: &1))
+        |> choose_assignee("person", person_uuid)
+
+      {:error, :trashed_person} ->
+        assign(socket, :assignee_notice, {:trashed, who})
+
+      {:error, _} ->
+        put_flash(socket, :error, gettext("Could not create the staff record."))
+    end
+  end
+
+  # A value set by a button rather than typed (an assignee, a deadline
+  # preset): cast onto the form as it stands, and — on a task being edited
+  # — saved with whatever else is waiting, as a typed change would be.
+  # `attrs` are shaped as the browser posts them (a deadline as the
+  # viewer's wall clock).
+  defp put_form_attrs(socket, attrs, extra_params \\ %{}) do
+    cs =
+      socket.assigns.form.source
+      |> Ecto.Changeset.cast(
+        normalize_form_attrs(attrs),
+        Map.keys(attrs) |> Enum.map(&String.to_existing_atom/1)
+      )
+      |> Map.put(:action, socket.assigns.form.source.action)
+
+    pending = socket.assigns[:pending_params] || %{}
+
+    params =
+      pending
+      |> Map.merge(extra_params)
+      |> Map.put("assignment", Map.merge(Map.get(pending, "assignment", %{}), attrs))
+
+    socket
+    |> assign_form(cs)
+    |> WebHelpers.mark_dirty()
+    |> schedule_autosave(params)
+  end
+
+  # Browsers post a `datetime-local` value as the viewer's wall clock.
+  defp normalize_form_attrs(attrs),
+    do: WebHelpers.normalize_datetime_local_attrs(attrs, ["deadline"])
+
+  # The deadline presets: a wall clock in the viewer's zone, as if typed.
+  defp deadline_preset(preset) do
+    now = DateTime.utc_now() |> L10n.local() |> DateTime.to_naive()
+    today = NaiveDateTime.to_date(now)
+
+    at =
+      case preset do
+        "hour" -> now |> NaiveDateTime.add(3600) |> Map.put(:second, 0)
+        "today" -> NaiveDateTime.new!(today, ~T[17:00:00])
+        "tomorrow" -> NaiveDateTime.new!(Date.add(today, 1), ~T[09:00:00])
+        _ -> nil
+      end
+
+    at &&
+      at |> NaiveDateTime.truncate(:second) |> NaiveDateTime.to_iso8601() |> String.slice(0, 16)
   end
 
   # Wires the AI-translate modal/buttons for the assignment's `description`.
@@ -568,6 +775,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       add_to_library: false,
       assignment_deps: [],
       available_assignment_deps: [],
+      unlocks: [],
       pending_dep_uuids: [],
       pending_dep_options: [],
       closure_tree: nil,
@@ -684,6 +892,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           add_to_library: false,
           assignment_deps: [],
           available_assignment_deps: [],
+          unlocks: [],
           # `:new` mode can't create real Dependency rows yet (no
           # assignment uuid). Track the user's selections in
           # `pending_dep_uuids` and create them post-insert in `save_new`
@@ -780,6 +989,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           assignment_deps: Projects.list_dependencies(assignment.uuid),
           available_assignment_deps:
             Projects.available_dependencies(project.uuid, assignment.uuid),
+          unlocks: [],
           pending_dep_uuids: [],
           pending_dep_options: [],
           task_mode: "new",
@@ -840,6 +1050,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           assignment_deps: Projects.list_dependencies(assignment.uuid),
           available_assignment_deps:
             Projects.available_dependencies(project.uuid, assignment.uuid),
+          unlocks: unlocks(project, assignment),
           pending_dep_uuids: [],
           pending_dep_options: [],
           # Edit mode doesn't render the closure UI (closure-pull is
@@ -976,11 +1187,109 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       []
   end
 
-  defp assign_form(socket, cs), do: assign(socket, form: to_form(cs))
+  # When the work really began and ended — stamped by Start and Done,
+  # corrected here (a late "Done" moved back to when it happened). Their own
+  # changeset (`Assignment.times_changeset/2`): the form's never casts them.
+  defp assign_times_form(
+         %{assigns: %{live_action: :edit, kind: "task", assignment: %Assignment{uuid: u} = a}} =
+           socket
+       )
+       when is_binary(u),
+       do: assign(socket, :times_form, to_form(Assignment.times_changeset(a, %{}), as: :times))
+
+  defp assign_times_form(socket), do: assign(socket, :times_form, nil)
+
+  defp take_times_params(%{assigns: %{times_form: %Phoenix.HTML.Form{}}} = socket, %{
+         "times" => %{} = times
+       }) do
+    a = socket.assigns.assignment
+
+    attrs =
+      times
+      |> Map.take(["started_at", "completed_at"])
+      |> drop_unchanged_wall(a, ["started_at", "completed_at"])
+      |> WebHelpers.normalize_datetime_local_attrs(["started_at", "completed_at"])
+
+    cs = a |> Assignment.times_changeset(attrs) |> Map.put(:action, :validate)
+    assign(socket, :times_form, to_form(cs, as: :times))
+  end
+
+  defp take_times_params(socket, _params), do: socket
+
+  # Corrected times are written after the row's own save, to the row as it
+  # now is. `:none` when nothing was changed.
+  defp save_times(%{assigns: %{times_form: %Phoenix.HTML.Form{source: cs}}}, updated) do
+    # Checked again against the row as saved, not the one the boxes were
+    # filled against: a status changed to done in the same save may take a
+    # finish time.
+    if cs.changes == %{},
+      do: :none,
+      else: Projects.correct_assignment_times(updated, cs.changes)
+  end
+
+  defp save_times(_socket, _updated), do: :none
+
+  # The assignment's fields as the changeset takes them: a `datetime-local`
+  # read in the viewer's zone, and one posted back exactly as it was shown
+  # left out — the box shows minutes, so a stored second must not be lost
+  # to a save of some other field.
+  defp form_attrs(attrs, socket) do
+    attrs
+    |> drop_unchanged_wall(socket.assigns[:assignment], ["deadline"])
+    |> normalize_form_attrs()
+  end
+
+  defp drop_unchanged_wall(attrs, record, fields) do
+    Enum.reduce(fields, attrs, fn field, acc ->
+      with raw when is_binary(raw) <- Map.get(acc, field),
+           %{} <- record,
+           %DateTime{} = at <- Map.get(record, String.to_existing_atom(field)),
+           true <- raw == local_input_value(at) do
+        Map.delete(acc, field)
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  # A stored instant as a `datetime-local` value: the viewer's wall clock,
+  # to the minute. The changeset's params hold what was cast — a UTC ISO
+  # string once normalised — which the box would not take, so that is
+  # shown as a wall clock too; anything else (a raw value that did not
+  # cast) as it is.
+  defp local_input_value(%DateTime{} = dt) do
+    dt
+    |> L10n.local()
+    |> DateTime.to_naive()
+    |> NaiveDateTime.to_iso8601()
+    |> String.slice(0, 16)
+  end
+
+  defp local_input_value(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, dt, _offset} -> local_input_value(dt)
+      _ -> value
+    end
+  end
+
+  defp local_input_value(other), do: other
+
+  # A `<input type="time">` value: `HH:MM`.
+  defp time_input_value(%Time{} = t), do: t |> Time.to_iso8601() |> String.slice(0, 5)
+  defp time_input_value(other), do: other
+
+  defp assign_form(socket, cs),
+    do: socket |> assign(form: to_form(cs)) |> refresh_assignee_chip()
 
   # ── Validate ────────────────────────────────────────────────────
 
   @impl true
+  # Opening a cued section (History, Discussion, AI notes are
+  # `<.accordion cue>`) reports it as seen. This form never cues anything,
+  # so there is nothing to clear — but without a clause the event raised
+  # FunctionClauseError and took the whole form down (tim-dev, 2026-10-27).
+  def handle_event("pk_cue_seen", _params, socket), do: {:noreply, socket}
+
   # "Done" on a task being edited: what is still waiting is saved first;
   # if that fails the form stays open on the error.
   def handle_event("close_form", _params, socket) do
@@ -995,7 +1304,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           _ -> Paths.projects()
         end
 
-      {:noreply, WebHelpers.close_or_navigate(socket, fallback)}
+      {:noreply, leave_form(socket, fallback)}
     end
   end
 
@@ -1006,7 +1315,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         _ -> Paths.projects()
       end
 
-    {:noreply, WebHelpers.close_or_navigate(socket, fallback)}
+    {:noreply, leave_form(socket, fallback)}
   end
 
   def handle_event("switch_language", %{"lang" => lang_code}, socket) do
@@ -1166,8 +1475,103 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  def handle_event("set_form_pane", %{"pane" => pane}, socket) when pane in @panes,
+    do: {:noreply, assign(socket, :form_pane, pane)}
+
+  def handle_event("set_form_pane", _params, socket), do: {:noreply, socket}
+
+  # The assignee picker (core `<.search_picker>`): people, teams and
+  # departments in one search, a page at a time.
+  def handle_event("assignee_search", %{"q" => q} = params, socket) when is_binary(q) do
+    limit =
+      case Integer.parse(to_string(params["limit"] || "")) do
+        {n, _} when n > 0 -> n
+        _ -> 20
+      end
+
+    {rows, more?} = Assignees.search_assignees(q, limit, L10n.current_content_lang())
+
+    {:noreply, push_event(socket, "assignee_results", %{q: q, results: rows, has_more: more?})}
+  end
+
+  # A query that is not text (a forged event) finds nobody.
+  def handle_event("assignee_search", _params, socket), do: {:noreply, socket}
+
+  # A pick names a row the search offered; it is looked up again, so a
+  # forged kind or uuid assigns nobody. A user with no staff person yet
+  # (`kind: "user"`): assigning them makes one, so the form asks first
+  # (`staff_confirm`).
+  def handle_event("assignee_pick", %{"kind" => "user", "uuid" => uuid}, socket) do
+    {:noreply, socket |> assign_user(uuid, :other) |> push_event("assignee_staged", %{})}
+  end
+
+  def handle_event("assignee_pick", %{"kind" => kind, "uuid" => uuid}, socket) do
+    socket =
+      case Assignees.describe(kind, uuid) do
+        %{kind: kind, uuid: uuid} -> choose_assignee(socket, kind, uuid)
+        nil -> socket
+      end
+
+    {:noreply, push_event(socket, "assignee_staged", %{})}
+  end
+
+  def handle_event("assignee_recent", %{"kind" => kind, "uuid" => uuid}, socket) do
+    offered? =
+      Enum.any?(socket.assigns[:recent_assignees] || [], &(&1.kind == kind and &1.uuid == uuid))
+
+    {:noreply, if(offered?, do: choose_assignee(socket, kind, uuid), else: socket)}
+  end
+
+  # The viewer themself — their staff person, made (after asking) when
+  # their account has none.
+  def handle_event("assign_to_me", _params, socket) do
+    case Activity.actor_uuid(socket) do
+      uuid when is_binary(uuid) -> {:noreply, assign_user(socket, uuid, :self)}
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # "Create and assign": the question holds the user, re-checked here.
+  def handle_event("staff_create_confirm", _params, socket) do
+    case socket.assigns[:staff_confirm] do
+      %{user_uuid: user_uuid, who: who} ->
+        socket = assign(socket, :staff_confirm, nil)
+
+        if may_assign?(socket) do
+          {:noreply, create_and_assign(socket, user_uuid, who)}
+        else
+          {:noreply, socket}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("staff_create_cancel", _params, socket),
+    do: {:noreply, assign(socket, :staff_confirm, nil)}
+
+  # The assignee search box's own form: Enter there must submit nothing.
+  def handle_event("assignee_noop", _params, socket), do: {:noreply, socket}
+
+  def handle_event("assignee_clear", _params, socket),
+    do: {:noreply, choose_assignee(socket, nil, nil)}
+
+  def handle_event("deadline_preset", %{"preset" => preset}, socket) do
+    case {socket.assigns.fx[:dates] != false, deadline_preset(preset)} do
+      {true, at} when is_binary(at) -> {:noreply, put_form_attrs(socket, %{"deadline" => at})}
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("deadline_clear", _params, socket),
+    do: {:noreply, put_form_attrs(socket, %{"deadline" => ""})}
+
   def handle_event("validate", %{"assignment" => attrs} = params, socket) do
-    socket = socket |> keep_edit_title(params) |> maybe_move(params)
+    socket =
+      socket |> take_task_params(params) |> take_times_params(params) |> maybe_move(params)
+
+    attrs = form_attrs(attrs, socket)
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
     task_mode = Map.get(params, "task_mode", socket.assigns.task_mode)
 
@@ -1176,16 +1580,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         nil -> socket.assigns.add_to_library
         value -> value == "true"
       end
-
-    # The new task's title (+ translations) rides in `params["task"]`;
-    # absent when the library tab is showing (its inputs are not rendered).
-    task_form =
-      case Map.get(params, "task") do
-        %{} = task_params -> new_task_form(merge_task_attrs(task_params, socket))
-        _ -> socket.assigns.task_form
-      end
-
-    new_task_title = Ecto.Changeset.get_field(task_form.source, :title) || ""
 
     socket =
       if task_mode == "existing" && socket.assigns.live_action == :new do
@@ -1210,8 +1604,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
      |> assign(
        assign_type: assign_type,
        task_mode: task_mode,
-       new_task_title: new_task_title,
-       task_form: task_form,
        add_to_library: add_to_library
      )
      |> WebHelpers.mark_dirty()
@@ -1252,14 +1644,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       ) do
     {:noreply,
      socket
-     |> keep_edit_title(params)
+     |> take_task_params(params)
+     |> take_times_params(params)
      |> cancel_autosave()
      |> assign(:pending_params, params)
      |> autosave_now()}
   end
 
   def handle_event("save", %{"assignment" => attrs} = params, socket) do
-    socket = keep_edit_title(socket, params)
+    socket = take_task_params(socket, params)
     assign_type = Map.get(params, "assign_type", "")
 
     # Save-time gate re-resolution (panel R3-4): the submit binds to the
@@ -1268,9 +1661,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     # "Add & next" (Shift+Enter, or the button — the submitter carries
     # `then=next`): after a successful create the form resets for the next
     # task instead of closing. Only a create can chain.
+    # `:assign_tasks` is re-read with the gates: `strip_unassignable/2`
+    # must judge the save by the right as it is now, not at mount.
     socket =
       assign(socket,
         fx: fx,
+        can_assign?: can_assign?(socket),
         add_next?: socket.assigns.live_action == :new and Map.get(params, "then") == "next"
       )
 
@@ -1288,17 +1684,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     # Labels ride a separate param (checkbox list) — captured only when
     # the flag is on at SAVE time, applied after the record write.
-    socket =
-      assign(
-        socket,
-        :pending_labels,
-        if(fx.labels, do: Enum.uniq(List.wrap(params["labels"] || [])))
-      )
+    socket = assign(socket, :pending_labels, pending_labels(fx, params))
 
     attrs =
       attrs
+      |> form_attrs(socket)
       |> clear_other_assignees(assign_type)
       |> strip_gated_attrs(fx)
+      |> strip_unassignable(socket)
       |> merge_attrs(socket)
 
     case {socket.assigns.live_action, task_mode} do
@@ -2064,7 +2457,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       task_mode: task_mode,
       add_to_library: to_library,
       dirty?: false,
-      form_seq: socket.assigns.form_seq + 1
+      form_seq: socket.assigns.form_seq + 1,
+      form_pane: "task"
     )
     |> WebHelpers.notify_dirty(false)
     |> WebHelpers.keep_host_title()
@@ -2093,8 +2487,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     task = Ecto.Changeset.apply_changes(task_form.source)
 
     case String.trim(task.title || "") do
-      "" -> {:noreply, put_flash(socket, :error, gettext("Task title is required."))}
-      title -> create_task_and_assign(socket, attrs, title, task.translations || %{})
+      "" ->
+        {:noreply,
+         socket
+         |> assign(:form_pane, "task")
+         |> put_flash(:error, gettext("Task title is required."))}
+
+      title ->
+        create_task_and_assign(socket, attrs, title, task.translations || %{})
     end
   end
 
@@ -2580,7 +2980,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  def handle_info(_message, socket), do: {:noreply, socket}
+  def handle_info(message, socket) do
+    Logger.debug("[AssignmentFormLive] unexpected handle_info: #{inspect(message)}")
+    {:noreply, socket}
+  end
 
   defp schedule_autosave(%{assigns: %{live_action: :edit, kind: "task"}} = socket, params) do
     socket = cancel_autosave(socket)
@@ -2606,16 +3009,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
     fx = Features.gates(socket.assigns.project)
 
+    # The right to hand the task out is asked again too, like the gates: a
+    # manager made a member since the form opened no longer reassigns.
     socket =
       assign(socket,
         fx: fx,
-        pending_labels: if(fx.labels, do: Enum.uniq(List.wrap(params["labels"] || [])))
+        pending_labels: pending_labels(fx, params),
+        can_assign?: can_assign?(socket)
       )
 
     attrs =
       attrs
+      |> form_attrs(socket)
       |> clear_other_assignees(assign_type)
       |> strip_gated_attrs(fx)
+      |> strip_unassignable(socket)
       |> merge_attrs(socket)
 
     {attrs, task_words} = split_task_words(socket, attrs)
@@ -2623,7 +3031,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
-        save_edit_title(socket, updated)
+        title_saved = save_edit_title(socket, updated)
 
         # The words become the person's only when the person changed them:
         # a form that saves on every change must not take a task's text
@@ -2640,23 +3048,29 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
         apply_pending_labels(socket, updated)
         told? = log_typed_changes(socket, socket.assigns.assignment, updated)
+        times = save_times(socket, updated)
 
         socket
         |> log_edit_once(updated, told?)
         |> hold_saved(updated)
+        |> hold_saved_title(title_saved)
+        |> hold_saved_times(times)
         |> assign(
           pending_params: nil,
           save_state: if(words_saved == :ok, do: :saved, else: :error),
           save_error:
             if(words_saved == :ok, do: nil, else: gettext("The description could not be saved.")),
-          dirty?: false
+          dirty?: title_saved != :ok
         )
-        |> WebHelpers.notify_dirty(false)
+        |> part_error(title_saved)
+        |> part_error(times)
+        |> WebHelpers.notify_dirty(title_saved != :ok)
 
       {:error, %Ecto.Changeset{} = cs} ->
         socket
         |> assign_form(Map.put(cs, :action, :validate))
         |> assign(save_state: :error, save_error: first_error_message(cs))
+        |> show_error_pane()
     end
   rescue
     e ->
@@ -2668,13 +3082,11 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp words_changed?(socket, attrs, task_words) do
     shown = socket.assigns.assignment
-    title = socket.assigns[:edit_title]
 
     not is_nil(task_words) or
       (Map.has_key?(attrs, "description") and
          (attrs["description"] || "") != (shown.description || "")) or
-      (socket.assigns[:title_editable?] == true and is_binary(title) and
-         match?(%Task{}, shown.task) and String.trim(title) != shown.task.title)
+      title_change(socket) != :same
   end
 
   # The record the next change is compared with: the task as it is now
@@ -2687,6 +3099,46 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       desc_on_task?: desc_on_task?
     )
   end
+
+  # The title as now saved: what the next change is compared with. A
+  # refused rename keeps the box as typed, with the task's error on it.
+  defp hold_saved_title(socket, {:error, %Ecto.Changeset{} = cs}),
+    do: assign(socket, :task_form, to_form(Map.put(cs, :action, :validate), as: :task))
+
+  defp hold_saved_title(socket, _result), do: hold_saved_title(socket)
+
+  defp hold_saved_title(%{assigns: %{title_editable?: true}} = socket) do
+    case socket.assigns.assignment do
+      %Assignment{task: %Task{} = task} ->
+        assign(socket,
+          title_task: task,
+          task_form: to_form(Projects.change_task(task, %{}), as: :task),
+          edit_title: task.title
+        )
+
+      _ ->
+        socket
+    end
+  end
+
+  defp hold_saved_title(socket), do: socket
+
+  # Corrected times that did not save keep their box and its error; else
+  # the boxes show the row as it now is.
+  defp hold_saved_times(socket, {:error, %Ecto.Changeset{} = cs}),
+    do: assign(socket, :times_form, to_form(Map.put(cs, :action, :validate), as: :times))
+
+  defp hold_saved_times(socket, _result), do: assign_times_form(socket)
+
+  # A part saved after the row's own save (the title, the corrected times)
+  # that failed: the bar says so and the tab holding it opens.
+  defp part_error(socket, {:error, %Ecto.Changeset{} = cs}) do
+    socket
+    |> assign(save_state: :error, save_error: first_error_message(cs))
+    |> show_error_pane()
+  end
+
+  defp part_error(socket, _result), do: socket
 
   # A status or a waiting-on changed through the form is its own line in the
   # project's history (the page's buttons log theirs the same way); the
@@ -2713,16 +3165,33 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     # Handed on in the same save: the new people hear "gave you a task", not
     # also that it started.
-    if status_action do
-      Activity.log(
-        status_action,
-        base ++
-          [
-            target_uuid: if(not reassigned?, do: Activity.assignee_target_uuid(now)),
-            tell: not reassigned?,
-            metadata: meta
-          ]
-      )
+    cond do
+      # Waiting <-> can be started is readiness, not a reopen: logged as the
+      # page's and the API's buttons log it, naming nobody (`Handoffs` tells
+      # the people a released task is theirs).
+      readiness_action(was.status, now.status) ->
+        Activity.log(
+          readiness_action(was.status, now.status),
+          base ++
+            [
+              tell: false,
+              metadata: Map.merge(meta, %{"from" => was.status, "to" => now.status})
+            ]
+        )
+
+      status_action ->
+        Activity.log(
+          status_action,
+          base ++
+            [
+              target_uuid: if(not reassigned?, do: Activity.assignee_target_uuid(now)),
+              tell: not reassigned?,
+              metadata: meta
+            ]
+        )
+
+      true ->
+        :ok
     end
 
     if blank_waiting(was.waiting_on) != blank_waiting(now.waiting_on) do
@@ -2738,6 +3207,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp log_typed_changes(_socket, _was, _now), do: false
+
+  defp readiness_action("waiting", "todo"), do: "projects.assignment_made_ready"
+  defp readiness_action("todo", "waiting"), do: "projects.assignment_made_idle"
+  defp readiness_action(_was, _now), do: nil
 
   defp blank_waiting(v) when is_binary(v) do
     case String.trim(v) do
@@ -2781,7 +3254,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
-        save_edit_title(socket, updated)
+        title_saved = save_edit_title(socket, updated)
         # A person saved the form: the title and description are theirs
         # now, whatever key wrote them before.
         _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
@@ -2804,14 +3277,26 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           metadata: %{"project" => socket.assigns.project.name}
         )
 
-        {:noreply,
-         socket
-         |> put_save_flash(words_saved)
-         |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
-           kind: :assignment,
-           record: updated,
-           action: :update
-         )}
+        case title_saved do
+          # The rest is saved; the form stays open on the refused title.
+          {:error, %Ecto.Changeset{} = cs} ->
+            {:noreply,
+             socket
+             |> hold_saved(updated)
+             |> hold_saved_title(title_saved)
+             |> part_error(title_saved)
+             |> put_flash(:error, first_error_message(cs))}
+
+          :ok ->
+            {:noreply,
+             socket
+             |> put_save_flash(words_saved)
+             |> WebHelpers.navigate_after_save(Paths.project(socket.assigns.project.uuid),
+               kind: :assignment,
+               record: updated,
+               action: :update
+             )}
+        end
 
       {:error, cs} ->
         Activity.log_failed("projects.assignment_updated",
@@ -2833,6 +3318,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     socket
     |> assign_form(cs)
     |> WebHelpers.maybe_switch_to_primary_on_error(cs, [:description])
+    |> show_error_pane()
     |> put_flash(:error, first_error_message(cs))
   end
 
@@ -2841,6 +3327,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp first_error_message(_), do: gettext("Could not save the assignment.")
+
+  # The fields this form added with V26 are named as their boxes are, in
+  # the viewer's language; older fields keep the generic spelling.
+  defp humanize(:deadline), do: gettext("Deadline")
+  defp humanize(:started_at), do: gettext("Started at")
+  defp humanize(:completed_at), do: gettext("Finished at")
+  defp humanize(:start_time), do: gettext("Start time")
+  defp humanize(:end_time), do: gettext("End time")
 
   defp humanize(field) do
     field |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
@@ -2947,15 +3441,123 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     |> then(fn a -> if fx.scheduling, do: a, else: Map.drop(a, ~w(counts_weekends)) end)
     |> then(fn a -> if fx.priorities, do: a, else: Map.drop(a, ~w(priority)) end)
     |> then(fn a -> if fx[:waiting] != false, do: a, else: Map.drop(a, ~w(waiting_on origin)) end)
-    |> then(fn a -> if fx[:dates] != false, do: a, else: Map.drop(a, ~w(start_date end_date)) end)
+    |> then(fn a ->
+      if fx[:dates] != false,
+        do: a,
+        else: Map.drop(a, ~w(start_date end_date start_time end_time deadline))
+    end)
   end
 
-  # To do / In progress / Done — the middle one only with the in-progress
-  # step on, or for a row already there (it must stay selectable).
+  # Who may not hand tasks out (`:assign_tasks`) leaves the assignee as it
+  # is, whatever a forged submit says — the picker is not drawn for them.
+  defp strip_unassignable(attrs, socket) do
+    if socket.assigns[:can_assign?] == false,
+      do: Map.drop(attrs, ~w(assigned_team_uuid assigned_department_uuid assigned_person_uuid)),
+      else: attrs
+  end
+
+  # The tabs the form shows, in order; a tab with nothing in it for this
+  # task is left out.
+  defp form_panes(assigns) do
+    [
+      {"task", gettext("Task"), true},
+      {"planning", gettext("Planning"), planning_pane?(assigns)},
+      {"connections", gettext("Connections"), assigns.fx.dependencies},
+      {"more", gettext("More"), more_pane?(assigns)}
+    ]
+    |> Enum.filter(&elem(&1, 2))
+    |> Enum.map(fn {pane, label, _shown} -> {pane, label} end)
+  end
+
+  defp planning_pane?(%{fx: fx} = assigns) do
+    template? = Map.get(assigns.project, :is_template, false) == true
+
+    fx.estimates or fx[:dates] != false or fx.scheduling or
+      (fx.labels and assigns.project_labels != []) or (assigns.subtasks_on? and not template?)
+  end
+
+  defp more_pane?(%{live_action: :edit, fx: fx} = assigns) do
+    template? = Map.get(assigns.project, :is_template, false) == true
+    (fx.ledger and not template?) or assigns.portal? or show_times?(assigns)
+  end
+
+  defp more_pane?(_assigns), do: false
+
+  # The real start and finish: once there is one, or once the task is under
+  # way — before that there is nothing to correct.
+  defp show_times?(%{times_form: %Phoenix.HTML.Form{}, assignment: a}),
+    do: a.status in ~w(in_progress done) or not is_nil(a.started_at) or not is_nil(a.completed_at)
+
+  defp show_times?(_assigns), do: false
+
+  # Which tab each field's error shows under; anything unlisted is the
+  # first tab's.
+  @pane_of %{
+    estimated_duration: "planning",
+    estimated_duration_unit: "planning",
+    start_date: "planning",
+    end_date: "planning",
+    start_time: "planning",
+    end_time: "planning",
+    counts_weekends: "planning",
+    parent_uuid: "planning"
+  }
+
+  # The tabs holding an error the form shows — a dot on each, so an error
+  # on a tab that is not open is not missed.
+  defp error_panes(assigns) do
+    form_panes =
+      case assigns.form.source do
+        %Ecto.Changeset{action: action, errors: errors} when not is_nil(action) ->
+          Enum.map(errors, fn {field, _} -> Map.get(@pane_of, field, "task") end)
+
+        _ ->
+          []
+      end
+
+    # A refused rename: its box is on the Task tab.
+    title_panes =
+      case assigns[:task_form] do
+        %Phoenix.HTML.Form{source: %Ecto.Changeset{action: action, errors: [_ | _]}}
+        when not is_nil(action) ->
+          ["task"]
+
+        _ ->
+          []
+      end
+
+    times_panes =
+      case assigns[:times_form] do
+        %Phoenix.HTML.Form{source: %Ecto.Changeset{action: action, errors: [_ | _]}}
+        when not is_nil(action) ->
+          ["more"]
+
+        _ ->
+          []
+      end
+
+    MapSet.new(form_panes ++ title_panes ++ times_panes)
+  end
+
+  # After a failed save: the open tab when the error is there, else the
+  # first tab that holds one.
+  defp show_error_pane(socket) do
+    errors = error_panes(socket.assigns)
+
+    cond do
+      MapSet.member?(errors, socket.assigns[:form_pane]) -> socket
+      pane = Enum.find(@panes, &MapSet.member?(errors, &1)) -> assign(socket, :form_pane, pane)
+      true -> socket
+    end
+  end
+
+  # Waiting / Can be started / In progress / Done — "in progress" only with
+  # the in-progress step on, or for a row already there (it must stay
+  # selectable).
   defp status_options(fx, assignment) do
     middle? = fx.in_progress or match?(%{status: "in_progress"}, assignment)
 
-    [{gettext("To do"), "todo"}] ++
+    [{gettext("Waiting"), "waiting"}, {gettext("Can be started"), "todo"}] ++
       if(middle?, do: [{gettext("In progress"), "in_progress"}], else: []) ++
       [{gettext("Done"), "done"}]
   end
@@ -2968,6 +3570,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       {gettext("Low"), "low"}
     ]
   end
+
+  # The labels a submit sets: nil (leave them) unless the flag is on and the
+  # label boxes were posted — they always post an empty sentinel, so a
+  # value set by a button (an assignee, a deadline preset) never clears
+  # them for want of the boxes.
+  defp pending_labels(%{labels: true}, %{"labels" => labels}),
+    do: labels |> List.wrap() |> Enum.reject(&(&1 in [nil, ""])) |> Enum.uniq()
+
+  defp pending_labels(_fx, _params), do: nil
 
   # Replace the saved assignment's labels with the submit's checkbox set
   # (nil = the flag was off at save time — leave the joins untouched).
@@ -3018,7 +3629,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           "assigned_team_uuid" => task.default_assigned_team_uuid,
           "assigned_department_uuid" => task.default_assigned_department_uuid,
           "assigned_person_uuid" => task.default_assigned_person_uuid,
-          "status" => attrs["status"] || "todo"
+          "status" => attrs["status"] || "waiting"
         }
 
         assign_type =
@@ -3047,9 +3658,27 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
+  # The tasks that wait on this one: what finishing it lets start.
+  defp unlocks(%Project{uuid: project_uuid}, %Assignment{uuid: uuid}) when is_binary(uuid) do
+    waiting =
+      for d <- Projects.list_all_dependencies(project_uuid),
+          d.depends_on_uuid == uuid,
+          into: MapSet.new(),
+          do: d.assignment_uuid
+
+    project_uuid
+    |> Projects.list_assignments()
+    |> Enum.filter(&MapSet.member?(waiting, &1.uuid))
+  rescue
+    _ -> []
+  end
+
+  defp unlocks(_project, _assignment), do: []
+
   defp reload_deps(socket) do
     {:noreply,
      assign(socket,
+       unlocks: unlocks(socket.assigns.project, socket.assigns.assignment),
        assignment_deps: Projects.list_dependencies(socket.assigns.assignment.uuid),
        available_assignment_deps:
          Projects.available_dependencies(
@@ -3072,7 +3701,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   @impl true
-  def render(assigns) do
+  def render(%{kind: "subproject"} = assigns) do
     ~H"""
     <div class={@wrapper_class}>
       <.page_header title={@heading} embed_mode={@embed_mode}>
@@ -3094,7 +3723,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             data-confirm={@dirty? && gettext("Discard your changes?")}
             class="link link-hover text-sm"
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 inline" /> {@project.name}
+            <.icon name="hero-arrow-left" class="w-4 h-4 inline" />
+            {if @from_view?, do: gettext("Back to task"), else: @project.name}
           </button>
         </:back_link>
         <:actions :if={assigns[:task_ref]}>
@@ -3102,7 +3732,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         </:actions>
       </.page_header>
 
-      <%= if @kind == "subproject" do %>
         <% sp_lang = L10n.current_content_lang() %>
         <.form
           for={@sp_form}
@@ -3296,10 +3925,96 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             </:cancel>
           </.form_actions>
         </.form>
-      <% else %>
+    </div>
+    """
+  end
+
+  def render(assigns) do
+    assigns = prepare_task_render(assigns)
+
+    ~H"""
+    <div class={@wrapper_class}>
+      <%!-- The header names the task as it is being typed (the boss: the
+           name at the top did not follow the field below), with where it
+           stands; it stays above the tabs. --%>
+      <header id="assignment-form-header" class="flex flex-col gap-1.5">
+        <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
+          <.link
+            :if={@embed_mode == :navigate and @project.uuid not in [nil, ""]}
+            navigate={Paths.project(@project.uuid)}
+            class="link link-hover text-base-content/70 inline-flex items-center gap-1 min-w-0"
+          >
+            <.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" />
+            <span class="truncate">{@project.name}</span>
+          </.link>
+          <span :if={@embed_mode != :navigate} class="text-base-content/70 truncate min-w-0">
+            {@project.name}
+          </span>
+          <.ref_chip :if={assigns[:task_ref]} ref={assigns[:task_ref]} />
+          <span class="text-base-content/50">{if @live_action == :edit, do: gettext("Editing"), else: gettext("Add task")}</span>
+          <div class="ml-auto flex items-center gap-1">
+            <button
+              :if={@from_view?}
+              type="button"
+              phx-click={if @live_action == :edit, do: "close_form", else: "cancel"}
+              data-confirm={@live_action != :edit && @dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm gap-1"
+            >
+              <.icon name="hero-arrow-left" class="w-4 h-4" /> {gettext("Back to task")}
+            </button>
+            <button
+              :if={@embed_mode not in [:navigate, :emit] and not @from_view?}
+              type="button"
+              phx-click={if @live_action == :edit, do: "close_form", else: "cancel"}
+              data-confirm={@live_action != :edit && @dirty? && gettext("Discard your changes?")}
+              class="btn btn-ghost btn-sm btn-square"
+              aria-label={gettext("Close")}
+            >
+              <.icon name="hero-x-mark" class="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+        <div class="flex items-start gap-3">
+          <h2 id="assignment-form-title" class="flex-1 min-w-0 text-xl font-semibold leading-snug break-words text-balance">
+            {header_title(assigns)}
+          </h2>
+          <.assignment_status_badge
+            :if={not Map.get(@project, :is_template, false)}
+            status={to_string(@form[:status].value || "waiting")}
+            size="md"
+            class="mt-1 shrink-0"
+          />
+        </div>
+      </header>
+
       <.form for={@form} id="assignment-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-4">
-        <div class="card bg-base-100 shadow">
-          <div class="card-body flex flex-col gap-3">
+        <%!-- The tabs. Every tab's fields stay in this one form and are only
+             hidden, so switching loses nothing typed and a save posts them
+             all; a tab holding an error the form shows carries a dot. --%>
+        <div :if={match?([_, _ | _], @panes)} role="tablist" class="tabs tabs-border" id="assignment-form-tabs">
+          <button
+            :for={{pane, label} <- @panes}
+            type="button"
+            role="tab"
+            id={"assignment-tab-#{pane}"}
+            aria-selected={to_string(@pane == pane)}
+            aria-controls={"assignment-pane-#{pane}"}
+            phx-click="set_form_pane"
+            phx-value-pane={pane}
+            class={["tab gap-1.5", @pane == pane && "tab-active"]}
+          >
+            {label}
+            <span
+              :if={MapSet.member?(@pane_errors, pane)}
+              class="inline-block w-2 h-2 rounded-full bg-error"
+              title={gettext("Something here needs fixing")}
+              data-pane-error={pane}
+            ></span>
+          </button>
+        </div>
+
+        <%!-- ── Task: what it is, where it stands, whose it is, by when ── --%>
+        <section id="assignment-pane-task" role="tabpanel" class={["flex flex-col gap-4", @pane != "task" && "hidden"]}>
             <%= if @live_action == :new do %>
               <%!-- Task-source tabs. Replaces the old "Pick from library /
                    Create new" dropdown — a tab strip makes the two
@@ -3366,22 +4081,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <% end %>
             <% end %>
 
-            <%!-- Editing: the task's name and where it stands come first —
-                 the form is opened to see that, then maybe to change one
-                 thing (the pass with the other AIs, 2026-10-14). --%>
-            <%= if @live_action == :edit do %>
-              <.task_title_field editable={@title_editable?} title={@edit_title} shared={@title_shared?} />
-              <.state_fields {assigns} />
-            <% end %>
-
-            <%!-- The translatable fields — the new task's title (Create new)
-                 and the description — sit under the language tabs and INSIDE
-                 the wrapper so a language switch shows the skeleton + cleanly
-                 re-mounts. The non-translatable fields below stay outside the
-                 wrapper (and keep their values). --%>
-            <%!-- Bundled tabs + AI row. Both without their own card padding:
-              this call already sits inside a padded card-body, so the strip
-              spans the fields' full width instead of an inset box of its own. --%>
+          <%!-- The words of the task, at the top and marked as what they
+               are (the boss): written per language, under the language
+               tabs. Only these two sit inside the wrapper — it re-mounts
+               on a language switch, so anything else in it would lose its
+               value. --%>
+          <div id="assignment-words" class={["flex flex-col gap-3", @translated? && "rounded-box border border-base-300 p-3"]}>
+            <div :if={@translated?} id="assignment-translated-hint" class="flex items-center gap-1.5 text-xs text-base-content/60">
+              <.icon name="hero-language" class="w-4 h-4 shrink-0" />
+              <span>{gettext("Title and description are translated per language: pick a language to write its version.")}</span>
+            </div>
+            <%!-- Bundled tabs + AI row, without card padding of their own. --%>
             <.ai_multilang_tabs
               :if={@multilang_enabled}
               multilang_enabled={@multilang_enabled}
@@ -3396,12 +4106,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               multilang_enabled={@multilang_enabled}
               current_lang={@current_lang}
               skeleton_class="space-y-2"
-              fields_class=""
+              fields_class="flex flex-col gap-3"
             >
               <:skeleton>
-                <%!-- Mirrors the fields the wrapper holds: the Create-new
-                     title (input height) above the description (textarea). --%>
-                <div :if={@live_action == :new and @task_mode == "new"} class="space-y-2 mb-3">
+                <%!-- Mirrors the fields the wrapper holds: the title (input
+                     height) above the description (textarea). --%>
+                <div :if={@title_field?} class="space-y-2 mb-3">
                   <div class="bg-base-content/15 rounded h-4 w-20 animate-pulse"></div>
                   <div class="bg-base-content/15 rounded h-10 w-full animate-pulse"></div>
                 </div>
@@ -3415,11 +4125,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                    wrapper and the cursor lands back in the title; the same
                    mount focuses it when the sheet opens. Enter submits
                    through the first submit button, "Add" (then=next): the
-                   form stays for the next task. --%>
+                   form stays for the next task. Editing, the cursor is left
+                   alone. --%>
               <div
-                :if={@live_action == :new and @task_mode == "new"}
+                :if={@title_field?}
                 id={"new-task-title-#{@form_seq}"}
-                phx-mounted={JS.focus(to: "#task_title")}
+                phx-mounted={@live_action == :new && JS.focus(to: "#task_title")}
               >
                 <.translatable_field
                   field_name="title"
@@ -3432,7 +4143,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   lang_data={WebHelpers.lang_data(@task_form, @current_lang)}
                   secondary_name={"task[translations][#{@current_lang}][title]"}
                   lang_data_key="title"
-                  label={gettext("Task title")}
+                  label={gettext("Title")}
+                  hint={if(@title_shared?, do: gettext("This task is in the task library: renaming it here renames it in every project that uses it."))}
                   required
                 />
               </div>
@@ -3450,15 +4162,287 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 lang_data_key="description"
                 label={gettext("Description")}
                 type="textarea"
-                rows={if(@live_action == :edit, do: 8, else: 3)}
+                rows={if(@live_action == :edit, do: 6, else: 3)}
                 disabled={@current_lang in @ai_in_flight}
                 mentions
                 data-mention-context={mention_context(@project)}
               />
             </.multilang_fields_wrapper>
+          </div>
 
-            <%!-- Adding: the name and the description lead, the state after. --%>
-            <.state_fields :if={@live_action != :edit} {assigns} />
+          <%!-- Where it stands: the list's own status colours, one press each
+               — a radio group, so the choice posts with the form. --%>
+          <fieldset id="assignment-status">
+            <legend class="text-sm font-semibold mb-1.5">{gettext("Status")}</legend>
+            <div class="flex flex-wrap gap-1.5">
+              <label
+                :for={{label, value} <- status_options(@fx, @assignment)}
+                id={"assignment-status-#{value}"}
+                class={status_choice_class(value, to_string(@form[:status].value) == value)}
+              >
+                <input
+                  type="radio"
+                  name={@form[:status].name}
+                  value={value}
+                  checked={to_string(@form[:status].value) == value}
+                  class="sr-only"
+                />
+                <.icon :if={to_string(@form[:status].value) == value} name="hero-check-mini" class="w-4 h-4 -ml-0.5" />
+                {label}
+              </label>
+            </div>
+          </fieldset>
+
+          <%!-- Whose it is: one search over people, teams and departments,
+               the person themselves one press away, and whoever this
+               project's tasks went to lately. The choice is the form's
+               three assignee fields, posted as hidden inputs. --%>
+          <div :if={@fx.assignees} id="assignment-assignee" class="flex flex-col gap-2">
+            <input type="hidden" name="assign_type" value={assignee_kind_of(@assignee_chip)} />
+            <input type="hidden" name={@form[:assigned_person_uuid].name} value={@form[:assigned_person_uuid].value} />
+            <input type="hidden" name={@form[:assigned_team_uuid].name} value={@form[:assigned_team_uuid].value} />
+            <input type="hidden" name={@form[:assigned_department_uuid].name} value={@form[:assigned_department_uuid].value} />
+            <div class="flex items-center justify-between gap-2">
+              <label for="assignment-assignee-search" class="text-sm font-semibold">{gettext("Assignee")}</label>
+              <%!-- Works for any account: one with no staff person gets
+                   one made, after the form asks (`staff_confirm`). --%>
+              <button
+                :if={@can_assign? and @assignee_chip.key != {"person", @my_person_uuid}}
+                type="button"
+                id="assignment-assign-me"
+                phx-click="assign_to_me"
+                class="btn btn-xs btn-outline gap-1"
+              >
+                <.icon name="hero-user-plus" class="w-3.5 h-3.5" /> {gettext("Assign to me")}
+              </button>
+            </div>
+            <p
+              :if={@can_assign? and match?({:trashed, _}, @assignee_notice)}
+              id="assignment-assignee-notice"
+              class="text-xs text-warning"
+            >
+              <%= if @assignee_notice == {:trashed, :self} do %>
+                {gettext("Your staff record is in the trash; restore it under Staff → People to be assigned.")}
+              <% else %>
+                {gettext("Their staff record is in the trash; restore it under Staff → People to assign them.")}
+              <% end %>
+            </p>
+
+            <div
+              :if={@assignee_chip.key}
+              id="assignment-assignee-chosen"
+              data-kind={assignee_kind_of(@assignee_chip)}
+              class="flex items-center gap-2 rounded-box border border-base-300 px-2.5 py-1.5"
+            >
+              <%= if @assignee_chip.row && @assignee_chip.row.faces do %>
+                <.assignee_faces faces={@assignee_chip.row.faces} size="sm" />
+              <% else %>
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-base-200 shrink-0">
+                  <.icon name={(@assignee_chip.row && @assignee_chip.row.icon) || "hero-user"} class="w-4 h-4 text-base-content/60" />
+                </span>
+              <% end %>
+              <div class="min-w-0 flex-1">
+                <div class="truncate font-medium text-sm">
+                  {(@assignee_chip.row && @assignee_chip.row.label) || gettext("No longer listed")}
+                </div>
+                <div :if={@assignee_chip.row && @assignee_chip.row.sublabel} class="truncate text-xs text-base-content/60">
+                  {@assignee_chip.row.sublabel}
+                </div>
+              </div>
+              <button
+                :if={@can_assign?}
+                type="button"
+                id="assignment-assignee-clear"
+                phx-click="assignee_clear"
+                class="btn btn-ghost btn-xs btn-circle"
+                aria-label={gettext("Remove the assignee")}
+                title={gettext("Remove the assignee")}
+              >
+                <.icon name="hero-x-mark" class="w-4 h-4" />
+              </button>
+            </div>
+            <p :if={is_nil(@assignee_chip.key) and not @can_assign?} class="text-sm text-base-content/60">
+              {gettext("Unassigned")}
+            </p>
+
+            <%!-- Owned by a form of its own (`form=`, drawn after this one):
+                 Enter in the search must pick a row, never add the task. --%>
+            <.search_picker
+              :if={@can_assign?}
+              id="assignment-assignee-search"
+              dropdown_id="assignment-assignee-list"
+              form="assignment-assignee-form"
+              search_event="assignee_search"
+              results_event="assignee_results"
+              pick_event="assignee_pick"
+              staged_event="assignee_staged"
+              search_on_focus
+              close_on_pick
+              placeholder={
+                if @assignee_chip.key,
+                  do: gettext("Hand it to someone else — search a person, team or department"),
+                  else: gettext("Search a person, team or department")
+              }
+              class="input input-sm w-full"
+              searching_label={gettext("Searching…")}
+              more_label={gettext("Load more")}
+              loading_more_label={gettext("Loading…")}
+              no_matches_label={gettext("No matches")}
+            />
+
+            <% recent = Enum.reject(@recent_assignees, &({&1.kind, &1.uuid} == @assignee_chip.key)) %>
+            <div :if={@can_assign? and recent != []} id="assignment-assignee-recent" class="flex flex-wrap items-center gap-1.5">
+              <span class="text-xs text-base-content/60">{gettext("Recent:")}</span>
+              <button
+                :for={r <- recent}
+                type="button"
+                phx-click="assignee_recent"
+                phx-value-kind={r.kind}
+                phx-value-uuid={r.uuid}
+                class="btn btn-xs btn-ghost border-base-300 gap-1 font-normal"
+                title={r.sublabel || r.label}
+              >
+                <.icon name={r.icon} class="w-3.5 h-3.5 opacity-60" />{r.label}
+              </button>
+            </div>
+          </div>
+
+          <%!-- The deadline: by when it has to be done — the one date that
+               makes a task overdue. The planned days are on Planning. --%>
+          <div :if={@fx[:dates] != false} id="assignment-deadline" class="flex flex-col gap-1.5">
+            <.input
+              field={@form[:deadline]}
+              value={local_input_value(@form[:deadline].value)}
+              type="datetime-local"
+              label={gettext("Deadline")}
+            />
+            <div class="flex flex-wrap items-center gap-1.5 text-xs">
+              <span class="text-base-content/60">{gettext("By when it has to be done.")}</span>
+              <button type="button" phx-click="deadline_preset" phx-value-preset="hour" class="btn btn-xs btn-ghost border-base-300 font-normal">
+                {gettext("In 1 hour")}
+              </button>
+              <button type="button" phx-click="deadline_preset" phx-value-preset="today" class="btn btn-xs btn-ghost border-base-300 font-normal">
+                {gettext("Today 17:00")}
+              </button>
+              <button type="button" phx-click="deadline_preset" phx-value-preset="tomorrow" class="btn btn-xs btn-ghost border-base-300 font-normal">
+                {gettext("Tomorrow 9:00")}
+              </button>
+              <button
+                :if={@form[:deadline].value not in [nil, ""]}
+                type="button"
+                phx-click="deadline_clear"
+                class="btn btn-xs btn-ghost font-normal text-base-content/60"
+              >
+                {gettext("No deadline")}
+              </button>
+            </div>
+          </div>
+
+          <div :if={@fx.priorities} class="w-full sm:w-48">
+            <.select field={@form[:priority]} label={gettext("Priority")} options={priority_options()} />
+          </div>
+
+          <.checkbox
+            :if={
+              @live_action == :new and @task_mode == "new" and @fx.library and
+                Authz.manage_library?(@phoenix_kit_current_scope)
+            }
+            name="add_to_library"
+            checked={@add_to_library}
+            label={gettext("Add to the task library")}
+            class="checkbox-primary checkbox-sm"
+          />
+        </section>
+
+        <%!-- ── Planning: the effort and the days it is meant for ── --%>
+        <section id="assignment-pane-planning" role="tabpanel" class={["flex flex-col gap-4", @pane != "planning" && "hidden"]}>
+            <%!-- The ESTIMATE: planned effort, not time already spent (that is
+                 logged under More). --%>
+            <div :if={@fx.estimates} class="flex gap-2">
+              <div class="flex-1">
+                <.input field={@form[:estimated_duration]} label={gettext("Estimate")} type="number" />
+              </div>
+              <div class="w-40">
+                <.select
+                  field={@form[:estimated_duration_unit]}
+                  label={gettext("Unit")}
+                  options={duration_unit_options()}
+                  prompt={gettext("—")}
+                />
+              </div>
+            </div>
+
+          <%!-- The plan (Max, 2026-10-06): optional days, either alone, each
+               with an optional time that belongs to its day. A dated task
+               sits on these days in the calendar and the timeline. Not the
+               deadline: a plan that slips makes nothing overdue. --%>
+          <div :if={@fx[:dates] != false} class="grid gap-3 sm:grid-cols-2">
+            <fieldset id="assignment-planned-start" class="rounded-box border border-base-300 p-3 flex flex-col gap-2">
+              <legend class="px-1 text-sm font-semibold">{gettext("Planned start")}</legend>
+              <.input field={@form[:start_date]} type="date" label={gettext("Day")} />
+              <.input field={@form[:start_time]} value={time_input_value(@form[:start_time].value)} type="time" label={gettext("Time (optional)")} />
+            </fieldset>
+            <fieldset id="assignment-planned-end" class="rounded-box border border-base-300 p-3 flex flex-col gap-2">
+              <legend class="px-1 text-sm font-semibold">{gettext("Planned end")}</legend>
+              <.input field={@form[:end_date]} type="date" label={gettext("Day")} />
+              <.input field={@form[:end_time]} value={time_input_value(@form[:end_time].value)} type="time" label={gettext("Time (optional)")} />
+            </fieldset>
+            <p class="sm:col-span-2 -mt-1 text-xs text-base-content/60">
+              {gettext("The plan: when the work is meant to happen. A time belongs to its day. Only the deadline makes a task overdue.")}
+            </p>
+          </div>
+
+            <%!-- NOT migrated to `<.checkbox>`: unlike Project/Template,
+                 `Assignment.counts_weekends` has no schema default — `nil`
+                 is a load-bearing third state meaning "inherit the parent
+                 project's counts_weekends" (see `Projects.node_hours/2` and
+                 `batched_planned_hours/2`, both `if is_nil(a.counts_weekends),
+                 do: project.counts_weekends, else: a.counts_weekends`). The
+                 hidden fallback below deliberately submits `""`, which Ecto's
+                 `cast/4` (empty_values) turns back into the schema default
+                 (`nil`) — preserving "inherit" on every unchecked save.
+                 `<.checkbox>` hardcodes its hidden fallback to `value="false"`
+                 (not configurable), so swapping it in would silently turn
+                 every unchecked submit into an explicit "never count
+                 weekends" override and permanently lose the inherit-from-
+                 project state through this form. --%>
+            <label :if={@fx.scheduling} class="flex items-center gap-2 cursor-pointer">
+              <input type="hidden" name={@form[:counts_weekends].name} value="" />
+              <input
+                type="checkbox"
+                name={@form[:counts_weekends].name}
+                value="true"
+                checked={@form[:counts_weekends].value == true or @form[:counts_weekends].value == "true"}
+                class="checkbox checkbox-primary checkbox-sm"
+              />
+              <span class="text-sm">{gettext("Counts weekends (e.g. deliveries, external processes)")}</span>
+            </label>
+
+            <%!-- Labels: plain checkboxes over the PROJECT's registry (managed
+                 in the Modules panel); selection replaces the join rows on
+                 save. Renders only when the flag is on AND labels exist. --%>
+            <div :if={@fx.labels and @project_labels != []} class="fieldset">
+              <span class="fieldset-legend text-sm font-medium mb-1">{gettext("Labels")}</span>
+              <%!-- Always posted, so a save that comes from a button (an
+                   assignee, a deadline preset) tells "no labels" apart from
+                   "the boxes were not sent" (`pending_labels/2`). --%>
+              <input type="hidden" name="labels[]" value="" />
+              <div class="flex flex-wrap gap-2">
+                <label
+                  :for={label <- @project_labels}
+                  class="flex items-center gap-1.5 cursor-pointer rounded-lg border border-base-200 px-2 py-1"
+                >
+                  <input
+                    type="checkbox"
+                    name="labels[]"
+                    value={label.uuid}
+                    checked={label.uuid in @selected_labels}
+                    class="checkbox checkbox-primary checkbox-xs"
+                  />
+                  <span class={["badge badge-sm", label.color]}>{label.name}</span>
+                </label>
+              </div>
+            </div>
 
             <%!-- Where the task sits: under another task of this project, or
                  at the top. Moving it takes its own subtasks along. --%>
@@ -3521,6 +4505,111 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               />
             </fieldset>
 
+        </section>
+
+        <%!-- ── Connections: what it waits on, what it lets start ── --%>
+        <% lang = L10n.current_content_lang() %>
+        <section
+          :if={@fx.dependencies}
+          id="assignment-pane-connections"
+          role="tabpanel"
+          class={["flex flex-col gap-4", @pane != "connections" && "hidden"]}
+        >
+          <%!-- The picker uses `phx-change` on its own `<.select>` (a form
+               inside a form is not HTML); it overrides the form's
+               `validate` for its own changes. Editing, a row is written at
+               once; adding, the choices wait for the task to exist and are
+               written right after it (`flush_pending_deps/2`). --%>
+          <fieldset id="assignment-waits-on" class="rounded-box border border-base-300 p-3 flex flex-col gap-2">
+            <legend class="px-1 text-sm font-semibold">{gettext("Waits on")}</legend>
+            <p class="text-xs text-base-content/60">
+              {gettext("Tasks in this project that must finish before this one can start.")}
+              <span :if={@live_action == :new}>{gettext("Selections will be applied when you save this task.")}</span>
+            </p>
+
+            <%= if @live_action == :edit do %>
+              <ul :if={@assignment_deps != []} class="flex flex-col gap-1">
+                <li :for={dep <- @assignment_deps} class="flex items-center gap-2 text-sm">
+                  <.assignment_status_badge status={dep.depends_on.status} size="xs" class="shrink-0" />
+                  <span class="truncate flex-1">{Assignment.label(dep.depends_on, lang)}</span>
+                  <button
+                    type="button"
+                    phx-click="remove_assignment_dep"
+                    phx-value-uuid={dep.depends_on_uuid}
+                    phx-disable-with={gettext("Removing…")}
+                    class="btn btn-ghost btn-xs btn-circle hover:text-error"
+                    aria-label={gettext("Remove")}
+                  >
+                    <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              </ul>
+              <.select
+                :if={@available_assignment_deps != []}
+                name="depends_on_uuid"
+                label={gettext("Add dependency")}
+                value=""
+                options={Enum.map(@available_assignment_deps, &{Assignment.label(&1, lang), &1.uuid})}
+                prompt={gettext("Select task")}
+                phx-change="add_assignment_dep"
+              />
+              <p :if={@assignment_deps == [] and @available_assignment_deps == []} class="text-sm text-base-content/50">
+                {gettext("No other tasks in this project to depend on.")}
+              </p>
+            <% else %>
+              <% by_uuid = Map.new(@pending_dep_options, &{&1.uuid, &1}) %>
+              <% pending = for u <- @pending_dep_uuids, a = Map.get(by_uuid, u), a, do: {u, a} %>
+              <ul :if={pending != []} class="flex flex-col gap-1">
+                <li :for={{dep_uuid, a} <- pending} class="flex items-center gap-2 text-sm">
+                  <.assignment_status_badge status={a.status} size="xs" class="shrink-0" />
+                  <span class="truncate flex-1">{Assignment.label(a, lang)}</span>
+                  <button
+                    type="button"
+                    phx-click="remove_pending_dep"
+                    phx-value-uuid={dep_uuid}
+                    class="btn btn-ghost btn-xs btn-circle hover:text-error"
+                    aria-label={gettext("Remove")}
+                  >
+                    <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+                  </button>
+                </li>
+              </ul>
+              <% remaining = Enum.reject(@pending_dep_options, fn a -> a.uuid in @pending_dep_uuids end) %>
+              <.select
+                :if={remaining != []}
+                name="depends_on_uuid"
+                label={gettext("Add dependency")}
+                value=""
+                options={Enum.map(remaining, &{Assignment.label(&1, lang), &1.uuid})}
+                prompt={gettext("Select task")}
+                phx-change="add_pending_dep"
+              />
+              <p :if={@pending_dep_options == []} class="text-sm text-base-content/50">
+                {gettext("No other tasks in this project to depend on.")}
+              </p>
+            <% end %>
+          </fieldset>
+
+          <fieldset :if={@live_action == :edit} id="assignment-unlocks" class="rounded-box border border-base-300 p-3 flex flex-col gap-2">
+            <legend class="px-1 text-sm font-semibold">{gettext("Unlocks")}</legend>
+            <p class="text-xs text-base-content/60">{gettext("Tasks that wait for this one to finish.")}</p>
+            <ul :if={@unlocks != []} class="flex flex-col gap-1">
+              <li :for={u <- @unlocks} class="flex items-center gap-2 text-sm">
+                <.assignment_status_badge status={u.status} size="xs" class="shrink-0" />
+                <span class="truncate">{Assignment.label(u, lang)}</span>
+              </li>
+            </ul>
+            <p :if={@unlocks == []} class="text-sm text-base-content/50">{gettext("Nothing waits for this task.")}</p>
+          </fieldset>
+        </section>
+
+        <%!-- ── More: time logged, the real start and finish, the portal ── --%>
+        <section
+          :if={Enum.any?(@panes, &(elem(&1, 0) == "more"))}
+          id="assignment-pane-more"
+          role="tabpanel"
+          class={["flex flex-col gap-4", @pane != "more" && "hidden"]}
+        >
             <%!-- The task's time, in one box: what people logged, what an
                  agent reported for itself (it sends its own time and tokens
                  over the API; nobody types those in), and a line to log
@@ -3631,206 +4720,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               </div>
             </fieldset>
 
-            <div
-              :if={@fx.estimates or @fx[:dates] != false or @fx.scheduling or (@fx.labels and @project_labels != [])}
-              class="divider text-xs text-base-content/50 my-1"
-            >
-              {gettext("Planning")}
-            </div>
-
-            <%!-- The ESTIMATE: planned effort, not time already spent (that is
-                 the box above). --%>
-            <div :if={@fx.estimates} class="flex gap-2">
-              <div class="flex-1">
-                <.input field={@form[:estimated_duration]} label={gettext("Estimate")} type="number" />
-              </div>
-              <div class="w-40">
-                <.select
-                  field={@form[:estimated_duration_unit]}
-                  label={gettext("Unit")}
-                  options={duration_unit_options()}
-                  prompt={gettext("—")}
-                />
-              </div>
-            </div>
-
-            <%!-- The task's own dates (Max, 2026-10-06): optional, either
-                 alone. A dated task sits on these days in the calendar and
-                 the timeline instead of where its duration would put it.
-                 Off with the "dates" feature (and so with Scheduling). --%>
-            <div :if={@fx[:dates] != false} class="flex gap-2">
-              <div class="flex-1">
-                <.input field={@form[:start_date]} type="date" label={gettext("Start date")} />
-              </div>
-              <div class="flex-1">
-                <.input field={@form[:end_date]} type="date" label={gettext("End date")} />
-              </div>
-            </div>
-
-            <%!-- NOT migrated to `<.checkbox>`: unlike Project/Template,
-                 `Assignment.counts_weekends` has no schema default — `nil`
-                 is a load-bearing third state meaning "inherit the parent
-                 project's counts_weekends" (see `Projects.node_hours/2` and
-                 `batched_planned_hours/2`, both `if is_nil(a.counts_weekends),
-                 do: project.counts_weekends, else: a.counts_weekends`). The
-                 hidden fallback below deliberately submits `""`, which Ecto's
-                 `cast/4` (empty_values) turns back into the schema default
-                 (`nil`) — preserving "inherit" on every unchecked save.
-                 `<.checkbox>` hardcodes its hidden fallback to `value="false"`
-                 (not configurable), so swapping it in would silently turn
-                 every unchecked submit into an explicit "never count
-                 weekends" override and permanently lose the inherit-from-
-                 project state through this form. --%>
-            <label :if={@fx.scheduling} class="flex items-center gap-2 cursor-pointer">
-              <input type="hidden" name={@form[:counts_weekends].name} value="" />
-              <input
-                type="checkbox"
-                name={@form[:counts_weekends].name}
-                value="true"
-                checked={@form[:counts_weekends].value == true or @form[:counts_weekends].value == "true"}
-                class="checkbox checkbox-primary checkbox-sm"
+          <%!-- When it really began and ended: stamped by Start and Done, and
+               corrected here — a "Done" pressed late moves back to when the
+               work was finished. Saved with the form, through their own
+               changeset; never in the future. --%>
+          <fieldset :if={@show_times?} id="assignment-real-times" class="rounded-box border border-base-300 p-3 flex flex-col gap-2">
+            <legend class="px-1 text-sm font-semibold">{gettext("When it really happened")}</legend>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <.input
+                field={@times_form[:started_at]}
+                value={local_input_value(@times_form[:started_at].value)}
+                type="datetime-local"
+                label={gettext("Started at")}
               />
-              <span class="text-sm">{gettext("Counts weekends (e.g. deliveries, external processes)")}</span>
-            </label>
-
-            <%!-- Labels: plain checkboxes over the PROJECT's registry (managed
-                 in the Modules panel); selection replaces the join rows on
-                 save. Renders only when the flag is on AND labels exist. --%>
-            <div :if={@fx.labels and @project_labels != []} class="fieldset">
-              <span class="fieldset-legend text-sm font-medium mb-1">{gettext("Labels")}</span>
-              <div class="flex flex-wrap gap-2">
-                <label
-                  :for={label <- @project_labels}
-                  class="flex items-center gap-1.5 cursor-pointer rounded-lg border border-base-200 px-2 py-1"
-                >
-                  <input
-                    type="checkbox"
-                    name="labels[]"
-                    value={label.uuid}
-                    checked={label.uuid in @selected_labels}
-                    class="checkbox checkbox-primary checkbox-xs"
-                  />
-                  <span class={["badge badge-sm", label.color]}>{label.name}</span>
-                </label>
-              </div>
-            </div>
-
-            <%= if @live_action == :new and @task_mode == "new" and @fx.library and
-                     Authz.manage_library?(@phoenix_kit_current_scope) do %>
-              <div class="divider my-1"></div>
-              <.checkbox
-                name="add_to_library"
-                checked={@add_to_library}
-                label={gettext("Add to the task library")}
-                class="checkbox-primary checkbox-sm"
+              <.input
+                field={@times_form[:completed_at]}
+                value={local_input_value(@times_form[:completed_at].value)}
+                type="datetime-local"
+                label={gettext("Finished at")}
               />
-            <% end %>
-          </div>
-        </div>
-
-        <%!-- Dependencies card. Lives INSIDE the form so it sits above
-             the action row (the boss's reading-order rule). The deps
-             picker uses `phx-change` on the `<.select>` directly
-             rather than a nested `<.form>` — nesting forms is invalid
-             HTML and the inner submit would otherwise hijack the
-             outer form's submit. The select's `phx-change` overrides
-             the parent form's `phx-change="validate"` for its own
-             change events.
-
-             - `:edit` mode: writes real Dependency rows immediately
-               (`add_assignment_dep` / `remove_assignment_dep`).
-             - `:new` mode: the assignment doesn't exist yet, so deps
-               can't be DB rows. Track selections in `pending_dep_uuids`
-               and flush them in `save_new` /
-               `create_assignment_for_new_task` after insert.
-             --%>
-        <% lang = L10n.current_content_lang() %>
-        <.form_section :if={@fx.dependencies} title={gettext("Dependencies")}>
-            <:subtitle>
-              {gettext("Tasks in this project that must finish before this one can start.")}
-              <%= if @live_action == :new do %>
-                <br />
-                <span class="text-base-content/50">
-                  {gettext("Selections will be applied when you save this task.")}
-                </span>
-              <% end %>
-            </:subtitle>
-
-            <%= if @live_action == :edit do %>
-              <%= if @assignment_deps != [] do %>
-                <div class="flex flex-wrap gap-2 mt-2">
-                  <%= for dep <- @assignment_deps do %>
-                    <span class="badge badge-outline gap-1">
-                      <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                      {Assignment.label(dep.depends_on, lang)}
-                      <button
-                        type="button"
-                        phx-click="remove_assignment_dep"
-                        phx-value-uuid={dep.depends_on_uuid}
-                        phx-disable-with={gettext("Removing…")}
-                        class="hover:text-error"
-                      >
-                        <.icon name="hero-x-mark" class="w-3 h-3" />
-                      </button>
-                    </span>
-                  <% end %>
-                </div>
-              <% end %>
-
-              <%= if @available_assignment_deps != [] do %>
-                <.select
-                  name="depends_on_uuid"
-                  label={gettext("Add dependency")}
-                  value=""
-                  options={Enum.map(@available_assignment_deps, &{Assignment.label(&1, lang), &1.uuid})}
-                  prompt={gettext("Select task")}
-                  phx-change="add_assignment_dep"
-                />
-              <% end %>
-
-              <%= if @assignment_deps == [] and @available_assignment_deps == [] do %>
-                <p class="text-sm text-base-content/50 mt-2">{gettext("No other tasks in this project to depend on.")}</p>
-              <% end %>
-            <% else %>
-              <%!-- :new mode --%>
-              <%= if @pending_dep_uuids != [] do %>
-                <div class="flex flex-wrap gap-2 mt-2">
-                  <% by_uuid = Map.new(@pending_dep_options, &{&1.uuid, &1}) %>
-                  <%= for dep_uuid <- @pending_dep_uuids, a = Map.get(by_uuid, dep_uuid), a do %>
-                    <span class="badge badge-outline gap-1">
-                      <.icon name="hero-arrow-right-circle" class="w-3 h-3" />
-                      {Assignment.label(a, lang)}
-                      <button
-                        type="button"
-                        phx-click="remove_pending_dep"
-                        phx-value-uuid={dep_uuid}
-                        class="hover:text-error"
-                      >
-                        <.icon name="hero-x-mark" class="w-3 h-3" />
-                      </button>
-                    </span>
-                  <% end %>
-                </div>
-              <% end %>
-
-              <%= if @pending_dep_options != [] do %>
-                <% remaining =
-                  Enum.reject(@pending_dep_options, fn a -> a.uuid in @pending_dep_uuids end) %>
-                <%= if remaining != [] do %>
-                  <.select
-                    name="depends_on_uuid"
-                    label={gettext("Add dependency")}
-                    value=""
-                    options={Enum.map(remaining, &{Assignment.label(&1, lang), &1.uuid})}
-                    prompt={gettext("Select task")}
-                    phx-change="add_pending_dep"
-                  />
-                <% end %>
-              <% else %>
-                <p class="text-sm text-base-content/50 mt-2">{gettext("No other tasks in this project to depend on.")}</p>
-              <% end %>
-            <% end %>
-        </.form_section>
+            </div>
+            <p class="text-xs text-base-content/60">
+              {gettext("Set when the task is started and done; correct them here if they were pressed late.")}
+            </p>
+          </fieldset>
 
         <%!-- Portal visibility. Inside the form so the page reads in
              order — fields, then who can see this, then Save. It used to
@@ -3843,7 +4756,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
              ever cast from the submitted params. `public` and
              `board_published_at` are server-set only — do not name them. --%>
         <div
-          :if={@live_action == :edit and portal_enabled?(@project)}
+          :if={@portal?}
           class="card bg-base-100 shadow"
         >
           <div class="card-body flex-row items-center justify-between gap-3 py-4">
@@ -3925,6 +4838,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           </div>
         </div>
 
+        </section>
+
         <%!-- DOM order matters: the browser's implicit submission (Enter in
              an input) presses the FIRST submit button, so "Add" comes before
              "Add & next" in the markup and CSS `order` puts it last on
@@ -3969,22 +4884,24 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               <.icon name="hero-trash" class="w-4 h-4" /> {gettext("Delete")}
             </button>
             <button type="button" phx-click="close_form" class="btn btn-sm">
-              {gettext("Done")}
+              {if @from_view?, do: gettext("Back to task"), else: gettext("Close")}
             </button>
           </div>
         </div>
         <div :if={@live_action != :edit} class="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 mt-2 py-2 px-3 rounded-box border border-base-300 bg-base-100 shadow">
           <button
             type="button"
+            id="assignment-close"
             phx-click="cancel"
             data-confirm={@dirty? && gettext("Discard your changes?")}
-            class="btn btn-ghost btn-sm order-1"
+            class="btn btn-ghost btn-sm order-1 mr-auto"
           >
-            {gettext("Cancel")}
+            {gettext("Close")}
           </button>
           <%!-- The browser's implicit submission (Enter in a field) presses
                the FIRST submit button: Enter adds and starts the next task,
-               like Enter in the typed list. "Add and close" is the click. --%>
+               like Enter in the typed list. "Add and close" is the click most
+               people make, so it is the highlighted one, last in the row. --%>
           <button
             :if={@live_action == :new}
             type="submit"
@@ -3993,14 +4910,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             value="next"
             phx-disable-with={gettext("Saving…")}
             title={gettext("Enter")}
-            class="btn btn-primary btn-sm order-3"
+            class="btn btn-outline btn-sm order-2"
           >
             {gettext("Add")}
           </button>
           <button
             type="submit"
             phx-disable-with={gettext("Saving…")}
-            class={["btn btn-sm order-2", if(@live_action == :new, do: "btn-outline", else: "btn-primary")]}
+            class="btn btn-primary btn-sm order-3"
           >
             <%= if @live_action == :new, do: gettext("Add and close"), else: gettext("Save") %>
           </button>
@@ -4019,74 +4936,89 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       <form id="assignment-log-form" phx-submit="log_time" class="hidden"></form>
       <%!-- Owns the "Add a subtask" line drawn inside the form above. --%>
       <form id="assignment-subtask-form" phx-submit="subtask_add" class="hidden"></form>
-
-      <%!-- The task's two threads, in its own form: what people said about
-           it, and what the agent wrote while working on it. They opened
-           only from two icons on the task's row, which the drawer covers.
-           Outside the form above (each has forms of its own), folded until
-           asked for, and there only while the project's Discussions are on. --%>
-      <div
-        :if={@live_action == :edit and @kind == "task" and (@threads || @task_history != [])}
-        id="assignment-threads"
-        class="flex flex-col gap-3 mt-4 mb-16"
-      >
-        <.accordion :if={@task_history != []} id={"assignment-history-#{@assignment.uuid}"} cue={true}>
-          <:title>
-            {gettext("History")}
-            <span class="ml-2 text-xs font-normal opacity-50">{length(@task_history)}</span>
-          </:title>
-          <:content>
-            <PhoenixKitProjects.Web.Components.HistoryFeed.history_feed
-              id={"task-history-#{@assignment.uuid}"}
-              entries={@task_history}
-              project={@project}
-              compact={true}
-            />
-          </:content>
-        </.accordion>
-        <%= if @threads do %>
-        <.accordion id="assignment-discussion" cue={true}>
-          <:title>
-            {gettext("Discussion")}
-            <span class="ml-2 text-xs font-normal opacity-50">{@threads.comments}</span>
-          </:title>
-          <:content>
-            <.live_component
-              module={PhoenixKitComments.Web.CommentsComponent}
-              id={"task-form-comments-#{@assignment.uuid}"}
-              resource_type="assignment"
-              resource_uuid={@assignment.uuid}
-              current_user={assigns[:phoenix_kit_current_user]}
-              title=""
-              show_likes={true}
-            />
-          </:content>
-        </.accordion>
-        <.accordion id="assignment-ai-notes" cue={true}>
-          <:title>
-            {gettext("AI notes")}
-            <span class="ml-2 text-xs font-normal opacity-50">{@threads.notes}</span>
-          </:title>
-          <:content>
-            <.live_component
-              module={PhoenixKitComments.Web.CommentsComponent}
-              id={"task-form-notes-#{@assignment.uuid}"}
-              resource_type={PhoenixKitProjects.TaskNotes.resource_type()}
-              resource_uuid={@assignment.uuid}
-              current_user={assigns[:phoenix_kit_current_user]}
-              title=""
-              show_likes={false}
-              decoration_keys={PhoenixKitProjects.TaskNotes.decoration_keys()}
-              comment_decorations={PhoenixKitProjects.TaskNotes.decorations(PhoenixKitProjects.TaskNotes.list(@assignment.uuid))}
-            />
-          </:content>
-        </.accordion>
-        <% end %>
-      </div>
-      <% end %>
+      <%!-- Owns the assignee search box: Enter there submits nothing. --%>
+      <form id="assignment-assignee-form" phx-submit="assignee_noop" class="hidden"></form>
+      <%!-- Asks before an assignment makes a staff record. --%>
+      <%!-- In the drawer this dialog sits inside the drawer's own dialog,
+           and daisyUI's `modal-end` makes every modal box under it full
+           height (a descendant rule); a confirm keeps its own height. --%>
+      <style :if={@staff_confirm}>
+        #pk-modal-staff_create_cancel > .modal-box { height: auto; }
+      </style>
+      <.confirm_modal
+        :if={@staff_confirm}
+        show={true}
+        on_confirm="staff_create_confirm"
+        on_cancel="staff_create_cancel"
+        title={gettext("Create a staff record?")}
+        title_icon="hero-user-plus"
+        messages={[
+          {:info,
+           gettext(
+             "%{name} has no staff record yet. Assigning creates one (Staff → People) with their name and account; you can fill it in or remove it there later.",
+             name: @staff_confirm.name
+           )}
+        ]}
+        prompt=""
+        cancel_text={gettext("Cancel")}
+        confirm_text={gettext("Create and assign")}
+      />
     </div>
     """
   end
+
+  # What the task form's template reads besides the assigns: which tabs it
+  # has and which is open, which hold an error, and which parts show.
+  defp prepare_task_render(assigns) do
+    project = assigns.project
+
+    assigns =
+      assign(assigns,
+        portal?:
+          assigns.live_action == :edit and project.uuid not in [nil, ""] and
+            portal_enabled?(project),
+        show_times?: show_times?(assigns),
+        title_field?:
+          (assigns.live_action == :new and assigns.task_mode == "new") or
+            (assigns.live_action == :edit and assigns[:title_editable?] == true),
+        translated?: assigns.multilang_enabled and match?([_, _ | _], assigns.language_tabs)
+      )
+
+    panes = form_panes(assigns)
+    open? = Enum.any?(panes, &(elem(&1, 0) == assigns.form_pane))
+
+    assign(assigns,
+      panes: panes,
+      pane: if(open?, do: assigns.form_pane, else: "task"),
+      pane_errors: error_panes(assigns)
+    )
+  end
+
+  # A status choice as the list's status badge (`AssignmentStatusBadge`):
+  # the chosen one filled, the others outlined in their own colour.
+  defp status_choice_class(status, true) do
+    [
+      "badge badge-lg h-auto py-1.5 px-3 gap-1 cursor-pointer select-none font-semibold",
+      "ring-2 ring-base-content/20 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2",
+      AssignmentStatusBadge.badge_class(status)
+    ]
+  end
+
+  defp status_choice_class(status, false) do
+    [
+      "badge badge-lg badge-outline h-auto py-1.5 px-3 gap-1 cursor-pointer select-none",
+      "opacity-80 hover:opacity-100 focus-within:outline focus-within:outline-2 focus-within:outline-offset-2",
+      status_outline(status)
+    ]
+  end
+
+  defp status_outline("todo"), do: "badge-info"
+  defp status_outline("in_progress"), do: "badge-warning"
+  defp status_outline("done"), do: "badge-success"
+  defp status_outline(_), do: "text-base-content/70"
+
+  defp assignee_kind_of(%{key: {kind, _uuid}}), do: kind
+  defp assignee_kind_of(_chip), do: ""
 
   defp public_board?(project) do
     case PhoenixKitProjects.Portal.get_portal(project.uuid) do

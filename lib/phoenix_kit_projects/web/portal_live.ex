@@ -213,7 +213,9 @@ defmodule PhoenixKitProjects.Web.PortalLive do
 
   # Whitelisted, never echoed back raw: the value reaches a class attribute
   # and a comparison, and anything outside the vocabulary is simply "all".
-  defp status_filter(status) when status in ["todo", "in_progress", "done"], do: status
+  defp status_filter(status) when status in ["waiting", "todo", "in_progress", "done"],
+    do: status
+
   defp status_filter(_), do: "all"
 
   defp load_issue(%{assigns: %{issue_uuid: nil}} = socket), do: assign(socket, issue: nil)
@@ -691,6 +693,7 @@ defmodule PhoenixKitProjects.Web.PortalLive do
     [{"all", gettext("All"), length(view.issues)}]
     |> Kernel.++(
       for {status, label} <- [
+            {"waiting", gettext("Waiting")},
             {"todo", gettext("Open")},
             {"in_progress", gettext("In progress")},
             {"done", gettext("Done")}

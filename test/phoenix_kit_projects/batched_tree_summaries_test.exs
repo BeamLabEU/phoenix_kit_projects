@@ -75,7 +75,7 @@ defmodule PhoenixKitProjects.BatchedTreeSummariesTest do
       [child] = a.children
       assert child.task_in_progress == 1
       [grandchild] = child.children
-      assert grandchild.task_todo == 3 and grandchild.children == []
+      assert grandchild.task_waiting == 3 and grandchild.children == []
     end
 
     test "a project with no assignments gets an empty node, and an unknown list is empty" do

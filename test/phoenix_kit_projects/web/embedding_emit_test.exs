@@ -757,7 +757,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
             })
         )
 
-      view |> element("button.btn[phx-click=cancel]") |> render_click()
+      view |> element("#assignment-close") |> render_click()
 
       assert_receive {:projects, :closed, %{frame_ref: 22}}, 500
     end

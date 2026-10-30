@@ -132,7 +132,8 @@ defmodule PhoenixKitProjects.Web.Components.RunningCard do
     [
       {node.task_done, gettext("done")},
       {node.task_in_progress, gettext("in progress")},
-      {node.task_todo, gettext("todo")}
+      {node.task_todo, gettext("can be started")},
+      {Map.get(node, :task_waiting, 0), gettext("waiting")}
     ]
     |> Enum.filter(fn {n, _label} -> n > 0 end)
     |> Enum.map_join(" · ", fn {n, label} -> "#{n} #{label}" end)

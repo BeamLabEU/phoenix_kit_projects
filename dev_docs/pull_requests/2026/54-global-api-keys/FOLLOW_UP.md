@@ -37,3 +37,25 @@ Findings from CODEX_REVIEW.md (C1), ZAI_REVIEW.md (Z) and CODEX_REREVIEW.md (C2)
 ## Grok's UX points
 
 Adopted: generic name hint; default project only from the second project; sub-projects switch moved into Details; a custom grant read as one line; Rotate/Revoke confirm that the old token dies at once. Not adopted: collapsing the presets to four (Max asked for the per-module presets such as "Interactions, read only").
+
+## Fixed (pre-existing) — CLAUDE review (triaged 2026-10-29)
+
+`CLAUDE_REVIEW.md` was added in `7286e44`, after this file. Paths under
+`lib/phoenix_kit_projects/`.
+
+- ~~IMPROVEMENT - HIGH — the rate limit ran after the expensive reads~~ — `web/api/auth.ex:39-52`: `rate_limit/2` straight after `ApiKeys.authenticate/1`, `admit/2` only on a pass; `test/phoenix_kit_projects/web/api_rate_limit_test.exs`. `7286e44`.
+- ~~IMPROVEMENT - HIGH — the API keys page read per key~~ — `ApiKeys.grants_by_key/1` (`api_keys.ex:155-170`), `list_for_projects/1` (`:79-90`), one options read per person (`web/api_keys_live.ex:257-281`); `batched_api_keys_page_test.exs`. `7286e44`.
+- ~~BUG - MEDIUM — `delete_grant/3` could move the home onto an empty grant~~ — picks the oldest grant with scopes (`api_keys.ex:234`). `7286e44`.
+- ~~NITPICK — a crafted `grid` param crashed the LiveView~~ — `set_grid` guards `is_map(grid)` (`web/api_keys_live.ex:538-543`). `7286e44`.
+- ~~NITPICK (half) — `projects.api_key_access_set` / `_removed` undocumented~~ — listed in `AGENTS.md:631`. `7286e44`.
+
+## Open
+
+Still live — awaiting Max's decision (the review's "Noted, not changed", re-verified 2026-10-29):
+
+- **IMPROVEMENT - MEDIUM — `GET /me` and task lists resolve access per project.** `ApiKeys.reachable/1` calls `access_for/2` per project under an inheriting grant (`api_keys.ex:365-385`); `Json.visible_row?/1` / `reachable?/1` do the same per sub-project row. Fix: load the key's grants once and resolve the nearest grant over the fetched tree (`Projects.subtree_uuids/1` + a parent map).
+- **IMPROVEMENT - MEDIUM — de, es, fr, it, pl catalogues largely untranslated.** After the 2026-10-29 sweep regenerated the catalogues (obsolete entries dropped), 575 of 1726 msgids are empty in each of the five (et, ru complete) — more than the 450 the review counted; every msgid new on the tasks-deadlines branch is translated. Fix: a translation pass.
+- **NITPICK — `rotate` / `revoke` log `resource_uuid: key.project_uuid`**, nil once a key has lost its home (`api_keys.ex:579`, `:602`). Fix: fall back to a grant's project, or log `resource_type: "api_key"`.
+- **NITPICK — API key usage rows are never pruned** (`api_usage.ex` has no delete). Fix: a retention sweep on the `day` index.
+- **NITPICK — the request view lives in the process dictionary** (`:pk_api_view`, `web/api/json.ex:314-321`, `:584`, `:592`); not cleared after the response. Fix: `Process.delete/1` in a `before_send`.
+- **NITPICK — `put_grant/4` is two statements without a transaction** (`api_keys.ex:174-209`: the grant, then "first grant becomes home"); harmless today because `Auth.home_project/1` falls back to the first grant. Fix: wrap in `Repo.transaction/1`.

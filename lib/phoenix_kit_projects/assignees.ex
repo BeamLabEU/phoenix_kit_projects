@@ -25,14 +25,17 @@ defmodule PhoenixKitProjects.Assignees do
   crash the dashboard.
   """
 
+  use Gettext, backend: PhoenixKitProjects.Gettext
+
   import Ecto.Query
 
+  alias PhoenixKit.Users.Auth.User
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
   # SHADOW schemas + the People doorway (staff-optional seam) — the
   # direct Ecto queries below run over projects' own read-only mappings
   # of the core-owned staff tables; the staff PACKAGE is not required.
   alias PhoenixKitProjects.People
-  alias PhoenixKitProjects.People.{Person, Team, TeamMembership}
+  alias PhoenixKitProjects.People.{Department, Person, Team, TeamMembership}
 
   require Logger
 
@@ -119,6 +122,114 @@ defmodule PhoenixKitProjects.Assignees do
         nil
     end
   end
+
+  @typedoc "Who an assignee is, as faces: up to `max` people and how many more."
+  @type faces :: %{faces: [%{name: String.t(), user: struct() | nil}], extra: non_neg_integer()}
+
+  @doc """
+  The faces behind each assignment's assignee, for showing who has what at
+  a glance (the boss, 2026-10-29): a person is themselves; a team is its
+  members; a department is the people whose primary department it is and
+  the members of its teams. One query per kind for the whole list.
+
+  Returns `%{assignment_uuid => faces}` for the assigned rows only, each
+  holding up to `max` people (named, with their user for the picture when
+  they have one) and the count left over. A failed staff read gives `%{}`:
+  faces are decoration and must never take a page down.
+  """
+  @spec faces([Assignment.t()], pos_integer()) :: %{optional(String.t()) => faces()}
+  def faces(assignments, max \\ 4) do
+    persons = assignments |> Enum.map(& &1.assigned_person_uuid) |> Enum.reject(&is_nil/1)
+    teams = assignments |> Enum.map(& &1.assigned_team_uuid) |> Enum.reject(&is_nil/1)
+    depts = assignments |> Enum.map(& &1.assigned_department_uuid) |> Enum.reject(&is_nil/1)
+
+    by_person = people_by(:person, persons)
+    by_team = people_by(:team, teams)
+    by_dept = people_by(:department, depts)
+
+    Enum.reduce(assignments, %{}, fn a, acc ->
+      case assignee_people(a, by_person, by_team, by_dept) do
+        [] ->
+          acc
+
+        people ->
+          {shown, rest} = Enum.split(people, max)
+          Map.put(acc, a.uuid, %{faces: shown, extra: length(rest)})
+      end
+    end)
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] faces failed: #{Exception.message(e)}")
+      %{}
+  end
+
+  defp assignee_people(%{assigned_person_uuid: u}, by_person, _, _) when is_binary(u),
+    do: Map.get(by_person, u, [])
+
+  defp assignee_people(%{assigned_team_uuid: u}, _, by_team, _) when is_binary(u),
+    do: Map.get(by_team, u, [])
+
+  defp assignee_people(%{assigned_department_uuid: u}, _, _, by_dept) when is_binary(u),
+    do: Map.get(by_dept, u, [])
+
+  defp assignee_people(_, _, _, _), do: []
+
+  defp people_by(_kind, []), do: %{}
+
+  defp people_by(:person, uuids) do
+    from(p in Person,
+      left_join: u in assoc(p, :user),
+      where: p.uuid in ^uuids,
+      select: {p.uuid, p, u}
+    )
+    |> repo().all()
+    |> Map.new(fn {uuid, p, u} -> {uuid, [face(p, u)]} end)
+  end
+
+  defp people_by(:team, uuids) do
+    from(m in TeamMembership,
+      join: p in assoc(m, :person),
+      left_join: u in assoc(p, :user),
+      where: m.team_uuid in ^uuids and p.status != "trashed",
+      order_by: [asc: p.name],
+      select: {m.team_uuid, p, u}
+    )
+    |> repo().all()
+    |> group_faces()
+  end
+
+  defp people_by(:department, uuids) do
+    primary =
+      from(p in Person,
+        left_join: u in assoc(p, :user),
+        where: p.primary_department_uuid in ^uuids and p.status != "trashed",
+        select: {p.primary_department_uuid, p, u}
+      )
+
+    via_teams =
+      from(m in TeamMembership,
+        join: t in Team,
+        on: t.uuid == m.team_uuid,
+        join: p in assoc(m, :person),
+        left_join: u in assoc(p, :user),
+        where: t.department_uuid in ^uuids and p.status != "trashed",
+        select: {t.department_uuid, p, u}
+      )
+
+    (repo().all(primary) ++ repo().all(via_teams))
+    |> Enum.uniq_by(fn {dept, p, _u} -> {dept, p.uuid} end)
+    |> Enum.sort_by(fn {_dept, p, _u} -> p.name || "" end)
+    |> group_faces()
+  end
+
+  defp group_faces(rows) do
+    Enum.group_by(rows, &elem(&1, 0), fn {_key, p, u} -> face(p, u) end)
+  end
+
+  defp face(%Person{name: name}, user),
+    do: %{name: name || (user && user.email) || "?", user: user}
+
+  defp repo, do: PhoenixKit.RepoHelper.repo()
 
   @doc "Whether the assignment has no assignee at all (person/team/department)."
   @spec unassigned?(Assignment.t()) :: boolean()
@@ -208,6 +319,388 @@ defmodule PhoenixKitProjects.Assignees do
       Logger.warning("[Assignees] people search failed: #{Exception.message(e)}")
       {[], false}
   end
+
+  # ── The task form's assignee picker ─────────────────────────────────
+
+  @doc """
+  Searches people, teams and departments together for the task form's
+  assignee picker (core `<.search_picker>` rows, `%{kind:, uuid:, label:,
+  sublabel:, icon:}`, `kind` being `"person"`, `"team"`, `"department"` or `"user"`):
+  a task goes to any one of the three, so the person typing should not have
+  to say which kind first (the boss, 2026-10-29: switching the kind swapped
+  the fields below without a word).
+
+  Unlike `search_people/3` this offers everyone who is not trashed — the
+  picker is where a person gets their first task. People come first, then
+  teams, then departments, then — as `kind: "user"` — active accounts with
+  no staff person at all (any user can be given a task; picking one makes
+  their person, `People.ensure_person_for_user/2`), each name-sorted; an
+  empty query is browse mode. A team or department the text matches brings
+  its people right under it (Max, 2026-10-30: typing "finance" should find
+  the Finance department and the people in it), each labelled with where
+  they come from and listed once: a department's are those whose primary
+  department it is and the members of its teams, as `faces/2` counts them.
+  Returns `{rows, has_more}`, `{[], false}` on a failed staff read.
+  """
+  @spec search_assignees(String.t() | nil, pos_integer(), String.t() | nil) ::
+          {[map()], boolean()}
+  def search_assignees(query, limit \\ 20, lang \\ nil) do
+    limit = limit |> max(1) |> min(100)
+    pattern = like_pattern(query)
+
+    people =
+      from(p in Person,
+        left_join: u in assoc(p, :user),
+        where: p.status != "trashed",
+        order_by: [asc: fragment("coalesce(?, ?)", p.name, u.email), asc: p.uuid],
+        limit: ^(limit + 1),
+        select: %{uuid: p.uuid, name: p.name, email: u.email}
+      )
+      |> then(fn q ->
+        if pattern,
+          do: where(q, [p, u], ilike(p.name, ^pattern) or ilike(u.email, ^pattern)),
+          else: q
+      end)
+      |> repo().all()
+      |> Enum.map(&person_row/1)
+
+    teams =
+      from(t in Team, order_by: [asc: t.name], limit: ^(limit + 1), preload: [:department])
+      |> name_like(pattern)
+      |> repo().all()
+      |> Enum.map(&team_row(&1, lang))
+
+    departments =
+      from(d in Department, order_by: [asc: d.name], limit: ^(limit + 1))
+      |> name_like(pattern)
+      |> repo().all()
+      |> Enum.map(&department_row(&1, lang))
+
+    users =
+      from(u in User,
+        as: :user,
+        where: u.is_active == true and not coalesce(u.api_only, false),
+        where: not exists(from(p in Person, where: p.user_uuid == parent_as(:user).uuid)),
+        order_by: [
+          asc:
+            fragment(
+              "lower(coalesce(nullif(trim(concat_ws(' ', ?, ?)), ''), ?))",
+              u.first_name,
+              u.last_name,
+              u.email
+            ),
+          asc: u.uuid
+        ],
+        limit: ^(limit + 1)
+      )
+      |> then(fn q ->
+        if pattern,
+          do:
+            where(
+              q,
+              [u],
+              ilike(u.email, ^pattern) or ilike(u.first_name, ^pattern) or
+                ilike(u.last_name, ^pattern)
+            ),
+          else: q
+      end)
+      |> repo().all()
+      |> Enum.map(&user_row/1)
+
+    groups =
+      if pattern,
+        do: with_members(teams, departments, people, lang),
+        else: teams ++ departments
+
+    {page, rest} = Enum.split(people ++ groups ++ users, limit)
+    {page, rest != []}
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] assignee search failed: #{Exception.message(e)}")
+      {[], false}
+  end
+
+  @doc """
+  One assignee as the picker shows it once chosen: its picker row plus its
+  faces (`faces/2`), or nil for an unknown uuid, nothing chosen, or a failed
+  read. `kind` is `"person"`, `"team"` or `"department"`.
+  """
+  @spec describe(String.t() | nil, String.t() | nil, String.t() | nil) :: map() | nil
+  def describe(kind, uuid, lang \\ nil)
+
+  def describe(kind, uuid, lang)
+      when kind in ~w(person team department) and is_binary(uuid) and uuid != "" do
+    # A uuid from the client is cast first: a malformed one would raise in
+    # the query (`Ecto.Query.CastError`) and take the form down with it.
+    with {:ok, uuid} <- Ecto.UUID.cast(uuid),
+         row when is_map(row) <- row_for(kind, uuid, lang) do
+      probe = struct(Assignment, [{:uuid, "chosen"}, {assignee_field(kind), uuid}])
+      Map.put(row, :faces, Map.get(faces([probe], 5), "chosen"))
+    else
+      _ -> nil
+    end
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] assignee lookup failed: #{Exception.message(e)}")
+      nil
+  end
+
+  def describe(_kind, _uuid, _lang), do: nil
+
+  @doc """
+  Whom a project's tasks went to lately — people, teams and departments,
+  newest first, at most `limit` — as picker rows: the one-click "Recent"
+  chips under the task form's assignee picker. A project with no assigned
+  task yet gets whom tasks went to lately in any project, so the first
+  task of a new project has suggestions too. `[]` on a failed read.
+  """
+  @spec recent_for_project(String.t() | nil, pos_integer(), String.t() | nil) :: [map()]
+  def recent_for_project(project_uuid, limit \\ 6, lang \\ nil)
+
+  def recent_for_project(project_uuid, limit, lang) when is_binary(project_uuid) do
+    case recent_assignees(project_uuid, limit, lang) do
+      [] -> recent_assignees(nil, limit, lang)
+      rows -> rows
+    end
+  end
+
+  def recent_for_project(_project_uuid, _limit, _lang), do: []
+
+  defp in_project(nil), do: dynamic(true)
+  defp in_project(uuid), do: dynamic([a], a.project_uuid == ^uuid)
+
+  defp recent_assignees(project_uuid, limit, lang) do
+    from(a in Assignment,
+      where: ^in_project(project_uuid),
+      where:
+        not is_nil(a.assigned_person_uuid) or not is_nil(a.assigned_team_uuid) or
+          not is_nil(a.assigned_department_uuid),
+      order_by: [desc: a.updated_at],
+      limit: 100,
+      select: {a.assigned_person_uuid, a.assigned_team_uuid, a.assigned_department_uuid}
+    )
+    |> repo().all()
+    |> Enum.map(fn
+      {p, _, _} when is_binary(p) -> {"person", p}
+      {_, t, _} when is_binary(t) -> {"team", t}
+      {_, _, d} -> {"department", d}
+    end)
+    |> Enum.uniq()
+    |> Enum.take(limit)
+    |> Enum.map(fn {kind, uuid} -> row_for(kind, uuid, lang) end)
+    |> Enum.reject(&is_nil/1)
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] recent assignees failed: #{Exception.message(e)}")
+      []
+  end
+
+  @doc "The assignment field that holds an assignee of `kind`."
+  @spec assignee_field(String.t()) :: atom()
+  def assignee_field("person"), do: :assigned_person_uuid
+  def assignee_field("team"), do: :assigned_team_uuid
+  def assignee_field("department"), do: :assigned_department_uuid
+
+  defp row_for("person", uuid, _lang) do
+    from(p in Person,
+      left_join: u in assoc(p, :user),
+      where: p.uuid == ^uuid,
+      select: %{uuid: p.uuid, name: p.name, email: u.email}
+    )
+    |> repo().one()
+    |> case do
+      nil -> nil
+      r -> person_row(r)
+    end
+  end
+
+  defp row_for("team", uuid, lang) do
+    case repo().one(from(t in Team, where: t.uuid == ^uuid, preload: [:department])) do
+      nil -> nil
+      t -> team_row(t, lang)
+    end
+  end
+
+  defp row_for("department", uuid, lang) do
+    case repo().get(Department, uuid) do
+      nil -> nil
+      d -> department_row(d, lang)
+    end
+  end
+
+  defp person_row(r) do
+    %{
+      kind: "person",
+      uuid: r.uuid,
+      label: r.name || r.email || "?",
+      sublabel: if(r.name && r.email, do: r.email),
+      icon: "hero-user"
+    }
+  end
+
+  # How many of a matched team's or department's people the picker lists
+  # under it.
+  @members_per_group 10
+
+  # Each matched team and department followed by its people, labelled with
+  # where they come from ("Finance", "Finance › Payroll"); a person already
+  # listed (a direct match or an earlier group) is not listed again.
+  defp with_members(teams, departments, people, lang) do
+    team_uuids = Enum.map(teams, & &1.uuid)
+    dept_uuids = Enum.map(departments, & &1.uuid)
+    by_team = members_by(:team, team_uuids, lang)
+    by_dept = members_by(:department, dept_uuids, lang)
+    seen = MapSet.new(people, & &1.uuid)
+
+    {rows, _seen} =
+      Enum.flat_map_reduce(teams ++ departments, seen, fn group, seen ->
+        members =
+          case group.kind do
+            "team" -> Map.get(by_team, group.uuid, [])
+            "department" -> Map.get(by_dept, group.uuid, [])
+          end
+          |> Enum.reject(&MapSet.member?(seen, &1.uuid))
+          |> Enum.take(@members_per_group)
+
+        {[group | members], Enum.reduce(members, seen, &MapSet.put(&2, &1.uuid))}
+      end)
+
+    rows
+  end
+
+  defp members_by(_kind, [], _lang), do: %{}
+
+  defp members_by(:team, uuids, lang) do
+    from(m in TeamMembership,
+      join: p in assoc(m, :person),
+      left_join: u in assoc(p, :user),
+      join: t in Team,
+      on: t.uuid == m.team_uuid,
+      left_join: d in Department,
+      on: d.uuid == t.department_uuid,
+      where: m.team_uuid in ^uuids and p.status != "trashed",
+      order_by: [asc: fragment("coalesce(?, ?)", p.name, u.email)],
+      select: {m.team_uuid, %{uuid: p.uuid, name: p.name, email: u.email}, t, d}
+    )
+    |> repo().all()
+    |> Enum.group_by(&elem(&1, 0), fn {_, r, t, d} -> member_row(r, [d, t], lang) end)
+  end
+
+  defp members_by(:department, uuids, lang) do
+    primary =
+      from(p in Person,
+        left_join: u in assoc(p, :user),
+        join: d in Department,
+        on: d.uuid == p.primary_department_uuid,
+        where: p.primary_department_uuid in ^uuids and p.status != "trashed",
+        select: {d.uuid, %{uuid: p.uuid, name: p.name, email: u.email}, d, nil}
+      )
+
+    via_teams =
+      from(m in TeamMembership,
+        join: t in Team,
+        on: t.uuid == m.team_uuid,
+        join: d in Department,
+        on: d.uuid == t.department_uuid,
+        join: p in assoc(m, :person),
+        left_join: u in assoc(p, :user),
+        where: t.department_uuid in ^uuids and p.status != "trashed",
+        select: {d.uuid, %{uuid: p.uuid, name: p.name, email: u.email}, d, t}
+      )
+
+    (repo().all(primary) ++ repo().all(via_teams))
+    |> Enum.uniq_by(fn {dept, r, _, _} -> {dept, r.uuid} end)
+    |> Enum.sort_by(fn {_, r, _, _} -> String.downcase(r.name || r.email || "") end)
+    |> Enum.group_by(&elem(&1, 0), fn {_, r, d, t} -> member_row(r, [d, t], lang) end)
+  end
+
+  # A person row whose sublabel says where they were found:
+  # "Finance › Payroll" (department, then team), or just one of the two.
+  defp member_row(r, path, lang) do
+    where =
+      path
+      |> Enum.reject(&is_nil/1)
+      |> Enum.map_join(" › ", &(People.localized_name(&1, lang) || "?"))
+
+    %{person_row(r) | sublabel: where}
+  end
+
+  # A user with no staff person yet: picking one makes the person
+  # (`People.ensure_person_for_user/2`, after the form asks).
+  defp user_row(%User{} = u) do
+    %{
+      kind: "user",
+      uuid: u.uuid,
+      label: People.new_person_name(u),
+      sublabel: u.email,
+      icon: "hero-user"
+    }
+  end
+
+  @doc """
+  A user the picker may offer as `kind: "user"` — active, not a service
+  account, with no staff person (trashed or not) — as its picker row, or
+  nil. The form re-looks a pick up through this.
+  """
+  @spec describe_user(String.t() | nil) :: map() | nil
+  def describe_user(uuid) when is_binary(uuid) do
+    with {:ok, uuid} <- Ecto.UUID.cast(uuid),
+         %User{} = user <- repo().get(User, uuid),
+         true <- People.assignable_user?(user),
+         false <- repo().exists?(from(p in Person, where: p.user_uuid == ^uuid)) do
+      user_row(user)
+    else
+      _ -> nil
+    end
+  rescue
+    e in [Postgrex.Error, DBConnection.ConnectionError, Ecto.QueryError] ->
+      Logger.warning("[Assignees] user lookup failed: #{Exception.message(e)}")
+      nil
+  end
+
+  def describe_user(_uuid), do: nil
+
+  defp team_row(t, lang) do
+    dept = if match?(%Department{}, t.department), do: People.localized_name(t.department, lang)
+
+    %{
+      kind: "team",
+      uuid: t.uuid,
+      label: People.localized_name(t, lang) || "?",
+      sublabel:
+        if(dept, do: gettext("Team · %{department}", department: dept), else: gettext("Team")),
+      icon: "hero-user-group"
+    }
+  end
+
+  defp department_row(d, lang) do
+    %{
+      kind: "department",
+      uuid: d.uuid,
+      label: People.localized_name(d, lang) || "?",
+      sublabel: gettext("Department"),
+      icon: "hero-building-office-2"
+    }
+  end
+
+  defp like_pattern(query) do
+    case query |> to_string() |> String.trim() do
+      "" ->
+        nil
+
+      q ->
+        escaped =
+          q
+          |> String.replace("\\", "\\\\")
+          |> String.replace("%", "\\%")
+          |> String.replace("_", "\\_")
+
+        "%#{escaped}%"
+    end
+  end
+
+  defp name_like(query, nil), do: query
+  defp name_like(query, pattern), do: where(query, [x], ilike(x.name, ^pattern))
 
   # The four ways an assignment can point at `:person` — each an EXISTS the
   # planner can short-circuit, OR'd into one condition for the picker query.

@@ -24,6 +24,13 @@ defmodule PhoenixKitProjects.Paths do
   @spec overview() :: String.t()
   def overview, do: Routes.path("#{@base}/overview")
 
+  @doc """
+  The Time page — each person's day (or week) across every project the viewer
+  may see: what was planned and what was actually done, hour by hour.
+  """
+  @spec time() :: String.t()
+  def time, do: Routes.path("#{@base}/time")
+
   @doc "Projects → API keys: every key a person has, and what each may do per project."
   def api_keys, do: Routes.path("#{@base}/api-keys")
 
@@ -137,6 +144,11 @@ defmodule PhoenixKitProjects.Paths do
   @doc "New-assignment form nested under a project."
   @spec new_assignment(String.t()) :: String.t()
   def new_assignment(project_id), do: Routes.path("#{@base}/#{project_id}/assignments/new")
+
+  @doc "A task's view (read, comment, the next step) nested under a project."
+  @spec view_assignment(String.t(), String.t()) :: String.t()
+  def view_assignment(project_id, id),
+    do: Routes.path("#{@base}/#{project_id}/assignments/#{id}")
 
   @doc "Edit form for an assignment nested under a project."
   @spec edit_assignment(String.t(), String.t()) :: String.t()

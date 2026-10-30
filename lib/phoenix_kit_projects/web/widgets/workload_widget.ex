@@ -42,7 +42,7 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
   rescue
     e ->
       Logger.warning("[WorkloadWidget] task_counts failed: #{Exception.message(e)}")
-      %{"todo" => 0, "in_progress" => 0, "done" => 0}
+      %{"waiting" => 0, "todo" => 0, "in_progress" => 0, "done" => 0}
   end
 
   @impl true
@@ -114,8 +114,9 @@ defmodule PhoenixKitProjects.Web.Widgets.WorkloadWidget do
           >
             {gettext("Tasks")}
           </p>
-          <div class="grid min-h-0 flex-1 grid-cols-3 gap-1.5">
-            <.kpi small label={gettext("Todo")} value={@tasks["todo"] || 0} tone="text-base-content" />
+          <div class="grid min-h-0 flex-1 grid-cols-4 gap-1.5">
+            <.kpi small label={gettext("Waiting")} value={@tasks["waiting"] || 0} tone="text-base-content/60" />
+            <.kpi small label={gettext("Can be started")} value={@tasks["todo"] || 0} tone="text-info" />
             <.kpi small label={gettext("Active")} value={@tasks["in_progress"] || 0} tone="text-warning" />
             <.kpi small label={gettext("Done")} value={@tasks["done"] || 0} tone="text-success" />
           </div>

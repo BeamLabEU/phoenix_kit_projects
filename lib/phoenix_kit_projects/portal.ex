@@ -1530,9 +1530,9 @@ defmodule PhoenixKitProjects.Portal do
                    "task_uuid" => task.uuid,
                    # The ASSIGNMENT status vocabulary (not the
                    # project-lifecycle status set): new portal issues are
-                   # plain open tasks — `source: "portal"` is the triage
+                   # plain waiting tasks — `source: "portal"` is the triage
                    # marker.
-                   "status" => "todo"
+                   "status" => "waiting"
                  },
                  broadcast: false,
                  # A stranger asking for something, not work anybody has

@@ -108,7 +108,8 @@ defmodule PhoenixKitProjects.Web.Helpers do
     PhoenixKitProjects.Web.ProjectFormLive,
     PhoenixKitProjects.Web.TaskFormLive,
     PhoenixKitProjects.Web.TemplateFormLive,
-    PhoenixKitProjects.Web.AssignmentFormLive
+    PhoenixKitProjects.Web.AssignmentFormLive,
+    PhoenixKitProjects.Web.AssignmentViewLive
   ]
 
   @doc """
@@ -1090,6 +1091,34 @@ defmodule PhoenixKitProjects.Web.Helpers do
       )
     end
 
+    :ok
+  end
+
+  @doc """
+  Swaps the frame this LV sits in for another LV in the same drawer
+  (`PopupHostLive`'s `:swap`): a task's view ⇄ its edit form. Emit mode
+  only; the caller handles navigate mode itself.
+  """
+  @spec emit_swap(Phoenix.LiveView.Socket.t(), module(), map()) :: :ok
+  def emit_swap(socket, lv, session) when is_atom(lv) and is_map(session) do
+    do_broadcast(socket, :swap, %{
+      frame_ref: socket.assigns[:embed_frame_ref],
+      lv: lv,
+      session: session
+    })
+
+    :ok
+  end
+
+  @doc """
+  Asks the page under the drawer to do something it owns — a task's
+  "Ready to start", "Done" or "Reopen" opens that page's dialog
+  (`ProjectShowLive` listens on its popup topic). The page runs it as its
+  own event, under its own gates and permission checks.
+  """
+  @spec emit_intent(Phoenix.LiveView.Socket.t(), String.t(), String.t()) :: :ok
+  def emit_intent(socket, event, uuid) when is_binary(event) and is_binary(uuid) do
+    do_broadcast(socket, :intent, %{event: event, uuid: uuid})
     :ok
   end
 

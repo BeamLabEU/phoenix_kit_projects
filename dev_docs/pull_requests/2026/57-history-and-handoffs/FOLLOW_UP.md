@@ -142,3 +142,29 @@ Open (for the maintainer):
   comments, notes and ledger entries. An unknown UUID alone did not reproduce
   the pre-fix exposure.
 
+
+## Fixed (pre-existing) — KIMI review (triaged 2026-10-29)
+
+`KIMI_REVIEW.md` holds two rounds. Its **post-merge recheck** (added in
+`904e596`, after `c8b8ed9`) confirmed no new defect, so it has nothing to
+triage. The `kimi` mentions in Round 3 above refer to its **Round 3** answer.
+That answer had findings Round 3 did not credit to kimi. Each one was
+re-checked against current code (paths under `lib/phoenix_kit_projects/`):
+
+- ~~BUG - MEDIUM — Ledger history: an amend or delete left no line~~ — `projects.work_amended` / `projects.work_removed` are logged (`ledger.ex:311`, `:362`, `:397`) and rendered (`web/components/history_feed.ex:188-200`, `:317-335`); only `work_logged` is dropped (`history.ex:45`). `1eed9d7`.
+- ~~BUG - MEDIUM — Already-running project: a first task added after Start never got "your turn"~~ — new tasks are now stored `waiting` (`schemas/assignment.ex:70`), and releasing one (`waiting → todo`) tells its people (`handoffs.ex:289-300`). `21141ca`.
+- ~~IMPROVEMENT - MEDIUM — Gettext: `default.pot` absent; notification-type labels unregistered~~ — `priv/gettext/default.pot` present; `notification_types/0` uses `gettext_noop` with `gettext_backend:` (`lib/phoenix_kit_projects.ex:76-84`), and the strings are in every locale. `1eed9d7`.
+- ~~NITPICK — static accordion id `assignment-history`~~ — the drawer's history id is `"task-view-history-#{uuid}"` (`web/assignment_view_live.ex:544`). `1eed9d7`.
+- ~~IMPROVEMENT - MEDIUM — test gaps~~ — covered by Round 3's "tests for the time-zone layer, the API reason, …" (`1eed9d7`).
+- Partially fixed — **BUG - MEDIUM — two tabs reopening the same done task both log and post.** A stale tab now re-reads the row and stops on a task already `waiting`/`todo` (`web/project_show_live.ex:2764-2772`, `scoped_assignment/2` at `:2148`; `21141ca`). Two reopens racing past that read both still log — see Open.
+- Partially fixed — **BUG - MEDIUM — missing/mis-attributed actors.** Actor-less lines read "Someone" (`web/components/history_feed.ex:50`; `1eed9d7`). `auto` rows still show no actor — see Open.
+- Part B ("missing for furniture orders"): item 1 (reassignment notices) was built in Round 3 ("handing a task on tells the new and the old owner"). Items 2–5 are feature proposals — see Open.
+
+## Open (after the KIMI triage)
+
+Still live — awaiting Max's decision:
+
+- **BUG - MEDIUM — concurrent reopen double side effects.** `update_assignment_with_activity/5` (`web/project_show_live.ex:1185-1199`) logs and the reason is posted (`:2797`) on any `{:ok, _}`. It ignores the `was` status that `update_tracking_status/2` reads under lock (`projects.ex:4244-4260`). Fix: return `was` from `update_assignment_status/2` and skip the log/post when it was already `todo`.
+- **BUG - MEDIUM (design) — `auto` History rows hide who set them off.** `web/components/history_feed.ex:50` (`e.auto != true`) and the auto sentences (`:263-275`). The moduledoc says such rows are "attributed to whoever's change set them off" (`handoffs.ex:10-12`), but the line never shows that person. Fix: show the actor on auto rows ("Ann's tick: everything under it is done"), or keep the current design.
+- **IMPROVEMENT - MEDIUM — one assignment SELECT per activity row.** `Activity.with_project_uuid/1` (`activity.ex:56-78`) looks the project up whenever the metadata lacks `project_uuid`. The 500-line API batch logs each row without it (`web/api/tasks_controller.ex:996-1001`). Fix: pass `"project_uuid"` in the metadata at the batch's call site (and the other known-project call sites).
+- **Feature proposals (kimi Part B 2–5), not built:** invoice/payment/revision events with amounts; date/dependency changes with old/new values and downstream warnings; exact file-revision links in History and notices; a resolvable owner for `waiting_on`, told on assignment and on clearance.

@@ -234,7 +234,7 @@ defmodule PhoenixKitProjects.Outline.Api do
           Assignment.status_changeset(%Assignment{}, %{
             "project_uuid" => project_uuid,
             "task_uuid" => task.uuid,
-            "status" => if(line.done, do: "done", else: "todo"),
+            "status" => if(line.done, do: "done", else: "waiting"),
             "progress_pct" => if(line.done, do: 100, else: 0),
             "completed_at" => if(line.done, do: now),
             "completed_by_uuid" => if(line.done, do: actor_uuid),

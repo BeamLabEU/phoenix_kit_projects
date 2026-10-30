@@ -8,7 +8,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
 
   use PhoenixKitProjects.LiveCase, async: false
 
-  alias PhoenixKitProjects.Projects
+  alias PhoenixKitProjects.{Assignees, Projects}
+  alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitStaff.Schemas.Department
 
   setup %{conn: conn} do
     scope = fake_scope()
@@ -109,11 +111,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
     end
   end
 
-  describe "save with assign_type='department' clears other assignees" do
-    test "save_new with assign_type=department doesn't carry team/person uuids",
-         %{conn: conn} do
+  describe "the assignee picker's choice is the one assignee saved" do
+    test "save_new with a department picked carries no team or person", %{conn: conn} do
       project = fixture_project()
       task = fixture_task()
+
+      dept =
+        Repo.insert!(%Department{
+          name: "Dept #{System.unique_integer([:positive])}"
+        })
 
       {:ok, view, _html} =
         live(conn, "/en/admin/projects/#{project.uuid}/assignments/new")
@@ -122,24 +128,23 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
 
+      render_click(view, "assignee_pick", %{"kind" => "department", "uuid" => dept.uuid})
+
       {:error, {:live_redirect, _}} =
         view
         |> form("#assignment-form",
-          assignment: %{
-            task_uuid: task.uuid,
-            status: "todo"
-          },
-          task_mode: "existing",
-          assign_type: "department"
+          assignment: %{task_uuid: task.uuid, status: "todo"},
+          task_mode: "existing"
         )
         |> render_submit()
 
-      # Just exercises clear_other_assignees branch — no further pin
-      # since the assignee uuids are nil/empty in our submitted attrs.
-      assert :ok == :ok
+      [created] = Projects.list_assignments(project.uuid)
+      assert created.assigned_department_uuid == dept.uuid
+      assert created.assigned_team_uuid == nil
+      assert created.assigned_person_uuid == nil
     end
 
-    test "save_new with assign_type='' (no assignee) clears all three", %{conn: conn} do
+    test "save_new with nobody picked clears all three", %{conn: conn} do
       project = fixture_project()
       task = fixture_task()
 
@@ -154,12 +159,12 @@ defmodule PhoenixKitProjects.Web.AssignmentFormSaveBranchesTest do
         view
         |> form("#assignment-form",
           assignment: %{task_uuid: task.uuid, status: "todo"},
-          task_mode: "existing",
-          assign_type: ""
+          task_mode: "existing"
         )
         |> render_submit()
 
-      assert :ok == :ok
+      [created] = Projects.list_assignments(project.uuid)
+      assert Assignees.unassigned?(created)
     end
   end
 end

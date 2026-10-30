@@ -16,6 +16,8 @@
  * than left to the browser, so an id can only ever move with its line.
  *
  * PkpTitle: one task title edited in place on a card row.
+ *
+ * PkpBoard: one column of the board, its cards dragged between columns.
  */
 (function () {
   "use strict";
@@ -1168,5 +1170,481 @@
     }
   };
 
-  window.PhoenixKitProjectsHooks = { PkpOutline: Outline, PkpTitle: Title };
+  /*
+   * PkpLinks: a task list's connections, shown without writing them on the
+   * cards. Hovering a connected task (a fine pointer only) marks the tasks
+   * it waits on and the ones it unlocks, draws arrows between them in the
+   * list's left gutter (into the hovered task from what it waits on, out of
+   * it to what it unlocks) and fades every other task to half; its trace
+   * button does the same for the whole chain, before and after, until the
+   * button is pressed again, Escape, or a click outside the list. All here
+   * in the browser from `data-links` ([[before, after], …]); the server is
+   * never asked.
+   *
+   * Nothing on a card is touched: the marks are this hook's own <style>
+   * rules, keyed by task uuid (the labels are their `content`), so a
+   * LiveView patch of a card — a status changing while it is traced —
+   * cannot strip them. Only the button's aria-pressed is set on the DOM,
+   * and `updated` sets it again. The arrows live in the list's own
+   * `<svg data-pkp-arrows phx-update="ignore">`, which a patch leaves alone.
+   */
+  var LINKS_STYLE_ID = "pkp-links-style";
+  var LINKS_CSS = [
+    "[data-pkp-card]{transition:opacity .12s,background-color .12s}",
+    // The label is a tab on the card's top-left edge, out of the row's flow:
+    // it comes and goes without moving anything (the view icon stays put).
+    "[data-pkp-rel]{position:absolute;left:.75rem;top:-.6rem;z-index:1;pointer-events:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.7rem;font-weight:600;line-height:1.15rem;white-space:nowrap;border-radius:999px}",
+    "@media (prefers-reduced-motion:reduce){[data-pkp-card]{transition:none}}"
+  ].join("\n");
+  var LK_BEFORE = "#7c5cd6", LK_AFTER = "#e0682b", LK_AFTER_TEXT = "#d0571d";
+  var LK_PRIMARY = "var(--color-primary,#4f46e5)";
+
+  function cssString(text) {
+    return '"' + String(text || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/[\r\n]+/g, " ") + '"';
+  }
+
+  var Links = {
+    mounted: function () {
+      if (!document.getElementById(LINKS_STYLE_ID)) {
+        var style = document.createElement("style");
+        style.id = LINKS_STYLE_ID;
+        style.textContent = LINKS_CSS;
+        document.head.appendChild(style);
+      }
+      var self = this;
+      this.marks = document.createElement("style");
+      this.marks.setAttribute("data-pkp-links-for", this.el.id);
+      document.head.appendChild(this.marks);
+      this.pin = null;
+      this.hover = null;
+      this.arrows = this.el.querySelector("[data-pkp-arrows]");
+      this.onResize = function () { if (self.pin !== null || self.hover !== null) self.apply(); };
+      window.addEventListener("resize", this.onResize);
+      this.fine = window.matchMedia("(hover: hover) and (pointer: fine)");
+      this.read();
+
+      // Hover after a short pause; between two cards the highlight moves
+      // straight over, and leaving clears after a grace period — moving
+      // down the list does not flicker.
+      this.onOver = function (e) {
+        if (!self.fine.matches) return;
+        var card = e.target.closest("[data-pkp-card]");
+        if (!card || !self.el.contains(card)) return;
+        var id = card.getAttribute("data-pkp-card");
+        clearTimeout(self.leaveT);
+        clearTimeout(self.enterT);
+        if (!self.linked(id)) { self.leaveT = setTimeout(function () { self.setHover(null); }, 90); return; }
+        if (self.hover === id) return;
+        self.enterT = setTimeout(function () { self.setHover(id); }, self.hover === null ? 140 : 60);
+      };
+      this.onOut = function (e) {
+        if (!self.fine.matches) return;
+        var card = e.target.closest("[data-pkp-card]");
+        if (!card || card.contains(e.relatedTarget)) return;
+        clearTimeout(self.enterT);
+        clearTimeout(self.leaveT);
+        self.leaveT = setTimeout(function () { self.setHover(null); }, 120);
+      };
+      this.onClick = function (e) {
+        var button = e.target.closest("[data-pkp-trace]");
+        if (!button || !self.el.contains(button)) return;
+        e.preventDefault();
+        var id = button.getAttribute("data-pkp-trace");
+        self.pin = self.pin === id ? null : id;
+        self.hover = null;
+        self.apply();
+      };
+      this.onFocus = function (e) {
+        var button = e.target.closest && e.target.closest("[data-pkp-trace]");
+        if (button && self.pin === null) self.setHover(button.getAttribute("data-pkp-trace"));
+      };
+      this.onBlur = function (e) {
+        if (e.target.closest && e.target.closest("[data-pkp-trace]") && self.pin === null) self.setHover(null);
+      };
+      this.onKey = function (e) {
+        if (e.key === "Escape" && (self.pin !== null || self.hover !== null)) {
+          self.pin = null;
+          self.hover = null;
+          self.apply();
+        }
+      };
+      this.onDoc = function (e) {
+        if (self.pin !== null && !self.el.contains(e.target)) {
+          self.pin = null;
+          self.apply();
+        }
+      };
+      // Dragging a card: no highlight while it moves.
+      this.onDrag = function () {
+        self.hover = null;
+        self.pin = null;
+        self.apply();
+      };
+
+      this.el.addEventListener("pointerover", this.onOver);
+      this.el.addEventListener("pointerout", this.onOut);
+      this.el.addEventListener("click", this.onClick);
+      this.el.addEventListener("focusin", this.onFocus);
+      this.el.addEventListener("focusout", this.onBlur);
+      this.el.addEventListener("dragstart", this.onDrag);
+      document.addEventListener("keydown", this.onKey);
+      document.addEventListener("click", this.onDoc, true);
+      this.apply();
+    },
+    updated: function () {
+      this.read();
+      if (this.pin !== null && !this.card(this.pin)) this.pin = null;
+      if (this.hover !== null && !this.card(this.hover)) this.hover = null;
+      this.apply();
+    },
+    destroyed: function () {
+      clearTimeout(this.enterT);
+      clearTimeout(this.leaveT);
+      document.removeEventListener("keydown", this.onKey);
+      document.removeEventListener("click", this.onDoc, true);
+      window.removeEventListener("resize", this.onResize);
+      if (this.marks) this.marks.remove();
+    },
+    read: function () {
+      var pairs = [];
+      this.arrows = this.el.querySelector("[data-pkp-arrows]");
+      try { pairs = JSON.parse(this.el.dataset.links || "[]"); } catch (_) { pairs = []; }
+      try { this.labels = JSON.parse(this.el.dataset.labels || "{}"); } catch (_) { this.labels = {}; }
+      var up = {}, down = {};
+      // The ids end up in CSS selectors: only uuids pass.
+      var uuid = /^[0-9a-f-]{36}$/i;
+      pairs = pairs.filter(function (p) {
+        return Array.isArray(p) && uuid.test(p[0]) && uuid.test(p[1]);
+      });
+      this.pairs = pairs;
+      pairs.forEach(function (p) {
+        (up[p[1]] = up[p[1]] || []).push(p[0]);
+        (down[p[0]] = down[p[0]] || []).push(p[1]);
+      });
+      this.up = up;
+      this.down = down;
+    },
+    linked: function (id) { return !!(this.up[id] || this.down[id]); },
+    card: function (id) {
+      return this.el.querySelector('[data-pkp-card="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]');
+    },
+    // Everything reachable from `id` one way, guarded against a cycle.
+    reach: function (id, map) {
+      var seen = {}, stack = (map[id] || []).slice();
+      while (stack.length) {
+        var x = stack.pop();
+        if (seen[x] || x === id) continue;
+        seen[x] = true;
+        (map[x] || []).forEach(function (y) { stack.push(y); });
+      }
+      return seen;
+    },
+    setHover: function (id) {
+      if (this.hover === id) return;
+      this.hover = id;
+      if (this.pin === null) this.apply();
+    },
+    apply: function () {
+      var self = this;
+      var labels = this.labels || {};
+      var src = this.pin !== null ? this.pin : this.hover;
+      var traced = this.pin !== null;
+
+      this.el.querySelectorAll("[data-pkp-trace]").forEach(function (b) {
+        var on = b.getAttribute("data-pkp-trace") === self.pin;
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+        if (labels.trace) b.title = on ? labels.stop : labels.trace;
+      });
+      if (src === null) { this.marks.textContent = ""; this.draw([]); return; }
+
+      // Hover: direct neighbours only, nothing fades. Trace: the whole
+      // chain, and what is not part of it fades a little.
+      var b1 = {}, a1 = {};
+      (this.up[src] || []).forEach(function (x) { b1[x] = true; });
+      (this.down[src] || []).forEach(function (x) { a1[x] = true; });
+      var bAll = traced ? this.reach(src, this.up) : b1;
+      var aAll = traced ? this.reach(src, this.down) : a1;
+
+      var scope = "#" + (window.CSS && CSS.escape ? CSS.escape(this.el.id) : this.el.id) + " ";
+      var card = function (id) { return scope + '[data-pkp-card="' + id + '"]'; };
+      var rel = function (id) { return scope + '[data-pkp-rel="' + id + '"]'; };
+      var rules = [];
+      var mark = function (id, colour, direct, label, textColour) {
+        rules.push(card(id) + (direct
+          ? "{opacity:1;background-color:color-mix(in oklab," + colour + " 6%,transparent);box-shadow:inset 3px 0 0 " + colour + "}"
+          : "{opacity:1;background-image:repeating-linear-gradient(to bottom," + colour + " 0 3px,transparent 3px 6px);background-size:2px 100%;background-repeat:no-repeat;background-position:left top}"));
+        rules.push(rel(id) + "{color:" + textColour + ";background-color:var(--color-base-100,#fff);padding:0 .45rem;box-shadow:0 0 0 1px " +
+          (direct ? "currentColor" : "color-mix(in oklab,currentColor 45%,transparent)") + "}");
+        rules.push(rel(id) + "::before{content:'';width:.4rem;height:.4rem;border-radius:50%;" +
+          (direct ? "background:currentColor" : "box-shadow:inset 0 0 0 1.5px currentColor") + "}");
+        rules.push(rel(id) + "::after{content:" + cssString(label) + "}");
+      };
+
+      // Everything outside what is shown fades to half, hover and trace.
+      rules.push(scope + "[data-pkp-card]{opacity:.4}");
+      rules.push(card(src) + "{opacity:1;box-shadow:inset 0 0 0 1px color-mix(in oklab,currentColor 28%,transparent)}");
+      Object.keys(b1).forEach(function (id) { mark(id, LK_BEFORE, true, labels.before, LK_BEFORE); });
+      Object.keys(a1).forEach(function (id) { if (!b1[id]) mark(id, LK_AFTER, true, labels.after, LK_AFTER_TEXT); });
+      Object.keys(bAll).forEach(function (id) { if (!b1[id] && !a1[id] && id !== src) mark(id, LK_BEFORE, false, labels.earlier, LK_BEFORE); });
+      Object.keys(aAll).forEach(function (id) { if (!b1[id] && !a1[id] && !bAll[id] && id !== src) mark(id, LK_AFTER, false, labels.later, LK_AFTER_TEXT); });
+      if (traced) rules.push(scope + '[data-pkp-trace="' + src + '"]{color:' + LK_PRIMARY + ";background-color:color-mix(in oklab," + LK_PRIMARY + " 12%,transparent)}");
+
+      this.marks.textContent = rules.join("\n");
+
+      // Arrows run in the flow's direction, from what comes first to what
+      // it frees. Hover: the hovered task's own. Trace: every connection
+      // inside the chain, the ones not touching it dashed.
+      var inChain = {};
+      inChain[src] = true;
+      Object.keys(bAll).forEach(function (id) { inChain[id] = true; });
+      Object.keys(aAll).forEach(function (id) { inChain[id] = true; });
+      var edges = (this.pairs || []).filter(function (p) {
+        return traced ? inChain[p[0]] && inChain[p[1]] : p[0] === src || p[1] === src;
+      }).map(function (p) {
+        return { from: p[0], to: p[1], after: !!aAll[p[1]] && !bAll[p[1]], direct: p[0] === src || p[1] === src };
+      });
+      this.draw(edges);
+    },
+    // Draws `edges` into the list's arrow layer: a curve from the left edge
+    // of the earlier task, out into the gutter and back into the later
+    // one, with a head. Cards out of view (folded) are skipped.
+    draw: function (edges) {
+      var svg = this.arrows;
+      if (!svg) return;
+      var NS = "http://www.w3.org/2000/svg";
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+      if (!edges.length) return;
+      var self = this, base = this.el.getBoundingClientRect();
+      var HEAD = 9;
+      var mid = this.el.id.replace(/[^\w-]/g, "");
+      var defs = document.createElementNS(NS, "defs");
+      [["b", LK_BEFORE], ["a", LK_AFTER]].forEach(function (m) {
+        var marker = document.createElementNS(NS, "marker");
+        marker.setAttribute("id", mid + "-head-" + m[0]);
+        marker.setAttribute("viewBox", "0 0 10 10");
+        // A fixed size in the layer's own pixels (not scaled by the stroke),
+        // its tip on the path's end.
+        marker.setAttribute("markerUnits", "userSpaceOnUse");
+        marker.setAttribute("refX", "10");
+        marker.setAttribute("refY", "5");
+        marker.setAttribute("markerWidth", "9");
+        marker.setAttribute("markerHeight", "9");
+        marker.setAttribute("orient", "auto-start-reverse");
+        var head = document.createElementNS(NS, "path");
+        head.setAttribute("d", "M0,0 L10,5 L0,10 z");
+        head.setAttribute("fill", m[1]);
+        marker.appendChild(head);
+        defs.appendChild(marker);
+      });
+      svg.appendChild(defs);
+      // An arrow leaves a task low on its edge and arrives high on the
+      // next one's, so on the hovered task what comes in and what goes out
+      // do not meet at one point.
+      var point = function (id, leaving) {
+        var c = self.card(id);
+        if (!c) return null;
+        var r = c.getBoundingClientRect();
+        if (!r.height) return null;
+        var inset = Math.min(14, r.height / 4);
+        return { x: r.left - base.left, y: (leaving ? r.bottom - inset : r.top + inset) - base.top };
+      };
+      edges.forEach(function (e) {
+        var p0 = point(e.from, true), p1 = point(e.to, false);
+        if (!p0 || !p1) return;
+        // Farther apart, wider out — stacked arrows do not sit on each other.
+        var bow = Math.max(8, Math.min(18, 8 + Math.abs(p1.y - p0.y) / 30));
+        var bx = Math.min(p0.x, p1.x) - bow - HEAD;
+        var path = document.createElementNS(NS, "path");
+        // The curve comes back level and ends in a straight run as long as
+        // the head, so the head sits on a straight line, not on the bend.
+        var runIn = p1.x - 1 - HEAD;
+        path.setAttribute(
+          "d",
+          "M" + (p0.x - 1) + "," + p0.y + " C" + bx + "," + p0.y + " " + bx + "," + p1.y + " " +
+            runIn + "," + p1.y + " L" + (p1.x - 1) + "," + p1.y
+        );
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", e.after ? LK_AFTER : LK_BEFORE);
+        path.setAttribute("stroke-width", e.direct ? "2" : "1.5");
+        path.setAttribute("stroke-linecap", "round");
+        if (!e.direct) path.setAttribute("stroke-dasharray", "4 3");
+        path.setAttribute("marker-end", "url(#" + mid + "-head-" + (e.after ? "a" : "b") + ")");
+        svg.appendChild(path);
+        var dot = document.createElementNS(NS, "circle");
+        dot.setAttribute("cx", p0.x);
+        dot.setAttribute("cy", p0.y);
+        dot.setAttribute("r", "2.5");
+        dot.setAttribute("fill", e.after ? LK_AFTER : LK_BEFORE);
+        svg.appendChild(dot);
+      });
+    }
+  };
+
+  // ── PkpBoard: one column of the board ────────────────────────────────
+  //
+  // Core's SortableGrid serves sortable lists; the board needs three things
+  // it does not take as options (the boss, 2026-10-29: a card dropped only
+  // when let go over one particular spot):
+  //   * the whole card picks up, not a small handle — its links and buttons
+  //     still click (a press that does not move is a click; a drag that
+  //     started on a link swallows the click after it, SortableJS's own);
+  //   * on a touch screen only after a short hold, so a swipe still scrolls
+  //     the board instead of grabbing whatever card is under the finger;
+  //   * while a card is held, every column shows it takes drops and the one
+  //     under the card lights up, with a dashed gap where it will land.
+  // The column's whole body is the list (the template makes it fill the
+  // column, empty or not), so anywhere in a column is a drop.
+  //
+  // Sends what SortableGrid sends — `{ordered_ids, moved_id, status,
+  // fromStatus}` under the column's `data-board-event` — and answers the
+  // page's `sortable:flash` and `pkp-board:revert` (a refused drop: the
+  // card goes back to where it was picked up). SortableJS is the host's
+  // vendored copy, loaded through core's loader (`PhoenixKitLibraries`, in
+  // core since 2.60).
+  var BOARD_STYLE_ID = "pkp-board-style";
+  var BOARD_CSS = [
+    ".pkp-board-card{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}",
+    ".pkp-board-list{transition:background-color .12s,box-shadow .12s}",
+    // Held: every column is a place to drop; the one holding the gap lights up.
+    ".pkp-board-dragging .pkp-board-list{box-shadow:inset 0 0 0 2px color-mix(in oklab,currentColor 10%,transparent)}",
+    ".pkp-board-dragging .pkp-board-list:has(.pkp-board-ghost){background-color:color-mix(in oklab,var(--color-primary,#4f46e5) 10%,transparent);box-shadow:inset 0 0 0 2px var(--color-primary,#4f46e5)}",
+    // The gap: where the card lands, as a dashed outline of its size.
+    ".pkp-board-ghost{opacity:1!important;background:transparent!important;border:2px dashed var(--color-primary,#4f46e5)!important;box-shadow:none!important}",
+    ".pkp-board-ghost>*{visibility:hidden}",
+    ".pkp-board-drag{cursor:grabbing!important;transform:rotate(1.5deg);box-shadow:0 10px 15px -3px rgba(0,0,0,.15)}",
+    ".pkp-board-list:has(.sortable-item) .pkp-board-empty{display:none}",
+    ".pkp-board-ok,.pkp-board-err{position:relative}",
+    ".pkp-board-ok::after,.pkp-board-err::after{content:'';position:absolute;inset:0;pointer-events:none;border-radius:inherit;animation:pkp-board-flash 1.1s ease-out}",
+    ".pkp-board-ok::after{--pkp-flash:rgba(34,197,94,.35)}",
+    ".pkp-board-err::after{--pkp-flash:rgba(239,68,68,.35)}",
+    "@keyframes pkp-board-flash{15%{background-color:var(--pkp-flash)}100%{background-color:transparent}}",
+    "@media (prefers-reduced-motion:reduce){.pkp-board-drag{transform:none}.pkp-board-ok::after,.pkp-board-err::after{animation:none}}"
+  ].join("\n");
+
+  function loadSortable() {
+    if (typeof window.Sortable === "function") return Promise.resolve();
+    var libs = window.PhoenixKitLibraries;
+    if (!libs || typeof libs.loadVendored !== "function") {
+      return Promise.reject(new Error("SortableJS is not available"));
+    }
+    return libs.loadVendored("SortableJS", "sortable", {
+      check: function () { return typeof window.Sortable === "function"; }
+    });
+  }
+
+  var Board = {
+    mounted: function () {
+      var self = this;
+      this.gone = false;
+      if (!document.getElementById(BOARD_STYLE_ID)) {
+        var style = document.createElement("style");
+        style.id = BOARD_STYLE_ID;
+        style.textContent = BOARD_CSS;
+        document.head.appendChild(style);
+      }
+      // Every column hears it; one card answers, so it flashes once.
+      this.handleEvent("sortable:flash", function (payload) {
+        if (!payload || !payload.uuid || !self.el.isConnected) return;
+        var cls = payload.status === "ok" ? "pkp-board-ok" : payload.status === "error" ? "pkp-board-err" : null;
+        if (!cls) return;
+        var card = self.el.querySelector('.sortable-item[data-id="' + CSS.escape(payload.uuid) + '"]');
+        if (!card) return;
+        card.classList.remove("pkp-board-ok", "pkp-board-err");
+        void card.offsetWidth;
+        card.classList.add(cls);
+        setTimeout(function () { card.classList.remove(cls); }, 1200);
+      });
+      // A drop the page refused (or a dialog now asks about): the card goes
+      // back where it was picked up. The server's columns did not change,
+      // so no patch would ever move it back. The column it came from
+      // remembers the move and answers; the others ignore it.
+      this.handleEvent("pkp-board:revert", function (payload) {
+        var last = self.lastMove;
+        if (!payload || !last || last.id !== payload.uuid) return;
+        self.lastMove = null;
+        var from = last.from;
+        var item = last.item;
+        if (!from || !from.isConnected || !item) return;
+        var siblings = Array.prototype.filter.call(
+          from.querySelectorAll(".sortable-item"),
+          function (n) { return n !== item && n.parentNode === from; }
+        );
+        var ref = siblings[last.index] || null;
+        if (ref) from.insertBefore(item, ref);
+        else from.appendChild(item);
+      });
+      loadSortable().then(function () {
+        if (!self.gone) self.init();
+      }, function () {
+        // Reported by core's loader; the step buttons still move cards.
+      });
+    },
+
+    init: function () {
+      var self = this;
+      var el = this.el;
+      var board = function () { return el.parentElement && el.parentElement.parentElement; };
+      this.sortable = window.Sortable.create(el, {
+        group: el.dataset.boardGroup,
+        draggable: ".sortable-item",
+        // Form controls never start a drag; links and buttons may (a press
+        // that does not move is still their click), and nothing filtered is
+        // prevented, so no click is lost to the filter.
+        filter: "input, textarea, select, .sortable-ignore",
+        preventOnFilter: false,
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackTolerance: 4,
+        delay: 180,
+        delayOnTouchOnly: true,
+        touchStartThreshold: 6,
+        animation: 150,
+        emptyInsertThreshold: 24,
+        ghostClass: "pkp-board-ghost",
+        chosenClass: "pkp-board-chosen",
+        dragClass: "pkp-board-drag",
+        onStart: function () {
+          var b = board();
+          if (b) b.classList.add("pkp-board-dragging");
+        },
+        onEnd: function (evt) {
+          var b = board();
+          if (b) b.classList.remove("pkp-board-dragging");
+          if (evt.from === evt.to && evt.oldIndex === evt.newIndex) return;
+          // Kept by the column the card left, for `pkp-board:revert`.
+          self.lastMove = {
+            id: evt.item.dataset.id,
+            item: evt.item,
+            from: evt.from,
+            index: evt.oldDraggableIndex
+          };
+          try {
+            var to = evt.to;
+            var ids = Array.prototype.map.call(
+              to.querySelectorAll(".sortable-item[data-id]"),
+              function (n) { return n.dataset.id; }
+            );
+            self.pushEvent(to.dataset.boardEvent || el.dataset.boardEvent, {
+              ordered_ids: ids,
+              moved_id: evt.item.dataset.id,
+              status: to.dataset.boardStatus,
+              fromStatus: evt.from.dataset.boardStatus
+            });
+          } catch (err) {
+            console.error("PkpBoard.onEnd failed:", err);
+          }
+        }
+      });
+    },
+
+    destroyed: function () {
+      this.gone = true;
+      if (this.sortable) {
+        this.sortable.destroy();
+        this.sortable = null;
+      }
+    }
+  };
+
+  window.PhoenixKitProjectsHooks = { PkpOutline: Outline, PkpTitle: Title, PkpLinks: Links, PkpBoard: Board };
 })();

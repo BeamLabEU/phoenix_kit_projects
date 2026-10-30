@@ -19,7 +19,7 @@ defmodule PhoenixKitProjects.Web.ProjectModulesLiveTest do
     assert html =~ "Modules &amp; features"
     assert html =~ "Tasks"
     assert html =~ "Workflow statuses"
-    assert html =~ "Simple to-do list"
+    assert html =~ "Simple task list"
   end
 
   test "toggle_ext flips the tasks extension off and back", %{conn: conn, project: project} do

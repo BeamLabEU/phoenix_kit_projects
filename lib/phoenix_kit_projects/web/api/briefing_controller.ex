@@ -57,7 +57,13 @@ defmodule PhoenixKitProjects.Web.Api.BriefingController do
         )
 
       open = Enum.filter(open_any, &(Map.get(outline.depths, &1.uuid, 0) == 0 or &1 in mine))
-      waiting = Enum.filter(open, &(is_binary(&1.waiting_on) and &1 not in mine))
+      # Idle (status `waiting`, nobody asked yet) or waiting on someone.
+      waiting =
+        Enum.filter(
+          open,
+          &((&1.status == "waiting" or is_binary(&1.waiting_on)) and &1 not in mine)
+        )
+
       ready = Enum.reject(open, &(&1 in mine or &1 in waiting))
 
       ordered =

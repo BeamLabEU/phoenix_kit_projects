@@ -197,6 +197,73 @@ defmodule PhoenixKitProjects.TaskAssigneeApiTest do
     end
   end
 
+  describe "a personal key whose user has no staff record" do
+    setup %{conn: conn} do
+      project = fixture_project()
+
+      {:ok, user} =
+        Auth.register_user(%{
+          email: "nostaff-#{uniq()}@example.com",
+          password: "ValidPassword123!",
+          first_name: "Nora",
+          last_name: "Nostaff"
+        })
+
+      user = PhoenixKitProjects.Test.Access.grant_projects!(user)
+      {:ok, _} = Members.add_member(project, user.uuid, role: "owner")
+
+      {:ok, _key, token} =
+        ApiKeys.create(project, %{"name" => "Nora's AI", "user_uuid" => user.uuid},
+          actor_uuid: user.uuid
+        )
+
+      {:ok, conn: authed(conn, token), project: project, user: user}
+    end
+
+    test "`me` creates their staff person and assigns it; a second `me` reuses it", %{
+      conn: conn,
+      user: user
+    } do
+      assert conn
+             |> get("#{@base}/me")
+             |> json_response(200)
+             |> get_in(["acting_for", "person_uuid"]) ==
+               nil
+
+      resp = create(conn, %{title: "Mine", assignee: "me"})
+      assert %{"task" => %{"assignee" => assignee}} = json_response(resp, 201)
+      assert %{"kind" => "person", "uuid" => person_uuid, "name" => "Nora Nostaff"} = assignee
+
+      person = PhoenixKitProjects.People.get_person_by_user_uuid(user.uuid)
+      assert person.uuid == person_uuid
+
+      assert_activity_logged("projects.staff_person_created",
+        resource_uuid: person_uuid,
+        actor_uuid: user.uuid
+      )
+
+      resp = create(conn, %{title: "Mine too", assignee: "me"})
+      assert json_response(resp, 201)["task"]["assignee"]["uuid"] == person_uuid
+
+      assert conn
+             |> get("#{@base}/me")
+             |> json_response(200)
+             |> get_in(["acting_for", "person_uuid"]) ==
+               person_uuid
+    end
+
+    test "a trashed staff person is refused and nothing is created", %{conn: conn, user: user} do
+      {:ok, person} = Staff.create_person(%{"user_uuid" => user.uuid, "name" => "Old Nora"})
+      {:ok, _} = Staff.trash_person(person)
+
+      assert %{"error" => %{"code" => "validation_failed", "message" => message}} =
+               conn |> create(%{title: "X", assignee: "me"}) |> json_response(422)
+
+      assert message =~ "trash"
+      refute_activity_logged("projects.staff_person_created")
+    end
+  end
+
   describe "a shared agent" do
     test "`me` names no one; a person's uuid still works", %{conn: conn} do
       project = fixture_project()

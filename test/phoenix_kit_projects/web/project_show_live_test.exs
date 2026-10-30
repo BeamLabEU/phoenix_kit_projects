@@ -1048,20 +1048,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
              "a submission from another project was decided from this page"
     end
 
-    test "under a lens the handles stay and the rail goes; All brings the rail back",
+    test "under a lens the handles stay; All keeps them",
          %{conn: conn, project: project} do
       {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
       # Default is "active" — a filter. Dragging still works (a drop is
-      # folded into the whole plan), but the rail draws the schedule walk
-      # and a slice of the plan is not the walk.
+      # folded into the whole plan).
       assert html =~ ~s(data-sortable="true")
       assert html =~ ~s(class="pk-drag-handle)
-      refute html =~ "bottom-0 w-0.5"
 
       all = view |> element("button[phx-value-tab=all]") |> render_click()
       assert all =~ ~s(data-sortable="true")
-      assert all =~ "bottom-0 w-0.5"
 
       # A non-manual sort is the one thing that switches dragging off.
       # Through the FORM, as the browser does: a bare <select phx-change>
@@ -1073,7 +1070,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
         |> render_change(%{"sort" => "newest"})
 
       assert sorted =~ ~s(data-sortable="false")
-      refute sorted =~ "bottom-0 w-0.5"
     end
 
     test "reordering under a lens folds the visible order into the whole plan", %{
@@ -1317,16 +1313,17 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
       assert :sys.get_state(view.pid).socket.assigns.list_manual?
     end
 
-    test "the sequence rail draws only when there is a sequence (scheduling on)",
+    test "no rail down the side, with or without scheduling; still reorderable",
          %{conn: conn} do
-      rail = ~s(class="absolute left-5 top-0 bottom-0 w-0.5 bg-base-300")
+      # One line through every row claimed "these run one after another";
+      # connections show on hover / trace instead (`PkpLinks`).
+      rail = "absolute left-5 top-0 bottom-0"
       project = lens_project(0, 2)
 
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert html =~ rail
+      refute html =~ rail
       assert html =~ "pk-drag-handle"
 
-      # A checklist: no schedule walk, so no line — but still reorderable.
       {:ok, _} = PhoenixKitProjects.Features.set_flags(project, %{"scheduling" => false})
       {:ok, _view, html} = live(conn, "/en/admin/projects/#{project.uuid}")
       refute html =~ rail
@@ -1502,6 +1499,55 @@ defmodule PhoenixKitProjects.Web.ProjectShowLiveTest do
 
       assert Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid) == before
       assert Projects.get_assignment(a.uuid).status == "done"
+    end
+
+    test "who may move a card but not edit the plan moves it without reordering", %{
+      conn: conn,
+      project: project,
+      a: a
+    } do
+      {:ok, t} =
+        Projects.create_task(%{"title" => "Second #{System.unique_integer([:positive])}"})
+
+      {:ok, b} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => t.uuid,
+          "status" => "todo"
+        })
+
+      {:ok, _} =
+        PhoenixKitProjects.Authz.set_overrides(project, %{
+          "edit_tasks" => "managers",
+          "update_status" => "anyone"
+        })
+
+      viewer = embed_user_uuid!()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, viewer, role: "viewer")
+      conn = put_test_scope(conn, fake_scope(user_uuid: viewer, permissions: ["projects"]))
+      before = Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid)
+      assert before == [a.uuid, b.uuid]
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      # Same column, new order: a reorder and nothing else.
+      render_hook(view, "board_move", %{
+        "moved_id" => b.uuid,
+        "status" => "todo",
+        "ordered_ids" => [b.uuid, a.uuid]
+      })
+
+      assert Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid) == before
+
+      # A real move still changes the status; the drop position is ignored.
+      render_hook(view, "board_move", %{
+        "moved_id" => b.uuid,
+        "status" => "in_progress",
+        "ordered_ids" => [b.uuid, a.uuid]
+      })
+
+      assert Projects.get_assignment(b.uuid).status == "in_progress"
+      assert Projects.list_assignments(project.uuid) |> Enum.map(& &1.uuid) == before
     end
 
     test "a forged destination status is refused", %{conn: conn, project: project, a: a} do

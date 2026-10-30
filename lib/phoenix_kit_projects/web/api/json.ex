@@ -28,9 +28,11 @@ defmodule PhoenixKitProjects.Web.Api.Json do
   alias PhoenixKitProjects.Schemas.{ApiKey, Assignment, Project, Task}
   alias PhoenixKitProjects.Web.Api.{Assignee, Docs}
 
-  @lifecycle ~w(todo in_progress done)
+  # `waiting` (the default) is idle; `todo` ("can be started") is released.
+  @lifecycle ~w(waiting todo in_progress done)
   @transitions %{
-    "todo" => ~w(in_progress done),
+    "waiting" => ~w(todo in_progress done),
+    "todo" => ~w(waiting in_progress done),
     "in_progress" => ~w(done todo),
     "done" => ~w(todo)
   }
@@ -416,6 +418,9 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       origin: a.origin,
       start_date: a.start_date,
       end_date: a.end_date,
+      start_time: a.start_time,
+      end_time: a.end_time,
+      deadline: a.deadline,
       overdue: Assignment.overdue?(a),
       labels: Enum.map(labels, & &1.name),
       # who it is FOR (a person, a team or a department), apart from who
@@ -427,6 +432,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       interactions:
         if(may_read_interactions?(), do: interactions || interaction_uuids(a), else: []),
       library_task: library_task?(a),
+      started_at: a.started_at,
       completed_at: a.completed_at,
       inserted_at: a.inserted_at,
       updated_at: a.updated_at
