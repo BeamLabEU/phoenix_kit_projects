@@ -122,6 +122,33 @@ defmodule PhoenixKitProjects.TaskDatesTest do
       assert Assignment.times_changeset(reopened, %{started_at: nil, completed_at: nil}).valid?
     end
 
+    test "real time corrections validate the stored status rather than a stale task" do
+      project = fixture_project()
+      a = task(project, "Reopened meanwhile")
+      {:ok, done} = Projects.complete_assignment(a, nil)
+      {:ok, _} = Projects.reopen_assignment(done)
+
+      assert {:error, cs} =
+               Projects.correct_assignment_times(done, %{completed_at: ~U[2026-10-05 09:00:00Z]})
+
+      assert {"the task is not done", _} = cs.errors[:completed_at]
+      assert %{status: "todo", completed_at: nil} = Projects.get_assignment(a.uuid)
+    end
+
+    test "real time corrections compare with the latest start time" do
+      project = fixture_project()
+      a = task(project, "Start corrected meanwhile")
+      {:ok, done} = Projects.complete_assignment(a, nil)
+
+      {:ok, _} =
+        Projects.correct_assignment_times(done, %{started_at: ~U[2026-10-05 10:00:00Z]})
+
+      assert {:error, cs} =
+               Projects.correct_assignment_times(done, %{completed_at: ~U[2026-10-05 09:00:00Z]})
+
+      assert {"must not be before it was started", _} = cs.errors[:completed_at]
+    end
+
     test "a project's link out: a web address or a path here, nothing that runs or leaves" do
       project = %Project{name: "P", start_mode: "immediate"}
       link = &Project.changeset(project, %{"external_url" => &1})

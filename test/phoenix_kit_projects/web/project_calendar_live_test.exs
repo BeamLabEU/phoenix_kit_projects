@@ -40,7 +40,13 @@ defmodule PhoenixKitProjects.Web.ProjectCalendarLiveTest do
   defp started_project_with_tasks do
     project = fixture_project(%{"start_mode" => "immediate", "counts_weekends" => false})
     {:ok, _} = Projects.start_project(project)
-    project = Projects.get_project!(project.uuid)
+
+    # Keep both tasks in the initially visible month, even when this test
+    # runs on its last day and the schedule crosses into the next month.
+    start = Date.utc_today() |> Date.beginning_of_month() |> Date.add(9)
+
+    {:ok, project} =
+      Projects.update_project(project, %{started_at: DateTime.new!(start, ~T[08:00:00])})
 
     t1 = fixture_task(%{"estimated_duration" => 2, "estimated_duration_unit" => "days"})
     t2 = fixture_task(%{"estimated_duration" => 3, "estimated_duration_unit" => "days"})

@@ -4209,7 +4209,18 @@ defmodule PhoenixKitProjects.Projects do
   @spec correct_assignment_times(Assignment.t(), map()) ::
           {:ok, Assignment.t()} | {:error, Ecto.Changeset.t()}
   def correct_assignment_times(%Assignment{} = a, attrs) do
-    with {:ok, updated} <- a |> Assignment.times_changeset(attrs) |> repo().update() do
+    result =
+      repo().transaction(fn ->
+        fresh =
+          repo().one!(from(x in Assignment, where: x.uuid == ^a.uuid, lock: "FOR NO KEY UPDATE"))
+
+        case fresh |> Assignment.times_changeset(attrs) |> repo().update() do
+          {:ok, updated} -> updated
+          {:error, cs} -> repo().rollback(cs)
+        end
+      end)
+
+    with {:ok, updated} <- result do
       ProjectsPubSub.broadcast_assignment(:assignment_updated, %{
         uuid: updated.uuid,
         project_uuid: updated.project_uuid

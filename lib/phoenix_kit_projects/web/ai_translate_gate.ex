@@ -26,6 +26,11 @@ defmodule PhoenixKitProjects.Web.AITranslateGate do
   end
 
   @doc false
+  # Closing is always allowed, including after the form's write right was
+  # revoked while the modal was open. The Embed only toggles this assign.
+  def gate("ai_toggle_modal", _params, %{assigns: %{ai_modal_open: true}} = socket),
+    do: {:cont, socket}
+
   def gate(event, _params, socket) when event in @events do
     if allowed?(socket) do
       {:cont, socket}

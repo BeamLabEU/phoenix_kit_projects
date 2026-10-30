@@ -27,3 +27,22 @@ gating the AI-translate modal. Re-verified 2026-10-29; paths are under
 ## Open
 
 None.
+
+## Codex follow-up — 2026-10-30
+
+The two findings in `CODEX_REVIEW.md` are fixed:
+
+- Parent changes from form validation now pass the current project's
+  `WriteGate` check before writing through `Outline.move/3`.
+- An open AI translation dialog can close after revocation; opening and
+  translation writes remain gated.
+
+Both new regressions fail against `5ea8d52`'s production code. With the
+fixes restored, the complete suite passed: **2,390 tests, zero failures**.
+Tests ran against a disposable local PostgreSQL server because the shared
+test server entered recovery after the workspace hit its disk quota.
+Build output was redirected to `/tmp` with `MIX_BUILD_PATH`.
+
+The normal development-environment `mix precommit` gate also passed:
+warnings-as-errors compilation, unused-lock and Hex audit checks,
+formatting, strict Credo, and Dialyzer. No new warning suppressions.

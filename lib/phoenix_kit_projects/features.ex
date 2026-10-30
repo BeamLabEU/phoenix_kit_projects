@@ -202,20 +202,35 @@ defmodule PhoenixKitProjects.Features do
   plus every built-in task flag, resolved for one project in one call.
   Rebuild it on `:project_features_changed` / `:project_modules_changed`.
   """
-  @spec gates(Project.t() | map() | binary()) :: %{atom() => boolean()}
-  def gates(project_or_uuid) do
-    ctx = context(project_or_uuid)
-    base = %{tasks: Map.get(ctx.enabled, "tasks", false)}
+  @spec gates(Project.t() | map() | binary() | [Project.t()]) ::
+          %{atom() => boolean()} | %{binary() => %{atom() => boolean()}}
+  def gates(projects) when is_list(projects) do
+    enabled = Extensions.enabled_maps(Enum.map(projects, & &1.uuid))
 
-    Enum.reduce(@task_gates, base, fn gate, acc ->
-      Map.put(acc, gate, resolve(ctx, to_string(gate), []))
+    Map.new(projects, fn project ->
+      ctx = %{
+        enabled: Map.get(enabled, project.uuid, %{}),
+        features: settings_features(project)
+      }
+
+      {project.uuid, resolve_gates(ctx)}
     end)
+  end
+
+  def gates(project_or_uuid) do
+    resolve_gates(context(project_or_uuid))
   rescue
     e ->
       Logger.warning("[Projects.Features] gates failed: #{Exception.message(e)}")
       Map.new([:tasks | @task_gates], &{&1, false})
   catch
     :exit, _ -> Map.new([:tasks | @task_gates], &{&1, false})
+  end
+
+  defp resolve_gates(ctx) do
+    Enum.reduce(@task_gates, %{tasks: Map.get(ctx.enabled, "tasks", false)}, fn gate, acc ->
+      Map.put(acc, gate, resolve(ctx, to_string(gate), []))
+    end)
   end
 
   @doc """

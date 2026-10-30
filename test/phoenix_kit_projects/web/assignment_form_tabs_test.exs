@@ -391,6 +391,39 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
       assert_activity_logged("projects.staff_person_created", actor_uuid: ctx.me)
     end
 
+    test "a pending staff creation rechecks the live assignment permission", ctx do
+      {:ok, view, _} = edit(ctx.conn, ctx.project, ctx.a)
+      render_click(view, "assign_to_me", %{})
+      assert render(view) =~ "Create a staff record?"
+
+      scope = fake_scope(user_uuid: ctx.me, roles: [], permissions: ["projects"])
+
+      :sys.replace_state(view.pid, fn %{socket: socket} = state ->
+        %{state | socket: Phoenix.Component.assign(socket, :phoenix_kit_current_scope, scope)}
+      end)
+
+      render_click(view, "staff_create_confirm", %{})
+      assert staff_person_of(ctx.me) == nil
+      refute_activity_logged("projects.staff_person_created")
+    end
+
+    test "a pending staff creation rechecks the project's assignment floor", ctx do
+      {:ok, _} = PhoenixKitProjects.Members.add_member(ctx.project, ctx.me, role: "member")
+      scope = fake_scope(user_uuid: ctx.me, roles: [], permissions: ["projects"])
+      {:ok, view, _} = edit(put_test_scope(ctx.conn, scope), ctx.project, ctx.a)
+      render_click(view, "assign_to_me", %{})
+      assert render(view) =~ "Create a staff record?"
+
+      {:ok, _} =
+        Projects.update_project(ctx.project, %{
+          "settings" => %{"authz" => %{"assign_tasks" => "managers"}}
+        })
+
+      render_click(view, "staff_create_confirm", %{})
+      assert staff_person_of(ctx.me) == nil
+      refute_activity_logged("projects.staff_person_created")
+    end
+
     test "the search leaves out disabled users, and a forged user pick assigns nobody", ctx do
       n = System.unique_integer([:positive])
 

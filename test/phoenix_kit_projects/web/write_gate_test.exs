@@ -88,6 +88,40 @@ defmodule PhoenixKitProjects.Web.WriteGateTest do
       render_click(view, "save", %{"assignment" => %{"estimated_duration" => "9"}})
       assert Projects.get_assignment(a.uuid).estimated_duration == 9
     end
+
+    test "changing a task's parent rechecks the stored edit permission", %{conn: conn} do
+      {project, a} = assignment!()
+
+      {:ok, parent} =
+        Projects.create_assignment(%{
+          "project_uuid" => project.uuid,
+          "task_uuid" => fixture_task().uuid
+        })
+
+      user_uuid = embed_user_uuid!()
+      {:ok, _} = PhoenixKitProjects.Members.add_member(project, user_uuid, role: "member")
+      scope = fake_scope(user_uuid: user_uuid, roles: [], permissions: ["projects"])
+
+      {:ok, view, _} =
+        live(
+          put_test_scope(conn, scope),
+          "/en/admin/projects/#{project.uuid}/assignments/#{a.uuid}/edit"
+        )
+
+      {:ok, _} =
+        Projects.update_project(project, %{
+          "settings" => %{"authz" => %{"edit_tasks" => "managers"}}
+        })
+
+      html =
+        render_change(view, "validate", %{
+          "assignment" => %{"estimated_duration" => "2"},
+          "parent_task" => parent.uuid
+        })
+
+      assert html =~ @refusal
+      assert Projects.get_assignment(a.uuid).parent_uuid == nil
+    end
   end
 
   describe "the project form" do

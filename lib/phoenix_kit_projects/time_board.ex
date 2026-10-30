@@ -41,6 +41,7 @@ defmodule PhoenixKitProjects.TimeBoard do
     Features,
     Hours,
     L10n,
+    Members,
     People,
     Projects,
     ScheduleLayout
@@ -782,10 +783,32 @@ defmodule PhoenixKitProjects.TimeBoard do
   its task list and its dates on.
   """
   @spec editable_projects(term(), [Project.t()]) :: %{binary() => boolean()}
+  def editable_projects(_scope, []), do: %{}
+
   def editable_projects(scope, projects) do
+    projects = Enum.uniq_by(projects, & &1.uuid)
+    gates = Features.gates(projects)
+    admin? = Authz.admin_all?(scope)
+
+    roles =
+      if admin?,
+        do: %{},
+        else:
+          scope
+          |> Authz.subject_user_uuid_of()
+          |> Members.accessible_projects()
+          |> Map.new(fn {project, role} -> {project.uuid, role} end)
+
     projects
-    |> Enum.uniq_by(& &1.uuid)
-    |> Map.new(&{&1.uuid, may_edit?(scope, &1)})
+    |> Map.new(fn project ->
+      fx = Map.fetch!(gates, project.uuid)
+
+      allowed? =
+        not project.is_template and fx.tasks and fx.dates and
+          (admin? or Authz.can_role?(project, roles[project.uuid], :edit_tasks))
+
+      {project.uuid, allowed?}
+    end)
   end
 
   # The dates flag too: with it off the task form shows no deadline and

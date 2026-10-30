@@ -124,6 +124,39 @@ defmodule PhoenixKitProjects.Extensions do
     :exit, _ -> %{}
   end
 
+  @doc "Effective extension maps for a list of projects, from one grouped read."
+  @spec enabled_maps([binary()]) :: %{binary() => %{String.t() => boolean()}}
+  def enabled_maps([]), do: %{}
+
+  def enabled_maps(project_uuids) when is_list(project_uuids) do
+    rows =
+      RepoHelper.repo().all(
+        from(m in ProjectModule,
+          where: m.project_uuid in ^project_uuids and m.instance_key == @default_instance
+        )
+      )
+      |> Enum.group_by(& &1.project_uuid)
+
+    catalog = Enum.map(Registry.list(), &{&1, Registry.available?(&1)})
+
+    Map.new(project_uuids, fn uuid ->
+      explicit = Map.new(Map.get(rows, uuid, []), &{&1.ext_key, &1.enabled})
+
+      enabled =
+        Map.new(catalog, fn {ext, available?} ->
+          {ext.key, available? and Map.get(explicit, ext.key, ext.default_enabled)}
+        end)
+
+      {uuid, enabled}
+    end)
+  rescue
+    e ->
+      Logger.warning("[Projects.Extensions] enabled_maps failed: #{Exception.message(e)}")
+      %{}
+  catch
+    :exit, _ -> %{}
+  end
+
   @doc """
   Whether one extension is effectively enabled for a project.
 

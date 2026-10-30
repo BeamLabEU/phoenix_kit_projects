@@ -83,4 +83,21 @@ defmodule PhoenixKitProjects.Web.AITranslateGateTest do
 
     refute render_click(view, "ai_toggle_modal", %{}) =~ "permission to do that here"
   end
+
+  test "an open modal can close after permission is revoked, but cannot reopen", %{conn: conn} do
+    task = fixture_task()
+
+    {:ok, view, _} =
+      live(put_test_scope(conn, fake_scope()), "/en/admin/projects/tasks/#{task.uuid}/edit")
+
+    render_click(view, "ai_toggle_modal", %{})
+    assert :sys.get_state(view.pid).socket.assigns.ai_modal_open
+    swap_scope(view, revoked())
+
+    render_click(view, "ai_toggle_modal", %{})
+    refute :sys.get_state(view.pid).socket.assigns.ai_modal_open
+
+    assert render_click(view, "ai_toggle_modal", %{}) =~ "permission"
+    refute :sys.get_state(view.pid).socket.assigns.ai_modal_open
+  end
 end

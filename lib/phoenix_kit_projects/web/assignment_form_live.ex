@@ -534,8 +534,15 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  defp may_assign?(socket),
-    do: socket.assigns.fx.assignees and socket.assigns[:can_assign?] == true
+  defp may_assign?(socket) do
+    with %Project{uuid: uuid} <- socket.assigns[:project],
+         %Project{} = project <- Projects.get_project(uuid) do
+      Features.on?(project, "assignees") and
+        Authz.can?(socket.assigns[:phoenix_kit_current_scope], project, :assign_tasks)
+    else
+      _ -> false
+    end
+  end
 
   # Assigns a user through their staff person: straight away when they
   # have one; asking first when assigning would create it (Max: nothing is
@@ -2152,7 +2159,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         subtasks_on?: true
       }
       when current != parent ->
-        if may?(socket, :edit_tasks), do: move_to(socket, a, parent), else: socket
+        if WriteGate.allowed?(socket),
+          do: move_to(socket, a, parent),
+          else: WriteGate.refuse(socket)
 
       %{live_action: :new} ->
         assign(socket, parent_task: parent)
@@ -2217,7 +2226,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # is reachable by a role that may log time on a task it may not edit).
   def write_events do
     ~w(save delete_task subtask_add subtask_toggle add_assignment_dep remove_assignment_dep
-       toggle_board_published toggle_portal_public generate_default_statuses save_subproject)
+       toggle_board_published toggle_portal_public generate_default_statuses save_subproject
+       staff_create_confirm)
   end
 
   @doc false
