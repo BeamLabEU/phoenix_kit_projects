@@ -234,9 +234,10 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
       {:ok, view, html} = live(conn, show_path(project))
 
       refute html =~ ~s(phx-value-tab="board")
-      html = render_click(view, "switch_tab", %{"tab" => "board"})
-      # Falls back to list — the board columns don't render.
-      refute html =~ "In progress</span>"
+      render_click(view, "switch_tab", %{"tab" => "board"})
+      # Falls back to list — the board columns don't render. (Asked by id:
+      # the rows' status menus name "In progress" too.)
+      refute has_element?(view, "[id^='board-column-']")
     end
   end
 

@@ -32,7 +32,7 @@ defmodule PhoenixKitProjects.Web.TabsNeverJumpTest do
     assert html =~ ~s(aria-controls="x-pane-b")
   end
 
-  test "a drawer frame is the column, a centred one is not" do
+  test "a drawer frame is the column; a centred one is a fixed-height column" do
     frame = [%{frame_ref: "f1", lv: nil, session: %{}, id: "f1"}]
 
     drawer =
@@ -50,6 +50,7 @@ defmodule PhoenixKitProjects.Web.TabsNeverJumpTest do
       )
 
     assert drawer =~ "pkp-frame"
+    refute drawer =~ "relative pkp-frame pkp-center"
     assert drawer =~ ~s|.pkp-frame *:has(> [data-pkp-tabs]) > [role="tabpanel"]:not(.hidden)|
 
     centred =
@@ -66,8 +67,10 @@ defmodule PhoenixKitProjects.Web.TabsNeverJumpTest do
         })
       )
 
-    refute centred =~ ~s(class="modal-box flex flex-col w-11/12 relative pkp-frame)
-    refute centred =~ "relative pkp-frame"
+    # A centred popup with tabs keeps one height whatever the open tab
+    # holds (the boss, 2026-10-31: the tabs jumped).
+    assert centred =~ "relative pkp-frame pkp-center"
+    assert centred =~ ".pkp-frame.pkp-center:has([data-pkp-tabs])"
   end
 
   test "the project page's views are one scroll area that follows the view", %{conn: conn} do

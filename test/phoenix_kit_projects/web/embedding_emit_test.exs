@@ -697,8 +697,12 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
             })
         )
 
-      assert html =~ ">Add task<"
-      assert html =~ "Emit Host"
+      # The compact header says the mode to screen readers (the title shows
+      # "New task" while the name is empty).
+      assert html =~ "Add task"
+      # The project's name left the popup's header (compact, one row); the
+      # form is the project's.
+      assert html =~ ~s(id="assignment-form")
       assert html =~ ~s(phx-click="cancel")
     end
 
