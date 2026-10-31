@@ -10678,3 +10678,15 @@ msgstr "Название шаблона"
 
 msgid "Description…"
 msgstr "Описание…"
+
+msgid "Browse more"
+msgstr "Показать ещё"
+
+msgid "Back"
+msgstr "Назад"
+
+msgid "Search results"
+msgstr "Результаты поиска"
+
+msgid "is not a list of assignees"
+msgstr "не является списком исполнителей"

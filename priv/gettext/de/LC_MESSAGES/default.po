@@ -10621,3 +10621,15 @@ msgstr "Name der Vorlage"
 
 msgid "Description…"
 msgstr "Beschreibung…"
+
+msgid "Browse more"
+msgstr "Mehr anzeigen"
+
+msgid "Back"
+msgstr "Zurück"
+
+msgid "Search results"
+msgstr "Suchergebnisse"
+
+msgid "is not a list of assignees"
+msgstr "ist keine Liste von Zuständigen"

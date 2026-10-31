@@ -33,6 +33,23 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
 
   Assigns it keeps: `assignee_chip`, `recent_assignees`, `my_person_uuid`,
   `can_assign?`, `staff_confirm`, `assignee_notice`, `assignee_project_uuid`.
+
+  ## Several assignees (a task, V29)
+
+  `init(socket, project, multi: true)` turns on the task's picker: any
+  number of people, teams and departments, ticked in lists and shown as
+  chips above them (the boss, 2026-10-31). It opens on Recent (the viewer's
+  own picks), then Teams, Departments and People, five each with "Browse
+  more" — which opens that one list alone, with a way back, scrolling on
+  for ever (`phx-viewport-bottom`, keyset pages from `Assignees.page/4`).
+  Typing searches everything, a team or department followed by its people.
+
+  The ticks have one source, `assignee_selected` (ordered `{kind, uuid}`);
+  a person listed twice (alone and under a group) is one tick. The LiveView
+  keeps it in step with its form (`set_selected/2`) and implements
+  `picker_set(socket, keys)`, called with the whole new list on every
+  change. The lists are a stream (`@streams.assignee_options`); a tick
+  re-inserts the rows of that key so they redraw.
   """
 
   use Phoenix.Component
@@ -49,7 +66,9 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   alias PhoenixKitProjects.{Activity, Assignees, L10n, People}
 
   @events ~w(assignee_search assignee_pick assignee_recent assign_to_me
-             staff_create_confirm staff_create_cancel assignee_noop assignee_clear)
+             staff_create_confirm staff_create_cancel assignee_noop assignee_clear
+             assignee_toggle assignee_remove assignee_browse assignee_back
+             assignee_query assignee_more)
 
   @doc "The events the picker sends; a LiveView hands each to `handle_event/4`."
   @spec events() :: [String.t()]
@@ -58,6 +77,11 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   @callback picker_allowed?(LiveView.Socket.t()) :: boolean()
   @callback picker_choose(LiveView.Socket.t(), String.t() | nil, String.t() | nil) ::
               LiveView.Socket.t()
+  @callback picker_set(LiveView.Socket.t(), [{String.t(), String.t()}]) :: LiveView.Socket.t()
+  @optional_callbacks picker_set: 2
+
+  @home_size 5
+  @page_size 20
 
   # ── State ──────────────────────────────────────────────────────────
 
@@ -86,6 +110,71 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
     |> Phoenix.Component.assign_new(:staff_confirm, fn -> nil end)
     |> Phoenix.Component.assign_new(:assignee_notice, fn -> nil end)
     |> Phoenix.Component.assign_new(:assignee_chip, fn -> %{key: nil, row: nil} end)
+    |> init_multi(Keyword.get(opts, :multi, false))
+  end
+
+  defp init_multi(socket, false),
+    do: Phoenix.Component.assign(socket, :assignee_multi?, false)
+
+  defp init_multi(socket, true) do
+    socket
+    |> Phoenix.Component.assign(
+      assignee_multi?: true,
+      assignee_selected: socket.assigns[:assignee_selected] || [],
+      assignee_rows: socket.assigns[:assignee_rows] || %{},
+      assignee_view: :home,
+      assignee_cursor: nil,
+      assignee_seen: %{}
+    )
+    |> LiveView.stream(:assignee_options, [], reset: true)
+    |> load_home()
+  end
+
+  # The opening lists: five of each kind and whether there are more.
+  defp load_home(socket) do
+    lang = L10n.current_content_lang()
+
+    home =
+      Map.new(~w(team department person), fn kind ->
+        {rows, next} = Assignees.page({:browse, kind}, nil, @home_size, lang)
+        {kind, %{rows: rows, more?: not is_nil(next)}}
+      end)
+
+    Phoenix.Component.assign(socket, :assignee_home, home)
+  end
+
+  @doc """
+  The ticked assignees (`[{kind, uuid}]`) as the form holds them: the
+  chips' rows are looked up for the ones not seen before.
+  """
+  @spec set_selected(LiveView.Socket.t(), [{String.t(), String.t()}]) :: LiveView.Socket.t()
+  def set_selected(socket, keys) when is_list(keys) do
+    was = socket.assigns[:assignee_selected] || []
+    cache = socket.assigns[:assignee_rows] || %{}
+    lang = L10n.current_content_lang()
+
+    cache =
+      Enum.reduce(keys, cache, fn {kind, uuid} = key, acc ->
+        if Map.has_key?(acc, key),
+          do: acc,
+          else: Map.put(acc, key, Assignees.describe(kind, uuid, lang))
+      end)
+
+    socket
+    |> Phoenix.Component.assign(assignee_selected: keys, assignee_rows: cache)
+    |> redraw((keys -- was) ++ (was -- keys))
+  end
+
+  # The rows of these keys in the open list, inserted again so their tick
+  # follows (a stream keeps no assigns of its own).
+  defp redraw(socket, []), do: socket
+
+  defp redraw(socket, keys) do
+    seen = socket.assigns[:assignee_seen] || %{}
+
+    keys
+    |> Enum.flat_map(&Map.get(seen, &1, []))
+    |> Enum.reduce(socket, &LiveView.stream_insert(&2, :assignee_options, &1))
   end
 
   @doc "Re-reads the Recent chips (after a pick, they lead with it)."
@@ -228,6 +317,13 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   # The search box's own form: Enter there must submit nothing.
   def handle_event("assignee_noop", _params, socket, _mod), do: {:noreply, socket}
 
+  def handle_event("assignee_clear", _params, %{assigns: %{assignee_multi?: true}} = socket, mod) do
+    if mod.picker_allowed?(socket),
+      do:
+        {:noreply, socket |> Phoenix.Component.assign(:assignee_notice, nil) |> set_keys([], mod)},
+      else: {:noreply, socket}
+  end
+
   def handle_event("assignee_clear", _params, socket, mod) do
     if mod.picker_allowed?(socket),
       do:
@@ -236,7 +332,102 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
       else: {:noreply, socket}
   end
 
+  # ── Several assignees ──────────────────────────────────────────────
+
+  # A tick: on when it was off, off when it was on. A pick names a row the
+  # lists offered and is looked up again (`describe`), so a forged kind or
+  # uuid ticks nobody; an account without a staff record asks first.
+  def handle_event("assignee_toggle", %{"kind" => "user", "uuid" => uuid}, socket, mod) do
+    {:noreply, assign_user(socket, uuid, :other, mod)}
+  end
+
+  def handle_event("assignee_toggle", %{"kind" => kind, "uuid" => uuid}, socket, mod) do
+    keys = socket.assigns[:assignee_selected] || []
+
+    cond do
+      not mod.picker_allowed?(socket) ->
+        {:noreply, socket}
+
+      {kind, uuid} in keys ->
+        {:noreply, set_keys(socket, List.delete(keys, {kind, uuid}), mod)}
+
+      true ->
+        case Assignees.describe(kind, uuid) do
+          %{kind: kind, uuid: uuid} -> {:noreply, choose(socket, kind, uuid, mod)}
+          nil -> {:noreply, socket}
+        end
+    end
+  end
+
+  def handle_event("assignee_remove", %{"kind" => kind, "uuid" => uuid}, socket, mod) do
+    keys = socket.assigns[:assignee_selected] || []
+
+    if mod.picker_allowed?(socket) and {kind, uuid} in keys,
+      do: {:noreply, set_keys(socket, List.delete(keys, {kind, uuid}), mod)},
+      else: {:noreply, socket}
+  end
+
+  def handle_event("assignee_browse", %{"kind" => kind}, socket, _mod)
+      when kind in ~w(team department person),
+      do: {:noreply, open_list(socket, {:browse, kind})}
+
+  def handle_event("assignee_back", _params, socket, _mod),
+    do: {:noreply, open_list(socket, :home)}
+
+  def handle_event("assignee_query", %{"assignee_q" => q}, socket, _mod) when is_binary(q) do
+    case String.trim(q) do
+      "" -> {:noreply, open_list(socket, :home)}
+      text -> {:noreply, open_list(socket, {:search, String.slice(text, 0, 100)})}
+    end
+  end
+
+  # The list's bottom came into view: the next page, once, for the list
+  # that asked (a page for a list since left is dropped).
+  def handle_event("assignee_more", _params, socket, _mod) do
+    case {socket.assigns[:assignee_view], socket.assigns[:assignee_cursor]} do
+      {{_, _} = view, cursor} when not is_nil(cursor) ->
+        {:noreply, load_page(socket, view, cursor)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_event(_event, _params, socket, _mod), do: {:noreply, socket}
+
+  defp open_list(socket, :home) do
+    socket
+    |> Phoenix.Component.assign(
+      assignee_view: :home,
+      assignee_cursor: nil,
+      assignee_seen: %{}
+    )
+    |> LiveView.stream(:assignee_options, [], reset: true)
+  end
+
+  defp open_list(socket, view) do
+    socket
+    |> Phoenix.Component.assign(
+      assignee_view: view,
+      assignee_cursor: nil,
+      assignee_seen: %{}
+    )
+    |> LiveView.stream(:assignee_options, [], reset: true)
+    |> load_page(view, nil)
+  end
+
+  defp load_page(socket, view, cursor) do
+    {rows, next} = Assignees.page(view, cursor, @page_size, L10n.current_content_lang())
+
+    seen =
+      Enum.reduce(rows, socket.assigns[:assignee_seen] || %{}, fn row, acc ->
+        Map.update(acc, {row.kind, row.uuid}, [row], &(&1 ++ [row]))
+      end)
+
+    socket
+    |> Phoenix.Component.assign(assignee_cursor: next, assignee_seen: seen)
+    |> LiveView.stream(:assignee_options, rows)
+  end
 
   # A choice the viewer made: put in the form, and remembered as theirs
   # for the Recent chips.
@@ -246,11 +437,23 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
 
       socket
       |> Phoenix.Component.assign(:assignee_notice, nil)
-      |> mod.picker_choose(kind, uuid)
+      |> put_choice(kind, uuid, mod)
       |> refresh_recent()
     else
       socket
     end
+  end
+
+  # One assignee: the choice replaces it. Several: it is added (ticked).
+  defp put_choice(%{assigns: %{assignee_multi?: true}} = socket, kind, uuid, mod) do
+    keys = socket.assigns.assignee_selected
+    if {kind, uuid} in keys, do: socket, else: set_keys(socket, keys ++ [{kind, uuid}], mod)
+  end
+
+  defp put_choice(socket, kind, uuid, mod), do: mod.picker_choose(socket, kind, uuid)
+
+  defp set_keys(socket, keys, mod) do
+    socket |> set_selected(keys) |> mod.picker_set(keys)
   end
 
   # Assigns a user through their staff person: straight away when they
@@ -475,6 +678,228 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   end
 
   @doc """
+  The several-assignee picker (`init(…, multi: true)`), inside the form it
+  fills: `name` is the list field the choice posts under
+  (`"assignment[assignees][]"`, one `kind:uuid` each, after an empty one
+  so a cleared list still posts). The search box belongs to `search_form`
+  (`assignee_picker_outside/1`), which sends `assignee_query` as it is
+  typed. `streams` is the LiveView's `@streams`.
+  """
+  attr(:id, :string, required: true)
+  attr(:label, :string, default: nil)
+  attr(:name, :string, required: true)
+  attr(:selected, :list, required: true)
+  attr(:rows, :map, default: %{})
+  attr(:view, :any, default: :home)
+  attr(:home, :map, default: %{})
+  attr(:more?, :boolean, default: false)
+  attr(:streams, :any, required: true)
+  attr(:can_assign?, :boolean, default: true)
+  attr(:my_person_uuid, :string, default: nil)
+  attr(:recent, :list, default: [])
+  attr(:notice, :any, default: nil)
+  attr(:search_form, :string, required: true)
+  attr(:me_id, :string, default: nil)
+  attr(:class, :any, default: nil)
+
+  def assignee_multi_picker(assigns) do
+    assigns =
+      assign(assigns,
+        me_id: assigns.me_id || "#{assigns.id}-me",
+        me?: {"person", assigns.my_person_uuid} in assigns.selected,
+        list_title: list_title(assigns.view)
+      )
+
+    ~H"""
+    <div id={@id} class={["flex flex-col gap-2", @class]} data-count={length(@selected)}>
+      <input type="hidden" name={@name} value="" />
+      <input :for={{kind, uuid} <- @selected} type="hidden" name={@name} value={"#{kind}:#{uuid}"} />
+
+      <div class="flex items-center justify-between gap-2">
+        <label :if={@label} for={"#{@id}-q"} class="text-sm font-semibold">{@label}</label>
+        <button
+          :if={@can_assign? and not @me?}
+          type="button"
+          id={@me_id}
+          phx-click="assign_to_me"
+          class="btn btn-xs btn-outline gap-1 ml-auto"
+        >
+          <.icon name="hero-user-plus" class="w-3.5 h-3.5" /> {gettext("Assign to me")}
+        </button>
+      </div>
+      <p :if={@can_assign? and match?({:trashed, _}, @notice)} id={"#{@id}-notice"} class="text-xs text-warning">
+        <%= if @notice == {:trashed, :self} do %>
+          {gettext("Your staff record is in the trash; restore it under Staff → People to be assigned.")}
+        <% else %>
+          {gettext("Their staff record is in the trash; restore it under Staff → People to assign them.")}
+        <% end %>
+      </p>
+
+      <%!-- Who it is for now: one chip each, in the order they were added. --%>
+      <div :if={@selected != []} id={"#{@id}-chips"} class="flex flex-wrap gap-1.5">
+        <span
+          :for={{kind, uuid} = key <- @selected}
+          id={"#{@id}-chip-#{kind}-#{uuid}"}
+          data-kind={kind}
+          class="inline-flex items-center gap-1.5 rounded-full border border-base-300 bg-base-100 py-0.5 pl-1 pr-1.5 text-sm max-w-full"
+        >
+          <% row = Map.get(@rows, key) %>
+          <%= if row && row[:faces] do %>
+            <.assignee_faces faces={row.faces} size="xs" />
+          <% else %>
+            <.icon name={(row && row.icon) || "hero-user"} class="w-4 h-4 text-base-content/60 shrink-0" />
+          <% end %>
+          <span class="truncate">{(row && row.label) || gettext("No longer listed")}</span>
+          <button
+            :if={@can_assign?}
+            type="button"
+            phx-click="assignee_remove"
+            phx-value-kind={kind}
+            phx-value-uuid={uuid}
+            class="btn btn-ghost btn-xs btn-circle min-h-0 h-5 w-5"
+            aria-label={gettext("Remove %{name}", name: (row && row.label) || "")}
+            title={gettext("Remove %{name}", name: (row && row.label) || "")}
+          >
+            <.icon name="hero-x-mark" class="w-3.5 h-3.5" />
+          </button>
+        </span>
+      </div>
+      <p :if={@selected == [] and not @can_assign?} class="text-sm text-base-content/60">
+        {gettext("Unassigned")}
+      </p>
+
+      <div :if={@can_assign?} class="rounded-box border border-base-300">
+        <label class="input input-sm w-full flex items-center gap-2 border-0 border-b border-base-300 rounded-b-none focus-within:outline-none">
+          <.icon name="hero-magnifying-glass" class="w-4 h-4 opacity-60" />
+          <input
+            id={"#{@id}-q"}
+            type="search"
+            name="assignee_q"
+            form={@search_form}
+            phx-debounce="250"
+            autocomplete="off"
+            placeholder={gettext("Search a person, team or department")}
+            class="grow"
+          />
+        </label>
+
+        <div id={"#{@id}-list"} class="max-h-72 overflow-y-auto overscroll-contain p-1">
+          <%= if @view == :home do %>
+            <.option_section
+              :if={@recent != []}
+              id={"#{@id}-recent"}
+              title={gettext("Recent")}
+              rows={@recent}
+              selected={@selected}
+            />
+            <.option_section
+              :for={{kind, title} <- [{"team", gettext("Teams")}, {"department", gettext("Departments")}, {"person", gettext("People")}]}
+              :if={match?(%{rows: [_ | _]}, @home[kind])}
+              id={"#{@id}-home-#{kind}"}
+              title={title}
+              rows={@home[kind].rows}
+              selected={@selected}
+              more_kind={@home[kind].more? && kind}
+            />
+          <% else %>
+            <div class="flex items-center gap-2 px-1 py-1">
+              <button type="button" phx-click="assignee_back" id={"#{@id}-back"} class="btn btn-ghost btn-xs gap-1">
+                <.icon name="hero-chevron-left" class="w-3.5 h-3.5" /> {gettext("Back")}
+              </button>
+              <span class="text-xs font-semibold uppercase tracking-wide text-base-content/60">{@list_title}</span>
+            </div>
+            <ul
+              id={"#{@id}-options"}
+              phx-update="stream"
+              phx-viewport-bottom={@more? && "assignee_more"}
+              class="flex flex-col"
+            >
+              <li
+                :for={{dom_id, row} <- @streams.assignee_options}
+                id={dom_id}
+                class={[member?(row) && "pl-4"]}
+              >
+                <.option_row row={row} selected={@selected} />
+              </li>
+              <li id={"#{@id}-options-empty"} class="hidden only:block px-2 py-2 text-sm text-base-content/60">
+                {gettext("No matches")}
+              </li>
+            </ul>
+          <% end %>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  attr(:id, :string, required: true)
+  attr(:title, :string, required: true)
+  attr(:rows, :list, required: true)
+  attr(:selected, :list, required: true)
+  attr(:more_kind, :any, default: nil)
+
+  defp option_section(assigns) do
+    ~H"""
+    <section id={@id} class="mb-1">
+      <h4 class="px-2 pt-1 pb-0.5 text-xs font-semibold uppercase tracking-wide text-base-content/60">
+        {@title}
+      </h4>
+      <ul class="flex flex-col">
+        <li :for={row <- @rows}><.option_row row={row} selected={@selected} /></li>
+      </ul>
+      <button
+        :if={@more_kind}
+        type="button"
+        id={"#{@id}-more"}
+        phx-click="assignee_browse"
+        phx-value-kind={@more_kind}
+        class="btn btn-ghost btn-xs w-full justify-start gap-1 font-normal text-primary"
+      >
+        {gettext("Browse more")} <.icon name="hero-chevron-right" class="w-3.5 h-3.5" />
+      </button>
+    </section>
+    """
+  end
+
+  attr(:row, :map, required: true)
+  attr(:selected, :list, required: true)
+
+  # One option, ticked when its key is chosen (a button, not a native
+  # checkbox: the server alone draws the tick — see the library picker).
+  defp option_row(assigns) do
+    assigns = assign(assigns, :on?, {assigns.row.kind, assigns.row.uuid} in assigns.selected)
+
+    ~H"""
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={to_string(@on?)}
+      phx-click="assignee_toggle"
+      phx-value-kind={@row.kind}
+      phx-value-uuid={@row.uuid}
+      data-assignee={"#{@row.kind}:#{@row.uuid}"}
+      class="flex w-full items-center gap-2 rounded px-2 py-1 text-left hover:bg-base-200"
+    >
+      <span class="checkbox checkbox-sm" aria-hidden="true" aria-checked={to_string(@on?)}></span>
+      <.icon name={@row[:icon] || "hero-user"} class="w-4 h-4 shrink-0 opacity-60" />
+      <span class="min-w-0 flex-1">
+        <span class="block truncate text-sm">{@row.label}</span>
+        <span :if={@row[:sublabel]} class="block truncate text-xs text-base-content/60">{@row.sublabel}</span>
+      </span>
+    </button>
+    """
+  end
+
+  defp member?(%{id: id}) when is_binary(id), do: String.contains?(id, "-person-")
+  defp member?(_), do: false
+
+  defp list_title({:browse, "team"}), do: gettext("Teams")
+  defp list_title({:browse, "department"}), do: gettext("Departments")
+  defp list_title({:browse, "person"}), do: gettext("People")
+  defp list_title({:search, _}), do: gettext("Search results")
+  defp list_title(_), do: nil
+
+  @doc """
   What the picker needs outside the form it sits in: the empty form that
   owns its search box, and the "Create a staff record?" question.
   """
@@ -483,7 +908,7 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
 
   def assignee_picker_outside(assigns) do
     ~H"""
-    <form id={@search_form} phx-submit="assignee_noop" class="hidden"></form>
+    <form id={@search_form} phx-submit="assignee_noop" phx-change="assignee_query" class="hidden"></form>
     <%!-- In the drawer this dialog sits inside the drawer's own dialog,
          and daisyUI's `modal-end` makes every modal box under it full
          height (a descendant rule); a confirm keeps its own height. --%>

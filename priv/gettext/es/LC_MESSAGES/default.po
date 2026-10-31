@@ -10621,3 +10621,15 @@ msgstr "Nombre de la plantilla"
 
 msgid "Description…"
 msgstr "Descripción…"
+
+msgid "Browse more"
+msgstr "Ver más"
+
+msgid "Back"
+msgstr "Atrás"
+
+msgid "Search results"
+msgstr "Resultados de búsqueda"
+
+msgid "is not a list of assignees"
+msgstr "no es una lista de responsables"

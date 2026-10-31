@@ -10621,3 +10621,15 @@ msgstr "Nom du modèle"
 
 msgid "Description…"
 msgstr "Description…"
+
+msgid "Browse more"
+msgstr "Voir plus"
+
+msgid "Back"
+msgstr "Retour"
+
+msgid "Search results"
+msgstr "Résultats de recherche"
+
+msgid "is not a list of assignees"
+msgstr "n'est pas une liste de responsables"

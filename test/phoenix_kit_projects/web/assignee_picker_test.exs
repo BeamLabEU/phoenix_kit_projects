@@ -75,13 +75,20 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
       refute has_element?(view, "#assignment-assignee-recent", "Dora")
 
       render_click(view, "assignee_pick", %{"kind" => "person", "uuid" => dora.uuid})
-      assert has_element?(view, "#assignment-assignee-chosen", "Dora")
-      # The chosen one is the chip, not a Recent chip as well.
-      refute has_element?(view, "#assignment-assignee-recent", "Dora")
+      assert has_element?(view, "#assignment-assignee-chip-person-#{dora.uuid}", "Dora")
+      # Recent shows them ticked (the task holds several, V29).
+      assert has_element?(
+               view,
+               "#assignment-assignee-recent [data-assignee='person:#{dora.uuid}'][aria-checked='true']"
+             )
 
-      view |> element("#assignment-assignee-clear") |> render_click()
-      refute has_element?(view, "#assignment-assignee-chosen")
-      assert has_element?(view, "#assignment-assignee-recent", "Dora")
+      render_click(view, "assignee_remove", %{"kind" => "person", "uuid" => dora.uuid})
+      refute has_element?(view, "#assignment-assignee-chip-person-#{dora.uuid}")
+
+      assert has_element?(
+               view,
+               "#assignment-assignee-recent [data-assignee='person:#{dora.uuid}'][aria-checked='false']"
+             )
 
       # And on the next form the viewer opens.
       {:ok, view, _} = edit(ctx)
@@ -114,6 +121,56 @@ defmodule PhoenixKitProjects.Web.AssigneePickerTest do
                Assignees.recent_for_viewer(ctx.me, ctx.project.uuid),
                &(&1.uuid == gone.uuid)
              )
+    end
+  end
+
+  describe "several assignees (V29)" do
+    test "ticks two from the lists, both saved; one removed from its chip", ctx do
+      ann = person!("Annike")
+      bo = person!("Boris")
+      {:ok, view, _} = edit(ctx)
+
+      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => ann.uuid})
+      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => bo.uuid})
+      assert has_element?(view, "#assignment-assignee-chip-person-#{ann.uuid}")
+      assert has_element?(view, "#assignment-assignee-chip-person-#{bo.uuid}")
+
+      render_submit(view, "save", %{
+        "assignment" => %{"assignees" => ["", "person:#{ann.uuid}", "person:#{bo.uuid}"]}
+      })
+
+      keys = ctx.a.uuid |> Projects.get_assignment() |> PhoenixKitProjects.AssigneeSet.keys()
+      assert keys == [{"person", ann.uuid}, {"person", bo.uuid}]
+
+      {:ok, view, _} = edit(ctx)
+      assert has_element?(view, "#assignment-assignee-chip-person-#{bo.uuid}")
+      render_click(view, "assignee_remove", %{"kind" => "person", "uuid" => ann.uuid})
+      refute has_element?(view, "#assignment-assignee-chip-person-#{ann.uuid}")
+    end
+
+    test "opens on sections; Browse more lists one kind with a way back", ctx do
+      for i <- 1..6, do: person!("Browse#{i}")
+      {:ok, view, _} = edit(ctx)
+
+      assert has_element?(view, "#assignment-assignee-home-person")
+      view |> element("#assignment-assignee-home-person-more") |> render_click()
+      assert has_element?(view, "#assignment-assignee-options [data-assignee^='person:']")
+      refute has_element?(view, "#assignment-assignee-home-person")
+
+      view |> element("#assignment-assignee-back") |> render_click()
+      assert has_element?(view, "#assignment-assignee-home-person")
+    end
+
+    test "a tick in a list redraws as ticked", ctx do
+      cleo = person!("Cleopatra#{System.unique_integer([:positive])}")
+      {:ok, view, _} = edit(ctx)
+
+      render_change(view, "assignee_query", %{"assignee_q" => cleo.name})
+      sel = "#assignment-assignee-options [data-assignee='person:#{cleo.uuid}']"
+      assert has_element?(view, sel <> "[aria-checked='false']")
+
+      view |> element(sel) |> render_click()
+      assert has_element?(view, sel <> "[aria-checked='true']")
     end
   end
 

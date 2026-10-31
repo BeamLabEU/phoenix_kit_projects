@@ -10621,3 +10621,15 @@ msgstr "Malli nimi"
 
 msgid "Description…"
 msgstr "Kirjeldus…"
+
+msgid "Browse more"
+msgstr "Vaata veel"
+
+msgid "Back"
+msgstr "Tagasi"
+
+msgid "Search results"
+msgstr "Otsingutulemused"
+
+msgid "is not a list of assignees"
+msgstr "ei ole vastutajate loend"

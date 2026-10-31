@@ -10618,3 +10618,15 @@ msgstr ""
 
 msgid "Description…"
 msgstr ""
+
+msgid "Browse more"
+msgstr ""
+
+msgid "Back"
+msgstr ""
+
+msgid "Search results"
+msgstr ""
+
+msgid "is not a list of assignees"
+msgstr ""
