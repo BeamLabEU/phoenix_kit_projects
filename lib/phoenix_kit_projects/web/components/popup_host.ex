@@ -134,10 +134,13 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
          short tab leaves room at the bottom and a long one scrolls inside
          its pane — never a small box around a long tab. Popups without
          tabs (confirms, small forms) keep their own height. */
-      .pkp-frame.pkp-center:has([data-pkp-tabs]) {
-        display: flex; flex-direction: column;
-        height: min(85dvh, calc(100dvh - 4rem)); max-height: none; overflow: hidden;
+      .pkp-frame.pkp-center:has([data-pkp-tabs]) { overflow: hidden; }
+      .pkp-frame.pkp-center > *:has([data-pkp-tabs]) {
+        flex: none; height: 70dvh;
       }
+      /* A long hint wraps; nothing in a pane scrolls sideways. */
+      .pkp-frame [role="tabpanel"] { overflow-x: hidden; }
+      .pkp-frame [role="tabpanel"] .label { white-space: normal; }
       .pkp-frame *:has([data-pkp-tabs]) {
         display: flex; flex-direction: column; flex: 1 1 0%; min-height: 0;
       }
