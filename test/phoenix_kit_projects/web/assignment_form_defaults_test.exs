@@ -68,7 +68,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormDefaultsTest do
 
     html = view |> element("button[phx-value-tab='existing']") |> render_click()
     refute copy(html) =~ ~r/template/i
-    assert html =~ ">Task"
+    assert html =~ "Search the library"
   end
 
   # What a reader sees: the text between tags, and the attributes that are

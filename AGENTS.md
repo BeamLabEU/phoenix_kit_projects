@@ -1772,6 +1772,21 @@ reference:
   written with `Auth.merge_user_custom_fields/3`), `FormParts`,
   `DescriptionEditor` (Leaf) and `RichText` (sanitised markdown; mentions are
   put back after the sanitiser under a per-render nonce).
+- **The "From library" picker** (item 27; the add-task form's library tab,
+  `AssignmentFormLive.library_picker/1` + `LibrarySearch`): a focused search
+  box (`LibrarySearch.filter/3`, diacritic-insensitive — "mootmine" finds
+  "Mõõtmine" — titles first, then descriptions; typing replaces the blocks
+  with one match list), then **Recent** (this viewer's last adds,
+  `custom_fields["projects_recent_library_tasks"]`, written with
+  `Auth.merge_user_custom_fields/3` by `LibrarySearch.remember/2`),
+  **Often used** (`often_used/2`: library tasks named by the most project
+  rows, at least two) and the whole library **A–Z under letter headings**
+  (`alphabetical/2`; in Estonian Õ Ä Ö Ü after W). Checkboxes, ticked in
+  order; the footer reads "Add N tasks". One tick is the form's own pick
+  (its details and pulled-in tasks, as the old select); several are added
+  in the order ticked, each with its library defaults. The search and the
+  ticks belong to a hidden form of their own (`assignment-library-form-*`),
+  so they never post with the task.
 - **Hooks** (all through `js_sources/0`): `PkpDraft` (the outline's draft row,
   `phoenix_kit_projects_drafts.js`, global `PhoenixKitProjectsDraftHooks`),
   `PkpTabScroll`, `PkpDrawerUrl`, `PkpUrlMirror` (`phoenix_kit_projects.js`,

@@ -48,6 +48,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     Features,
     L10n,
     Labels,
+    LibrarySearch,
     MoveLock,
     Outline,
     Paths,
@@ -1459,8 +1460,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp assign_options(socket) do
     lang = L10n.current_content_lang()
 
+    library_tasks = Projects.list_tasks()
+
     assign(socket,
-      task_options: Projects.list_tasks() |> Enum.map(&{Task.localized_title(&1, lang), &1.uuid}),
+      task_options: Enum.map(library_tasks, &{Task.localized_title(&1, lang), &1.uuid}),
+      # The "From library" picker (item 27): the whole library, what was
+      # typed in its search, and the tasks ticked, in the order ticked.
+      library_tasks: library_tasks,
+      library_q: "",
+      library_picked: [],
+      library_recent: [],
+      library_often: [],
       team_options: load_teams(),
       department_options: load_departments(),
       person_options: load_people(),
@@ -1685,7 +1695,8 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
       {:noreply,
        socket
-       |> assign(task_mode: "existing", title_suggestions: [])
+       |> assign(task_mode: "existing", title_suggestions: [], library_picked: [uuid])
+       |> assign_library_blocks()
        |> prefill_from_template(uuid, attrs)
        |> WebHelpers.mark_dirty()}
     else
@@ -1697,10 +1708,46 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       when mode in ~w(existing new) do
     # The library tab only exists while the project's library flag is on;
     # a stale or forged switch to it is ignored.
-    if mode == "existing" and not socket.assigns.fx.library do
-      {:noreply, socket}
+    cond do
+      mode == "existing" and not socket.assigns.fx.library ->
+        {:noreply, socket}
+
+      mode == "existing" ->
+        {:noreply, socket |> assign(task_mode: mode) |> assign_library_blocks()}
+
+      true ->
+        {:noreply, assign(socket, task_mode: mode)}
+    end
+  end
+
+  # ── The "From library" picker (item 27) ─────────────────────────────
+  #
+  # Search first (diacritic-insensitive, title then description), then the
+  # viewer's Recent adds, the site's Often used, and everything A–Z under
+  # letter headings; ticked tasks are added in the order ticked. One tick
+  # is the form's own library pick (its details, its pulled-in tasks);
+  # several are added each with its library defaults.
+
+  def handle_event("library_search", params, socket) do
+    q = params |> Map.get("library_q", socket.assigns[:library_q] || "") |> to_string()
+    {:noreply, assign(socket, library_q: String.slice(q, 0, 200))}
+  end
+
+  def handle_event("library_toggle", %{"uuid" => uuid}, socket) do
+    known? = Enum.any?(socket.assigns[:library_tasks] || [], &(&1.uuid == uuid))
+
+    if known? and socket.assigns.fx.library and socket.assigns.live_action == :new do
+      picked = socket.assigns.library_picked
+
+      picked = if uuid in picked, do: List.delete(picked, uuid), else: picked ++ [uuid]
+
+      {:noreply,
+       socket
+       |> assign(library_picked: picked)
+       |> sync_library_pick()
+       |> WebHelpers.mark_dirty()}
     else
-      {:noreply, assign(socket, task_mode: mode)}
+      {:noreply, socket}
     end
   end
 
@@ -2037,9 +2084,17 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> merge_attrs(socket)
 
     case {socket.assigns.live_action, task_mode} do
-      {:new, "new"} -> save_with_new_task(socket, attrs, params)
-      {:new, _} -> save_new(socket, attrs)
-      {:edit, _} -> save_edit(socket, attrs)
+      {:new, "new"} ->
+        save_with_new_task(socket, attrs, params)
+
+      {:new, "existing"} when length(socket.assigns.library_picked) > 1 ->
+        save_library_many(socket)
+
+      {:new, _} ->
+        save_new(socket, attrs)
+
+      {:edit, _} ->
+        save_edit(socket, attrs)
     end
   end
 
@@ -2772,6 +2827,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp after_create(socket, record) do
     project = socket.assigns.project
     place_under_parent(socket, record)
+
+    if socket.assigns.task_mode == "existing" and is_binary(record.task_uuid) do
+      LibrarySearch.remember(Activity.actor_uuid(socket), [record.task_uuid])
+    end
 
     if socket.assigns.add_next? do
       socket
@@ -4000,6 +4059,117 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     })
   end
 
+  # Recent (this viewer's) and Often used (the site's), as library tasks.
+  defp assign_library_blocks(socket) do
+    tasks = socket.assigns[:library_tasks] || []
+    by_uuid = Map.new(tasks, &{&1.uuid, &1})
+    pick = fn uuids -> for u <- uuids, %Task{} = t <- [Map.get(by_uuid, u)], do: t end
+
+    recent = socket |> Activity.actor_uuid() |> LibrarySearch.recent() |> pick.()
+    often = tasks |> Enum.map(& &1.uuid) |> LibrarySearch.often_used(8) |> pick.()
+
+    assign(socket, library_recent: recent, library_often: often)
+  end
+
+  # One tick is the form's library pick, as the old select made it (its
+  # details prefilled, the tasks it pulls in offered); any other count
+  # leaves the form without one.
+  defp sync_library_pick(%{assigns: %{library_picked: [uuid]}} = socket),
+    do: prefill_from_template(socket, uuid, socket.assigns.form.params || %{})
+
+  defp sync_library_pick(socket),
+    do:
+      assign(socket,
+        selected_task_uuid: nil,
+        closure_tree: nil,
+        excluded_closure_uuids: MapSet.new()
+      )
+
+  # Several library tasks at once, in the order ticked: each with its own
+  # library defaults (description, estimate, default assignee), under the
+  # same gates as a single add.
+  defp save_library_many(socket) do
+    project = socket.assigns.project
+    fx = socket.assigns.fx
+
+    created =
+      Enum.reduce_while(socket.assigns.library_picked, [], fn uuid, acc ->
+        with %Task{} = task <- Projects.get_task(uuid),
+             attrs =
+               task
+               |> library_attrs(project)
+               |> strip_gated_attrs(fx)
+               |> strip_unassignable(socket),
+             {:ok, a} <- Projects.create_assignment(attrs) do
+          Activity.log("projects.assignment_created",
+            actor_uuid: Activity.actor_uuid(socket),
+            resource_type: "assignment",
+            resource_uuid: a.uuid,
+            target_uuid: Activity.assignee_target_uuid(a),
+            metadata: %{"project" => project.name}
+          )
+
+          {:cont, [a | acc]}
+        else
+          _ -> {:halt, {:error, acc}}
+        end
+      end)
+
+    case created do
+      {:error, done} ->
+        Enum.each(done, &place_under_parent(socket, &1))
+
+        Activity.log_failed("projects.assignment_created",
+          actor_uuid: Activity.actor_uuid(socket),
+          resource_type: "assignment",
+          metadata: %{"project" => project.name, "project_uuid" => project.uuid}
+        )
+
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           ngettext(
+             "Could not add every task: 1 was added.",
+             "Could not add every task: %{count} were added.",
+             length(done)
+           )
+         )}
+
+      [last | earlier] ->
+        earlier |> Enum.reverse() |> Enum.each(&place_under_parent(socket, &1))
+
+        LibrarySearch.remember(
+          Activity.actor_uuid(socket),
+          Enum.reverse(Enum.map(earlier, & &1.task_uuid))
+        )
+
+        n = length(earlier) + 1
+
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           ngettext("1 task added to project.", "%{count} tasks added to project.", n)
+         )
+         |> after_create(last)}
+    end
+  end
+
+  defp library_attrs(%Task{} = task, project) do
+    %{
+      "task_uuid" => task.uuid,
+      "project_uuid" => project.uuid,
+      "description" => RefText.collapse(task.description),
+      "estimated_duration" => task.estimated_duration && to_string(task.estimated_duration),
+      "estimated_duration_unit" => task.estimated_duration_unit,
+      "assigned_team_uuid" => task.default_assigned_team_uuid,
+      "assigned_department_uuid" => task.default_assigned_department_uuid,
+      "assigned_person_uuid" => task.default_assigned_person_uuid,
+      "status" => "waiting"
+    }
+  end
+
   defp prefill_from_template(socket, task_uuid, attrs) do
     case Projects.get_task(task_uuid) do
       nil ->
@@ -4449,12 +4619,21 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               />
 
               <%= if @task_mode == "existing" do %>
-                <.select
-                  field={@form[:task_uuid]}
-                  label={gettext("Task")}
-                  options={@task_options}
-                  prompt={gettext("Select task")}
-                  required
+                <%!-- One tick is the form's library pick; several are
+                     added each with its library defaults. --%>
+                <input
+                  type="hidden"
+                  name={@form[:task_uuid].name}
+                  value={single_pick(@library_picked)}
+                />
+                <.library_picker
+                  dom={@dom}
+                  q={@library_q}
+                  picked={@library_picked}
+                  tasks={@library_tasks}
+                  recent={@library_recent}
+                  often={@library_often}
+                  lang={L10n.current_content_lang()}
                 />
 
                 <%!-- Closure pull-in tree. Renders only when the
@@ -5282,7 +5461,14 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             phx-disable-with={gettext("Saving…")}
             class="btn btn-primary btn-sm order-3"
           >
-            <%= if @live_action == :new, do: gettext("Add and close"), else: gettext("Save") %>
+            <%= cond do %>
+              <% @live_action == :new and @task_mode == "existing" and @library_picked != [] -> %>
+                {ngettext("Add %{count} task", "Add %{count} tasks", length(@library_picked))}
+              <% @live_action == :new -> %>
+                {gettext("Add and close")}
+              <% true -> %>
+                {gettext("Save")}
+            <% end %>
           </button>
         </div>
         <p :if={@live_action == :new} class="text-xs text-base-content/50 text-right">
@@ -5297,6 +5483,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       </.form>
       <%!-- Owns the "Log time" inputs drawn inside the form above (`form=`). --%>
       <form id={"assignment-log-form-#{@dom}"} phx-submit="log_time" class="hidden"></form>
+      <%!-- Owns the library picker's search and ticks drawn inside the form above. --%>
+      <form
+        id={"assignment-library-form-#{@dom}"}
+        phx-change="library_search"
+        phx-submit="library_search"
+        class="hidden"
+      ></form>
       <%!-- Owns the "Add a subtask" line drawn inside the form above. --%>
       <form id={"assignment-subtask-form-#{@dom}"} phx-submit="subtask_add" class="hidden"></form>
       <%!-- Owns the task's file inputs drawn inside the form above. --%>
@@ -5437,6 +5630,131 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       name when is_binary(name) and name != "" -> name
       _ -> gettext("New sub-project")
     end
+  end
+
+  defp single_pick([uuid]), do: uuid
+  defp single_pick(_), do: ""
+
+  attr(:dom, :string, required: true)
+  attr(:q, :string, required: true)
+  attr(:picked, :list, required: true)
+  attr(:tasks, :list, required: true)
+  attr(:recent, :list, required: true)
+  attr(:often, :list, required: true)
+  attr(:lang, :string, default: nil)
+
+  # The "From library" picker: search, then Recent / Often used / A–Z;
+  # typing replaces the blocks with one list of matches.
+  defp library_picker(assigns) do
+    form_id = "assignment-library-form-#{assigns.dom}"
+
+    matches =
+      if String.trim(assigns.q) == "",
+        do: nil,
+        else: LibrarySearch.filter(assigns.tasks, assigns.q, assigns.lang)
+
+    assigns =
+      assign(assigns,
+        form_id: form_id,
+        matches: matches,
+        groups: if(matches, do: [], else: LibrarySearch.alphabetical(assigns.tasks, assigns.lang))
+      )
+
+    ~H"""
+    <div id={"library-picker-#{@dom}"} class="flex flex-col gap-2">
+      <label class="input input-bordered input-sm flex items-center gap-2 w-full">
+        <.icon name="hero-magnifying-glass" class="w-4 h-4 opacity-60" />
+        <input
+          type="search"
+          id={"library-search-#{@dom}"}
+          name="library_q"
+          form={@form_id}
+          value={@q}
+          placeholder={gettext("Search the library")}
+          autocomplete="off"
+          phx-debounce="150"
+          phx-mounted={JS.focus()}
+          class="grow"
+        />
+      </label>
+      <p :if={@picked != []} class="text-xs text-base-content/70">
+        {ngettext("1 task ticked", "%{count} tasks ticked", length(@picked))}
+      </p>
+      <div class="max-h-80 overflow-y-auto rounded-box border border-base-200 p-1 [scrollbar-gutter:stable]">
+        <%= if @matches do %>
+          <p :if={@matches == []} class="text-sm text-base-content/60 p-2">
+            {gettext("No library task matches “%{q}”.", q: @q)}
+          </p>
+          <.library_rows id={"library-matches-#{@dom}"} tasks={@matches} picked={@picked} lang={@lang} form_id={@form_id} />
+        <% else %>
+          <.library_block :if={@recent != []} title={gettext("Recent")} id={"library-recent-#{@dom}"}>
+            <.library_rows id={"library-recent-rows-#{@dom}"} tasks={@recent} picked={@picked} lang={@lang} form_id={@form_id} />
+          </.library_block>
+          <.library_block :if={@often != []} title={gettext("Often used")} id={"library-often-#{@dom}"}>
+            <.library_rows id={"library-often-rows-#{@dom}"} tasks={@often} picked={@picked} lang={@lang} form_id={@form_id} />
+          </.library_block>
+          <.library_block
+            :for={{letter, tasks} <- @groups}
+            title={letter}
+            id={"library-letter-#{@dom}-#{letter_id(letter)}"}
+          >
+            <.library_rows id={"library-letter-rows-#{@dom}-#{letter_id(letter)}"} tasks={tasks} picked={@picked} lang={@lang} form_id={@form_id} />
+          </.library_block>
+        <% end %>
+      </div>
+    </div>
+    """
+  end
+
+  defp letter_id(letter), do: letter |> :erlang.phash2() |> Integer.to_string()
+
+  attr(:title, :string, required: true)
+  attr(:id, :string, required: true)
+  slot(:inner_block, required: true)
+
+  defp library_block(assigns) do
+    ~H"""
+    <section id={@id} class="mb-1">
+      <h4 class="sticky top-0 z-[1] bg-base-100 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-base-content/60">
+        {@title}
+      </h4>
+      {render_slot(@inner_block)}
+    </section>
+    """
+  end
+
+  attr(:id, :string, required: true)
+  attr(:tasks, :list, required: true)
+  attr(:picked, :list, required: true)
+  attr(:lang, :string, default: nil)
+  attr(:form_id, :string, required: true)
+
+  defp library_rows(assigns) do
+    ~H"""
+    <ul id={@id} class="flex flex-col">
+      <li :for={t <- @tasks}>
+        <label class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer hover:bg-base-200">
+          <input
+            type="checkbox"
+            class="checkbox checkbox-sm"
+            form={@form_id}
+            checked={t.uuid in @picked}
+            phx-click="library_toggle"
+            phx-value-uuid={t.uuid}
+            data-library-task={t.uuid}
+          />
+          <span class="flex-1 min-w-0 truncate text-sm">{Task.localized_title(t, @lang)}</span>
+          <span
+            :if={t.uuid in @picked}
+            class="badge badge-sm badge-primary"
+            title={gettext("Added in this order")}
+          >
+            {Enum.find_index(@picked, &(&1 == t.uuid)) + 1}
+          </span>
+        </label>
+      </li>
+    </ul>
+    """
   end
 
   # What the task form's template reads besides the assigns: which tabs it

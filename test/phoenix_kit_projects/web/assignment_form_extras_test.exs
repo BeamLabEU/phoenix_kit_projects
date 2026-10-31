@@ -58,11 +58,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormExtrasTest do
       # Create new is the default tab; these cases pick from the library.
 
       _ = view |> element("button[phx-value-tab='existing']") |> render_click()
+      # A library pick is a tick in the picker (item 27).
+      render_click(view, "library_toggle", %{"uuid" => task.uuid})
 
       _ =
         view
         |> form("#assignment-form",
-          assignment: %{task_uuid: task.uuid, status: "todo"},
+          assignment: %{status: "todo"},
           task_mode: "existing"
         )
         |> render_change()
