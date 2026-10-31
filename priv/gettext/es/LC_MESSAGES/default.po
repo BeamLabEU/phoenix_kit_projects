@@ -233,7 +233,7 @@ msgstr "Cancelar"
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5250
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:5262
 #: lib/phoenix_kit_projects/web/assignment_view_live.ex:429
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:73
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:74
 #: lib/phoenix_kit_projects/web/components/popup_host.ex:185
 #: lib/phoenix_kit_projects/web/components/popup_host.ex:186
 #: lib/phoenix_kit_projects/web/project_events_live.ex:580
@@ -799,8 +799,8 @@ msgstr "La lista de proyectos cambió; inténtalo de nuevo."
 #: lib/phoenix_kit_projects/web/project_activity_live.ex:79
 #: lib/phoenix_kit_projects/web/project_api_live.ex:70
 #: lib/phoenix_kit_projects/web/project_api_live.ex:81
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:90
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:128
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:91
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:129
 #: lib/phoenix_kit_projects/web/project_events_live.ex:462
 #: lib/phoenix_kit_projects/web/project_files_live.ex:73
 #: lib/phoenix_kit_projects/web/project_files_live.ex:84
@@ -1022,7 +1022,7 @@ msgstr "Iniciado %{when}"
 msgid "Starting…"
 msgstr "Iniciando…"
 
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:298
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:299
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:89
 #, elixir-autogen, elixir-format
 msgid "Status"
@@ -1204,7 +1204,7 @@ msgstr "Plantillas"
 msgid "This is a template — set up tasks, then create projects from it."
 msgstr "Esto es una plantilla — configura las tareas y luego crea proyectos a partir de ella."
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:276
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:277
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:175
 #: lib/phoenix_kit_projects/web/project_show_live.ex:716
 #, elixir-autogen, elixir-format
@@ -1339,7 +1339,7 @@ msgstr "no puede depender de sí misma"
 msgid "completed"
 msgstr "completado"
 
-#: lib/phoenix_kit_projects/projects.ex:5155
+#: lib/phoenix_kit_projects/projects.ex:5231
 #, elixir-autogen, elixir-format
 msgid "conflicting dependency change in flight, please retry"
 msgstr "cambio de dependencia conflictivo en curso, inténtalo de nuevo"
@@ -1476,7 +1476,7 @@ msgstr "hoy"
 msgid "tomorrow"
 msgstr "mañana"
 
-#: lib/phoenix_kit_projects/projects.ex:5123
+#: lib/phoenix_kit_projects/projects.ex:5199
 #, elixir-autogen, elixir-format
 msgid "would create a dependency cycle"
 msgstr "crearía un ciclo de dependencia"
@@ -1596,7 +1596,7 @@ msgid "(No title)"
 msgstr "(Sin título)"
 
 #: lib/phoenix_kit_projects/calendar_display.ex:237
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:586
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:587
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:423
 #, elixir-autogen, elixir-format
 msgid "(untitled task)"
@@ -1640,7 +1640,7 @@ msgstr "A → Z por título"
 
 #: lib/phoenix_kit_projects/web/overview_live.ex:835
 #: lib/phoenix_kit_projects/web/overview_live.ex:910
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:840
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:841
 #, elixir-autogen, elixir-format
 msgid "About this calendar"
 msgstr "Acerca de este calendario"
@@ -1651,7 +1651,7 @@ msgid "Active"
 msgstr "Activo"
 
 #: lib/phoenix_kit_projects/web/components/quick_add_composer.ex:43
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:786
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:787
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:643
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6167
 #, elixir-autogen, elixir-format
@@ -1692,7 +1692,7 @@ msgid "Auto"
 msgstr "Automático"
 
 #: lib/phoenix_kit_projects/web/project_activity_live.ex:153
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:753
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:754
 #: lib/phoenix_kit_projects/web/project_files_live.ex:232
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:610
 #: lib/phoenix_kit_projects/web/project_members_live.ex:533
@@ -1722,7 +1722,7 @@ msgid "Build phase"
 msgstr "Fase de construcción"
 
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:77
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:757
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:758
 #: lib/phoenix_kit_projects/web/project_show_live.ex:5606
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:735
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:1119
@@ -1740,7 +1740,7 @@ msgstr "Centrado"
 msgid "Change the defaults here"
 msgstr "Cambia aquí los valores predeterminados"
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:884
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:885
 #, elixir-autogen, elixir-format
 msgid "Click a task to edit it; a sub-project opens the child project."
 msgstr "Haz clic en una tarea para editarla; un subproyecto abre el proyecto hijo."
@@ -1809,7 +1809,7 @@ msgstr "Estado personalizado"
 msgid "Date created"
 msgstr "Fecha de creación"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:523
+#: lib/phoenix_kit_projects/calendar_display.ex:526
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4696
 #: lib/phoenix_kit_projects/web/assignment_form_live.ex:4701
 #: lib/phoenix_kit_projects/web/components/time_input.ex:197
@@ -1904,7 +1904,7 @@ msgstr "Fin estimado"
 msgid "Each project is an ongoing line across the month."
 msgstr "Cada proyecto es una línea continua a lo largo del mes."
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:872
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:873
 #, elixir-autogen, elixir-format
 msgid "Each task spans the days it is scheduled to run, in the project's task order — the same schedule as the Timeline tab."
 msgstr "Cada tarea abarca los días en los que está programada, en el orden de tareas del proyecto — la misma programación que la pestaña «Cronología»."
@@ -2038,7 +2038,7 @@ msgstr "Izquierda / inicio"
 msgid "Let it overflow"
 msgstr "Dejar que desborde"
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:766
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:767
 #, elixir-autogen, elixir-format
 msgid "Loading the calendar…"
 msgstr "Cargando el calendario…"
@@ -2065,7 +2065,7 @@ msgstr "Marcador"
 msgid "Minimum bar width"
 msgstr "Ancho mínimo de barra"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:521
+#: lib/phoenix_kit_projects/calendar_display.ex:524
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:472
 #, elixir-autogen, elixir-format
 msgid "Month"
@@ -2094,7 +2094,7 @@ msgstr "Anidar subproyecto"
 msgid "Newest first"
 msgstr "Más recientes primero"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:535
+#: lib/phoenix_kit_projects/calendar_display.ex:538
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:481
 #: lib/phoenix_kit_projects/web/time_live.ex:370
 #, elixir-autogen, elixir-format
@@ -2150,7 +2150,7 @@ msgstr "Aún no hay tareas en este subproyecto."
 msgid "No tasks to chart yet."
 msgstr "Aún no hay tareas para graficar."
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:777
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:778
 #, elixir-autogen, elixir-format
 msgid "No tasks to place on the calendar yet."
 msgstr "Aún no hay tareas que colocar en el calendario."
@@ -2248,7 +2248,7 @@ msgstr "Elige una estrategia antes de aplicar."
 msgid "Planned end"
 msgstr "Fin planificado"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:534
+#: lib/phoenix_kit_projects/calendar_display.ex:537
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:480
 #: lib/phoenix_kit_projects/web/time_live.ex:358
 #, elixir-autogen, elixir-format
@@ -2305,7 +2305,7 @@ msgstr "Carga de trabajo de proyectos"
 
 #: lib/phoenix_kit_projects/web/overview_live.ex:863
 #: lib/phoenix_kit_projects/web/overview_live.ex:944
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:869
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:870
 #, elixir-autogen, elixir-format
 msgid "Reading the calendar"
 msgstr "Cómo leer el calendario"
@@ -2544,7 +2544,7 @@ msgstr "Ese proyecto ya no existe."
 msgid "The entities module is not enabled, so workflow statuses are currently unavailable."
 msgstr "El módulo de entidades no está activado, así que los estados de flujo de trabajo no están disponibles."
 
-#: lib/phoenix_kit_projects/calendar_display.ex:526
+#: lib/phoenix_kit_projects/calendar_display.ex:529
 #: lib/phoenix_kit_projects/web/gettext_manifest.ex:76
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:614
 #: lib/phoenix_kit_projects/web/project_show_live.ex:5602
@@ -2557,7 +2557,7 @@ msgstr "Cronología"
 msgid "Timeline chart"
 msgstr "Diagrama de cronología"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:520
+#: lib/phoenix_kit_projects/calendar_display.ex:523
 #: lib/phoenix_kit_projects/hours/period.ex:34
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:107
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:471
@@ -2613,7 +2613,7 @@ msgstr "Marca de agua (grande y en cursiva al lado)"
 msgid "Wave spread (per day)"
 msgstr "Desfase de la onda (por día)"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:522
+#: lib/phoenix_kit_projects/calendar_display.ex:525
 #: lib/phoenix_kit_projects/web/project_gantt_live.ex:473
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1823
 #: lib/phoenix_kit_projects/web/time_live.ex:341
@@ -2642,7 +2642,7 @@ msgid "Workflow status"
 msgstr "Estado del flujo de trabajo"
 
 #: lib/phoenix_kit_projects.ex:611
-#: lib/phoenix_kit_projects/features.ex:519
+#: lib/phoenix_kit_projects/features.ex:575
 #: lib/phoenix_kit_projects/web/projects_settings_live.ex:801
 #, elixir-autogen, elixir-format
 msgid "Workflow statuses"
@@ -2765,7 +2765,7 @@ msgid "Unassigned"
 msgstr "Sin asignar"
 
 #: lib/phoenix_kit_projects/web/overview_live.ex:613
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:381
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "via %{name}"
 msgstr "vía %{name}"
@@ -3162,7 +3162,7 @@ msgstr "(cuenta eliminada)"
 msgid "A project needs at least one owner — promote someone else first."
 msgstr "Un proyecto necesita al menos un propietario — promociona antes a otra persona."
 
-#: lib/phoenix_kit_projects/calendar_display.ex:527
+#: lib/phoenix_kit_projects/calendar_display.ex:530
 #: lib/phoenix_kit_projects/web/project_activity_live.ex:57
 #: lib/phoenix_kit_projects/web/project_activity_live.ex:137
 #: lib/phoenix_kit_projects/web/project_modules_live.ex:886
@@ -3196,7 +3196,7 @@ msgstr "Añadir el primer archivo"
 msgid "Adding…"
 msgstr "Añadiendo…"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:532
+#: lib/phoenix_kit_projects/calendar_display.ex:535
 #: lib/phoenix_kit_projects/web/project_events_live.ex:553
 #: lib/phoenix_kit_projects/web/project_events_live.ex:669
 #, elixir-autogen, elixir-format
@@ -3482,7 +3482,7 @@ msgstr "Nuevo evento"
 msgid "New whiteboard"
 msgstr "Nueva pizarra"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:537
+#: lib/phoenix_kit_projects/calendar_display.ex:540
 #: lib/phoenix_kit_projects/web/project_events_live.ex:473
 #, elixir-autogen, elixir-format
 msgid "Next month"
@@ -3573,7 +3573,7 @@ msgstr "Preajuste aplicado."
 msgid "Presets:"
 msgstr "Preajustes:"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:536
+#: lib/phoenix_kit_projects/calendar_display.ex:539
 #: lib/phoenix_kit_projects/web/project_events_live.ex:466
 #, elixir-autogen, elixir-format
 msgid "Previous month"
@@ -4376,7 +4376,7 @@ msgid "Participation updated."
 msgstr "Participación actualizada."
 
 #: lib/phoenix_kit_projects/api_access.ex:84
-#: lib/phoenix_kit_projects/features.ex:520
+#: lib/phoenix_kit_projects/features.ex:576
 #: lib/phoenix_kit_projects/web/components/description_editor.ex:170
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2738
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1593
@@ -5832,7 +5832,7 @@ msgstr "Termina"
 msgid "From"
 msgstr "Desde"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:533
+#: lib/phoenix_kit_projects/calendar_display.ex:536
 #: lib/phoenix_kit_projects/web/components/running_card.ex:155
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2428
 #: lib/phoenix_kit_projects/web/project_list_columns.ex:72
@@ -6181,7 +6181,7 @@ msgstr "Registro actualizado."
 msgid "Everyone"
 msgstr "Todos"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:485
+#: lib/phoenix_kit_projects/calendar_display.ex:488
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1869
 #: lib/phoenix_kit_projects/web/time_live.ex:997
 #, elixir-autogen, elixir-format
@@ -6278,7 +6278,7 @@ msgstr "Convertirlo en proyecto independiente"
 msgid "Modules and their settings"
 msgstr "Módulos y su configuración"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:481
+#: lib/phoenix_kit_projects/calendar_display.ex:484
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1865
 #: lib/phoenix_kit_projects/web/time_live.ex:993
 #, elixir-autogen, elixir-format
@@ -6422,7 +6422,7 @@ msgstr "Ponerlo dentro de otro proyecto"
 msgid "Report"
 msgstr "Informe"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:486
+#: lib/phoenix_kit_projects/calendar_display.ex:489
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1870
 #: lib/phoenix_kit_projects/web/time_live.ex:998
 #, elixir-autogen, elixir-format
@@ -6473,7 +6473,7 @@ msgstr "Iniciado"
 msgid "State"
 msgstr "Estado"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:487
+#: lib/phoenix_kit_projects/calendar_display.ex:490
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1871
 #: lib/phoenix_kit_projects/web/time_live.ex:999
 #, elixir-autogen, elixir-format
@@ -6553,7 +6553,7 @@ msgstr "Esta semana"
 msgid "This year"
 msgstr "Este año"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:484
+#: lib/phoenix_kit_projects/calendar_display.ex:487
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1868
 #: lib/phoenix_kit_projects/web/time_live.ex:996
 #, elixir-autogen, elixir-format
@@ -6602,7 +6602,7 @@ msgstr "Total"
 msgid "Try a longer period, or clear the filters."
 msgstr "Prueba con un periodo más largo o quita los filtros."
 
-#: lib/phoenix_kit_projects/calendar_display.ex:482
+#: lib/phoenix_kit_projects/calendar_display.ex:485
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1866
 #: lib/phoenix_kit_projects/web/time_live.ex:994
 #, elixir-autogen, elixir-format
@@ -6619,7 +6619,7 @@ msgstr "Activa el registro de trabajo en los módulos y funciones del proyecto p
 msgid "Until %{date}"
 msgstr "Hasta el %{date}"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:483
+#: lib/phoenix_kit_projects/calendar_display.ex:486
 #: lib/phoenix_kit_projects/web/project_hours_live.ex:1867
 #: lib/phoenix_kit_projects/web/time_live.ex:995
 #, elixir-autogen, elixir-format
@@ -8032,7 +8032,7 @@ msgstr "Todo"
 msgid "Everything under it is done:"
 msgstr "Todo lo que hay debajo está hecho:"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:496
+#: lib/phoenix_kit_projects/calendar_display.ex:499
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:119
 #, elixir-autogen, elixir-format
 msgid "Friday"
@@ -8050,7 +8050,7 @@ msgstr "Continúa con “%{task}” — “%{after}” vuelve a estar hecha"
 msgid "History"
 msgstr "Historial"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:492
+#: lib/phoenix_kit_projects/calendar_display.ex:495
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:115
 #, elixir-autogen, elixir-format
 msgid "Monday"
@@ -8081,7 +8081,7 @@ msgstr "Lista para empezar:"
 msgid "Reopen “%{task}”"
 msgstr "Reabrir “%{task}”"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:497
+#: lib/phoenix_kit_projects/calendar_display.ex:500
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:120
 #, elixir-autogen, elixir-format
 msgid "Saturday"
@@ -8092,7 +8092,7 @@ msgstr "sábado"
 msgid "Show older"
 msgstr "Mostrar anteriores"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:498
+#: lib/phoenix_kit_projects/calendar_display.ex:501
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:121
 #, elixir-autogen, elixir-format
 msgid "Sunday"
@@ -8108,19 +8108,19 @@ msgstr "El proyecto está completo"
 msgid "The project is open again"
 msgstr "El proyecto está abierto de nuevo"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:495
+#: lib/phoenix_kit_projects/calendar_display.ex:498
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:118
 #, elixir-autogen, elixir-format
 msgid "Thursday"
 msgstr "jueves"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:493
+#: lib/phoenix_kit_projects/calendar_display.ex:496
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:116
 #, elixir-autogen, elixir-format
 msgid "Tuesday"
 msgstr "martes"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:494
+#: lib/phoenix_kit_projects/calendar_display.ex:497
 #: lib/phoenix_kit_projects/web/components/history_feed.ex:117
 #, elixir-autogen, elixir-format
 msgid "Wednesday"
@@ -9089,7 +9089,7 @@ msgstr "Fijar plazo"
 msgid "Set when the task is started and done; correct them here if they were pressed late."
 msgstr "Se fijan al empezar y terminar la tarea; corrígelos aquí si se pulsó tarde."
 
-#: lib/phoenix_kit_projects/web/components/form_parts.ex:139
+#: lib/phoenix_kit_projects/web/components/form_parts.ex:140
 #, elixir-autogen, elixir-format
 msgid "Something here needs fixing"
 msgstr "Aquí hay algo que corregir"
@@ -9463,7 +9463,7 @@ msgstr "Todo lo que lo use dejará de funcionar, en todos los proyectos."
 msgid "Every…"
 msgstr "Cada…"
 
-#: lib/phoenix_kit_projects/features.ex:517
+#: lib/phoenix_kit_projects/features.ex:573
 #: lib/phoenix_kit_projects/web/project_form_live.ex:2168
 #, elixir-autogen, elixir-format
 msgid "From template"
@@ -9861,7 +9861,7 @@ msgstr "“%{task}” ahora es un subproyecto."
 msgid "“%{task}” is a task now; its project is archived."
 msgstr "“%{task}” ahora es una tarea; su proyecto está archivado."
 
-#: lib/phoenix_kit_projects/web/project_calendar_live.ex:881
+#: lib/phoenix_kit_projects/web/project_calendar_live.ex:882
 #, elixir-autogen, elixir-format
 msgid "⚑ marks a task's deadline at its time, red once it has passed. A task with planned times shows them."
 msgstr "⚑ marca el plazo de una tarea a su hora, en rojo una vez pasado. Una tarea con horarios planificados los muestra."
@@ -9996,12 +9996,12 @@ msgstr "Cambiar el acceso de sus claves de API"
 msgid "Create API keys"
 msgstr "Crear claves de API"
 
-#: lib/phoenix_kit_projects/features.ex:493
+#: lib/phoenix_kit_projects/features.ex:549
 #, elixir-autogen, elixir-format
 msgid "Every task feature explicitly on."
 msgstr "Todas las funciones de tareas activadas explícitamente."
 
-#: lib/phoenix_kit_projects/features.ex:492
+#: lib/phoenix_kit_projects/features.ex:548
 #, elixir-autogen, elixir-format
 msgid "Full tracker"
 msgstr "Seguimiento completo"
@@ -10022,7 +10022,7 @@ msgstr "Dale un nombre a la etiqueta."
 msgid "Issue"
 msgstr "Incidencia"
 
-#: lib/phoenix_kit_projects/features.ex:448
+#: lib/phoenix_kit_projects/features.ex:450
 #, elixir-autogen, elixir-format
 msgid "Just a task list — no start or finish, no tracking, no scheduling."
 msgstr "Solo una lista de tareas — sin inicio ni fin, sin seguimiento, sin planificación."
@@ -10057,17 +10057,17 @@ msgstr "Rotar sus claves de API"
 msgid "See every API key, make keys for anyone or for nobody (shared), and change, rotate or revoke any key"
 msgstr "Ver todas las claves de API, crear claves para cualquiera o para nadie (compartidas) y cambiar, rotar o revocar cualquier clave"
 
-#: lib/phoenix_kit_projects/features.ex:446
+#: lib/phoenix_kit_projects/features.ex:448
 #, elixir-autogen, elixir-format
 msgid "Simple task list"
 msgstr "Lista de tareas simple"
 
-#: lib/phoenix_kit_projects/features.ex:485
+#: lib/phoenix_kit_projects/features.ex:487
 #, elixir-autogen, elixir-format
 msgid "Standard project"
 msgstr "Proyecto estándar"
 
-#: lib/phoenix_kit_projects/features.ex:518
+#: lib/phoenix_kit_projects/features.ex:574
 #, elixir-autogen, elixir-format
 msgid "Start timing"
 msgstr "Hora de inicio"
@@ -10077,7 +10077,7 @@ msgstr "Hora de inicio"
 msgid "Status lists"
 msgstr "Listas de estados"
 
-#: lib/phoenix_kit_projects/features.ex:487
+#: lib/phoenix_kit_projects/features.ex:489
 #, elixir-autogen, elixir-format
 msgid "The default feature set — everything the module ships on today."
 msgstr "El conjunto de funciones por defecto — todo lo que el módulo trae activado hoy."
@@ -10393,123 +10393,123 @@ msgstr "En espera — esperando a %{tasks}"
 msgid "A sub-project's description cannot hold images. Add them to one of its tasks."
 msgstr "La descripción de un subproyecto no puede contener imágenes. Añádelas a una de sus tareas."
 
-#: lib/phoenix_kit_projects/calendar_display.ex:525
+#: lib/phoenix_kit_projects/calendar_display.ex:528
 #, elixir-autogen, elixir-format
 msgid "Agenda"
 msgstr "Agenda"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:508
+#: lib/phoenix_kit_projects/calendar_display.ex:511
 #, elixir-autogen, elixir-format
 msgid "April"
 msgstr "abril"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:512
+#: lib/phoenix_kit_projects/calendar_display.ex:515
 #, elixir-autogen, elixir-format
 msgid "August"
 msgstr "agosto"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:545
+#: lib/phoenix_kit_projects/calendar_display.ex:548
 #, elixir-autogen, elixir-format
 msgid "Calendars"
 msgstr "Calendarios"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:516
+#: lib/phoenix_kit_projects/calendar_display.ex:519
 #, elixir-autogen, elixir-format
 msgid "December"
 msgstr "diciembre"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:506
+#: lib/phoenix_kit_projects/calendar_display.ex:509
 #, elixir-autogen, elixir-format
 msgid "February"
 msgstr "febrero"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:544
+#: lib/phoenix_kit_projects/calendar_display.ex:547
 #, elixir-autogen, elixir-format
 msgid "Go to today"
 msgstr "Ir a hoy"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:505
+#: lib/phoenix_kit_projects/calendar_display.ex:508
 #, elixir-autogen, elixir-format
 msgid "January"
 msgstr "enero"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:511
+#: lib/phoenix_kit_projects/calendar_display.ex:514
 #, elixir-autogen, elixir-format
 msgid "July"
 msgstr "julio"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:510
+#: lib/phoenix_kit_projects/calendar_display.ex:513
 #, elixir-autogen, elixir-format
 msgid "June"
 msgstr "junio"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:507
+#: lib/phoenix_kit_projects/calendar_display.ex:510
 #, elixir-autogen, elixir-format
 msgid "March"
 msgstr "marzo"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:541
+#: lib/phoenix_kit_projects/calendar_display.ex:544
 #, elixir-autogen, elixir-format
 msgid "Next day"
 msgstr "Día siguiente"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:539
+#: lib/phoenix_kit_projects/calendar_display.ex:542
 #, elixir-autogen, elixir-format
 msgid "Next week"
 msgstr "Semana siguiente"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:543
+#: lib/phoenix_kit_projects/calendar_display.ex:546
 #, elixir-autogen, elixir-format
 msgid "Next year"
 msgstr "Año siguiente"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:531
+#: lib/phoenix_kit_projects/calendar_display.ex:534
 #, elixir-autogen, elixir-format
 msgid "No events"
 msgstr "Sin eventos"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:515
+#: lib/phoenix_kit_projects/calendar_display.ex:518
 #, elixir-autogen, elixir-format
 msgid "November"
 msgstr "noviembre"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:514
+#: lib/phoenix_kit_projects/calendar_display.ex:517
 #, elixir-autogen, elixir-format
 msgid "October"
 msgstr "octubre"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:540
+#: lib/phoenix_kit_projects/calendar_display.ex:543
 #, elixir-autogen, elixir-format
 msgid "Previous day"
 msgstr "Día anterior"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:538
+#: lib/phoenix_kit_projects/calendar_display.ex:541
 #, elixir-autogen, elixir-format
 msgid "Previous week"
 msgstr "Semana anterior"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:542
+#: lib/phoenix_kit_projects/calendar_display.ex:545
 #, elixir-autogen, elixir-format
 msgid "Previous year"
 msgstr "Año anterior"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:513
+#: lib/phoenix_kit_projects/calendar_display.ex:516
 #, elixir-autogen, elixir-format
 msgid "September"
 msgstr "septiembre"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:524
+#: lib/phoenix_kit_projects/calendar_display.ex:527
 #, elixir-autogen, elixir-format
 msgid "Year"
 msgstr "Año"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:530
+#: lib/phoenix_kit_projects/calendar_display.ex:533
 #, elixir-autogen, elixir-format
 msgctxt "calendar"
 msgid "+%{count} more"
 msgstr "+%{count} más"
 
-#: lib/phoenix_kit_projects/calendar_display.ex:509
+#: lib/phoenix_kit_projects/calendar_display.ex:512
 #, elixir-autogen, elixir-format
 msgctxt "month name"
 msgid "May"
@@ -10534,3 +10534,13 @@ msgstr "La descripción de un proyecto no puede contener imágenes. Añádelas a
 #, elixir-autogen, elixir-format
 msgid "A template's description cannot hold images. Add them to one of its tasks."
 msgstr "La descripción de una plantilla no puede contener imágenes. Añádelas a una de sus tareas."
+
+#: lib/phoenix_kit_projects/features.ex:494
+#, elixir-autogen, elixir-format
+msgid "Embedded project"
+msgstr "Proyecto integrado"
+
+#: lib/phoenix_kit_projects/features.ex:496
+#, elixir-autogen, elixir-format
+msgid "Work that lives on another record: tasks with deadlines, files and their comments — no general comments, priorities, labels, progress or time on the project itself."
+msgstr "Trabajo que pertenece a otro registro: tareas con plazos, archivos y sus comentarios — sin comentarios generales, prioridades, etiquetas, progreso ni tiempo en el propio proyecto."

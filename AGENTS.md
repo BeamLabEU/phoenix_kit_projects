@@ -1563,6 +1563,38 @@ view's own check). Unlike `tab_url_sync` this has no session switch and is on
 in every embed, and the parameter name is not namespaced — a host page using
 `?task=` itself must know. Only the `task` parameter is touched.
 
+#### A project kept on a host record (an order): the `"embedded"` preset
+
+A host that creates one project per record of its own (an order, a case)
+passes the `"embedded"` feature preset, the "ongoing" choice and the
+immediate start in the same attrs (boss item 16, 2026-10-31):
+
+```elixir
+PhoenixKitProjects.Projects.create_project(
+  %{
+    "name" => "#15-1 — Kitchen",
+    "preset" => "embedded",      # any Features.presets/0 key; an unknown key is ignored
+    "ongoing" => true,           # settings["completion"] = "manual": ends only when someone ends it
+    "start_mode" => "immediate"  # the default; an ongoing immediate project is started at once
+  },
+  actor_uuid: user_uuid          # the creator's owner seat
+)
+# => {:ok, %Project{started_at: %DateTime{}, settings: %{"completion" => "manual", "features" => %{…}}}}
+```
+
+`create_project_from_template/3` takes the same keys (the preset's flags
+and extensions win over the template's). String keys only. The preset's
+flags are written into the new row's `settings["features"]` (flags the
+caller passes there win); its extensions are set after the insert. **On:**
+tasks, assignees, statuses with the in-progress step, dates and deadlines,
+dependencies, subtasks, the task library, estimates, scheduling, Timeline,
+sub-projects, Board, Calendar, the work ledger (time on tasks), the Files
+extension, the All comments tab. **Off:** the project's general comments,
+priorities, labels, progress %, time on the project as a whole, billable,
+the dead `waiting` flag, whiteboards, events, the portal and its flags. An
+existing project takes it with `Features.apply_preset(project, "embedded",
+actor_uuid: …)` (flags and extensions) or on its Modules page → Presets.
+
 ## Versioning & releases
 
 SemVer. The version is single-sourced in `mix.exs` (`@version`); `version/0`

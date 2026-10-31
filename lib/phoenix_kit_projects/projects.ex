@@ -1175,9 +1175,59 @@ defmodule PhoenixKitProjects.Projects do
   the project inside a larger transaction (template clone) and emit a single
   event once the transaction commits, so a rollback can't leak a
   `:project_created` for a project that never persisted.
+
+  Two creation choices may ride in `attrs` beside the schema fields:
+
+    * `"preset"` — a `Features` preset key (`"embedded"`, `"simple"`, …):
+      its flags are written into the new row's `settings["features"]`
+      (flags the caller passes there win) and the extensions it names are
+      turned on or off after the insert. An unknown key is ignored.
+    * `"ongoing"` — `true` makes it ongoing work (`settings["completion"]
+      = "manual"`); with `"start_mode" => "immediate"` (the default) such
+      a project is started at once, so a host gets a started, ongoing
+      project from one call.
   """
   @spec create_project(map(), keyword()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t()}
   def create_project(attrs, opts \\ []) do
+    {attrs, preset} = take_creation_choices(attrs)
+
+    with {:ok, project} <- do_create_project(attrs, opts) do
+      if preset && not repo().in_transaction?() do
+        PhoenixKitProjects.Features.apply_preset_extensions(project, preset,
+          actor_uuid: Keyword.get(opts, :actor_uuid)
+        )
+      end
+
+      start_ongoing({:ok, project})
+    end
+  end
+
+  # The creation choices that are not schema fields (`create_project/2`):
+  # a preset's flags and "ongoing" folded into `settings`, the preset
+  # returned so its extensions can be set once the row exists.
+  defp take_creation_choices(attrs) when is_map(attrs) do
+    {preset_key, attrs} = Map.pop(attrs, "preset")
+    {ongoing, attrs} = Map.pop(attrs, "ongoing")
+    preset = if is_binary(preset_key), do: PhoenixKitProjects.Features.get_preset(preset_key)
+    ongoing? = ongoing in [true, "true"]
+
+    if preset || ongoing? do
+      settings =
+        (Map.get(attrs, "settings") || %{})
+        |> then(fn s ->
+          if preset,
+            do: Map.put(s, "features", Map.merge(preset.flags, Map.get(s, "features") || %{})),
+            else: s
+        end)
+        |> then(fn s -> if ongoing?, do: Map.put(s, "completion", "manual"), else: s end)
+
+      {Map.put(attrs, "settings", settings), preset}
+    else
+      {attrs, nil}
+    end
+  end
+
+  defp do_create_project(attrs, opts) do
     # Auto-assign the next position scoped to the project's
     # `is_template` bucket so a new row lands at the bottom of either
     # the project list or the template list (whichever the row
@@ -1201,7 +1251,7 @@ defmodule PhoenixKitProjects.Projects do
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
       end
 
-      start_ongoing({:ok, project})
+      {:ok, project}
     end
   end
 
@@ -2367,21 +2417,39 @@ defmodule PhoenixKitProjects.Projects do
     # clone an arbitrary project — with settings/extensions now carried,
     # the copied payload got wider.
     case get_project(template_uuid) do
-      %Project{is_template: true} = template -> clone_template(template, project_attrs, opts)
-      _ -> {:error, :template_not_found}
+      %Project{is_template: true} = template ->
+        # The creation choices (`create_project/2`) are the caller's: a
+        # preset's flags and "ongoing" overlay the template's settings.
+        {project_attrs, preset} = take_creation_choices(stringify_top_keys(project_attrs))
+        clone_template(template, project_attrs, Keyword.put(opts, :preset, preset))
+
+      _ ->
+        {:error, :template_not_found}
     end
   end
+
+  defp stringify_top_keys(attrs) when is_map(attrs),
+    do: Map.new(attrs, fn {k, v} -> {to_string(k), v} end)
 
   defp clone_template(template, project_attrs, opts) do
     # Capability carry (the creation-page brainstorm's union rule): the
     # TEMPLATE's own settings — feature flags, authz overrides, status
     # translation mode — are the base layer; caller-provided settings
-    # overlay them (explicit choices win); the back-link key is forced.
-    # It makes the clone countable by `template_usage/1` long after the
-    # activity log's retention window has pruned the event.
+    # overlay them (explicit choices win, flag by flag); the back-link key
+    # is forced. It makes the clone countable by `template_usage/1` long
+    # after the activity log's retention window has pruned the event.
+    caller_settings = Map.get(project_attrs, "settings") || %{}
+
+    features =
+      Map.merge(
+        Map.get(template.settings, "features") || %{},
+        Map.get(caller_settings, "features") || %{}
+      )
+
     settings =
       template.settings
-      |> Map.merge(Map.get(project_attrs, "settings", %{}))
+      |> Map.merge(caller_settings)
+      |> then(fn s -> if features == %{}, do: s, else: Map.put(s, "features", features) end)
       |> Map.put("created_from_template_uuid", template.uuid)
 
     # The form's explicit status-set choice wins; blank/absent inherits
@@ -2429,6 +2497,14 @@ defmodule PhoenixKitProjects.Projects do
         # the whole tree has committed, so a rollback leaks nothing and
         # subscribers still learn the new project exists.
         carry_template_extensions(template, project, opts)
+
+        # After the carry, so a preset's "off" wins over the template's "on".
+        if preset = Keyword.get(opts, :preset) do
+          PhoenixKitProjects.Features.apply_preset_extensions(project, preset,
+            actor_uuid: Keyword.get(opts, :actor_uuid)
+          )
+        end
+
         ProjectsPubSub.broadcast_project(:project_created, project_payload(project))
         start_ongoing({:ok, project})
 

@@ -33,7 +33,9 @@ defmodule PhoenixKitProjects.Features do
 
   Named flag bundles applied at creation (or any time before a team relies
   on the current shape): `"simple"` (a todo list — everything off but the
-  list), `"standard"` (the pre-hub defaults), `"full"` (everything on).
+  list), `"standard"` (the pre-hub defaults), `"embedded"` (a project a
+  host app keeps on one of its own records, such as an order: lean, with
+  its extensions set too), `"full"` (everything on).
   `apply_preset/3` writes the bundle as EXPLICIT values. The site default
   for new projects is the `projects_default_preset` setting (`"standard"`).
   """
@@ -488,6 +490,60 @@ defmodule PhoenixKitProjects.Features do
         flags: %{}
       },
       %{
+        key: "embedded",
+        name: gettext_noop("Embedded project"),
+        description:
+          gettext_noop(
+            "Work that lives on another record: tasks with deadlines, files and their comments — no general comments, priorities, labels, progress or time on the project itself."
+          ),
+        # The project a host app keeps on one of its own records — an order,
+        # a case (the boss, 2026-10-31: half the features on an order's
+        # project were never needed). The record has its own comments, so
+        # the project's general thread is off and the tab of every task's
+        # comments is on; time is logged on tasks only; estimates, the
+        # Timeline and sub-projects stay (Max). The module names no host
+        # record: any app embedding a project per record can use it.
+        flags: %{
+          "library" => true,
+          "in_progress" => true,
+          "assignees" => true,
+          "subtasks" => true,
+          # The "Waiting on / requested by" fields this flag gated are gone.
+          "waiting" => false,
+          "dates" => true,
+          "estimates" => true,
+          "progress" => false,
+          "dependencies" => true,
+          "statuses" => true,
+          "scheduling" => true,
+          "subprojects" => true,
+          "priorities" => false,
+          "labels" => false,
+          "ledger" => true,
+          "lifecycle" => true,
+          "view_board" => true,
+          "view_timeline" => true,
+          "view_calendar" => true,
+          "project_time" => false,
+          "billable" => false,
+          "project_comments" => false,
+          "all_comments" => true,
+          "portal_submit" => false,
+          "portal_list" => false,
+          "portal_status" => false
+        },
+        # Extensions this preset turns on or off (`apply_preset/3`); one not
+        # installed, or whose site module is off, is left as it is.
+        extensions: %{
+          "tasks" => true,
+          "files" => true,
+          "discussions" => true,
+          "whiteboards" => false,
+          "events" => false,
+          "portal" => false
+        }
+      },
+      %{
         key: "full",
         name: gettext_noop("Full tracker"),
         description: gettext_noop("Every task feature explicitly on."),
@@ -573,9 +629,54 @@ defmodule PhoenixKitProjects.Features do
   @spec apply_preset(Project.t(), String.t(), keyword()) :: {:ok, Project.t()} | {:error, term()}
   def apply_preset(%Project{} = project, preset_key, opts \\ []) do
     case get_preset(preset_key) do
-      nil -> {:ok, project}
-      %{flags: flags} -> set_flags(project, flags, opts)
+      nil ->
+        {:ok, project}
+
+      %{flags: flags} = preset ->
+        with {:ok, project} <- set_flags(project, flags, opts) do
+          apply_preset_extensions(project, preset, opts)
+          {:ok, project}
+        end
     end
+  end
+
+  @doc """
+  Turns on or off the extensions a preset names (its `extensions` map;
+  most presets name none). Only what differs from the project's current
+  state is written; an extension that is not installed or cannot be
+  enabled is left alone. Best-effort: returns `:ok`.
+  """
+  @spec apply_preset_extensions(Project.t() | map(), String.t() | map(), keyword()) :: :ok
+  def apply_preset_extensions(project, preset_key, opts \\ [])
+
+  def apply_preset_extensions(project, preset_key, opts) when is_binary(preset_key) do
+    case get_preset(preset_key) do
+      nil -> :ok
+      preset -> apply_preset_extensions(project, preset, opts)
+    end
+  end
+
+  def apply_preset_extensions(%{uuid: uuid}, %{} = preset, opts) do
+    wanted = Map.get(preset, :extensions, %{})
+
+    if wanted != %{} do
+      current = Extensions.enabled_map(uuid)
+      ext_opts = Keyword.take(opts, [:actor_uuid])
+
+      Enum.each(wanted, fn {ext_key, on?} ->
+        case {on?, Map.get(current, ext_key, false)} do
+          {true, false} -> Extensions.enable(uuid, ext_key, ext_opts)
+          {false, true} -> Extensions.disable(uuid, ext_key, ext_opts)
+          _ -> :ok
+        end
+      end)
+    end
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("[Projects.Features] preset extensions failed: #{Exception.message(e)}")
+      :ok
   end
 
   # ── Internals ───────────────────────────────────────────────────────
