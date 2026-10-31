@@ -15,6 +15,7 @@ defmodule PhoenixKitProjects.Web.ApiTest do
   alias PhoenixKitProjects.{ApiKeys, Authz, Extensions, Features, Ledger, Members, Projects}
   alias PhoenixKitProjects.TaskNotes
   alias PhoenixKitProjects.Test.Repo
+  alias PhoenixKitProjects.Web.Api.Docs
 
   @base "/api/projects/v1"
 
@@ -595,7 +596,7 @@ defmodule PhoenixKitProjects.Web.ApiTest do
     end
 
     test "the error is in the contract's table" do
-      assert PhoenixKitProjects.Web.Api.Docs.llms_txt() =~ "task_required"
+      assert Docs.llms_txt() =~ "task_required"
     end
   end
 

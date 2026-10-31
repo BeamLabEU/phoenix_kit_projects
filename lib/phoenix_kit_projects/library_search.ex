@@ -146,10 +146,8 @@ defmodule PhoenixKitProjects.LibrarySearch do
       [Task.localized_description(task, lang), task.description | translated(task, "description")]
       |> Enum.filter(&is_binary/1)
 
-  defp translated(%Task{translations: %{} = tr}, field),
+  defp translated(%Task{translations: tr}, field) when is_map(tr),
     do: for({_lang, %{} = fields} <- tr, is_binary(fields[field]), do: fields[field])
-
-  defp translated(_task, _field), do: []
 
   @doc """
   The library under letter headings, A–Z by the title in `lang`:
