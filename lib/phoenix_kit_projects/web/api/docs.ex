@@ -764,7 +764,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
         method: "POST",
         path: "/time",
         summary:
-          "Record minutes spent on the project as a whole (not on one task). Same rules as /tasks/{id}/time.",
+          "Record minutes spent on the project as a whole (not on one task). Same rules as /tasks/{id}/time. Only where the project keeps time on the project itself (the `project_time` feature on /me, off by default); otherwise 422 task_required — log the time on a task with /tasks/{id}/time.",
         auth: true,
         scope: "time:write",
         action: "log_time",
@@ -1388,6 +1388,8 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     {422, "validation_failed",
      "A field is missing or has the wrong shape; `details` names the fields and, for closed sets, the allowed values. Fix the request; do not retry it unchanged."},
     {422, "idempotency_key_required", "This POST needs an Idempotency-Key header."},
+    {422, "task_required",
+     "This project keeps time on its tasks only (`project_time` off): log the time on the task it went on with POST /tasks/{id}/time."},
     {429, "rate_limited",
      "The key has used its calls for the current window. Wait the `Retry-After` seconds, then retry the same request (same Idempotency-Key). Nothing was done."},
     {500, "(any)",

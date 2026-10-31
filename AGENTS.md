@@ -1754,8 +1754,9 @@ reference:
   with "Save the task first to add images" (the editor always intercepts
   pastes, so none lands in the text as a `data:` URL).
 - **Project features with a site default** — see "Settings keys". `project_time`
-  (time on the project as a whole) is enforced on the project page's Log time
-  AND on the Hours page (an entry with no task); `billable` on every write,
+  (time on the project as a whole) is enforced on the project page's Log time,
+  on the Hours page (an entry with no task) AND on the API's `POST /time`
+  (422 `task_required` while it is off — Max, 2026-10-31: "A"); `billable` on every write,
   and an edit where it is off keeps the entry's mark.
 - **Shared form parts**: `TimeInput`, `DurationInput`, `AssigneePicker`
   (recent picks under the user's `custom_fields["projects_recent_assignees"]`,

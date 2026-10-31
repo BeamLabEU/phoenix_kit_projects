@@ -128,6 +128,10 @@ defmodule PhoenixKitProjects.Web.ApiTest do
                |> post_json("#{@base}/tasks/#{task["uuid"]}/time", %{"minutes" => 7}, idem())
                |> json_response(201)
 
+      # Time on the child as a whole needs its `project_time` on.
+      {:ok, _} =
+        child_uuid |> Projects.get_project() |> Features.set_flags(%{"project_time" => true})
+
       assert %{"entry" => _} =
                c
                |> post_json("#{@base}/time", %{"minutes" => 5, "project" => child_uuid}, idem())
@@ -563,8 +567,41 @@ defmodule PhoenixKitProjects.Web.ApiTest do
 
   # ── Ledger ──────────────────────────────────────────────────────
 
+  describe "time with no task follows project_time (Max, 2026-10-31)" do
+    test "off (the default): 422 task_required, nothing recorded; a task's time still lands",
+         %{conn: conn, token: token, project: project, assignment: a} do
+      c = api(conn, token)
+
+      assert %{"error" => %{"code" => "task_required", "message" => message}} =
+               c |> post_json("#{@base}/time", %{minutes: 3}, idem()) |> json_response(422)
+
+      assert message =~ "Name a task"
+      assert Ledger.list_entries(project.uuid) == []
+
+      assert %{"entry" => _} =
+               c
+               |> post_json("#{@base}/tasks/#{a.uuid}/time", %{minutes: 3}, idem())
+               |> json_response(201)
+    end
+
+    test "on: the project-level entry is recorded",
+         %{conn: conn, token: token, project: project} do
+      {:ok, _} = Features.set_flags(project, %{"project_time" => true})
+
+      assert %{"entry" => %{"task_uuid" => nil}} =
+               api(conn, token)
+               |> post_json("#{@base}/time", %{minutes: 3}, idem())
+               |> json_response(201)
+    end
+
+    test "the error is in the contract's table" do
+      assert PhoenixKitProjects.Web.Api.Docs.llms_txt() =~ "task_required"
+    end
+  end
+
   test "time and usage are recorded as the key, never billable, and replay on the same idempotency key",
        %{conn: conn, token: token, key: key, project: project, assignment: a} do
+    {:ok, _} = Features.set_flags(project, %{"project_time" => true})
     c = api(conn, token)
 
     assert %{"error" => %{"code" => "idempotency_key_required"}} =
@@ -633,6 +670,7 @@ defmodule PhoenixKitProjects.Web.ApiTest do
     project: project,
     assignment: a
   } do
+    {:ok, _} = Features.set_flags(project, %{"project_time" => true})
     c = api(conn, token)
 
     %{"entry" => %{"occurred_at" => "2026-10-04T09:15:00Z", "recorded_at" => recorded_at}} =
