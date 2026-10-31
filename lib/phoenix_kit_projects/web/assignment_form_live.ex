@@ -445,15 +445,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # tab is open, the primary's where that one has none.
   defp header_title(assigns) do
     case typed_title(assigns) do
-      title when is_binary(title) and title != "" ->
-        title
-
-      _ ->
-        # Emptied while typing: the name it is saved under, if it has one.
-        case assigns[:title_task] do
-          %Task{title: saved} when is_binary(saved) and saved != "" -> saved
-          _ -> gettext("New task")
-        end
+      title when is_binary(title) and title != "" -> title
+      # Emptied while typing: the header says so ("Untitled"), it does not
+      # keep the last text (the boss, 2026-10-31).
+      _ -> ""
     end
   end
 
@@ -4261,6 +4256,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       <.form_header
         id="subproject-form-header"
         title={subproject_title(assigns)}
+        untitled={@live_action != :edit && gettext("New sub-project")}
         mode={if @live_action == :edit, do: gettext("Editing"), else: gettext("Add sub-project")}
         close_event={@embed_mode not in [:navigate, :emit] && "cancel"}
         close_confirm={@dirty? && gettext("Discard your changes?")}
@@ -4269,20 +4265,22 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <.link
             :if={@embed_mode == :navigate}
             navigate={Paths.project(@project.uuid)}
-            class="link link-hover text-base-content/70 inline-flex items-center gap-1 min-w-0"
+            class="btn btn-ghost btn-sm btn-square shrink-0"
+            title={@project.name}
+            aria-label={@project.name}
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" />
-            <span class="truncate">{@project.name}</span>
+            <.icon name="hero-arrow-left" class="w-4 h-4" />
           </.link>
           <button
-            :if={@embed_mode != :navigate}
+            :if={@embed_mode != :navigate and @from_view?}
             type="button"
             phx-click="cancel"
             data-confirm={@dirty? && gettext("Discard your changes?")}
-            class="link link-hover text-base-content/70 inline-flex items-center gap-1 min-w-0"
+            class="btn btn-ghost btn-sm btn-square shrink-0"
+            title={gettext("Back to task")}
+            aria-label={gettext("Back to task")}
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" />
-            <span class="truncate">{if @from_view?, do: gettext("Back to task"), else: @project.name}</span>
+            <.icon name="hero-arrow-left" class="w-4 h-4" />
           </button>
           <.ref_chip :if={assigns[:task_ref]} ref={assigns[:task_ref]} />
         </:context>
@@ -4358,8 +4356,9 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 lang_data={WebHelpers.lang_data(@sp_form, @current_lang)}
                 secondary_name={"subproject[translations][#{@current_lang}][name]"}
                 lang_data_key="name"
-                label={gettext("Sub-project name")}
-                required
+                label=""
+                placeholder={gettext("Sub-project name")}
+                aria-label={gettext("Sub-project name")}
               />
               <%!-- Pictures are intercepted (`uploads`) and refused: a
                    sub-project's description is its project's, which holds
@@ -4369,7 +4368,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 id={DescriptionEditor.editor_id("subproject-description", @current_lang)}
                 name={DescriptionEditor.field_name("subproject", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@sp_form, @current_lang, @primary_language, @multilang_enabled)}
-                label={gettext("Description")}
+                placeholder={gettext("Description…")}
                 mention_context={mention_context(@project)}
                 uploads
                 image_button={false}
@@ -4540,6 +4539,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         id="assignment-form-header"
         title_id="assignment-form-title"
         title={header_title(assigns)}
+        untitled={@live_action != :edit && gettext("New task")}
         mode={if @live_action == :edit, do: gettext("Editing"), else: gettext("Add task")}
         close_event={
           @embed_mode not in [:navigate, :emit] and not @from_view? &&
@@ -4551,33 +4551,31 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <.link
             :if={@embed_mode == :navigate and @project.uuid not in [nil, ""]}
             navigate={Paths.project(@project.uuid)}
-            class="link link-hover text-base-content/70 inline-flex items-center gap-1 min-w-0"
+            class="btn btn-ghost btn-sm btn-square shrink-0"
+            title={@project.name}
+            aria-label={@project.name}
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" />
-            <span class="truncate">{@project.name}</span>
+            <.icon name="hero-arrow-left" class="w-4 h-4" />
           </.link>
-          <span :if={@embed_mode != :navigate} class="text-base-content/70 truncate min-w-0">
-            {@project.name}
-          </span>
-          <.ref_chip :if={assigns[:task_ref]} ref={assigns[:task_ref]} />
-        </:context>
-        <:actions>
           <button
             :if={@from_view?}
             type="button"
             phx-click={if @live_action == :edit, do: "close_form", else: "cancel"}
             data-confirm={@live_action != :edit && @dirty? && gettext("Discard your changes?")}
-            class="btn btn-ghost btn-sm gap-1"
+            class="btn btn-ghost btn-sm btn-square shrink-0"
+            title={gettext("Back to task")}
+            aria-label={gettext("Back to task")}
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4" /> {gettext("Back to task")}
+            <.icon name="hero-arrow-left" class="w-4 h-4" />
           </button>
-        </:actions>
+          <.ref_chip :if={assigns[:task_ref]} ref={assigns[:task_ref]} />
+        </:context>
         <:badge>
           <.assignment_status_badge
             :if={not Map.get(@project, :is_template, false)}
             status={to_string(@form[:status].value || "waiting")}
             size="md"
-            class="mt-1 shrink-0"
+            class="shrink-0"
           />
         </:badge>
       </.form_header>
@@ -4718,9 +4716,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                   lang_data={WebHelpers.lang_data(@task_form, @current_lang)}
                   secondary_name={"task[translations][#{@current_lang}][title]"}
                   lang_data_key="title"
-                  label={gettext("Title")}
+                  label=""
+                  placeholder={gettext("Task name")}
+                  aria-label={gettext("Task name")}
                   hint={if(@title_shared?, do: gettext("This task is in the task library: renaming it here renames it in every project that uses it."))}
-                  required
                 />
                 <%!-- Library tasks matching the title as typed: a press adds
                      that one, as from the library tab. --%>
@@ -4756,7 +4755,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                     assigns[:phoenix_kit_current_scope]
                   )
                 }
-                label={gettext("Description")}
+                placeholder={gettext("Description…")}
                 mention_context={mention_context(@project)}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
@@ -5628,7 +5627,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     case typed && String.trim(typed) do
       name when is_binary(name) and name != "" -> name
-      _ -> gettext("New sub-project")
+      _ -> ""
     end
   end
 

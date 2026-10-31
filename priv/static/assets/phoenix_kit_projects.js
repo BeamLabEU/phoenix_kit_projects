@@ -1873,6 +1873,31 @@
     return null;
   }
 
+  // A side menu inside a row's ⋮ menu ("Change status ›", the boss,
+  // 2026-10-31): it opens on hover, and a press on its entry (touch, a
+  // keyboard's Enter) toggles it. The row menu closes on ANY click inside
+  // it, so this press is taken in the capture phase, before that listener
+  // and before LiveView, and goes no further. Its items are ordinary
+  // menu items: their click closes the menu and runs as usual.
+  if (!window.__pkpSubmenu) {
+    window.__pkpSubmenu = true;
+    document.addEventListener("click", function (e) {
+      var toggle = e.target && e.target.closest && e.target.closest("[data-pkp-submenu-toggle]");
+      if (!toggle) return;
+      e.stopPropagation();
+      e.preventDefault();
+      var item = toggle.closest("[data-pkp-submenu]");
+      if (!item) return;
+      var open = !item.hasAttribute("data-open");
+      item.toggleAttribute("data-open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        var first = item.querySelector("[data-pkp-submenu-list] [role='menuitem']");
+        if (first) first.focus({ preventScroll: true });
+      }
+    }, true);
+  }
+
   window.PhoenixKitProjectsHooks = {
     PkpOutline: Outline,
     PkpTitle: Title,

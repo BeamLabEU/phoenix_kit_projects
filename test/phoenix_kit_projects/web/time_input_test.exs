@@ -97,25 +97,6 @@ defmodule PhoenixKitProjects.Web.TimeInputTest do
     end
   end
 
-  describe "status buttons" do
-    test "press sends the event with the status, the current one marked" do
-      html =
-        Phoenix.LiveViewTest.render_component(
-          &FormParts.status_buttons/1,
-          id: "st",
-          value: "todo",
-          options: [{"Waiting", "waiting"}, {"Can be started", "todo"}],
-          event: "set_status",
-          values: %{"uuid" => "u1"}
-        )
-
-      assert html =~ ~s(id="st-todo")
-      assert html =~ ~s(aria-pressed="true")
-      assert html =~ "set_status"
-      refute html =~ ~s(type="radio")
-    end
-  end
-
   describe "the task form" do
     test "asks for times with selects, not the device's pickers", ctx do
       {:ok, view, html} =

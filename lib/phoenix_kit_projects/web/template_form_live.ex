@@ -406,7 +406,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
 
     case typed && String.trim(typed) do
       name when is_binary(name) and name != "" -> name
-      _ -> assigns[:heading] || gettext("New template")
+      _ -> ""
     end
   end
 
@@ -417,13 +417,20 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       <.form_header
         id="template-form-header"
         title={typed_name(assigns)}
+        untitled={@live_action != :edit && (assigns[:heading] || gettext("New template"))}
         mode={if @live_action == :edit, do: gettext("Editing")}
         close_event={@embed_mode not in [:navigate, :emit] && "cancel"}
         close_confirm={@dirty? && gettext("Discard your changes?")}
       >
         <:context>
-          <.link :if={@embed_mode == :navigate} navigate={Paths.templates()} class="link link-hover text-base-content/70 inline-flex items-center gap-1">
-            <.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" /> {gettext("Templates")}
+          <.link
+            :if={@embed_mode == :navigate}
+            navigate={Paths.templates()}
+            class="btn btn-ghost btn-sm btn-square shrink-0"
+            title={gettext("Templates")}
+            aria-label={gettext("Templates")}
+          >
+            <.icon name="hero-arrow-left" class="w-4 h-4" />
           </.link>
           <%!-- In a popup no lone "← Templates" line above the title, as in the
                project popup: the popup closes with its ✕ and Close. --%>
@@ -455,9 +462,10 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
               lang_data={WebHelpers.lang_data(@form, @current_lang)}
               secondary_name={"project[translations][#{@current_lang}][name]"}
               lang_data_key="name"
-              label={gettext("Name")}
+              label=""
+              placeholder={gettext("Template name")}
+              aria-label={gettext("Template name")}
               disabled={@current_lang in @ai_in_flight}
-              required
             />
 
             <%!-- Pictures are intercepted (`uploads`) and refused: a template, like a project,
@@ -467,7 +475,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
                 id={DescriptionEditor.editor_id("template-description", @current_lang)}
                 name={DescriptionEditor.field_name("project", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@form, @current_lang, @primary_language, @multilang_enabled)}
-                label={gettext("Description")}
+                placeholder={gettext("Description…")}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
                 image_button={false}

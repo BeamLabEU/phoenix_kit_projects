@@ -22,6 +22,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitProjects.Web.Components.VizPalette
+  import PhoenixKitProjects.Web.Components.RefChip, only: [ref_chip: 1]
   import PhoenixKitWeb.Components.Core.Chart, only: [bar_chart: 1]
   import PhoenixKitWeb.Components.Core.ColumnSettings, only: [column_settings_modal: 1]
   import PhoenixKitWeb.Components.Core.EmptyState, only: [empty_state: 1]
@@ -238,7 +239,7 @@ defmodule PhoenixKitProjects.Web.ApiKeysUsage do
               <.table_default_row :for={t <- @u.by_task}>
                 <.table_default_cell class="max-w-72">
                   <.link :if={t.href} navigate={t.href} class="link link-hover">
-                    <span :if={t.ref} class="font-mono text-xs text-base-content/50 mr-1">{t.ref}</span>{t.title}
+                    <.ref_chip ref={t.ref} class="mr-1" />{t.title}
                   </.link>
                   <span :if={!t.href} class="text-base-content/50">{gettext("(deleted task)")}</span>
                 </.table_default_cell>

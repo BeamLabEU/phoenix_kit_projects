@@ -36,15 +36,24 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   # ── Header ─────────────────────────────────────────────────────────
 
   @doc """
-  The popup's header: a context line (`:context` — the way back, the
-  record's place; `mode` — "Editing", "Add task"; a close button when
-  `close_event` is set) and the title, which the form keeps up to date as
-  the name is typed. `:badge` sits beside the title (a status).
+  The popup's header, one row (the boss, 2026-10-31: compact, the same in
+  every popup): `:context` first (the record's ref pill, a back arrow),
+  then the title, which the form keeps up to date as the name is typed —
+  an emptied name shows a muted "Untitled" rather than the last text —
+  then `:badge` (a status), `:actions` and the close button when
+  `close_event` is set. `mode` ("Editing", "Add task") is said to screen
+  readers and in the title's tooltip only; the title already says it.
   """
   attr(:id, :string, required: true)
   attr(:title_id, :string, default: nil)
   attr(:title, :string, required: true)
   attr(:mode, :string, default: nil)
+
+  attr(:untitled, :string,
+    default: nil,
+    doc: "shown, muted, while the name is empty (default: \"Untitled\")"
+  )
+
   attr(:close_event, :string, default: nil)
 
   attr(:close_confirm, :any,
@@ -58,34 +67,36 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   slot(:badge)
 
   def form_header(assigns) do
+    assigns = assign(assigns, :untitled?, String.trim(assigns.title || "") == "")
+
     ~H"""
-    <header id={@id} class="flex flex-col gap-1.5">
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm min-w-0">
-        {render_slot(@context)}
-        <span :if={@mode} class="text-base-content/50">{@mode}</span>
-        <div class="ml-auto flex items-center gap-1">
-          {render_slot(@actions)}
-          <button
-            :if={@close_event}
-            type="button"
-            phx-click={@close_event}
-            data-confirm={@close_confirm}
-            class="btn btn-ghost btn-sm btn-square"
-            aria-label={@close_label || gettext("Close")}
-          >
-            <.icon name="hero-x-mark" class="w-5 h-5" />
-          </button>
-        </div>
-      </div>
-      <div class="flex items-start gap-3">
-        <h2
-          id={@title_id || "#{@id}-title"}
-          class="flex-1 min-w-0 text-xl font-semibold leading-snug break-words text-balance"
-        >
-          {@title}
-        </h2>
-        {render_slot(@badge)}
-      </div>
+    <%!-- Without its own ✕ the header sits in a popup whose ✕ is pinned at
+         the top right: leave it that room. --%>
+    <header id={@id} class={["flex items-center gap-2 min-w-0 shrink-0", !@close_event && "pr-8"]}>
+      {render_slot(@context)}
+      <h2
+        id={@title_id || "#{@id}-title"}
+        title={@mode}
+        class={[
+          "flex-1 min-w-0 text-lg font-semibold leading-tight break-words",
+          @untitled? && "text-base-content/40 italic font-normal"
+        ]}
+      >
+        <span :if={@mode} class="sr-only">{@mode}:</span>
+        {if @untitled?, do: @untitled || gettext("Untitled"), else: @title}
+      </h2>
+      {render_slot(@badge)}
+      {render_slot(@actions)}
+      <button
+        :if={@close_event}
+        type="button"
+        phx-click={@close_event}
+        data-confirm={@close_confirm}
+        class="btn btn-ghost btn-sm btn-square shrink-0"
+        aria-label={@close_label || gettext("Close")}
+      >
+        <.icon name="hero-x-mark" class="w-5 h-5" />
+      </button>
     </header>
     """
   end
@@ -260,17 +271,39 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
   language it does not know keeps the name it came with.
   """
   @spec native_tabs([map()]) :: [map()]
-  def native_tabs(tabs) when is_list(tabs), do: Enum.map(tabs, &native_tab/1)
+  def native_tabs(tabs) when is_list(tabs) do
+    bases = tabs |> Enum.map(&base_code/1) |> Enum.frequencies()
+    Enum.map(tabs, &native_tab(&1, bases))
+  end
+
   def native_tabs(tabs), do: tabs
 
-  defp native_tab(%{code: code} = tab) when is_binary(code) do
-    case native_name(code) do
-      name when is_binary(name) and name != "" -> Map.put(tab, :name, name)
-      _ -> tab
+  # The region is named only when two variants of one language are on
+  # together ("English (US)" beside "English (UK)"); a site with one
+  # English says "English" (the boss, 2026-10-31).
+  defp native_tab(%{code: code} = tab, bases) when is_binary(code) do
+    base = base_code(tab)
+    lone? = Map.get(bases, base, 0) == 1 and base != code
+
+    case (lone? && native_name(base)) || native_name(code) do
+      name when is_binary(name) and name != "" ->
+        Map.put(tab, :name, if(lone?, do: strip_region(name), else: name))
+
+      _ ->
+        if lone? and is_binary(tab[:name]),
+          do: Map.put(tab, :name, strip_region(tab.name)),
+          else: tab
     end
   end
 
-  defp native_tab(tab), do: tab
+  defp native_tab(tab, _bases), do: tab
+
+  defp base_code(%{code: code}) when is_binary(code),
+    do: code |> String.split(["-", "_"], parts: 2) |> hd() |> String.downcase()
+
+  defp base_code(_), do: nil
+
+  defp strip_region(name), do: String.replace(name, ~r/\s*\([^)]*\)\s*$/u, "")
 
   defp native_name(code) do
     case Languages.get_available_language_by_code(code) do
@@ -309,38 +342,6 @@ defmodule PhoenixKitProjects.Web.Components.FormParts do
         </label>
       </div>
     </fieldset>
-    """
-  end
-
-  @doc """
-  The same coloured status choices as plain buttons, for a status changed
-  at once rather than posted with a form (the "Change status" popup): each
-  press sends `event` with `values` plus `"status" => value`; the current
-  one is marked and pressed already.
-  """
-  attr(:id, :string, required: true)
-  attr(:value, :string, default: nil, doc: "the status it has now")
-  attr(:options, :list, required: true, doc: "`[{label, value}]`")
-  attr(:event, :string, required: true)
-  attr(:values, :map, default: %{}, doc: "sent with every press, beside `status`")
-  attr(:target, :any, default: nil)
-
-  def status_buttons(assigns) do
-    ~H"""
-    <div id={@id} class="flex flex-wrap gap-1.5" role="group">
-      <button
-        :for={{label, value} <- @options}
-        type="button"
-        id={"#{@id}-#{value}"}
-        phx-click={Phoenix.LiveView.JS.push(@event, value: Map.put(@values, "status", value), target: @target)}
-        aria-pressed={to_string(@value == value)}
-        phx-disable-with={label}
-        class={status_choice_class(value, @value == value)}
-      >
-        <.icon :if={@value == value} name="hero-check-mini" class="w-4 h-4 -ml-0.5" />
-        {label}
-      </button>
-    </div>
     """
   end
 

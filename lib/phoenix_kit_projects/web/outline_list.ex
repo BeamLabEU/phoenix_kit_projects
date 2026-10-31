@@ -23,6 +23,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
   use Gettext, backend: PhoenixKitProjects.Gettext
 
   import PhoenixKitWeb.Components.Core.Icon
+  import PhoenixKitProjects.Web.Components.RefChip, only: [ref_chip: 1]
 
   alias PhoenixKitProjects.{
     Activity,
@@ -1089,7 +1090,7 @@ defmodule PhoenixKitProjects.Web.OutlineList do
       </p>
       <ul class="flex flex-col gap-1">
         <li :for={a <- @held} class="flex items-center gap-2 text-sm">
-          <span class="font-mono text-xs text-base-content/50 shrink-0">{Refs.task_ref(@project.key, a.number)}</span>
+          <.ref_chip ref={Refs.task_ref(@project.key, a.number)} />
           <span class="truncate flex-1 text-base-content/60 line-through">{Assignment.label(a)}</span>
           <button type="button" class="btn btn-ghost btn-xs" phx-click="outline_restore" phx-value-uuid={a.uuid} phx-disable-with={gettext("Restoring…")}>
             <.icon name="hero-arrow-uturn-left" class="w-3.5 h-3.5" /> {gettext("Restore")}

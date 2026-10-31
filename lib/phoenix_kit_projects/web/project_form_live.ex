@@ -653,8 +653,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           name: "project",
           description: "project",
           key: "project",
-          external_url: "project",
-          external_label: "project",
+          external_url: "settings",
+          external_label: "settings",
           start_mode: "schedule",
           scheduled_start_date: "schedule",
           status_entity_uuid: "settings"
@@ -671,7 +671,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
     case typed && String.trim(typed) do
       name when is_binary(name) and name != "" -> name
-      _ -> gettext("New project")
+      _ -> ""
     end
   end
 
@@ -2508,9 +2508,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               lang_data={WebHelpers.lang_data(@form, @current_lang)}
               secondary_name={"project[translations][#{@current_lang}][name]"}
               lang_data_key="name"
-              label={gettext("Name")}
+              label=""
+              placeholder={gettext("Project name")}
+              aria-label={gettext("Project name")}
               disabled={@current_lang in @ai_in_flight}
-              required
             />
 
             <%!-- Pictures are intercepted (`uploads`) and refused: a project's description
@@ -2520,7 +2521,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 id={DescriptionEditor.editor_id("project-description", @current_lang)}
                 name={DescriptionEditor.field_name("project", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@form, @current_lang, @primary_language, @multilang_enabled)}
-                label={gettext("Description")}
+                placeholder={gettext("Description…")}
                 mention_context={mention_context(assigns[:project])}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
@@ -2576,6 +2577,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       <.form_header
         id="project-form-header"
         title={project_title(assigns)}
+        untitled={@live_action != :edit && gettext("New project")}
         mode={if @live_action == :edit, do: gettext("Editing"), else: gettext("New project")}
         close_event={@embed_mode not in [:navigate, :emit] && "cancel"}
         close_confirm={@dirty? && gettext("Discard your changes?")}
@@ -2586,9 +2588,11 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <.link
             :if={@embed_mode == :navigate}
             navigate={Paths.projects()}
-            class="link link-hover text-base-content/70 inline-flex items-center gap-1"
+            class="btn btn-ghost btn-sm btn-square shrink-0"
+            title={gettext("Projects")}
+            aria-label={gettext("Projects")}
           >
-            <.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" /> {gettext("Projects")}
+            <.icon name="hero-arrow-left" class="w-4 h-4" />
           </.link>
           <%!-- The task popup's shape (the walk-through, 2026-10-31): the
                record's short name beside the mode, its state beside the
@@ -2596,7 +2600,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           <.ref_chip :if={@live_action == :edit and not @project.is_template} ref={@project.key} />
         </:context>
         <:badge>
-          <span :if={@live_action == :edit and is_binary(@project.uuid)} class="mt-1 shrink-0">
+          <span :if={@live_action == :edit and is_binary(@project.uuid)} class="shrink-0">
             <.project_status_badge project={@project} />
           </span>
         </:badge>
@@ -3072,7 +3076,25 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               notice={@assignee_notice}
             />
 
-              <%!-- A link out (V26): where this project belongs elsewhere — the
+
+          </.form_pane>
+
+          <.form_pane prefix="project" pane="schedule" active={@pane}>
+              <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
+
+              <%!-- Schedule math config — gated on `scheduling` (start mode /
+                   date below stay: they're lifecycle, not schedule math). --%>
+              <.checkbox
+                :if={@fx.scheduling}
+                field={@form[:counts_weekends]}
+                label={gettext("Count weekends in schedule")}
+                class="checkbox-primary checkbox-sm"
+              />
+          </.form_pane>
+
+          <.form_pane prefix="project" pane="settings" active={@pane}>
+              <%!-- On Settings, not the first tab (the boss, 2026-10-31: the first
+                   tab holds only what you need to set a project up). A link out (V26): where this project belongs elsewhere — the
                    order a host app made it for, a client folder. It shows as
                    a button in the project's header on every tab. A path on
                    this site ("/admin/…") stays right when the database moves
@@ -3097,22 +3119,6 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
                 </p>
               </fieldset>
 
-          </.form_pane>
-
-          <.form_pane prefix="project" pane="schedule" active={@pane}>
-              <.start_block form={@form} lifecycle={@flag_states["lifecycle"] != false} />
-
-              <%!-- Schedule math config — gated on `scheduling` (start mode /
-                   date below stay: they're lifecycle, not schedule math). --%>
-              <.checkbox
-                :if={@fx.scheduling}
-                field={@form[:counts_weekends]}
-                label={gettext("Count weekends in schedule")}
-                class="checkbox-primary checkbox-sm"
-              />
-          </.form_pane>
-
-          <.form_pane prefix="project" pane="settings" active={@pane}>
               <%!-- How the task list looks (`Web.OutlineList`): typed like a
                    text, or rows that carry what the features add — and which
                    of those stay in the task's form (Max, 2026-10-14: "the more

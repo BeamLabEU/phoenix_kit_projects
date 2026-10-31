@@ -9916,8 +9916,8 @@ msgstr "Iga nädal"
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6470
 #, elixir-autogen, elixir-format
 msgctxt "task action"
-msgid "Change status…"
-msgstr "Muuda olekut…"
+msgid "Change status"
+msgstr "Muuda olekut"
 
 #: lib/phoenix_kit_projects/web/components/assignment_status_badge.ex:137
 #, elixir-autogen, elixir-format
@@ -10606,3 +10606,18 @@ msgstr "Hiljutised"
 #, elixir-autogen, elixir-format
 msgid "Search the library"
 msgstr "Otsi teegist"
+
+msgid "Untitled"
+msgstr "Nimetu"
+
+msgid "Task name"
+msgstr "Ülesande nimi"
+
+msgid "Project name"
+msgstr "Projekti nimi"
+
+msgid "Template name"
+msgstr "Malli nimi"
+
+msgid "Description…"
+msgstr "Kirjeldus…"

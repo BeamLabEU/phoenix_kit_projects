@@ -9916,8 +9916,8 @@ msgstr "Toutes les semaines"
 #: lib/phoenix_kit_projects/web/project_show_live.ex:6470
 #, elixir-autogen, elixir-format
 msgctxt "task action"
-msgid "Change status…"
-msgstr "Changer le statut…"
+msgid "Change status"
+msgstr "Changer le statut"
 
 #: lib/phoenix_kit_projects/web/components/assignment_status_badge.ex:137
 #, elixir-autogen, elixir-format
@@ -10606,3 +10606,18 @@ msgstr "Récentes"
 #, elixir-autogen, elixir-format
 msgid "Search the library"
 msgstr "Rechercher dans la bibliothèque"
+
+msgid "Untitled"
+msgstr "Sans titre"
+
+msgid "Task name"
+msgstr "Nom de la tâche"
+
+msgid "Project name"
+msgstr "Nom du projet"
+
+msgid "Template name"
+msgstr "Nom du modèle"
+
+msgid "Description…"
+msgstr "Description…"

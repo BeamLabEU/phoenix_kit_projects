@@ -633,7 +633,9 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # `mx-auto max-w-xl` would otherwise stack a second 576px cap on top,
   # leaving most of the modal empty. Stamp a full-width wrapper for
   # children unless the host explicitly passed one.
-  @child_wrapper_class "flex flex-col w-full px-4 py-6 gap-4"
+  # Compact (the boss, 2026-10-31): the box's own padding is the margin;
+  # the wrapper adds none above the header.
+  @child_wrapper_class "flex flex-col w-full px-1 pb-1 gap-3"
 
   defp push_frame(socket, lv, child_session) do
     frame_ref = System.unique_integer([:positive, :monotonic])

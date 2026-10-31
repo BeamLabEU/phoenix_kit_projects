@@ -1,7 +1,8 @@
 defmodule PhoenixKitProjects.Web.Components.RefChip do
   @moduledoc """
   A project's key or a task's ref (`ACME`, `ACME-42` —
-  `PhoenixKitProjects.Refs`) as a small monospace chip: the name to say
+  `PhoenixKitProjects.Refs`) as a small monospace pill — the same pill
+  wherever a ref shows, rows and popups included (the boss, 2026-10-31): the name to say
   aloud, type into a search box or the address bar, or paste into a commit
   message. Selecting it takes the whole ref (`select-all`); nothing renders
   for a row that has none yet.
@@ -22,9 +23,8 @@ defmodule PhoenixKitProjects.Web.Components.RefChip do
       data-ref={@ref}
       title={gettext("%{ref} — works in search, in the address bar and on the API", ref: @ref)}
       class={[
-        "font-mono select-all whitespace-nowrap shrink-0 text-base-content/60",
-        @size == "sm" && "text-xs",
-        @size == "md" && "badge badge-ghost badge-sm",
+        "badge badge-ghost font-mono select-all whitespace-nowrap shrink-0 text-base-content/70",
+        @size == "sm" && "badge-sm",
         @class
       ]}
     >{@ref}</span>

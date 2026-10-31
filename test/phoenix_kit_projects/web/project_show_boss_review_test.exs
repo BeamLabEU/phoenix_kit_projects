@@ -249,25 +249,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
     end
   end
 
-  describe "Change status… (item 4)" do
-    test "the ⋮ menu opens the status popup with the current status marked", %{conn: conn} do
+  describe "Change status (item 4; a side list in ⋮ since list 2, item 13)" do
+    test "the ⋮ menu lists the statuses beside it, the current one marked", %{conn: conn} do
       project = started_project()
       a = assignment!(project)
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
-      html =
-        view
-        |> element(~s(#assignment-menu-#{a.uuid} [phx-click="open_status_change"]))
-        |> render_click()
+      menu = view |> element("#assignment-menu-#{a.uuid}") |> render()
+      assert menu =~ "data-pkp-submenu-toggle"
+      assert menu =~ ~r/id="status-menu-#{a.uuid}-todo"[^>]*aria-checked="true"/s
+      assert menu =~ ~r/id="status-menu-#{a.uuid}-done"[^>]*aria-checked="false"/s
+      refute has_element?(view, ~s([phx-click="open_status_change"]))
 
-      assert html =~ ~s(id="status-change-choices-#{a.uuid}")
-
-      # The shared status buttons (`FormParts.status_buttons/1`), the
-      # current one pressed.
-      assert html =~ ~r/id="status-change-choices-#{a.uuid}-todo"[^>]*aria-pressed="true"/s
-      assert html =~ ~r/id="status-change-choices-#{a.uuid}-done"[^>]*aria-pressed="false"/s
-
-      render_click(view, "set_status", %{"uuid" => a.uuid, "status" => "in_progress"})
+      view |> element("#status-menu-#{a.uuid}-in_progress") |> render_click()
       assert Projects.get_assignment(a.uuid).status == "in_progress"
     end
 
@@ -277,7 +271,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       a = assignment!(project, %{"status" => "waiting"})
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
 
-      render_click(view, "open_status_change", %{"uuid" => a.uuid})
       html = render_click(view, "set_status", %{"uuid" => a.uuid, "status" => "todo"})
 
       assert html =~ ~s(id="next-up-form-#{project.uuid}")
@@ -316,11 +309,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       assert Projects.get_assignment(a.uuid).status == "done"
     end
 
-    test "a board card has the same entry", %{conn: conn} do
+    test "a board card has the same statuses in a menu of its own", %{conn: conn} do
       project = started_project()
       a = assignment!(project)
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
-      assert has_element?(view, ~s(#board-card-#{a.uuid} [phx-click="open_status_change"]))
+      assert has_element?(view, "#board-card-#{a.uuid} #board-status-#{a.uuid}-done")
     end
   end
 
@@ -411,7 +404,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
 
       assert has_element?(
                view,
-               ~s(#assignment-menu-#{link.uuid} [phx-click="open_status_change"])
+               "#assignment-menu-#{link.uuid} #status-menu-#{link.uuid}-todo"
              )
 
       assert has_element?(view, ~s([data-pkp-card="#{link.uuid}"]))
@@ -448,8 +441,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       task = assignment!(child)
 
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{parent.uuid}")
-      html = render_click(view, "open_status_change", %{"uuid" => link.uuid})
-      assert html =~ ~s(id="status-change-choices-#{link.uuid}-done")
+      assert has_element?(view, "#status-menu-#{link.uuid}-done")
 
       render_click(view, "set_status", %{"uuid" => link.uuid, "status" => "in_progress"})
       assert Projects.get_assignment(link.uuid).status == "in_progress"
@@ -459,14 +451,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       assert Projects.get_assignment(link.uuid).status == "in_progress"
     end
 
-    test "with the setting on, the popup offers only release and hold", %{conn: conn} do
+    test "with the setting on, the menu offers only release and hold", %{conn: conn} do
       parent = started_project()
       {_child, link} = subproject!(parent)
       {:ok, view, _html} = live(conn, "/en/admin/projects/#{parent.uuid}")
 
-      html = render_click(view, "open_status_change", %{"uuid" => link.uuid})
-      assert html =~ ~s(id="status-change-choices-#{link.uuid}-waiting")
-      refute html =~ ~s(id="status-change-choices-#{link.uuid}-done")
+      assert has_element?(view, "#status-menu-#{link.uuid}-waiting")
+      refute has_element?(view, "#status-menu-#{link.uuid}-done")
     end
   end
 

@@ -280,7 +280,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
 
     case typed && String.trim(typed) do
       title when is_binary(title) and title != "" -> title
-      _ -> gettext("New task")
+      _ -> ""
     end
   end
 
@@ -578,13 +578,20 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       <.form_header
         id="task-form-header"
         title={typed_title(assigns)}
+        untitled={@live_action != :edit && gettext("New task")}
         mode={if @live_action == :edit, do: gettext("Editing")}
         close_event={@embed_mode not in [:navigate, :emit] && "cancel"}
         close_confirm={@dirty? && gettext("Discard your changes?")}
       >
         <:context>
-          <.link :if={@embed_mode == :navigate} navigate={Paths.tasks()} class="link link-hover text-base-content/70 inline-flex items-center gap-1">
-            <.icon name="hero-arrow-left" class="w-4 h-4 shrink-0" /> {gettext("Tasks")}
+          <.link
+            :if={@embed_mode == :navigate}
+            navigate={Paths.tasks()}
+            class="btn btn-ghost btn-sm btn-square shrink-0"
+            title={gettext("Tasks")}
+            aria-label={gettext("Tasks")}
+          >
+            <.icon name="hero-arrow-left" class="w-4 h-4" />
           </.link>
           <%!-- In a popup no lone "← Tasks" line above the title, as in the
                project popup: the popup closes with its ✕ and Close. --%>
@@ -613,9 +620,10 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               lang_data={WebHelpers.lang_data(@form, @current_lang)}
               secondary_name={"task[translations][#{@current_lang}][title]"}
               lang_data_key="title"
-              label={gettext("Title")}
+              label=""
+              placeholder={gettext("Task name")}
+              aria-label={gettext("Task name")}
               disabled={@current_lang in @ai_in_flight}
-              required
             />
 
             <%!-- Pictures are intercepted (`uploads`) and refused: a library task
@@ -625,7 +633,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
                 id={DescriptionEditor.editor_id("task-description", @current_lang)}
                 name={DescriptionEditor.field_name("task", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@form, @current_lang, @primary_language, @multilang_enabled)}
-                label={gettext("Description")}
+                placeholder={gettext("Description…")}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
                 image_button={false}

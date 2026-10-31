@@ -128,6 +128,16 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
          what is left; beside the strip, the open pane is the ONE scroll
          area; everything else (the header, the form's buttons) keeps its
          height. The strip is outside what scrolls, so it cannot move. */
+      /* A centred popup with tabs keeps one height whatever the open tab
+         holds (the boss, 2026-10-31: the tabs jumped as the content
+         changed length): the box is a fixed share of the screen, so a
+         short tab leaves room at the bottom and a long one scrolls inside
+         its pane — never a small box around a long tab. Popups without
+         tabs (confirms, small forms) keep their own height. */
+      .pkp-frame.pkp-center:has([data-pkp-tabs]) {
+        display: flex; flex-direction: column;
+        height: min(85dvh, calc(100dvh - 4rem)); max-height: none; overflow: hidden;
+      }
       .pkp-frame *:has([data-pkp-tabs]) {
         display: flex; flex-direction: column; flex: 1 1 0%; min-height: 0;
       }
@@ -153,7 +163,7 @@ defmodule PhoenixKitProjects.Web.Components.PopupHost do
         placement={@placement}
         max_width={@max_width}
         class={
-          [@modal_box_class, "relative", @placement == :end && "pkp-frame"]
+          [@modal_box_class, "relative pkp-frame", @placement == :center && "pkp-center"]
           |> Enum.reject(&(&1 in [nil, false]))
           |> Enum.join(" ")
         }

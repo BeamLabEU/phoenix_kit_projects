@@ -197,22 +197,22 @@ defmodule PhoenixKitProjects.Web.TaskRowBoardTest do
                Projects.get_assignment(a.uuid)
     end
 
-    # The row menu names no next step any more: "Change status…" opens the
-    # status popup, whose choices are the statuses' own names (the boss,
-    # 2026-10-30), each guarded against a double click.
-    test "the row menu changes the status through the popup", %{conn: conn} do
+    # The row menu names no next step any more: "Change status ›" opens a
+    # side list of the statuses inside the menu (the boss, 2026-10-30 and
+    # 10-31 — no popup); one press runs that status.
+    test "the row menu changes the status from its side list", %{conn: conn} do
       project = fixture_project(%{"start_mode" => "immediate"})
       a = task(project, "Ready one", %{"status" => "todo"})
 
       {:ok, view, _html} = show(conn, project)
       menu = view |> element("#assignment-menu-#{a.uuid}") |> render()
-      assert menu =~ "Change status…"
+      assert menu =~ "Change status"
       refute menu =~ "Mark done"
+      assert menu =~ ~s(id="status-menu-#{a.uuid}-todo")
+      assert menu =~ ~r/id="status-menu-#{a.uuid}-todo"[^>]*aria-checked="true"/s
 
-      html = render_click(view, "open_status_change", %{"uuid" => a.uuid})
-      # The shared status buttons (`FormParts.status_buttons/1`).
-      assert html =~ ~s(id="status-change-choices-#{a.uuid}-done")
-      assert html =~ ~r/id="status-change-choices-#{a.uuid}-done"[^>]*phx-disable-with/s
+      view |> element("#status-menu-#{a.uuid}-in_progress") |> render_click()
+      assert Projects.get_assignment(a.uuid).status == "in_progress"
     end
   end
 

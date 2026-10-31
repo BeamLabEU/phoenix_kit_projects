@@ -412,6 +412,18 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
       assert Enum.map(FormParts.native_tabs(tabs), & &1.name) == ["Eesti", "Русский", "Unknown"]
     end
 
+    test "a region is named only when two variants of the language are on" do
+      tab = fn code, name ->
+        %{code: code, name: name, flag: nil, is_primary: false, short_code: code}
+      end
+
+      lone = FormParts.native_tabs([tab.("et", "Estonian"), tab.("en-US", "English (US)")])
+      assert Enum.map(lone, & &1.name) == ["Eesti", "English"]
+
+      both = FormParts.native_tabs([tab.("en-US", "English (US)"), tab.("en-GB", "English (UK)")])
+      assert Enum.all?(both, &(&1.name =~ "("))
+    end
+
     test "the description editor hides Leaf's English word / char / read-time counter" do
       html =
         render_component(

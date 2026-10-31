@@ -80,7 +80,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     AssignmentStatusBadge,
     ConfirmAction,
     DurationInput,
-    FormParts,
     MoveProject,
     TimeInput
   }
@@ -437,7 +436,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               reopen_uuid: nil,
               reopen_task: nil,
               next_up: nil,
-              status_change: nil,
               assignment_labels: %{},
               invoice_ready?: false
             )
@@ -600,7 +598,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       reopen_uuid: nil,
       reopen_task: nil,
       next_up: nil,
-      status_change: nil,
       assignment_labels: %{},
       invoice_ready?: false
     ]
@@ -2087,12 +2084,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                      unlike the status it led to). Done still asks "next
                      up", a release still asks who to tell. --%>
                 <%= if not @is_template and @a.status in ~w(waiting todo in_progress done) do %>
-                  <.table_row_menu_button
-                    phx-click="open_status_change"
-                    phx-value-uuid={@a.uuid}
-                    icon="hero-arrows-right-left"
-                    label={pgettext("task action", "Change status…")}
-                  />
+                  <.status_submenu a={@a} choices={AssignmentStatusBadge.choices(@a, @fx)} />
                   <.table_row_menu_divider />
                 <% end %>
                 <.smart_menu_link
@@ -3010,42 +3002,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  # ── Change status… (the boss, 2026-10-30) ─────────────────────────
+  # ── Change status (the boss, 2026-10-30; a side menu in ⋮ since 10-31) ──
   #
-  # The popup is UI state; the pick runs as the step that status is, through
+  # The pick runs as the step that status is, through
   # `handle_event/3` again — that step's own feature gate, permission and
   # `expect:` stale guard apply, and its dialogs still ask first: Done opens
   # "next up", Can be started from Waiting the release ("who to tell"), Can
   # be started from Done the reopen's "why".
-  defp gated_handle_event("open_status_change", %{"uuid" => uuid}, socket) do
-    case scoped_assignment(socket, uuid) do
-      %Assignment{status: status} = a when status in ~w(waiting todo in_progress done) ->
-        {:noreply,
-         assign(socket,
-           status_change: %{
-             uuid: a.uuid,
-             status: status,
-             label: Assignment.label(a, L10n.current_content_lang()),
-             subproject?: Assignment.subproject?(a),
-             choices: status_choices(socket, a)
-           }
-         )}
 
-      _ ->
-        {:noreply, socket}
-    end
-  end
-
-  defp gated_handle_event("close_status_change", _params, socket),
-    do: {:noreply, assign(socket, status_change: nil)}
-
-  # `from` is the status the popup showed: a pick made against a status the
+  # `from` is the status the menu showed: a pick made against a status the
   # task has since left is refused (said, and the page reloaded), not
   # replayed from wherever the task is now.
   defp gated_handle_event("set_status", %{"uuid" => uuid, "status" => to} = params, socket)
        when to in ~w(waiting todo in_progress done) do
-    socket = assign(socket, status_change: nil)
-
     with %Assignment{} = a <- scoped_assignment(socket, uuid),
          :ok <- same_status(a, params["from"]),
          true <- to in status_choices(socket, a),
@@ -6011,12 +5980,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                           </.smart_link>
                           <.table_row_menu id={"assignment-menu-#{a.uuid}"}>
                             <%= if not @is_template and a.status in ~w(waiting todo in_progress done) do %>
-                              <.table_row_menu_button
-                                phx-click="open_status_change"
-                                phx-value-uuid={a.uuid}
-                                icon="hero-arrows-right-left"
-                                label={pgettext("task action", "Change status…")}
-                              />
+                              <.status_submenu a={a} choices={AssignmentStatusBadge.choices(a, @fx)} />
                               <.table_row_menu_divider />
                             <% end %>
                             <.smart_menu_link
@@ -6460,17 +6424,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                     </span>
 
                     <div class="ml-auto max-w-full flex flex-wrap items-center justify-end gap-1">
-                      <button
+                      <%!-- The statuses as a menu of their own, no popup. --%>
+                      <.table_row_menu
                         :if={a.status in ~w(waiting todo in_progress done)}
-                        type="button"
-                        phx-click="open_status_change"
-                        phx-value-uuid={a.uuid}
-                        class="btn btn-ghost btn-xs btn-square"
-                        title={pgettext("task action", "Change status…")}
-                        aria-label={pgettext("task action", "Change status…")}
+                        id={"board-status-menu-#{a.uuid}"}
+                        label={pgettext("task action", "Change status")}
+                        trigger_size="xs"
                       >
-                        <.icon name="hero-arrows-right-left" class="w-3.5 h-3.5" />
-                      </button>
+                        <.status_menu_items a={a} choices={AssignmentStatusBadge.choices(a, @fx)} id_prefix="board-status" />
+                      </.table_row_menu>
                       <%= cond do %>
                         <% a.status == "waiting" -> %>
                           <button
@@ -6732,24 +6694,6 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <% end %>
       </div>
 
-      <%!-- Change status…: the task form's coloured status choices, the
-           current one marked. Each press runs that status's own step. --%>
-      <.modal
-        :if={@status_change}
-        show
-        on_close="close_status_change"
-        id={"project-status-change-#{@project.uuid}"}
-        max_width="sm"
-      >
-        <:title>{gettext("Status of “%{task}”", task: @status_change.label)}</:title>
-        <FormParts.status_buttons
-          id={"status-change-choices-#{@status_change.uuid}"}
-          value={@status_change.status}
-          options={Enum.map(@status_change.choices, &{AssignmentStatusBadge.label(&1, @status_change.subproject?), &1})}
-          event="set_status"
-          values={%{"uuid" => @status_change.uuid, "from" => @status_change.status}}
-        />
-      </.modal>
 
       <%!-- Reopen asks why. --%>
       <% reopening = @reopen_uuid && @reopen_task %>
@@ -7079,6 +7023,72 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       <.confirm_action_modal confirm={assigns[:confirm_action]} />
       <.move_project_modal move={assigns[:move_project]} />
     </div>
+    """
+  end
+
+  # ── Status from the ⋮ menu (the boss, 2026-10-31) ───────────────────
+  #
+  # "Change status ›" opens a side list of the statuses inside the row's
+  # menu — on hover, or on a press (touch, keyboard; the module's JS keeps
+  # the menu open for that press). One press on a status runs it as the
+  # popup did (`set_status`, its step's own gate and dialogs).
+  attr(:a, :map, required: true)
+  attr(:choices, :list, required: true)
+
+  defp status_submenu(assigns) do
+    ~H"""
+    <li role="none" class="relative group/pkpsub" data-pkp-submenu>
+      <button
+        type="button"
+        role="menuitem"
+        aria-haspopup="menu"
+        aria-expanded="false"
+        data-pkp-submenu-toggle
+        class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm w-full text-left hover:bg-base-200 transition-colors cursor-pointer"
+      >
+        <.icon name="hero-arrows-right-left" class="w-4 h-4 shrink-0 opacity-70" />
+        <span class="flex-1">{pgettext("task action", "Change status")}</span>
+        <.icon name="hero-chevron-right" class="w-3.5 h-3.5 opacity-60" />
+      </button>
+      <ul
+        role="menu"
+        data-pkp-submenu-list
+        class={[
+          "hidden absolute right-full top-0 mr-1 min-w-[11rem] rounded-box bg-base-100",
+          "border border-base-200 shadow-xl p-1 z-10",
+          "group-hover/pkpsub:block group-focus-within/pkpsub:block group-data-[open]/pkpsub:block"
+        ]}
+      >
+        <.status_menu_items a={@a} choices={@choices} />
+      </ul>
+    </li>
+    """
+  end
+
+  attr(:a, :map, required: true)
+  attr(:choices, :list, required: true)
+  attr(:id_prefix, :string, default: "status-menu")
+
+  defp status_menu_items(assigns) do
+    ~H"""
+    <li :for={status <- @choices} role="none">
+      <button
+        type="button"
+        id={"#{@id_prefix}-#{@a.uuid}-#{status}"}
+        role="menuitemradio"
+        aria-checked={to_string(status == @a.status)}
+        disabled={status == @a.status}
+        phx-click="set_status"
+        phx-value-uuid={@a.uuid}
+        phx-value-status={status}
+        phx-value-from={@a.status}
+        class="flex items-center gap-2 px-3 py-2 rounded-lg text-sm w-full text-left hover:bg-base-200 transition-colors cursor-pointer disabled:cursor-default disabled:hover:bg-transparent"
+      >
+        <span class={["inline-block w-2.5 h-2.5 rounded-full shrink-0", AssignmentStatusBadge.color(status)]}></span>
+        <span class="flex-1">{AssignmentStatusBadge.label(status, Assignment.subproject?(@a))}</span>
+        <.icon :if={status == @a.status} name="hero-check" class="w-4 h-4 text-primary" />
+      </button>
+    </li>
     """
   end
 end
