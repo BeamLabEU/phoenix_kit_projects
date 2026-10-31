@@ -66,6 +66,8 @@ defmodule PhoenixKitProjects.Schemas.Assignment do
           end_time: Time.t() | nil,
           parent_uuid: UUIDv7.t() | nil,
           translations: translations_map(),
+          assignee_links: [AssignmentAssignee.t()] | Ecto.Association.NotLoaded.t(),
+          assignee_keys: [{String.t(), String.t()}] | nil,
           dependencies: [Dependency.t()] | Ecto.Association.NotLoaded.t(),
           inserted_at: DateTime.t() | nil,
           updated_at: DateTime.t() | nil

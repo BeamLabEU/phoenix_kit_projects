@@ -678,8 +678,9 @@ defmodule PhoenixKitProjects.Assignees do
     # the query (`Ecto.Query.CastError`) and take the form down with it.
     with {:ok, uuid} <- Ecto.UUID.cast(uuid),
          row when is_map(row) <- row_for(kind, uuid, lang) do
-      probe = %Assignment{uuid: "chosen", assignee_keys: [{kind, uuid}]}
-      Map.put(row, :faces, Map.get(faces([probe], 5), "chosen"))
+      # A stand-in task holding just this one assignee.
+      probe = %Assignment{uuid: uuid, assignee_keys: [{kind, uuid}]}
+      Map.put(row, :faces, Map.get(faces([probe], 5), uuid))
     else
       _ -> nil
     end

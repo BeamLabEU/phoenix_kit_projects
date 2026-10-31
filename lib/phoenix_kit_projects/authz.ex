@@ -531,7 +531,7 @@ defmodule PhoenixKitProjects.Authz do
   # a core user via `person.user_uuid` (nil-safe at every hop).
   defp relationship_grant?(user_uuid, action, record)
        when action in [:update_status, :log_time] do
-    is_binary(user_uuid) and user_uuid in assignee_user_uuids(record)
+    user_uuid in assignee_user_uuids(record)
   end
 
   defp relationship_grant?(_user_uuid, _action, _record), do: false
