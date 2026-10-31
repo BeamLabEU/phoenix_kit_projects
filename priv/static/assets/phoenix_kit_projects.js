@@ -1203,7 +1203,11 @@
     // The label is a tab on the card's top-left edge, out of the row's flow:
     // it comes and goes without moving anything (the view icon stays put).
     "[data-pkp-rel]{position:absolute;left:.75rem;top:-.6rem;z-index:1;pointer-events:none;display:inline-flex;align-items:center;gap:.3rem;font-size:.7rem;font-weight:600;line-height:1.15rem;white-space:nowrap;border-radius:999px}",
-    "@media (prefers-reduced-motion:reduce){[data-pkp-card]{transition:none}}"
+    // While no arrows show, a top-level card reaches over the gutter they
+    // use (its contents stay put); `apply` draws it back while they show.
+    ".pkp-links-gutter .pkp-row-card{margin-left:-2rem;padding-left:2rem;transition:margin-left .15s ease,padding-left .15s ease}",
+    ".pkp-links-gutter.sortable-dragging .pkp-row-card,.pkp-links-gutter .sortable-ghost .pkp-row-card{transition:none}",
+    "@media (prefers-reduced-motion:reduce){[data-pkp-card],.pkp-links-gutter .pkp-row-card{transition:none}}"
   ].join("\n");
   var LK_BEFORE = "#7c5cd6", LK_AFTER = "#e0682b", LK_AFTER_TEXT = "#d0571d";
   var LK_PRIMARY = "var(--color-primary,#4f46e5)";
@@ -1309,6 +1313,7 @@
     destroyed: function () {
       clearTimeout(this.enterT);
       clearTimeout(this.leaveT);
+      clearTimeout(this.drawT);
       document.removeEventListener("keydown", this.onKey);
       document.removeEventListener("click", this.onDoc, true);
       window.removeEventListener("resize", this.onResize);
@@ -1364,7 +1369,9 @@
         b.setAttribute("aria-pressed", on ? "true" : "false");
         if (labels.trace) b.title = on ? labels.stop : labels.trace;
       });
-      if (src === null) { this.marks.textContent = ""; this.draw([]); return; }
+      var wasOn = this.gutterOn === true;
+      this.gutterOn = src !== null;
+      if (src === null) { clearTimeout(this.drawT); this.marks.textContent = ""; this.draw([]); return; }
 
       // Hover: direct neighbours only, nothing fades. Trace: the whole
       // chain, and what is not part of it fades a little.
@@ -1391,6 +1398,8 @@
 
       // Everything outside what is shown fades to half, hover and trace.
       rules.push(scope + "[data-pkp-card]{opacity:.4}");
+      // The cards give the gutter back to the arrows.
+      rules.push(scope + ".pkp-row-card{margin-left:0;padding-left:0}");
       rules.push(card(src) + "{opacity:1;box-shadow:inset 0 0 0 1px color-mix(in oklab,currentColor 28%,transparent)}");
       Object.keys(b1).forEach(function (id) { mark(id, LK_BEFORE, true, labels.before, LK_BEFORE); });
       Object.keys(a1).forEach(function (id) { if (!b1[id]) mark(id, LK_AFTER, true, labels.after, LK_AFTER_TEXT); });
@@ -1412,7 +1421,17 @@
       }).map(function (p) {
         return { from: p[0], to: p[1], after: !!aAll[p[1]] && !bAll[p[1]], direct: p[0] === src || p[1] === src };
       });
-      this.draw(edges);
+      // Coming from no arrows, the cards are still sliding back: drawn once
+      // they stand where the arrows meet them (the slide is .15s).
+      clearTimeout(this.drawT);
+      var slides = !wasOn && this.el.classList.contains("pkp-links-gutter") &&
+        !(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      if (slides) {
+        this.draw([]);
+        this.drawT = setTimeout(function () { if (self.gutterOn) self.draw(edges); }, 170);
+      } else {
+        this.draw(edges);
+      }
     },
     // Draws `edges` into the list's arrow layer: a curve from the left edge
     // of the earlier task, out into the gutter and back into the later

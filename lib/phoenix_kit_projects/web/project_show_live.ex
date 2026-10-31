@@ -5838,7 +5838,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         <div
           :if={@visible_assignments != []}
           id={"project-task-links-#{@project.uuid}"}
-          class={["relative", @fx.dependencies and @link_pairs != [] && "pl-8"]}
+          class={["relative", @fx.dependencies and @link_pairs != [] && "pl-8 pkp-links-gutter"]}
           phx-hook={if @fx.dependencies, do: "PkpLinks"}
           data-links={Jason.encode!(@link_pairs)}
           data-labels={
@@ -5904,8 +5904,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
                 <%!-- `min-w-0`: a flex child is as wide as its content unless told
                      otherwise, and one long line inside (an expanded
                      sub-project's task) pushed the page sideways. --%>
+                <%!-- A top-level card reaches over the arrows' gutter while no
+                     arrows show, and slides back when they do (`PkpLinks`;
+                     the boss, 2026-10-31: the gutter read as a gap). Its
+                     contents stay where they are. --%>
                 <div class={[
                   "flex-1 min-w-0 card bg-base-100 shadow-sm border",
+                  Map.get(ol_depths, a.uuid, 0) == 0 && "pkp-row-card",
                   if(not @is_template and a.status == "done", do: "border-success/30 opacity-75", else: "border-base-200"),
                   assigns[:focus_task] == a.uuid && "ring-2 ring-primary"
                 ]}>

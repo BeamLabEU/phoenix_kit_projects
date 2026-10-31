@@ -309,6 +309,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowBossReviewTest do
       assert Projects.get_assignment(a.uuid).status == "done"
     end
 
+    # List 2, item 9: the arrows' gutter is filled by the top-level cards
+    # until arrows show (`PkpLinks` draws them back).
+    test "with connections the cards reach over the arrows' gutter", %{conn: conn} do
+      project = started_project()
+      first = assignment!(project)
+      second = assignment!(project, %{"status" => "waiting"})
+      {:ok, _} = Projects.add_dependency(second.uuid, first.uuid)
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{project.uuid}")
+
+      assert has_element?(view, "#project-task-links-#{project.uuid}.pkp-links-gutter")
+      assert has_element?(view, "#task-#{first.uuid} .pkp-row-card")
+    end
+
     test "a board card has the same statuses in a menu of its own", %{conn: conn} do
       project = started_project()
       a = assignment!(project)
