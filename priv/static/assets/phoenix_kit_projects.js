@@ -1900,6 +1900,11 @@
   // menu items: their click closes the menu and runs as usual.
   if (!window.__pkpSubmenu) {
     window.__pkpSubmenu = true;
+    // The row menu is a popover, which the browser clips (`overflow:auto`):
+    // a menu holding a side list lets it out.
+    var subStyle = document.createElement("style");
+    subStyle.textContent = "[data-row-menu-content]:has([data-pkp-submenu]){overflow:visible}";
+    document.head.appendChild(subStyle);
     document.addEventListener("click", function (e) {
       var toggle = e.target && e.target.closest && e.target.closest("[data-pkp-submenu-toggle]");
       if (!toggle) return;
