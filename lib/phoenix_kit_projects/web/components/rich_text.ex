@@ -61,8 +61,12 @@ defmodule PhoenixKitProjects.Web.Components.RichText do
       "[&_a]:link [&_a]:link-primary [&_strong]:font-semibold",
       "[&_code]:bg-base-200 [&_code]:px-1 [&_code]:rounded",
       "[&_blockquote]:border-l-2 [&_blockquote]:border-base-300 [&_blockquote]:pl-3",
-      "[&_img]:max-w-full [&_img]:rounded-box [&_img]:my-1",
-      @compact && "text-sm line-clamp-3 [&_img]:max-h-24",
+      # The editor saves a picture with its own `width`/`height`; a cap on
+      # one side alone squashed it (the boss's 2026-10-31 photo), so the
+      # height always follows the width, and a row lets the width follow
+      # its height cap instead.
+      "[&_img]:max-w-full [&_img]:h-auto [&_img]:object-contain [&_img]:rounded-box [&_img]:my-1",
+      @compact && "text-sm line-clamp-3 [&_img]:max-h-24 [&_img]:w-auto",
       @class
     ]}>
       {raw(@html)}
