@@ -73,6 +73,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   alias PhoenixKitProjects.Web.Components.WorkflowStatusFields, as: WSF
   alias PhoenixKitProjects.Web.Crumbs
+  alias PhoenixKitProjects.Web.DescriptionImages
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.WriteGate
   alias PhoenixKitWeb.Components.Core.FormFieldLabel
@@ -3438,7 +3439,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         _ -> nil
       end
 
-    {:noreply, PhoenixKitProjects.Web.DescriptionImages.paste_for(socket, target, id, paste)}
+    {:noreply, DescriptionImages.paste_for(socket, target, id, paste)}
   end
 
   # `@` and `#` typed in a description: the mentions the textarea offered.

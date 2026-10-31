@@ -24,6 +24,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
     only: [form_header: 1, form_tabs: 1, form_pane: 1, words_block: 1]
 
   alias PhoenixKit.Mentions
+  alias PhoenixKit.Modules.Storage
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
@@ -3443,7 +3444,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   defp assign_cover(%{assigns: %{project: %Project{} = project}} = socket) do
     url =
       with uuid when is_binary(uuid) <- Project.cover_file_uuid(project),
-           %{} = file <- PhoenixKit.Modules.Storage.get_file(uuid) do
+           %{} = file <- Storage.get_file(uuid) do
         Attachments.download_url(file)
       else
         _ -> nil

@@ -18,8 +18,8 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.DescriptionEditor
-  alias PhoenixKitProjects.Web.DescriptionImages
   alias PhoenixKitProjects.Web.Crumbs
+  alias PhoenixKitProjects.Web.DescriptionImages
 
   import PhoenixKitProjects.Web.Components.DescriptionEditor,
     only: [description_editor: 1, description_value: 4]
