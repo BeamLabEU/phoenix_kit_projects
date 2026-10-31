@@ -350,10 +350,11 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
     end
   end
 
-  describe "a picture pasted into a description that cannot hold one (item 10)" do
+  # Since the boss's second list (item 8) every description takes them.
+  describe "a picture pasted into a project's, template's or library task's description" do
     @png <<137, 80, 78, 71, 13, 10, 26, 10>>
 
-    defp paste_refused(view, html, base) do
+    defp paste_kept(view, html, base) do
       [id] =
         Regex.run(~r/data-description-editor="(#{base}--[^"]+)"/, html, capture: :all_but_first)
 
@@ -372,7 +373,8 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
       )
 
       html = render(view)
-      assert html =~ "cannot hold images"
+      refute html =~ "cannot hold images"
+      refute html =~ "Upload failed"
       refute html =~ "data:image/png"
     end
 
@@ -380,22 +382,23 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
       {:ok, conn: put_test_scope(conn, fake_scope(user_uuid: embed_user_uuid!()))}
     end
 
-    test "the library task editor refuses it", %{conn: conn} do
+    test "the library task editor keeps it", %{conn: conn} do
       task = fixture_task()
       {:ok, view, html} = live(conn, "/en/admin/projects/tasks/#{task.uuid}/edit")
-      paste_refused(view, html, "task-description")
+      paste_kept(view, html, "task-description")
     end
 
-    test "the template editor refuses it", %{conn: conn} do
+    test "the template editor keeps it", %{conn: conn} do
       template = fixture_project(%{"is_template" => true})
       {:ok, view, html} = live(conn, "/en/admin/projects/templates/#{template.uuid}/edit")
-      paste_refused(view, html, "template-description")
+      paste_kept(view, html, "template-description")
     end
 
-    test "the project editor refuses it", %{conn: conn} do
+    test "the project editor keeps it in the project's folder", %{conn: conn} do
       project = fixture_project()
       {:ok, view, html} = live(conn, "/en/admin/projects/#{project.uuid}/edit")
-      paste_refused(view, html, "project-description")
+      paste_kept(view, html, "project-description")
+      assert [_ | _] = PhoenixKitProjects.Attachments.list_files(project)
     end
   end
 

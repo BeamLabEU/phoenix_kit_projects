@@ -71,7 +71,7 @@ defmodule PhoenixKitProjects.Attachments do
 
   alias PhoenixKit.Utils.Format
 
-  alias PhoenixKitProjects.Schemas.{Assignment, AssignmentFile, Project}
+  alias PhoenixKitProjects.Schemas.{Assignment, AssignmentFile, Project, Task}
 
   @list_limit 200
 
@@ -285,6 +285,90 @@ defmodule PhoenixKitProjects.Attachments do
         end
     end
   end
+
+  # ── Pictures in a project's or a library task's description ─────────
+  #
+  # The boss, 2026-10-31: "can't add image to project or paste into
+  # description. Check consistency" — a project's (and a sub-project's,
+  # template's) description takes pictures as a task's does, kept in the
+  # project's folder; a library task's in one "task library" folder, since
+  # it belongs to no project. The text keeps each by its file
+  # (`InlineImages`), so a viewer gets an address they may open.
+
+  @description_image_max_mb 10
+  @task_library_folder "projects-task-library"
+
+  @doc "The largest picture a description takes, in MB."
+  def description_image_max_mb, do: @description_image_max_mb
+
+  @doc """
+  Stores the picture at `path` for `holder`'s description (a `%Project{}`
+  or a library `%Task{}`): `{:ok, %File{}}` or `{:error, reason}`.
+  """
+  @spec store_description_image(Project.t() | Task.t(), Path.t(), keyword(), binary() | nil) ::
+          {:ok, File.t()} | {:error, term()}
+  def store_description_image(holder, path, opts, actor_uuid) do
+    store_opts =
+      opts
+      |> Keyword.take([:filename, :content_type, :size_bytes])
+      |> Keyword.put(:user_uuid, actor_uuid)
+
+    with {:ok, folder_uuid} <- description_folder(holder, actor_uuid),
+         {:ok, %File{} = file} <- Storage.store_file(path, store_opts) do
+      place_in(file, folder_uuid)
+    end
+  rescue
+    e ->
+      Logger.warning(
+        "[Projects.Attachments] store_description_image failed: #{Exception.message(e)}"
+      )
+
+      {:error, :store_failed}
+  end
+
+  @doc """
+  A picture pasted into an editor (a `data:` URL) stored for `holder`'s
+  description. Only an image, at most `description_image_max_mb/0`.
+  """
+  @spec store_pasted_image(Project.t() | Task.t(), String.t(), String.t() | nil, binary() | nil) ::
+          {:ok, File.t()} | {:error, term()}
+  def store_pasted_image(holder, "data:" <> rest, name, actor_uuid) do
+    with [meta, b64] <- String.split(rest, ",", parts: 2),
+         [mime | _] <- String.split(meta, ";"),
+         true <- String.starts_with?(mime, "image/") and String.ends_with?(meta, ";base64"),
+         true <- byte_size(b64) <= div(@description_image_max_mb * 1_048_576 * 4, 3) + 4,
+         {:ok, bytes} <- Base.decode64(b64, ignore: :whitespace) do
+      path = Path.join(System.tmp_dir!(), "pkp-paste-#{System.unique_integer([:positive])}")
+      Elixir.File.write!(path, bytes)
+
+      try do
+        store_description_image(
+          holder,
+          path,
+          [filename: name || "pasted-image", content_type: mime, size_bytes: byte_size(bytes)],
+          actor_uuid
+        )
+      after
+        Elixir.File.rm(path)
+      end
+    else
+      _ -> {:error, :not_an_image}
+    end
+  end
+
+  def store_pasted_image(_holder, _data, _name, _actor_uuid), do: {:error, :not_an_image}
+
+  defp description_folder(%Project{uuid: uuid} = project, actor_uuid) when is_binary(uuid),
+    do: ensure_folder(project, actor_uuid)
+
+  defp description_folder(%Task{}, actor_uuid) do
+    case ResourceFolders.ensure(@task_library_folder, nil, actor_uuid) do
+      {:ok, %Folder{uuid: uuid}} -> {:ok, uuid}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp description_folder(_holder, _actor_uuid), do: {:error, :not_saved}
 
   # ── A task's own files (V27) ────────────────────────────────────────
   #

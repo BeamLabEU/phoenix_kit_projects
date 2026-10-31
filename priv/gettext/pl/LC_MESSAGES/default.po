@@ -10690,3 +10690,15 @@ msgstr "Tak"
 
 msgid "No"
 msgstr "Nie"
+
+msgid "Cover image"
+msgstr "Obraz okładki"
+
+msgid "Choose an image"
+msgstr "Wybierz obraz"
+
+msgid "Only an image can be pasted here."
+msgstr "Tutaj można wkleić tylko obraz."
+
+msgid "Save it first to add images."
+msgstr "Najpierw zapisz, aby dodać obrazy."

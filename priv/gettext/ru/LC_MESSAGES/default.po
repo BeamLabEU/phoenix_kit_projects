@@ -10690,3 +10690,15 @@ msgstr "Да"
 
 msgid "No"
 msgstr "Нет"
+
+msgid "Cover image"
+msgstr "Обложка"
+
+msgid "Choose an image"
+msgstr "Выбрать изображение"
+
+msgid "Only an image can be pasted here."
+msgstr "Сюда можно вставить только изображение."
+
+msgid "Save it first to add images."
+msgstr "Чтобы добавить изображения, сначала сохраните."

@@ -3426,16 +3426,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     {:noreply, store_pasted_image(socket, id, paste)}
   end
 
-  # An image pasted into a sub-project's description: refused, never kept
-  # as a `data:` URL (the sub-project's text is its project's, which keeps
-  # no pictures).
-  def handle_info({:leaf_paste_image, %{editor_id: "subproject-description--" <> _}}, socket) do
-    {:noreply,
-     put_flash(
-       socket,
-       :error,
-       gettext("A sub-project's description cannot hold images. Add them to one of its tasks.")
-     )}
+  # An image pasted into a sub-project's description: kept in the
+  # sub-project's own folder (it is a project) and placed at the cursor.
+  def handle_info(
+        {:leaf_paste_image, %{editor_id: "subproject-description--" <> _ = id} = paste},
+        socket
+      ) do
+    target =
+      case sp_source(socket) do
+        %Project{uuid: uuid} = sub when is_binary(uuid) -> {sub, id}
+        _ -> nil
+      end
+
+    {:noreply, PhoenixKitProjects.Web.DescriptionImages.paste_for(socket, target, id, paste)}
   end
 
   # `@` and `#` typed in a description: the mentions the textarea offered.
@@ -4401,14 +4404,19 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
                 placeholder={gettext("Sub-project name")}
                 aria-label={gettext("Sub-project name")}
               />
-              <%!-- Pictures are intercepted (`uploads`) and refused: a
-                   sub-project's description is its project's, which holds
-                   no inline pictures, and a `data:` address in the text is
-                   never stored. No image button for the same reason. --%>
+              <%!-- Pictures are intercepted (`uploads`): a pasted one is kept
+                   in the sub-project's own folder and placed by file, as a
+                   project's (`DescriptionImages`). --%>
               <.description_editor
                 id={DescriptionEditor.editor_id("subproject-description", @current_lang)}
                 name={DescriptionEditor.field_name("subproject", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@sp_form, @current_lang, @primary_language, @multilang_enabled)}
+                content={
+                  editor_content(
+                    description_value(@sp_form, @current_lang, @primary_language, @multilang_enabled),
+                    assigns[:phoenix_kit_current_scope]
+                  )
+                }
                 placeholder={gettext("Description…")}
                 mention_context={mention_context(@project)}
                 uploads

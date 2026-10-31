@@ -134,7 +134,8 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
     assert Attachments.list_task_files(ctx.a.uuid) == []
   end
 
-  test "an image pasted into a sub-project's description is refused, not kept as data", ctx do
+  test "an image pasted into a sub-project not saved yet is answered with a word, not kept as data",
+       ctx do
     {:ok, view, html} =
       live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/assignments/new?kind=subproject")
 
@@ -155,7 +156,7 @@ defmodule PhoenixKitProjects.Web.TaskFilesTest do
     )
 
     html = render(view)
-    assert html =~ "cannot hold images"
+    assert html =~ "Save it first to add images."
     refute html =~ "data:image/png"
   end
 

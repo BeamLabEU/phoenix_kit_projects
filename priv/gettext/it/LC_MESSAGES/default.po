@@ -10633,3 +10633,15 @@ msgstr "Sì"
 
 msgid "No"
 msgstr "No"
+
+msgid "Cover image"
+msgstr "Immagine di copertina"
+
+msgid "Choose an image"
+msgstr "Scegli un'immagine"
+
+msgid "Only an image can be pasted here."
+msgstr "Qui si può incollare solo un'immagine."
+
+msgid "Save it first to add images."
+msgstr "Salva prima per aggiungere immagini."

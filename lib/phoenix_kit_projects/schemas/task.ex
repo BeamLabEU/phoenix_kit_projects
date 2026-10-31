@@ -120,6 +120,8 @@ defmodule PhoenixKitProjects.Schemas.Task do
     |> validate_required(@required)
     |> validate_length(:title, min: 1, max: 500)
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
+    # Pictures kept by file, served per viewer (`InlineImages`).
+    |> PhoenixKitProjects.InlineImages.put_refs()
     |> validate_number(:estimated_duration, greater_than: 0)
     |> validate_inclusion(:estimated_duration_unit, @duration_units)
     |> validate_translations_shape()

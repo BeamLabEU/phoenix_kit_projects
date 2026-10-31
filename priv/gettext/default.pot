@@ -10630,3 +10630,15 @@ msgstr ""
 
 msgid "No"
 msgstr ""
+
+msgid "Cover image"
+msgstr ""
+
+msgid "Choose an image"
+msgstr ""
+
+msgid "Only an image can be pasted here."
+msgstr ""
+
+msgid "Save it first to add images."
+msgstr ""

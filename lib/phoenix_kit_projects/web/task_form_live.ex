@@ -24,6 +24,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   alias PhoenixKitProjects.Schemas.Task
   alias PhoenixKitProjects.Web.Components.{AssigneePicker, DurationInput}
   alias PhoenixKitProjects.Web.Components.DescriptionEditor
+  alias PhoenixKitProjects.Web.DescriptionImages
 
   import PhoenixKitProjects.Web.Components.DescriptionEditor,
     only: [description_editor: 1, description_value: 4]
@@ -63,6 +64,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
       |> assign_assignee_picker()
       |> assign_ai_translate()
       |> assign(dirty?: false)
+      |> DescriptionImages.allow(&description_image_target/1)
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -418,20 +420,26 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
   def handle_info({:leaf_suggest, _} = msg, socket),
     do: {:noreply, DescriptionEditor.suggest(socket, msg, nil)}
 
-  # An image pasted into the description: refused, never kept as a `data:`
-  # URL — a library task keeps no files (the walk-through, 2026-10-31).
-  def handle_info({:leaf_paste_image, %{editor_id: "task-description--" <> _}}, socket) do
-    {:noreply,
-     put_flash(
-       socket,
-       :error,
-       gettext(
-         "A library task's description cannot hold images. Add them to the task in a project."
-       )
-     )}
-  end
+  # An image pasted into the description: kept in the library task's folder
+  # and placed at the cursor (the boss, 2026-10-31).
+  def handle_info(
+        {:leaf_paste_image, %{editor_id: "task-description--" <> _ = id} = paste},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.paste(socket, id, paste)}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Where a picture for the description goes (`DescriptionImages`): the
+  # saved library task's folder; nowhere before it is saved.
+  defp description_image_target(
+         %{assigns: %{live_action: :edit, task: %Task{uuid: uuid} = holder}} = socket
+       )
+       when is_binary(uuid),
+       do:
+         {holder, DescriptionEditor.editor_id("task-description", socket.assigns[:current_lang])}
+
+  defp description_image_target(_socket), do: nil
 
   defp put_description(%{assigns: %{form: form}} = socket, lang, markdown) do
     %{primary_language: primary, multilang_enabled: multi?} = socket.assigns
@@ -626,18 +634,26 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               disabled={@current_lang in @ai_in_flight}
             />
 
-            <%!-- Pictures are intercepted (`uploads`) and refused: a library task
-                 keeps no files, and a `data:` address in the text is never
-                 stored. No image button for the same reason. --%>
+            <%!-- Pictures are intercepted (`uploads`): pasted or added with
+                 the button, kept in the library task's folder and placed by file
+                 (`DescriptionImages`); never a `data:` address in the text. --%>
             <.description_editor
                 id={DescriptionEditor.editor_id("task-description", @current_lang)}
                 name={DescriptionEditor.field_name("task", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@form, @current_lang, @primary_language, @multilang_enabled)}
+                content={
+                  PhoenixKitProjects.InlineImages.resolve(
+                    description_value(@form, @current_lang, @primary_language, @multilang_enabled),
+                    assigns[:phoenix_kit_current_scope],
+                    keep_missing: true
+                  )
+                }
                 placeholder={gettext("Description…")}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
                 image_button={false}
               />
+              <DescriptionImages.button :if={@live_action == :edit} uploads={@uploads} id="task-description-image" />
         </.words_block>
 
         <%!-- Non-translatable settings (duration, default assignee). --%>

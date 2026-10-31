@@ -18,6 +18,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   alias PhoenixKitProjects.{Activity, L10n, Paths, Projects, Statuses}
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.DescriptionEditor
+  alias PhoenixKitProjects.Web.DescriptionImages
   alias PhoenixKitProjects.Web.Crumbs
 
   import PhoenixKitProjects.Web.Components.DescriptionEditor,
@@ -57,6 +58,7 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
       |> assign_status_init()
       |> assign_ai_translate()
       |> assign(dirty?: false)
+      |> DescriptionImages.allow(&description_image_target/1)
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -297,18 +299,27 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
   def handle_info({:leaf_suggest, _} = msg, socket),
     do: {:noreply, DescriptionEditor.suggest(socket, msg, nil)}
 
-  # An image pasted into the description: refused, never kept as a `data:`
-  # URL — a template, like a project, keeps no pictures in its description (the walk-through, 2026-10-31).
-  def handle_info({:leaf_paste_image, %{editor_id: "template-description--" <> _}}, socket) do
-    {:noreply,
-     put_flash(
-       socket,
-       :error,
-       gettext("A template's description cannot hold images. Add them to one of its tasks.")
-     )}
-  end
+  # An image pasted into the description: kept in the template's folder
+  # and placed at the cursor (the boss, 2026-10-31).
+  def handle_info(
+        {:leaf_paste_image, %{editor_id: "template-description--" <> _ = id} = paste},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.paste(socket, id, paste)}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Where a picture for the description goes (`DescriptionImages`): the
+  # saved template's folder; nowhere before it is saved.
+  defp description_image_target(
+         %{assigns: %{live_action: :edit, project: %Project{uuid: uuid} = holder}} = socket
+       )
+       when is_binary(uuid),
+       do:
+         {holder,
+          DescriptionEditor.editor_id("template-description", socket.assigns[:current_lang])}
+
+  defp description_image_target(_socket), do: nil
 
   defp put_description(%{assigns: %{form: form}} = socket, lang, markdown) do
     %{primary_language: primary, multilang_enabled: multi?} = socket.assigns
@@ -468,18 +479,26 @@ defmodule PhoenixKitProjects.Web.TemplateFormLive do
               disabled={@current_lang in @ai_in_flight}
             />
 
-            <%!-- Pictures are intercepted (`uploads`) and refused: a template, like a project,
-                 keeps no files, and a `data:` address in the text is never
-                 stored. No image button for the same reason. --%>
+            <%!-- Pictures are intercepted (`uploads`): pasted or added with
+                 the button, kept in the template's folder and placed by file
+                 (`DescriptionImages`); never a `data:` address in the text. --%>
             <.description_editor
                 id={DescriptionEditor.editor_id("template-description", @current_lang)}
                 name={DescriptionEditor.field_name("project", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@form, @current_lang, @primary_language, @multilang_enabled)}
+                content={
+                  PhoenixKitProjects.InlineImages.resolve(
+                    description_value(@form, @current_lang, @primary_language, @multilang_enabled),
+                    assigns[:phoenix_kit_current_scope],
+                    keep_missing: true
+                  )
+                }
                 placeholder={gettext("Description…")}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
                 image_button={false}
               />
+              <DescriptionImages.button :if={@live_action == :edit} uploads={@uploads} id="template-description-image" />
         </.words_block>
 
         <%!-- Non-translatable settings stay outside the wrapper so they

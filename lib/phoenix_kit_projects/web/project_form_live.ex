@@ -27,13 +27,14 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKit.Utils.Values
   alias PhoenixKitAI.Components.AITranslate.FormGlue
   alias PhoenixKitProjects.{Activity, Archetypes, Authz, Errors, Features, L10n, Paths, Projects}
-  alias PhoenixKitProjects.{Extensions, Grants, Members, Statuses}
+  alias PhoenixKitProjects.{Attachments, Extensions, Grants, Members, Statuses}
   alias PhoenixKitProjects.Extensions.ConfigOptions
   alias PhoenixKitProjects.Schemas.Project
   alias PhoenixKitProjects.Web.Components.AccessPanel
   alias PhoenixKitProjects.Web.Components.{AssigneePicker, FormParts, TimeInput}
   alias PhoenixKitProjects.Web.Components.ConfirmAction
   alias PhoenixKitProjects.Web.Components.DescriptionEditor
+  alias PhoenixKitProjects.Web.DescriptionImages
 
   import PhoenixKitProjects.Web.Components.DescriptionEditor,
     only: [description_editor: 1, description_value: 4]
@@ -95,6 +96,15 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       |> assign_ai_translate()
       |> assign_cue_baseline()
       |> assign(dirty?: false)
+      |> DescriptionImages.allow(&description_image_target/1)
+      |> allow_upload(:project_cover,
+        accept: ~w(image/*),
+        max_entries: 1,
+        max_file_size: Attachments.description_image_max_mb() * 1_048_576,
+        auto_upload: true,
+        progress: &cover_progress/3
+      )
+      |> assign_cover()
       |> WebHelpers.keep_host_title()
 
     {:ok, socket}
@@ -990,6 +1000,9 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   # just-revealed date field even though the user has touched neither.
   # The changeset is still rebuilt so reactive bits stay in sync
   # with form state.
+  def handle_event("remove_cover", _params, %{assigns: %{live_action: :edit}} = socket),
+    do: {:noreply, put_cover(socket, nil)}
+
   def handle_event("validate", %{"project" => attrs} = params, socket) do
     selected_template = Map.get(params, "template_uuid", socket.assigns.selected_template)
     assign_type = Map.get(params, "assign_type", socket.assigns.assign_type)
@@ -2521,18 +2534,30 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               disabled={@current_lang in @ai_in_flight}
             />
 
-            <%!-- Pictures are intercepted (`uploads`) and refused: a project's description
-                 keeps no files, and a `data:` address in the text is never
-                 stored. No image button for the same reason. --%>
+            <%!-- Pictures are intercepted (`uploads`): pasted or added with
+                 the button, kept in the project's folder and placed by file
+                 (`DescriptionImages`); never a `data:` address in the text. --%>
             <.description_editor
                 id={DescriptionEditor.editor_id("project-description", @current_lang)}
                 name={DescriptionEditor.field_name("project", @current_lang, @primary_language, @multilang_enabled)}
                 value={description_value(@form, @current_lang, @primary_language, @multilang_enabled)}
+                content={
+                  PhoenixKitProjects.InlineImages.resolve(
+                    description_value(@form, @current_lang, @primary_language, @multilang_enabled),
+                    assigns[:scope],
+                    keep_missing: true
+                  )
+                }
                 placeholder={gettext("Description…")}
                 mention_context={mention_context(assigns[:project])}
                 readonly={@current_lang in @ai_in_flight}
                 uploads
                 image_button={false}
+              />
+              <DescriptionImages.button
+                :if={assigns[:uploads]}
+                uploads={assigns[:uploads]}
+                id="project-description-image"
               />
           </.words_block>
 
@@ -2632,6 +2657,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
             primary_language={@primary_language}
             ai_in_flight={@ai_in_flight}
             ai_translate={FormGlue.ai_translate_config(assigns)}
+            scope={assigns[:phoenix_kit_current_scope]}
           />
 
           <%!-- Starting point: outcome cards bundling preset + extension
@@ -3063,6 +3089,8 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               primary_language={@primary_language}
               ai_in_flight={@ai_in_flight}
               ai_translate={FormGlue.ai_translate_config(assigns)}
+              scope={assigns[:phoenix_kit_current_scope]}
+              uploads={@uploads}
             />
 
             <%!-- Whose it is (V128): the task popup's picker. --%>
@@ -3100,6 +3128,28 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
           </.form_pane>
 
           <.form_pane prefix="project" pane="settings" active={@pane}>
+              <%!-- A cover picture: optional, shown nowhere yet (the boss,
+                   2026-10-31); saved as soon as it is chosen. --%>
+              <fieldset id="project-cover-settings" class="flex flex-col gap-2 rounded-box border border-base-300 p-3">
+                <legend class="px-1 text-sm font-medium">{gettext("Cover image")}</legend>
+                <div class="flex items-center gap-3">
+                  <img
+                    :if={@cover_url}
+                    src={@cover_url}
+                    alt=""
+                    class="h-16 w-28 rounded-box border border-base-300 object-cover"
+                  />
+                  <label for={@uploads.project_cover.ref} class="btn btn-sm btn-ghost border-base-300 gap-1 font-normal">
+                    <.icon name="hero-photo" class="w-4 h-4" />
+                    {if @cover_url, do: gettext("Change"), else: gettext("Choose an image")}
+                  </label>
+                  <.live_file_input upload={@uploads.project_cover} class="hidden" />
+                  <button :if={@cover_url} type="button" phx-click="remove_cover" class="btn btn-sm btn-ghost text-error font-normal">
+                    {gettext("Remove")}
+                  </button>
+                </div>
+              </fieldset>
+
               <%!-- On Settings, not the first tab (the boss, 2026-10-31: the first
                    tab holds only what you need to set a project up). A link out (V26): where this project belongs elsewhere — the
                    order a host app made it for, a client folder. It shows as
@@ -3362,18 +3412,87 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
          DescriptionEditor.decode_context(mention_context(socket.assigns[:project]))
        )}
 
-  # An image pasted into the description: refused, never kept as a `data:`
-  # URL — a project keeps no pictures in its description, as a sub-project's editor says (the walk-through, 2026-10-31).
-  def handle_info({:leaf_paste_image, %{editor_id: "project-description--" <> _}}, socket) do
-    {:noreply,
-     put_flash(
-       socket,
-       :error,
-       gettext("A project's description cannot hold images. Add them to one of its tasks.")
-     )}
-  end
+  # An image pasted into the description: kept in the project's folder and
+  # placed at the cursor, as a task's (the boss, 2026-10-31).
+  def handle_info(
+        {:leaf_paste_image, %{editor_id: "project-description--" <> _ = id} = paste},
+        socket
+      ),
+      do: {:noreply, DescriptionImages.paste(socket, id, paste)}
 
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Where a picture for the description goes (`DescriptionImages`): the
+  # saved record's folder; nowhere before it is saved.
+  defp description_image_target(
+         %{assigns: %{live_action: :edit, project: %Project{uuid: uuid} = project}} = socket
+       )
+       when is_binary(uuid),
+       do:
+         {project,
+          DescriptionEditor.editor_id("project-description", socket.assigns[:current_lang])}
+
+  defp description_image_target(_socket), do: nil
+
+  # ── The cover picture (Settings tab) ────────────────────────────────
+  #
+  # Optional, shown nowhere yet (the boss, 2026-10-31). Kept in the
+  # project's folder and named in `settings["cover_file_uuid"]`, saved as
+  # soon as it is chosen or removed — not with the form.
+
+  defp assign_cover(%{assigns: %{project: %Project{} = project}} = socket) do
+    url =
+      with uuid when is_binary(uuid) <- Project.cover_file_uuid(project),
+           %{} = file <- PhoenixKit.Modules.Storage.get_file(uuid) do
+        Attachments.download_url(file)
+      else
+        _ -> nil
+      end
+
+    assign(socket, cover_url: url)
+  rescue
+    _ -> assign(socket, cover_url: nil)
+  end
+
+  defp assign_cover(socket), do: assign(socket, cover_url: nil)
+
+  defp cover_progress(:project_cover, %{done?: true} = entry, socket) do
+    project = socket.assigns.project
+
+    result =
+      consume_uploaded_entry(socket, entry, fn %{path: path} ->
+        {:ok,
+         Attachments.store_description_image(
+           project,
+           path,
+           [
+             filename: entry.client_name,
+             content_type: entry.client_type,
+             size_bytes: entry.client_size
+           ],
+           Activity.actor_uuid(socket)
+         )}
+      end)
+
+    case result do
+      {:ok, file} -> {:noreply, put_cover(socket, to_string(file.uuid))}
+      _ -> {:noreply, put_flash(socket, :error, gettext("Upload failed. Please try again."))}
+    end
+  end
+
+  defp cover_progress(_upload, _entry, socket), do: {:noreply, socket}
+
+  defp put_cover(%{assigns: %{project: %Project{} = project}} = socket, uuid) do
+    settings =
+      if uuid,
+        do: Map.put(project.settings || %{}, "cover_file_uuid", uuid),
+        else: Map.delete(project.settings || %{}, "cover_file_uuid")
+
+    case Projects.update_project(project, %{"settings" => settings}) do
+      {:ok, project} -> socket |> assign(project: project) |> assign_cover()
+      _ -> put_flash(socket, :error, gettext("Something went wrong. Please try again."))
+    end
+  end
 
   defp put_description(%{assigns: %{form: form}} = socket, lang, markdown) do
     %{primary_language: primary, multilang_enabled: multi?} = socket.assigns

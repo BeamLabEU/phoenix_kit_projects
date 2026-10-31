@@ -69,6 +69,41 @@ defmodule PhoenixKitProjects.InlineImages do
   def to_refs(text), do: text
 
   @doc """
+  A changeset whose description — and each translation's — keeps its
+  images by file (`to_refs/1`): a task's, a project's, a library task's.
+  A description that only reads back what it was shown is no change.
+  """
+  @spec put_refs(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  def put_refs(%Ecto.Changeset{} = changeset) do
+    changeset =
+      case Ecto.Changeset.fetch_change(changeset, :description) do
+        {:ok, text} when is_binary(text) ->
+          Ecto.Changeset.put_change(changeset, :description, to_refs(text))
+
+        _ ->
+          changeset
+      end
+
+    case Ecto.Changeset.fetch_change(changeset, :translations) do
+      {:ok, %{} = translations} ->
+        Ecto.Changeset.put_change(
+          changeset,
+          :translations,
+          Map.new(translations, fn
+            {lang, %{"description" => text} = fields} when is_binary(text) ->
+              {lang, %{fields | "description" => to_refs(text)}}
+
+            other ->
+              other
+          end)
+        )
+
+      _ ->
+        changeset
+    end
+  end
+
+  @doc """
   `text` with each image reference turned into an address `scope` may open
   (`Storage.authorized_url/4`; a private library's is a time-window one).
   An image the viewer may not see, or whose file is gone, is left out —

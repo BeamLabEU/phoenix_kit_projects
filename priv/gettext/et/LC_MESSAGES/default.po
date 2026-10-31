@@ -10633,3 +10633,15 @@ msgstr "Jah"
 
 msgid "No"
 msgstr "Ei"
+
+msgid "Cover image"
+msgstr "Kaanepilt"
+
+msgid "Choose an image"
+msgstr "Vali pilt"
+
+msgid "Only an image can be pasted here."
+msgstr "Siia saab kleepida ainult pildi."
+
+msgid "Save it first to add images."
+msgstr "Piltide lisamiseks salvesta see esmalt."

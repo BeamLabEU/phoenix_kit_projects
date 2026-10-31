@@ -181,6 +181,8 @@ defmodule PhoenixKitProjects.Schemas.Project do
     |> validate_change(:external_url, &http_url/2)
     |> validate_key()
     |> PhoenixKitProjects.RefText.expand_on_write([:description])
+    # Pictures kept by file, served per viewer (`InlineImages`).
+    |> PhoenixKitProjects.InlineImages.put_refs()
     |> validate_inclusion(:start_mode, @start_modes)
     |> validate_translations_shape()
     |> sanitize_settings()
@@ -284,6 +286,9 @@ defmodule PhoenixKitProjects.Schemas.Project do
     # default); "manual" — never on its own, ongoing work a person ends.
     # Copied onto a sub-project at creation (`Projects.create_subproject/2`).
     "completion" => &__MODULE__.completion_mode?/1,
+    # The project's cover picture (a file in its folder), optional and shown
+    # nowhere yet (the boss, 2026-10-31: "it's an option").
+    "cover_file_uuid" => &is_binary/1,
     # What an AI agent on the API may do here (`agent_policy/1` fills the
     # defaults): take over a task someone else started, reword tasks it
     # did not create, delete tasks, amend its own ledger entries.
@@ -310,6 +315,11 @@ defmodule PhoenixKitProjects.Schemas.Project do
   @doc "The completion modes: `auto` (the last task done ends it) and `manual` (ongoing)."
   @spec completion_modes() :: [String.t()]
   def completion_modes, do: @completion_modes
+
+  @doc "The file uuid of the project's cover picture, or nil."
+  @spec cover_file_uuid(t() | map()) :: String.t() | nil
+  def cover_file_uuid(%{settings: %{"cover_file_uuid" => uuid}}) when is_binary(uuid), do: uuid
+  def cover_file_uuid(_), do: nil
 
   @doc ~S|How this project ends — `"auto"` unless its settings say `"manual"`.|
   @spec completion(t() | map() | nil) :: String.t()
