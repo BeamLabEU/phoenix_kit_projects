@@ -10,6 +10,7 @@ defmodule PhoenixKitProjects.Projects do
   alias PhoenixKit.Activity.Entry, as: ActivityEntry
   alias PhoenixKit.Mentions.Token
   alias PhoenixKit.Utils.Reorder
+  alias PhoenixKitProjects.AssigneeSet
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Refs
 
@@ -2068,9 +2069,10 @@ defmodule PhoenixKitProjects.Projects do
         from(a in Assignment,
           join: p in Project,
           on: p.uuid == a.project_uuid,
+          # The person among the task's assignees (V29: several).
+          where: ^AssigneeSet.subject_exists("person", person.uuid),
           where:
-            a.assigned_person_uuid == ^person.uuid and a.status != "done" and
-              a.review_status == "accepted" and
+            a.status != "done" and a.review_status == "accepted" and
               p.is_template == false and is_nil(p.archived_at),
           order_by: [asc: a.status, asc: a.inserted_at],
           # `parent: :task` — a subtask reads as "parent / title" on a plate.
@@ -2591,9 +2593,7 @@ defmodule PhoenixKitProjects.Projects do
              "estimated_duration" => a.estimated_duration,
              "estimated_duration_unit" => a.estimated_duration_unit,
              "counts_weekends" => a.counts_weekends,
-             "assigned_team_uuid" => a.assigned_team_uuid,
-             "assigned_department_uuid" => a.assigned_department_uuid,
-             "assigned_person_uuid" => a.assigned_person_uuid
+             "assignees" => AssigneeSet.keys(a)
            },
            broadcast: false
          ) do
@@ -3158,6 +3158,10 @@ defmodule PhoenixKitProjects.Projects do
     assigned_person: [:user]
   ]
 
+  # Every assignee (V29), with what names it, in one statement per list.
+  defp assignment_preloads,
+    do: @assignment_preloads ++ [assignee_links: AssigneeSet.link_query()]
+
   @assignee_preloads [:assigned_team, :assigned_department, assigned_person: [:user]]
 
   @doc "Fetches a project with its assignee associations preloaded (V128)."
@@ -3175,7 +3179,7 @@ defmodule PhoenixKitProjects.Projects do
     Assignment
     |> where([a], a.project_uuid == ^project_uuid and a.review_status == "accepted")
     |> order_by([a], asc: a.position, asc: a.inserted_at)
-    |> preload(^@assignment_preloads)
+    |> preload(^assignment_preloads())
     |> repo().all()
   end
 
@@ -3206,7 +3210,7 @@ defmodule PhoenixKitProjects.Projects do
       Assignment
       |> where([a], a.project_uuid in ^uuids and a.review_status == "accepted")
       |> order_by([a], asc: a.position, asc: a.inserted_at)
-      |> preload(^@assignment_preloads)
+      |> preload(^assignment_preloads())
       |> repo().all()
 
     # Every asked-for uuid gets an entry, so a later lookup never re-queries.
@@ -3289,7 +3293,7 @@ defmodule PhoenixKitProjects.Projects do
     Assignment
     |> where([a], a.project_uuid == ^project_uuid and a.review_status == "pending")
     |> order_by([a], desc: a.inserted_at)
-    |> preload(^@assignment_preloads)
+    |> preload(^assignment_preloads())
     |> repo().all()
   end
 
@@ -3298,13 +3302,13 @@ defmodule PhoenixKitProjects.Projects do
   def get_assignment(id) do
     case Refs.parse(id) do
       {:uuid, uuid} ->
-        Assignment |> preload(^@assignment_preloads) |> repo().get(uuid)
+        Assignment |> preload(^assignment_preloads()) |> repo().get(uuid)
 
       {:task, key, number} ->
         with %Project{uuid: project_uuid} <- project_by_key(key) do
           Assignment
           |> where([a], a.project_uuid == ^project_uuid and a.number == ^number)
-          |> preload(^@assignment_preloads)
+          |> preload(^assignment_preloads())
           |> repo().one()
         end
 

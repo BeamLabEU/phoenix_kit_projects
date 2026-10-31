@@ -28,7 +28,7 @@ defmodule PhoenixKitProjects.TaskConversion do
   import Ecto.Query
 
   alias PhoenixKit.RepoHelper
-  alias PhoenixKitProjects.{Outline, Projects}
+  alias PhoenixKitProjects.{AssigneeSet, Outline, Projects}
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Schemas.{Assignment, Project, Task, WorkEntry}
 
@@ -126,6 +126,9 @@ defmodule PhoenixKitProjects.TaskConversion do
       "is_template" => to_string(parent.is_template),
       "start_mode" => "immediate",
       "settings" => settings,
+      # A project has one assignee: the task's when it has exactly one (its
+      # mirror columns, V29). With several the project gets none — the row
+      # keeps them all, as it keeps its other things.
       "assigned_person_uuid" => row.assigned_person_uuid,
       "assigned_team_uuid" => row.assigned_team_uuid,
       "assigned_department_uuid" => row.assigned_department_uuid
@@ -197,15 +200,21 @@ defmodule PhoenixKitProjects.TaskConversion do
             after_position: link.position
           )
 
+          # The row keeps its own assignees; with none it takes the
+          # project's one (V29: written as its set, mirror included).
+          keys =
+            case AssigneeSet.keys(link) do
+              [] -> AssigneeSet.legacy_keys(child)
+              own -> own
+            end
+
+          AssigneeSet.write_rows(repo(), link.uuid, keys)
+
           row =
             link
             |> Ecto.Changeset.change(
-              task_uuid: task.uuid,
-              child_project_uuid: nil,
-              assigned_person_uuid: link.assigned_person_uuid || assignee(link, child, :person),
-              assigned_team_uuid: link.assigned_team_uuid || assignee(link, child, :team),
-              assigned_department_uuid:
-                link.assigned_department_uuid || assignee(link, child, :department)
+              Map.to_list(AssigneeSet.mirror(keys)) ++
+                [task_uuid: task.uuid, child_project_uuid: nil]
             )
             |> Ecto.Changeset.check_constraint(:child_project_uuid,
               name: :phoenix_kit_project_assignments_task_xor_child
@@ -271,25 +280,6 @@ defmodule PhoenixKitProjects.TaskConversion do
     case %Task{} |> Task.changeset(attrs) |> repo().insert() do
       {:ok, task} -> task
       {:error, cs} -> repo().rollback(cs)
-    end
-  end
-
-  # A row with no assignee of its own takes the project's, when it has one
-  # and the row has none of any kind.
-  defp assignee(link, child, kind) do
-    if is_nil(link.assigned_person_uuid) and is_nil(link.assigned_team_uuid) and
-         is_nil(link.assigned_department_uuid) do
-      case kind do
-        :person ->
-          child.assigned_person_uuid
-
-        :team ->
-          if is_nil(child.assigned_person_uuid), do: child.assigned_team_uuid
-
-        :department ->
-          if is_nil(child.assigned_person_uuid) and is_nil(child.assigned_team_uuid),
-            do: child.assigned_department_uuid
-      end
     end
   end
 

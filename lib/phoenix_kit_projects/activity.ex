@@ -108,13 +108,21 @@ defmodule PhoenixKitProjects.Activity do
   @doc """
   Resolves an assignment's assignee to a core USER uuid for `target_uuid` —
   the field core's activity→notification bridge treats as the recipient
-  (Step 7 wiring). Person-assigned rows resolve through the staff person's
-  linked account (preloaded or by lookup); team/department/unassigned rows
-  resolve nil (multi-recipient fan-out is a later layer — the bridge is
-  one-target-per-entry). Nil-safe at every hop; a staff outage degrades to
-  nil, never blocks the mutation being logged.
+  (Step 7 wiring). Only a task whose ONE assignee is a person resolves,
+  through the staff person's linked account; a task with a team, a
+  department, several assignees (V29) or nobody resolves nil, and its
+  people are told by `Notices.tell_assignees/2` instead (one row each).
+  Nil-safe at every hop; a staff outage degrades to nil, never blocks the
+  mutation being logged.
   """
   @spec assignee_target_uuid(map() | nil) :: binary() | nil
+  def assignee_target_uuid(%PhoenixKitProjects.Schemas.Assignment{} = a) do
+    case PhoenixKitProjects.AssigneeSet.keys(a) do
+      [{"person", person_uuid}] -> person_user_uuid(person_uuid)
+      _ -> nil
+    end
+  end
+
   def assignee_target_uuid(%{assigned_person: %{user_uuid: user_uuid}})
       when is_binary(user_uuid),
       do: user_uuid
@@ -132,4 +140,15 @@ defmodule PhoenixKitProjects.Activity do
   end
 
   def assignee_target_uuid(_), do: nil
+
+  defp person_user_uuid(person_uuid) do
+    case PhoenixKitProjects.People.get_person(person_uuid, preload: []) do
+      %{user_uuid: user_uuid} when is_binary(user_uuid) -> user_uuid
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  catch
+    :exit, _ -> nil
+  end
 end

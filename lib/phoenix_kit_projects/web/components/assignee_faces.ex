@@ -59,8 +59,8 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
   "Person:" / "Team:" before it (the boss, 2026-10-30): the face or the
   icon already says which kind it is. Nothing when nobody is assigned.
 
-  `a` is anything carrying the `assigned_*` fields and their preloads (an
-  assignment, a project); `faces` is its entry from `Assignees.faces/2`.
+  `a` is an assignment (every one of its assignees, V29, names joined) or
+  a project (its one); `faces` is its entry from `Assignees.faces/2`.
   """
   attr(:a, :map, required: true)
   attr(:faces, :map, default: nil)
@@ -79,12 +79,15 @@ defmodule PhoenixKitProjects.Web.Components.AssigneeFaces do
     """
   end
 
-  # From the FIELDS, never from a translated label: the kind picks the
-  # icon in every language.
-  defp kind(%{assigned_person_uuid: uuid}) when is_binary(uuid), do: :person
-  defp kind(%{assigned_team_uuid: uuid}) when is_binary(uuid), do: :team
-  defp kind(%{assigned_department_uuid: uuid}) when is_binary(uuid), do: :department
-  defp kind(_), do: nil
+  # From the keys, never from a translated label: the kind picks the icon
+  # in every language. Several assignees show the people icon.
+  defp kind(a) do
+    case PhoenixKitProjects.People.assignee_keys(a) do
+      [] -> nil
+      [{kind, _}] -> String.to_existing_atom(kind)
+      _several -> :team
+    end
+  end
 
   defp kind_icon(:team), do: "hero-users"
   defp kind_icon(:department), do: "hero-building-office"

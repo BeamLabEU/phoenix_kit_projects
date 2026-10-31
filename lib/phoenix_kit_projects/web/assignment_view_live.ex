@@ -776,10 +776,14 @@ defmodule PhoenixKitProjects.Web.AssignmentViewLive do
 
   defp task_description(_assignment, _lang), do: nil
 
-  defp assignee_kind(%{assigned_person_uuid: p}) when is_binary(p), do: :person
-  defp assignee_kind(%{assigned_team_uuid: t}) when is_binary(t), do: :team
-  defp assignee_kind(%{assigned_department_uuid: d}) when is_binary(d), do: :department
-  defp assignee_kind(_), do: nil
+  # Whether anyone is on it, and as what (V29: several show as people).
+  defp assignee_kind(a) do
+    case PhoenixKitProjects.People.assignee_keys(a) do
+      [] -> nil
+      [{kind, _}] -> String.to_existing_atom(kind)
+      _several -> :team
+    end
+  end
 
   defp priority_label("urgent"), do: gettext("Urgent")
   defp priority_label("high"), do: gettext("High")

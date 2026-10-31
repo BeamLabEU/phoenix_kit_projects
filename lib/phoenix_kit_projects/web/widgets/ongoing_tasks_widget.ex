@@ -14,8 +14,6 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   import PhoenixKitProjects.Web.Widgets.Helpers
 
   alias PhoenixKitProjects.{Paths, Projects}
-  alias PhoenixKitProjects.People
-  alias PhoenixKitProjects.People.Person
   alias PhoenixKitProjects.Schemas.Assignment
 
   @default_limit 6
@@ -135,8 +133,8 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   end
 
   defp own_line?(%Assignment{} = a) do
-    not is_nil(a.assigned_person_uuid) or not is_nil(a.assigned_team_uuid) or
-      not is_nil(a.assigned_department_uuid) or not is_nil(a.start_date) or not is_nil(a.end_date)
+    not PhoenixKitProjects.AssigneeSet.empty?(a) or not is_nil(a.start_date) or
+      not is_nil(a.end_date)
   end
 
   defp task_label(%Assignment{} = a), do: Assignment.label_under(a) || gettext("Untitled task")
@@ -145,8 +143,13 @@ defmodule PhoenixKitProjects.Web.Widgets.OngoingTasksWidget do
   defp dot_class("done"), do: "bg-success"
   defp dot_class(_), do: "bg-base-300"
 
-  defp assignee(%{assigned_team: %{name: n}}) when is_binary(n), do: n
-  defp assignee(%{assigned_department: %{name: n}}) when is_binary(n), do: n
-  defp assignee(%{assigned_person: %Person{} = p}), do: People.display_name(p)
+  # Every assignee (V29), in chip order.
+  defp assignee(%Assignment{} = a) do
+    case PhoenixKitProjects.AssigneeSet.names(a) do
+      [] -> nil
+      names -> Enum.join(names, ", ")
+    end
+  end
+
   defp assignee(_), do: nil
 end
