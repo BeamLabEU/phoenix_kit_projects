@@ -6956,6 +6956,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
             "pubsub_topic" => @embed_pubsub_topic,
             "placement" => "end",
             "open" => popup_open(assigns),
+            # The page's own address is ours: the open task rides in it.
+            "url_param" => "task",
             "wrapper_class" => "contents",
             "locale" => L10n.current_content_lang(),
             "current_user_uuid" =>

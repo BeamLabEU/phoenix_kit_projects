@@ -1550,18 +1550,21 @@ matches the top frame.
 | `"root_view"` | `nil` | The LV rendered as the host's base frame |
 | `"placement"` | `"center"` | `"end"` renders every frame as a full-height right-hand sheet |
 | `"max_width"` | `6xl` centered, `2xl` as a drawer | any core `max_width` value (`sm` … `7xl`, `full`) |
+| `"url_param"` | `nil` (off) | Name of the HOST page's query parameter that carries the open task (e.g. `"task"`, `"pk_task"`; a letter, then letters, digits, `_`, `-`, at most 32). Absent or invalid: the address is neither written nor read |
 
 `PopupHostLive` forwards `current_user_uuid` and `locale` into every child
 session, so a popup-host integration passes the viewer's uuid once.
 
-⚠️ **`PopupHostLive` writes the open task into the HOST page's address**
-(`?task=KEY-12`, hook `PkpDrawerUrl`; boss item 21 asked for it inside the
-order page): opening a task's view or edit form `pushState`s it, closing
-drops it, Back closes the drawer, and a `?task=` (a `KEY-n` or a uuid) present
-when the host mounts opens that task (`"pkp_url_task"`; who may see it is the
-view's own check). Unlike `tab_url_sync` this has no session switch and is on
-in every embed, and the parameter name is not namespaced — a host page using
-`?task=` itself must know. Only the `task` parameter is touched.
+**The open task in the HOST page's address is opt-in** (`"url_param"`, Max
+2026-10-31: off by default, the host names the parameter; boss item 21 asked
+for it inside the order page). With it, e.g. `"url_param" => "task"`,
+opening a task's view or edit form `pushState`s `?task=KEY-12` (hook
+`PkpDrawerUrl`, `data-param`), closing drops it, Back closes the drawer, and
+the parameter present when the host mounts opens that task (`"pkp_url_task"`;
+who may see it is the view's own check). Only that one parameter is touched.
+Without it nothing is written to the address and a `"pkp_url_task"` event is
+ignored. The module's own routed project page passes `"url_param" => "task"`
+to its drawer, so `/admin/projects/<id>?task=KEY-12` works as before.
 
 #### A project kept on a host record (an order): the `"embedded"` preset
 

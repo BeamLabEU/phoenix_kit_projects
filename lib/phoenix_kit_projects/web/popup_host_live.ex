@@ -49,6 +49,11 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     for the drawer.
   - `"modal_box_class"` (optional) — extra classes on every frame's
     `modal-box` (a host that wants a specific width or padding).
+  - `"url_param"` (optional, off by default) — the name of the parameter
+    of the HOST page's address that carries the open task (`"task"`,
+    `"pk_task"`, …: letters, digits, `_` and `-`, a letter first, at most
+    32). Absent, nothing is written to the address and nothing is read
+    from it. See "A task in the page's address".
 
   ## Example: dashboard root view (`OverviewLive`)
 
@@ -92,8 +97,12 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
 
   ## A task in the page's address
 
-  A task's view or edit form open in a frame puts the task in the PAGE's
-  URL — `?task=ACME-12`, the host's own path and other parameters kept —
+  Only when the host asks for it with `"url_param"` (Max, 2026-10-31:
+  "by default, it's off, but they can turn it on, and they can even change
+  what … goes into the URL"); the module's own project page asks for
+  `"task"`. A task's view or edit form open in a frame puts the task in
+  the PAGE's URL — `?task=ACME-12` (the host's name for the parameter),
+  the host's own path and other parameters kept —
   so a reload or a shared link opens it again, and the browser's Back
   closes the frame instead of leaving the page (the boss, 2026-10-30, on
   an order page: "he refreshed the page, and the task is closed"). The
@@ -102,7 +111,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   (or drops the parameter when the page was loaded with it). A `?task=`
   in the address when the host mounts opens that task (`"pkp_url_task"`),
   read by the hook since an embedded LiveView never sees the host's URL.
-  Only the `task` parameter is ever written.
+  Only that one parameter is ever written.
   """
 
   use Phoenix.LiveView, layout: false
@@ -154,6 +163,7 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
     modal_box_class = Map.get(session, "modal_box_class")
     placement = decode_placement(Map.get(session, "placement"))
     max_width = decode_max_width(Map.get(session, "max_width"), placement)
+    url_param = decode_url_param(Map.get(session, "url_param"))
 
     if connected?(socket) do
       ProjectsPubSub.subscribe(topic)
@@ -173,10 +183,19 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
        modal_box_class: modal_box_class,
        placement: placement,
        max_width: max_width,
+       url_param: url_param,
        modal_stack: [],
        root_view: root_view
      )}
   end
+
+  # The host's name for the address parameter, or nil (off). A plain name,
+  # so it can sit in a query string and a data attribute as it is.
+  defp decode_url_param(name) when is_binary(name) do
+    if Regex.match?(~r/\A[A-Za-z][A-Za-z0-9_-]{0,31}\z/, name), do: name
+  end
+
+  defp decode_url_param(_), do: nil
 
   defp decode_placement("end"), do: :end
   defp decode_placement(_), do: :center
@@ -518,6 +537,10 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
   # entry the frame pushed, so the task's frames close (and whatever was
   # opened over them); a ref — a reload or a link: that task's view opens,
   # unless it is already the one on top.
+  # Off (no `"url_param"`): the address is not this host's to read.
+  def handle_event("pkp_url_task", _params, %{assigns: %{url_param: nil}} = socket),
+    do: {:noreply, socket}
+
   def handle_event("pkp_url_task", %{"task" => ""}, socket) do
     {:noreply, close_task_frames(socket)}
   end
@@ -689,10 +712,13 @@ defmodule PhoenixKitProjects.Web.PopupHostLive do
         )}
       </:frame>
     </.popup_host>
-    <%!-- The open task in the page's address (`PkpDrawerUrl`). --%>
+    <%!-- The open task in the page's address (`PkpDrawerUrl`), only
+         when the host named the parameter. --%>
     <div
+      :if={@url_param}
       id={"pkp-drawer-url-#{topic_suffix(@host_topic)}"}
       phx-hook="PkpDrawerUrl"
+      data-param={@url_param}
       data-task={top_task_ref(@modal_stack) || ""}
       hidden
     >

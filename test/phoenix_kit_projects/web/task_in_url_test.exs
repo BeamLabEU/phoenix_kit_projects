@@ -2,8 +2,10 @@ defmodule PhoenixKitProjects.Web.TaskInUrlTest do
   @moduledoc """
   Item 21: the task open in a drawer is in the page's address (`?task=`),
   so a reload or a link opens it again and Back closes it (`PopupHostLive`
-  + the `PkpDrawerUrl` hook); and the language comes from the URL, never
-  from a `"locale"` left in the browser's session.
+  + the `PkpDrawerUrl` hook) — in an embed only when the host names the
+  parameter (`"url_param"`, Max 2026-10-31: off by default); and the
+  language comes from the URL, never from a `"locale"` left in the
+  browser's session.
   """
 
   use PhoenixKitProjects.LiveCase, async: false
@@ -41,23 +43,75 @@ defmodule PhoenixKitProjects.Web.TaskInUrlTest do
      a: a}
   end
 
-  defp host(ctx) do
+  defp host(ctx, extra \\ %{"url_param" => "task"}) do
     topic = "task-url-#{System.unique_integer([:positive])}"
 
     {:ok, view, _html} =
       live_isolated(ctx.conn, PhoenixKitProjects.Web.PopupHostLive,
-        session: %{
-          "pubsub_topic" => topic,
-          "placement" => "end",
-          "current_user_uuid" => ctx.user.uuid,
-          "root_view" => %{
-            "lv" => "Elixir.PhoenixKitProjects.Web.ProjectShowLive",
-            "session" => %{"id" => ctx.project.uuid}
-          }
-        }
+        session:
+          Map.merge(
+            %{
+              "pubsub_topic" => topic,
+              "placement" => "end",
+              "current_user_uuid" => ctx.user.uuid,
+              "root_view" => %{
+                "lv" => "Elixir.PhoenixKitProjects.Web.ProjectShowLive",
+                "session" => %{"id" => ctx.project.uuid}
+              }
+            },
+            extra
+          )
       )
 
     {view, topic}
+  end
+
+  defp open_view(ctx, topic) do
+    ProjectsPubSub.broadcast_embed(topic, :opened, %{
+      lv: PhoenixKitProjects.Web.AssignmentViewLive,
+      session: ProjectShowLive.view_session(%{project_uuid: ctx.project.uuid, uuid: ctx.a.uuid}),
+      frame_ref: nil
+    })
+  end
+
+  describe "an embed that names no parameter (the default)" do
+    test "no address hook, and a forged address event opens nothing", ctx do
+      {view, topic} = host(ctx, %{})
+      refute has_element?(view, ~s([phx-hook="PkpDrawerUrl"]))
+
+      open_view(ctx, topic)
+      assert render(view) =~ "<dialog"
+      refute has_element?(view, ~s([phx-hook="PkpDrawerUrl"]))
+
+      # Nothing is read from the address either.
+      render_hook(view, "pkp_url_task", %{"task" => ""})
+      assert render(view) =~ "<dialog"
+    end
+
+    test "an address ref is not read", ctx do
+      {view, _topic} = host(ctx, %{})
+      render_hook(view, "pkp_url_task", %{"task" => Assignment.row_ref(ctx.a)})
+      refute render(view) =~ "<dialog"
+    end
+
+    test "a name that is not a plain parameter name is off", ctx do
+      {view, _topic} = host(ctx, %{"url_param" => "task\"><script>"})
+      refute has_element?(view, ~s([phx-hook="PkpDrawerUrl"]))
+    end
+  end
+
+  test "the host picks the parameter's name", ctx do
+    {view, topic} = host(ctx, %{"url_param" => "pk_task"})
+    assert has_element?(view, ~s([phx-hook="PkpDrawerUrl"][data-param="pk_task"]))
+
+    open_view(ctx, topic)
+    ref = Assignment.row_ref(ctx.a)
+    assert has_element?(view, ~s([phx-hook="PkpDrawerUrl"][data-task="#{ref}"]))
+  end
+
+  test "the project's own page keeps ?task=", ctx do
+    {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}")
+    assert has_element?(view, ~s([phx-hook="PkpDrawerUrl"][data-param="task"]))
   end
 
   test "opening a task's view puts its ref in the address hook", ctx do
