@@ -103,7 +103,8 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
       t = PhoenixKitProjects.CalendarDisplay.translations()
       Gettext.put_locale(PhoenixKitProjects.Gettext, "en")
 
-      assert t.month_names[10] == "Oktoober"
+      # Estonian month names are lower-case (3b4489b).
+      assert t.month_names[10] == "oktoober"
       assert t.day_names[2] == "Teisipäev"
       assert t.day_names_short[1] == "E"
       assert t.day_names_narrow[4] == "N"

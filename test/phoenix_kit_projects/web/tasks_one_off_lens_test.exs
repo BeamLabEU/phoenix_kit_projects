@@ -65,9 +65,9 @@ defmodule PhoenixKitProjects.Web.TasksOneOffLensTest do
     {:ok, view, _html} = live(conn, "/en/admin/projects/#{p.uuid}/assignments/new")
     # Create new is the default tab; the picker lives under From library.
     html = view |> element("button[phx-value-tab='existing']") |> render_click()
-    [select] = Regex.run(~r/<select[^>]*name="assignment\[task_uuid\]"[^>]*>.*?<\/select>/s, html)
-    assert select =~ "Offered"
-    refute select =~ "Not offered"
+    [picker] = Regex.run(~r/<div id="library-picker-.*?<\/ul>\s*<\/section>\s*<\/div>/s, html)
+    assert picker =~ "Offered"
+    refute picker =~ "Not offered"
   end
 
   test "the edit form can promote a one-off task with its checkbox", %{conn: conn} do
