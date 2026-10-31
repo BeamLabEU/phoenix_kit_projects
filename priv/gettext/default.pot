@@ -10641,6 +10641,7 @@ msgid "Only an image can be pasted here."
 msgstr ""
 
 msgid "Save it first to add images."
+msgstr ""
 
 msgid "Browse more"
 msgstr ""
