@@ -188,7 +188,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
   end
 
   describe "assignee" do
-    test "the picker finds teams, and picking one sets only the team", ctx do
+    test "the picker finds teams; ticking one beside the person, then the person off", ctx do
       bob = person!("Bob")
 
       {:ok, a} =
@@ -202,22 +202,31 @@ defmodule PhoenixKitProjects.Web.AssignmentFormTabsTest do
           department_uuid: dept.uuid
         })
 
-      {:ok, view, html} = edit(ctx.conn, ctx.project, a)
-      refute html =~ ~s(name="assign_type" value="team")
-      assert has_element?(view, "#assignment-assignee-chosen", "Bob")
+      {:ok, view, _html} = edit(ctx.conn, ctx.project, a)
+      assert has_element?(view, "#assignment-assignee-chip-person-#{bob.uuid}", "Bob")
 
-      render_click(view, "assignee_search", %{"q" => "Crew"})
-      assert_push_event(view, "assignee_results", %{results: rows})
-      assert Enum.any?(rows, &(&1.kind == "team" and &1.uuid == team.uuid))
+      render_change(view, "assignee_query", %{"assignee_q" => "Crew"})
 
-      render_click(view, "assignee_pick", %{
-        "kind" => "team",
-        "uuid" => team.uuid,
-        "label" => team.name
-      })
+      assert has_element?(
+               view,
+               "#assignment-assignee-options [data-assignee='team:#{team.uuid}']"
+             )
 
-      assert has_element?(view, "#assignment-assignee-chosen", team.name)
+      render_click(view, "assignee_toggle", %{"kind" => "team", "uuid" => team.uuid})
+      assert has_element?(view, "#assignment-assignee-chip-team-#{team.uuid}", team.name)
+      autosave(view)
 
+      saved = Projects.get_assignment(a.uuid)
+
+      assert PhoenixKitProjects.AssigneeSet.keys(saved) == [
+               {"person", bob.uuid},
+               {"team", team.uuid}
+             ]
+
+      # Several: the single columns are empty.
+      assert saved.assigned_person_uuid == nil and saved.assigned_team_uuid == nil
+
+      render_click(view, "assignee_toggle", %{"kind" => "person", "uuid" => bob.uuid})
       autosave(view)
       saved = Projects.get_assignment(a.uuid)
       assert saved.assigned_team_uuid == team.uuid

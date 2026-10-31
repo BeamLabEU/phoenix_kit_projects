@@ -429,6 +429,7 @@ defmodule PhoenixKitProjects.Handoffs do
         }
       )
       |> RepoHelper.repo().all()
+      |> with_assignee_sets()
       |> Map.new(&{&1.uuid, &1})
 
     pairs =
@@ -484,4 +485,11 @@ defmodule PhoenixKitProjects.Handoffs do
   end
 
   defp label(shape, uuid), do: get_in(shape.rows, [uuid, :label]) || ""
+
+  # Each row's assignees (V29: several), read for the whole project at once
+  # so telling them costs no read per row (`AssigneeSet.keys/1` takes them).
+  defp with_assignee_sets(rows) do
+    keys = rows |> Enum.map(& &1.uuid) |> PhoenixKitProjects.AssigneeSet.keys_by_task()
+    Enum.map(rows, &Map.put(&1, :assignee_keys, Map.get(keys, &1.uuid, [])))
+  end
 end

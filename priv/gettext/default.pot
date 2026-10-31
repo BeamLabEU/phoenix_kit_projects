@@ -10641,4 +10641,15 @@ msgid "Only an image can be pasted here."
 msgstr ""
 
 msgid "Save it first to add images."
+
+msgid "Browse more"
+msgstr ""
+
+msgid "Back"
+msgstr ""
+
+msgid "Search results"
+msgstr ""
+
+msgid "is not a list of assignees"
 msgstr ""

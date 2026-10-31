@@ -36,7 +36,7 @@ defmodule PhoenixKitProjects.Notices do
   alias PhoenixKit.Users.Auth.Scope
   alias PhoenixKit.Users.Auth.User
   alias PhoenixKit.Utils.RecipientLocale
-  alias PhoenixKitProjects.{Activity, Authz, L10n, Paths, Projects}
+  alias PhoenixKitProjects.{Activity, AssigneeSet, Authz, L10n, Paths, Projects}
   alias PhoenixKitProjects.Schemas.{Assignment, Project}
 
   @task_actions ~w(projects.assignment_created projects.assignment_updated
@@ -306,11 +306,14 @@ defmodule PhoenixKitProjects.Notices do
   """
   @spec reassigned(Assignment.t(), Assignment.t(), binary() | nil, map()) :: boolean()
   def reassigned(%Assignment{} = was, %Assignment{} = now, actor_uuid, extra \\ %{}) do
-    if assignee_key(was) == assignee_key(now) do
+    was_keys = AssigneeSet.keys(was)
+    now_keys = AssigneeSet.keys(now)
+
+    if MapSet.new(was_keys) == MapSet.new(now_keys) do
       false
     else
       fresh = Projects.get_assignment(now.uuid) || now
-      to = PhoenixKitProjects.People.assignee_name(fresh) || ""
+      to = PhoenixKitProjects.People.assignee_name(%{fresh | assignee_keys: now_keys}) || ""
       from_name = PhoenixKitProjects.People.assignee_name(was) || ""
 
       result =
@@ -329,8 +332,12 @@ defmodule PhoenixKitProjects.Notices do
           _ -> extra
         end
 
-      new_people = PhoenixKitProjects.People.assignee_user_uuids(fresh)
-      old_people = PhoenixKitProjects.People.assignee_user_uuids(was) -- new_people
+      # Only who came onto it and who left it (V29: adding a second person
+      # is not taking it from the first).
+      now_users = PhoenixKitProjects.People.user_uuids_for(now_keys)
+      was_users = PhoenixKitProjects.People.user_uuids_for(was_keys)
+      new_people = now_users -- was_users
+      old_people = was_users -- now_users
 
       notify("projects.assignment_reassigned", fresh,
         actor_uuid: actor_uuid,
@@ -360,9 +367,10 @@ defmodule PhoenixKitProjects.Notices do
   """
   @spec removing(Assignment.t(), binary() | nil, map(), (-> result)) :: result when result: term()
   def removing(%Assignment{} = a, actor_uuid, extra \\ %{}, delete) when is_function(delete, 0) do
+    # Their assignees are read now too: the delete takes the rows with it.
     branch =
       try do
-        [a | PhoenixKitProjects.Outline.rows_below(a)]
+        AssigneeSet.preload([a | PhoenixKitProjects.Outline.rows_below(a)])
       rescue
         _ -> [a]
       end
@@ -385,9 +393,6 @@ defmodule PhoenixKitProjects.Notices do
       Logger.warning("[Projects] removal notice failed: #{inspect(error.__struct__)}")
       :ok
   end
-
-  defp assignee_key(a),
-    do: {a.assigned_person_uuid, a.assigned_team_uuid, a.assigned_department_uuid}
 
   @doc false
   # The one line, in the current Gettext locale. Public for the tests.

@@ -4487,11 +4487,10 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # Which kind of assignee a row has, from the fields — only ever asked
   # whether there is one; the name is shown by `assignee_shown/1`.
   defp assignee_type(a) do
-    cond do
-      a.assigned_person_uuid -> :person
-      a.assigned_team_uuid -> :team
-      a.assigned_department_uuid -> :department
-      true -> nil
+    case PhoenixKitProjects.People.assignee_keys(a) do
+      [] -> nil
+      [{kind, _}] -> String.to_existing_atom(kind)
+      _several -> :team
     end
   end
 

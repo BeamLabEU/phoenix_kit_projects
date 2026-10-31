@@ -319,9 +319,8 @@ defmodule PhoenixKitProjects.Repeats do
         "estimated_duration" => a.estimated_duration,
         "estimated_duration_unit" => a.estimated_duration_unit,
         "counts_weekends" => a.counts_weekends,
-        "assigned_person_uuid" => a.assigned_person_uuid,
-        "assigned_team_uuid" => a.assigned_team_uuid,
-        "assigned_department_uuid" => a.assigned_department_uuid,
+        # Every assignee comes back with it (V29: several).
+        "assignees" => PhoenixKitProjects.AssigneeSet.keys(a),
         "start_date" => shift_date(a.start_date, rule),
         "end_date" => shift_date(a.end_date, rule),
         "start_time" => a.start_time,

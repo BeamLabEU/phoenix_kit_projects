@@ -10702,3 +10702,15 @@ msgstr "Tutaj można wkleić tylko obraz."
 
 msgid "Save it first to add images."
 msgstr "Najpierw zapisz, aby dodać obrazy."
+
+msgid "Browse more"
+msgstr "Pokaż więcej"
+
+msgid "Back"
+msgstr "Wstecz"
+
+msgid "Search results"
+msgstr "Wyniki wyszukiwania"
+
+msgid "is not a list of assignees"
+msgstr "nie jest listą wykonawców"

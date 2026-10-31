@@ -10645,3 +10645,15 @@ msgstr "Seule une image peut être collée ici."
 
 msgid "Save it first to add images."
 msgstr "Enregistrez d'abord pour ajouter des images."
+
+msgid "Browse more"
+msgstr "Voir plus"
+
+msgid "Back"
+msgstr "Retour"
+
+msgid "Search results"
+msgstr "Résultats de recherche"
+
+msgid "is not a list of assignees"
+msgstr "n'est pas une liste de responsables"

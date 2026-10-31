@@ -55,6 +55,14 @@ defmodule PhoenixKitProjects.Web.Helpers do
           PhoenixKitProjects.Schemas.Assignment.t()
           | PhoenixKitProjects.Schemas.Project.t()
         ) :: String.t() | nil
+  def assignee_label(%PhoenixKitProjects.Schemas.Assignment{} = a) do
+    # Every assignee (V29), in chip order.
+    case PhoenixKitProjects.AssigneeSet.names(a) do
+      [] -> nil
+      names -> Enum.join(names, ", ")
+    end
+  end
+
   def assignee_label(a) do
     cond do
       a.assigned_person && a.assigned_person.user ->

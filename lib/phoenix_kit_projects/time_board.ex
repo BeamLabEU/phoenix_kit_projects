@@ -36,6 +36,7 @@ defmodule PhoenixKitProjects.TimeBoard do
 
   alias PhoenixKitProjects.{
     Activity,
+    AssigneeSet,
     Authz,
     Extensions,
     Features,
@@ -210,8 +211,7 @@ defmodule PhoenixKitProjects.TimeBoard do
     # The assignees of the unscheduled tasks too: the strip counts their
     # tasks on their row, so the row must be there.
     known_people =
-      (people ++
-         Enum.flat_map(assignments ++ unscheduled_in, &List.wrap(loaded(&1.assigned_person))))
+      (people ++ Enum.flat_map(assignments ++ unscheduled_in, &assigned_people/1))
       |> Enum.reject(&trashed?/1)
       |> Enum.uniq_by(& &1.uuid)
 
@@ -232,14 +232,10 @@ defmodule PhoenixKitProjects.TimeBoard do
       |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
       |> Map.new(fn {k, lines} -> {k, Enum.sort_by(lines, &line_sort_key/1)} end)
 
+    # A task with several assignees counts on each of their rows.
     unscheduled =
       unscheduled_in
-      |> Enum.flat_map(fn a ->
-        case assignee_key(a) do
-          nil -> []
-          key -> [{key, a}]
-        end
-      end)
+      |> Enum.flat_map(fn a -> Enum.map(row_keys(a), &{&1, a}) end)
       |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
 
     people_by_uuid = Map.new(known_people, &{&1.uuid, &1})
@@ -316,46 +312,69 @@ defmodule PhoenixKitProjects.TimeBoard do
 
   defp starter_person(_a, _by_actor), do: nil
 
-  # Which rows an assignment's lines go to.
+  # Which rows an assignment's lines go to. Several assignees (V29): each
+  # person's own line carries only their own entries, and an entry nobody
+  # on a row logged stays on ONE line — the hours are never counted twice.
   defp place(a, entries, by_actor, now, lang) do
     base = base_line(a, now, lang)
+    keys = row_keys(a)
+    persons = for {:person, u} <- keys, do: u
+    groups = Enum.reject(keys, &match?({:person, _}, &1))
 
-    case assignee_key(a) do
-      {:person, _} = key ->
-        [{key, %{base | logged: Enum.map(entries, &entry/1), role: :own}}]
-
-      nil ->
+    case {persons, groups} do
+      {[], []} ->
         # Unassigned: only what someone actually did on it is anyone's time.
         a
         |> workers(entries, by_actor)
         |> Enum.map(fn {person, mine} -> worker_line(base, person, mine, a, nil) end)
 
-      group_key ->
-        workers = workers(a, entries, by_actor)
-        worker_uuids = Enum.map(workers, fn {p, _} -> p.uuid end)
-        placed? = &(match?(%{}, &1) and &1.uuid in worker_uuids)
-        starter_placed? = placed?.(starter_person(a, by_actor))
+      {[u], []} ->
+        [{{:person, u}, %{base | logged: Enum.map(entries, &entry/1), role: :own}}]
 
-        # Logged by someone the board can't put on a row stays on the plan line.
-        stray = Enum.reject(entries, &placed?.(actor_person(&1, by_actor)))
-
-        plan_line = %{
-          base
-          | actual: if(starter_placed?, do: nil, else: base.actual),
-            live?: base.live? and not starter_placed?,
-            late: if(starter_placed?, do: nil, else: base.late),
-            logged: Enum.map(stray, &entry/1),
-            role: :plan,
-            worked_by: Enum.map(workers, fn {p, _} -> People.display_name(p) end)
-        }
-
-        [
-          {group_key, plan_line}
-          | Enum.map(workers, fn {person, mine} ->
-              worker_line(base, person, mine, a, group_name(a))
-            end)
-        ]
+      _ ->
+        shared_lines(a, base, entries, by_actor, persons, groups)
     end
+  end
+
+  defp shared_lines(a, base, entries, by_actor, persons, groups) do
+    workers = workers(a, entries, by_actor)
+    others = Enum.reject(workers, fn {p, _} -> p.uuid in persons end)
+    placed = persons ++ Enum.map(others, fn {p, _} -> p.uuid end)
+    placed? = &(match?(%{}, &1) and &1.uuid in placed)
+    starter_placed? = placed?.(starter_person(a, by_actor))
+    stray = Enum.reject(entries, &placed?.(actor_person(&1, by_actor)))
+    via = group_name(a)
+
+    own =
+      persons
+      |> Enum.with_index()
+      |> Enum.map(fn {u, i} ->
+        mine = Enum.filter(entries, &match?(%{uuid: ^u}, actor_person(&1, by_actor)))
+        # With no group to hold them, the stray entries go on the first.
+        mine = if groups == [] and i == 0, do: mine ++ stray, else: mine
+        {{:person, u}, %{base | logged: Enum.map(mine, &entry/1), role: :own}}
+      end)
+
+    plans =
+      groups
+      |> Enum.with_index()
+      |> Enum.map(fn {key, i} ->
+        {key,
+         %{
+           base
+           | actual: if(starter_placed?, do: nil, else: base.actual),
+             live?: base.live? and not starter_placed?,
+             late: if(starter_placed?, do: nil, else: base.late),
+             logged: if(i == 0, do: Enum.map(stray, &entry/1), else: []),
+             role: :plan,
+             worked_by: Enum.map(workers, fn {p, _} -> People.display_name(p) end)
+         }}
+      end)
+
+    workers_lines =
+      Enum.map(others, fn {person, mine} -> worker_line(base, person, mine, a, via) end)
+
+    own ++ plans ++ workers_lines
   end
 
   # The people who did work on `a`: whoever started it, and whoever logged
@@ -523,28 +542,58 @@ defmodule PhoenixKitProjects.TimeBoard do
   defp in_range?(t, {rs, re}),
     do: NaiveDateTime.compare(t, rs) != :lt and NaiveDateTime.compare(t, re) == :lt
 
-  @doc "The row an assignment's plan belongs to, or nil when unassigned."
+  @doc """
+  The rows an assignment's plan belongs to — one per assignee (V29), in
+  chip order; `[]` when unassigned.
+  """
+  @spec row_keys(Assignment.t()) :: [row_key()]
+  def row_keys(a) do
+    a
+    |> AssigneeSet.keys()
+    |> Enum.map(fn {kind, u} -> {String.to_existing_atom(kind), u} end)
+  end
+
+  @doc "The first row an assignment's plan belongs to, or nil when unassigned."
   @spec assignee_key(Assignment.t()) :: row_key() | nil
-  def assignee_key(%{assigned_person_uuid: u}) when is_binary(u), do: {:person, u}
-  def assignee_key(%{assigned_team_uuid: u}) when is_binary(u), do: {:team, u}
-  def assignee_key(%{assigned_department_uuid: u}) when is_binary(u), do: {:department, u}
-  def assignee_key(_), do: nil
+  def assignee_key(a), do: a |> row_keys() |> List.first()
 
   defp group_names(assignments) do
     Enum.reduce(assignments, %{}, fn a, acc ->
-      case {assignee_key(a), group_name(a)} do
-        {{kind, _} = key, name} when kind != :person and is_binary(name) ->
-          Map.put(acc, key, name)
-
-        _ ->
-          acc
-      end
+      a
+      |> group_links()
+      |> Enum.reduce(acc, fn {key, name}, acc -> Map.put(acc, key, name) end)
     end)
   end
 
-  defp group_name(%{assigned_team: %Team{name: n}}), do: n
-  defp group_name(%{assigned_department: %Department{name: n}}), do: n
-  defp group_name(_), do: nil
+  # `{row_key, name}` of a task's teams and departments.
+  defp group_links(%Assignment{assignee_links: links}) when is_list(links) do
+    Enum.flat_map(links, fn
+      %{team: %Team{uuid: u, name: n}} when is_binary(n) -> [{{:team, u}, n}]
+      %{department: %Department{uuid: u, name: n}} when is_binary(n) -> [{{:department, u}, n}]
+      _ -> []
+    end)
+  end
+
+  defp group_links(%{assigned_team: %Team{uuid: u, name: n}}) when is_binary(n),
+    do: [{{:team, u}, n}]
+
+  defp group_links(%{assigned_department: %Department{uuid: u, name: n}}) when is_binary(n),
+    do: [{{:department, u}, n}]
+
+  defp group_links(_), do: []
+
+  defp group_name(a) do
+    case group_links(a) do
+      [{_key, name} | _] -> name
+      _ -> nil
+    end
+  end
+
+  # The people named on a task (loaded with their account).
+  defp assigned_people(%Assignment{assignee_links: links}) when is_list(links),
+    do: for(%{person: %Person{} = p} <- links, do: p)
+
+  defp assigned_people(a), do: List.wrap(loaded(a.assigned_person))
 
   @doc "A task's display title in `lang`."
   @spec title(Assignment.t(), String.t() | nil) :: String.t()
@@ -659,7 +708,13 @@ defmodule PhoenixKitProjects.TimeBoard do
     end
   end
 
-  @preloads [:project, :task, :assigned_team, :assigned_department, assigned_person: :user]
+  @preloads [
+    :project,
+    :task,
+    :assigned_team,
+    :assigned_department,
+    assigned_person: :user
+  ]
 
   defp read_assignments(projects, from, to, now) do
     start_utc = wall_utc(NaiveDateTime.new!(from, ~T[00:00:00]))
@@ -683,6 +738,7 @@ defmodule PhoenixKitProjects.TimeBoard do
     |> base_query()
     |> where(^cond)
     |> preload(^@preloads)
+    |> preload(assignee_links: ^AssigneeSet.link_query())
     |> RepoHelper.repo().all()
   end
 
@@ -753,12 +809,12 @@ defmodule PhoenixKitProjects.TimeBoard do
     |> where(
       [a],
       a.status != "done" and is_nil(a.deadline) and is_nil(a.start_date) and is_nil(a.end_date) and
-        is_nil(a.started_at) and
-        (not is_nil(a.assigned_person_uuid) or not is_nil(a.assigned_team_uuid) or
-           not is_nil(a.assigned_department_uuid))
+        is_nil(a.started_at)
     )
+    |> where(^AssigneeSet.any_exists())
     |> limit(@unscheduled_cap)
     |> preload(^@preloads)
+    |> preload(assignee_links: ^AssigneeSet.link_query())
     |> RepoHelper.repo().all()
   end
 
