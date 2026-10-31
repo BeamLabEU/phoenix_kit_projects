@@ -1732,8 +1732,11 @@ reference:
   that names no one releases nothing.
 - **Task ⇄ sub-project in place** (`TaskConversion`): needs `:edit_tasks` +
   `:create_tasks` on the project the row sits in (an expanded sub-project's
-  task is converted in ITS project), and, back to a task, `:archive_project`
-  on the sub-project (it is archived and its tasks move into the list).
+  task is converted in ITS project), and, back to a task, `:edit_tasks` in
+  BOTH the project the row sits in and the sub-project (Max, 2026-10-31:
+  "Go with B"); the sub-project is archived as part of the conversion under
+  that rule, not the owner-level `:archive_project`, and its tasks move
+  into the list.
 - **A task's files** (`Attachments.store_task_file/…`, V27,
   `Web.Components.TaskFiles`, registered in `FileReferences`): stored through
   core Storage in a folder per task; each upload, paste and removal re-checks

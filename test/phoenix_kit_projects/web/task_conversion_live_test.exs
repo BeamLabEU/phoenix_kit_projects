@@ -139,29 +139,72 @@ defmodule PhoenixKitProjects.Web.TaskConversionLiveTest do
   end
 
   # Back to a task archives the sub-project and moves its tasks into this
-  # list: the archive right on the sub-project is asked, not only the edit
-  # rights on this page's project. A manager here is not an owner there.
-  test "a manager of the parent cannot fold a sub-project they may not archive", ctx do
-    {:ok, %{child_project: child, assignment: link}} =
-      Projects.create_subproject(ctx.project.uuid, %{"name" => "Doors"})
+  # list: it takes the right to edit tasks in BOTH projects (Max,
+  # 2026-10-31: "Go with B"), not the owner-level archive right.
+  describe "a sub-project made a task again" do
+    setup ctx do
+      {:ok, %{child_project: child, assignment: link}} =
+        Projects.create_subproject(ctx.project.uuid, %{"name" => "Doors"})
 
-    {:ok, manager} =
-      Auth.register_user(%{
-        "email" => "manager-#{System.unique_integer([:positive])}@example.com",
-        "password" => "ManagerPass123!"
-      })
+      {:ok, manager} =
+        Auth.register_user(%{
+          "email" => "manager-#{System.unique_integer([:positive])}@example.com",
+          "password" => "ManagerPass123!"
+        })
 
-    {:ok, _} = Members.add_member(ctx.project, manager.uuid, role: "manager")
+      {:ok, _} = Members.add_member(ctx.project, manager.uuid, role: "manager")
 
-    conn =
-      put_test_scope(build_conn(), fake_scope(user_uuid: manager.uuid, permissions: ["projects"]))
+      scope = fake_scope(user_uuid: manager.uuid, permissions: ["projects"])
+      conn = put_test_scope(build_conn(), scope)
 
-    {:ok, view, _html} = live(conn, "/en/admin/projects/#{ctx.project.uuid}")
+      {:ok, child: child, link: link, manager: manager, manager_conn: conn, manager_scope: scope}
+    end
 
-    assert render_click(view, "make_task", %{"uuid" => link.uuid}) =~
-             "You do not have permission to do that."
+    test "a parent manager who may edit tasks in the sub-project folds it (and archives it)",
+         ctx do
+      {:ok, _} = Members.add_member(ctx.child, ctx.manager.uuid, role: "member")
+      # Not an owner there: the archive right alone would have refused it.
+      refute Authz.can?(ctx.manager_scope, ctx.child, :archive_project)
 
-    assert Projects.get_assignment(link.uuid).child_project_uuid == child.uuid
-    assert is_nil(Repo.get(Project, child.uuid).archived_at)
+      {:ok, view, _html} = live(ctx.manager_conn, "/en/admin/projects/#{ctx.project.uuid}")
+
+      assert render_click(view, "make_task", %{"uuid" => ctx.link.uuid}) =~ "is a task now"
+      assert is_nil(Projects.get_assignment(ctx.link.uuid).child_project_uuid)
+      assert Repo.get(Project, ctx.child.uuid).archived_at
+    end
+
+    test "a parent manager with no role in the sub-project cannot, even with a forged event",
+         ctx do
+      {:ok, view, _html} = live(ctx.manager_conn, "/en/admin/projects/#{ctx.project.uuid}")
+
+      assert render_click(view, "make_task", %{"uuid" => ctx.link.uuid}) =~
+               "You do not have permission to do that."
+
+      assert Projects.get_assignment(ctx.link.uuid).child_project_uuid == ctx.child.uuid
+      assert is_nil(Repo.get(Project, ctx.child.uuid).archived_at)
+    end
+
+    test "edit rights in the sub-project alone are not enough", ctx do
+      {:ok, outsider} =
+        Auth.register_user(%{
+          "email" => "outsider-#{System.unique_integer([:positive])}@example.com",
+          "password" => "OutsiderPass123!"
+        })
+
+      {:ok, _} = Members.add_member(ctx.project, outsider.uuid, role: "viewer")
+      # Here only managers edit tasks; a viewer may not.
+      {:ok, _} = Authz.set_overrides(ctx.project, %{"edit_tasks" => "managers"})
+      {:ok, _} = Members.add_member(ctx.child, outsider.uuid, role: "manager")
+
+      conn =
+        put_test_scope(
+          build_conn(),
+          fake_scope(user_uuid: outsider.uuid, permissions: ["projects"])
+        )
+
+      {:ok, view, _html} = live(conn, "/en/admin/projects/#{ctx.project.uuid}")
+      render_click(view, "make_task", %{"uuid" => ctx.link.uuid})
+      assert Projects.get_assignment(ctx.link.uuid).child_project_uuid == ctx.child.uuid
+    end
   end
 end

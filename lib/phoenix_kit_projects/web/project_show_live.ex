@@ -4920,25 +4920,28 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   end
 
   # Asked of the project the row sits in — a task of an expanded
-  # sub-project is converted there, not on this page's project — and, for
-  # a sub-project made a task again, of the sub-project itself: its tasks
-  # move into this list and it is archived, which is the archive right
-  # everywhere else.
-  defp conversion_allowed?(scope, %Assignment{} = a, way) do
+  # sub-project is converted there, not on this page's project. A task made
+  # a sub-project needs the rights to edit and to add tasks there. A
+  # sub-project made a task again needs the right to edit tasks in BOTH the
+  # project the row sits in and the sub-project (Max, 2026-10-31: "Go with
+  # B"): its tasks move into the list, and archiving it is part of the
+  # conversion under that rule, not the owner-level archive right.
+  defp conversion_allowed?(scope, %Assignment{} = a, :to_subproject) do
     case Projects.get_project(a.project_uuid) do
       %Project{} = home ->
-        Authz.can?(scope, home, :edit_tasks) and Authz.can?(scope, home, :create_tasks) and
-          (way == :to_subproject or child_archivable?(scope, a.child_project_uuid))
+        Authz.can?(scope, home, :edit_tasks) and Authz.can?(scope, home, :create_tasks)
 
       nil ->
         false
     end
   end
 
-  defp child_archivable?(scope, child_uuid) do
-    case Projects.get_project(child_uuid) do
-      %Project{} = child -> Authz.can?(scope, child, :archive_project)
-      nil -> false
+  defp conversion_allowed?(scope, %Assignment{} = a, :to_task) do
+    with %Project{} = home <- Projects.get_project(a.project_uuid),
+         %Project{} = child <- Projects.get_project(a.child_project_uuid) do
+      Authz.can?(scope, home, :edit_tasks) and Authz.can?(scope, child, :edit_tasks)
+    else
+      _ -> false
     end
   end
 
