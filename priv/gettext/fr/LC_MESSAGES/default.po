@@ -10621,3 +10621,15 @@ msgstr "Nom du modèle"
 
 msgid "Description…"
 msgstr "Description…"
+
+msgid "cleared"
+msgstr "effacé"
+
+msgid "Start date"
+msgstr "Date de début"
+
+msgid "Yes"
+msgstr "Oui"
+
+msgid "No"
+msgstr "Non"

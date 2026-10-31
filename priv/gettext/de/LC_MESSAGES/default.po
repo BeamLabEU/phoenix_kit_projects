@@ -10621,3 +10621,15 @@ msgstr "Name der Vorlage"
 
 msgid "Description…"
 msgstr "Beschreibung…"
+
+msgid "cleared"
+msgstr "entfernt"
+
+msgid "Start date"
+msgstr "Startdatum"
+
+msgid "Yes"
+msgstr "Ja"
+
+msgid "No"
+msgstr "Nein"

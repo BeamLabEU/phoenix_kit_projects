@@ -10621,3 +10621,15 @@ msgstr "Nombre de la plantilla"
 
 msgid "Description…"
 msgstr "Descripción…"
+
+msgid "cleared"
+msgstr "borrado"
+
+msgid "Start date"
+msgstr "Fecha de inicio"
+
+msgid "Yes"
+msgstr "Sí"
+
+msgid "No"
+msgstr "No"

@@ -10621,3 +10621,15 @@ msgstr "Malli nimi"
 
 msgid "Description…"
 msgstr "Kirjeldus…"
+
+msgid "cleared"
+msgstr "eemaldatud"
+
+msgid "Start date"
+msgstr "Alguskuupäev"
+
+msgid "Yes"
+msgstr "Jah"
+
+msgid "No"
+msgstr "Ei"

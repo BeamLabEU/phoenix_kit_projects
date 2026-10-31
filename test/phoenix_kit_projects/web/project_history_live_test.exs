@@ -128,6 +128,75 @@ defmodule PhoenixKitProjects.Web.ProjectHistoryLiveTest do
     assert html =~ "Measure wall A again."
   end
 
+  # The boss's second list, item 15: a line says what changed, from what
+  # to what, and names the file; one visit's saves read as one line.
+  test "an edit says what changed, from what to what; saves of one visit are one line", ctx do
+    log = fn changes ->
+      PhoenixKitProjects.Activity.log("projects.assignment_updated",
+        actor_uuid: ctx.user_uuid,
+        resource_type: "assignment",
+        resource_uuid: ctx.model.uuid,
+        tell: false,
+        metadata: %{"changes" => changes}
+      )
+    end
+
+    log.([
+      %{"field" => "deadline", "from" => "2026-11-03T09:00:00Z", "to" => "2026-11-04T09:00:00Z"}
+    ])
+
+    log.([
+      %{"field" => "deadline", "from" => "2026-11-04T09:00:00Z", "to" => "2026-11-05T09:00:00Z"},
+      %{"field" => "priority", "from" => "normal", "to" => "urgent"}
+    ])
+
+    PhoenixKitProjects.Activity.log("projects.task_file_added",
+      actor_uuid: ctx.user_uuid,
+      resource_type: "assignment",
+      resource_uuid: ctx.model.uuid,
+      tell: false,
+      metadata: %{"file_uuid" => Ecto.UUID.generate(), "file_name" => "measurements.pdf"}
+    )
+
+    {:ok, view, _html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/history")
+    html = view |> find_live_child("project-history-live-#{ctx.project.uuid}") |> render()
+
+    assert html =~ "Deadline:"
+    assert html =~ "Priority:"
+    assert html =~ "Urgent"
+    # One line for the two saves: the deadline from where it started.
+    assert length(Regex.scan(~r/Deadline:/, html)) == 1
+    assert html =~ "measurements.pdf"
+  end
+
+  test "Changes compares a task before and after a save" do
+    was = %PhoenixKitProjects.Schemas.Assignment{
+      priority: "normal",
+      estimated_duration: 2,
+      estimated_duration_unit: "hours"
+    }
+
+    now = %{was | priority: "high", estimated_duration: 3, deadline: ~U[2026-11-05 09:00:00Z]}
+
+    changes =
+      PhoenixKitProjects.Changes.assignment(was, now, title: {"Measure", "Measure the room"})
+
+    fields = Map.new(changes, &{&1["field"], {&1["from"], &1["to"]}})
+
+    assert fields["title"] == {"Measure", "Measure the room"}
+    assert fields["priority"] == {"normal", "high"}
+    assert fields["estimate"] == {"2 hours", "3 hours"}
+    assert fields["deadline"] == {nil, "2026-11-05T09:00:00Z"}
+
+    merged =
+      PhoenixKitProjects.Changes.merge([
+        [%{"field" => "priority", "from" => "normal", "to" => "high"}],
+        [%{"field" => "priority", "from" => "high", "to" => "normal"}]
+      ])
+
+    assert merged == []
+  end
+
   test "/history opens the tab", ctx do
     {:ok, view, html} = live(ctx.conn, "/en/admin/projects/#{ctx.project.uuid}/history")
     assert html =~ ~s(phx-value-tab="history")

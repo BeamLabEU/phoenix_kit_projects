@@ -67,6 +67,28 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
                   {if @compact, do: L10n.format_month_day_time(e.at), else: L10n.local_time(e.at)}
                 </time>
               </div>
+              <%!-- What changed, from what to what (the boss, 2026-10-31:
+                   "it needs to show what was changed"). --%>
+              <ul :if={changes(e) != []} class="mt-1 flex flex-col gap-0.5 text-xs text-base-content/70">
+                <li :for={c <- changes(e)} class="break-words">
+                  <span class="font-medium text-base-content/80">{field_label(c["field"])}:</span>
+                  <span :if={not is_nil(c["from"])} class="line-through decoration-base-content/30">{value(c["field"], c["from"])}</span>
+                  <span :if={not is_nil(c["from"]) and not is_nil(c["to"])} aria-hidden="true">→</span>
+                  <span :if={not is_nil(c["to"])} class="text-base-content/90">{value(c["field"], c["to"])}</span>
+                  <span :if={is_nil(c["to"])} class="italic">{gettext("cleared")}</span>
+                </li>
+              </ul>
+              <p :if={e[:file] && e.file.name} class="mt-1 text-xs inline-flex items-center gap-1 min-w-0">
+                <.icon name="hero-paper-clip" class="w-3.5 h-3.5 shrink-0 opacity-60" />
+                <a
+                  :if={e.file.url}
+                  href={e.file.url}
+                  target="_blank"
+                  rel="noopener"
+                  class="link link-hover truncate"
+                >{e.file.name}</a>
+                <span :if={!e.file.url} class="truncate">{e.file.name}</span>
+              </p>
               <blockquote
                 :if={quote_text(e)}
                 class="mt-1 border-l-2 border-base-300 pl-3 text-sm text-base-content/80 whitespace-pre-line break-words"
@@ -443,6 +465,85 @@ defmodule PhoenixKitProjects.Web.Components.HistoryFeed do
       true -> gettext("%{h} h %{m} min", h: h, m: m)
     end
   end
+
+  # ── Changes ─────────────────────────────────────────────────────────
+
+  defp changes(%{kind: :activity, meta: %{"changes" => list}}) when is_list(list), do: list
+  defp changes(_), do: []
+
+  defp field_label("title"), do: gettext("Name")
+  defp field_label("name"), do: gettext("Name")
+  defp field_label("description"), do: gettext("Description")
+  defp field_label("deadline"), do: gettext("Deadline")
+  defp field_label("start_date"), do: gettext("Start date")
+  defp field_label("end_date"), do: gettext("End date")
+  defp field_label("start_time"), do: gettext("Start time")
+  defp field_label("end_time"), do: gettext("End time")
+  defp field_label("estimate"), do: gettext("Estimate")
+  defp field_label("priority"), do: gettext("Priority")
+  defp field_label("progress_pct"), do: gettext("Progress")
+  defp field_label("repeat_rule"), do: gettext("Repeats")
+  defp field_label("counts_weekends"), do: gettext("Count weekends in schedule")
+  defp field_label("start_mode"), do: gettext("Start")
+  defp field_label("scheduled_start_date"), do: gettext("Start date")
+  defp field_label("external_url"), do: gettext("Link")
+  defp field_label("external_label"), do: gettext("Button text")
+  defp field_label("completion"), do: gettext("How it ends")
+  defp field_label(other), do: other
+
+  # A stored value in the viewer's words: dates and instants in their zone,
+  # slugs as their labels.
+  defp value("deadline", v), do: instant(v)
+  defp value("scheduled_start_date", v), do: instant(v)
+  defp value(field, v) when field in ["start_date", "end_date"], do: date(v)
+
+  defp value(field, v) when field in ["start_time", "end_time"],
+    do: v |> to_string() |> String.slice(0, 5)
+
+  defp value("estimate", v) when is_binary(v) do
+    case String.split(v, " ", parts: 2) do
+      [n, unit] ->
+        case Integer.parse(n) do
+          {n, ""} -> PhoenixKitProjects.Schemas.Task.format_duration(n, unit)
+          _ -> v
+        end
+
+      _ ->
+        v
+    end
+  end
+
+  defp value("priority", "urgent"), do: gettext("Urgent")
+  defp value("priority", "high"), do: gettext("High")
+  defp value("priority", "low"), do: gettext("Low")
+  defp value("priority", _), do: gettext("Normal")
+  defp value("progress_pct", v), do: "#{v} %"
+  defp value("repeat_rule", v), do: PhoenixKitProjects.Repeats.label(v) || "—"
+  defp value("counts_weekends", true), do: gettext("Yes")
+  defp value("counts_weekends", _), do: gettext("No")
+  defp value("completion", "manual"), do: "∞ " <> gettext("Ongoing")
+  defp value("completion", _), do: gettext("Has an end")
+  defp value("description", v), do: "“#{v}”"
+  defp value(_field, v) when is_binary(v), do: v
+  defp value(_field, v), do: to_string(v)
+
+  defp instant(v) when is_binary(v) do
+    case DateTime.from_iso8601(v) do
+      {:ok, dt, _} -> L10n.format_datetime(dt)
+      _ -> date(v)
+    end
+  end
+
+  defp instant(v), do: to_string(v)
+
+  defp date(v) when is_binary(v) do
+    case Date.from_iso8601(String.slice(v, 0, 10)) do
+      {:ok, d} -> L10n.format_date(d)
+      _ -> v
+    end
+  end
+
+  defp date(v), do: to_string(v)
 
   # ── Look ────────────────────────────────────────────────────────────
 

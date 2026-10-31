@@ -10678,3 +10678,15 @@ msgstr "Название шаблона"
 
 msgid "Description…"
 msgstr "Описание…"
+
+msgid "cleared"
+msgstr "очищено"
+
+msgid "Start date"
+msgstr "Дата начала"
+
+msgid "Yes"
+msgstr "Да"
+
+msgid "No"
+msgstr "Нет"

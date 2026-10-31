@@ -10618,3 +10618,15 @@ msgstr ""
 
 msgid "Description…"
 msgstr ""
+
+msgid "cleared"
+msgstr ""
+
+msgid "Start date"
+msgstr ""
+
+msgid "Yes"
+msgstr ""
+
+msgid "No"
+msgstr ""

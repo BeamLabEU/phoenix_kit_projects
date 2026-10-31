@@ -1870,11 +1870,18 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       {:ok, project} ->
         sync_mentions(socket, project)
 
+        # What changed, from what to what (the history shows it).
+        changes = PhoenixKitProjects.Changes.project(socket.assigns.project, project)
+
         Activity.log("projects.project_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: project.uuid,
-          metadata: %{"name" => project.name}
+          metadata:
+            if(changes == [],
+              do: %{"name" => project.name},
+              else: %{"name" => project.name, "changes" => changes}
+            )
         )
 
         {:noreply,

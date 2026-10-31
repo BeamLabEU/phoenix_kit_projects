@@ -720,7 +720,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   end
 
   defp after_upload(socket, {:ok, file}, inline?) do
-    log_task_file(socket, "projects.task_file_added", file.uuid)
+    log_task_file(socket, "projects.task_file_added", file.uuid, file.original_file_name)
 
     if inline? do
       DescriptionEditor.insert_image(
@@ -773,7 +773,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
       case result do
         {:ok, file} ->
-          log_task_file(socket, "projects.task_file_added", file.uuid)
+          log_task_file(socket, "projects.task_file_added", file.uuid, file.original_file_name)
           DescriptionEditor.insert_image(editor_id, inline_src(socket, file), "")
           load_task_files(socket)
 
@@ -881,12 +881,16 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   defp upload_error_text(:too_many_files), do: gettext("Too many files at once.")
   defp upload_error_text(_), do: gettext("Upload failed. Please try again.")
 
-  defp log_task_file(socket, action, file_uuid) do
+  # The file's name rides along (the history names and links the file).
+  defp log_task_file(socket, action, file_uuid, name) do
+    meta = %{"file_uuid" => file_uuid, "project_uuid" => socket.assigns.project.uuid}
+
     Activity.log(action,
       actor_uuid: Activity.actor_uuid(socket),
       resource_type: "assignment",
       resource_uuid: socket.assigns.assignment.uuid,
-      metadata: %{"file_uuid" => file_uuid, "project_uuid" => socket.assigns.project.uuid}
+      metadata:
+        if(is_binary(name) and name != "", do: Map.put(meta, "file_name", name), else: meta)
     )
   end
 
@@ -1893,11 +1897,10 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   def handle_event("remove_task_file", %{"uuid" => file_uuid}, socket) do
     if attach_allowed?(socket) do
-      inline? =
-        Enum.any?(
-          socket.assigns[:task_files] || [],
-          &(&1.inline and to_string(&1.file.uuid) == file_uuid)
-        )
+      shown =
+        Enum.find(socket.assigns[:task_files] || [], &(to_string(&1.file.uuid) == file_uuid))
+
+      inline? = match?(%{inline: true}, shown)
 
       case Attachments.remove_task_file(
              socket.assigns.assignment,
@@ -1905,7 +1908,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
              Activity.actor_uuid(socket)
            ) do
         :ok ->
-          log_task_file(socket, "projects.task_file_removed", file_uuid)
+          log_task_file(
+            socket,
+            "projects.task_file_removed",
+            file_uuid,
+            shown && shown.file.original_file_name
+          )
+
           socket = if inline?, do: strip_inline_image(socket, file_uuid), else: socket
           {:noreply, socket |> load_task_files() |> put_flash(:info, gettext("File removed."))}
 
@@ -2790,11 +2799,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
     case Projects.update_project(sp_source(socket), attrs) do
       {:ok, updated} ->
+        changes = PhoenixKitProjects.Changes.project(sp_source(socket), updated)
+
         Activity.log("projects.project_updated",
           actor_uuid: Activity.actor_uuid(socket),
           resource_type: "project",
           resource_uuid: updated.uuid,
-          metadata: %{"name" => updated.name}
+          metadata: with_changes(%{"name" => updated.name}, changes)
         )
 
         # Re-sync the linking row's denormalized rollup; climbs to this project.
@@ -3480,11 +3491,13 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
       |> merge_attrs(socket)
 
     {attrs, task_words} = split_task_words(socket, attrs)
+    title_pair = title_pair(socket)
 
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
         title_saved = save_edit_title(socket, updated)
+        changes = edit_changes(socket.assigns.assignment, updated, title_pair, task_words)
 
         # The words become the person's only when the person changed them:
         # a form that saves on every change must not take a task's text
@@ -3504,7 +3517,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
         times = save_times(socket, updated)
 
         socket
-        |> log_edit_once(updated, told?)
+        |> log_edit_once(updated, told?, changes)
         |> hold_saved(updated)
         |> hold_saved_title(title_saved)
         |> hold_saved_times(times)
@@ -3674,40 +3687,68 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
 
   defp blank_waiting(_), do: nil
 
-  # One line in the project's activity per visit to the form, not one per
-  # pause in typing.
-  # The task's people hear "changed your task" once per visit too — from the
+  # Every save that changed something records what it changed (the boss,
+  # 2026-10-31: a history saying only "edited" is useless); the history
+  # shows one visit's saves as one line (`HistoryFeed`). A save that changed
+  # nothing it records is not a line, past the visit's first.
+  # The task's people hear "changed your task" once per visit — from the
   # first save that was not already news to them (a status change or a hand
   # over tells them in its own words).
-  defp log_edit_once(
-         %{assigns: %{edit_logged?: true, edit_told?: true}} = socket,
-         _updated,
-         _told?
-       ),
-       do: socket
+  defp log_edit_once(socket, updated, told?, changes) do
+    first? = socket.assigns[:edit_logged?] != true
+    tell? = not told? and socket.assigns[:edit_told?] != true
 
-  defp log_edit_once(%{assigns: %{edit_logged?: true}} = socket, _updated, true), do: socket
+    if first? or changes != [] do
+      Activity.log("projects.assignment_updated",
+        actor_uuid: Activity.actor_uuid(socket),
+        resource_type: "assignment",
+        resource_uuid: updated.uuid,
+        target_uuid: if(tell?, do: Activity.assignee_target_uuid(updated)),
+        tell: tell?,
+        metadata: with_changes(%{"project" => socket.assigns.project.name}, changes)
+      )
 
-  defp log_edit_once(socket, updated, told?) do
-    Activity.log("projects.assignment_updated",
-      actor_uuid: Activity.actor_uuid(socket),
-      resource_type: "assignment",
-      resource_uuid: updated.uuid,
-      target_uuid: if(not told?, do: Activity.assignee_target_uuid(updated)),
-      tell: not told?,
-      metadata: %{"project" => socket.assigns.project.name}
-    )
+      assign(socket, edit_logged?: true, edit_told?: socket.assigns[:edit_told?] == true or tell?)
+    else
+      socket
+    end
+  end
 
-    assign(socket, edit_logged?: true, edit_told?: not told?)
+  defp with_changes(meta, []), do: meta
+  defp with_changes(meta, changes), do: Map.put(meta, "changes", changes)
+
+  # The task's name before and after this save, when the form renames it
+  # (read before the save: afterwards the form and the task agree).
+  defp title_pair(socket) do
+    case title_change(socket) do
+      {:changed, title, _titles} -> {Assignment.label(socket.assigns.assignment), title}
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp edit_changes(%Assignment{} = was, %Assignment{} = now, title_pair, task_words) do
+    description =
+      case {task_words, was.task} do
+        {%{"description" => d}, %Task{} = task} -> {task.description, d}
+        _ -> nil
+      end
+
+    PhoenixKitProjects.Changes.assignment(was, now, title: title_pair, description: description)
+  rescue
+    _ -> []
   end
 
   defp save_edit(socket, attrs) do
     {attrs, task_words} = split_task_words(socket, attrs)
+    title_pair = title_pair(socket)
 
     case Projects.update_assignment_form(socket.assigns.assignment, attrs) do
       {:ok, updated} ->
         words_saved = save_task_words(updated, task_words)
         title_saved = save_edit_title(socket, updated)
+        changes = edit_changes(socket.assigns.assignment, updated, title_pair, task_words)
         # A person saved the form: the title and description are theirs
         # now, whatever key wrote them before.
         _ = Projects.stamp_assignment(updated, %{words_by_key_uuid: nil})
@@ -3727,7 +3768,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           resource_uuid: updated.uuid,
           target_uuid: if(not told?, do: Activity.assignee_target_uuid(updated)),
           tell: not told?,
-          metadata: %{"project" => socket.assigns.project.name}
+          metadata: with_changes(%{"project" => socket.assigns.project.name}, changes)
         )
 
         case title_saved do

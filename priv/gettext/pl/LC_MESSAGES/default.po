@@ -10678,3 +10678,15 @@ msgstr "Nazwa szablonu"
 
 msgid "Description…"
 msgstr "Opis…"
+
+msgid "cleared"
+msgstr "usunięto"
+
+msgid "Start date"
+msgstr "Data rozpoczęcia"
+
+msgid "Yes"
+msgstr "Tak"
+
+msgid "No"
+msgstr "Nie"

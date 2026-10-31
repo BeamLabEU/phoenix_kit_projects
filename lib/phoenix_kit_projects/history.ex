@@ -118,8 +118,119 @@ defmodule PhoenixKitProjects.History do
         &{DateTime.to_unix(&1.at), order(&1), DateTime.to_unix(&1.at, :microsecond)},
         :desc
       )
+      |> fold_edits()
+      |> with_files(task_uuids)
 
     %{entries: entries, total: length(entries), truncated: truncated}
+  end
+
+  # ── One visit's saves as one line ──────────────────────────────────
+  #
+  # The task form saves as it is changed, so one visit is several rows,
+  # each with what that save changed (`PhoenixKitProjects.Changes`). Rows
+  # next to each other by the same person on the same record, within
+  # @fold_window, read as one line: each field from where it started to
+  # where it ended.
+
+  @fold_window 30 * 60
+  @edit_actions ~w(projects.assignment_updated projects.project_updated)
+
+  defp fold_edits(entries) do
+    entries
+    |> Enum.chunk_while(
+      [],
+      fn e, run ->
+        case run do
+          [] ->
+            {:cont, [e]}
+
+          [last | _] ->
+            if same_edit?(last, e), do: {:cont, [e | run]}, else: {:cont, Enum.reverse(run), [e]}
+        end
+      end,
+      fn
+        [] -> {:cont, []}
+        run -> {:cont, Enum.reverse(run), []}
+      end
+    )
+    |> Enum.map(&merge_run/1)
+  end
+
+  defp same_edit?(%{kind: :activity, action: a} = newer, %{kind: :activity, action: a} = older)
+       when a in @edit_actions do
+    newer.actor_uuid == older.actor_uuid and
+      newer.meta["changes"] != nil and older.meta["changes"] != nil and
+      edit_subject(newer) == edit_subject(older) and
+      DateTime.diff(newer.at, older.at) <= @fold_window
+  end
+
+  defp same_edit?(_newer, _older), do: false
+
+  defp edit_subject(%{task: %{uuid: uuid}}), do: uuid
+  defp edit_subject(e), do: e.meta["name"]
+
+  defp merge_run([one]), do: one
+
+  defp merge_run([newest | _] = run) do
+    changes =
+      run
+      |> Enum.reverse()
+      |> Enum.map(& &1.meta["changes"])
+      |> PhoenixKitProjects.Changes.merge()
+
+    %{
+      newest
+      | meta: Map.put(newest.meta, "changes", changes),
+        told: Enum.flat_map(run, & &1.told)
+    }
+  end
+
+  # ── Files: named, and a link while the file is still on its task ────
+
+  @file_actions ~w(projects.task_file_added projects.task_file_removed)
+
+  defp with_files(entries, task_uuids) do
+    ids =
+      for %{kind: :activity, action: a, meta: %{"file_uuid" => id}} <- entries,
+          a in @file_actions,
+          is_binary(id),
+          uniq: true,
+          do: id
+
+    if ids == [] do
+      entries
+    else
+      attached = attached_files(ids, task_uuids)
+      urls = PhoenixKitProjects.Attachments.download_urls(Map.values(attached))
+
+      Enum.map(entries, fn
+        %{kind: :activity, action: a, meta: %{"file_uuid" => id} = meta} = e
+        when a in @file_actions ->
+          file = Map.get(attached, id)
+
+          Map.put(e, :file, %{
+            name: meta["file_name"] || (file && file.original_file_name),
+            url: a == "projects.task_file_added" && Map.get(urls, id)
+          })
+
+        e ->
+          e
+      end)
+    end
+  rescue
+    _ -> entries
+  end
+
+  # The files still on a task of this project: only those get a link.
+  defp attached_files(ids, task_uuids) do
+    from(f in PhoenixKit.Modules.Storage.File,
+      join: af in PhoenixKitProjects.Schemas.AssignmentFile,
+      on: af.file_uuid == f.uuid,
+      where: f.uuid in ^ids and af.assignment_uuid in ^task_uuids,
+      distinct: true
+    )
+    |> RepoHelper.repo().all()
+    |> Map.new(&{to_string(&1.uuid), &1})
   end
 
   defp ledger_row?(%{kind: :activity, action: "projects.work_" <> _}), do: true
