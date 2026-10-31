@@ -434,6 +434,7 @@ defmodule PhoenixKitProjects.Web.Api.Json do
       # who it is FOR (a person, a team or a department), apart from who
       # made it and who started it
       assignee: Assignee.to_json(a),
+      assignees: Assignee.list_json(a),
       created_by: %{person: a.created_by_uuid, key: a.created_by_key_uuid},
       started_by: %{person: a.started_by_uuid, key: a.started_by_key_uuid},
       words_by: if(a.words_by_key_uuid, do: %{key: a.words_by_key_uuid}, else: %{person: true}),

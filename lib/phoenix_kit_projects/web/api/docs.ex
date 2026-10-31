@@ -232,7 +232,7 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "`me`, `none` (unassigned) or a person's uuid; only the tasks assigned to that person"
+              "`me`, `none` (unassigned) or a person's uuid; only the tasks that person is among the assignees of"
           },
           %{
             name: "due_before",
@@ -308,7 +308,15 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc:
-              "who the task is for: `me` (the person this key acts for; their staff record is created if they have none), a person's uuid from GET /people, or `{\"team\": uuid}` / `{\"department\": uuid}`; one assignee at a time. Needs the assignees feature and the assign_tasks action"
+              "who the task is for, when it is ONE: `me` (the person this key acts for; their staff record is created if they have none), a person's uuid from GET /people, or `{\"team\": uuid}` / `{\"department\": uuid}`; it becomes the whole list. Send `assignees` for several - not both. Needs the assignees feature and the assign_tasks action"
+          },
+          %{
+            name: "assignees",
+            in: :body,
+            type: "array",
+            required: false,
+            doc:
+              "everyone the task is for, all equal: a list of what `assignee` takes (`me`, a person's uuid, `{\"person\": uuid}`, `{\"team\": uuid}`, `{\"department\": uuid}`), at most 50; it replaces the whole list, `[]` clears it. Not together with `assignee`"
           },
           %{
             name: "start_date",
@@ -435,6 +443,13 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
             type: "string",
             required: false,
             doc: "as on create; null clears it, leaving it out keeps it"
+          },
+          %{
+            name: "assignees",
+            in: :body,
+            type: "array",
+            required: false,
+            doc: "as on create: the whole new list, `[]` clears it, leaving it out keeps it"
           },
           %{
             name: "start_date",
@@ -1614,13 +1629,17 @@ defmodule PhoenixKitProjects.Web.Api.Docs do
     - `waiting_on` - whom the task waits on ("the client", "the boss"). A badge beside the status,
       not a status: a task waiting on someone is still in whatever status it has. Clear it when the wait is over.
     - `origin` - where a relayed item came from ("client", "boss"); 40 characters.
-    - `assignee` - who the task is FOR, apart from who made it (`created_by`) and who started it
-      (`started_by`). On every row: `{kind, uuid, name}` (kind is person, team or department) or
-      null. To set it on create or PATCH: `"me"` (the person this key acts for - `/me` gives their
+    - `assignees` - who the task is FOR, apart from who made it (`created_by`) and who started it
+      (`started_by`): any number of people, teams and departments, all equal (one status for all,
+      every one of them is told). On every row: a list of `{kind, uuid, name}` (kind is person, team
+      or department), `[]` when nobody. `assignee` beside it is the ONE assignee for older clients:
+      `{kind, uuid, name}` when there is exactly one, null when there are none or several. To set
+      them on create or PATCH: `assignees` (the whole new list) or `assignee` (one, which becomes
+      the whole list) - not both. Each entry is `"me"` (the person this key acts for - `/me` gives their
       `acting_for.person_uuid`; when that is null because their account has no staff record yet,
       `"me"` creates a bare one with their name, without asking, and assigns it), a person's uuid from `GET /people`, `{"team": uuid}` or
-      `{"department": uuid}`; null clears it; leaving the field out changes nothing. A task has one
-      assignee. A task you create is unassigned unless you say so: when the work is the person's
+      `{"department": uuid}`; null or `[]` clears; leaving the fields out changes nothing.
+      A task you create is unassigned unless you say so: when the work is the person's
       you act for, pass `assignee: "me"`; when they relay a task for a colleague, look the
       colleague up in `GET /people?q=<name>`. `GET /tasks?assignee=me` is that person's list, and
       the briefing marks those rows `assigned_to_me` and counts them. Needs the assignees feature
