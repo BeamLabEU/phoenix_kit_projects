@@ -235,8 +235,10 @@ defmodule PhoenixKitProjects.Web.FeatureEnforcementTest do
 
       refute html =~ ~s(phx-value-tab="board")
       html = render_click(view, "switch_tab", %{"tab" => "board"})
-      # Falls back to list — the board columns don't render.
-      refute html =~ "In progress</span>"
+      # Falls back to list — the board columns don't render (the rows'
+      # status menus name the statuses too, so the columns are looked for).
+      refute html =~ ~s(id="board-column-)
+      refute html =~ ~s(phx-value-tab="board")
     end
   end
 

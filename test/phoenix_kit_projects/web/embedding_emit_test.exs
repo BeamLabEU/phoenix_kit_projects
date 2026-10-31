@@ -697,8 +697,9 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
             })
         )
 
-      assert html =~ ">Add task<"
-      assert html =~ "Emit Host"
+      assert html =~ "Add task"
+      # The compact header (the boss's second list, item 2) names no
+      # project in a popup: the popup sits on that project's page.
       assert html =~ ~s(phx-click="cancel")
     end
 

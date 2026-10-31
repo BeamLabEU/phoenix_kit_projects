@@ -32,7 +32,7 @@ defmodule PhoenixKitProjects.Web.TabsNeverJumpTest do
     assert html =~ ~s(aria-controls="x-pane-b")
   end
 
-  test "a drawer frame is the column, a centred one is not" do
+  test "a drawer frame is the column, a centred one is one that keeps its height" do
     frame = [%{frame_ref: "f1", lv: nil, session: %{}, id: "f1"}]
 
     drawer =
@@ -66,8 +66,9 @@ defmodule PhoenixKitProjects.Web.TabsNeverJumpTest do
         })
       )
 
-    refute centred =~ ~s(class="modal-box flex flex-col w-11/12 relative pkp-frame)
-    refute centred =~ "relative pkp-frame"
+    # A centred frame is a column too since the boss's second list (item
+    # 3): `pkp-center` gives it one height while it holds tabs.
+    assert centred =~ "relative pkp-frame pkp-center"
   end
 
   test "the project page's views are one scroll area that follows the view", %{conn: conn} do
