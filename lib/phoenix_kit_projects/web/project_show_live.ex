@@ -1369,12 +1369,15 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     if rows != [], do: build_next_up(socket, :complete, a, rows, params["force"] == "1")
   end
 
-  defp build_next_up(socket, mode, %Assignment{} = a, rows, force?) do
+  # `project` is the rows' project: this page's, or — for a sub-project
+  # finished from its own page — the project its row sits in.
+  defp build_next_up(socket, mode, %Assignment{} = a, rows, force?, project \\ nil) do
     scope = socket.assigns[:phoenix_kit_current_scope]
-    project = socket.assigns.project
+    project = project || socket.assigns.project
 
     %{
       mode: mode,
+      project_uuid: project.uuid,
       task_uuid: a.uuid,
       subproject?: Assignment.subproject?(a),
       force: force?,
@@ -1388,7 +1391,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
              comment: may_comment_next_up?(socket, scope, project, row)
            }}
         end),
-      recipients: next_up_recipients(socket, rows),
+      recipients: next_up_recipients(socket, rows, project),
       muted: %{},
       idle: []
     }
@@ -1406,9 +1409,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # list), less the viewer (nobody hears of their own act) and anyone who
   # may not open the project (`Notices.notify/3` would skip them anyway).
   # Names read in one go, sorted.
-  defp next_up_recipients(socket, rows) do
+  defp next_up_recipients(socket, rows, project) do
     actor = Activity.actor_uuid(socket)
-    project = socket.assigns.project
 
     by_row =
       Map.new(rows, fn row ->
@@ -1442,6 +1444,9 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   # The offered rows still on the page and still not started, in order.
   defp next_up_rows(nil, _assignments), do: []
+
+  # Rows of another project (a sub-project finished from its own page).
+  defp next_up_rows(%{rows: rows}, _assignments) when is_list(rows), do: rows
 
   defp next_up_rows(%{uuids: uuids}, assignments),
     do: Enum.filter(assignments, &(&1.uuid in uuids and &1.status in ["waiting", "todo"]))
@@ -1486,10 +1491,13 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # after the kept-idle rows were put back must not leave them demoted, so
   # either everything is written or nothing is. A row that moved on since
   # the dialog opened (`:stale`) is left as it is and is no failure.
-  defp confirm_next_up(socket, %Assignment{} = a, next_up, notes) do
+  defp confirm_next_up(socket, a, next_up, notes) do
     scope = socket.assigns[:phoenix_kit_current_scope]
-    project = socket.assigns.project
-    rows = next_up_rows_from(socket, next_up.uuids)
+
+    project =
+      next_up_project(socket, Map.get(next_up, :project_uuid, socket.assigns.project.uuid))
+
+    rows = next_up_rows_from(socket, next_up)
     may? = &may_release_next_up?(scope, project, &1)
 
     Handoffs.with_overrides(next_up_overrides(next_up, notes), fn ->
@@ -1506,6 +1514,19 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
   defp run_next_up(socket, a, rows, %{mode: :complete} = next_up, may?),
     do: complete_and_release(socket, a, rows, next_up, may?)
+
+  # After a sub-project finished by itself: the kept-idle rows back to
+  # waiting, the rest released. The sub-project's row is done already.
+  defp run_next_up(socket, _link, rows, %{mode: :subproject} = next_up, may?) do
+    idle = Enum.filter(rows, &(&1.uuid in next_up.idle and &1.status == "todo" and may?.(&1)))
+
+    with :ok <- set_each_readiness(socket, idle, "waiting"),
+         {:ok, released} <- release_next_up(socket, rows, next_up, may?) do
+      {:ok, socket, released}
+    else
+      :error -> {:error, socket, gettext("Could not update task.")}
+    end
+  end
 
   defp complete_and_release(socket, a, rows, next_up, may?) do
     idle = Enum.filter(rows, &(&1.uuid in next_up.idle and &1.status == "todo" and may?.(&1)))
@@ -1642,11 +1663,14 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # discussions — flagged as a hand-off note, so the thread does not tell
   # the task's people a second time (the notice already quoted it to the
   # ticked ones; the unticked are told nothing).
-  defp post_next_up_comments(socket, %{uuids: uuids}, notes) when is_map(notes) do
+  defp post_next_up_comments(socket, %{uuids: _} = next_up, notes) when is_map(notes) do
     actor = Activity.actor_uuid(socket)
     scope = socket.assigns[:phoenix_kit_current_scope]
-    project = socket.assigns.project
-    rows = Map.new(next_up_rows_from(socket, uuids), &{&1.uuid, &1})
+
+    project =
+      next_up_project(socket, Map.get(next_up, :project_uuid, socket.assigns.project.uuid))
+
+    rows = Map.new(next_up_rows_from(socket, next_up), &{&1.uuid, &1})
 
     posted =
       for {uuid, text} <- notes,
@@ -1701,7 +1725,12 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
     end
   end
 
-  defp next_up_rows_from(socket, uuids),
+  # The offered rows as they are now: from this page's list, or read again
+  # when they are another project's.
+  defp next_up_rows_from(_socket, %{rows: rows, uuids: uuids}) when is_list(rows),
+    do: fresh_next_up_rows(uuids)
+
+  defp next_up_rows_from(socket, %{uuids: uuids}),
     do: Enum.filter(socket.assigns[:assignments] || [], &(&1.uuid in uuids))
 
   defp next_up_flash(socket, 0, 0), do: socket
@@ -2513,7 +2542,11 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
 
     # A question left open by an earlier tick is not this one's.
     {:noreply, socket} = handle_event(event, params, ConfirmAction.clear(socket))
-    asked = socket.assigns[:confirm_action] != nil or socket.assigns[:next_up] != nil
+
+    asked =
+      socket.assigns[:confirm_action] != nil or
+        match?(%{mode: mode} when mode != :subproject, socket.assigns[:next_up])
+
     {:reply, %{asked: asked}, socket}
   end
 
@@ -2545,19 +2578,73 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   defp authorized_handle_event(event, params, socket) do
     case Map.get(@event_actions, event) do
       nil ->
-        gated_handle_event(event, params, socket)
+        run_step(event, params, socket)
 
       action ->
         scope = socket.assigns[:phoenix_kit_current_scope]
 
         if Authz.can?(scope, socket.assigns.project, action, authz_record(event, params, socket)) and
              child_task_allowed?(scope, action, event, params, socket) do
-          gated_handle_event(event, params, socket)
+          run_step(event, params, socket)
         else
           {:noreply,
            put_flash(socket, :error, gettext("You don't have permission to do that here."))}
         end
     end
+  end
+
+  # A step the person took here. When it finished a sub-project by itself
+  # (its last task done, `subproject_auto`), what that unlocks is offered
+  # in the usual "next up" dialog — never released without it (Max,
+  # 2026-10-31: "go with b"; `Projects.collect_finished_subprojects/1`).
+  defp run_step(event, params, socket) do
+    {reply, finished} =
+      Projects.collect_finished_subprojects(fn -> gated_handle_event(event, params, socket) end)
+
+    case {finished, reply} do
+      {[], reply} ->
+        reply
+
+      {finished, {:noreply, socket}} ->
+        {:noreply, offer_subproject_next_up(socket, finished)}
+
+      {finished, {:reply, map, socket}} ->
+        {:reply, map, offer_subproject_next_up(socket, finished)}
+    end
+  end
+
+  # The first finished sub-project whose unlocked rows are still not
+  # started; a question already open on the page is not replaced.
+  defp offer_subproject_next_up(%{assigns: %{next_up: %{}}} = socket, _finished), do: socket
+
+  defp offer_subproject_next_up(socket, finished) do
+    Enum.find_value(finished, socket, fn %{link_uuid: link_uuid, project_uuid: project_uuid} = f ->
+      with %Assignment{} = link <- Projects.get_assignment(link_uuid),
+           %Project{} = project <- next_up_project(socket, project_uuid),
+           rows when rows != [] <- fresh_next_up_rows(f.row_uuids) do
+        next_up =
+          socket
+          |> build_next_up(:subproject, link, rows, false, project)
+          |> Map.put(:rows, if(project.uuid == socket.assigns.project.uuid, do: nil, else: rows))
+
+        assign(socket, next_up: next_up)
+      else
+        _ -> nil
+      end
+    end)
+  end
+
+  defp next_up_project(socket, project_uuid) do
+    if project_uuid == socket.assigns.project.uuid,
+      do: socket.assigns.project,
+      else: Projects.get_project(project_uuid)
+  end
+
+  defp fresh_next_up_rows(uuids) do
+    for uuid <- uuids,
+        %Assignment{status: status} = row <- [Projects.get_assignment(uuid)],
+        status in ["waiting", "todo"],
+        do: row
   end
 
   defp authz_record(event, %{"uuid" => uuid}, socket) when is_binary(uuid) do
@@ -2997,7 +3084,8 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
   # until it is confirmed.
   defp gated_handle_event("next_up_toggle_idle", %{"uuid" => uuid}, socket) do
     case socket.assigns.next_up do
-      %{mode: :complete, uuids: uuids, idle: idle} = next_up when is_binary(uuid) ->
+      %{mode: mode, uuids: uuids, idle: idle} = next_up
+      when mode in [:complete, :subproject] and is_binary(uuid) ->
         cond do
           uuid in idle -> {:noreply, assign(socket, next_up: %{next_up | idle: idle -- [uuid]})}
           uuid in uuids -> {:noreply, assign(socket, next_up: %{next_up | idle: [uuid | idle]})}
@@ -3019,6 +3107,24 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
       {:noreply, assign(socket, next_up: %{next_up | muted: Map.put(muted, uuid, mine)})}
     else
       _ -> {:noreply, socket}
+    end
+  end
+
+  # After a sub-project finished by itself: its row is done already.
+  defp gated_handle_event(
+         "next_up_confirm",
+         %{"uuid" => uuid} = params,
+         %{assigns: %{next_up: %{mode: :subproject, task_uuid: uuid} = next_up}} = socket
+       ) do
+    socket = assign(socket, next_up: nil)
+
+    case confirm_next_up(socket, nil, next_up, params["notes"]) do
+      {:ok, socket, released} ->
+        {socket, sent} = post_next_up_comments(socket, next_up, params["notes"])
+        maybe_sync_and_reload({:ok, next_up_flash(socket, released, sent)})
+
+      error ->
+        maybe_sync_and_reload(error)
     end
   end
 
@@ -6683,20 +6789,26 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
         close_guard={:input}
       >
         <:title>
-          <%= if @next_up.mode == :release do %>
-            {gettext("Allow “%{task}” to start?", task: @next_up.after)}
-          <% else %>
-            {AssignmentStatusBadge.mark_done_question(@next_up.after, @next_up.subproject?)}
+          <%= cond do %>
+            <% @next_up.mode == :release -> %>
+              {gettext("Allow “%{task}” to start?", task: @next_up.after)}
+            <% @next_up.mode == :subproject -> %>
+              {gettext("“%{name}” is done. Start what comes next?", name: @next_up.after)}
+            <% true -> %>
+              {AssignmentStatusBadge.mark_done_question(@next_up.after, @next_up.subproject?)}
           <% end %>
         </:title>
         <% next_rows = next_up_rows(@next_up, @assignments) %>
         <.form for={%{}} id={"next-up-form-#{@project.uuid}"} phx-submit="next_up_confirm" class="flex flex-col gap-3">
           <input type="hidden" name="uuid" value={@next_up.task_uuid} />
           <p class="text-sm text-base-content/70">
-            <%= if @next_up.mode == :release do %>
-              {gettext("The people ticked below are told it is their turn when you confirm — untick anyone who should not be notified. A comment goes along with the notification.")}
-            <% else %>
-              {gettext("Once it is done, these tasks can start: the people ticked below are told when you confirm, with your comment. Press “Keep idle” on a task that should wait.")}
+            <%= cond do %>
+              <% @next_up.mode == :release -> %>
+                {gettext("The people ticked below are told it is their turn when you confirm — untick anyone who should not be notified. A comment goes along with the notification.")}
+              <% @next_up.mode == :subproject -> %>
+                {gettext("Its last task is done, so these tasks can start: the people ticked below are told when you confirm, with your comment. Press “Keep idle” on a task that should wait. Cancel, and they stay as they are.")}
+              <% true -> %>
+                {gettext("Once it is done, these tasks can start: the people ticked below are told when you confirm, with your comment. Press “Keep idle” on a task that should wait.")}
             <% end %>
           </p>
           <div :for={a <- next_rows} class="rounded-box border border-base-200 p-3 flex flex-col gap-2">
@@ -6710,7 +6822,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               <%!-- One button: pressed, the task stays waiting and the row
                    greys out; pressed again, it is released with the rest. --%>
               <button
-                :if={@next_up.mode == :complete and can.release}
+                :if={@next_up.mode in [:complete, :subproject] and can.release}
                 type="button"
                 phx-click="next_up_toggle_idle"
                 phx-value-uuid={a.uuid}
@@ -6786,7 +6898,7 @@ defmodule PhoenixKitProjects.Web.ProjectShowLive do
               {gettext("Cancel")}
             </button>
             <button
-              :if={@next_up.mode == :release}
+              :if={@next_up.mode in [:release, :subproject]}
               type="submit"
               phx-disable-with={gettext("Saving…")}
               class="btn btn-info btn-sm"

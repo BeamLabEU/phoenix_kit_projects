@@ -9,9 +9,6 @@ defmodule PhoenixKitProjects.Projects do
 
   alias PhoenixKit.Activity.Entry, as: ActivityEntry
   alias PhoenixKit.Mentions.Token
-  alias PhoenixKit.Users.Auth
-  alias PhoenixKit.Users.Auth.Scope
-  alias PhoenixKit.Users.Auth.User, as: AuthUser
   alias PhoenixKit.Utils.Reorder
   alias PhoenixKitProjects.PubSub, as: ProjectsPubSub
   alias PhoenixKitProjects.Refs
@@ -2892,8 +2889,9 @@ defmodule PhoenixKitProjects.Projects do
 
         PhoenixKitProjects.Handoffs.batch(fn ->
           broadcast_status_changed(updated, link.status, :auto)
-          release_after_subproject(next_up, link.project_uuid)
         end)
+
+        note_finished_subproject(updated, next_up)
 
         recompute_project_completion(updated.project_uuid, depth + 1)
 
@@ -2902,14 +2900,13 @@ defmodule PhoenixKitProjects.Projects do
     end
   end
 
-  # A sub-project that finishes by itself (`subproject_auto`) hands off as a
-  # task ticked by hand does through the page's "next up" dialog, with the
-  # dialog's default: the waiting rows nothing else holds up any more are
-  # released ("can be started"), and their people are told it is their turn
-  # after the sub-project (`Handoffs`, in the same batch as the finish). No
-  # one sees a dialog for a rollup, so no one could have kept one idle —
-  # but the dialog's rights still apply: only the rows the acting person may
-  # move are released (`release_after_subproject/2`).
+  # A sub-project that finishes by itself (`subproject_auto`) releases
+  # nothing on its own (Max, 2026-10-31: "go with b"). What its finish
+  # unlocks — the not-started rows nothing else holds up any more — is
+  # noted for the page that handled the last Done (`collect_finished_subprojects/1`),
+  # which opens the usual "next up" dialog for the person in front of it.
+  # A process with no page (the API, a job) notes nothing: the rows stay
+  # where they are until a person starts them.
   defp subproject_next_up(%Assignment{status: "done"}, _rollup), do: []
 
   defp subproject_next_up(%Assignment{} = link, %{status: "done"}),
@@ -2917,55 +2914,47 @@ defmodule PhoenixKitProjects.Projects do
 
   defp subproject_next_up(_link, _rollup), do: []
 
-  # Only the rows the person whose tick finished the sub-project may move
-  # themselves — the dialog's rule (`:update_status` on the row, checked
-  # in the row's project), so a rollup never releases on someone's behalf
-  # what they could not have released by hand. A process that names no one
-  # (`Actor.get/0` nil: a job, a script) releases nothing; those rows stay
-  # waiting for a person to start them.
-  defp release_after_subproject([], _project_uuid), do: :ok
+  @finished_subprojects :pkp_finished_subprojects
 
-  defp release_after_subproject(rows, project_uuid) do
-    may? = release_check(PhoenixKitProjects.Actor.get(), project_uuid)
+  @doc """
+  Runs `fun` and returns `{result, finished}`: every sub-project row that
+  finished by itself while it ran (its last task done, `subproject_auto`)
+  and unlocked rows that still wait — `[%{link_uuid, project_uuid,
+  row_uuids}]`, deepest first. A page wraps the step a person took in it
+  and offers the "next up" dialog for those rows; nothing is released
+  without that. Outside a wrapper nothing is collected.
+  """
+  @spec collect_finished_subprojects((-> result)) :: {result, [map()]} when result: term()
+  def collect_finished_subprojects(fun) when is_function(fun, 0) do
+    previous = Process.get(@finished_subprojects)
+    Process.put(@finished_subprojects, [])
 
-    for %{uuid: uuid, status: "waiting"} <- rows,
-        %Assignment{status: "waiting"} = a <- [get_assignment(uuid)],
-        may?.(a) do
-      case update_assignment_status(a, %{status: "todo"}, expect: "waiting") do
-        {:ok, _} ->
-          PhoenixKitProjects.Activity.log("projects.assignment_made_ready",
-            actor_uuid: PhoenixKitProjects.Actor.get(),
-            resource_type: "assignment",
-            resource_uuid: a.uuid,
-            metadata: %{
-              "task" => Assignment.label(a),
-              "from" => "waiting",
-              "to" => "todo",
-              "auto" => true
-            },
-            tell: false
-          )
-
-        _ ->
-          :ok
-      end
+    try do
+      result = fun.()
+      {result, Enum.reverse(Process.get(@finished_subprojects) || [])}
+    after
+      if is_nil(previous),
+        do: Process.delete(@finished_subprojects),
+        else: Process.put(@finished_subprojects, previous)
     end
-
-    :ok
   end
 
-  defp release_check(nil, _project_uuid), do: fn _ -> false end
+  defp note_finished_subproject(_link, []), do: :ok
 
-  defp release_check(actor_uuid, project_uuid) do
-    with %AuthUser{is_active: true} = user <- Auth.get_user(actor_uuid),
-         %Project{} = project <- get_project(project_uuid) do
-      scope = Scope.for_user(user)
-      &PhoenixKitProjects.Authz.can?(scope, project, :update_status, &1)
-    else
-      _ -> fn _ -> false end
+  defp note_finished_subproject(%Assignment{} = link, rows) do
+    case Process.get(@finished_subprojects) do
+      noted when is_list(noted) ->
+        entry = %{
+          link_uuid: link.uuid,
+          project_uuid: link.project_uuid,
+          row_uuids: Enum.map(rows, & &1.uuid)
+        }
+
+        Process.put(@finished_subprojects, [entry | noted])
+
+      _ ->
+        :ok
     end
-  rescue
-    _ -> fn _ -> false end
   end
 
   # Computes the denormalized rollup a sub-project's linking assignment carries.

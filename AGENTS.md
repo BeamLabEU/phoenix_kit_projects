@@ -1730,9 +1730,15 @@ reference:
   (`"day"` in the rule: 31 Jan → 28 Feb → 31 Mar). The occurrence is made
   under the project lock and announced after the commit.
 - **A sub-project that finishes by itself** (`subproject_auto`) releases
-  the rows waiting on it only where the acting person (`Actor.get/0`) holds
-  `:update_status` on the row — the "next up" dialog's rule; a process
-  that names no one releases nothing.
+  nothing on its own (Max, 2026-10-31: "go with b"). The page that handled
+  the last Done wraps the step in `Projects.collect_finished_subprojects/1`
+  (`ProjectShowLive.run_step/3`, every gated event) and opens the usual
+  "next up" dialog (mode `:subproject`) for the rows the sub-project
+  unlocks — in the parent project even when the Done was on the
+  sub-project's own page; each row's release right is checked in its own
+  project, Keep idle and the notify ticks work as for a task, Cancel leaves
+  them waiting. The API, a job or any other process collects nothing, so
+  nothing is released.
 - **Task ⇄ sub-project in place** (`TaskConversion`): needs `:edit_tasks` +
   `:create_tasks` on the project the row sits in (an expanded sub-project's
   task is converted in ITS project), and, back to a task, `:edit_tasks` in
