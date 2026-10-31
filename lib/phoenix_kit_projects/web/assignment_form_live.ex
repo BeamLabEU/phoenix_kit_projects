@@ -5685,20 +5685,20 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           <p :if={@matches == []} class="text-sm text-base-content/60 p-2">
             {gettext("No library task matches “%{q}”.", q: @q)}
           </p>
-          <.library_rows id={"library-matches-#{@dom}"} tasks={@matches} picked={@picked} lang={@lang} form_id={@form_id} />
+          <.library_rows id={"library-matches-#{@dom}"} tasks={@matches} picked={@picked} lang={@lang} />
         <% else %>
           <.library_block :if={@recent != []} title={gettext("Recent")} id={"library-recent-#{@dom}"}>
-            <.library_rows id={"library-recent-rows-#{@dom}"} tasks={@recent} picked={@picked} lang={@lang} form_id={@form_id} />
+            <.library_rows id={"library-recent-rows-#{@dom}"} tasks={@recent} picked={@picked} lang={@lang} />
           </.library_block>
           <.library_block :if={@often != []} title={gettext("Often used")} id={"library-often-#{@dom}"}>
-            <.library_rows id={"library-often-rows-#{@dom}"} tasks={@often} picked={@picked} lang={@lang} form_id={@form_id} />
+            <.library_rows id={"library-often-rows-#{@dom}"} tasks={@often} picked={@picked} lang={@lang} />
           </.library_block>
           <.library_block
             :for={{letter, tasks} <- @groups}
             title={letter}
             id={"library-letter-#{@dom}-#{letter_id(letter)}"}
           >
-            <.library_rows id={"library-letter-rows-#{@dom}-#{letter_id(letter)}"} tasks={tasks} picked={@picked} lang={@lang} form_id={@form_id} />
+            <.library_rows id={"library-letter-rows-#{@dom}-#{letter_id(letter)}"} tasks={tasks} picked={@picked} lang={@lang} />
           </.library_block>
         <% end %>
       </div>
@@ -5727,22 +5727,25 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   attr(:tasks, :list, required: true)
   attr(:picked, :list, required: true)
   attr(:lang, :string, default: nil)
-  attr(:form_id, :string, required: true)
 
   defp library_rows(assigns) do
     ~H"""
     <ul id={@id} class="flex flex-col">
       <li :for={t <- @tasks}>
-        <label class="flex items-center gap-2 rounded px-2 py-1 cursor-pointer hover:bg-base-200">
-          <input
-            type="checkbox"
-            class="checkbox checkbox-sm"
-            form={@form_id}
-            checked={t.uuid in @picked}
-            phx-click="library_toggle"
-            phx-value-uuid={t.uuid}
-            data-library-task={t.uuid}
-          />
+        <%!-- A button, not a native checkbox: LiveView locks a clicked input
+             while its event is in flight and drops the server's `checked` on
+             it, so the box the person clicked stayed empty. The server alone
+             draws the tick (daisyUI styles `aria-checked`). --%>
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={to_string(t.uuid in @picked)}
+          class="flex w-full items-center gap-2 rounded px-2 py-1 text-left cursor-pointer hover:bg-base-200"
+          phx-click="library_toggle"
+          phx-value-uuid={t.uuid}
+          data-library-task={t.uuid}
+        >
+          <span class="checkbox checkbox-sm" aria-hidden="true" aria-checked={to_string(t.uuid in @picked)}></span>
           <span class="flex-1 min-w-0 truncate text-sm">{Task.localized_title(t, @lang)}</span>
           <span
             :if={t.uuid in @picked}
@@ -5751,7 +5754,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
           >
             {Enum.find_index(@picked, &(&1 == t.uuid)) + 1}
           </span>
-        </label>
+        </button>
       </li>
     </ul>
     """

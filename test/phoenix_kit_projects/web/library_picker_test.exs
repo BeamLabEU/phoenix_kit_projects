@@ -137,6 +137,11 @@ defmodule PhoenixKitProjects.Web.LibraryPickerTest do
       html = render_click(view, "library_toggle", %{"uuid" => ctx.design.uuid})
       assert html =~ "Add 2 tasks"
 
+      # The server draws every tick, on each row of a task listed twice too.
+      assert has_element?(view, "[data-library-task='#{ctx.fit.uuid}'][aria-checked='true']")
+      refute has_element?(view, "[data-library-task='#{ctx.fit.uuid}'][aria-checked='false']")
+      refute has_element?(view, "[data-library-task='#{ctx.measure.uuid}'][aria-checked='true']")
+
       render_submit(view, "save", %{
         "assignment" => %{"status" => "waiting"},
         "task_mode" => "existing"
