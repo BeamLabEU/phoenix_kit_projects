@@ -44,6 +44,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   alias PhoenixKitProjects.Web.Crumbs
   alias PhoenixKitProjects.Web.Helpers, as: WebHelpers
   alias PhoenixKitProjects.Web.OutlineList
+  alias PhoenixKitProjects.Web.WriteGate
   alias PhoenixKitWeb.Components.Core.ChangeCue
 
   require Logger
@@ -849,9 +850,10 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   @doc false
   # The events that write. `confirm_action_ok` replays a confirmed event by
-  # calling `handle_event/3` directly, past the hook, so it is gated itself.
+  # calling `handle_event/3` directly, past the hook, so it gates the event
+  # it replays (a confirmed Close is no write and still leaves).
   def write_events,
-    do: ~w(save generate_default_statuses end_project resume_project confirm_action_ok)
+    do: ~w(save generate_default_statuses end_project resume_project)
 
   @doc false
   # What opening this form needed (`apply_action/3`): the projects module
@@ -1090,15 +1092,24 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
 
   # Ending ongoing work asks first (`Components.ConfirmAction`).
   def handle_event("request_confirm", params, socket),
-    do: {:noreply, ConfirmAction.request(socket, params, ~w(end_project))}
+    do: {:noreply, ConfirmAction.request(socket, params, ~w(end_project cancel))}
 
   def handle_event("confirm_action_cancel", _params, socket),
     do: {:noreply, ConfirmAction.clear(socket)}
 
   def handle_event("confirm_action_ok", _params, socket) do
     case ConfirmAction.take(socket) do
-      {nil, socket} -> {:noreply, socket}
-      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+      {nil, socket} ->
+        {:noreply, socket}
+
+      # The confirmed event runs past the write hook (a direct call), so
+      # it is gated here, one event at a time: a write is re-asked, a
+      # Close is not, so a person who lost the right can still leave.
+      {%{event: event, params: params}, socket} ->
+        case WriteGate.gate(event, params, socket) do
+          {:halt, socket} -> {:noreply, socket}
+          {:cont, socket} -> handle_event(event, params, socket)
+        end
     end
   end
 
@@ -1111,6 +1122,12 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
   def handle_event("cancel", _params, socket) do
     {:noreply, WebHelpers.close_or_navigate(socket, Paths.projects())}
   end
+
+  # The form's id, one per popup: the Save button sits outside the form
+  # (`form=`), and two project popups stacked on one page must each submit
+  # their own (panel review, list 3). On its own page it stays "project-form".
+  defp form_dom_id(%{embed_frame_ref: ref}) when is_integer(ref), do: "project-form-f#{ref}"
+  defp form_dom_id(_assigns), do: "project-form"
 
   # ── Creation-state tracking (:new only; no-op on :edit) ──────────
 
@@ -2669,7 +2686,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
       <.form_tabs id="project-form-tabs" prefix="project" panes={@panes} active={@pane} errors={@pane_errors} />
 
       <div data-pkp-scroll class="flex flex-col gap-3">
-      <.form for={@form} id="project-form" phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
+      <.form for={@form} id={form_dom_id(assigns)} phx-change="validate" phx-submit="save" phx-debounce="300" class="flex flex-col gap-3">
 
         <%!-- ══ :new — the 2026-08-06 redesign: basics, starting-point
              cards, capability customize, statuses, invites. ══ --%>
@@ -3143,6 +3160,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
               view={@assignee_view}
               home={@assignee_home}
               more?={not is_nil(@assignee_cursor)}
+              none?={@assignee_seen == %{}}
               open?={@assignee_open?}
               streams={@streams}
             />
@@ -3428,7 +3446,7 @@ defmodule PhoenixKitProjects.Web.ProjectFormLive do
         </button>
         <button
           type="submit"
-          form="project-form"
+          form={form_dom_id(assigns)}
           class="btn btn-primary btn-sm"
           disabled={@ai_in_flight != []}
           phx-disable-with={gettext("Saving…")}

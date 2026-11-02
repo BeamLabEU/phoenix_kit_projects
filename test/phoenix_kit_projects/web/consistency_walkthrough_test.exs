@@ -230,7 +230,8 @@ defmodule PhoenixKitProjects.Web.ConsistencyWalkthroughTest do
 
       assert footer =~ ~r/^[^<]*>\s*Close\s*</
       refute footer =~ "Cancel"
-      assert footer =~ ~s(form="project-form")
+      # The popup's own form (one per popup, stacked popups each save theirs).
+      assert footer =~ ~r/form="project-form-f\d+"/
       assert footer =~ ~r/>\s*Save\s*</
     end
 

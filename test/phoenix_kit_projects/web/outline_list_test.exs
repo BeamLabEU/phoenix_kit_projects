@@ -599,7 +599,10 @@ defmodule PhoenixKitProjects.Web.OutlineListTest do
       assert html =~ ~s(name="assignment[description]")
       assert html =~ "Delete this task and its subtask?"
 
+      # Delete asks first (the page's own dialog); the confirmation deletes.
       view |> element("#assignment-delete") |> render_click()
+      assert titles(p) != []
+      render_click(view, "confirm_action_ok", %{})
       assert titles(p) == []
     end
 

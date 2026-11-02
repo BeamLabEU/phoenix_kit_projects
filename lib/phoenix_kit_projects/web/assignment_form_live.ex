@@ -874,14 +874,28 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
     end
   end
 
-  # The description pictures taken out of the text, removed with Save.
+  # The description pictures taken out of the text, removed with Save —
+  # asked again whether this person may still manage the task's files: the
+  # right can be taken away between the click and the Save (panel review,
+  # list 3). Refused, the files stay on the task; only the text changes.
   defp remove_pending_files(socket) do
-    socket.assigns
-    |> Map.get(:pending_file_removals, [])
-    |> Enum.reduce(socket, fn {file_uuid, shown}, acc ->
-      remove_file_now(acc, file_uuid, shown, false)
-    end)
-    |> assign(:pending_file_removals, [])
+    case Map.get(socket.assigns, :pending_file_removals, []) do
+      [] ->
+        socket
+
+      pending ->
+        if attach_allowed?(socket) do
+          pending
+          |> Enum.reduce(socket, fn {file_uuid, shown}, acc ->
+            remove_file_now(acc, file_uuid, shown, false)
+          end)
+          |> assign(:pending_file_removals, [])
+        else
+          socket
+          |> assign(:pending_file_removals, [])
+          |> put_flash(:error, gettext("You don't have permission to manage files here."))
+        end
+    end
   end
 
   # A picture taken off the task leaves its description too — every
@@ -1713,18 +1727,30 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
   # FunctionClauseError and took the whole form down (tim-dev, 2026-10-27).
   def handle_event("pk_cue_seen", _params, socket), do: {:noreply, socket}
 
-  # A file's removal asks first, through the module's one confirm dialog
+  # A file's removal, the task's deletion and a Close with unsaved changes
+  # ask first, through the module's one confirm dialog
   # (`Components.ConfirmAction`); only these events may be put behind it.
   def handle_event("request_confirm", params, socket),
-    do: {:noreply, ConfirmAction.request(socket, params, ~w(remove_task_file))}
+    do:
+      {:noreply,
+       ConfirmAction.request(socket, params, ~w(remove_task_file delete_task close_form cancel))}
 
   def handle_event("confirm_action_cancel", _params, socket),
     do: {:noreply, ConfirmAction.clear(socket)}
 
   def handle_event("confirm_action_ok", _params, socket) do
     case ConfirmAction.take(socket) do
-      {nil, socket} -> {:noreply, socket}
-      {%{event: event, params: params}, socket} -> handle_event(event, params, socket)
+      {nil, socket} ->
+        {:noreply, socket}
+
+      # The confirmed event runs past the write hook (a direct call), so
+      # it is gated here, one event at a time: a write is re-asked, a
+      # Close is not, so a person who lost the right can still leave.
+      {%{event: event, params: params}, socket} ->
+        case WriteGate.gate(event, params, socket) do
+          {:halt, socket} -> {:noreply, socket}
+          {:cont, socket} -> handle_event(event, params, socket)
+        end
     end
   end
 
@@ -4532,6 +4558,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               view={@assignee_view}
               home={@assignee_home}
               more?={not is_nil(@assignee_cursor)}
+              none?={@assignee_seen == %{}}
               open?={@assignee_open?}
               streams={@streams}
             />
@@ -4921,6 +4948,7 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
             view={@assignee_view}
             home={@assignee_home}
             more?={not is_nil(@assignee_cursor)}
+            none?={@assignee_seen == %{}}
             open?={@assignee_open?}
             streams={@streams}
             search_form={"assignment-assignee-form-#{@dom}"}
@@ -5555,7 +5583,6 @@ defmodule PhoenixKitProjects.Web.AssignmentFormLive do
               :if={@kind == "task" and @can_delete_task?}
               type="button"
               id="assignment-delete"
-              phx-click="delete_task"
               {ConfirmAction.ask("delete_task",
                 title: delete_question(@subtask_total),
                 confirm: gettext("Delete")

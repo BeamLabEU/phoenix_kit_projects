@@ -706,6 +706,7 @@ defmodule PhoenixKitProjects.Web.TaskFormLive do
               view={@assignee_view}
               home={@assignee_home}
               more?={not is_nil(@assignee_cursor)}
+              none?={@assignee_seen == %{}}
               open?={@assignee_open?}
               streams={@streams}
             />

@@ -65,18 +65,31 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
     case {String.trim(to_string(date)), clock(parts)} do
       {"", _} -> ""
       {day, nil} -> day <> "T00:00"
+      # A time that does not read is passed on as typed, so the receiver's
+      # parsing refuses it (a field error) — never cleared, never midnight
+      # (panel review, list 3).
+      {day, {:invalid, typed}} -> day <> "T" <> typed
       {day, time} -> day <> "T" <> time
     end
   end
 
-  def fold(%{} = parts), do: clock(parts) || ""
+  def fold(%{} = parts) do
+    case clock(parts) do
+      nil -> ""
+      {:invalid, typed} -> typed
+      time -> time
+    end
+  end
 
   # `"HH:MM"` of the typed time, or of the posted hour, minute and AM/PM;
-  # nil for none (or one that reads as no time).
+  # nil for none, `{:invalid, text}` for typed text that is not a time.
   defp clock(%{"time" => typed}) do
-    case parse_clock(typed) do
-      {h, m} -> pad(h) <> ":" <> pad(m)
-      nil -> nil
+    text = typed |> to_string() |> String.trim()
+
+    case {text, parse_clock(text)} do
+      {"", _} -> nil
+      {_, {h, m}} -> pad(h) <> ":" <> pad(m)
+      {text, nil} -> {:invalid, text}
     end
   end
 
@@ -173,6 +186,15 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
       match?({:ok, _}, Date.from_iso8601(text)) ->
         %{date: text, hour: nil, minute: nil}
 
+      # A day with a time that did not read (`fold/1`): the day, and the
+      # text kept in the box so it can be corrected.
+      match?([_, _, _], Regex.run(~r/^(\d{4}-\d{2}-\d{2})T(.+)$/, text)) ->
+        [_, day, typed] = Regex.run(~r/^(\d{4}-\d{2}-\d{2})T(.+)$/, text)
+        %{date: day, hour: nil, minute: nil, typed: typed}
+
+      text != "" ->
+        Map.put(empty(), :typed, text)
+
       true ->
         empty()
     end
@@ -220,7 +242,8 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
       assign(assigns,
         date: p.date,
         hour: p.hour || if(p.date == "", do: assigns.default_hour, else: 0),
-        minute: p.minute || 0
+        minute: p.minute || 0,
+        typed: p[:typed]
       )
 
     ~H"""
@@ -246,6 +269,7 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
           hour={@hour}
           minute={@minute}
           blank={false}
+          typed={@typed}
           form={@form}
           disabled={@disabled}
           size={@size}
@@ -273,7 +297,7 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
   def clock_input(assigns) do
     assigns = with_field(assigns)
     p = parts(assigns.value)
-    assigns = assign(assigns, hour: p.hour, minute: p.minute || 0)
+    assigns = assign(assigns, hour: p.hour, minute: p.minute || 0, typed: p[:typed])
 
     ~H"""
     <fieldset id={@id} class={["flex flex-col gap-1", @class]} data-time-input="clock">
@@ -285,6 +309,7 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
           hour={@hour}
           minute={@minute}
           blank={true}
+          typed={@typed}
           form={@form}
           disabled={@disabled}
           size={@size}
@@ -303,13 +328,16 @@ defmodule PhoenixKitProjects.Web.Components.TimeInput do
   attr(:form, :string, default: nil)
   attr(:disabled, :boolean, default: false)
   attr(:size, :string, default: "sm")
+  attr(:typed, :string, default: nil, doc: "text typed that did not read as a time, kept")
 
   # The time as one typed field, in the site's clock, with every half hour
   # offered as a suggestion (the browser's list under the field).
   defp clock_field(assigns) do
     assigns =
       assign(assigns,
-        shown: if(is_integer(assigns.hour), do: L10n.format_clock(assigns.hour, assigns.minute)),
+        shown:
+          assigns.typed ||
+            if(is_integer(assigns.hour), do: L10n.format_clock(assigns.hour, assigns.minute)),
         suggestions: for(h <- 0..23, m <- [0, 30], do: L10n.format_clock(h, m)),
         example: L10n.format_clock(17, 30),
         input_class: "input input-#{assigns.size} w-32"

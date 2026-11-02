@@ -207,7 +207,14 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
             nil -> nil
           end
 
-        Phoenix.Component.assign(socket, :assignee_chip, %{key: key, row: row})
+        was = socket.assigns[:assignee_chip][:key]
+
+        # The open list's rows of the old and the new choice drawn again,
+        # so a tick follows the choice in one-pick pickers too (panel
+        # review, list 3: a stream row keeps the tick it was drawn with).
+        socket
+        |> Phoenix.Component.assign(:assignee_chip, %{key: key, row: row})
+        |> redraw(Enum.reject([was, key], &is_nil/1))
     end
   end
 
@@ -596,6 +603,12 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   attr(:view, :any, default: :home)
   attr(:home, :map, default: %{})
   attr(:more?, :boolean, default: false)
+
+  attr(:none?, :boolean,
+    default: false,
+    doc: "the open list holds nothing (`@assignee_seen == %{}`): its \"No matches\" line shows"
+  )
+
   attr(:open?, :boolean, default: false)
   attr(:streams, :any, required: true)
   attr(:class, :any, default: nil)
@@ -636,6 +649,12 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
   attr(:view, :any, default: :home)
   attr(:home, :map, default: %{})
   attr(:more?, :boolean, default: false)
+
+  attr(:none?, :boolean,
+    default: false,
+    doc: "the open list holds nothing (`@assignee_seen == %{}`): its \"No matches\" line shows"
+  )
+
   attr(:open?, :boolean, default: false)
   attr(:streams, :any, required: true)
   attr(:can_assign?, :boolean, default: true)
@@ -797,10 +816,13 @@ defmodule PhoenixKitProjects.Web.Components.AssigneePicker do
             >
               <.option_row row={row} selected={@selected} />
             </li>
-            <li id={"#{@id}-options-empty"} class="hidden only:block px-2 py-2 text-sm text-base-content/60">
-              {gettext("No matches")}
-            </li>
           </ul>
+          <%!-- Outside the list: `phx-viewport-bottom` watches the list's
+               last child, which must be a result for the next page to load
+               (a hidden line there never came into view — panel review). --%>
+          <p :if={@none?} id={"#{@id}-options-empty"} class="px-2 py-2 text-sm text-base-content/60">
+            {gettext("No matches")}
+          </p>
         <% end %>
       </div>
     </div>

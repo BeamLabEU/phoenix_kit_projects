@@ -645,7 +645,7 @@ defmodule PhoenixKitProjects.Web.EmbeddingEmitTest do
         )
 
       view
-      |> form("#project-form",
+      |> form("#project-form-f31",
         project: %{"name" => "Emit Project", "start_mode" => "immediate"}
       )
       |> render_submit()
